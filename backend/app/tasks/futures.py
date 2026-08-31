@@ -968,8 +968,9 @@ async def _mark_resolved_impl():
     knows one thing — a date passed — and it used to spend that on a bare
     `status='resolved'`, which reads downstream as "this market settled" and
     enlarges the calibration denominator without contributing a graded row.
-    Combined with `FuturesOutcome.is_winner`'s non-null `False` default, the
-    result is not an ungraded market but a market that looks all-loser.
+    Combined with `FuturesOutcome.is_winner`'s `False` default — the column is
+    nullable, but production stores the default rather than NULL — the result is
+    not an ungraded market but a market that looks all-loser.
 
     The write still happens: markets stuck in `open` break every pipeline that
     keys on `resolved` (gotcha #33), and stranding them would be a worse bug.

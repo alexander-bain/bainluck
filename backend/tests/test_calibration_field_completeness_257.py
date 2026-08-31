@@ -303,6 +303,25 @@ class _FakeDB:
         # advance behind committed work. Read-only here; nothing to do.
         return None
 
+    async def begin_nested(self):
+        # D22 (#1978, CAL-P150). The two diagnostics reads the beat is allowed
+        # to publish WITHOUT now run inside a savepoint, because a statement
+        # timeout aborts the whole transaction and a bare `except` cannot
+        # survive it. This fake has to offer one, and offering a real-shaped
+        # no-op is the honest stand-in: the reads here do not fail, so the
+        # savepoint is entered and committed and nothing is exercised beyond
+        # the call itself. The rollback path has its own suite against a
+        # purpose-built fake session
+        # (`test_calibration_soft_stage_d22.test_a_raising_soft_stage_does_not_end_the_beat`).
+        class _Savepoint:
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+        return _Savepoint()
+
 
 @pytest.fixture(autouse=True)
 def _disable_sample_gate(monkeypatch):
@@ -384,6 +403,47 @@ async def test_precompute_wrapper_caches_exact_shared_payload():
             captured[key] = val
 
         def get(self, key):
+            # D21 (#1978, CAL-P150): the PRODUCER path refuses to publish a
+            # candidate whose per-bookmaker curve is missing — an absent key was
+            # taking ~96,026 outcomes out of the published population silently,
+            # and the gate could only report that the population had moved. So
+            # this fake has to answer for that key.
+            #
+            # 🔴 CORRECTED by CERT-485 P1-b (CAL-P151). This used to return
+            # `"[]"` and call it "a written, complete curve that happens to hold
+            # no rows". The writer cannot produce that: `backfill_winners.py`'s
+            # `elif not buckets:` arm sets terminal `no_work` and returns
+            # WITHOUT reaching the `setex`, so the only value that ever reaches
+            # this key is a NON-EMPTY list. `[]` is corrupt, and the reader now
+            # refuses it by name rather than returning a silent zero.
+            #
+            # What this test is actually about is payload identity, so the
+            # answer has to leave `rows` empty without being a corrupt value.
+            # One soccer bucket does exactly that: the read-side soccer_2way
+            # exclusion (#1011) drops it, so `rows == []`.
+            #
+            # 🔴 CORRECTED AGAIN by CERT-497 (CAL-P152), and the correction is
+            # the finding in miniature. The line above used to read
+            # `{"category": "soccer_epl", "bucket_idx": 5, "n": 0}` and the
+            # comment claimed it was "a shape the writer really writes". It is
+            # not, and that was the whole of CERT-497: the writer emits NINE
+            # keys from one aggregate and `n` is a per-outcome counter that is
+            # never 0, so this fixture was a three-key dict no sweep can
+            # produce. P1-b's container gate waved it through because it is a
+            # dict; the reader now checks the ROW, and it refuses this.
+            #
+            # `soccer_excluded` is consequently 40 rather than 0 — the one place
+            # this differs from what `"[]"` produced. Nothing here asserts on it
+            # (the assertions are payload identity and the field-completeness
+            # block), and a fixture that lies about its writer is worth more
+            # than a zero that matched.
+            if key == "bainluck:bookmaker_calibration":
+                return (
+                    '[{"bucket_idx": 5, "source": "odds_api_bookmaker", '
+                    '"category": "soccer_epl", "price_moved": null, '
+                    '"n": 40, "winners": 18, "avg_prob": 0.45, '
+                    '"sum_prob": 18.0, "sum_sq_err": 0.5}]'
+                )
             return None
 
     fake_db = _FakeDB()

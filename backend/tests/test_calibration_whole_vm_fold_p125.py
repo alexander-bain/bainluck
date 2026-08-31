@@ -496,24 +496,58 @@ def test_phantom_pct_is_none_not_zero_on_an_empty_cell(monkeypatch):
     assert wvf.phantom_census(rows, buckets=1)["phantom_pct"] is None
 
 
-def test_the_fan_out_join_is_still_on_two_of_five_columns():
-    """THE FINDING, pinned against the frozen file.
+def test_the_fan_out_join_now_carries_all_five_columns():
+    """THE FINDING, and it has been ACTED ON — D5, 2026-08-30, CAL-P150.
 
-    If someone widens the ``clean_vms`` join — or narrows ``vm_stats``' GROUP BY
-    — this test fails, and that is the signal that 16-CAL has been acted on. It
-    asserts the DEFECT, deliberately, so its removal is loud rather than silent.
+    This guard used to assert the DEFECT: ``clean_vms`` joined on two of the
+    five columns ``vm_stats`` groups by, so it read
+    ``assert "mutually_exclusive" not in join`` and told whoever tripped it that
+    16-CAL might be fixed. It is fixed. Alex granted the freeze exception on
+    2026-08-30 (RULINGS-BATCH D5) and the join now carries all five.
+
+    So the guard is INVERTED rather than deleted, exactly as the missing-loser
+    census guard was for 12-CAL. Deleting it would leave the repair unpinned by
+    the file that found the defect, and a silent re-narrowing of the join would
+    reintroduce a 36.65% row duplication with no test objecting.
+
+    Text-shape only, and deliberately so — this file's subject is the SQL. The
+    relational claim ("one outcome, one published row") is proved against a real
+    Postgres in
+    ``tests/integration/test_calibration_vm_variant_join_pg.py``.
+
+    🔴 THE MEASURED NUMBERS IN THIS FILE ARE PRE-D5 AND ARE NOW HISTORICAL.
+    ``polymarket/basketball``'s 43.44% phantom share, and every other phantom
+    figure here, describes the population as it was published before the join
+    was widened. They are correct as a record of the defect and wrong as a
+    description of today's curve. Re-measuring them is a production fold and
+    therefore the measurement lane's (ruling 134); it is staged, not assumed.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
     sql = _calibration_population_ctes()
     grp = sql.split("vm_stats AS (", 1)[1].split("GROUP BY", 1)[1].split("),", 1)[0]
     for col in ("vm_id", "source", "category", "is_grouped", "mutually_exclusive"):
         assert col in grp, f"vm_stats no longer groups by {col} — re-measure 16-CAL"
-    join = sql.split("JOIN clean_vms cv ON", 1)[1].split("\n", 2)[0]
+
+    # The join's conjuncts now span several lines, so read to the end of the
+    # ON clause rather than to the end of the first line. Terminating on the
+    # next JOIN keeps this honest if a conjunct is added or reordered.
+    join = sql.split("JOIN clean_vms cv", 1)[1].split("JOIN", 1)[0]
     assert "cv.vm_id = vm.vm_id" in join and "cv.source = vm.source" in join
-    assert "mutually_exclusive" not in join, (
-        "clean_vms is now joined on mutually_exclusive too — the 16-CAL fan-out "
-        "may be fixed. Re-run --phantom on polymarket/basketball (was 43.44%) "
-        "and update the measured numbers in this file.")
+    for col in ("category", "is_grouped", "mutually_exclusive"):
+        assert f"cv.{col} IS NOT DISTINCT FROM vm.{col}" in join, (
+            f"the clean_vms join no longer carries {col}, so a virtual market "
+            f"whose members disagree on it publishes every one of its outcomes "
+            f"once per variant again. That was measured at 36.65% of the "
+            f"published rows over 13 cells. See D5 / ruling 125."
+        )
+    assert "=" not in join.replace("cv.vm_id = vm.vm_id", "").replace(
+        "cv.source = vm.source", ""
+    ), (
+        "a nullable dimension is joined with `=` rather than "
+        "`IS NOT DISTINCT FROM`. GROUP BY puts NULLs in one group, so `=` "
+        "matches NO variant for those rows and turns the de-duplication into a "
+        "silent row LOSS — strictly worse than the duplication it replaced."
+    )
 
 
 # ==========================================================================

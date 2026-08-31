@@ -1,0 +1,1193 @@
+{
+  "category": "baseball",
+  "population_check_vs_cal_p136": {
+    "compared": true,
+    "p136_rows": 64889,
+    "p137_rows": 64894,
+    "only_in_p136": 0,
+    "only_in_p137": 5,
+    "price_drifted": 0,
+    "price_drift_pct": 0.0,
+    "structurally_mismatched": 0,
+    "example_structural": [],
+    "ok": false
+  },
+  "markets_with_more_than_one_leg_of_a_name": {
+    "yes": 0,
+    "over": 0,
+    "under": 0
+  },
+  "composition": {
+    "markets": 64894,
+    "legs_by_branch": {
+      "over:cal": 20957,
+      "over:cal_eq_open": 11925,
+      "over:none": 31517,
+      "over:open": 495,
+      "under:cal": 12619,
+      "under:cal_eq_open": 12118,
+      "under:none": 38257,
+      "under:open": 1900,
+      "yes:cal": 5831,
+      "yes:cal_eq_open": 5812,
+      "yes:none": 53108,
+      "yes:open": 143
+    },
+    "priced_leg_branch": {
+      "cal": 21505,
+      "cal_eq_open": 16206,
+      "open": 634
+    },
+    "over_leg_carries_BOTH_branches": 26055
+  },
+  "arms": {
+    "D_package_coalesce": {
+      "laddered": 24953,
+      "markets_drop": 7216,
+      "markets_ambiguous": 0,
+      "markets_coherent": 17737,
+      "drop_rate_of_laddered_pct": 28.92,
+      "families_condemned": 2175,
+      "families_multi_rung": 9871,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "yes": 11786,
+        "no_leg": 19653,
+        "over": 26559,
+        "half_pair": 6896
+      }
+    },
+    "F_cal_branch_only": {
+      "laddered": 22940,
+      "markets_drop": 6301,
+      "markets_ambiguous": 0,
+      "markets_coherent": 16639,
+      "drop_rate_of_laddered_pct": 27.47,
+      "families_condemned": 2013,
+      "families_multi_rung": 9371,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 20290,
+        "yes": 11643,
+        "over": 24658,
+        "half_pair": 8303
+      }
+    },
+    "G_open_branch_only": {
+      "laddered": 22136,
+      "markets_drop": 7350,
+      "markets_ambiguous": 0,
+      "markets_coherent": 14786,
+      "drop_rate_of_laddered_pct": 33.2,
+      "families_condemned": 2145,
+      "families_multi_rung": 8502,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "yes": 11277,
+        "no_leg": 27057,
+        "over": 24887,
+        "half_pair": 1673
+      }
+    },
+    "H_cal_era_only": {
+      "laddered": 10138,
+      "markets_drop": 2244,
+      "markets_ambiguous": 0,
+      "markets_coherent": 7894,
+      "drop_rate_of_laddered_pct": 22.13,
+      "families_condemned": 943,
+      "families_multi_rung": 4580,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 37546,
+        "yes": 5831,
+        "over": 12059,
+        "half_pair": 9458
+      }
+    }
+  },
+  "era_association": {
+    "eligible_families": 9871,
+    "by_branch_set": {
+      "cal": {
+        "families": 5180,
+        "condemned": 1098,
+        "violating_pairs": 1203,
+        "markets": 12498,
+        "condemn_rate_pct": 21.2
+      },
+      "cal+cal_eq_open": {
+        "families": 1640,
+        "condemned": 395,
+        "violating_pairs": 519,
+        "markets": 4832,
+        "condemn_rate_pct": 24.09
+      },
+      "cal+open": {
+        "families": 117,
+        "condemned": 0,
+        "violating_pairs": 0,
+        "markets": 234,
+        "condemn_rate_pct": 0.0
+      },
+      "cal_eq_open": {
+        "families": 2782,
+        "condemned": 682,
+        "violating_pairs": 913,
+        "markets": 7051,
+        "condemn_rate_pct": 24.51
+      },
+      "cal_eq_open+open": {
+        "families": 64,
+        "condemned": 0,
+        "violating_pairs": 0,
+        "markets": 128,
+        "condemn_rate_pct": 0.0
+      },
+      "open": {
+        "families": 88,
+        "condemned": 0,
+        "violating_pairs": 0,
+        "markets": 210,
+        "condemn_rate_pct": 0.0
+      }
+    },
+    "pure_vs_mixed": {
+      "mixed": {
+        "families": 1821,
+        "condemned": 395,
+        "violating_pairs": 519,
+        "markets": 5194,
+        "condemn_rate_pct": 21.69
+      },
+      "pure": {
+        "families": 8050,
+        "condemned": 1780,
+        "violating_pairs": 2116,
+        "markets": 19759,
+        "condemn_rate_pct": 22.11
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_pct": 18.2,
+      "eligible_that_are_mixed_pct": 18.4
+    }
+  },
+  "as_of_reach": {
+    "priced_markets": 38345,
+    "priced_leg_has_opening_captured_at": 31396,
+    "priced_leg_has_price_changed_at": 2629,
+    "opening_captured_at_coverage_pct": 81.88,
+    "price_changed_at_coverage_pct": 6.86,
+    "note": "the CAL branch carries no as-of at all; where coverage is ~0 hypothesis (a) is UNANSWERABLE from futures_outcomes and needs the price-history table (lesson 21)"
+  },
+  "as_of_spread": {
+    "eligible_families": 9871,
+    "dated_families": 2051,
+    "dated_share_of_eligible_pct": 20.8,
+    "by_rung_as_of_spread": {
+      "<1h": {
+        "families": 1885,
+        "condemned": 579,
+        "condemn_rate_pct": 30.72
+      },
+      "1h-1d": {
+        "families": 164,
+        "condemned": 6,
+        "condemn_rate_pct": 3.66
+      },
+      ">7d": {
+        "families": 2,
+        "condemned": 2,
+        "condemn_rate_pct": 100.0
+      }
+    }
+  },
+  "violation_shape": {
+    "eligible_families": 9871,
+    "condemned_families": 2175,
+    "by_rung_count": {
+      "2": {
+        "families": 8172,
+        "condemned": 1354,
+        "condemn_rate_pct": 16.57
+      },
+      "3": {
+        "families": 676,
+        "condemned": 217,
+        "condemn_rate_pct": 32.1
+      },
+      "4": {
+        "families": 196,
+        "condemned": 123,
+        "condemn_rate_pct": 62.76
+      },
+      "5+": {
+        "families": 827,
+        "condemned": 481,
+        "condemn_rate_pct": 58.16
+      }
+    },
+    "by_magnitude": {
+      "<=0.5pp": {
+        "pairs": 67,
+        "pct": 2.5
+      },
+      "0.5-2pp": {
+        "pairs": 251,
+        "pct": 9.5
+      },
+      "2-5pp": {
+        "pairs": 283,
+        "pct": 10.7
+      },
+      "5-10pp": {
+        "pairs": 327,
+        "pct": 12.4
+      },
+      ">10pp": {
+        "pairs": 1707,
+        "pct": 64.8
+      }
+    },
+    "worst_reversal_per_condemned_family": {
+      "median_pp": 18.5,
+      "p90_pp": 42.5
+    }
+  },
+  "settled_step_test": {
+    "eligible_families": 9871,
+    "contradictory": 1,
+    "contradictory_and_condemned": 1,
+    "near_boundary_but_not_settled": 4129,
+    "by_settlement_mix": {
+      "all_live": {
+        "families": 6264,
+        "condemned": 1681,
+        "condemn_rate_pct": 26.84
+      },
+      "all_settled": {
+        "families": 212,
+        "condemned": 19,
+        "condemn_rate_pct": 8.96
+      },
+      "mixed_settlement": {
+        "families": 3395,
+        "condemned": 475,
+        "condemn_rate_pct": 13.99
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_settlement_pct": 21.8,
+      "eligible_that_are_mixed_settlement_pct": 34.4
+    },
+    "contradictory_share_of_all_settled_pct": 0.5
+  },
+  "leg_swap_test": {
+    "condemned_families": 2175,
+    "min_flips_histogram": {
+      "1": 1511,
+      "2": 60,
+      "3": 19,
+      "4+": 14
+    },
+    "no_assignment_fixes_it": 571,
+    "one_flip_share_of_condemned_pct": 69.5,
+    "flip_matches_the_other_leg_pct": 81.2,
+    "over_under_pairs_checked": 3771
+  },
+  "worst_examples": [
+    {
+      "worst_reversal_pp": 98.55,
+      "direction": "dec",
+      "family_key": "polymarket:385267  ||  baltimore orioles vs. kansas city royals: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "14.5": 0.0045,
+        "16.5": 0.99,
+        "17.5": 0.99
+      },
+      "members": [
+        {
+          "market_id": 34603043,
+          "name": "Baltimore Orioles vs. Kansas City Royals: O/U 14.5",
+          "price": 0.0045,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34603047,
+          "name": "Baltimore Orioles vs. Kansas City Royals: O/U 17.5",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34603048,
+          "name": "Baltimore Orioles vs. Kansas City Royals: O/U 16.5",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 97.9,
+      "direction": "dec",
+      "family_key": "polymarket:406481  ||  tampa bay rays vs. cleveland guardians: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "1.5": 0.001,
+        "3.5": 0.98,
+        "4.5": 0.53,
+        "5.5": 0.16,
+        "7.5": 0.011
+      },
+      "members": [
+        {
+          "market_id": 13847363,
+          "name": "Tampa Bay Rays vs. Cleveland Guardians: O/U 5.5",
+          "price": 0.16,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847364,
+          "name": "Tampa Bay Rays vs. Cleveland Guardians: O/U 4.5",
+          "price": 0.53,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847365,
+          "name": "Tampa Bay Rays vs. Cleveland Guardians: O/U 3.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847367,
+          "name": "Tampa Bay Rays vs. Cleveland Guardians: O/U 7.5",
+          "price": 0.011,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847368,
+          "name": "Tampa Bay Rays vs. Cleveland Guardians: O/U 1.5",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 96.0,
+      "direction": "dec",
+      "family_key": "polymarket:367679  ||  los angeles dodgers vs. colorado rockies: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "9.5": 0.44,
+        "10.5": 0.08,
+        "11.5": 0.02,
+        "12.5": 0.98
+      },
+      "members": [
+        {
+          "market_id": 34603935,
+          "name": "Los Angeles Dodgers vs. Colorado Rockies: O/U 10.5",
+          "price": 0.08,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34603936,
+          "name": "Los Angeles Dodgers vs. Colorado Rockies: O/U 11.5",
+          "price": 0.02,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34603938,
+          "name": "Los Angeles Dodgers vs. Colorado Rockies: O/U 9.5",
+          "price": 0.44,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34603943,
+          "name": "Los Angeles Dodgers vs. Colorado Rockies: O/U 12.5",
+          "price": 0.98,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 95.0,
+      "direction": "dec",
+      "family_key": "polymarket:350289  ||  minnesota twins vs. toronto blue jays: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "10.5": 0.25,
+        "11.5": 0.24,
+        "12.5": 0.01,
+        "14.5": 0.96
+      },
+      "members": [
+        {
+          "market_id": 34604875,
+          "name": "Minnesota Twins vs. Toronto Blue Jays: O/U 12.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34604877,
+          "name": "Minnesota Twins vs. Toronto Blue Jays: O/U 11.5",
+          "price": 0.24,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34604883,
+          "name": "Minnesota Twins vs. Toronto Blue Jays: O/U 14.5",
+          "price": 0.96,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34604891,
+          "name": "Minnesota Twins vs. Toronto Blue Jays: O/U 10.5",
+          "price": 0.25,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 94.0,
+      "direction": "dec",
+      "family_key": "polymarket:622142  ||  athletics vs. los angeles angels: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "5.5": 0.08,
+        "6.5": 0.07,
+        "7.5": 0.25,
+        "8.5": 0.21,
+        "9.5": 0.03,
+        "10.5": 0.97,
+        "11.5": 0.15
+      },
+      "members": [
+        {
+          "market_id": 46677022,
+          "name": "Athletics vs. Los Angeles Angels: O/U 9.5",
+          "price": 0.03,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677034,
+          "name": "Athletics vs. Los Angeles Angels: O/U 11.5",
+          "price": 0.15,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677035,
+          "name": "Athletics vs. Los Angeles Angels: O/U 5.5",
+          "price": 0.08,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677036,
+          "name": "Athletics vs. Los Angeles Angels: O/U 7.5",
+          "price": 0.25,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677037,
+          "name": "Athletics vs. Los Angeles Angels: O/U 10.5",
+          "price": 0.97,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677040,
+          "name": "Athletics vs. Los Angeles Angels: O/U 6.5",
+          "price": 0.07,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 46677042,
+          "name": "Athletics vs. Los Angeles Angels: O/U 8.5",
+          "price": 0.21,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 82.9,
+      "direction": "dec",
+      "family_key": "polymarket:406497  ||  kansas city royals vs. athletics: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "3.5": 1.0,
+        "4.5": 1.0,
+        "5.5": 0.01,
+        "6.5": 0.26,
+        "7.5": 0.11,
+        "8.5": 0.09,
+        "9.5": 0.919,
+        "10.5": 0.4
+      },
+      "members": [
+        {
+          "market_id": 13847265,
+          "name": "Kansas City Royals vs. Athletics: O/U 9.5",
+          "price": 0.919,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847267,
+          "name": "Kansas City Royals vs. Athletics: O/U 8.5",
+          "price": 0.09,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847268,
+          "name": "Kansas City Royals vs. Athletics: O/U 7.5",
+          "price": 0.11,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847270,
+          "name": "Kansas City Royals vs. Athletics: O/U 10.5",
+          "price": 0.4,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847271,
+          "name": "Kansas City Royals vs. Athletics: O/U 6.5",
+          "price": 0.26,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847272,
+          "name": "Kansas City Royals vs. Athletics: O/U 5.5",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847273,
+          "name": "Kansas City Royals vs. Athletics: O/U 4.5",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13847274,
+          "name": "Kansas City Royals vs. Athletics: O/U 3.5",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 81.45,
+      "direction": "dec",
+      "family_key": "polymarket:523536  ||  milwaukee brewers vs. houston astros: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "2.5": 0.0005,
+        "3.5": 0.0005,
+        "4.5": 0.815,
+        "5.5": 0.725,
+        "6.5": 0.625,
+        "7.5": 0.495,
+        "8.5": 0.425,
+        "9.5": 0.325,
+        "10.5": 0.265
+      },
+      "members": [
+        {
+          "market_id": 29524440,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 7.5",
+          "price": 0.495,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524441,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 4.5",
+          "price": 0.815,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524442,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 5.5",
+          "price": 0.725,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524443,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 6.5",
+          "price": 0.625,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524444,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 8.5",
+          "price": 0.425,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524445,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 9.5",
+          "price": 0.325,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29524446,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 10.5",
+          "price": 0.265,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30075395,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 3.5",
+          "price": 0.0005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 30075396,
+          "name": "Milwaukee Brewers vs. Houston Astros: O/U 2.5",
+          "price": 0.0005,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.45,
+      "direction": "dec",
+      "family_key": "polymarket:527087  ||  chicago white sox vs. minnesota twins: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "5.5": 0.73,
+        "6.5": 0.645,
+        "7.5": 0.525,
+        "8.5": 0.445,
+        "9.5": 0.35,
+        "10.5": 0.285,
+        "11.5": 0.205,
+        "13.5": 0.9995,
+        "14.5": 0.9995,
+        "15.5": 0.001,
+        "16.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 30036507,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 8.5",
+          "price": 0.445,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190174,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 5.5",
+          "price": 0.73,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190175,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 6.5",
+          "price": 0.645,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190176,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 7.5",
+          "price": 0.525,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190177,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 9.5",
+          "price": 0.35,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190178,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 10.5",
+          "price": 0.285,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30190179,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 11.5",
+          "price": 0.205,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30683345,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 13.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30683346,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 14.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30683347,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 15.5",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 30683348,
+          "name": "Chicago White Sox vs. Minnesota Twins: O/U 16.5",
+          "price": 0.001,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.0,
+      "direction": "dec",
+      "family_key": "polymarket:520279  ||  kansas city royals vs. texas rangers: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "5.5": 0.725,
+        "6.5": 0.645,
+        "7.5": 0.535,
+        "8.5": 0.435,
+        "9.5": 0.34,
+        "10.5": 0.275,
+        "11.5": 0.205,
+        "12.5": 0.995
+      },
+      "members": [
+        {
+          "market_id": 28924318,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 7.5",
+          "price": 0.535,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28980821,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 5.5",
+          "price": 0.725,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28980822,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 8.5",
+          "price": 0.435,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28980823,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 10.5",
+          "price": 0.275,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28980824,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 11.5",
+          "price": 0.205,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29029649,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 6.5",
+          "price": 0.645,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29029651,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 9.5",
+          "price": 0.34,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29570411,
+          "name": "Kansas City Royals vs. Texas Rangers: O/U 12.5",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 78.9,
+      "direction": "dec",
+      "family_key": "polymarket:586223  ||  jordan walker: home runs <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.2,
+        "1.5": 0.989
+      },
+      "members": [
+        {
+          "market_id": 35666030,
+          "name": "Jordan Walker: Home Runs O/U 0.5",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 35666031,
+          "name": "Jordan Walker: Home Runs O/U 1.5",
+          "price": 0.989,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 78.45,
+      "direction": "dec",
+      "family_key": "polymarket:509700  ||  minnesota twins vs. chicago white sox: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "5.5": 0.73,
+        "6.5": 0.655,
+        "7.5": 0.555,
+        "8.5": 0.455,
+        "9.5": 0.355,
+        "10.5": 0.285,
+        "11.5": 0.215,
+        "13.5": 0.9995,
+        "15.5": 0.9995,
+        "16.5": 0.9995,
+        "17.5": 0.003
+      },
+      "members": [
+        {
+          "market_id": 27458675,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 8.5",
+          "price": 0.455,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 27585407,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 6.5",
+          "price": 0.655,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27585408,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 11.5",
+          "price": 0.215,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27585409,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 10.5",
+          "price": 0.285,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27585410,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 5.5",
+          "price": 0.73,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27585411,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 7.5",
+          "price": 0.555,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 27585412,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 9.5",
+          "price": 0.355,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28044698,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 13.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28044699,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 15.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28044700,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 16.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28044703,
+          "name": "Minnesota Twins vs. Chicago White Sox: O/U 17.5",
+          "price": 0.003,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 76.95,
+      "direction": "dec",
+      "family_key": "polymarket:513485  ||  atlanta braves vs. boston red sox: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "4.5": 0.795,
+        "5.5": 0.5,
+        "6.5": 0.585,
+        "7.5": 0.48,
+        "8.5": 0.38,
+        "9.5": 0.5,
+        "10.5": 0.225,
+        "11.5": 0.9945,
+        "12.5": 0.005
+      },
+      "members": [
+        {
+          "market_id": 27881214,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 7.5",
+          "price": 0.48,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27981708,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 5.5",
+          "price": 0.5,
+          "branch": "cal"
+        },
+        {
+          "market_id": 27981709,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 9.5",
+          "price": 0.5,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28046593,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 4.5",
+          "price": 0.795,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28046594,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 6.5",
+          "price": 0.585,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28046595,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 8.5",
+          "price": 0.38,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28046596,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 10.5",
+          "price": 0.225,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28449030,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 12.5",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28449048,
+          "name": "Atlanta Braves vs. Boston Red Sox: O/U 11.5",
+          "price": 0.9945,
+          "branch": "cal_eq_open"
+        }
+      ]
+    }
+  ],
+  "holdout_at": 46674532,
+  "holdout": {
+    "early": {
+      "rows": 32447,
+      "D_package_coalesce": {
+        "laddered": 8885,
+        "markets_drop": 4272,
+        "markets_ambiguous": 0,
+        "markets_coherent": 4613,
+        "drop_rate_of_laddered_pct": 48.08,
+        "families_condemned": 868,
+        "families_multi_rung": 2257,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "yes": 9731,
+          "no_leg": 9336,
+          "over": 9553,
+          "half_pair": 3827
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 1410,
+        "markets_drop": 454,
+        "markets_ambiguous": 0,
+        "markets_coherent": 956,
+        "drop_rate_of_laddered_pct": 32.2,
+        "families_condemned": 107,
+        "families_multi_rung": 413,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 18467,
+          "yes": 5339,
+          "over": 1841,
+          "half_pair": 6800
+        }
+      },
+      "era_association": {
+        "eligible_families": 2257,
+        "by_branch_set": {
+          "cal": {
+            "families": 1052,
+            "condemned": 268,
+            "violating_pairs": 373,
+            "markets": 3856,
+            "condemn_rate_pct": 25.48
+          },
+          "cal+cal_eq_open": {
+            "families": 382,
+            "condemned": 209,
+            "violating_pairs": 333,
+            "markets": 2260,
+            "condemn_rate_pct": 54.71
+          },
+          "cal_eq_open": {
+            "families": 822,
+            "condemned": 391,
+            "violating_pairs": 568,
+            "markets": 2767,
+            "condemn_rate_pct": 47.57
+          },
+          "cal_eq_open+open": {
+            "families": 1,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 2,
+            "condemn_rate_pct": 0.0
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 383,
+            "condemned": 209,
+            "violating_pairs": 333,
+            "markets": 2262,
+            "condemn_rate_pct": 54.57
+          },
+          "pure": {
+            "families": 1874,
+            "condemned": 659,
+            "violating_pairs": 941,
+            "markets": 6623,
+            "condemn_rate_pct": 35.17
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 24.1,
+          "eligible_that_are_mixed_pct": 17.0
+        }
+      }
+    },
+    "late": {
+      "rows": 32447,
+      "D_package_coalesce": {
+        "laddered": 16068,
+        "markets_drop": 2931,
+        "markets_ambiguous": 0,
+        "markets_coherent": 13137,
+        "drop_rate_of_laddered_pct": 18.24,
+        "families_condemned": 1305,
+        "families_multi_rung": 7616,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 10317,
+          "yes": 2055,
+          "over": 17006,
+          "half_pair": 3069
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 8728,
+        "markets_drop": 1777,
+        "markets_ambiguous": 0,
+        "markets_coherent": 6951,
+        "drop_rate_of_laddered_pct": 20.36,
+        "families_condemned": 834,
+        "families_multi_rung": 4169,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 19079,
+          "yes": 492,
+          "half_pair": 2658,
+          "over": 10218
+        }
+      },
+      "era_association": {
+        "eligible_families": 7616,
+        "by_branch_set": {
+          "cal": {
+            "families": 4130,
+            "condemned": 828,
+            "violating_pairs": 828,
+            "markets": 8642,
+            "condemn_rate_pct": 20.05
+          },
+          "cal+cal_eq_open": {
+            "families": 1258,
+            "condemned": 186,
+            "violating_pairs": 186,
+            "markets": 2572,
+            "condemn_rate_pct": 14.79
+          },
+          "cal+open": {
+            "families": 117,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 234,
+            "condemn_rate_pct": 0.0
+          },
+          "cal_eq_open": {
+            "families": 1960,
+            "condemned": 291,
+            "violating_pairs": 345,
+            "markets": 4284,
+            "condemn_rate_pct": 14.85
+          },
+          "cal_eq_open+open": {
+            "families": 63,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 126,
+            "condemn_rate_pct": 0.0
+          },
+          "open": {
+            "families": 88,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 210,
+            "condemn_rate_pct": 0.0
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 1438,
+            "condemned": 186,
+            "violating_pairs": 186,
+            "markets": 2932,
+            "condemn_rate_pct": 12.93
+          },
+          "pure": {
+            "families": 6178,
+            "condemned": 1119,
+            "violating_pairs": 1173,
+            "markets": 13136,
+            "condemn_rate_pct": 18.11
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 14.3,
+          "eligible_that_are_mixed_pct": 18.9
+        }
+      }
+    }
+  }
+}

@@ -252,6 +252,22 @@ def build_slow_event(
                 continue
             if isinstance(value, (int, float)) and math.isfinite(float(value)):
                 record[key] = value
+        # `unfinished_queries` is an ATTRIBUTION field, not a display one, and it
+        # was the only one dropped (LAT-P158). `app_ms` is a RESIDUAL —
+        # `wall - db_ms` — and `DbTiming` deliberately records a statement that
+        # started and never finished in `unfinished` rather than in `total_ms`,
+        # "so a partial `total_ms` announces itself instead of reading as a fast
+        # request". The ring then dropped the announcement, so a cancelled
+        # statement reads as unexplained app time and nothing distinguishes it
+        # from real CPU. LAT-P145 had to read `unfinished=1` off response headers
+        # to diagnose exactly that on this ring's own subject.
+        #
+        # `build_split` omits the key entirely when it is zero, so a clean
+        # request's record is byte-identical to before — this only ever ADDS a
+        # field to a record that had something to declare.
+        unfinished = split.get("unfinished_queries")
+        if isinstance(unfinished, int) and unfinished > 0:
+            record["unfinished_queries"] = unfinished
     return json.dumps(record, separators=(",", ":"), allow_nan=False)
 
 

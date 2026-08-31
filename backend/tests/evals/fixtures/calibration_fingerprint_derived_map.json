@@ -2,6 +2,7 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
+    "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY"
   ],
   "hashed_roots": [
@@ -10,8 +11,63 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 47,
+  "input_count": 54,
   "inputs": [
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_ABSENT_REFUSAL",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_ABSENT_REFUSAL",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "BOOKMAKER_CURVE_REDIS_KEY",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_REDIS_KEY",
+      "sql_interpolated": true,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_SOURCE",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_SOURCE",
+      "sql_interpolated": false,
+      "used_in": [
+        "_bookmaker_row_defect"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_UNREADABLE_REFUSAL",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_UNREADABLE_REFUSAL",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
     {
       "covered_by_value": false,
       "definition_sha16": null,
@@ -128,7 +184,8 @@
       "sql_interpolated": true,
       "used_in": [
         "_build_nonexclusive_bundle_census",
-        "_calibration_population_ctes"
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
       ]
     },
     {
@@ -307,6 +364,18 @@
       "sql_interpolated": false,
       "used_in": [
         "_build_nonexclusive_bundle_census"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
       ]
     },
     {
@@ -502,6 +571,17 @@
     },
     {
       "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_BOOKMAKER_ROW_REQUIRED_KEYS",
+      "origin": "app.tasks.precompute_calibration:_BOOKMAKER_ROW_REQUIRED_KEYS",
+      "sql_interpolated": false,
+      "used_in": [
+        "_bookmaker_row_defect"
+      ]
+    },
+    {
+      "covered_by_value": false,
       "definition_sha16": "6d3548c2ffd1eba9",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
@@ -551,8 +631,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "1f9acd476c2317d22b14c92af77981102a4fe454a91025322be246291f20f81a",
-  "uncovered_behavior_or_evidence": 23,
-  "uncovered_count": 44,
-  "uncovered_sql_shaping": 21
+  "source_sha256": "60fa9df1596cdd729c10c4f7db86496b7106b0a3ff7e7c993d372aa8aa29f1a6",
+  "uncovered_behavior_or_evidence": 28,
+  "uncovered_count": 50,
+  "uncovered_sql_shaping": 22
 }

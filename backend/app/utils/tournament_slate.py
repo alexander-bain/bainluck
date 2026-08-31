@@ -54,7 +54,7 @@ without a database.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
@@ -668,6 +668,61 @@ def build_results(
     }
 
 
+def _prop_settlement(
+    prop: dict[str, Any], *, now: datetime
+) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+    """Is this curated question already answered by the calendar? (Q465)
+
+    Returns ``(settled, settled_answer, settled_at, withhold_reason)``.  At most
+    one of the last two is ever set: a card is either renderable — settled or
+    not — or withheld with a named reason.
+
+    ``settles_at`` is the instant the QUESTION is answered, which is not the
+    instant the MARKET closes and not the instant we notice.  It is curated,
+    because only the agent writing the register knows that "Will Sinner actually
+    play?" is decided by the draw and the first ball rather than by
+    ``resolution_date`` — which on that market reads five weeks out and is a
+    close time anyway (gotcha #14).
+    """
+    raw = prop.get("settles_at")
+    settles_at: Optional[datetime] = None
+    if isinstance(raw, str) and raw:
+        try:
+            settles_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            # An unparseable instant is NOT a licence to guess. The card stays
+            # live and the register validator names it — see
+            # `PROP_SETTLES_AT_NOT_ISO`, which is structural precisely so this
+            # branch is unreachable on a register that passed its gate.
+            settles_at = None
+    if settles_at is not None and settles_at.tzinfo is None:
+        # A NAIVE STAMP IS READ AS UTC (CERT-527), and this line is load-bearing
+        # rather than tidy. `is_iso8601` accepts an offset-less instant, so
+        # `2026-08-30T15:05:00` passes the register's gate — and comparing it
+        # with an aware `now` raises `TypeError`, which is a **500 on the whole
+        # tournament route** from curated data the validator called valid.
+        #
+        # UTC is the right reading and not a shrug: every other writer in this
+        # codebase stamps UTC, and `tournament_board._hours_since` already
+        # states the same rule for the same reason. Coercing here means no
+        # curated register can take the page down, whatever the gate let past.
+        settles_at = settles_at.replace(tzinfo=timezone.utc)
+    if settles_at is None or now < settles_at:
+        # Not yet, or never declared. Either way the card is a live question and
+        # renders exactly as it did before this function existed.
+        return False, None, None, None
+
+    answer = prop.get("settled_answer")
+    if not isinstance(answer, str) or not answer.strip():
+        # PROVABLY ANSWERED, ANSWER NOT HELD. The one state where the honest
+        # move is to show nothing: printing it would present a decided question
+        # in the live type, which is the defect Alex reported. Named and
+        # counted by the caller, never a silent disappearance.
+        return False, None, None, "SETTLED_WITHOUT_AN_ANSWER"
+
+    return True, answer.strip(), settles_at.isoformat(), None
+
+
 def build_props(
     register: dict[str, Any],
     *,
@@ -706,9 +761,45 @@ def build_props(
     card still RENDERS (Alex, 2026-08-28: illiquid questions are never hidden);
     it renders muted, with every declared subject on it, and ``unpriced_legs``
     names the ones we have nothing for so the page can say so out loud.
+
+    ═══ A TIME-BOUNDED QUESTION STOPS BEING A QUESTION (Q465, Alex) ═══
+
+    Alex, on the US Open page an hour into opening day: *"The 'Will Sinner
+    actually play?' prop doesn't make sense now that the tourney has started."*
+    He is right, and the reason it is a TRUTH defect rather than a copy one is
+    that the card was still printing a live probability under a question the
+    world had already answered.  The standing ruling is *settled means settled*:
+    one system-wide settled language, and a prop is not exempt from it.
+
+    Some questions are not resolved by their market closing — they are resolved
+    by an EVENT, at a known instant.  "Will he play?" is answered the moment the
+    draw is fixed and play begins, whatever the market does afterwards, and
+    Kalshi leaving the market ``status='open'`` (gotcha #33) does not make the
+    question open.  So the register carries the instant:
+
+    ``settles_at``      ISO instant after which this question is answered.
+    ``settled_answer``  the answer, as a STRING.
+
+    A string, not an entity key, and that is load-bearing: ``sinner-competes``
+    carries only a ``Yes`` row, so "he did not play" cannot be said by pointing
+    at an outcome.  There is no outcome to point at.
+
+    Past ``settles_at`` with an answer, the card renders SETTLED and the three
+    keys below say so.  Past it WITHOUT one, the card is **withheld and logged**
+    — a question we can prove is answered but whose answer we do not hold must
+    not be printed as though it were still open.  That is the one case where
+    showing nothing beats showing the card, and it is counted rather than
+    silent (gotcha #53).  Before ``settles_at``, and for a prop that declares no
+    ``settles_at`` at all, nothing changes: ``settled`` is ``False`` and the card
+    renders exactly as it does today.
     """
     out: list[dict[str, Any]] = []
+    withheld: dict[str, str] = {}
     for prop in TournamentRegister(register).props:
+        settled, settled_answer, settled_at, withhold = _prop_settlement(prop, now=now)
+        if withhold is not None:
+            withheld[str(prop.get("key"))] = withhold
+            continue
         views: list[dict[str, Any]] = []
         priced_times: list[Optional[datetime]] = []
         card_liquidity: list[Optional[str]] = []
@@ -834,6 +925,16 @@ def build_props(
             # question has no single answering outcome (a field market), so the
             # card must show a ranked list rather than one headline number.
             "answer_entity_key": answer["entity_key"] if answer else None,
+            # ═══ THE SETTLED CONTRACT (Q465) ═══
+            #
+            # Exactly these three names, because the renderer is already built
+            # against them and a near-miss ships the fix dead. `settled` is an
+            # explicit boolean so the card never has to infer its own state
+            # from the absence of a key; `settled_answer` is a STRING because
+            # a one-outcome prop has nothing to point at (see the docstring).
+            "settled": settled,
+            "settled_answer": settled_answer,
+            "settled_at": settled_at,
             "price_state": state,
             "observed_at": (
                 min(t for t in priced_times if t is not None).isoformat()
@@ -851,6 +952,15 @@ def build_props(
             "liquidity": thinnest_liquidity(card_liquidity),
             "liquidity_reasons": sorted(card_liquidity_reasons),
         })
+    if withheld:
+        # A card that disappears must leave a trace somewhere a person can read.
+        # This section has no diagnostics channel in its payload — it is a bare
+        # list by contract — so the log is the channel, and the guard below
+        # asserts the withholding rather than trusting it.
+        logger.info(
+            "tournament props withheld %d settled card(s) with no answer: %s",
+            len(withheld), withheld,
+        )
     return out
 
 

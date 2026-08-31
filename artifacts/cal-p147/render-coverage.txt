@@ -1,0 +1,24 @@
+========================================================================================
+CAL-P147 — beat coverage of banked scorecard renders
+========================================================================================
+beats logged: 17   distinct censuses banked: 8
+
+  beat   1  2026-08-29T23:35:53    --    CLEAN
+  beat   2  2026-08-30T00:35:55    --    CLEAN
+  beat   3  2026-08-30T01:35:23  RENDER  CLEAN
+  beat   4  2026-08-30T02:38:29    --    B_DIAGNOSTICS_TRUTH_CENSUS
+  beat   5  2026-08-30T03:37:54    --    CLEAN
+  beat   6  2026-08-30T04:35:25  RENDER  CLEAN
+  beat   7  2026-08-30T05:26:33    --    C_DEPLOY_KILL
+  beat   8  2026-08-30T06:38:18  RENDER  CLEAN
+  beat   9  2026-08-30T07:36:38    --    CLEAN
+  beat  10  2026-08-30T08:47:24    --    CLEAN
+  beat  11  2026-08-30T09:43:19    --    CLEAN
+  beat  12  2026-08-30T10:40:42    --    CLEAN
+  beat  13  2026-08-30T11:38:03    --    CLEAN
+  beat  14  2026-08-30T12:25:53    --    CLEAN  <- MEASUREMENT (promotion)
+  beat  15  2026-08-30T13:42:18    --    B_DIAGNOSTICS_TRUTH_CENSUS
+  beat  16  2026-08-30T14:38:38  RENDER  CLEAN
+  beat  17  2026-08-30T15:37:22    --    CLEAN
+
+beats with a banked render: 4/17

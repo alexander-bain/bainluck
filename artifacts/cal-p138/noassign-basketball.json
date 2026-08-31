@@ -1,0 +1,1422 @@
+{
+  "cell": "polymarket/basketball",
+  "families_condemned": 311,
+  "families_ambiguous_kept_by_the_duplicate_guard": 0,
+  "no_assignment": {
+    "label": "no_assignment",
+    "families": 168,
+    "rung_count_histogram": {
+      "3": 12,
+      "4": 23,
+      "5": 20,
+      "6": 20,
+      "7": 19,
+      "8": 21,
+      "9": 12,
+      "10": 12,
+      "11": 18,
+      "12": 1,
+      "13": 1,
+      "14": 2,
+      "15": 2,
+      "17": 1,
+      "19": 1,
+      "25": 3
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 168
+    },
+    "distinct_event_ids_per_family": {
+      "1": 168
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 1.2,
+    "some_rungs_in_settled_band_pct": 71.4,
+    "rungs_straddle_the_settled_price_band_pct": 70.2,
+    "over_under_pairs_checked": 1269,
+    "over_plus_under_equals_one_pct": 50.6,
+    "has_a_flip_invariant_rung_pct": 22.0,
+    "has_an_ISOLATED_half_rung_pct": 16.7,
+    "near_half_but_outside_band_pct": 25.0,
+    "has_a_market_whose_under_equals_its_over_pct": 88.1,
+    "over_equals_under_markets": 519,
+    "worst_reversal_pp": {
+      "median": 42.9,
+      "p90": 69.0,
+      "max": 98.9
+    },
+    "dp_dies_at_rung_index": {
+      "2": 54,
+      "3": 49,
+      "4": 31,
+      "5": 15,
+      "6": 10,
+      "7": 7,
+      "8": 2
+    }
+  },
+  "unique_one_flip": {
+    "label": "unique_one_flip",
+    "families": 106,
+    "rung_count_histogram": {
+      "2": 70,
+      "3": 23,
+      "4": 9,
+      "5": 4
+    },
+    "min_rungs": 2,
+    "direction": {
+      "dec": 106
+    },
+    "distinct_event_ids_per_family": {
+      "1": 106
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 12.3,
+    "some_rungs_in_settled_band_pct": 56.6,
+    "rungs_straddle_the_settled_price_band_pct": 44.3,
+    "over_under_pairs_checked": 265,
+    "over_plus_under_equals_one_pct": 46.8,
+    "has_a_flip_invariant_rung_pct": 11.3,
+    "has_an_ISOLATED_half_rung_pct": 6.6,
+    "near_half_but_outside_band_pct": 10.4,
+    "has_a_market_whose_under_equals_its_over_pct": 66.0,
+    "over_equals_under_markets": 115,
+    "worst_reversal_pp": {
+      "median": 16.4,
+      "p90": 48.0,
+      "max": 85.6
+    },
+    "dp_dies_at_rung_index": {
+      "none": 106
+    }
+  },
+  "hard_infeasible": {
+    "label": "still_infeasible_at_widest_slack",
+    "families": 67,
+    "rung_count_histogram": {
+      "3": 5,
+      "4": 2,
+      "5": 3,
+      "6": 7,
+      "7": 8,
+      "8": 11,
+      "9": 6,
+      "10": 5,
+      "11": 12,
+      "12": 1,
+      "13": 1,
+      "14": 2,
+      "15": 2,
+      "19": 1,
+      "25": 1
+    },
+    "min_rungs": 3,
+    "direction": {
+      "dec": 67
+    },
+    "distinct_event_ids_per_family": {
+      "1": 67
+    },
+    "families_spanning_more_than_one_event_pct": 0.0,
+    "all_rungs_in_settled_band_pct": 0.0,
+    "some_rungs_in_settled_band_pct": 83.6,
+    "rungs_straddle_the_settled_price_band_pct": 83.6,
+    "over_under_pairs_checked": 587,
+    "over_plus_under_equals_one_pct": 53.5,
+    "has_a_flip_invariant_rung_pct": 31.3,
+    "has_an_ISOLATED_half_rung_pct": 29.9,
+    "near_half_but_outside_band_pct": 29.9,
+    "has_a_market_whose_under_equals_its_over_pct": 94.0,
+    "over_equals_under_markets": 252,
+    "worst_reversal_pp": {
+      "median": 50.9,
+      "p90": 97.0,
+      "max": 98.9
+    },
+    "dp_dies_at_rung_index": {
+      "2": 19,
+      "3": 19,
+      "4": 16,
+      "5": 7,
+      "6": 3,
+      "7": 2,
+      "8": 1
+    }
+  },
+  "tolerance_ladder": {
+    "0.005": {
+      "repairable_families": 5,
+      "pct_of_no_assignment": 3.0
+    },
+    "0.010": {
+      "repairable_families": 13,
+      "pct_of_no_assignment": 7.7
+    },
+    "0.020": {
+      "repairable_families": 26,
+      "pct_of_no_assignment": 15.5
+    },
+    "0.050": {
+      "repairable_families": 49,
+      "pct_of_no_assignment": 29.2
+    },
+    "0.100": {
+      "repairable_families": 63,
+      "pct_of_no_assignment": 37.5
+    },
+    "0.250": {
+      "repairable_families": 101,
+      "pct_of_no_assignment": 60.1
+    }
+  },
+  "still_infeasible_at_widest_slack": 67,
+  "still_infeasible_pct_of_condemned": 21.5,
+  "worst_examples": [
+    {
+      "family_key": "polymarket:322957\u001farizona wildcats vs. michigan wolverines: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 98.9,
+      "rungs": [
+        {
+          "value": 164.5,
+          "price": 0.001,
+          "market_id": 35448341,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 164.5",
+          "event_id": 12256488,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 165.5,
+          "price": 0.75,
+          "market_id": 35448338,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 165.5",
+          "event_id": 12256488,
+          "over": "0.750000",
+          "under": "0.250000",
+          "yes": null
+        },
+        {
+          "value": 166.5,
+          "price": 0.98,
+          "market_id": 35448347,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 166.5",
+          "event_id": 12256488,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        },
+        {
+          "value": 167.5,
+          "price": 0.52,
+          "market_id": 35448337,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 167.5",
+          "event_id": 12256488,
+          "over": "0.520000",
+          "under": "0.480000",
+          "yes": null
+        },
+        {
+          "value": 168.5,
+          "price": 0.98,
+          "market_id": 35448353,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 168.5",
+          "event_id": 12256488,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        },
+        {
+          "value": 169.5,
+          "price": 0.5,
+          "market_id": 35448349,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 169.5",
+          "event_id": 12256488,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 170.5,
+          "price": 0.99,
+          "market_id": 35448355,
+          "name": "Arizona Wildcats vs. Michigan Wolverines: O/U 170.5",
+          "event_id": 12256488,
+          "over": "0.990000",
+          "under": "0.990000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:291888\u001fmiami hurricanes vs. purdue boilermakers: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 98.9,
+      "rungs": [
+        {
+          "value": 148.5,
+          "price": 0.001,
+          "market_id": 35452794,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 148.5",
+          "event_id": 11290371,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 151.5,
+          "price": 0.51,
+          "market_id": 35452797,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 151.5",
+          "event_id": 11290371,
+          "over": "0.510000",
+          "under": "0.510000",
+          "yes": null
+        },
+        {
+          "value": 152.5,
+          "price": 0.5,
+          "market_id": 35452783,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 152.5",
+          "event_id": 11290371,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 153.5,
+          "price": 0.21,
+          "market_id": 35452792,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 153.5",
+          "event_id": 11290371,
+          "over": "0.210000",
+          "under": "0.790000",
+          "yes": null
+        },
+        {
+          "value": 155.5,
+          "price": 0.49,
+          "market_id": 35452798,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 155.5",
+          "event_id": 11290371,
+          "over": "0.490000",
+          "under": "0.490000",
+          "yes": null
+        },
+        {
+          "value": 156.5,
+          "price": 0.02,
+          "market_id": 35452788,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 156.5",
+          "event_id": 11290371,
+          "over": "0.020000",
+          "under": "0.020000",
+          "yes": null
+        },
+        {
+          "value": 157.5,
+          "price": 0.99,
+          "market_id": 35452796,
+          "name": "Miami Hurricanes vs. Purdue Boilermakers: O/U 157.5",
+          "event_id": 11290371,
+          "over": "0.990000",
+          "under": "0.990000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:266900\u001fwisconsin badgers vs. michigan wolverines: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.9,
+      "rungs": [
+        {
+          "value": 134.5,
+          "price": 0.62,
+          "market_id": 35458484,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 134.5",
+          "event_id": 9397935,
+          "over": "0.620000",
+          "under": "0.380000",
+          "yes": null
+        },
+        {
+          "value": 137.5,
+          "price": 0.001,
+          "market_id": 35458485,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 137.5",
+          "event_id": 9397935,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 138.5,
+          "price": 0.98,
+          "market_id": 35458480,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 138.5",
+          "event_id": 9397935,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        },
+        {
+          "value": 147.5,
+          "price": 0.03,
+          "market_id": 35458464,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 147.5",
+          "event_id": 9397935,
+          "over": "0.030000",
+          "under": "0.030000",
+          "yes": null
+        },
+        {
+          "value": 149.5,
+          "price": 0.54,
+          "market_id": 35458468,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 149.5",
+          "event_id": 9397935,
+          "over": "0.540000",
+          "under": "0.460000",
+          "yes": null
+        },
+        {
+          "value": 151.5,
+          "price": 0.47,
+          "market_id": 35458473,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 151.5",
+          "event_id": 9397935,
+          "over": "0.470000",
+          "under": "0.530000",
+          "yes": null
+        },
+        {
+          "value": 160.5,
+          "price": 0.021,
+          "market_id": 35458461,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 160.5",
+          "event_id": 9397935,
+          "over": "0.021000",
+          "under": "0.021000",
+          "yes": null
+        },
+        {
+          "value": 161.5,
+          "price": 0.01,
+          "market_id": 35458460,
+          "name": "Wisconsin Badgers vs. Michigan Wolverines: O/U 161.5",
+          "event_id": 9397935,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:334884\u001foklahoma sooners vs. baylor bears: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.9,
+      "rungs": [
+        {
+          "value": 157.5,
+          "price": 0.001,
+          "market_id": 35446663,
+          "name": "Oklahoma Sooners vs. Baylor Bears: O/U 157.5",
+          "event_id": 12393558,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 158.5,
+          "price": 0.29,
+          "market_id": 35446671,
+          "name": "Oklahoma Sooners vs. Baylor Bears: O/U 158.5",
+          "event_id": 12393558,
+          "over": "0.290000",
+          "under": "0.710000",
+          "yes": null
+        },
+        {
+          "value": 159.5,
+          "price": 0.001,
+          "market_id": 35446664,
+          "name": "Oklahoma Sooners vs. Baylor Bears: O/U 159.5",
+          "event_id": 12393558,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 166.5,
+          "price": 0.33,
+          "market_id": 35446666,
+          "name": "Oklahoma Sooners vs. Baylor Bears: O/U 166.5",
+          "event_id": 12393558,
+          "over": "0.330000",
+          "under": "0.670000",
+          "yes": null
+        },
+        {
+          "value": 170.5,
+          "price": 0.98,
+          "market_id": 35446667,
+          "name": "Oklahoma Sooners vs. Baylor Bears: O/U 170.5",
+          "event_id": 12393558,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:283102\u001fkings vs. hornets: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.9,
+      "rungs": [
+        {
+          "value": 226.5,
+          "price": 0.001,
+          "market_id": 35454475,
+          "name": "Kings vs. Hornets: O/U 226.5",
+          "event_id": 10730722,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 227.5,
+          "price": 0.52,
+          "market_id": 35454474,
+          "name": "Kings vs. Hornets: O/U 227.5",
+          "event_id": 10730722,
+          "over": "0.520000",
+          "under": "0.480000",
+          "yes": null
+        },
+        {
+          "value": 228.5,
+          "price": 0.66,
+          "market_id": 35454476,
+          "name": "Kings vs. Hornets: O/U 228.5",
+          "event_id": 10730722,
+          "over": "0.660000",
+          "under": "0.340000",
+          "yes": null
+        },
+        {
+          "value": 229.5,
+          "price": 0.001,
+          "market_id": 35454478,
+          "name": "Kings vs. Hornets: O/U 229.5",
+          "event_id": 10730722,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 230.5,
+          "price": 0.001,
+          "market_id": 35454512,
+          "name": "Kings vs. Hornets: O/U 230.5",
+          "event_id": 10730722,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 231.5,
+          "price": 0.001,
+          "market_id": 35454514,
+          "name": "Kings vs. Hornets: O/U 231.5",
+          "event_id": 10730722,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 232.5,
+          "price": 0.37,
+          "market_id": 35454519,
+          "name": "Kings vs. Hornets: O/U 232.5",
+          "event_id": 10730722,
+          "over": "0.370000",
+          "under": "0.630000",
+          "yes": null
+        },
+        {
+          "value": 233.5,
+          "price": 0.06,
+          "market_id": 35454517,
+          "name": "Kings vs. Hornets: O/U 233.5",
+          "event_id": 10730722,
+          "over": "0.060000",
+          "under": "0.940000",
+          "yes": null
+        },
+        {
+          "value": 235.5,
+          "price": 0.21,
+          "market_id": 35454522,
+          "name": "Kings vs. Hornets: O/U 235.5",
+          "event_id": 10730722,
+          "over": "0.210000",
+          "under": "0.790000",
+          "yes": null
+        },
+        {
+          "value": 238.5,
+          "price": 0.02,
+          "market_id": 35454521,
+          "name": "Kings vs. Hornets: O/U 238.5",
+          "event_id": 10730722,
+          "over": "0.020000",
+          "under": "0.020000",
+          "yes": null
+        },
+        {
+          "value": 241.5,
+          "price": 0.98,
+          "market_id": 35454541,
+          "name": "Kings vs. Hornets: O/U 241.5",
+          "event_id": 10730722,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:323402\u001fconnecticut huskies vs. illinois fighting illini: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.9,
+      "rungs": [
+        {
+          "value": 135.5,
+          "price": 0.49,
+          "market_id": 35448301,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 135.5",
+          "event_id": 12929213,
+          "over": "0.490000",
+          "under": "0.490000",
+          "yes": null
+        },
+        {
+          "value": 137.5,
+          "price": 0.57,
+          "market_id": 35448305,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 137.5",
+          "event_id": 12929213,
+          "over": "0.570000",
+          "under": "0.430000",
+          "yes": null
+        },
+        {
+          "value": 139.5,
+          "price": 0.001,
+          "market_id": 35448296,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 139.5",
+          "event_id": 12929213,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 140.5,
+          "price": 0.54,
+          "market_id": 35448311,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 140.5",
+          "event_id": 12929213,
+          "over": "0.540000",
+          "under": "0.460000",
+          "yes": null
+        },
+        {
+          "value": 141.5,
+          "price": 0.47,
+          "market_id": 35448303,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 141.5",
+          "event_id": 12929213,
+          "over": "0.470000",
+          "under": "0.530000",
+          "yes": null
+        },
+        {
+          "value": 142.5,
+          "price": 0.03,
+          "market_id": 35448310,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 142.5",
+          "event_id": 12929213,
+          "over": "0.030000",
+          "under": "0.030000",
+          "yes": null
+        },
+        {
+          "value": 143.5,
+          "price": 0.48,
+          "market_id": 35448306,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 143.5",
+          "event_id": 12929213,
+          "over": "0.480000",
+          "under": "0.520000",
+          "yes": null
+        },
+        {
+          "value": 144.5,
+          "price": 0.47,
+          "market_id": 35448304,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 144.5",
+          "event_id": 12929213,
+          "over": "0.470000",
+          "under": "0.530000",
+          "yes": null
+        },
+        {
+          "value": 146.5,
+          "price": 0.98,
+          "market_id": 35448312,
+          "name": "Connecticut Huskies vs. Illinois Fighting Illini: O/U 146.5",
+          "event_id": 12929213,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:332515\u001fbulls vs. wizards: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.0,
+      "rungs": [
+        {
+          "value": 227.5,
+          "price": 0.01,
+          "market_id": 35446919,
+          "name": "Bulls vs. Wizards: O/U 227.5",
+          "event_id": 12257590,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 229.5,
+          "price": 0.98,
+          "market_id": 35446907,
+          "name": "Bulls vs. Wizards: O/U 229.5",
+          "event_id": 12257590,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        },
+        {
+          "value": 233.5,
+          "price": 0.23,
+          "market_id": 35446908,
+          "name": "Bulls vs. Wizards: O/U 233.5",
+          "event_id": 12257590,
+          "over": "0.230000",
+          "under": "0.770000",
+          "yes": null
+        },
+        {
+          "value": 234.5,
+          "price": 0.5,
+          "market_id": 35446899,
+          "name": "Bulls vs. Wizards: O/U 234.5",
+          "event_id": 12257590,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 236.5,
+          "price": 0.05,
+          "market_id": 35446900,
+          "name": "Bulls vs. Wizards: O/U 236.5",
+          "event_id": 12257590,
+          "over": "0.050000",
+          "under": "0.050000",
+          "yes": null
+        },
+        {
+          "value": 242.5,
+          "price": 0.02,
+          "market_id": 35446890,
+          "name": "Bulls vs. Wizards: O/U 242.5",
+          "event_id": 12257590,
+          "over": "0.020000",
+          "under": "0.020000",
+          "yes": null
+        },
+        {
+          "value": 247.5,
+          "price": 0.49,
+          "market_id": 35446892,
+          "name": "Bulls vs. Wizards: O/U 247.5",
+          "event_id": 12257590,
+          "over": "0.490000",
+          "under": "0.490000",
+          "yes": null
+        },
+        {
+          "value": 248.5,
+          "price": 0.001,
+          "market_id": 35446914,
+          "name": "Bulls vs. Wizards: O/U 248.5",
+          "event_id": 12257590,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 249.5,
+          "price": 0.001,
+          "market_id": 35446909,
+          "name": "Bulls vs. Wizards: O/U 249.5",
+          "event_id": 12257590,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 250.5,
+          "price": 0.001,
+          "market_id": 35446866,
+          "name": "Bulls vs. Wizards: O/U 250.5",
+          "event_id": 12257590,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 251.5,
+          "price": 0.001,
+          "market_id": 35446925,
+          "name": "Bulls vs. Wizards: O/U 251.5",
+          "event_id": 12257590,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:350431\u001fmagic vs. celtics: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 97.0,
+      "rungs": [
+        {
+          "value": 221.5,
+          "price": 0.55,
+          "market_id": 34939372,
+          "name": "Magic vs. Celtics: O/U 221.5",
+          "event_id": 13138678,
+          "over": "0.550000",
+          "under": "0.450000",
+          "yes": null
+        },
+        {
+          "value": 222.5,
+          "price": 0.01,
+          "market_id": 34939387,
+          "name": "Magic vs. Celtics: O/U 222.5",
+          "event_id": 13138678,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 223.5,
+          "price": 0.83,
+          "market_id": 34939338,
+          "name": "Magic vs. Celtics: O/U 223.5",
+          "event_id": 13138678,
+          "over": "0.830000",
+          "under": "0.170000",
+          "yes": null
+        },
+        {
+          "value": 224.5,
+          "price": 0.55,
+          "market_id": 34939342,
+          "name": "Magic vs. Celtics: O/U 224.5",
+          "event_id": 13138678,
+          "over": "0.550000",
+          "under": "0.450000",
+          "yes": null
+        },
+        {
+          "value": 226.5,
+          "price": 0.98,
+          "market_id": 34939341,
+          "name": "Magic vs. Celtics: O/U 226.5",
+          "event_id": 13138678,
+          "over": "0.980000",
+          "under": "0.980000",
+          "yes": null
+        },
+        {
+          "value": 228.5,
+          "price": 0.01,
+          "market_id": 34939344,
+          "name": "Magic vs. Celtics: O/U 228.5",
+          "event_id": 13138678,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 229.5,
+          "price": 0.82,
+          "market_id": 34939346,
+          "name": "Magic vs. Celtics: O/U 229.5",
+          "event_id": 13138678,
+          "over": "0.820000",
+          "under": "0.180000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:274180\u001ftcu horned frogs vs. ohio state buckeyes: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 96.9,
+      "rungs": [
+        {
+          "value": 130.5,
+          "price": 0.6,
+          "market_id": 35456177,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 130.5",
+          "event_id": 10117761,
+          "over": "0.600000",
+          "under": "0.400000",
+          "yes": null
+        },
+        {
+          "value": 131.5,
+          "price": 0.001,
+          "market_id": 35456178,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 131.5",
+          "event_id": 10117761,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 132.5,
+          "price": 0.3,
+          "market_id": 35456156,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 132.5",
+          "event_id": 10117761,
+          "over": "0.300000",
+          "under": "0.700000",
+          "yes": null
+        },
+        {
+          "value": 133.5,
+          "price": 0.3,
+          "market_id": 35456185,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 133.5",
+          "event_id": 10117761,
+          "over": "0.300000",
+          "under": "0.700000",
+          "yes": null
+        },
+        {
+          "value": 134.5,
+          "price": 0.97,
+          "market_id": 35456173,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 134.5",
+          "event_id": 10117761,
+          "over": "0.970000",
+          "under": "0.970000",
+          "yes": null
+        },
+        {
+          "value": 135.5,
+          "price": 0.3,
+          "market_id": 35456187,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 135.5",
+          "event_id": 10117761,
+          "over": "0.300000",
+          "under": "0.700000",
+          "yes": null
+        },
+        {
+          "value": 139.5,
+          "price": 0.32,
+          "market_id": 35456167,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 139.5",
+          "event_id": 10117761,
+          "over": "0.320000",
+          "under": "0.680000",
+          "yes": null
+        },
+        {
+          "value": 140.5,
+          "price": 0.001,
+          "market_id": 35456169,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 140.5",
+          "event_id": 10117761,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 141.5,
+          "price": 0.5,
+          "market_id": 35456163,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 141.5",
+          "event_id": 10117761,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 142.5,
+          "price": 0.5,
+          "market_id": 35456164,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 142.5",
+          "event_id": 10117761,
+          "over": "0.500000",
+          "under": "0.500000",
+          "yes": null
+        },
+        {
+          "value": 143.5,
+          "price": 0.001,
+          "market_id": 35456166,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 143.5",
+          "event_id": 10117761,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 144.5,
+          "price": 0.49,
+          "market_id": 35456161,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 144.5",
+          "event_id": 10117761,
+          "over": "0.490000",
+          "under": "0.490000",
+          "yes": null
+        },
+        {
+          "value": 145.5,
+          "price": 0.03,
+          "market_id": 35456175,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 145.5",
+          "event_id": 10117761,
+          "over": "0.030000",
+          "under": "0.030000",
+          "yes": null
+        },
+        {
+          "value": 146.5,
+          "price": 0.3,
+          "market_id": 35456158,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 146.5",
+          "event_id": 10117761,
+          "over": "0.300000",
+          "under": "0.700000",
+          "yes": null
+        },
+        {
+          "value": 150.5,
+          "price": 0.14,
+          "market_id": 35456160,
+          "name": "TCU Horned Frogs vs. Ohio State Buckeyes: O/U 150.5",
+          "event_id": 10117761,
+          "over": "0.140000",
+          "under": "0.860000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:276190\u001ftrail blazers vs. nuggets: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 79.9,
+      "rungs": [
+        {
+          "value": 240.5,
+          "price": 0.888,
+          "market_id": 35455803,
+          "name": "Trail Blazers vs. Nuggets: O/U 240.5",
+          "event_id": 10329598,
+          "over": "0.888000",
+          "under": "0.112000",
+          "yes": null
+        },
+        {
+          "value": 241.5,
+          "price": 0.12,
+          "market_id": 35455799,
+          "name": "Trail Blazers vs. Nuggets: O/U 241.5",
+          "event_id": 10329598,
+          "over": "0.120000",
+          "under": "0.880000",
+          "yes": null
+        },
+        {
+          "value": 242.5,
+          "price": 0.001,
+          "market_id": 35455801,
+          "name": "Trail Blazers vs. Nuggets: O/U 242.5",
+          "event_id": 10329598,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 253.5,
+          "price": 0.8,
+          "market_id": 35455796,
+          "name": "Trail Blazers vs. Nuggets: O/U 253.5",
+          "event_id": 10329598,
+          "over": "0.800000",
+          "under": "0.200000",
+          "yes": null
+        },
+        {
+          "value": 255.5,
+          "price": 0.27,
+          "market_id": 35455793,
+          "name": "Trail Blazers vs. Nuggets: O/U 255.5",
+          "event_id": 10329598,
+          "over": "0.270000",
+          "under": "0.730000",
+          "yes": null
+        },
+        {
+          "value": 256.5,
+          "price": 0.46,
+          "market_id": 35455787,
+          "name": "Trail Blazers vs. Nuggets: O/U 256.5",
+          "event_id": 10329598,
+          "over": "0.460000",
+          "under": "0.540000",
+          "yes": null
+        },
+        {
+          "value": 257.5,
+          "price": 0.04,
+          "market_id": 35455788,
+          "name": "Trail Blazers vs. Nuggets: O/U 257.5",
+          "event_id": 10329598,
+          "over": "0.040000",
+          "under": "0.040000",
+          "yes": null
+        },
+        {
+          "value": 258.5,
+          "price": 0.44,
+          "market_id": 35455794,
+          "name": "Trail Blazers vs. Nuggets: O/U 258.5",
+          "event_id": 10329598,
+          "over": "0.440000",
+          "under": "0.560000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:293092\u001fclippers vs. pacers: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 79.0,
+      "rungs": [
+        {
+          "value": 228.5,
+          "price": 0.01,
+          "market_id": 35452702,
+          "name": "Clippers vs. Pacers: O/U 228.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 229.5,
+          "price": 0.33,
+          "market_id": 35452694,
+          "name": "Clippers vs. Pacers: O/U 229.5",
+          "event_id": 11881371,
+          "over": "0.330000",
+          "under": "0.670000",
+          "yes": null
+        },
+        {
+          "value": 230.5,
+          "price": 0.01,
+          "market_id": 35452762,
+          "name": "Clippers vs. Pacers: O/U 230.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 231.5,
+          "price": 0.01,
+          "market_id": 35452727,
+          "name": "Clippers vs. Pacers: O/U 231.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 232.5,
+          "price": 0.8,
+          "market_id": 35452729,
+          "name": "Clippers vs. Pacers: O/U 232.5",
+          "event_id": 11881371,
+          "over": "0.800000",
+          "under": "0.200000",
+          "yes": null
+        },
+        {
+          "value": 233.5,
+          "price": 0.01,
+          "market_id": 35452719,
+          "name": "Clippers vs. Pacers: O/U 233.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 234.5,
+          "price": 0.01,
+          "market_id": 35452720,
+          "name": "Clippers vs. Pacers: O/U 234.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 235.5,
+          "price": 0.001,
+          "market_id": 35452696,
+          "name": "Clippers vs. Pacers: O/U 235.5",
+          "event_id": 11881371,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 236.5,
+          "price": 0.42,
+          "market_id": 35452722,
+          "name": "Clippers vs. Pacers: O/U 236.5",
+          "event_id": 11881371,
+          "over": "0.420000",
+          "under": "0.580000",
+          "yes": null
+        },
+        {
+          "value": 237.5,
+          "price": 0.36,
+          "market_id": 35452730,
+          "name": "Clippers vs. Pacers: O/U 237.5",
+          "event_id": 11881371,
+          "over": "0.360000",
+          "under": "0.640000",
+          "yes": null
+        },
+        {
+          "value": 238.5,
+          "price": 0.307,
+          "market_id": 35452760,
+          "name": "Clippers vs. Pacers: O/U 238.5",
+          "event_id": 11881371,
+          "over": "0.307000",
+          "under": "0.693000",
+          "yes": null
+        },
+        {
+          "value": 239.5,
+          "price": 0.01,
+          "market_id": 35452723,
+          "name": "Clippers vs. Pacers: O/U 239.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 240.5,
+          "price": 0.11,
+          "market_id": 35452717,
+          "name": "Clippers vs. Pacers: O/U 240.5",
+          "event_id": 11881371,
+          "over": "0.110000",
+          "under": "0.890000",
+          "yes": null
+        },
+        {
+          "value": 241.5,
+          "price": 0.01,
+          "market_id": 35452713,
+          "name": "Clippers vs. Pacers: O/U 241.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        },
+        {
+          "value": 244.5,
+          "price": 0.01,
+          "market_id": 35452716,
+          "name": "Clippers vs. Pacers: O/U 244.5",
+          "event_id": 11881371,
+          "over": "0.010000",
+          "under": "0.010000",
+          "yes": null
+        }
+      ]
+    },
+    {
+      "family_key": "polymarket:332527\u001ftimberwolves vs. pacers: <rung>",
+      "direction": "dec",
+      "worst_reversal_pp": 72.9,
+      "rungs": [
+        {
+          "value": 228.5,
+          "price": 0.47,
+          "market_id": 35447047,
+          "name": "Timberwolves vs. Pacers: O/U 228.5",
+          "event_id": 12257589,
+          "over": "0.470000",
+          "under": "0.530000",
+          "yes": null
+        },
+        {
+          "value": 229.5,
+          "price": 0.001,
+          "market_id": 35447079,
+          "name": "Timberwolves vs. Pacers: O/U 229.5",
+          "event_id": 12257589,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 230.5,
+          "price": 0.51,
+          "market_id": 35447046,
+          "name": "Timberwolves vs. Pacers: O/U 230.5",
+          "event_id": 12257589,
+          "over": "0.510000",
+          "under": "0.510000",
+          "yes": null
+        },
+        {
+          "value": 231.5,
+          "price": 0.001,
+          "market_id": 35447092,
+          "name": "Timberwolves vs. Pacers: O/U 231.5",
+          "event_id": 12257589,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 232.5,
+          "price": 0.001,
+          "market_id": 35447088,
+          "name": "Timberwolves vs. Pacers: O/U 232.5",
+          "event_id": 12257589,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 233.5,
+          "price": 0.001,
+          "market_id": 35447090,
+          "name": "Timberwolves vs. Pacers: O/U 233.5",
+          "event_id": 12257589,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 234.5,
+          "price": 0.27,
+          "market_id": 35447066,
+          "name": "Timberwolves vs. Pacers: O/U 234.5",
+          "event_id": 12257589,
+          "over": "0.270000",
+          "under": "0.730000",
+          "yes": null
+        },
+        {
+          "value": 235.5,
+          "price": 0.001,
+          "market_id": 35447039,
+          "name": "Timberwolves vs. Pacers: O/U 235.5",
+          "event_id": 12257589,
+          "over": "0.001000",
+          "under": "0.001000",
+          "yes": null
+        },
+        {
+          "value": 236.5,
+          "price": 0.73,
+          "market_id": 35447037,
+          "name": "Timberwolves vs. Pacers: O/U 236.5",
+          "event_id": 12257589,
+          "over": "0.730000",
+          "under": "0.270000",
+          "yes": null
+        },
+        {
+          "value": 237.5,
+          "price": 0.13,
+          "market_id": 35447041,
+          "name": "Timberwolves vs. Pacers: O/U 237.5",
+          "event_id": 12257589,
+          "over": "0.130000",
+          "under": "0.870000",
+          "yes": null
+        },
+        {
+          "value": 238.5,
+          "price": 0.44,
+          "market_id": 35447063,
+          "name": "Timberwolves vs. Pacers: O/U 238.5",
+          "event_id": 12257589,
+          "over": "0.440000",
+          "under": "0.560000",
+          "yes": null
+        },
+        {
+          "value": 239.5,
+          "price": 0.02,
+          "market_id": 35447045,
+          "name": "Timberwolves vs. Pacers: O/U 239.5",
+          "event_id": 12257589,
+          "over": "0.020000",
+          "under": "0.020000",
+          "yes": null
+        },
+        {
+          "value": 241.5,
+          "price": 0.43,
+          "market_id": 35447044,
+          "name": "Timberwolves vs. Pacers: O/U 241.5",
+          "event_id": 12257589,
+          "over": "0.430000",
+          "under": "0.570000",
+          "yes": null
+        }
+      ]
+    }
+  ]
+}

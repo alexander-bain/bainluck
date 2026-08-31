@@ -1,0 +1,1225 @@
+{
+  "category": "soccer",
+  "population_check_vs_cal_p136": {
+    "compared": true,
+    "p136_rows": 190155,
+    "p137_rows": 190198,
+    "only_in_p136": 0,
+    "only_in_p137": 43,
+    "price_drifted": 0,
+    "price_drift_pct": 0.0,
+    "structurally_mismatched": 0,
+    "example_structural": [],
+    "ok": false
+  },
+  "markets_with_more_than_one_leg_of_a_name": {
+    "yes": 0,
+    "over": 0,
+    "under": 0
+  },
+  "composition": {
+    "markets": 190198,
+    "legs_by_branch": {
+      "over:cal": 19009,
+      "over:cal_eq_open": 86144,
+      "over:none": 83238,
+      "over:open": 1807,
+      "under:cal": 10255,
+      "under:cal_eq_open": 89072,
+      "under:none": 89033,
+      "under:open": 1838,
+      "yes:cal": 18849,
+      "yes:cal_eq_open": 23813,
+      "yes:none": 145931,
+      "yes:open": 1605
+    },
+    "priced_leg_branch": {
+      "cal": 32120,
+      "cal_eq_open": 109857,
+      "open": 3396
+    },
+    "over_leg_carries_BOTH_branches": 105043
+  },
+  "arms": {
+    "D_package_coalesce": {
+      "laddered": 98582,
+      "markets_drop": 27257,
+      "markets_ambiguous": 0,
+      "markets_coherent": 71325,
+      "drop_rate_of_laddered_pct": 27.65,
+      "families_condemned": 6496,
+      "families_multi_rung": 29705,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 38912,
+        "yes": 44267,
+        "over": 101106,
+        "half_pair": 5913
+      }
+    },
+    "F_cal_branch_only": {
+      "laddered": 97227,
+      "markets_drop": 27158,
+      "markets_ambiguous": 0,
+      "markets_coherent": 70069,
+      "drop_rate_of_laddered_pct": 27.93,
+      "families_condemned": 6475,
+      "families_multi_rung": 29315,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 42294,
+        "yes": 42662,
+        "over": 99238,
+        "half_pair": 6004
+      }
+    },
+    "G_open_branch_only": {
+      "laddered": 98047,
+      "markets_drop": 27879,
+      "markets_ambiguous": 0,
+      "markets_coherent": 70168,
+      "drop_rate_of_laddered_pct": 28.43,
+      "families_condemned": 6679,
+      "families_multi_rung": 29486,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 39236,
+        "yes": 44106,
+        "over": 100202,
+        "half_pair": 6654
+      }
+    },
+    "H_cal_era_only": {
+      "laddered": 8293,
+      "markets_drop": 2859,
+      "markets_ambiguous": 0,
+      "markets_coherent": 5434,
+      "drop_rate_of_laddered_pct": 34.47,
+      "families_condemned": 716,
+      "families_multi_rung": 2725,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 152098,
+        "yes": 18849,
+        "half_pair": 9238,
+        "over": 10013
+      }
+    }
+  },
+  "era_association": {
+    "eligible_families": 29705,
+    "by_branch_set": {
+      "cal": {
+        "families": 2271,
+        "condemned": 463,
+        "violating_pairs": 575,
+        "markets": 7800,
+        "condemn_rate_pct": 20.39
+      },
+      "cal+cal_eq_open": {
+        "families": 2484,
+        "condemned": 857,
+        "violating_pairs": 1134,
+        "markets": 9316,
+        "condemn_rate_pct": 34.5
+      },
+      "cal+cal_eq_open+open": {
+        "families": 1,
+        "condemned": 0,
+        "violating_pairs": 0,
+        "markets": 6,
+        "condemn_rate_pct": 0.0
+      },
+      "cal+open": {
+        "families": 1,
+        "condemned": 0,
+        "violating_pairs": 0,
+        "markets": 4,
+        "condemn_rate_pct": 0.0
+      },
+      "cal_eq_open": {
+        "families": 24534,
+        "condemned": 5159,
+        "violating_pairs": 6315,
+        "markets": 80067,
+        "condemn_rate_pct": 21.03
+      },
+      "cal_eq_open+open": {
+        "families": 33,
+        "condemned": 4,
+        "violating_pairs": 4,
+        "markets": 154,
+        "condemn_rate_pct": 12.12
+      },
+      "open": {
+        "families": 381,
+        "condemned": 13,
+        "violating_pairs": 14,
+        "markets": 1235,
+        "condemn_rate_pct": 3.41
+      }
+    },
+    "pure_vs_mixed": {
+      "mixed": {
+        "families": 2519,
+        "condemned": 861,
+        "violating_pairs": 1138,
+        "markets": 9480,
+        "condemn_rate_pct": 34.18
+      },
+      "pure": {
+        "families": 27186,
+        "condemned": 5635,
+        "violating_pairs": 6904,
+        "markets": 89102,
+        "condemn_rate_pct": 20.73
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_pct": 13.3,
+      "eligible_that_are_mixed_pct": 8.5
+    }
+  },
+  "as_of_reach": {
+    "priced_markets": 145373,
+    "priced_leg_has_opening_captured_at": 140945,
+    "priced_leg_has_price_changed_at": 1904,
+    "opening_captured_at_coverage_pct": 96.95,
+    "price_changed_at_coverage_pct": 1.31,
+    "note": "the CAL branch carries no as-of at all; where coverage is ~0 hypothesis (a) is UNANSWERABLE from futures_outcomes and needs the price-history table (lesson 21)"
+  },
+  "as_of_spread": {
+    "eligible_families": 29705,
+    "dated_families": 24845,
+    "dated_share_of_eligible_pct": 83.6,
+    "by_rung_as_of_spread": {
+      "<1h": {
+        "families": 23501,
+        "condemned": 4939,
+        "condemn_rate_pct": 21.02
+      },
+      "1h-1d": {
+        "families": 1340,
+        "condemned": 200,
+        "condemn_rate_pct": 14.93
+      },
+      "1d-7d": {
+        "families": 3,
+        "condemned": 0,
+        "condemn_rate_pct": 0.0
+      },
+      ">7d": {
+        "families": 1,
+        "condemned": 0,
+        "condemn_rate_pct": 0.0
+      }
+    }
+  },
+  "violation_shape": {
+    "eligible_families": 29705,
+    "condemned_families": 6496,
+    "by_rung_count": {
+      "2": {
+        "families": 9452,
+        "condemned": 940,
+        "condemn_rate_pct": 9.94
+      },
+      "3": {
+        "families": 12265,
+        "condemned": 2365,
+        "condemn_rate_pct": 19.28
+      },
+      "4": {
+        "families": 3312,
+        "condemned": 813,
+        "condemn_rate_pct": 24.55
+      },
+      "5+": {
+        "families": 4676,
+        "condemned": 2378,
+        "condemn_rate_pct": 50.86
+      }
+    },
+    "by_magnitude": {
+      "<=0.5pp": {
+        "pairs": 38,
+        "pct": 0.5
+      },
+      "0.5-2pp": {
+        "pairs": 4806,
+        "pct": 59.8
+      },
+      "2-5pp": {
+        "pairs": 1087,
+        "pct": 13.5
+      },
+      "5-10pp": {
+        "pairs": 494,
+        "pct": 6.1
+      },
+      ">10pp": {
+        "pairs": 1617,
+        "pct": 20.1
+      }
+    },
+    "worst_reversal_per_condemned_family": {
+      "median_pp": 1.0,
+      "p90_pp": 21.5
+    }
+  },
+  "settled_step_test": {
+    "eligible_families": 29705,
+    "contradictory": 0,
+    "contradictory_and_condemned": 0,
+    "near_boundary_but_not_settled": 354,
+    "by_settlement_mix": {
+      "all_live": {
+        "families": 29232,
+        "condemned": 6438,
+        "condemn_rate_pct": 22.02
+      },
+      "all_settled": {
+        "families": 379,
+        "condemned": 18,
+        "condemn_rate_pct": 4.75
+      },
+      "mixed_settlement": {
+        "families": 94,
+        "condemned": 40,
+        "condemn_rate_pct": 42.55
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_settlement_pct": 0.6,
+      "eligible_that_are_mixed_settlement_pct": 0.3
+    },
+    "contradictory_share_of_all_settled_pct": 0.0
+  },
+  "leg_swap_test": {
+    "condemned_families": 6496,
+    "min_flips_histogram": {
+      "1": 2358,
+      "2": 259,
+      "3": 27,
+      "4+": 9
+    },
+    "no_assignment_fixes_it": 3843,
+    "one_flip_share_of_condemned_pct": 36.3,
+    "flip_matches_the_other_leg_pct": 97.2,
+    "over_under_pairs_checked": 7895
+  },
+  "worst_examples": [
+    {
+      "worst_reversal_pp": 77.0,
+      "direction": "dec",
+      "family_key": "polymarket:535891  ||  fc imabari vs. fc ry\u016bky\u016b: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.9995,
+        "1.5": 0.9995,
+        "2.5": 0.9995,
+        "3.5": 0.21,
+        "4.5": 0.05,
+        "5.5": 0.82
+      },
+      "members": [
+        {
+          "market_id": 28456640,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 0.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28456641,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 1.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28456642,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 2.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28456643,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 3.5",
+          "price": 0.21,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28456644,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 4.5",
+          "price": 0.05,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28456645,
+          "name": "FC Imabari vs. FC Ry\u016bky\u016b: O/U 5.5",
+          "price": 0.82,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 65.95,
+      "direction": "dec",
+      "family_key": "polymarket:451421  ||  cdoriente petrolero vs. club blooming: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.9995,
+        "1.5": 0.0005,
+        "2.5": 0.66,
+        "3.5": 0.44,
+        "4.5": 0.001,
+        "5.5": 0.14
+      },
+      "members": [
+        {
+          "market_id": 16633906,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 0.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633907,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 1.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633908,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 2.5",
+          "price": 0.66,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633909,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 3.5",
+          "price": 0.44,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633910,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 4.5",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633911,
+          "name": "CDOriente Petrolero vs. Club Blooming: O/U 5.5",
+          "price": 0.14,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 61.45,
+      "direction": "dec",
+      "family_key": "polymarket:497168  ||  bologna fc 1909 vs. fc internazionale milano: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "1.5": 0.835,
+        "2.5": 0.605,
+        "3.5": 0.385,
+        "4.5": 0.9995,
+        "5.5": 0.095
+      },
+      "members": [
+        {
+          "market_id": 22545972,
+          "name": "Bologna FC 1909 vs. FC Internazionale Milano: O/U 2.5",
+          "price": 0.605,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22545973,
+          "name": "Bologna FC 1909 vs. FC Internazionale Milano: O/U 3.5",
+          "price": 0.385,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22545974,
+          "name": "Bologna FC 1909 vs. FC Internazionale Milano: O/U 4.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22545975,
+          "name": "Bologna FC 1909 vs. FC Internazionale Milano: O/U 5.5",
+          "price": 0.095,
+          "branch": "cal"
+        },
+        {
+          "market_id": 22545982,
+          "name": "Bologna FC 1909 vs. FC Internazionale Milano: O/U 1.5",
+          "price": 0.835,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 60.45,
+      "direction": "dec",
+      "family_key": "polymarket:539399  ||  bk hacken vs. hammarby if: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.96,
+        "1.5": 0.9995,
+        "2.5": 0.615,
+        "3.5": 0.395,
+        "4.5": 0.9995,
+        "5.5": 0.095
+      },
+      "members": [
+        {
+          "market_id": 29098936,
+          "name": "BK Hacken vs. Hammarby IF: O/U 0.5",
+          "price": 0.96,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29098937,
+          "name": "BK Hacken vs. Hammarby IF: O/U 1.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29098938,
+          "name": "BK Hacken vs. Hammarby IF: O/U 2.5",
+          "price": 0.615,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29098939,
+          "name": "BK Hacken vs. Hammarby IF: O/U 3.5",
+          "price": 0.395,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29098940,
+          "name": "BK Hacken vs. Hammarby IF: O/U 4.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 29098941,
+          "name": "BK Hacken vs. Hammarby IF: O/U 5.5",
+          "price": 0.095,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 49.9,
+      "direction": "dec",
+      "family_key": "polymarket:570184  ||  defensor sporting vs. ca boston river: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.5005,
+        "1.5": 0.9995,
+        "2.5": 0.0005,
+        "3.5": 0.0005,
+        "4.5": 0.0005,
+        "5.5": 0.0005
+      },
+      "members": [
+        {
+          "market_id": 33587708,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 0.5",
+          "price": 0.5005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 33587709,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 5.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 33587711,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 3.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 33587713,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 4.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 33587715,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 2.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 33587717,
+          "name": "Defensor Sporting vs. CA Boston River: O/U 1.5",
+          "price": 0.9995,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 48.55,
+      "direction": "dec",
+      "family_key": "polymarket:511474  ||  c\u00f4te d'ivoire vs. ecuador: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.855,
+        "1.5": 0.595,
+        "2.5": 0.315,
+        "3.5": 0.15,
+        "4.5": 0.05,
+        "5.5": 0.0145,
+        "6.5": 0.5,
+        "7.5": 0.5,
+        "8.5": 0.0015
+      },
+      "members": [
+        {
+          "market_id": 25196730,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 0.5",
+          "price": 0.855,
+          "branch": "cal"
+        },
+        {
+          "market_id": 25196731,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 1.5",
+          "price": 0.595,
+          "branch": "cal"
+        },
+        {
+          "market_id": 25196732,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 2.5",
+          "price": 0.315,
+          "branch": "cal"
+        },
+        {
+          "market_id": 25196733,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 3.5",
+          "price": 0.15,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 25196734,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 4.5",
+          "price": 0.05,
+          "branch": "cal"
+        },
+        {
+          "market_id": 25196735,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 5.5",
+          "price": 0.0145,
+          "branch": "cal"
+        },
+        {
+          "market_id": 34780262,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 7.5",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34780263,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 8.5",
+          "price": 0.0015,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34780264,
+          "name": "C\u00f4te d'Ivoire vs. Ecuador: O/U 6.5",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 48.45,
+      "direction": "dec",
+      "family_key": "polymarket:184193  ||  wydad athletic club vs. as far: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "1.5": 0.515,
+        "2.5": 0.9995,
+        "3.5": 0.0005,
+        "4.5": 0.0005
+      },
+      "members": [
+        {
+          "market_id": 13793721,
+          "name": "Wydad Athletic Club vs. AS FAR: O/U 1.5",
+          "price": 0.515,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793722,
+          "name": "Wydad Athletic Club vs. AS FAR: O/U 3.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793723,
+          "name": "Wydad Athletic Club vs. AS FAR: O/U 2.5",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793724,
+          "name": "Wydad Athletic Club vs. AS FAR: O/U 4.5",
+          "price": 0.0005,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 47.95,
+      "direction": "dec",
+      "family_key": "polymarket:510372  ||  algeria vs. austria: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.93,
+        "1.5": 0.705,
+        "2.5": 0.44,
+        "3.5": 0.225,
+        "4.5": 0.085,
+        "5.5": 0.0285,
+        "6.5": 0.0155,
+        "7.5": 0.495,
+        "8.5": 0.495
+      },
+      "members": [
+        {
+          "market_id": 24750382,
+          "name": "Algeria vs. Austria: O/U 1.5",
+          "price": 0.705,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750383,
+          "name": "Algeria vs. Austria: O/U 3.5",
+          "price": 0.225,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750384,
+          "name": "Algeria vs. Austria: O/U 5.5",
+          "price": 0.0285,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750387,
+          "name": "Algeria vs. Austria: O/U 0.5",
+          "price": 0.93,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750388,
+          "name": "Algeria vs. Austria: O/U 2.5",
+          "price": 0.44,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750389,
+          "name": "Algeria vs. Austria: O/U 4.5",
+          "price": 0.085,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452163,
+          "name": "Algeria vs. Austria: O/U 8.5",
+          "price": 0.495,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452168,
+          "name": "Algeria vs. Austria: O/U 7.5",
+          "price": 0.495,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452172,
+          "name": "Algeria vs. Austria: O/U 6.5",
+          "price": 0.0155,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 47.95,
+      "direction": "dec",
+      "family_key": "polymarket:184194  ||  kawkab ac vs. oc safi: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "1.5": 0.505,
+        "2.5": 0.0005,
+        "3.5": 0.0005,
+        "4.5": 0.48
+      },
+      "members": [
+        {
+          "market_id": 13793726,
+          "name": "Kawkab AC vs. OC Safi: O/U 1.5",
+          "price": 0.505,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793727,
+          "name": "Kawkab AC vs. OC Safi: O/U 4.5",
+          "price": 0.48,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793729,
+          "name": "Kawkab AC vs. OC Safi: O/U 2.5",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 13793730,
+          "name": "Kawkab AC vs. OC Safi: O/U 3.5",
+          "price": 0.0005,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 47.5,
+      "direction": "dec",
+      "family_key": "polymarket:510386  ||  tunisia vs. netherlands: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.948,
+        "1.5": 0.805,
+        "2.5": 0.565,
+        "3.5": 0.34,
+        "4.5": 0.165,
+        "5.5": 0.085,
+        "6.5": 0.5,
+        "7.5": 0.015,
+        "8.5": 0.49
+      },
+      "members": [
+        {
+          "market_id": 24750548,
+          "name": "Tunisia vs. Netherlands: O/U 4.5",
+          "price": 0.165,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750549,
+          "name": "Tunisia vs. Netherlands: O/U 0.5",
+          "price": 0.948,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750552,
+          "name": "Tunisia vs. Netherlands: O/U 2.5",
+          "price": 0.565,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750555,
+          "name": "Tunisia vs. Netherlands: O/U 5.5",
+          "price": 0.085,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750557,
+          "name": "Tunisia vs. Netherlands: O/U 1.5",
+          "price": 0.805,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750558,
+          "name": "Tunisia vs. Netherlands: O/U 3.5",
+          "price": 0.34,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38453085,
+          "name": "Tunisia vs. Netherlands: O/U 8.5",
+          "price": 0.49,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38453086,
+          "name": "Tunisia vs. Netherlands: O/U 7.5",
+          "price": 0.015,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 38453088,
+          "name": "Tunisia vs. Netherlands: O/U 6.5",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 47.15,
+      "direction": "dec",
+      "family_key": "polymarket:510403  ||  argentina vs. austria: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.93,
+        "1.5": 0.745,
+        "2.5": 0.495,
+        "3.5": 0.265,
+        "4.5": 0.125,
+        "5.5": 0.045,
+        "6.5": 0.0185,
+        "7.5": 0.49,
+        "8.5": 0.485
+      },
+      "members": [
+        {
+          "market_id": 24750753,
+          "name": "Argentina vs. Austria: O/U 0.5",
+          "price": 0.93,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750754,
+          "name": "Argentina vs. Austria: O/U 4.5",
+          "price": 0.125,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750757,
+          "name": "Argentina vs. Austria: O/U 3.5",
+          "price": 0.265,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750759,
+          "name": "Argentina vs. Austria: O/U 2.5",
+          "price": 0.495,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750761,
+          "name": "Argentina vs. Austria: O/U 1.5",
+          "price": 0.745,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750762,
+          "name": "Argentina vs. Austria: O/U 5.5",
+          "price": 0.045,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38453849,
+          "name": "Argentina vs. Austria: O/U 7.5",
+          "price": 0.49,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38453851,
+          "name": "Argentina vs. Austria: O/U 6.5",
+          "price": 0.0185,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38453853,
+          "name": "Argentina vs. Austria: O/U 8.5",
+          "price": 0.485,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 46.25,
+      "direction": "dec",
+      "family_key": "polymarket:510379  ||  egypt vs. ir iran: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "0.5": 0.875,
+        "1.5": 0.655,
+        "2.5": 0.38,
+        "3.5": 0.205,
+        "4.5": 0.07,
+        "5.5": 0.0275,
+        "6.5": 0.49,
+        "7.5": 0.485,
+        "8.5": 0.49
+      },
+      "members": [
+        {
+          "market_id": 24750468,
+          "name": "Egypt vs. IR Iran: O/U 0.5",
+          "price": 0.875,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750469,
+          "name": "Egypt vs. IR Iran: O/U 1.5",
+          "price": 0.655,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750470,
+          "name": "Egypt vs. IR Iran: O/U 2.5",
+          "price": 0.38,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750471,
+          "name": "Egypt vs. IR Iran: O/U 3.5",
+          "price": 0.205,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750472,
+          "name": "Egypt vs. IR Iran: O/U 4.5",
+          "price": 0.07,
+          "branch": "cal"
+        },
+        {
+          "market_id": 24750473,
+          "name": "Egypt vs. IR Iran: O/U 5.5",
+          "price": 0.0275,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452667,
+          "name": "Egypt vs. IR Iran: O/U 7.5",
+          "price": 0.485,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452672,
+          "name": "Egypt vs. IR Iran: O/U 6.5",
+          "price": 0.49,
+          "branch": "cal"
+        },
+        {
+          "market_id": 38452679,
+          "name": "Egypt vs. IR Iran: O/U 8.5",
+          "price": 0.49,
+          "branch": "cal"
+        }
+      ]
+    }
+  ],
+  "holdout_at": 57374044,
+  "holdout": {
+    "early": {
+      "rows": 95099,
+      "D_package_coalesce": {
+        "laddered": 34957,
+        "markets_drop": 11345,
+        "markets_ambiguous": 0,
+        "markets_coherent": 23612,
+        "drop_rate_of_laddered_pct": 32.45,
+        "families_condemned": 2736,
+        "families_multi_rung": 10097,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 24003,
+          "yes": 29816,
+          "over": 35367,
+          "half_pair": 5913
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 2189,
+        "markets_drop": 580,
+        "markets_ambiguous": 0,
+        "markets_coherent": 1609,
+        "drop_rate_of_laddered_pct": 26.5,
+        "families_condemned": 159,
+        "families_multi_rung": 762,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 66066,
+          "yes": 16875,
+          "half_pair": 9191,
+          "over": 2967
+        }
+      },
+      "era_association": {
+        "eligible_families": 10097,
+        "by_branch_set": {
+          "cal": {
+            "families": 1285,
+            "condemned": 173,
+            "violating_pairs": 197,
+            "markets": 4557,
+            "condemn_rate_pct": 13.46
+          },
+          "cal+cal_eq_open": {
+            "families": 600,
+            "condemned": 275,
+            "violating_pairs": 328,
+            "markets": 2436,
+            "condemn_rate_pct": 45.83
+          },
+          "cal+open": {
+            "families": 1,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 4,
+            "condemn_rate_pct": 0.0
+          },
+          "cal_eq_open": {
+            "families": 8189,
+            "condemned": 2286,
+            "violating_pairs": 2808,
+            "markets": 27855,
+            "condemn_rate_pct": 27.92
+          },
+          "cal_eq_open+open": {
+            "families": 13,
+            "condemned": 1,
+            "violating_pairs": 1,
+            "markets": 74,
+            "condemn_rate_pct": 7.69
+          },
+          "open": {
+            "families": 9,
+            "condemned": 1,
+            "violating_pairs": 2,
+            "markets": 31,
+            "condemn_rate_pct": 11.11
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 614,
+            "condemned": 276,
+            "violating_pairs": 329,
+            "markets": 2514,
+            "condemn_rate_pct": 44.95
+          },
+          "pure": {
+            "families": 9483,
+            "condemned": 2460,
+            "violating_pairs": 3007,
+            "markets": 32443,
+            "condemn_rate_pct": 25.94
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 10.1,
+          "eligible_that_are_mixed_pct": 6.1
+        }
+      }
+    },
+    "late": {
+      "rows": 95099,
+      "D_package_coalesce": {
+        "laddered": 63625,
+        "markets_drop": 15912,
+        "markets_ambiguous": 0,
+        "markets_coherent": 47713,
+        "drop_rate_of_laddered_pct": 25.01,
+        "families_condemned": 3760,
+        "families_multi_rung": 19608,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "over": 65739,
+          "yes": 14451,
+          "no_leg": 14909
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 6104,
+        "markets_drop": 2279,
+        "markets_ambiguous": 0,
+        "markets_coherent": 3825,
+        "drop_rate_of_laddered_pct": 37.34,
+        "families_condemned": 557,
+        "families_multi_rung": 1963,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 86032,
+          "yes": 1974,
+          "over": 7046,
+          "half_pair": 47
+        }
+      },
+      "era_association": {
+        "eligible_families": 19608,
+        "by_branch_set": {
+          "cal": {
+            "families": 986,
+            "condemned": 290,
+            "violating_pairs": 378,
+            "markets": 3243,
+            "condemn_rate_pct": 29.41
+          },
+          "cal+cal_eq_open": {
+            "families": 1884,
+            "condemned": 582,
+            "violating_pairs": 806,
+            "markets": 6880,
+            "condemn_rate_pct": 30.89
+          },
+          "cal+cal_eq_open+open": {
+            "families": 1,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 6,
+            "condemn_rate_pct": 0.0
+          },
+          "cal_eq_open": {
+            "families": 16345,
+            "condemned": 2873,
+            "violating_pairs": 3507,
+            "markets": 52212,
+            "condemn_rate_pct": 17.58
+          },
+          "cal_eq_open+open": {
+            "families": 20,
+            "condemned": 3,
+            "violating_pairs": 3,
+            "markets": 80,
+            "condemn_rate_pct": 15.0
+          },
+          "open": {
+            "families": 372,
+            "condemned": 12,
+            "violating_pairs": 12,
+            "markets": 1204,
+            "condemn_rate_pct": 3.23
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 1905,
+            "condemned": 585,
+            "violating_pairs": 809,
+            "markets": 6966,
+            "condemn_rate_pct": 30.71
+          },
+          "pure": {
+            "families": 17703,
+            "condemned": 3175,
+            "violating_pairs": 3897,
+            "markets": 56659,
+            "condemn_rate_pct": 17.93
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 15.6,
+          "eligible_that_are_mixed_pct": 9.7
+        }
+      }
+    }
+  }
+}

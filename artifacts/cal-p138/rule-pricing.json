@@ -1,0 +1,57 @@
+{
+  "baseball": {
+    "cell": "polymarket/baseball",
+    "baseline": {
+      "n": 41139,
+      "ece": 4.68,
+      "gap": 3.25
+    },
+    "candidates": [
+      {
+        "rule": "CAL-P136 package (drop every condemned family)",
+        "outcomes_dropped": 2663,
+        "pct_of_cell_dropped": 6.47,
+        "ece_after": 4.78,
+        "ece_delta": 0.1,
+        "gap_after": 3.82,
+        "gap_delta": 0.57
+      },
+      {
+        "rule": "drop only the leg-swap families",
+        "outcomes_dropped": 725,
+        "pct_of_cell_dropped": 1.76,
+        "ece_after": 4.46,
+        "ece_delta": -0.22,
+        "gap_after": 3.43,
+        "gap_delta": 0.18
+      },
+      {
+        "rule": "drop only the accused row",
+        "outcomes_dropped": 224,
+        "pct_of_cell_dropped": 0.54,
+        "ece_after": 4.63,
+        "ece_delta": -0.05,
+        "gap_after": 3.32,
+        "gap_delta": 0.07
+      },
+      {
+        "rule": "drop only the families no swap can fix",
+        "outcomes_dropped": 1752,
+        "pct_of_cell_dropped": 4.26,
+        "ece_after": 4.8,
+        "ece_delta": 0.12,
+        "gap_after": 3.6,
+        "gap_delta": 0.35
+      },
+      {
+        "rule": "drop every laddered market (doctrine 18's outer bound)",
+        "outcomes_dropped": 6064,
+        "pct_of_cell_dropped": 14.74,
+        "ece_after": 5.59,
+        "ece_delta": 0.91,
+        "gap_after": 4.75,
+        "gap_delta": 1.5
+      }
+    ]
+  }
+}

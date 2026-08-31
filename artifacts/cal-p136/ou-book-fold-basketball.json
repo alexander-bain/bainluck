@@ -1,0 +1,167 @@
+{
+  "category": "basketball",
+  "markets_total": 25825,
+  "price_site": {
+    "no_leg": 11936,
+    "yes": 6076,
+    "over": 5977,
+    "half_pair": 1836
+  },
+  "arms": {
+    "A_shipped": {
+      "families": 80,
+      "families_multi_rung": 2,
+      "families_ambiguous": 0,
+      "families_condemned": 0,
+      "violating_pairs": 0,
+      "flat_pairs": 0,
+      "markets_priced": null,
+      "price_legs": {},
+      "markets_drop": 0,
+      "markets_ambiguous": 0,
+      "markets_coherent": 6
+    },
+    "B_price_site": {
+      "families": 1202,
+      "families_multi_rung": 816,
+      "families_ambiguous": 384,
+      "families_condemned": 272,
+      "violating_pairs": 531,
+      "flat_pairs": 168,
+      "markets_priced": 12053,
+      "price_legs": {
+        "no_leg": 11936,
+        "yes": 6076,
+        "over": 5977,
+        "half_pair": 1836
+      },
+      "markets_drop": 1414,
+      "markets_ambiguous": 3606,
+      "markets_coherent": 447
+    },
+    "C_identity_only": {
+      "families": 80,
+      "families_multi_rung": 2,
+      "families_ambiguous": 0,
+      "families_condemned": 0,
+      "violating_pairs": 0,
+      "flat_pairs": 0,
+      "markets_priced": null,
+      "price_legs": {},
+      "markets_drop": 0,
+      "markets_ambiguous": 0,
+      "markets_coherent": 6
+    },
+    "D_package": {
+      "families": 4166,
+      "families_multi_rung": 557,
+      "families_ambiguous": 0,
+      "families_condemned": 311,
+      "violating_pairs": 613,
+      "flat_pairs": 270,
+      "markets_priced": 12053,
+      "price_legs": {
+        "no_leg": 11936,
+        "yes": 6076,
+        "over": 5977,
+        "half_pair": 1836
+      },
+      "markets_drop": 1709,
+      "markets_ambiguous": 0,
+      "markets_coherent": 743
+    },
+    "E_package_no_coin_flip": {
+      "families": 4054,
+      "families_multi_rung": 549,
+      "families_ambiguous": 0,
+      "families_condemned": 301,
+      "violating_pairs": 585,
+      "flat_pairs": 269,
+      "markets_priced": 11873,
+      "price_legs": {
+        "no_leg": 11936,
+        "yes": 6076,
+        "over": 5797,
+        "half_pair": 1836
+      },
+      "markets_drop": 1630,
+      "markets_ambiguous": 0,
+      "markets_coherent": 746,
+      "markets_excluded_as_coin_flip": 180
+    }
+  },
+  "reconcile_shipped_vs_package": {
+    "dropped_by_shipped_only": 0,
+    "dropped_by_package_only": 1709,
+    "dropped_by_both": 0
+  },
+  "manufactured_by_the_unscoped_key": {
+    "eligible_families": 432,
+    "condemned_families": 272,
+    "condemned_spanning_multi_event": 59,
+    "condemned_spanning_multi_event_pct": 21.7,
+    "violating_pairs": 531,
+    "violating_pairs_from_multi_event": 87,
+    "violating_pairs_from_multi_event_pct": 16.4,
+    "widest_family_events_spanned": 5
+  },
+  "two_sided_arithmetic": {
+    "markets_with_both_legs": 5977,
+    "legs_equal": {
+      "n": 2013,
+      "sum_median": 0.02,
+      "sum_within_1pct_of_one": 180,
+      "sum_within_1pct_pct": 8.9
+    },
+    "legs_unequal": {
+      "n": 3964,
+      "sum_median": 1.0,
+      "sum_within_1pct_of_one": 2735,
+      "sum_within_1pct_pct": 69.0
+    },
+    "equal_share_pct": 33.7
+  },
+  "holdout_at": 35446525,
+  "holdout": {
+    "early": {
+      "families": 2241,
+      "families_multi_rung": 265,
+      "families_ambiguous": 0,
+      "families_condemned": 115,
+      "violating_pairs": 220,
+      "flat_pairs": 142,
+      "markets_priced": 6705,
+      "price_legs": {
+        "no_leg": 5809,
+        "yes": 3686,
+        "over": 3019,
+        "half_pair": 398
+      },
+      "markets_drop": 625,
+      "markets_ambiguous": 0,
+      "markets_coherent": 497,
+      "rows": 12912,
+      "drop_rate_of_laddered_pct": 55.7
+    },
+    "late": {
+      "families": 1928,
+      "families_multi_rung": 291,
+      "families_ambiguous": 0,
+      "families_condemned": 196,
+      "violating_pairs": 393,
+      "flat_pairs": 128,
+      "markets_priced": 5348,
+      "price_legs": {
+        "no_leg": 6127,
+        "yes": 2390,
+        "over": 2958,
+        "half_pair": 1438
+      },
+      "markets_drop": 1084,
+      "markets_ambiguous": 0,
+      "markets_coherent": 242,
+      "rows": 12913,
+      "drop_rate_of_laddered_pct": 81.75
+    }
+  }
+}

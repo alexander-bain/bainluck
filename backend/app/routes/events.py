@@ -7953,9 +7953,11 @@ def _settled_grade_fields(market, outcome) -> dict:
     `None` whenever the grade is not authoritative. `None` is "no verdict" and is
     a different statement from `False`, which is "this side lost".
 
-    ** BOTH HALVES OF THE GATE ARE LOAD-BEARING. ** `is_winner` is a non-nullable
-    Boolean defaulting to False (gotcha #33), so neither condition alone can tell a
-    grade from an ungraded row:
+    ** BOTH HALVES OF THE GATE ARE LOAD-BEARING. ** `is_winner` is a Boolean
+    defaulting to False (gotcha #33) — nullable, but production stores the default
+    rather than NULL for an ungraded row (2,536 NULL of 3,893,126, measured
+    2026-08-31, and every one of those also has a NULL `resolution_source`). So
+    neither condition alone can tell a grade from an ungraded row:
 
     * **Market status alone is not enough** — and this is where #2089's own
       suggested snippet (`fo.is_winner if fm.status == "resolved" else None`) would
@@ -8118,7 +8120,8 @@ def _build_props_script(player_props, event_is_finished):
         if event_is_finished:
             hit = pp.get("hit")
             if hit is None and pp.get("resolution_source"):
-                # is_winner is a non-nullable Boolean defaulting to False, so an
+                # is_winner is a Boolean defaulting to False — nullable, but
+                # production stores the default — so an
                 # UNRESOLVED outcome carries is_winner=False (not None) — trusting
                 # it here rendered ungraded props as a confident "miss" (observed
                 # live: WNBA player props with resolution_source=None all showed

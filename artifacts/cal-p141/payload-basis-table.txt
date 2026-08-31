@@ -1,0 +1,20 @@
+cell                        published   distinct   phantom  phantom%  inflation
+kalshi/baseball               169,425     99,084    70,341    41.52%     1.7099
+kalshi/basketball             109,702     62,407    47,295    43.11%     1.7578
+kalshi/hockey                  32,946     17,435    15,511    47.08%     1.8896
+polymarket/weather             25,739     25,648        91     0.35%     1.0035
+kalshi/soccer                  23,388     20,559     2,829    12.10%     1.1376
+polymarket/basketball          13,116      7,419     5,697    43.44%     1.7679
+polymarket/economics           12,989      8,327     4,662    35.89%     1.5599
+kalshi/football                10,357      8,815     1,542    14.89%     1.1749
+polymarket/golf                 6,443      4,308     2,135    33.14%     1.4956
+polymarket/politics             6,296      4,612     1,684    26.75%     1.3651
+polymarket/entertainment        4,147      3,019     1,128    27.20%     1.3736
+polymarket/cricket              3,252      2,834       418    12.85%     1.1475
+polymarket/hockey               2,281      1,670       611    26.79%     1.3659
+TOTAL (13 cells)              420,081    266,137   153,944    36.65%     1.5784
+
+published total_outcomes on the page: 925,466
+covered by an exact payload-basis measurement: 420,081 = 45.4%
+NOT extrapolated to the remaining 505,385 - the 13 measured cells span 0.35% to 47.08% phantom,
+a 134x spread, so a pooled factor carries no information about an unmeasured cell.

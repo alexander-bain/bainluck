@@ -27,8 +27,8 @@ shape: seed an outcome exactly the way production seeds it — `is_winner=False`
 the model default, never `None` — then run the real `_write_prices` against a
 real database and assert a `futures_odds_snapshots` row lands. A fixture that
 sets `is_winner=None` reproduces the false green, which is why
-`test_a_null_seeded_fixture_is_the_false_green` exists: it demonstrates the trap
-rather than describing it.
+`test_null_is_unreachable_even_when_you_ask_for_it` exists: it demonstrates the
+trap rather than describing it.
 
 Real Postgres, not SQLite and not a recording double, for two reasons that both
 bite here. `_write_prices` builds its INSERT with the postgresql dialect's
@@ -344,13 +344,20 @@ class TestTheFalseGreenIsReproducible:
         moved the blind spot from FALSE to NULL would not be a fix.
 
         Asserted as a truth table rather than by inserting a NULL row, because
-        the two schemas disagree about whether that row can exist: production is
-        built by Alembic and permits NULL, while this test database is built by
-        `Base.metadata.create_all`, where the non-Optional `Mapped[bool]`
-        annotation renders the column NOT NULL. A test that inserted NULL would
-        pass or error depending on which schema it met, which is not a property
-        worth asserting. The three-valued semantics are the same either way and
-        are what the predicate actually rests on.
+        when this was written the two schemas disagreed about whether that row
+        could exist: production is built by Alembic and permits NULL, while this
+        test database is built by `Base.metadata.create_all`, which rendered the
+        column NOT NULL from a non-Optional `Mapped[bool]`. A test that inserted
+        NULL would have passed or errored depending on which schema it met, which
+        is not a property worth asserting.
+
+        🔴 **THAT REASON EXPIRED, and the truth table is kept for a different
+        one.** CAL-P156/CAL-P157 closed the drift: the model is now
+        `Mapped[Optional[bool]]` with `server_default=text("false")`, so a
+        metadata-built database has production's exact column and a NULL row IS
+        reachable — `tests/integration/test_futures_outcome_grade_schema_parity_pg.py`
+        inserts one and reads it back. What survives is that the three-valued
+        semantics, not any one fixture, are what the predicate rests on.
         """
         from sqlalchemy import text
 
@@ -378,8 +385,12 @@ class TestTheFalseGreenIsReproducible:
     async def test_the_model_default_is_false_not_null(self, db):
         """The fact the whole defect rests on, pinned where a schema change trips it.
 
-        If `is_winner` ever becomes genuinely nullable, the writer's predicate
-        needs re-deciding and this assertion is where that conversation starts.
+        The column IS genuinely nullable now (CAL-P156/CAL-P157 aligned the model
+        with production), and this still holds — SQLAlchemy's client-side
+        `default=False` fires on the ORM path whether or not NULL is legal, which
+        is why the widening moved no writer. What would trip this is the default
+        going away; then ordinary ingest starts storing unknown truth and the
+        writer's predicate needs re-deciding.
         """
         from sqlalchemy import text
         from app.models.models import FuturesMarket, FuturesOutcome

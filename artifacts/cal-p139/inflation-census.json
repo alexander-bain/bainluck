@@ -1,0 +1,90 @@
+{
+ "kalshi/baseball": {
+  "cell": "kalshi/baseball",
+  "rows_published": 168942,
+  "distinct_outcomes": 129469,
+  "distinct_markets": 22267,
+  "inflation": 1.3049,
+  "seconds": 3650.9,
+  "payload_n": 169682,
+  "payload_ece": 1.85,
+  "replica_vs_payload_pct": -0.436
+ },
+ "polymarket/soccer": {
+  "cell": "polymarket/soccer",
+  "rows_published": 101627,
+  "distinct_outcomes": 81194,
+  "distinct_markets": 14902,
+  "inflation": 1.2517,
+  "seconds": 2761.3,
+  "payload_n": 107800,
+  "payload_ece": 3.35,
+  "replica_vs_payload_pct": -5.726
+ },
+ "kalshi/basketball": {
+  "cell": "kalshi/basketball",
+  "rows_published": 91687,
+  "distinct_outcomes": 61982,
+  "distinct_markets": 11942,
+  "inflation": 1.4793,
+  "seconds": 1152.2,
+  "payload_n": 110922,
+  "payload_ece": 1.33,
+  "replica_vs_payload_pct": -17.341
+ },
+ "kalshi/economics": {
+  "cell": "kalshi/economics",
+  "rows_published": 30181,
+  "distinct_outcomes": 30181,
+  "distinct_markets": 2088,
+  "inflation": 1.0,
+  "seconds": 155.9,
+  "payload_n": 29335,
+  "payload_ece": 5.21,
+  "replica_vs_payload_pct": 2.884
+ },
+ "polymarket/esports": {
+  "cell": "polymarket/esports",
+  "rows_published": 14236,
+  "distinct_outcomes": 8846,
+  "distinct_markets": 4590,
+  "inflation": 1.6093,
+  "seconds": 942.7,
+  "payload_n": 14864,
+  "payload_ece": 7.03,
+  "replica_vs_payload_pct": -4.225
+ },
+ "polymarket/baseball": {
+  "cell": "polymarket/baseball",
+  "rows_published": 41177,
+  "distinct_outcomes": 24902,
+  "distinct_markets": 5426,
+  "inflation": 1.6536,
+  "seconds": 619.3,
+  "payload_n": 45240,
+  "payload_ece": 4.73,
+  "replica_vs_payload_pct": -8.981
+ },
+ "polymarket/hockey": {
+  "cell": "polymarket/hockey",
+  "rows_published": 1779,
+  "distinct_outcomes": 1677,
+  "distinct_markets": 628,
+  "inflation": 1.0608,
+  "seconds": 106.8,
+  "payload_n": 2281,
+  "payload_ece": 7.36,
+  "replica_vs_payload_pct": -22.008
+ },
+ "polymarket/basketball": {
+  "cell": "polymarket/basketball",
+  "rows_published": 8426,
+  "distinct_outcomes": 7426,
+  "distinct_markets": 1527,
+  "inflation": 1.1347,
+  "seconds": 398.2,
+  "payload_n": 13116,
+  "payload_ece": 4.25,
+  "replica_vs_payload_pct": -35.758
+ }
+}

@@ -13,6 +13,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import text
@@ -46,6 +47,421 @@ _MAIN_CACHE_TTL = 7200
 # failed/partial publish can never destroy a usable prior payload (Item 1).
 _MAIN_LAST_GOOD_KEY = "bainluck:calibration:main:last_good"
 _MAIN_KEY = "bainluck:calibration:main"
+
+# D21 (#1978, CAL-P150). The per-bookmaker curve arrives through Redis rather
+# than through this module's SQL — written by `precompute_bookmaker_calibration`
+# (backfill_winners.py, every 6 h, 24 h TTL, fails closed) and read in Phase 3
+# below. It is ~96,026 outcomes and it is concatenated into `all_rows`, so it is
+# part of the PUBLISHED population and not, as its phase heading implies, a
+# transparency read.
+#
+# The reason all three of these are named constants rather than literals is the
+# outage they are named after: the reader swallowed an absent key with
+# `except: pass`, so the one string that identifies the failure appeared nowhere
+# in the evidence. A refusal whose reason is a bare literal buried in a string
+# is a refusal nobody can grep for.
+BOOKMAKER_CURVE_REDIS_KEY = "bainluck:bookmaker_calibration"
+BOOKMAKER_CURVE_ABSENT_REFUSAL = "bookmaker_curve_key_absent"
+BOOKMAKER_CURVE_UNREADABLE_REFUSAL = "bookmaker_curve_key_unreadable"
+
+#: CERT-502 P1. The ONLY value `source` may hold in a row under
+#: `BOOKMAKER_CURVE_REDIS_KEY` — `_precompute_bookmaker_calibration` emits it as a
+#: literal, once, for every bucket it writes.
+#:
+#: This is a provenance check, not a type check, and it is the difference between
+#: the two that CERT-502 found. `r.source` is part of the merge KEY, so a
+#: complete, type-correct row carrying `source="kalshi"` was admitted with
+#: `degraded=None` and merged into KALSHI's published curve — moving bookmaker
+#: mass into another source's calibration while keeping the outcome COUNT
+#: identical, which is precisely the shape the population gate cannot see.
+#: Proving a row is well-formed is not proving it came from its only writer.
+BOOKMAKER_CURVE_SOURCE = "odds_api_bookmaker"
+
+#: What the reader expects to find, for the refusal message only. Approximate by
+#: construction — it is the magnitude the outage was measured at
+#: (alex-inbox/calibration-907 §"what you will need to do after it deploys"), and
+#: it is quoted so an operator reading the refusal knows what "short" means
+#: without having to go and find the number. Nothing branches on it.
+BOOKMAKER_CURVE_EXPECTED_OUTCOMES = 96_026
+
+
+def _shape_of(value) -> str:
+    """Describe a parsed JSON value's SHAPE for a refusal message.
+
+    CERT-485 P1-b. An operator told only "wrong shape" has to go and fetch the
+    key themselves; an operator told "a list of 3 items, first is int" can act.
+    So the shape is named — and ONLY the shape.
+
+    The VALUE is deliberately never interpolated. This string goes to the logs
+    and into the served payload's degraded reason, and the key can hold ~96K
+    outcomes' worth of rows: echoing it would turn a diagnostic into a log flood
+    on the one path that is already having a bad day. Type and cardinality are
+    what distinguish the four failure modes; the contents distinguish nothing.
+    """
+    if isinstance(value, list):
+        if not value:
+            return "an empty list"
+        kinds = sorted({type(v).__name__ for v in value})
+        return f"a list of {len(value)} item(s) of type {'/'.join(kinds)}"
+    return f"a bare {type(value).__name__}"
+
+
+# CERT-497 P1. The set of keys the CONSUMER dereferences, derived by reading it
+# rather than by copying the writer's literal. `_precompute_bookmaker_calibration`
+# (backfill_winners.py) emits nine keys; eight of them are read as bare
+# attributes on the merge path — `r.bucket_idx`, `r.source`, `r.category` are the
+# merge KEY, `r.n`/`r.winners` are summed, `r.sum_prob`/`r.sum_sq_err` are
+# `float()`d, `r.avg_prob` is read once — so a row missing any of them raises
+# AttributeError AFTER the refusal boundary, which kills the scheduled build
+# instead of degrading it.
+#
+# `price_moved` is deliberately NOT required: the merge path already reads it as
+# `getattr(r, "price_moved", None)`, so its absence is handled by construction
+# and demanding it would refuse a payload the consumer can in fact read.
+_BOOKMAKER_ROW_REQUIRED_KEYS = (
+    "bucket_idx",
+    "source",
+    "category",
+    "n",
+    "winners",
+    "avg_prob",
+    "sum_prob",
+    "sum_sq_err",
+)
+
+
+def _is_real_number(value) -> bool:
+    """A JSON number this reader can do arithmetic on.
+
+    `bool` is excluded ON PURPOSE. `isinstance(True, int)` is True in Python, so
+    a naive int check admits `{"n": true}` and then `acc["n"] += True` counts a
+    bucket of ONE outcome — a silent miscount, which is the exact class this
+    validator exists to stop. NaN/inf are excluded for the same reason: they
+    propagate through the sums and surface as a `null` avg_prob in the payload
+    rather than as a refusal.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _bookmaker_row_defect(row: dict) -> str | None:
+    """Name the first schema defect in one bookmaker row, or None if it is sound.
+
+    CERT-497 P1. The container gate below proves `raw` is a non-empty list of
+    dicts. It does NOT prove the dicts are bookmaker rows, and CERT-497
+    constructed three payloads that pass it and still reproduce the two failure
+    modes D21 exists to end:
+
+      [{"category": "soccer_epl"}]   the soccer filter drops it on the way past,
+                                     `rows` comes back empty and the reader
+                                     returns ([], 0, None) — a SILENT zero with
+                                     no reason in the payload, which is the
+                                     96K-outcome shortfall re-entered a second
+                                     time through a second unchecked shape.
+      [{}]                           survives the filter as SimpleNamespace(),
+                                     returns degraded=None, then AttributeError
+                                     on `r.n` — a crash the refusal boundary has
+                                     already been passed, so the producer dies
+                                     instead of preserving the prior snapshot.
+      [{"category": ..., "n": ...}]  same crash one key later, on `r.winners`.
+
+    Returned as a description rather than raised so the caller can put it on the
+    EXISTING degradation contract (producer raises by name, serve path reports
+    the reason in the payload) instead of introducing a second one.
+
+    Only key names and type names are ever named — never a value. `_shape_of`
+    explains why: this string reaches the logs and the served payload, and the
+    key can hold ~96K outcomes' worth of rows.
+    """
+    missing = [k for k in _BOOKMAKER_ROW_REQUIRED_KEYS if k not in row]
+    if missing:
+        return "missing required key(s) %s" % ", ".join(repr(k) for k in missing)
+
+    if not isinstance(row["bucket_idx"], int) or isinstance(row["bucket_idx"], bool):
+        return "'bucket_idx' is %s, not an int" % type(row["bucket_idx"]).__name__
+    for key in ("source", "category"):
+        if not isinstance(row[key], str):
+            return "%r is %s, not a str" % (key, type(row[key]).__name__)
+
+    # 🔴 CERT-502 P1 — PROVENANCE, not shape, and the distinction is the finding.
+    # Every check around this one proves the row is WELL-FORMED. None of them
+    # proves it came from its only writer, and `r.source` is part of the merge
+    # KEY: a complete, type-correct row carrying `source="kalshi"` was admitted
+    # with `degraded=None` and merged into KALSHI's published curve. The outcome
+    # COUNT is unchanged by that, so the population gate cannot see it either —
+    # bookmaker mass silently becomes another source's calibration.
+    #
+    # The expected value is NOT interpolated (`_shape_of`'s discipline applies to
+    # the constant too): the message names the offending key, and the fixed prose
+    # below already tells an operator which curve this key carries.
+    if row["source"] != BOOKMAKER_CURVE_SOURCE:
+        return (
+            "'source' is not the one this key's only writer emits — the row "
+            "claims a different source and would be merged under it"
+        )
+    for key in ("n", "winners"):
+        if not isinstance(row[key], int) or isinstance(row[key], bool):
+            return "%r is %s, not an int" % (key, type(row[key]).__name__)
+    for key in ("avg_prob", "sum_prob", "sum_sq_err"):
+        if not _is_real_number(row[key]):
+            return "%r is %s, not a finite number" % (key, type(row[key]).__name__)
+
+    # Domain checks, and only the two the writer makes structurally impossible.
+    # `n` counts every outcome in the bucket and `winners` increments a subset of
+    # the same loop, so `1 <= n` and `0 <= winners <= n` hold by construction.
+    # A row outside them is corrupt in a way that stays SILENT if admitted:
+    # `n <= 0` contributes nothing but drags the `avg_prob` denominator, and
+    # `winners > n` hands `_wilson_ci` an impossible rate and publishes a
+    # calibration point above 100%. Nothing looser is asserted — `avg_prob` is
+    # NOT cross-checked against `sum_prob / n`, because the writer rounds and a
+    # float-equality refusal would be a false alarm on a healthy sweep.
+    if row["n"] < 1:
+        return "'n' is not a positive count"
+    if not 0 <= row["winners"] <= row["n"]:
+        return "'winners' is outside 0..n"
+
+    # Optional by consumer contract, but if it IS present it becomes part of the
+    # merge key, so it has to be hashable and of the writer's type.
+    if "price_moved" in row and not (
+        row["price_moved"] is None or isinstance(row["price_moved"], bool)
+    ):
+        return "'price_moved' is %s, not a bool or null" % type(
+            row["price_moved"]
+        ).__name__
+
+    return None
+
+
+def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
+    """The per-bookmaker curve, or a NAMED refusal. Never a silent zero.
+
+    D21 (#1978, CAL-P150) — freeze exception GRANTED by Alex 2026-08-30, and
+    lifted out of Phase 3 so the refusal can be exercised without standing up
+    the whole build.
+
+    THE DEFECT THIS REPLACES, and it is worth the paragraph because the shape
+    recurs. The call site read this key inside a ``try: ... except Exception:
+    pass``. ``_precompute_bookmaker_calibration`` stopped finishing inside its
+    soft time limit, so it stopped writing the key; the key aged out of its 24 h
+    TTL; this reader turned the absence into ZERO rows; and the rows are
+    concatenated into ``all_rows``, so the candidate went out ~96,026 outcomes
+    short. The publish gate then rightly refused it, every beat, naming the
+    SYMPTOM (a population move) and unable to name the CAUSE. Silent
+    non-publish from 2026-08-29T00:36:47Z until it was run by hand.
+
+    Returns ``(rows, soccer_excluded_n, degraded_reason)``. ``degraded_reason``
+    is ``None`` on a good read and one of the two reason codes otherwise; it is
+    only ever non-None when ``refuse`` is False.
+
+    Raises :class:`RuntimeError` naming :data:`BOOKMAKER_CURVE_ABSENT_REFUSAL`
+    or :data:`BOOKMAKER_CURVE_UNREADABLE_REFUSAL` when ``refuse`` is True.
+
+    🔴 ``refuse`` IS NOT A CONVENIENCE FLAG, AND ITS ABSENCE WAS A REAL DEFECT
+    IN THE FIRST CUT OF THIS FIX. ``compute_calibration_payload`` has TWO
+    callers: the scheduled producer, and ``/api/calibration``'s in-request
+    cold-cache fallback. Refusing unconditionally turned "Redis is unreachable"
+    into a 500 on the PUBLIC endpoint — a user-visible regression, on exactly
+    the path that exists because Redis is unavailable. Caught by 95 failures in
+    the calibration suite, 55 of them in ``test_route_calibration.py``, on the
+    first full run after the fix.
+
+    So the refusal is scoped to the producer, which is the only caller that can
+    PUBLISH a short candidate and therefore the only one for which "short" is a
+    correctness question. The serve path keeps the behaviour its docstring
+    promises (``behaves EXACTLY as it did before``) and reports the degradation
+    in the payload instead of swallowing it. That is still the whole point of
+    D21: the absence is named either way, and the difference is only whether
+    naming it stops the beat or annotates the response.
+
+    🔴 THIS DOES NOT MAKE THE PRODUCER'S OUTCOME WORSE, and that is the argument
+    for taking it inside a freeze. The gate already refused the short candidate,
+    so nothing that used to publish stops publishing; an unattributable refusal
+    is replaced by one that says which key, which writer, and how much is
+    missing. What it must NOT become is a reason to publish anyway — a partial
+    curve is not a smaller right answer, it is the exact shape that caused the
+    outage.
+
+    All three failure modes are one class on purpose (gotcha #53 — an empty
+    answer is a response shape, not an absence): absent, unreachable and
+    unparseable were indistinguishable under ``pass``, and the fix that
+    distinguishes them from SUCCESS is the whole point. They are still told
+    apart from each other, by two distinct reason codes, because "Redis is down"
+    and "the writer has not landed a sweep" want different operators.
+    """
+    _json = json_module or json
+
+    # 🔴 THIS QUEUE RAISED A PINNED TRIPWIRE — `uncovered_sql_shaping` 21 -> 22 —
+    # AND THE REASON BELONGS BESIDE THE LINE THAT DID IT.
+    #
+    # `scripts/evals/calibration_fingerprint_derived_map.py` marks a
+    # module-level name `sql_shaping` when it is interpolated into a string by
+    # an f-string, a `+` or a `%` (CAL-P032 widened it past f-strings precisely
+    # because this module builds SQL all three ways). Naming
+    # `BOOKMAKER_CURVE_REDIS_KEY` inside a refusal message therefore counts it,
+    # and there is no way to put the key in the message that the detector will
+    # not see — a `.join` or a local alias would hide it, which is gaming a
+    # tripwire rather than satisfying it.
+    #
+    # So the pin is RAISED, with the argument written into the guard: this key
+    # is not SQL, but under the guard's own stated purpose — "the only class
+    # that can silently change the published population" — it qualifies in
+    # substance. Change it and the build reads a different curve and publishes
+    # ~96K fewer outcomes. What it is NOT is silent, and D21 is the reason: on
+    # the producer path a key that resolves to nothing is now a named refusal,
+    # not a shortfall. It is the first entry in this count whose failure mode is
+    # loud by construction.
+    #
+    # The other three BOOKMAKER_CURVE_* constants stay OUT of the count and are
+    # not being hidden from it: the reason codes are passed to `_degrade` as
+    # arguments and never interpolated, and the expected-outcomes figure is
+    # rendered by `format()` — a call, which the detector does not treat as
+    # string building because a call is not how this module writes SQL.
+    _expected = format(BOOKMAKER_CURVE_EXPECTED_OUTCOMES, ",")
+
+    def _degrade(reason: str, message: str, cause: Exception | None = None):
+        if refuse:
+            raise RuntimeError(f"{reason}: {message}") from cause
+        # Not swallowed: logged with the traceback where there is one, and
+        # returned so the caller can put the reason IN the payload. A serve that
+        # is short 96K outcomes and does not say so is the original defect with
+        # a different caller.
+        logger.warning(
+            "calibration serve degraded — %s: %s", reason, message,
+            exc_info=cause is not None,
+        )
+        return [], 0, reason
+
+    try:
+        cached = rc.get(BOOKMAKER_CURVE_REDIS_KEY)
+    except Exception as exc:
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "could not read %s from Redis, so the per-bookmaker curve (~%s "
+            "outcomes, source odds_api_bookmaker) cannot be assembled. Nothing "
+            "published, prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
+            exc,
+        )
+
+    if not cached:
+        return _degrade(
+            BOOKMAKER_CURVE_ABSENT_REFUSAL,
+            "%s is absent, so the candidate would publish ~%s outcomes short. "
+            "Its only writer is precompute_bookmaker_calibration "
+            "(backfill_winners.py, every 6 h, 24 h TTL, fails closed), so an "
+            "absent key means that task has not landed a COMPLETE sweep inside "
+            "one TTL. Fire it detached and confirm by_source carries "
+            "odds_api_bookmaker before expecting this build to publish. "
+            "Nothing published, prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
+        )
+
+    try:
+        raw = _json.loads(cached)
+    except Exception as exc:
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "%s is present but is not JSON this reader can parse. Nothing "
+            "published, prior snapshot preserved." % (BOOKMAKER_CURVE_REDIS_KEY,),
+            exc,
+        )
+
+    # 🔴 CERT-485 P1-b. `json.loads` returning is proof the bytes were JSON. It
+    # is NOT proof they are a list of bookmaker rows, and until this check
+    # existed the reader went straight from the parse into `for row in raw` /
+    # `row.get(...)`. Three shapes got through, and the first is the worst:
+    #
+    #   {}     iterated zero keys and returned ([], 0, None) — SILENT, no
+    #          reason in the payload. That is the 96K-outcome shortfall D21 was
+    #          written to end, re-entered through a shape nobody checked.
+    #   null   TypeError: 'NoneType' object is not iterable
+    #   [1]    AttributeError: 'int' object has no attribute 'get'
+    #
+    # and the two exceptions escaped the `refuse=False` arm as well, so they
+    # 500'd `/api/calibration`'s cold-cache fallback — the same defect D21's
+    # first cut had (two callers, one of them unconsidered), one layer in.
+    #
+    # `[]` is refused too, and that is a deliberate reversal. The writer CANNOT
+    # produce it: `backfill_winners.py`'s `elif not buckets:` arm sets
+    # `terminal = "no_work"` and returns without ever reaching the `setex`, so
+    # the only value that can be written is a non-empty list. An empty list is
+    # therefore corrupt, not "no rows this cycle", and gotcha #53 says the two
+    # must not share an answer.
+    #
+    # Everything lands on the EXISTING degradation contract rather than a new
+    # one: producer raises by name, serve path logs and returns the reason so it
+    # reaches the payload.
+    if not isinstance(raw, list) or not raw or not all(
+        isinstance(row, dict) for row in raw
+    ):
+        return _degrade(
+            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+            "%s parsed as JSON but is not a non-empty list of bookmaker rows "
+            "(got %s), so the per-bookmaker curve (~%s outcomes, source "
+            "odds_api_bookmaker) cannot be assembled. Its only writer never "
+            "writes an empty list — it reports no_work and writes nothing — so "
+            "this value did not come from a healthy sweep. Nothing published, "
+            "prior snapshot preserved."
+            % (BOOKMAKER_CURVE_REDIS_KEY, _shape_of(raw), _expected),
+        )
+
+    # 🔴 CERT-497 P1. The gate above proves the CONTAINER; this one proves the
+    # ROWS. Splitting them is the point of the fix: a list of dicts was treated
+    # as a list of bookmaker rows, and "dict-shaped" is not "readable" — the
+    # three payloads named in `_bookmaker_row_defect` all clear the container
+    # check and then either publish a silent zero or crash the build past the
+    # refusal boundary. That is gotcha #53 one level down from where D21 caught
+    # it the first time: same defect, same reader, narrower shape.
+    #
+    # THE WHOLE PAYLOAD IS REFUSED, one bad row or all of them, and the rows are
+    # NOT filtered down to the sound ones. Dropping the bad rows and publishing
+    # the rest is precisely the unattributed shortfall this reader exists to
+    # prevent — it would put a curve short by an unknown count on the board with
+    # nothing in the payload saying so. The refusal is loud and the prior
+    # snapshot survives; a quiet partial is neither.
+    #
+    # The first defect is reported with its row index, not a tally: the writer
+    # emits every row from one loop over one aggregate, so rows do not go wrong
+    # independently, and the first one is enough for an operator to read the key
+    # and see what happened.
+    for _idx, _row in enumerate(raw):
+        _defect = _bookmaker_row_defect(_row)
+        if _defect is not None:
+            return _degrade(
+                BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+                "%s parsed as a list of %d dict(s), but row %d is not a "
+                "bookmaker row: %s. So the per-bookmaker curve (~%s outcomes, "
+                "source odds_api_bookmaker) cannot be assembled. Its only "
+                "writer emits every required key from a single aggregate under "
+                "one hard-coded source, so a row that fails this check did not "
+                "come from a healthy sweep. Nothing published, prior snapshot "
+                "preserved."
+                % (
+                    BOOKMAKER_CURVE_REDIS_KEY,
+                    len(raw),
+                    _idx,
+                    _defect,
+                    _expected,
+                ),
+            )
+
+    # Queue #158 (#1011): the per-bookmaker calibration devigs soccer moneyline
+    # as home_prob/(home_prob+away_prob) — the SAME 2-way draw-omission bug as
+    # the events curve (`_precompute_bookmaker_calibration` has no draw term).
+    # Left in, it dominates the soccer_* by_category lines (~40K draw-inflated
+    # outcomes). Dropped here, read-side, so the exclusion holds even though the
+    # 6 h source keeps writing them.
+    rows = []
+    soccer_excluded = 0
+    for row in raw:
+        if category_is_soccer_2way_excluded(row.get("category")):
+            soccer_excluded += int(row.get("n") or 0)
+            continue
+        rows.append(SimpleNamespace(**row))
+    return rows, soccer_excluded, None
 
 # Queue 298 (#1512): both keys above live in the SAME 50MB allkeys-lru Redis, so
 # "durable last_good" was only ever durable against TTL, never against eviction
@@ -86,6 +502,25 @@ def _sql_str_tuple(values) -> str:
     of its literal.
     """
     return "(" + ", ".join(f"'{v.replace(chr(39), chr(39) * 2)}'" for v in sorted(values)) + ")"
+
+
+def _sql_pair_tuple(pairs) -> str:
+    """Render (source, category) pairs as a deterministic SQL row-value IN-list.
+
+    D12 (#1978, CAL-P150). The sibling of :func:`_sql_str_tuple` for a predicate
+    that must be scoped by BOTH dimensions. Sorted for a stable plan cache key,
+    same defensive quote-doubling, same module-constants-only contract.
+
+    Row-value syntax — ``(a, b) IN ((x, y))`` — rather than an OR-chain, because
+    an OR-chain of two-column tests is where a scoping bug hides in plain sight:
+    a missing pair of brackets turns "kalshi AND crypto" into "kalshi OR crypto"
+    and the predicate silently swallows every Kalshi cell on the board.
+    """
+    rendered = ", ".join(
+        "(" + ", ".join(f"'{v.replace(chr(39), chr(39) * 2)}'" for v in pair) + ")"
+        for pair in sorted(pairs)
+    )
+    return "(" + rendered + ")"
 
 
 def _main_payload_is_publishable(response: Any) -> bool:
@@ -845,6 +1280,51 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
 # a blanket exclusion would drop good data; the general sweep is #160's sentinel.
 ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
 
+# D12 (#1978, CAL-P150) — the ruled non-exclusive-bundle exclusion gains ONE
+# (source, category) tuple. Freeze exception GRANTED by Alex 2026-08-30
+# (RULINGS-BATCH, D12: "delete via the approved exclusion list; the two OUR-bugs
+# it was hiding stay filed"), on the design banked in
+# artifacts/cal-p121/RULE-DESIGN-kalshi-crypto.md §4 (RULE C).
+#
+# WHY THIS CELL. `kalshi/crypto` is 4,566 published rows at ECE 7.61 pp against
+# a 3.0 bar — rank 6, 20,999 excess-outcomes — and 99.9% of it is the
+# non-exclusive bundle shape this predicate already names. 625 markets produce
+# 4,566 rows, so one gold print is counted 7.31 times, and the rungs of one
+# ladder are near-deterministically related: if gold is above $3,360 it is above
+# $3,350. Both arms of the ruled gate — the realization test (>=2 winners) and
+# the structural test (published prices summing past 1.15) — condemn the same
+# 4,563 rows, so there is no version of this that leaves a material cell behind.
+#
+# 🔴 SO THIS DOES NOT FIX RANK 6, IT DELETES IT — 4,563 rows out, 3 left, the
+# cell becomes an absence. Said here rather than discovered after deploy. It is
+# seventeen times larger than the same outcome already accepted for kalshi/tech
+# and it is why the exception was asked for by name.
+#
+# 🔴 THE LABEL IS WRONG AND DELETING THE CELL DOES NOT FIX THAT. The cell is
+# 99.5% METALS — gold, silver, palladium, copper, lithium, nickel — and exactly
+# ONE row of it is cryptocurrency. The page today tells a reader we made 4,565
+# forecasts about crypto; we made ~625 about the price of metal and one about
+# Hyperliquid. This tuple fixes the first half of that sentence only. The relabel
+# is RULE-DESIGN §5, it is a WRITER fix, and it stays filed.
+#
+# 🔴 AND DO NOT REACH FOR THE ADMIN BUTTON. `_cleanup_crypto_impl`
+# (app/tasks/retention.py, exposed at app/routes/admin_data_quality.py) deletes
+# futures_markets / futures_outcomes / futures_odds_snapshots
+# `WHERE llm_sport_category = 'crypto'`. Its predicate is exactly the label that
+# is wrong. Pressing it to "clean up rank 6" would permanently destroy 3,922
+# legitimate commodities markets and all their price history because an LLM
+# called them crypto. It is not on the beat schedule, which is the only reason
+# those rows are still alive.
+#
+# SCOPED BY SOURCE AS WELL AS CATEGORY, deliberately. A bare category allowlist
+# entry would also act on `polymarket/crypto`, and CAL-P112 item 3 is the
+# standing warning about exactly that: RULE T's category-only widening moved
+# `polymarket/tech` 8.04 -> 12.62, WORSE, and that cell is still UNMEASURED. A
+# (source, category) tuple cannot reach a cell nobody has folded.
+NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS = (
+    ("kalshi", "crypto"),
+)
+
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
     "(cumulative Total-Kills Over/Under ladders per game, per-game winners, "
@@ -856,12 +1336,26 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "per-market cp-sum 17.9). The >=3-outcome sibling of the malformed-binary "
     "filter and the exclusion complement of #157's counter-class guard. The "
     "many-YES ladder grading is correct, so these are excluded from the curve, "
-    "never re-graded. Read-side only; never mutates resolutions."
+    "never re-graded. Read-side only; never mutates resolutions. "
+    # D12 (#1978, CAL-P150). The published text has to say the filter is no
+    # longer esports-only, or the page describes a rule that has not been in
+    # force since this shipped. Kept generic and pointed at `excluded_cells`
+    # rather than naming the cell twice: the list is derived from the constant,
+    # this sentence is not, and two hand-maintained copies of one fact is how
+    # the comment that hid D5 for months came to exist.
+    "Since 2026-08-30 the same structural test also removes individually ruled "
+    "(source, category) cells that are dominated by this shape — see "
+    "`excluded_cells` for the current list, each of which is a separate ruling "
+    "with its own measured evidence, not a widening of the esports rule."
 )
 
 
 def market_is_esports_multi_bundle(
-    category: str | None, n_outcomes: int, n_winners: int
+    category: str | None,
+    n_outcomes: int,
+    n_winners: int,
+    *,
+    source: str | None = None,
 ) -> bool:
     """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
 
@@ -877,9 +1371,23 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    return category == ESPORTS_MULTI_BUNDLE_CATEGORY and market_is_nonexclusive_bundle(
-        n_outcomes, n_winners
-    )
+    if not market_is_nonexclusive_bundle(n_outcomes, n_winners):
+        return False
+    if category == ESPORTS_MULTI_BUNDLE_CATEGORY:
+        return True
+    # D12 (#1978, CAL-P150). The mirror has to move with the CTE or it stops
+    # being a mirror — and a mirror that has silently stopped mirroring is the
+    # defect this whole queue keeps finding (D5's comment said the join carried
+    # two columns; it said so for months).
+    #
+    # ``source`` is keyword-only WITH a default so the four existing call sites
+    # keep working, and the default is None rather than a source string: None
+    # means "the caller did not say", and a caller that did not say must not be
+    # able to trip a (source, category) rule by accident. The cost is that a
+    # caller which SHOULD pass a source and does not gets the old answer, which
+    # is why `test_the_mirror_and_the_cte_agree_on_the_ruled_cells` reads the
+    # ruled tuples out of the constant rather than restating them.
+    return source is not None and (source, category) in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
 
 
 # ---------------------------------------------------------------------------
@@ -902,8 +1410,20 @@ def market_is_esports_multi_bundle(
 
 # Rung 1 — a resolved market that graded NOBODY a winner.
 #
-# ``is_winner`` is NOT NULL with a False default, so an ungraded outcome is
-# stored identically to a genuine loser. The market-level discriminator is
+# ``is_winner`` is NULLABLE in production (``is_nullable = YES``) but that is
+# very nearly a technicality: **measured 2026-08-31, of 3,893,126 outcomes only
+# 2,536 have ``is_winner IS NULL``, and EVERY ONE of them also has
+# ``resolution_source IS NULL``.** The real "nobody graded this" shape is
+# ``is_winner = false, resolution_source = NULL`` (778,306 rows) — which is why
+# `` resolution_source IS NOT NULL`` and not ``is_winner IS NOT NULL`` is this
+# repository's canonical grade predicate (`calibration_graded_share.
+# GRADED_PREDICATE`). An ungraded outcome is therefore stored exactly like a
+# genuine loser, and it is the truth-eligibility allowlist in
+# ``ranked_outcomes`` — not any rung here — that keeps it out of the curve.
+# (This comment read "is NOT NULL" until CAL-P156, which was flatly wrong; the
+# measurement above replaced both that claim and the over-correction that
+# followed it. See CERT-520 [P2].)
+# The market-level discriminator is
 # winner cardinality: a resolved multi-outcome question whose every member is
 # False either (a) never had its winner captured — the omitted-draw class, where
 # a drawn match makes both named sides lose (#1011), (b) is an orphan half of a
@@ -915,6 +1435,19 @@ def market_is_esports_multi_bundle(
 # generalizes the both-false leg to every shape and size (r339 census: cricket
 # 240 markets / 237 eligible outcomes, soccer 4,282 / 6,920, tennis 1,141 /
 # 2,397, hockey 307 / 1,475 — all-loser markets in every category).
+#
+# 🔴 THE ``>= 2`` FLOOR IS DELIBERATE AND THERE IS NO RUNG BELOW IT. At ONE
+# outcome "nobody won" is the ordinary result of a claim that resolved No, so
+# winner cardinality stops discriminating — and nothing else here needs to,
+# because a lone claim nothing ever graded carries ``resolution_source = NULL``
+# and never reaches ``ranked_outcomes`` at all (the allowlist at the eligibility
+# filter). CAL-P156 briefly added a "rung 1b" on ``is_winner IS NULL`` to cover
+# this shape; CERT-520 blocked it and the measurement above is why — the
+# predicate selected a 2,536-row cohort that the eligibility filter had already
+# removed, so the rung was dead code and its census would have published a
+# permanent zero. **Do not re-add it.** If the ungraded lone-claim class ever
+# needs to be COUNTED, that is a census before the eligibility filter, not a
+# rung after it.
 NO_WINNER_RULE_TEXT = (
     "Excludes every resolved market with >=2 outcomes that graded NOBODY a "
     "winner. is_winner has a False default, so an ungraded or never-captured "
@@ -1919,12 +2452,26 @@ def _calibration_population_ctes(
             -- (identical membership) so the esports EXCLUSION and the
             -- category-independent bundle CENSUS derive from one structural
             -- test rather than two copies of it.
+            -- ⚠️ THE NAME IS NARROWER THAN THE CTE SINCE D12 (#1978, CAL-P150).
+            -- This is the non-exclusive-bundle CURVE EXCLUSION, and it now
+            -- covers the esports category on any source PLUS the cells named in
+            -- NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS. The identifiers and the
+            -- payload key keep their esports names deliberately: the key is a
+            -- public contract on /api/calibration, and the freeze exception
+            -- granted was for one tuple, not for a rename. What a reader needs
+            -- is WHICH cells were excluded, and that is published as
+            -- `excluded_by_cell` rather than inferred from a CTE name.
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
-                WHERE mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
-                  AND mrs.n_outcomes >= 3
+                JOIN market_info mi ON mi.market_id = mrs.market_id
+                WHERE mrs.n_outcomes >= 3
                   AND mrs.win_count >= 2
+                  AND (
+                        mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                        OR (mi.source, mrs.category)
+                            IN {_sql_pair_tuple(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}
+                  )
             ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
@@ -2056,18 +2603,144 @@ def _calibration_population_ctes(
                     COUNT(DISTINCT vm.market_id) AS market_count,
                     COUNT(*) AS total_outcomes,
                     COUNT(*) FILTER (WHERE fo.is_winner = true) AS has_winner,
+                    -- 12-CAL: an AFFIRMATIVE grade, which is NOT the complement
+                    -- of has_winner. ``is_winner`` is nullable with a False
+                    -- default, so "not a winner" spans a graded loss and a row
+                    -- nothing ever graded. Only the first may be published as a
+                    -- loss (gotcha #21), and until the lone-claim arm below,
+                    -- nothing in this chain ever had to tell them apart.
+                    COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded,
                     COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                       AND fo.opening_probability > 0
-                                      AND fo.opening_probability < 1) AS eligible
+                                      AND fo.opening_probability < 1) AS eligible,
+                    -- D13 option A (Alex 2026-08-30, CAL-P155): the lone-claim
+                    -- counts, PER MEMBER MARKET. Every other column here is a
+                    -- fact about the VARIANT, and that is exactly why the arm
+                    -- below could not be written correctly before these
+                    -- existed: ``market_count = 1 AND total_outcomes = 1`` is
+                    -- the only way a variant-grained aggregate can say "this
+                    -- holds one lone claim", and it says it by ALSO requiring
+                    -- that nothing else shares the variant.
+                    --
+                    -- ``mrs.n_outcomes`` is the market's outcome count AS
+                    -- CAPTURED -- the same basis Queue 299 rung 1 counts on --
+                    -- so "lone claim" means the same thing in both places.
+                    -- ``COUNT(DISTINCT fo.market_id)`` because a market with
+                    -- ``n_outcomes = 1`` contributes exactly one row and the
+                    -- DISTINCT costs nothing, while making the column's grain
+                    -- unmistakable to the next reader.
+                    COUNT(DISTINCT fo.market_id) FILTER (
+                        WHERE mrs.n_outcomes = 1
+                          AND fo.is_winner IS NOT NULL) AS graded_lone_claims,
+                    COUNT(DISTINCT fo.market_id) FILTER (
+                        WHERE mrs.n_outcomes = 1
+                          AND fo.is_winner IS NULL) AS ungraded_lone_claims
                 FROM virtual_market vm
                 JOIN futures_outcomes fo ON fo.market_id = vm.market_id{vm_stats_roster_predicate}
+                -- LEFT, and ruling 125 is why. ``market_result_shape`` is one
+                -- row per ``market_id`` and every market reaching this join has
+                -- one (both relations are built over ``market_info`` joined to
+                -- ``futures_outcomes``), so an inner join would be equivalent
+                -- TODAY. A join added to a population CTE to compute a new
+                -- column must not be able to change which rows that CTE
+                -- aggregates over, and only the outer form guarantees that
+                -- without depending on an argument. The two FILTERs above are
+                -- NULL-safe by construction: a missing ``mrs`` row fails
+                -- ``mrs.n_outcomes = 1`` and counts toward neither column.
+                LEFT JOIN market_result_shape mrs ON mrs.market_id = vm.market_id
                 GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
                          vm.mutually_exclusive
             ),
             clean_vms AS (
                 SELECT * FROM vm_stats
                 WHERE eligible >= 1
-                  AND has_winner >= 1
+                  AND (
+                        has_winner >= 1
+                        -- 12-CAL (YOUR-TURN D13). A LONE CLAIM -- one market,
+                        -- one captured outcome, ungrouped -- is a complete,
+                        -- scoreable prediction, and under the bare
+                        -- ``has_winner >= 1`` gate it published if and ONLY if
+                        -- it WON. Queue 299 rung 1 declines to exclude it on
+                        -- purpose ("a lone Yes/No claim that legitimately
+                        -- resolved No is not an authority failure" -- it
+                        -- requires n_outcomes >= 2) and rung 3 declines it too
+                        -- (market_type = 'field' only). BOTH carve-outs were
+                        -- dead letters: this gate predates Queue 299 by three
+                        -- months (#691, 2026-05-28) and deleted the row three
+                        -- CTEs before either predicate could be evaluated.
+                        --
+                        -- This does NOT admit unknown truth. A >=2-outcome vm
+                        -- that graded nobody still fails this predicate, and is
+                        -- still removed downstream by ``no_winner_markets``,
+                        -- exactly as rung 1 intends. ``graded >= 1`` refuses a
+                        -- row whose ``is_winner`` was never written at all.
+                        --
+                        -- 🔴 THE ARM COUNTS PER MARKET. ALEX RULED IT (option A,
+                        -- alex-inbox/calibration-919, 2026-08-30; #1978
+                        -- CAL-P155), REVERSING CAL-P151's option B.
+                        --
+                        -- The retired form was ``market_count = 1 AND
+                        -- total_outcomes = 1 AND graded >= 1``, and those counts
+                        -- are per VARIANT. So TWO independently-graded lone
+                        -- claims landing in the SAME variant carried
+                        -- ``market_count = 2`` and the arm refused BOTH; with no
+                        -- winner anywhere in the variant the first arm refused
+                        -- them too, and every one of those rows is individually
+                        -- the thing this arm calls "a complete, scoreable
+                        -- prediction". They were excluded only because they were
+                        -- counted together. CERT-485 found it as a row loss
+                        -- (P1-a) — before D5 they published anyway, by matching
+                        -- a SIBLING variant's admission row through the
+                        -- two-column join; D5 did not create the exclusion, it
+                        -- removed the accident that hid it. Alex was given both
+                        -- options with the population cost declared UNMEASURED
+                        -- and chose A knowingly.
+                        --
+                        -- 🔴 THERE IS NO ``ungraded_lone_claims = 0`` CONJUNCT
+                        -- HERE ANY MORE, AND REMOVING IT IS THE POINT (CERT-514).
+                        -- CAL-P155 shipped one as a fail-closed residue and the
+                        -- cert blocked it: admission is variant-grained —
+                        -- ``ranked_outcomes`` joins ONE ``clean_vms`` row per
+                        -- variant — so refusing the variant to keep ONE ungraded
+                        -- lone claim out ALSO withheld every independently graded
+                        -- claim beside it. That is the sibling coupling option A
+                        -- exists to remove; a narrower version of the same defect
+                        -- is still the defect.
+                        --
+                        -- 🔴 AND NOTHING REPLACES IT, BECAUSE NOTHING HAS TO.
+                        -- CAL-P156 first "fixed" this by moving the refusal down
+                        -- a grain into a new rung 1b on ``is_winner IS NULL``.
+                        -- CERT-520 blocked that, and the measurement settles it:
+                        -- of 3,893,126 outcomes only 2,536 have ``is_winner IS
+                        -- NULL`` and EVERY one also has ``resolution_source IS
+                        -- NULL``, so the eligibility allowlist in
+                        -- ``ranked_outcomes`` had already removed all of them.
+                        -- The rung was dead code selecting a cohort that could
+                        -- not reach it.
+                        --
+                        -- So the premise this conjunct was built on ("a
+                        -- single-outcome member nothing ever graded has NO rung")
+                        -- was simply false. It has one, and it always did: an
+                        -- ungraded outcome carries ``resolution_source = NULL``
+                        -- and is refused by truth eligibility, which is this
+                        -- repository's canonical grade authority
+                        -- (``calibration_graded_share.GRADED_PREDICATE``).
+                        -- Admitting a variant still admits every member's
+                        -- outcomes, and every member is still individually
+                        -- answerable: ``n_outcomes >= 2`` members to rung 1 (this
+                        -- arm only ever fires with ``has_winner = 0``, so each has
+                        -- ``win_count = 0``), and ungraded members to the
+                        -- eligibility filter. Nothing published here is unknown
+                        -- truth, and nothing scoreable is held back for a
+                        -- sibling's sake.
+                        --
+                        -- Pinned both directions by ``tests/integration/
+                        -- test_calibration_vm_variant_join_pg.py`` (the
+                        -- asymmetric fixture, whose MIXED variant seeds exactly
+                        -- the graded-beside-ungraded case this must now split)
+                        -- and by ``tests/test_calibration_lost_losses_12cal.py``.
+                        OR graded_lone_claims >= 1
+                  )
             ),
             ranked_outcomes AS MATERIALIZED (
                 SELECT
@@ -2189,7 +2862,38 @@ def _calibration_population_ctes(
                     ) AS rn_distance_rank
                 FROM futures_outcomes fo
                 JOIN virtual_market vm ON vm.market_id = fo.market_id
-                JOIN clean_vms cv ON cv.vm_id = vm.vm_id AND cv.source = vm.source
+                -- D5 / ruling 125 (the sign reversed) — #1978, CAL-P150.
+                -- ``vm_stats`` GROUPs BY FIVE columns; this join carried TWO.
+                -- A virtual market whose members disagree on ``category``,
+                -- ``is_grouped`` or ``mutually_exclusive`` therefore holds one
+                -- ``clean_vms`` row PER VARIANT, and a two-column join matched
+                -- every one of them: every outcome in that virtual market was
+                -- emitted once per variant. Measured (alex-inbox/calibration-911,
+                -- artifacts/cal-p139 + cal-p141 + cal-p142): 18,363 of 18,378
+                -- groups of >=3 resolved markets (99.9%) carry mixed identity,
+                -- and on the 13 cells folded exactly, 420,081 published rows
+                -- are 266,137 distinct — 36.65% phantom, 1.5784x.
+                --
+                -- Ruling 125 says a join that can DELETE a row must carry every
+                -- dimension that identifies the row. The same coarse key three
+                -- CTEs earlier MULTIPLIES instead, and the remedy is the same:
+                -- carry every dimension the aggregate is grouped on.
+                --
+                -- ``IS NOT DISTINCT FROM``, not ``=``, on the two nullable
+                -- dimensions. ``GROUP BY`` puts NULLs in one group, so a plain
+                -- equality join would match NO variant for those rows and turn
+                -- this de-duplication into a silent row LOSS — the failure mode
+                -- that is strictly worse than the defect. ``category`` is
+                -- COALESCEd to 'uncategorized' in ``market_info`` and
+                -- ``is_grouped`` is a COALESCEd boolean expression, so neither
+                -- is nullable today; they are written NULL-safe anyway because
+                -- the guarantee lives in another function.
+                JOIN clean_vms cv
+                  ON cv.vm_id = vm.vm_id
+                 AND cv.source = vm.source
+                 AND cv.category IS NOT DISTINCT FROM vm.category
+                 AND cv.is_grouped IS NOT DISTINCT FROM vm.is_grouped
+                 AND cv.mutually_exclusive IS NOT DISTINCT FROM vm.mutually_exclusive
                 {curve_price_join}
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
@@ -2315,8 +3019,18 @@ def _calibration_population_ctes(
             -- while ``event_sizes`` counts per ``(event_id, source)``), so two
             -- sources carrying >=3 resolved markets on one event share a vm_id.
             -- Every neighbouring aggregate is source-scoped deliberately —
-            -- ``vm_stats`` GROUPs BY ``(vm_id, source)``, ``clean_vms`` JOINs on
-            -- both — and this one was not: it grouped on ``vm_id`` alone and the
+            -- ``vm_stats`` GROUPs BY ``(vm_id, source, category, is_grouped,
+            -- mutually_exclusive)`` and ``clean_vms`` JOINs on all five —
+            -- 🔴 CORRECTED 2026-08-30 (D5, CAL-P150): this sentence used to read
+            -- "GROUPs BY ``(vm_id, source)``, ``clean_vms`` JOINs on both", and
+            -- it was false in BOTH halves. The aggregate always grouped on five;
+            -- the join carried two. The comment cited the pair as the model
+            -- citizen, ruling 125's own text repeated it, and a dedicated audit
+            -- read the first two columns of the ``GROUP BY`` and stopped — which
+            -- is how a 36.65% row duplication survived directly under a ruling
+            -- written about coarse join keys. The join is fixed above; this
+            -- correction stays because the wrong sentence is what hid it.
+            -- — and this one was not: it grouped on ``vm_id`` alone and the
             -- join below matched on ``vm_id`` alone. A mode detected among one
             -- source's legs therefore DELETED the other source's legs sitting at
             -- the same price. Measured whole-domain (CAL-P087,
@@ -3509,6 +4223,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         PHASE_SPORTS,
     )
 
+    # D21 (#1978, CAL-P150). Captured BEFORE the NULL_RUNNER substitution below,
+    # because after it `runner` can no longer answer the question. This is the
+    # only place in the body that can tell the two callers apart, and one of the
+    # reads downstream must: the scheduled build may REFUSE to publish a
+    # candidate missing its per-bookmaker curve, and the route's in-request
+    # cold-cache fallback must not — refusing there is a 500 on the public
+    # endpoint, on the path that exists precisely because Redis is unreachable.
+    is_producer_build = runner is not None
+
     runner = runner or NULL_RUNNER
 
     # nullcontext preserves the historical block structure (the queries below
@@ -3863,27 +4586,35 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # -----------------------------------------------------------
         # Query 5: Per-bookmaker calibration from Redis
         # -----------------------------------------------------------
-        bookmaker_rows = []
-        # Queue #158 (#1011): the per-bookmaker calibration (odds_api_bookmaker)
-        # devigs soccer moneyline as home_prob/(home_prob+away_prob) — the SAME
-        # 2-way draw-omission bug as the events curve (_precompute_bookmaker_
-        # calibration in backfill_winners.py has no draw term). Left in, it
-        # dominates the soccer_* by_category lines (~40K draw-inflated outcomes).
-        # Drop the soccer_* bookmaker buckets here (read-side, consumption-side)
-        # so the exclusion is robust even though the 6h source keeps writing them.
-        bookmaker_soccer_excluded = 0
-        try:
-            from types import SimpleNamespace as _NS
-            rc = get_redis_client()
-            _cached = rc.get("bainluck:bookmaker_calibration")
-            if _cached:
-                for row in json.loads(_cached):
-                    if category_is_soccer_2way_excluded(row.get("category")):
-                        bookmaker_soccer_excluded += int(row.get("n") or 0)
-                        continue
-                    bookmaker_rows.append(_NS(**row))
-        except Exception:
-            pass
+        # D21 (#1978, CAL-P150) — freeze exception GRANTED by Alex 2026-08-30.
+        # These two lines used to be a `try: ... except Exception: pass` around
+        # the read, and that is what a 23-hour silent publish outage looked like
+        # from the inside. An absent, unreachable or unparseable key is now a
+        # NAMED refusal; the reasoning, the measured chain and the argument for
+        # why refusing loudly is not a worse outcome are all on
+        # `read_bookmaker_curve_rows`.
+        #
+        # 🔴 These rows are NOT diagnostics, despite the phase heading above.
+        # They are concatenated into `all_rows`, so they are part of the
+        # PUBLISHED population — which is why their silent absence took ~96,026
+        # outcomes out of the candidate rather than out of a transparency read.
+        #
+        # 🔴 `refuse` IS SCOPED TO THE PRODUCER, and the first cut of this fix
+        # got that wrong. `runner` is the discriminator this function already
+        # documents: present for the scheduled build, absent for
+        # `routes/calibration.public_calibration`'s in-request cold-cache
+        # fallback. Refusing on BOTH turned "Redis is unreachable" into a 500 on
+        # the public endpoint — on the very path that exists because Redis is
+        # unavailable. The producer is the only caller that can PUBLISH a short
+        # candidate, so it is the only one for which short is a correctness
+        # question; the serve path reports the degradation in the payload.
+        (
+            bookmaker_rows,
+            bookmaker_soccer_excluded,
+            bookmaker_curve_degraded,
+        ) = read_bookmaker_curve_rows(
+            get_redis_client(), refuse=is_producer_build
+        )
 
         # -----------------------------------------------------------
         # Query 6: Total resolved markets count
@@ -4044,13 +4775,28 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         """)
         truth_by_class = runner.reuse(PHASE_DIAGNOSTICS, "truth_by_class")
         if truth_by_class is None:
-            with runner.stage("read:truth_census"):
+            # D22: SOFT. This census is a pure diagnostic by its own comment
+            # above ("no source-bias interpretation; just the counts") and the
+            # publish gate reads none of it, yet it is an unbounded scan over
+            # every resolved futures row sitting in a required phase AHEAD of
+            # the publish. When the futures rebuild has a heavy beat it is
+            # squeezed under the ~104 s it needs and the whole publish dies.
+            # It now degrades to UNOBSERVED instead, and says so in the payload.
+            async with runner.soft_stage(db, "read:truth_census") as soft:
                 truth_result = await db.execute(truth_sql)
                 truth_by_class = {
                     r.truth_class: {"outcomes": int(r.outcomes), "markets": int(r.markets)}
                     for r in truth_result.all()
                 }
-            runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
+            if soft.failed:
+                # Left as None on purpose: ``_build_truth_evidence`` reports
+                # None as UNOBSERVED, and an empty dict would report a clean
+                # contract on no evidence. Not recorded either, so the phase's
+                # carried key set no longer matches and the NEXT beat re-reads
+                # it rather than inheriting a hole.
+                truth_by_class = None
+            else:
+                runner.record(PHASE_DIAGNOSTICS, "truth_by_class", truth_by_class)
 
         # -----------------------------------------------------------
         # Query 12: L2-78 Item 0 (flagged since L2-73) — the true resolved-data
@@ -4070,23 +4816,26 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # Nothing about the query changed; only where it is accounted for.
         date_range = runner.reuse(PHASE_DIAGNOSTICS, "date_range")
         if date_range is None:
-            try:
-                with runner.stage("read:date_range"):
-                    dr = (
-                        await db.execute(
-                            text(
-                                "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
-                                "FROM futures_markets "
-                                "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
-                                "AND resolution_date <= NOW() "
-                                "AND resolution_date >= NOW() - INTERVAL '5 years'"
-                            )
+            # D22: this was a bare ``try``, and it cannot survive the failure
+            # it was written for. A statement timeout aborts the whole
+            # transaction, so the ``except`` caught the error and the phase's own
+            # commit raised anyway — the beat died with the handler right there.
+            # Same intent, now with the savepoint that makes it true. The
+            # ``if`` stays INSIDE: on a degraded read ``dr`` is never bound.
+            async with runner.soft_stage(db, "read:date_range"):
+                dr = (
+                    await db.execute(
+                        text(
+                            "SELECT MIN(resolution_date) AS lo, MAX(resolution_date) AS hi "
+                            "FROM futures_markets "
+                            "WHERE status = 'resolved' AND resolution_date IS NOT NULL "
+                            "AND resolution_date <= NOW() "
+                            "AND resolution_date >= NOW() - INTERVAL '5 years'"
                         )
-                    ).one()
+                    )
+                ).one()
                 if dr.lo and dr.hi:
                     date_range = {"start": dr.lo.isoformat(), "end": dr.hi.isoformat()}
-            except Exception:
-                logger.warning("calibration date_range aggregate failed", exc_info=True)
             runner.record(PHASE_DIAGNOSTICS, "date_range", date_range)
 
         if not _diagnostics_carried:
@@ -4545,7 +5294,20 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             },
         },
         "esports_multi_bundle_filter": {  # Queue #159 (#1010)
-            "applies_to": "esports",
+            # D12 (#1978, CAL-P150): `applies_to` was the literal "esports" and
+            # is now derived, because the filter stopped being esports-only the
+            # moment the first (source, category) tuple was ruled onto it. The
+            # KEY keeps its name — it is a public contract on /api/calibration —
+            # so this list is the only place a reader can see that a second cell
+            # is being deleted here. Hard-coding it would have restated the
+            # constant and could not have drifted from the constant it restated.
+            "applies_to": ", ".join(
+                [ESPORTS_MULTI_BUNDLE_CATEGORY]
+                + [f"{src}/{cat}" for src, cat in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS]
+            ),
+            "excluded_cells": [
+                list(pair) for pair in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+            ],
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
@@ -4622,6 +5384,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": soccer_2way_excluded + bookmaker_soccer_excluded,
             "events_excluded": soccer_2way_excluded,
             "bookmaker_excluded": bookmaker_soccer_excluded,
+            # D21 (#1978, CAL-P150). None on a normal read; one of the two
+            # reason codes when the per-bookmaker curve could not be assembled
+            # and this response was served anyway. Only the serve path can ever
+            # set it — the producer refuses instead — and it is here rather than
+            # nowhere because a payload that is short ~96K outcomes and does not
+            # say so is the original defect with a different caller. A zero that
+            # cannot be told from an absence is a response shape, not an answer
+            # (gotcha #53).
+            "bookmaker_curve_degraded": bookmaker_curve_degraded,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",
@@ -4658,7 +5429,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
 
 
 def _build_truth_evidence(
-    truth_by_class: dict,
+    truth_by_class: dict | None,
     *,
     mex_normalized_markets: int,
     mex_published_markets: int,
@@ -4674,6 +5445,13 @@ def _build_truth_evidence(
     an unknown resolution_source in the resolved population, or the Queue #259
     candidate==published partition breaking — never on a source-mix ratio.
     """
+    # D22: ``None`` means the census did not run this beat (its statement was
+    # cancelled and the beat published anyway). That is NOT the same as a census
+    # that ran and found nothing: with an empty dict every ``.get`` default is
+    # zero and ``contract_ok`` would come back True on no evidence at all. The
+    # distinction is carried all the way into the payload.
+    observed = truth_by_class is not None
+    truth_by_class = truth_by_class or {}
     unknown = truth_by_class.get("unknown", {"outcomes": 0, "markets": 0})
     price_derived = truth_by_class.get("price_derived", {"outcomes": 0, "markets": 0})
     partition_ok = mex_normalized_markets == mex_published_markets
@@ -4707,7 +5485,28 @@ def _build_truth_evidence(
             "published_markets": mex_published_markets,
             "ok": partition_ok,
         },
-        "contract_ok": not violations,
+        # D22. THREE fields, and they move together — a reader that checks only
+        # ``contract_ok`` must not be able to read an unobserved beat as a clean
+        # one, so it is ``None`` (not True, not False) when the census did not
+        # run: there is no violation, and there is also no evidence.
+        #
+        # A VIOLATION OUTRANKS UNOBSERVED, and the order of these branches is
+        # the whole reason to write them out. ``partition_invariant`` is derived
+        # from the aggregate, not from the census, so it still answers on a
+        # degraded beat — and a beat that FOUND a broken partition must report
+        # RED even though the other half of the artifact is missing. Ranking
+        # unobserved first would have hidden it.
+        "census_observed": observed,
+        "contract_status": (
+            "violated" if violations
+            else "ok" if observed
+            else "unobserved"
+        ),
+        "contract_ok": (
+            False if violations
+            else True if observed
+            else None
+        ),
         "contract_violations": violations,
     }
 
@@ -4916,6 +5715,21 @@ def _main_input_fingerprint() -> str:
         CALIBRATION_POPULATION_VERSION,
         REPRESENTATIVE_TIE_AUTHORITY,
         f"coverage_census={COVERAGE_CENSUS_ENABLED}",
+        # D12 (#1978, CAL-P150) — the fourth instance of the hole this docstring
+        # keeps describing, and it was found the way CAL-P024 found the census
+        # switch: by asking what would happen if the value changed.
+        # `NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS` is INTERPOLATED into the emitted
+        # SQL, but `inspect.getsource(_calibration_population_ctes)` hashes the
+        # f-string TEMPLATE, not the value substituted into it. So adding or
+        # removing a ruled cell would have changed which rows the curve
+        # publishes while leaving this digest identical — and a cursor banked
+        # under one exclusion list would have stayed resumable by code with a
+        # different one, merging units built from two populations into one
+        # payload. That is precisely what this digest exists to make impossible.
+        #
+        # Hashed by NAME as well as value, like its two neighbours above, so it
+        # is greppable rather than an incidental substring.
+        f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
         source,
     )
 

@@ -492,11 +492,15 @@ async def _write_prices(
       state.
 
       The predicate is ``IS NOT TRUE``, not ``IS NULL``, and the difference is
-      the whole of #2199's first live failure. ``FuturesOutcome.is_winner`` is
-      declared non-nullable with ``default=False`` (models.py), so **no
-      production row is ever NULL** — unsettled is stored as ``FALSE``. Measured
-      across every eligible tier-1 open market at the time: 0 NULL, 10,762
-      FALSE, 42 TRUE. ``IS NULL`` therefore matched nothing, every priced item
+      the whole of #2199's first live failure. ``FuturesOutcome.is_winner``
+      carries ``default=False`` (models.py), so **effectively no production row
+      is NULL** — unsettled is stored as ``FALSE``. Measured across every
+      eligible tier-1 open market at the time: 0 NULL, 10,762 FALSE, 42 TRUE;
+      table-wide on 2026-08-31 the NULLs are 2,536 of 3,893,126, and every one
+      of them also has a NULL ``resolution_source``. (The column is *nullable* —
+      the model said otherwise until CAL-P157 corrected it — which is exactly
+      why the predicate below must stay tri-state-safe.) A NULL test therefore
+      matched nothing, every priced item
       fell through to ``unknown_outcomes``, and the task wrote zero snapshots by
       construction and permanently. ``IS NOT TRUE`` keeps the settled refusal
       against the tri-state that actually exists.
