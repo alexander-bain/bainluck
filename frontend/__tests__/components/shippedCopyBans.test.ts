@@ -67,6 +67,7 @@ import {
   isProse,
   isSourceAttribution,
   MARKET_OBJECT_NOUNS,
+  NO_READING_COPY_BANS,
   OUR_SUBJECT_NOUNS,
   READING_NOUNS,
   scanBundleSource,
@@ -783,11 +784,26 @@ describe("reading copy back out of minified JavaScript", () => {
    * because "No number ever reached us for " is banned by the quantifier and
    * not by anything after it — which is the property that makes this group
    * work on a minified bundle at all.
+   *
+   * ⚠️ **WIDENED BY UX-P218, NOT DELETED — AND THE TITLE NOW SAYS THE TRUE
+   * THING.** This test asserted that the DEFAULT bundle scan catches a history
+   * claim, and Alex's D25-scope ruling condemns exactly that: the group applies
+   * only to copy emitted by the no-reading components, and a minified chunk
+   * cannot say which component a string came from. What was always real here is
+   * the EXTRACTION claim — that a template literal split at its interpolation
+   * still reaches the scanner as prose, and that the conditional half stays
+   * clean. That half is preserved verbatim by handing the scan the fenced list
+   * explicitly. The condemned half is replaced by its opposite, which is the
+   * fence proven at the very layer that used to over-enforce it.
    */
-  it("catches UX-P211's history claim in the shape a chunk really carries it", () => {
+  it("extracts UX-P211's history claim from the shape a chunk really carries it", () => {
     const planted =
       'function T(e,t){return t?`No number ever reached us for ${e}, so this comparison was never complete.`:`We have no number for ${e} yet.`}';
-    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    const hits = scanBundleSource(
+      "app/tournaments/[slug]/page-0a584f.js",
+      planted,
+      NO_READING_COPY_BANS,
+    );
     expect(hits.length).toBeGreaterThan(0);
     // THREE rules fire on one sentence, and that is the intended shape rather
     // than redundancy: "no number … ever" and "ever reached us" are different
@@ -805,6 +821,12 @@ describe("reading copy back out of minified JavaScript", () => {
     // The replacement half of the same ternary must NOT be a hit, or the guard
     // would be firing on the chunk rather than on the sentence.
     expect(hits.every((h) => !h.literal.includes("We have no number for"))).toBe(true);
+
+    // 🔴 THE FENCE, AT THE LAYER THAT USED TO ENFORCE IT. The identical plant,
+    // scanned with the DEFAULT list, is clean — because a minified chunk cannot
+    // answer "which component emitted this", and a scanner that guessed is the
+    // false-positive engine six certs kept walking into.
+    expect(scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted)).toEqual([]);
   });
 
   /**
@@ -821,17 +843,27 @@ describe("reading copy back out of minified JavaScript", () => {
    * "complete". If a future edit narrows the group back to UX-P213's six
    * literals, the layer-1 pins and this one fail together, which is the
    * signal that the claim — not the sentence — is what the rule is holding.
+   *
+   * ⚠️ **WIDENED BY UX-P218 FOR THE SAME REASON AS ITS SIBLING ABOVE.** The
+   * alternate-wording claim and the clean-conditional claim are untouched; the
+   * list is now named explicitly, and the fence gets its own assertion.
    */
-  it("catches a REWORDED history claim in the shape a chunk really carries it", () => {
+  it("extracts a REWORDED history claim from the shape a chunk really carries it", () => {
     const planted =
       'function R(e,t){return t?`There has never been a probability for ${e}.`:`We have no probability for ${e} yet.`}';
-    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    const hits = scanBundleSource(
+      "app/tournaments/[slug]/page-0a584f.js",
+      planted,
+      NO_READING_COPY_BANS,
+    );
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.map((h) => h.ban.id).sort()).toEqual(["there-was-never-a-reading"]);
     expect(hits.every((h) => h.surface === "app/tournaments")).toBe(true);
     // The conditional half is the sentence the product is allowed to say, and
     // it must stay clean or the plant is proving nothing about the quantifier.
     expect(hits.every((h) => !h.literal.includes("We have no probability for"))).toBe(true);
+    // The fence: the same plant is invisible to the default list.
+    expect(scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted)).toEqual([]);
   });
 
   /**
