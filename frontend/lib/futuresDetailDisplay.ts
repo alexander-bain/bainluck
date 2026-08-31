@@ -89,3 +89,61 @@ export function movementExplanation(leader: MovementLeader | null): string | nul
   }
   return null;
 }
+
+export type FuturesSortField = "probability" | "change" | "name";
+export type FuturesSortDirection = "asc" | "desc";
+
+export interface SortableOutcome {
+  name: string;
+  probability: number | null;
+  probability_change_24h?: number | null;
+}
+
+/**
+ * UX-P230 — the "All Outcomes" table's ordering.
+ *
+ * ONE CONVENTION, and it is the whole point of this function: **every comparator
+ * below is written ASCENDING** (a before b when the result is negative), and the
+ * direction flip at the bottom is the ONLY place that reverses. `desc` therefore
+ * means "biggest first" for probability, "biggest gainer first" for change, and
+ * Z→A for name.
+ *
+ * The detail page previously kept these comparators inline and authored two of
+ * the three in reverse (`b - a`) while `name` used the normal convention — so the
+ * shared inverter, written for `name`, flipped the other two a SECOND time. Under
+ * the default `probability`/`desc` the table rendered ascending: on market 109441
+ * the 27% leader the hero is entirely about was the LAST of eight rows, under a
+ * pill reading "Probability ↓".
+ *
+ * Keeping it here rather than inline is not tidying: an inline switch can only be
+ * exercised through the page's default state, which is exactly why five of the six
+ * field×direction combinations had never been under test.
+ */
+export function sortFuturesOutcomes<T extends SortableOutcome>(
+  outcomes: readonly T[],
+  field: FuturesSortField,
+  direction: FuturesSortDirection,
+): T[] {
+  return [...outcomes].sort((a, b) => {
+    let comparison = 0;
+
+    switch (field) {
+      case "probability":
+        comparison = (a.probability ?? 0) - (b.probability ?? 0);
+        break;
+      case "change": {
+        // The signed change, never its magnitude: ascending puts the biggest
+        // losers first, descending the biggest gainers.
+        const aChange = a.probability_change_24h ?? 0;
+        const bChange = b.probability_change_24h ?? 0;
+        comparison = aChange - bChange;
+        break;
+      }
+      case "name":
+        comparison = a.name.localeCompare(b.name);
+        break;
+    }
+
+    return direction === "asc" ? comparison : -comparison;
+  });
+}

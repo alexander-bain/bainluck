@@ -38,7 +38,12 @@ import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
-import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
+import {
+  movementExplanation as movementExplanationHelper,
+  pickHeroOutcome,
+  sortFuturesOutcomes,
+} from "@/lib/futuresDetailDisplay";
+import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
@@ -109,8 +114,10 @@ function isGenericOutcomeName(name: string): boolean {
   return false;
 }
 
-type SortField = "probability" | "change" | "name";
-type SortDirection = "asc" | "desc";
+// UX-P230: aliases of the sorter's own types, so the buttons and the comparator
+// can never disagree about which fields exist.
+type SortField = FuturesSortField;
+type SortDirection = FuturesSortDirection;
 
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
@@ -271,33 +278,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     ? relatedEventsData.events
     : [];
 
-  // Sort outcomes
+  // Sort outcomes. UX-P230: the comparators live in futuresDetailDisplay so all
+  // six field×direction combinations can be exercised, not just the page default.
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
-
-    const sorted = [...market.outcomes].sort((a, b) => {
-      let comparison = 0;
-
-      switch (sortField) {
-        case "probability":
-          comparison = (b.probability ?? 0) - (a.probability ?? 0);
-          break;
-        case "change":
-          // Sort by actual change value, not absolute value
-          // Descending shows biggest gainers first, ascending shows biggest losers first
-          const aChange = a.probability_change_24h ?? 0;
-          const bChange = b.probability_change_24h ?? 0;
-          comparison = bChange - aChange;
-          break;
-        case "name":
-          comparison = a.name.localeCompare(b.name);
-          break;
-      }
-
-      return sortDirection === "asc" ? comparison : -comparison;
-    });
-
-    return sorted;
+    return sortFuturesOutcomes(market.outcomes, sortField, sortDirection);
   }, [market?.outcomes, sortField, sortDirection]);
 
   // The leader is always the outcome with highest probability (independent of sort)
@@ -978,6 +963,10 @@ function OutcomeRow({
 
   return (
     <div
+      // UX-P230: the rendered order is the thing under guard — name it on the row
+      // so a test reads what the page actually painted, not what a helper returned.
+      data-testid="outcome-row"
+      data-outcome-name={outcome.name}
       className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
         isSelected
           ? "bg-blue-50 border border-blue-200"
