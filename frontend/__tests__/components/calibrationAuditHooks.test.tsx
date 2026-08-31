@@ -693,6 +693,13 @@ const SELECTOR_ARG: Record<string, number> = {
  */
 const REQUIRED_SELECTOR_APIS = ["locator", "waitForSelector", "getByTestId"] as const;
 
+/**
+ * Which API a call invokes, and how far the real arguments are pushed right.
+ * `argOffset` is 1 for `f.call(thisArg, …)` and 0 everywhere else. `null` means
+ * this file cannot tell what is being called, and that is always LOUD.
+ */
+type CalleeRead = { name: string; argOffset: number } | null;
+
 type PackRead = {
   /** Every selector string the pack can produce. */
   selectors: string[];
@@ -957,15 +964,38 @@ function readPack(file: string, src: string): PackRead {
        * really calls an arrow inline — and its body is walked normally, so a
        * selector inside it is still read.
        */
-      const calleeName = (c: ts.Expression): string | null => {
-        if (ts.isPropertyAccessExpression(c)) return c.name.text;
-        if (ts.isIdentifier(c)) return c.text;
+      const calleeName = (c: ts.Expression): CalleeRead => {
         if (ts.isParenthesizedExpression(c)) return calleeName(c.expression);
+        if (ts.isIdentifier(c)) return { name: c.text, argOffset: 0 };
         if (ts.isElementAccessExpression(c)) {
           const v = asStrings(resolve(c.argumentExpression, env));
-          return v && v.length === 1 ? v[0] : null;
+          return v && v.length === 1 ? { name: v[0], argOffset: 0 } : null;
         }
-        if (ts.isArrowFunction(c) || ts.isFunctionExpression(c)) return "";
+        if (ts.isPropertyAccessExpression(c)) {
+          const prop = c.name.text;
+          if (prop === "call" || prop === "apply" || prop === "bind") {
+            // Ported the moment CERT-593 blocked the sibling. Reading the final
+            // property name records `call` for `page.locator.call(page, sel)`,
+            // so the selector argument is never resolved while the browser runs
+            // a real `locator`.
+            //
+            // Normalising beats refusing: `consent.spec.ts` legitimately writes
+            // `window.localStorage.setItem.bind(...)`, so the TARGET is read
+            // first and only a real selector API is treated specially.
+            const inner = calleeName(c.expression);
+            if (inner === null) return null;
+            if (!(inner.name in SELECTOR_ARG)) return { name: "", argOffset: 0 };
+            // `f.call(thisArg, …)` pushes every real argument one slot right.
+            if (prop === "call") return { name: inner.name, argOffset: inner.argOffset + 1 };
+            // `.apply` hides the arguments in an array; `.bind` defers the call
+            // to a site this function is not looking at. Both LOUD.
+            return null;
+          }
+          return { name: prop, argOffset: 0 };
+        }
+        if (ts.isArrowFunction(c) || ts.isFunctionExpression(c)) {
+          return { name: "", argOffset: 0 };
+        }
         // A conditional, an awaited value, another call's result: any of these
         // can evaluate to a selector method and none can be read here.
         return null;
@@ -976,10 +1006,12 @@ function readPack(file: string, src: string): PackRead {
           `<unreadable callee>(${callee.getText().replace(/\s+/g, " ").slice(0, 80)})`
         );
       }
-      const name = resolvedName ?? "";
+      const name = resolvedName?.name ?? "";
+      const argOffset = resolvedName?.argOffset ?? 0;
       if (name) calledNames.add(name);
 
-      const idx = SELECTOR_ARG[name];
+      const idx =
+        SELECTOR_ARG[name] === undefined ? undefined : SELECTOR_ARG[name] + argOffset;
       if (idx !== undefined && n.arguments.length > idx) {
         const arg = n.arguments[idx];
         const v = asStrings(resolve(arg, env));
@@ -1141,6 +1173,29 @@ page["locator"](\`[data-testid="\${HOOK}"]\`);`,
     src: `const SELECTOR = '[data-testid="calibration-unknown-api"]';
 page[pickApi()](SELECTOR);`,
     loud: true,
+  },
+  {
+    name: "CERT-593 (sibling): a selector reached through `page.locator.call(page, …)`",
+    // Ported the moment CERT-593 blocked `ux-163` for it. The selector is
+    // INLINE, not bound to a const, because a const would be caught by the
+    // resolved-constants dump and the row would pass for the wrong reason.
+    src: `page.locator.call(page, "[data-" + 'testid="calibration-call-indirect"]');`,
+    loud: false,
+    hooks: ["calibration-call-indirect"],
+  },
+  {
+    name: "`.apply` hides its arguments in an array and fails loudly",
+    src: `page.locator.apply(page, ['[data-testid="calibration-apply"]']);`,
+    loud: true,
+  },
+  {
+    name: "`.bind` on a method that is NOT a selector API is left alone",
+    // `consent.spec.ts` really writes this shape, which is why the target is
+    // read first rather than every `.bind` being refused.
+    src: `const real = window.localStorage.setItem.bind(window.localStorage);
+page.locator('[data-testid="calibration-page"]');`,
+    loud: false,
+    hooks: ["calibration-page"],
   },
   {
     name: "an inline IIFE is not an unreadable API — and its body is still read",
