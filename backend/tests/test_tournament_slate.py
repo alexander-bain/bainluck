@@ -375,6 +375,8 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
     slate = build_slate(_register(matchups=[]), prices={}, now=NOW)
     assert slate == {
         "matches": [], "count": 0, "incoherent": 0, "dropped": {},
+        # Q463: an empty card must say whether the scoreboard was even read.
+        "in_progress": 0, "order_of_play_listed": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
@@ -1824,3 +1826,261 @@ def test_the_route_hands_build_results_the_prices_it_already_loaded():
     assert call.endswith(")")
     assert "prices=prices" in call
 
+
+
+# ---------------------------------------------------------------------------
+# THE ORDER OF PLAY (Q463) — the card said "No matches scheduled" all day
+#
+# Alex, on bainluck.com/tournaments/us-open at ~2:40pm PT on opening day:
+# "It's weird that there's no matches scheduled. that's obviously not true."
+#
+# It was not true. The register recorded what ESPN records before an order of
+# play exists — midnight local, `2026-08-30T04:00Z` — on all 96 main-draw
+# fixtures, and `build_slate` read that placeholder as a START and applied a
+# six-hour elapsed-time bound to it. Six hours after midnight is 10:00Z; the
+# first ball of the tournament was at 15:05Z. Every fixture of opening day was
+# dropped ALREADY_PLAYED five hours before opening day began.
+#
+# These are the class guards. Each one fails on the pre-Q463 builder.
+# ---------------------------------------------------------------------------
+
+#: A matchup carrying the id the draw ceremony pins — the join key.
+def _drawn_matchup(comp_id="182655", **overrides):
+    matchup = _matchup(
+        matchup_key="womens-singles:clara-burel-vs-yexin-ma:2026-08-30",
+        evidence={
+            "kind": "draw-ceremony-espn",
+            "espn_competition_id": comp_id,
+            "espn_round": "Round 1",
+            "observed_at": NOW.isoformat(),
+        },
+    )
+    matchup.update(overrides)
+    return matchup
+
+
+def _listed(comp_id="182655", **overrides):
+    entry = {
+        "espn_competition_id": comp_id,
+        "draw": "womens-singles",
+        "state": "upcoming",
+        "start_at": (NOW + timedelta(hours=3)).isoformat(),
+        "start_is_tbd": False,
+        "status_detail": "Mon, August 31st at 11:00 AM EDT",
+        "espn_round": "Round 1",
+    }
+    entry.update(overrides)
+    return {comp_id: entry}
+
+
+def test_the_midnight_placeholder_no_longer_empties_the_card_on_a_match_day():
+    """THE DEFECT, in one test.
+
+    A fixture registered at midnight local, read six hours later — the exact
+    shape of opening day at 10:00Z. Without the scoreboard it is dropped; with
+    it, ESPN says the match has not been played and it stays, carrying ESPN's
+    real start rather than the placeholder.
+    """
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    real_start = (NOW + timedelta(hours=1)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=midnight)])
+
+    without = build_slate(register, prices=_prices(), now=NOW)
+    assert without["count"] == 0
+    assert without["dropped"] == {"ALREADY_PLAYED": 1}
+
+    with_card = build_slate(
+        register,
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(start_at=real_start),
+    )
+    assert with_card["count"] == 1
+    row = with_card["matches"][0]
+    assert row["live_state"] == "upcoming"
+    # ESPN's start, NOT the register's placeholder — the row must not print
+    # midnight for an afternoon match.
+    assert row["scheduled_date"] == real_start
+    assert row["start_is_tbd"] is False
+
+
+def test_a_match_in_progress_outlives_the_elapsed_time_window():
+    """A five-setter is the one row an hours-since-start rule cannot keep."""
+    long_ago = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=long_ago)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(state="in_progress", start_at=long_ago,
+                              status_detail="5th Set"),
+    )
+    assert slate["count"] == 1
+    assert slate["in_progress"] == 1
+    row = slate["matches"][0]
+    assert row["live_state"] == "in_progress"
+    assert row["status_detail"] == "5th Set"
+
+
+def test_a_decided_match_leaves_because_espn_says_so_not_because_time_passed():
+    """`post` competitions are absent from the map, and absence is the signal.
+
+    Its own drop reason: one of these is a fact from the source and the other
+    is an inference from the clock, and a short slate must say which.
+    """
+    soon = (NOW + timedelta(hours=2)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=soon)]),
+        prices=_prices(),
+        now=NOW,
+        # Scoreboard read, other fixtures on it, this one not.
+        order_of_play=_listed(comp_id="999999"),
+    )
+    assert slate["count"] == 0
+    assert slate["dropped"] == {"DECIDED": 1}
+
+
+def test_a_tbd_start_is_flagged_rather_than_printed_as_midnight():
+    midnight = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+    slate = build_slate(
+        _register(matchups=[_drawn_matchup(scheduled_date=midnight)]),
+        prices=_prices(),
+        now=NOW,
+        order_of_play=_listed(start_at=midnight, start_is_tbd=True,
+                              status_detail=None),
+    )
+    assert slate["count"] == 1
+    assert slate["matches"][0]["start_is_tbd"] is True
+    assert slate["matches"][0]["status_detail"] is None
+
+
+def test_a_fixture_the_scoreboard_does_not_know_keeps_the_clock_fallback():
+    """The qualifying draw carries no competition id, so nothing changed for it.
+
+    Without an id there is no join and no DECIDED verdict to draw — the row
+    must fall back to the elapsed-time bound rather than vanish because some
+    OTHER fixture was on the scoreboard.
+    """
+    played = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 1)).isoformat()
+    upcoming = (NOW + timedelta(hours=2)).isoformat()
+    order = _listed(comp_id="999999")
+
+    gone = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW, order_of_play=order,
+    )
+    assert gone["dropped"] == {"ALREADY_PLAYED": 1}
+
+    kept = build_slate(
+        _register(matchups=[_matchup(scheduled_date=upcoming)]),
+        prices=_prices(), now=NOW, order_of_play=order,
+    )
+    assert kept["count"] == 1
+    assert kept["matches"][0]["live_state"] is None
+
+
+def test_an_absent_order_of_play_changes_nothing():
+    """No scoreboard is the pre-Q463 behaviour, exactly — never a blank page."""
+    upcoming = (NOW + timedelta(hours=2)).isoformat()
+    register = _register(matchups=[_drawn_matchup(scheduled_date=upcoming)])
+    for order in (None, {}):
+        slate = build_slate(register, prices=_prices(), now=NOW, order_of_play=order)
+        assert slate["count"] == 1, order
+        assert slate["matches"][0]["live_state"] is None
+        assert slate["order_of_play_listed"] == 0
+
+
+def test_an_empty_card_says_whether_the_overlay_was_even_read():
+    """gotcha #53: "nothing is on" and "the overlay joined nothing" are not the
+    same empty card, and for a day nobody could tell them apart."""
+    played = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 1)).isoformat()
+    blind = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW,
+    )
+    assert blind["count"] == 0 and blind["order_of_play_listed"] == 0
+
+    read = build_slate(
+        _register(matchups=[_matchup(scheduled_date=played)]),
+        prices=_prices(), now=NOW, order_of_play=_listed(comp_id="999999"),
+    )
+    assert read["count"] == 0 and read["order_of_play_listed"] == 1
+
+
+def test_the_competition_id_survives_the_price_overlay():
+    """The matchup-level id is the anchor `apply_resolved_links` cannot destroy.
+
+    The linker REPLACES a `missing` source block wholesale, and it has done so
+    72 times on today's payload. An id read only out of `sources[].evidence`
+    would disappear exactly when the fixture became priced.
+    """
+    from app.utils.tournament_slate import espn_competition_id
+
+    matchup = _drawn_matchup()
+    # Every source block replaced by a linked one carrying no ESPN evidence.
+    matchup["sources"] = [{
+        "source": "kalshi", "kind": "match", "market_id": 1, "outcome_id": 2,
+        "status": "live", "evidence": {"kind": "linker-resolved"},
+    }]
+    assert espn_competition_id(matchup) == "182655"
+
+    # And the per-source copy still answers when the matchup has no evidence.
+    fallback = _matchup()
+    fallback["sources"][0]["evidence"]["espn_competition_id"] = "184739"
+    assert espn_competition_id(fallback) == "184739"
+    assert espn_competition_id(_matchup()) is None
+
+
+def test_a_naive_scheduled_date_is_refused_rather_than_assumed_utc():
+    """Guessing a timezone onto a fixture time is this file's own refusal."""
+    slate = build_slate(
+        _register(matchups=[_matchup(scheduled_date="2026-08-30T04:00:00")]),
+        prices=_prices(), now=NOW,
+    )
+    assert slate["dropped"] == {"NO_SCHEDULED_START": 1}
+
+
+def _balanced_call(source: str, opener: str, *, after: str) -> str:
+    """The full text of one call, paren-balanced — never "up to the first `)`".
+
+    The naive version reads a window that stops inside a nested call and then
+    fails on a correct call site; the existing `build_results` guard learned
+    that the hard way and this is the same scan, shared.
+    """
+    start = source.index(opener, source.index(after))
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "(":
+            depth += 1
+        elif source[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"unbalanced call for {opener!r}")
+
+
+def test_the_route_hands_build_slate_the_order_of_play():
+    """The wiring, which is the half a unit test cannot see (Q463).
+
+    Every test above can pass with the argument dropped at the call site, and
+    the page would go straight back to "No matches scheduled" on a match day —
+    which is exactly how it shipped.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py"
+    ).read_text()
+    call = _balanced_call(source, "build_slate(", after='payload["slate"]')
+    assert "order_of_play=" in call
+
+
+def test_the_capture_rig_hands_build_slate_the_order_of_play():
+    """A rig that renders the page WITHOUT the feature under review is worse
+    than no rig — it produces a real-looking artifact that proves the opposite
+    of what it appears to. That sentence is already in this file's sibling
+    guard for `prices=`; this is the same trap one feature later.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "scripts" / "capture_tournament_payload.py"
+    ).read_text()
+    call = _balanced_call(source, "build_slate(", after='payload["slate"]')
+    assert "order_of_play=" in call

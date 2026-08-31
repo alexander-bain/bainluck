@@ -97,6 +97,28 @@ export interface SlateMatch {
   draw_label: string;
   round: string;
   scheduled_date: string;
+  /**
+   * Is this match on RIGHT NOW (Q463)?
+   *
+   * ESPN's own state, not a comparison of `scheduled_date` to the clock — a
+   * five-setter outlives any elapsed-time window, and "started seven hours
+   * ago" is not evidence a match is over. Optional and `null` when the
+   * scoreboard carries no entry for the fixture; a decided match is not here
+   * at all, because it is a result.
+   */
+  live_state?: "in_progress" | "upcoming" | null;
+  /** ESPN's words for that state — "2nd Set". Beside the enum, never instead. */
+  status_detail?: string | null;
+  /**
+   * Is `scheduled_date` a TIME, or a day wearing one (Q463)?
+   *
+   * `true` means the source has published no order of play for this fixture
+   * yet, so the timestamp is midnight local. Reading it as a start is the
+   * defect that printed "No matches scheduled" through the whole of the US
+   * Open's opening day; printing it is the smaller version of the same
+   * mistake, so a row with this flag says TBD and shows no clock.
+   */
+  start_is_tbd?: boolean;
   sides: SlateSide[];
   coherent: boolean;
   raw_sum: number | null;
@@ -224,6 +246,17 @@ export interface SlateData {
   matches: SlateMatch[];
   count: number;
   incoherent: number;
+  /** How many of `matches` are being played RIGHT NOW (Q463). */
+  in_progress?: number;
+  /**
+   * How many competitions the ESPN order-of-play overlay carried (Q463).
+   *
+   * `0` with an empty list means the overlay is not reaching us; a positive
+   * number with an empty list means the tournament genuinely has nothing on.
+   * Before this the two were the same empty card, and the first of them ran
+   * for a full day (gotcha #53).
+   */
+  order_of_play_listed?: number;
   dropped: Record<string, number>;
   price_state: PriceState;
   newest_observed_at: string | null;

@@ -208,8 +208,21 @@ def build_payload(slug: str, *, now: datetime) -> dict[str, Any]:
                 (block.get("source"), block.get("market_id"), block.get("outcome_id"))
             ] = loaded
 
+    # ONE FETCH, BOTH HALVES OF THE DAY (Q463) — and hoisted above the slate for
+    # the same reason `prices=` was pushed into `build_results` below: a rig that
+    # renders the page WITHOUT the feature under review produces a real-looking
+    # artifact that proves the opposite of what it appears to. Without this the
+    # rig would still draw the empty "No matches scheduled" card this queue
+    # exists to kill.
+    espn = asyncio.run(_espn(spec["espn_event_name"]))
+
     payload = build_boards(register, prices=by_identity, series_by_outcome=series, now=now)
-    payload["slate"] = build_slate(register, prices=prices, now=now)
+    payload["slate"] = build_slate(
+        register,
+        prices=prices,
+        now=now,
+        order_of_play=espn.get("order_of_play") or {},
+    )
     payload["props"] = build_props(register, prices=prices, now=now)
     payload["grids"] = build_grids(
         register, boards=payload.get("boards") or [], prices=prices, now=now
@@ -234,9 +247,7 @@ def build_payload(slug: str, *, now: datetime) -> dict[str, Any]:
     #
     # It costs no query. `reg.matchup_outcome_ids()` is already in the one
     # `IN (...)` above, exactly as the route's own comment says of its version.
-    payload["results"] = build_results(
-        register, results=asyncio.run(_espn(spec["espn_event_name"])), prices=prices
-    )
+    payload["results"] = build_results(register, results=espn, prices=prices)
     payload["broadcasts"] = reg.broadcasts
     payload["slug"] = slug
     payload["title"] = spec["title"]

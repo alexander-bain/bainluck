@@ -161,6 +161,14 @@ export interface MatchListEntry {
   roundLabel: string;
   /** ISO string, or `null` for a bracket match with no scheduled date. */
   scheduledDate: string | null;
+  /**
+   * `scheduledDate` is a DAY, not a time (Q463) — the source has published no
+   * order of play for this fixture, so the timestamp is midnight local. The
+   * row says TBD and prints no clock; see `SlateMatch.start_is_tbd`.
+   */
+  startIsTbd: boolean;
+  /** ESPN's live state for the fixture, or `null` when it carries none (Q463). */
+  liveState: "in_progress" | "upcoming" | null;
   drawLabel: string | null;
   sides: [MatchListSide, MatchListSide];
   decided: boolean;
@@ -378,6 +386,8 @@ export function matchListFromSlate(
       round,
       roundLabel: MATCH_ROUND_LABELS[round],
       scheduledDate: match.scheduled_date ?? null,
+      startIsTbd: match.start_is_tbd === true,
+      liveState: match.live_state ?? null,
       drawLabel: match.draw_label ?? null,
       sides,
       decided,
@@ -515,6 +525,8 @@ export function matchListFromBracket(
         round: match.round,
         roundLabel: MATCH_ROUND_LABELS[match.round],
         scheduledDate: joined?.scheduled_date ?? null,
+        startIsTbd: joined?.start_is_tbd === true,
+        liveState: joined?.live_state ?? null,
         drawLabel: joined?.draw_label ?? null,
         sides,
         decided,

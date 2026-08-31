@@ -765,11 +765,22 @@ async def _hub_payload(
     # `utils/tournament_event_link`.
     event_links = await resolve_matchup_events(db, register)
 
+    # ONE READ, BOTH HALVES OF THE DAY (Q463). The cached ESPN payload carries
+    # the decided matches AND the ones still to play; hoisted above the slate
+    # because the slate needs the second half to know what is on. Still a single
+    # Redis read — the order of play costs no fetch, no key and no beat, because
+    # `sync_tournament_results` was already discarding it.
+    espn = await _espn_results(slug)
+
     payload = build_boards(
         register, prices=by_identity, series_by_outcome=series, now=now
     )
     payload["slate"] = build_slate(
-        register, prices=prices, now=now, event_ids=event_links["by_matchup"]
+        register,
+        prices=prices,
+        now=now,
+        event_ids=event_links["by_matchup"],
+        order_of_play=espn.get("order_of_play") or {},
     )
     payload["props"] = build_props(register, prices=prices, now=now)
     # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the
@@ -798,9 +809,7 @@ async def _hub_payload(
     # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
     # outcome ids are already in the one `IN (...)` above, and the number used
     # is `opening_probability`, which is loaded on the same row.
-    payload["results"] = build_results(
-        register, results=await _espn_results(slug), prices=prices
-    )
+    payload["results"] = build_results(register, results=espn, prices=prices)
     payload["broadcasts"] = reg.broadcasts
     # How many blank fixtures the overlay filled this request. Reported rather
     # than inferred: a page whose cards are dark because no market exists and

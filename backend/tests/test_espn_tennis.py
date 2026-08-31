@@ -385,3 +385,107 @@ class TestDrawVocabulary:
         do — 63 men's, 63 women's, 21 mixed competitions on 2026-08-26."""
         for slug in ("mens-doubles", "womens-doubles", "mixed-doubles"):
             assert DRAW_SLUGS[slug] == slug
+
+
+# ---------------------------------------------------------------------------
+# THE ORDER OF PLAY (Q463)
+#
+# `parse_results` threw away every competition that was not `post` — 806 of the
+# 1,250 on the US Open scoreboard — and among them was the answer to "what is on
+# right now". The slate had no other source for it and read "No matches
+# scheduled" through the whole of opening day.
+# ---------------------------------------------------------------------------
+
+class TestTheOrderOfPlay:
+    def _card(self, competitions):
+        return parse_results([_payload(competitions)], event_name="US Open")
+
+    def test_an_unplayed_competition_is_published_instead_of_discarded(self):
+        parsed = self._card([
+            _competition(
+                _competitor("A B", winner=False, sets=[]),
+                _competitor("C D", winner=False, sets=[]),
+                state="pre", comp_id="182655",
+            )
+        ])
+        assert parsed["stats"]["final"] == 0
+        entry = parsed["order_of_play"]["182655"]
+        assert entry["state"] == "upcoming"
+        assert entry["start_at"] == "2026-08-24T15:05Z"
+        assert entry["draw"] == "mens-singles"
+        assert parsed["stats"]["upcoming"] == 1
+
+    def test_in_progress_is_its_own_state_and_not_collapsed_into_upcoming(self):
+        """The one row an elapsed-time rule cannot keep, and the most
+        interesting one on the page."""
+        parsed = self._card([
+            _competition(
+                _competitor("A B", winner=False, sets=[6]),
+                _competitor("C D", winner=False, sets=[4]),
+                state="in", comp_id="182675",
+            )
+        ])
+        assert parsed["order_of_play"]["182675"]["state"] == "in_progress"
+        assert parsed["stats"]["in_progress"] == 1
+        assert parsed["stats"]["upcoming"] == 0
+
+    def test_a_decided_competition_gets_no_entry(self):
+        """Absence IS the signal the slate reads. A `post` competition in this
+        map would put a finished match back on the day's card."""
+        parsed = self._card([
+            _competition(
+                _competitor("A B", winner=True, sets=[6, 6]),
+                _competitor("C D", winner=False, sets=[3, 4]),
+                state="post", comp_id="184607",
+            )
+        ])
+        assert parsed["order_of_play"] == {}
+        assert parsed["stats"]["final"] == 1
+
+    def test_a_tbd_placeholder_is_flagged_and_its_template_detail_dropped(self):
+        """`detail` on a TBD row is an unsubstituted format string — "M/d -
+        'TBD'" — and its `date` is midnight local. Printing either as a start is
+        the smaller version of the defect that emptied the card."""
+        competition = _competition(
+            _competitor("A B", winner=False, sets=[]),
+            _competitor("C D", winner=False, sets=[]),
+            state="pre", comp_id="182659",
+        )
+        competition["date"] = "2026-08-31T04:00Z"
+        competition["status"]["type"] = {
+            "state": "pre", "detail": "M/d - 'TBD'", "shortDetail": "TBD",
+        }
+        entry = self._card([competition])["order_of_play"]["182659"]
+        assert entry["start_is_tbd"] is True
+        assert entry["status_detail"] is None
+        # The placeholder itself is kept — it is honest DATA, flagged.
+        assert entry["start_at"] == "2026-08-31T04:00Z"
+
+    def test_a_scheduled_competition_keeps_its_real_time_and_words(self):
+        competition = _competition(
+            _competitor("A B", winner=False, sets=[]),
+            _competitor("C D", winner=False, sets=[]),
+            state="pre", comp_id="182661",
+        )
+        competition["status"]["type"] = {
+            "state": "pre",
+            "detail": "Mon, August 31st at 11:00 AM EDT",
+            "shortDetail": "8/31 - 11:00 AM EDT",
+        }
+        entry = self._card([competition])["order_of_play"]["182661"]
+        assert entry["start_is_tbd"] is False
+        assert entry["status_detail"] == "Mon, August 31st at 11:00 AM EDT"
+
+    def test_another_tournament_on_the_same_scoreboard_is_not_on_our_card(self):
+        """`event_name` selects, here as everywhere else on this page."""
+        parsed = parse_results(
+            [_payload([
+                _competition(
+                    _competitor("A B", winner=False, sets=[]),
+                    _competitor("C D", winner=False, sets=[]),
+                    state="pre", comp_id="777",
+                )
+            ], name="Winston-Salem Open")],
+            event_name="US Open",
+        )
+        assert parsed["order_of_play"] == {}

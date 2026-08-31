@@ -36,6 +36,25 @@ Three things this module refuses to do:
    this morning must not still be presenting this morning's matches at
    midnight.
 
+   ⚠️ **AND IT MUST NOT DO THAT BY GUESSING FROM A PLACEHOLDER (Q463).**  That
+   bound is an *elapsed-time* rule over the register's ``scheduled_date``, and
+   on ceremony day the register records what ESPN records before an order of
+   play exists: **midnight, local** — ``2026-08-30T04:00Z`` on all 96 US Open
+   main-draw fixtures.  Six hours later is 10:00Z; the first ball of the
+   tournament was at 15:05Z.  So every fixture of opening day was dropped
+   ``ALREADY_PLAYED`` **five hours before opening day began**, and the card read
+   "No matches scheduled" from morning to night while Djokovic was on court —
+   Alex, 2026-08-30: *"It's weird that there's no matches scheduled. that's
+   obviously not true."*
+
+   The fix is not a wider window.  A window is a guess about a fixture we have
+   an authority for: the same ESPN scoreboard this page already fetches every
+   three minutes says, per competition, ``pre`` / ``in`` / ``post`` and the real
+   start.  So ``order_of_play`` overrides the clock rule wherever it speaks, the
+   elapsed-time bound survives only as the fallback for a fixture ESPN does not
+   list, and **a decided match leaves the slate because ESPN says it is decided
+   — never because enough hours went by.**
+
 4. **Call a row live off its freshest side.**  A slate row publishes a
    *normalized pair*, so both sides are inside the number the reader sees: an
    0.72 that was normalized against a side quoted twenty days ago is a
@@ -88,6 +107,48 @@ MATCH_STALE_AFTER_HOURS = 6.0
 #: A move smaller than this is noise, not a story. Same dead band as the board's
 #: trend direction, so "moved" means one thing across the whole page.
 MOVE_DEAD_BAND = 0.003
+
+
+def _parse_moment(value: Any) -> Optional[datetime]:
+    """An ISO-8601 string -> an aware datetime, or ``None``.
+
+    Naive input is REFUSED rather than assumed UTC.  Every comparison this
+    module makes is against an aware ``now``, so a naive value would raise at
+    the comparison — and the version that silently stamped UTC on it would be
+    guessing a timezone onto a fixture time, which is the exact class of defect
+    this file exists to refuse.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else None
+
+
+def espn_competition_id(matchup: dict[str, Any]) -> Optional[str]:
+    """The ESPN competition id the register pinned for this fixture, if any.
+
+    Matchup-level ``evidence`` FIRST, and that ordering is load-bearing.  The
+    draw ceremony writes ``{"kind": "draw-ceremony-espn",
+    "espn_competition_id": ...}`` onto the matchup itself, and
+    ``apply_resolved_links`` may only rewrite ``sources`` — so the matchup-level
+    id is the one anchor on this fixture the price overlay cannot destroy.  The
+    per-source fallback is real (the ceremony census stamps it there too) but it
+    is exactly the copy a linked block replaces, which on today's payload it has
+    already done 72 times.
+    """
+    pinned = (matchup.get("evidence") or {}).get("espn_competition_id")
+    if pinned:
+        return str(pinned)
+    for block in matchup.get("sources") or []:
+        if not isinstance(block, dict):
+            continue
+        candidate = (block.get("evidence") or {}).get("espn_competition_id")
+        if candidate:
+            return str(candidate)
+    return None
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -176,6 +237,7 @@ def build_match_row(
     now: datetime,
     cutoff: Optional[datetime],
     event_ids: Optional[dict[str, int]] = None,
+    order_of_play: Optional[dict[str, dict[str, Any]]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -197,24 +259,54 @@ def build_match_row(
       started is the worst possible moment to stop answering questions about
       it.
 
+    ``order_of_play`` (Q463) is ESPN's live card, keyed by competition id — see
+    doctrine 3 in the module docstring for why an elapsed-time rule alone read
+    "No matches scheduled" through the whole of the US Open's opening day.
+    ``cutoff`` gates its refusal too, and for the same reason it gates the
+    clock's: only a caller asking "what is on" wants a decided match withheld.
+
     Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
     """
     players = matchup.get("players")
     if not isinstance(players, list) or len(players) != 2:
         return None, "NOT_A_PAIR"
 
-    scheduled = matchup.get("scheduled_date")
-    started: Optional[datetime] = None
-    if isinstance(scheduled, str) and scheduled:
-        try:
-            started = datetime.fromisoformat(scheduled.replace("Z", "+00:00"))
-        except ValueError:
-            started = None
+    started = _parse_moment(matchup.get("scheduled_date"))
+
+    # THE SCOREBOARD FIRST, THE CLOCK ONLY WHERE IT IS SILENT (Q463).
+    #
+    # `comp_id` is an id the register pinned at the draw ceremony, so this is a
+    # dict lookup and none of this page's no-request-time-name-matching posture
+    # is spent on it.
+    comp_id = espn_competition_id(matchup)
+    listed = (order_of_play or {}).get(comp_id) if comp_id else None
+    live_state: Optional[str] = None
+    status_detail: Optional[str] = None
+    start_is_tbd = False
+
+    if listed is not None:
+        live_state = str(listed.get("state") or "") or None
+        status_detail = listed.get("status_detail")
+        start_is_tbd = listed.get("start_is_tbd") is True
+        # ESPN's real start supersedes the register's ceremony-day placeholder
+        # — but only when ESPN has one. A missing or unparseable date must not
+        # blank a start we already hold.
+        started = _parse_moment(listed.get("start_at")) or started
+    elif comp_id and order_of_play and cutoff is not None:
+        # We hold an id, the scoreboard was read, and this fixture is not on it.
+        # That is what a DECIDED match looks like — `post` competitions are
+        # deliberately absent from the map — and it belongs to `build_results`.
+        # Its own reason, never folded into ALREADY_PLAYED: one of these is a
+        # fact from the source and the other is an inference from the clock.
+        return None, "DECIDED"
+
     if started is None:
         return None, "NO_SCHEDULED_START"
-    if cutoff is not None and started < cutoff:
-        # Registered when it was upcoming; it is not upcoming now. The
-        # register is a file and the clock is not.
+    if cutoff is not None and listed is None and started < cutoff:
+        # No scoreboard entry to go on: registered when it was upcoming, and it
+        # is not upcoming now. The register is a file and the clock is not.
+        # Reached by the qualifying draw, whose matchups the ceremony census
+        # never stamped with a competition id.
         return None, "ALREADY_PLAYED"
 
     block = next(
@@ -331,6 +423,24 @@ def build_match_row(
         "draw_label": draw_label(str(matchup.get("draw") or "")),
         "round": matchup.get("round"),
         "scheduled_date": started.isoformat(),
+        # IS THIS ON RIGHT NOW (Q463)? `in_progress` / `upcoming` / `None`, from
+        # ESPN's own state and never from comparing the start to the clock — a
+        # five-set match outlives any elapsed-time window, and "started 7 hours
+        # ago" is not evidence a match is over. `None` means no scoreboard entry
+        # for this fixture, which is honest and is what every caller that passes
+        # no `order_of_play` gets.
+        "live_state": live_state,
+        # ESPN's display text for that state ("2nd Set"). Beside the enum, never
+        # instead of it: a renderer branches on `live_state` and prints this.
+        "status_detail": status_detail,
+        # IS `scheduled_date` A TIME, OR A DAY WEARING ONE (Q463)?
+        #
+        # `True` means the source has not published an order of play for this
+        # fixture, so the timestamp is midnight local — the exact value that,
+        # read as a start, emptied this card for a whole day. A renderer must
+        # print "TBD" and not "12:00 AM": the placeholder was never wrong as
+        # DATA, only as something displayed or compared without this flag.
+        "start_is_tbd": start_is_tbd,
         "sides": views,
         # The honesty fields. A client that ignores every one of them still
         # cannot render a confident number, because `probability` is None
@@ -378,6 +488,7 @@ def build_slate(
     now: datetime,
     max_stale_hours: float = MATCH_STALE_AFTER_HOURS,
     event_ids: Optional[dict[str, int]] = None,
+    order_of_play: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -385,6 +496,15 @@ def build_slate(
     "opening_probability", "observed_at"}``.  Keying on the outcome id the
     register pins — rather than on anything derived from a name at request time
     — is what makes the sides mapping load-bearing instead of decorative.
+
+    ``order_of_play`` is ``espn_tennis.parse_results``' map of ESPN competition
+    id -> ``{"state", "start_at", ...}`` for every competition that is not
+    decided.  Where it speaks it is the authority on both questions the clock
+    rule was guessing at — is this fixture still to come, and when does it
+    actually start — for the reasons set out as doctrine 3 in the module
+    docstring.  ``None`` or ``{}`` leaves every fixture on the elapsed-time
+    fallback, which is what a caller with no scoreboard gets and what this page
+    did before Q463.
     """
     reg = TournamentRegister(register)
     cutoff = now - timedelta(hours=max_stale_hours)
@@ -394,7 +514,13 @@ def build_slate(
 
     for matchup in reg.matchups:
         row, reason = build_match_row(
-            reg, matchup, prices=prices, now=now, cutoff=cutoff, event_ids=event_ids
+            reg,
+            matchup,
+            prices=prices,
+            now=now,
+            cutoff=cutoff,
+            event_ids=event_ids,
+            order_of_play=order_of_play,
         )
         if row is None:
             reason = reason or "UNKNOWN"
@@ -427,6 +553,13 @@ def build_slate(
         "matches": rows,
         "count": len(rows),
         "incoherent": sum(1 for r in rows if not r["coherent"]),
+        # THE TWO NUMBERS THAT MAKE AN EMPTY SLATE DIAGNOSABLE (Q463, gotcha
+        # #53). "Nothing is on" and "the overlay joined nothing" render
+        # identically and need different people; before this, opening day's
+        # empty card carried no signal at all that a whole draw had been
+        # dropped by a clock rule.
+        "in_progress": sum(1 for r in rows if r.get("live_state") == "in_progress"),
+        "order_of_play_listed": len(order_of_play or {}),
         "dropped": dict(sorted(dropped.items())),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,

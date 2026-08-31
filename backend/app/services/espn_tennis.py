@@ -392,16 +392,73 @@ def format_score(competitors: list[dict[str, Any]]) -> Optional[str]:
     )
 
 
+#: ESPN ``status.type.state`` -> the word the slate uses for it.  ``post`` is
+#: absent on purpose: a decided match is a RESULT and has its own section, so
+#: there is no slate word for it and the slate drops it.
+SLATE_STATE_BY_ESPN_STATE: dict[str, str] = {
+    "in": "in_progress",
+    "pre": "upcoming",
+}
+
+#: ESPN's ``status.type.shortDetail`` for a fixture it has not given a time yet.
+#:
+#: This is the marker that keeps a placeholder from being printed as a start.
+#: Measured over the 530 unplayed US Open competitions on the 2026-08-31T01:29Z
+#: scoreboard, it partitions them exactly and three ways at once::
+#:
+#:     shortDetail "TBD"  ->  detail "M/d - 'TBD'"   date 04:00Z   508
+#:     anything else      ->  "Mon, August 31st..."  a real time    22
+#:
+#: ``04:00Z`` is midnight in Flushing Meadows: ESPN's stand-in for "some time
+#: that day", which is also what the register recorded at the draw ceremony and
+#: what an elapsed-time rule then read as a start.  ``detail`` on those rows is
+#: an UNSUBSTITUTED FORMAT STRING — ``M/d - 'TBD'`` — so it is display text only
+#: in the sense that displaying it would be a bug; it is dropped, and the flag
+#: is carried instead.
+TBD_SHORT_DETAIL = "TBD"
+
+
 def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dict[str, Any]:
-    """Decoded ESPN scoreboards -> ``{draw: {pair_key: result}}``.
+    """Decoded ESPN scoreboards -> ``{draw: {pair_key: result}}`` + the day's card.
 
     ``event_name`` selects the tournament out of a scoreboard that also carries
     whatever else is on that week ("Winston-Salem Open", "Abierto GNP
     Seguros").  An exact-substring test rather than a fuzzy one: this module is
     on the same page as the register and inherits its posture — a tournament is
     served because somebody named it, never because a scorer picked it.
+
+    ═══ ``order_of_play``: THE OTHER 80% OF THE PAYLOAD (Q463) ═══
+
+    This function threw away every competition that was not ``post``, which is
+    806 of the 1,250 on the US Open scoreboard, and among them is the answer to
+    "what is on right now".  The slate had no other source for it and said
+    **"No matches scheduled" through the whole of opening day** — measured
+    2026-08-31T01:29Z with 2 matches in progress, 22 already decided and 73
+    still to play.
+
+    So the same pass now also publishes ``order_of_play``: ESPN's competition id
+    -> its state and its REAL start time.  Three properties make it the right
+    key for the slate to join on:
+
+    - **It is an id, not a name.**  The register pins
+      ``matchup.evidence.espn_competition_id`` at the draw ceremony, so the join
+      is a dict lookup and this module's no-request-time-name-matching posture
+      survives intact.
+    - **The start time is ESPN's, not the register's.**  The register recorded
+      the ceremony-day placeholder — midnight ET, ``2026-08-30T04:00Z``, on all
+      96 main-draw fixtures — because that is what ESPN says before an order of
+      play is published.  Once one is, ESPN's ``date`` is the real 15:05Z, and
+      the register file cannot be rewritten every morning.
+    - **``in`` is carried, not collapsed into ``pre``.**  A match in its second
+      set is the single most interesting row on the page, and it is the one row
+      an elapsed-time rule cannot keep (a five-setter outlives any window).
+
+    ``post`` deliberately gets no entry: a decided match belongs to
+    ``build_results``, and its absence from this map is what tells the slate to
+    drop it.
     """
     by_draw: dict[str, dict[str, Any]] = {}
+    order_of_play: dict[str, dict[str, Any]] = {}
     seen_competitions: set[str] = set()
     stats = {
         "events": 0,
@@ -414,6 +471,11 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
         # shrug the page printed before anybody measured which it was.
         "walkovers": 0,
         "retirements": 0,
+        # Q463: the day's card, counted where it is read. An empty slate is
+        # either "nothing is on" or "the overlay joined nothing", and those need
+        # different people (gotcha #53).
+        "in_progress": 0,
+        "upcoming": 0,
     }
 
     for payload in payloads:
@@ -438,6 +500,40 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
 
                     status = ((competition.get("status") or {}).get("type") or {})
                     if status.get("state") not in FINAL_STATES:
+                        # NOT DECIDED — so it is the day's card, not a result.
+                        # Recorded before the `continue` that used to end the
+                        # story here; see the `order_of_play` section of this
+                        # function's docstring.
+                        slate_state = SLATE_STATE_BY_ESPN_STATE.get(
+                            str(status.get("state") or "")
+                        )
+                        if slate_state is not None:
+                            tbd = (
+                                str(status.get("shortDetail") or "")
+                                == TBD_SHORT_DETAIL
+                            )
+                            order_of_play[comp_id] = {
+                                "espn_competition_id": comp_id,
+                                "draw": draw,
+                                "state": slate_state,
+                                # ESPN's own scheduled start — real once an order
+                                # of play is published, midnight-local until
+                                # then. `start_is_tbd` says which, so a caller
+                                # never has to infer it from the hour.
+                                "start_at": competition.get("date"),
+                                "start_is_tbd": tbd,
+                                # Dropped when it is the unsubstituted template
+                                # rather than text about this match. See
+                                # `TBD_SHORT_DETAIL`.
+                                "status_detail": None if tbd else status.get("detail"),
+                                "espn_round": (
+                                    (competition.get("round") or {}).get("displayName")
+                                ),
+                            }
+                            stats[
+                                "in_progress" if slate_state == "in_progress"
+                                else "upcoming"
+                            ] += 1
                         continue
                     stats["final"] += 1
 
@@ -484,7 +580,7 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     elif completion == "retired":
                         stats["retirements"] += 1
 
-    return {"draws": by_draw, "stats": stats}
+    return {"draws": by_draw, "order_of_play": order_of_play, "stats": stats}
 
 
 async def fetch_tournament_results(
