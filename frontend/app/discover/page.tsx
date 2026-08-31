@@ -427,7 +427,10 @@ function FeedItemShell({
   );
 }
 
-function ChallengeModal({
+// Exported for `__tests__/capture/emptyStatesRenderTheirOwnBranch.test.tsx`,
+// which renders the no-cards branch. Three certs blocked a source-only anchor on
+// this empty state; a render needs the component to be reachable.
+export function ChallengeModal({
   items,
   currentIndex,
   completed,

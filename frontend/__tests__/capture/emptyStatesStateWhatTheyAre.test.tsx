@@ -42,6 +42,18 @@
  * router. They are asserted against `renderableText` — the JSX CHILD text of the
  * file, with every attribute subtree, dead expression and comment excluded.
  *
+ * 🔴 UX-P223: THAT IS NO LONGER THE BINDING ANCHOR FOR THE SIX PAGES, AND THE
+ * PARAGRAPHS BELOW ARE KEPT AS THE RECORD OF WHY IT COULD NOT BE.
+ * A THIRD cert (CERT-566) blocked the scoped source anchor by moving the MARKER
+ * along with the sentence, so the scope followed the copy. Three findings of one
+ * shape are a statement about the anchor KIND: a source oracle cannot tell which
+ * BRANCH a reader is standing in, because branch selection is a runtime fact.
+ * The six pages are now genuinely RENDERED, one state each, in
+ * `emptyStatesRenderTheirOwnBranch.test.tsx` — read that file's header for the
+ * measurement that overturned "rendering them would prove less and break more".
+ * Everything here is kept as a cheap second layer; it is no longer the only
+ * thing standing between a rewrite and a regression.
+ *
  * 🔴 TWO CERTS BLOCKED THIS FILE'S ANCHORS, AND BOTH WERE RIGHT.
  *
  *   CERT-558  the anchor was `read(file).toContain(sentence)`, a raw substring
@@ -62,11 +74,15 @@
  * comment, a sibling-branch move, and dropping a site's scope altogether.
  *
  * This is still a source anchor, not a render: it reads what the file WOULD
- * render, not what a browser did. That is this repo's established treatment for
+ * render, not what a browser did. That WAS this repo's established treatment for
  * exactly this shape — see the header of
  * `__tests__/components/dailyChallengeAuditHooks.test.ts`: *"both pages are
  * large client components behind fetch/localStorage, and rendering them would
- * prove less and break more."* TWO of the six are ALSO rendered EMPTY, in the
+ * prove less and break more."* UX-P223 measured that claim instead of inheriting
+ * it and it does not hold: `renderToStaticMarkup` runs in this harness today,
+ * and all six pages render their empty branch in well under a second each. No
+ * DOM is involved and none is available (`jsdom` is absent and npm is
+ * unreachable) — but none is needed. TWO of the six are ALSO rendered EMPTY, in the
  * captures that already own them, and those captures were repointed at the new
  * copy in this same change rather than left spelling the retired sentence:
  *
