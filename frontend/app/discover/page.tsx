@@ -25,7 +25,12 @@ import {
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
-import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import {
+  initialFeedRequest,
+  nextFeedRequest,
+  dedupeById,
+  shouldLoadNextPage,
+} from "@/lib/discover/feedPaging";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
@@ -1106,9 +1111,19 @@ export default function DiscoverPage() {
     setChallengeIndex(next);
   }, [challengeIndex, challengeItems.length, completeChallenge]);
 
-  // Load more from API when client-side items run out
+  // Load more from API when client-side items run out. The predicate lives in
+  // `lib/discover/feedPaging` (LAT-P171) — inline it fired on the FIRST commit,
+  // racing a duplicate `offset=1` feed build against the `offset=0` request that
+  // gates the first card. See `shouldLoadNextPage` for the full account.
   useEffect(() => {
-    if (visibleCount >= processedItems.length - 5 && hasMore && !loadingMore) {
+    if (
+      shouldLoadNextPage({
+        visibleCount,
+        renderedCount: processedItems.length,
+        hasMore,
+        loadingMore,
+      })
+    ) {
       loadNextPage();
     }
   }, [visibleCount, processedItems.length, hasMore, loadingMore, loadNextPage]);

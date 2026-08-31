@@ -36,6 +36,47 @@ export function nextFeedRequest(loadedCount: number): FeedRequestPlan {
 }
 
 /**
+ * Whether the auto-pager should fetch the next page RIGHT NOW.
+ *
+ * LAT-P171. This lived inline in `app/discover/page.tsx` as
+ * `visibleCount >= processedItems.length - 5 && hasMore && !loadingMore`, which
+ * is true on the very first commit: `visibleCount` starts at `FEED_PAGE_LIMIT`
+ * and `renderedCount` is 0, so the test reads `20 >= -5`. A cold load therefore
+ * issued `/api/feed?limit=20&offset=1` — `nextFeedRequest` floors the offset at
+ * 1 — concurrently with the `offset=0` request that gates the first card. That
+ * is a second full feed build, at an offset the backend prewarm does not cover,
+ * returning a page that overlaps page one by 19 of 20 items. The 2026-08-31
+ * browser rail observed it as `net::ERR_ABORTED` on that exact URL.
+ *
+ * 🔴 `renderedCount > 0` IS THE PRECONDITION, NOT A THRESHOLD TWEAK. "The reader
+ * is running out of rendered items" cannot be true before any item has rendered.
+ * It does not risk stranding an exhausted feed: an empty page one closes
+ * `has_more` through the availability decision, so pagination is already over.
+ *
+ * Extracted here rather than left in the component because this harness renders
+ * with `renderToStaticMarkup`, which never runs effects — inline, the predicate
+ * has no test path at all.
+ */
+export function shouldLoadNextPage(state: {
+  /** Cards the reader can currently see. */
+  visibleCount: number;
+  /** Cards already loaded and rendered across every page so far. */
+  renderedCount: number;
+  /** The backend has not yet said the feed is exhausted. */
+  hasMore: boolean;
+  /** A pagination request is already in flight. */
+  loadingMore: boolean;
+}): boolean {
+  const { visibleCount, renderedCount, hasMore, loadingMore } = state;
+  if (renderedCount === 0) return false;
+  if (!hasMore || loadingMore) return false;
+  return visibleCount >= renderedCount - PAGINATION_LOOKAHEAD;
+}
+
+/** How many unseen cards may remain before the next page is fetched. */
+export const PAGINATION_LOOKAHEAD = 5;
+
+/**
  * De-duplicate items by stable id, preserving first-seen order. Defense in depth
  * so a paging/coalesce hiccup can never render the same card twice.
  */
