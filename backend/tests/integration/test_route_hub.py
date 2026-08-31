@@ -11,7 +11,11 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
+# UX-P209: `import pytest` was here and unused — zero `pytest.` references in the
+# file. It predates this branch (proved by re-running ruff on the parent's own
+# bytes), and it was invisible because changed-file Ruff only sees a file
+# somebody touches. This diff touches it, so it is fixed here rather than
+# carried as a red gate. Parked as UX-P209-3: nothing sweeps for the class.
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +308,61 @@ class TestHubUpcoming:
         monkeypatch.setitem(hub._UPCOMING_LISTERS, "ufc", _fake_lister)
         body = (await client.get("/api/hub/mma")).json()
         assert {c["key"] for c in body["upcoming"]} == {"event:ufc:live"}
+
+    async def test_a_card_with_an_unknown_phase_is_still_capped(
+        self, client, monkeypatch
+    ):
+        """UX-P209. The cap used to read `status != "upcoming"` and keep
+        everything else, on the reasoning that live/settled cards are happening
+        now. `unknown` is neither: it says we could not establish the phase, and
+        a card dated a year out is far-future whether or not we know what it is
+        doing. Left alone, the fix one layer down — a lister that stops making
+        an affirmative claim — would have quietly exempted every card it emits
+        from the horizon without one line here changing.
+
+        No capped domain emits `unknown` today (`_HORIZON_CAPPED_DOMAINS` is
+        combat-only, tennis is not in it), so this drives the real route with a
+        substituted lister and pins the rule rather than a current behaviour.
+        The near-dated sibling is the control: it proves the rail did not simply
+        come back empty.
+        """
+        import app.routes.hub as hub
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        far = (now + timedelta(days=365)).isoformat()
+        soon = (now + timedelta(days=5)).isoformat()
+
+        async def _fake_lister(db, *, limit=20):
+            return [
+                {
+                    "key": "event:ufc:unknown-far",
+                    "name": "Phase Unknown, A Year Out",
+                    "domain": "ufc",
+                    "status": "unknown",
+                    "start_date": far,
+                    "is_major": False,
+                    "fight_count": 8,
+                    "latest_commence": far,
+                },
+                {
+                    "key": "event:ufc:unknown-soon",
+                    "name": "Phase Unknown, This Week",
+                    "domain": "ufc",
+                    "status": "unknown",
+                    "start_date": soon,
+                    "is_major": False,
+                    "fight_count": 8,
+                    "latest_commence": soon,
+                },
+            ]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "ufc", _fake_lister)
+        body = (await client.get("/api/hub/mma")).json()
+        keys = {c["key"] for c in body["upcoming"]}
+        assert keys == {"event:ufc:unknown-soon"}, (
+            "an unknown-phase card escaped the horizon cap"
+        )
 
 
 # ============================================================================

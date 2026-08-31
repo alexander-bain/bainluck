@@ -82,6 +82,15 @@ def _markets_with_outcomes(rows, resolution_date=None):
     `resolution_date` defaults to None — the corpus carries none — so the
     date-dependent branches stay quiet unless a test supplies a date on purpose.
     UX-P208 supplies one; see `TestTheRailNeverClaimsATournamentIsLive`.
+
+    ⚠️ THE ROW FALLBACK IS A MERGE AFFORDANCE, NOT A FEATURE (UX-P209).
+    `program/ux-148` needs this same loader to carry per-row dates and writes
+    exactly `r.get("resolution_date")` here; the argument form is what this file
+    needs. Measured 2026-08-31: `tennis_production_corpus.json` carries no
+    `resolution_date` key on either branch and ux-148 does not add one, so the
+    two forms are behaviour-identical on this corpus and the union below is a
+    strict superset of both. That reduces the one real content conflict between
+    the branches to "take ours". CERT-519 H2 is why this is spelled out.
     """
     out = []
     for r in rows:
@@ -92,7 +101,11 @@ def _markets_with_outcomes(rows, resolution_date=None):
                 id=r["id"],
                 volume_24h=r["volume_24h"],
                 status=r["status"],
-                resolution_date=resolution_date,
+                resolution_date=(
+                    resolution_date
+                    if resolution_date is not None
+                    else r.get("resolution_date")
+                ),
                 outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(n)],
             )
         )
@@ -457,6 +470,29 @@ class TestTheRailNeverClaimsATournamentIsLive:
         offenders = [c["name"] for c in await self._concepts() if c["status"] == "live"]
         assert not offenders, f"cards claiming LIVE on a future date: {offenders}"
 
+    async def test_no_card_claims_the_opposite_phase_either(self):
+        """UX-P209 / CERT-519 — THE ASSERTION THE BLOCKED VERSION WAS MISSING.
+
+        The test above passes for two very different rails: one that says "we
+        cannot tell" and one that says "it has not started". UX-P208 shipped the
+        second, and it is a false statement about the same four cards: the US
+        Open was in its third day with two matches in progress while its card
+        would have read **Upcoming**. Removing a wrong claim by installing its
+        negation is not removing a wrong claim.
+
+        So the property under test is not "not live" — it is that the rail makes
+        NO phase claim it cannot support. `unknown` is asserted by name as well,
+        because a rail that started emitting some third affirmative word would
+        satisfy the set test while rendering a label again.
+        """
+        claimed = {
+            c["name"]: c["status"]
+            for c in await self._concepts()
+            if c["status"] in ("live", "upcoming")
+        }
+        assert not claimed, f"cards asserting a phase from a resolution date: {claimed}"
+        assert {c["status"] for c in await self._concepts()} == {"unknown"}
+
     async def test_the_population_did_not_change(self):
         """The fix changes what a card CLAIMS, not which cards exist. A repair
         that quietly emptied the rail would satisfy the assertion above."""
@@ -640,15 +676,24 @@ class TestMergingNeverSubtractsTheDate:
         class exists to prevent, so the proof is rebuilt rather than relaxed:
         the borrowed date is shown to still DRIVE the status, in the one
         direction that is still observable.
+
+        UX-P209 MOVED THE REACHABLE VALUE A SECOND TIME — "upcoming" to
+        "unknown", for the reason CERT-519 gives — and that is exactly why the
+        rebuild above was the right shape. The line below is not the proof and
+        never was; it only records which of the two non-settled values is
+        reachable today. The DISCRIMINATOR is the proof, it is unchanged by
+        either ship, and it would fail on a merge that dropped the date no
+        matter what word the surviving card carries.
         """
         rich, dated, _ = self._pair()
         (card,) = await self._rail([rich, dated])
-        assert card["status"] == "upcoming"
+        # Reachable-value bookkeeping, not the proof — see the docstring.
+        assert card["status"] == "unknown"
 
         # The discriminator. Give the sibling a PAST date and the merged card
         # must settle off the rail — which only the sibling's date can cause,
         # since `rich` alone carries none and stays. A merge that subtracted the
-        # date would leave the card sitting here as "upcoming" forever.
+        # date would leave the card sitting here on the rail forever.
         rich2, _, _ = self._pair()
         past = SimpleNamespace(
             id=58728642,
@@ -663,10 +708,16 @@ class TestMergingNeverSubtractsTheDate:
 
     async def test_alone_the_undated_rendering_still_admits_no_date(self):
         """The control. A date is borrowed from a SIBLING, never invented — with
-        no sibling to read, the rail still says it does not know."""
+        no sibling to read, the rail still says it does not know.
+
+        `start_date is None` is the load-bearing half. The status alongside it
+        is `unknown` (UX-P209, was `upcoming`) and reads correctly now: with no
+        date on any rendering of this tournament there is nothing whatsoever to
+        infer a phase from, which is the state the word exists to name.
+        """
         rich, _, _ = self._pair()
         (card,) = await self._rail([rich])
-        assert card["start_date"] is None and card["status"] == "upcoming"
+        assert card["start_date"] is None and card["status"] == "unknown"
 
     async def test_the_winners_own_date_wins_when_it_has_one(self):
         """Identity's row is still preferred; the sibling is a fallback, not an

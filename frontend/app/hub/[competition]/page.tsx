@@ -28,6 +28,9 @@ import { fetchHub, formatProbability } from "@/lib/api";
 import type { HubResponse, HubUpcoming, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { eventPath } from "@/lib/eventKey";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+// UX-P209: the pill lives outside this route file so a guard can render it and
+// so a second copy cannot quietly become the one that ships. See its header.
+import { StatusPill } from "@/components/hub/HubStatusPill";
 
 // ---------------------------------------------------------------------------
 // Section display config: friendly labels + render order. Sections the backend
@@ -93,21 +96,6 @@ function formatDate(iso: string | null): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-function StatusPill({ status }: { status: string }) {
-  if (status === "live") {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-accent-live">
-        <span className="w-1.5 h-1.5 rounded-full bg-accent-live animate-pulse" />
-        Live
-      </span>
-    );
-  }
-  if (status === "settled") {
-    return <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Final</span>;
-  }
-  return <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-brand">Upcoming</span>;
 }
 
 function UpcomingCard({ card }: { card: HubUpcoming }) {

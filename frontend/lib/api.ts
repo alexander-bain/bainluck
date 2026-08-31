@@ -1605,7 +1605,11 @@ export interface HubUpcoming {
   key: string;
   name: string;
   domain: string;
-  status: "upcoming" | "live" | "settled" | string;
+  // `unknown` is a first-class value, not a gap: the tennis rail has no
+  // trustworthy start signal, so it declares the phase unknown rather than
+  // guessing one (UX-P209 / CERT-519). `HubStatusPill` withholds the label for
+  // it — see that file for why the open `| string` arm must stay silent too.
+  status: "upcoming" | "live" | "settled" | "unknown" | string;
   start_date: string | null;
   is_major: boolean;
   fight_count?: number | null;

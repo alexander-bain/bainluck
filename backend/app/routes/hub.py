@@ -242,13 +242,23 @@ _UPCOMING_HORIZON_DAYS = 90
 
 
 def _within_horizon(concepts: list[dict], horizon_days: int) -> list[dict]:
-    """Drop far-future ``upcoming`` concepts more than ``horizon_days`` ahead.
+    """Drop far-future not-yet-started concepts more than ``horizon_days`` ahead.
 
-    Only ``status == "upcoming"`` cards are capped — live/in-progress/settled cards
-    keep their near-now times. A concept with no parseable date is kept (fail-open:
-    never hide a real card because its date field was missing). Prefers the
-    ``latest_commence`` datetime, falling back to the serialized ``start_date`` ISO
-    string.
+    Only cards that have NOT been asserted to be under way are capped —
+    live/in-progress/settled cards keep their near-now times. A concept with no
+    parseable date is kept (fail-open: never hide a real card because its date
+    field was missing). Prefers the ``latest_commence`` datetime, falling back to
+    the serialized ``start_date`` ISO string.
+
+    UX-P209: the test is "not asserted live", not "says upcoming". It was the
+    latter, and a lister that stops making an affirmative claim would then have
+    slipped every far-future card past the cap without one line of this function
+    changing — the same absence-reads-as-a-value class CERT-519 blocked one layer
+    down. ``unknown`` means we do not know the phase, which is not a reason to
+    exempt a card dated eight months out. No tennis domain reaches here today
+    (``_HORIZON_CAPPED_DOMAINS`` is combat-only), so this is the class being
+    closed where it lives rather than a behaviour change; the guard drives the
+    function directly.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -256,7 +266,7 @@ def _within_horizon(concepts: list[dict], horizon_days: int) -> list[dict]:
     cutoff = now + timedelta(days=horizon_days)
     kept: list[dict] = []
     for c in concepts:
-        if (c.get("status") or "") != "upcoming":
+        if (c.get("status") or "") not in ("upcoming", "unknown"):
             kept.append(c)
             continue
         raw = c.get("latest_commence") or c.get("start_date")

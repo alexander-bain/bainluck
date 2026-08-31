@@ -288,7 +288,23 @@ def tennis_gender(text: str | None) -> str:
 def tennis_status(
     status: str | None, resolution_date, now, *, proximity_live: bool = False
 ) -> str:
-    """upcoming / live / settled from status + resolution proximity.
+    """upcoming / live / settled / unknown from status + resolution proximity.
+
+    ═══ WHY A CALLER WITH NO EVIDENCE GETS "unknown", NOT "upcoming" (UX-P209) ═══
+
+    UX-P208 made "live" opt-in (the reasoning is kept below, and it stands) but
+    returned "upcoming" when the flag was off. CERT-519 blocked that, correctly:
+    the rail had just finished stating that it cannot tell whether a tournament
+    has begun, and then said one had not. `StatusPill` renders every non-live,
+    non-settled status as a confident **Upcoming**, so the fix swapped a false
+    LIVE claim for a false UPCOMING one — on the US Open, which was in its
+    third day and had two matches in progress while the card announced it as
+    forthcoming. One wrong affirmative for another is not a repair.
+
+    Doctrine 1: could-not-check never renders as nothing-to-report. So the
+    no-evidence case now has its own name. `unknown` is not a filtered-out
+    state — those cards stay on the rail, keep their name, date and link, and
+    simply do not claim a phase. `HubStatusPill` withholds the label for it.
 
     ═══ WHY "live" IS OPT-IN AND DEFAULTS TO OFF (UX-P208) ═══
 
@@ -317,6 +333,12 @@ def tennis_status(
     Hence the default: silence means "we cannot tell", and a caller that wants
     the old inference has to name it. `TennisEventAdapter.build_event` passes
     `proximity_live=True` deliberately — see the note at that call site.
+
+    `proximity_live` therefore carries BOTH halves of the authority: a caller
+    that passes it is asserting that resolution proximity is a usable phase
+    signal for its surface, which makes "live" available to it AND makes its
+    "upcoming" a claim it is entitled to make. A caller that does not pass it
+    has no phase signal at all, so it gets neither.
     """
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
         return "settled"
@@ -330,13 +352,15 @@ def tennis_status(
                     return "live"
         except TypeError:
             pass
-    return "upcoming"
+    # Not settled, and no evidence either way unless the caller supplied the
+    # authority to read proximity as a phase (UX-P209 / CERT-519).
+    return "upcoming" if proximity_live else "unknown"
 
 
 async def list_tennis_tournament_concepts(
     db: AsyncSession,
     *,
-    statuses: tuple[str, ...] = ("upcoming", "live"),
+    statuses: tuple[str, ...] = ("upcoming", "live", "unknown"),
     limit: int = 20,
 ) -> list[dict]:
     """Enumerate upcoming/live TENNIS tournament concepts for the /hub/tennis rail
@@ -434,10 +458,12 @@ async def list_tennis_tournament_concepts(
                 end_at = min(sibling_dates)
         # UX-P208: no `proximity_live` here, so the rail never claims a
         # tournament has begun — it has no evidence either way (see
-        # `tennis_status`). Membership is deliberately untouched: the filter
-        # below still reads the same `statuses`, and every card that appeared on
-        # the rail before still appears on it. What changed is only what a card
-        # is willing to assert about itself.
+        # `tennis_status`). UX-P209/CERT-519: and it does not claim the opposite
+        # either, so what it emits here is `unknown`, which is why `unknown` is
+        # in the default `statuses`. Membership is deliberately untouched: every
+        # card that appeared on the rail before still appears on it, in the same
+        # order, with the same name and date. What changed is only what a card
+        # is willing to assert about its own phase.
         status = tennis_status(winner.status, end_at, now)
         if status not in statuses:
             continue
