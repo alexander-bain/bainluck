@@ -123,6 +123,33 @@ export interface PropMarket {
   /** UX-P157. The AND over the card's priced rows — see `lib/liquidity`. */
   liquidity?: string | null;
   liquidity_reasons?: string[] | null;
+
+  /* ── SETTLEMENT (UX-P207) — see `propSettlement` for the whole contract ── */
+
+  /**
+   * The REGISTER's verdict that this question's window has closed.
+   *
+   * ⚠️ **NEVER INFERRED ON THIS SIDE, AND THAT IS THE POINT.** `propIsResolved`
+   * already guesses from a price pinned at a rail, and its own note says why
+   * that is only ever a "looks decided": an illiquid market sitting at 99.9% is
+   * not a settled one. This field is the other thing — a fact the register was
+   * told, by a rule that can see the schedule and the results.
+   *
+   * Absent or false ⇒ every card renders exactly as it did before UX-P207.
+   */
+  settled?: boolean | null;
+  /**
+   * What HAPPENED, as the reader should read it: `"No"`, `"Yes"`, a player's
+   * name.
+   *
+   * A STRING and not an entity key, because the answer is frequently not one of
+   * the card's outcomes. `sinner-competes` carries a single outcome — `Yes` —
+   * so "he did not play" cannot be named by pointing at a row. A key would make
+   * the most common settled answer on this page unsayable.
+   */
+  settled_answer?: string | null;
+  /** When the question closed. Optional; the card reads without it. */
+  settled_at?: string | null;
 }
 
 /**
@@ -305,6 +332,13 @@ export function printedOutcomes(market: PropMarket): PropOutcome[] {
  * fresh.
  */
 export function propIsPresentedAsLive(market: PropMarket): boolean {
+  // AND A SETTLED QUESTION IS NEVER LIVE (UX-P207). The market may still be
+  // quoted — Kalshi was quoting `sinner-competes` twenty minutes before Alex
+  // read the page — but a live QUOTE on a closed question is not a live
+  // ANSWER, and this function is the one every surface asks about the answer.
+  // Putting it here rather than at the card means the section banner, the stale
+  // list and the interest score all stop treating it as an open race too.
+  if (propSettlement(market) !== null) return false;
   // AND AN INCOMPLETE COMPARISON IS NEVER LIVE, whatever it prints. For a field
   // card this is already implied — the missing subject is one of the printed
   // rows and fails the `every` below. It is stated separately so the rule does
@@ -423,6 +457,65 @@ export function propStaleOutcomes(market: PropMarket): PropOutcome[] {
  * copy guard bans it from anything a reader sees.
  */
 export const PROP_QUIET_AFTER_HOURS = 48;
+
+/* =========================================================================
+ * SETTLED MEANS SETTLED (UX-P207 — Alex's standing ruling 2)
+ * =========================================================================
+ *
+ * TOP-PRODUCT-DEFECTS item 6, Alex 2026-08-30: *"Will Sinner actually play?"
+ * still a live question after play began — time-bounded props need settled
+ * rendering.* Measured on the 2026-08-31 payload, ten hours after the main
+ * draw started and after the fixture had been played:
+ *
+ *     key=sinner-competes  price_state=live  probability_is_live=true
+ *     probability=0.01     age_hours=0.34    answer=Yes
+ *
+ * The card was therefore drawn in the confident treatment, with a fresh
+ * timestamp, printing **1%** as the current answer to a question that no longer
+ * had one. Every part of that is locally correct — Kalshi really is quoting
+ * that market, and it really was quoted twenty minutes ago — and the composite
+ * is a page telling the reader that a decided thing is still up in the air.
+ *
+ * ═══ THE SPLIT, AND WHY THIS HALF CANNOT DECIDE ANYTHING ═══
+ *
+ * KNOWING a question has closed needs the schedule and the results: whether the
+ * draw is underway, whether the player took the court. That lives where the
+ * register is written (lane1's rule). This module renders the verdict and
+ * never forms one — see `PropMarket.settled`. The whole of the settled path is
+ * therefore behind an explicit `settled === true`, and a payload without the
+ * field renders byte-identically to the day before this shipped.
+ *
+ * ═══ WHAT SETTLED LOOKS LIKE, WHICH IS THIS LANE'S CALL ═══
+ *
+ * Ruling 2 says heroes show winners and cards show results, so the card stops
+ * printing a probability as its headline and prints the RESULT — the number
+ * moves to a muted line and is labelled as the last reading before the question
+ * closed, because throwing it away would lose real information. And the card
+ * stops carrying freshness: an age chip on a settled question is answering
+ * "is this current?", which is no longer the reader's question and, at
+ * `0.3h`, answers it wrongly.
+ */
+
+export interface PropSettlement {
+  /** The result in words, or `null` when the register knows only THAT it closed. */
+  answer: string | null;
+  /** When it closed. `null` is ordinary — the card reads without it. */
+  at: string | null;
+}
+
+/**
+ * The register's settlement verdict for a card, or `null` for an open question.
+ *
+ * `settled !== true` returns `null` — not `undefined`-tolerant truthiness, an
+ * explicit `true`. A payload that grows a `settled: "yes"` string one day
+ * should render as OPEN and be caught by a guard, rather than quietly switching
+ * every card on the page into the settled treatment.
+ */
+export function propSettlement(market: PropMarket): PropSettlement | null {
+  if (market.settled !== true) return null;
+  const answer = (market.settled_answer ?? "").trim();
+  return { answer: answer === "" ? null : answer, at: market.settled_at ?? null };
+}
 
 /**
  * A settled question. `probability` pinned at the rails is the observable — a

@@ -1094,8 +1094,11 @@ describe("curated props", () => {
     expect(html).toContain("Carlos Alcaraz");
     expect(html).toContain("Jannik Sinner");
     expect(html).toContain("No number yet");
+    // Re-worded by UX-P212 (CERT-537), same claim minus the history: the
+    // present perfect asserted that no number had EVER arrived, which the row's
+    // own `observed_at` can contradict. Subject, hole and tense are unchanged.
     expect(html).toContain(
-      "No number has reached us for Carlos Alcaraz yet, so this comparison is not complete."
+      "We have no number for Carlos Alcaraz yet, so this comparison is not complete."
     );
   });
 

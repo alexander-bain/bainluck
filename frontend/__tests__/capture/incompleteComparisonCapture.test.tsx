@@ -153,8 +153,12 @@ describe("UX-P156 — a comparison is complete or it is not presented as one", (
     expect(html).toContain("Jannik Sinner");
     expect(html).toContain("56%");
     expect(html).toContain("No number yet");
+    // UX-P212 (CERT-537) moved this off the present perfect. "No number HAS
+    // reached us … yet" is a claim about all of history, and `observed_at` —
+    // the newest `captured_at` WHERE `probability IS NOT NULL` — can disprove it
+    // on this exact row shape. The sentence now reports what we HAVE.
     expect(html).toContain(
-      "No number has reached us for Carlos Alcaraz yet, so this comparison is not complete."
+      "We have no number for Carlos Alcaraz yet, so this comparison is not complete."
     );
     expect(html).toContain('data-live="false"');
     expect(html).toContain('data-incomplete="true"');
@@ -260,7 +264,7 @@ ${panel(
     expect(written).toContain('class="tag after"');
     expect(written).toContain('class="tag control"');
     // The artifact must contain the FIX, not three copies of the same panel.
-    expect(written).toContain("No number has reached us for Carlos Alcaraz");
+    expect(written).toContain("We have no number for Carlos Alcaraz");
     expect(written).toContain('data-incomplete="true"');
     expect(written).toContain('data-incomplete="false"');
   });

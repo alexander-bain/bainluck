@@ -16,6 +16,7 @@ import {
   propIncompleteComparison,
   propIsPresentedAsLive,
   propIsResolved,
+  propSettlement,
   type PropMarket,
   type PropOutcome,
 } from "@/lib/tournamentProps";
@@ -210,11 +211,47 @@ function nameList(names: string[]): string {
  * reached us" — for the same reason `FRESHNESS_DEFINITION` is: we cannot tell a
  * market nobody quoted from a market we are not reading, and only one of those
  * two would be the market's fault.
+ *
+ * ⚠️ AND ON A SETTLED CARD IT GOES INTO THE PAST (UX-P211). "…has not reached
+ * us YET" is a claim that the number may still arrive, which is the
+ * open-question posture the settled treatment exists to remove — once the
+ * question has closed the hole is permanent. The fact reported is unchanged and
+ * the subject is still named; only the tense moves, because the hole is the
+ * reader's business either way and dropping the sentence on a settled card
+ * would trade one false impression for another.
+ *
+ * 🔴 BUT NEITHER TENSE MAY CLAIM ANYTHING ABOUT ALL OF HISTORY (UX-P212,
+ * CERT-537). UX-P211 wrote the settled branch as "No number EVER reached us …
+ * so this comparison was NEVER complete", and the cert disproved it from the
+ * payload: `PropOutcome.observed_at` is the newest `captured_at` **where
+ * `probability IS NOT NULL`** (`backend/app/utils/latest_observation.py`), and
+ * `tournaments.py` loads it from a different statement than
+ * `current_probability`. So `probability: null` beside a populated
+ * `observed_at` is ordinary wire data AND positive proof that a number did
+ * reach us — the sentence contradicted a timestamp printed by the same route.
+ *
+ * The open branch said "No number HAS reached us … YET", which is the identical
+ * present-perfect claim disproven by the identical field; the cert rendered
+ * only the settled one, but a fix that repairs the branch a cert happened to
+ * look at and leaves its twin is the one-element-out failure UX-P208→P211 each
+ * paid for. Both now speak about what we HAVE, which is the only thing the card
+ * can see. The tense distinction survives — an open comparison may still be
+ * completed, a closed one may not — because that part was right.
+ *
+ * ⚠️ THE HISTORICAL SPLIT IS AVAILABLE AND DELIBERATELY NOT TAKEN. `observed_at`
+ * would let this distinguish "never had a number" from "had one, lost it". It
+ * is refused because `who` is a NAME LIST: one sentence covering a
+ * never-quoted subject and a lapsed one cannot carry two histories without
+ * splitting into two, and a four-way copy matrix is a larger claim surface than
+ * the defect it answers. Present availability is true in every wire shape.
  */
-function incompleteComparisonNote(incomplete: {
-  subjects: PropOutcome[];
-  undeclared: number;
-}): string {
+function incompleteComparisonNote(
+  incomplete: {
+    subjects: PropOutcome[];
+    undeclared: number;
+  },
+  settled: boolean
+): string {
   const named = incomplete.subjects
     .map((outcome) => outcome.display_name)
     .filter((name) => Boolean(name));
@@ -225,7 +262,9 @@ function incompleteComparisonNote(incomplete: {
         ? "one of the names in it"
         : `${unnamed} of the names in it`
       : `${nameList(named)}${unnamed > 0 ? ` and ${unnamed} more` : ""}`;
-  return `No number has reached us for ${who} yet, so this comparison is not complete.`;
+  return settled
+    ? `We have no number for ${who}, so this comparison is not complete and the question has closed.`
+    : `We have no number for ${who} yet, so this comparison is not complete.`;
 }
 
 function PropCard({
@@ -244,6 +283,13 @@ function PropCard({
   // which is how a card could print rows that had no vote on its own liveness.
   // A comparison's rows come back from here complete, unquoted ones included.
   const rows = answer === null ? printedOutcomes(market) : [];
+  // HOW MANY OF THOSE ROWS ACTUALLY CARRY A NUMBER (UX-P212, CERT-537).
+  // NOT `rows.length`. A comparison deliberately RETAINS its unpriced subjects —
+  // that is the whole of CERT-430's fix — so "there are rows" and "there are
+  // readings" are different questions, and the settled label below was asking
+  // the wrong one: an entirely unpriced settled comparison announced
+  // "· last readings" above two rows that each said `No number`.
+  const readings = rows.filter((outcome) => outcome.probability !== null).length;
   // A DECLARED SUBJECT WE HAVE NO NUMBER FOR (CERT-430, finding 1). Non-null
   // means this card is a comparison with a hole in it: it renders, with every
   // subject, muted, and it says which one is missing.
@@ -263,6 +309,10 @@ function PropCard({
   // hidden, and the label says "looks", because that is the strength of the
   // evidence we have. Real settlement detection is lane1's.
   const looksDecided = propIsResolved(market);
+  // AND A CARD THE REGISTER SAYS IS CLOSED SHOWS A RESULT, NOT A PRICE
+  // (UX-P207, Alex's ruling 2 — settled means settled). Non-null only when the
+  // payload says so; this component infers nothing. See `propSettlement`.
+  const settled = propSettlement(market);
   // THE NON-HOVER PATH ON THE WEB, and the rehearsal for the native one
   // (UX-P157). A phone browser has no hover either, so the same tap that a
   // SwiftUI long-press will perform opens the same sentence here. Card-local
@@ -283,6 +333,7 @@ function PropCard({
       data-freshness={fresh.state}
       data-shape={answer ? "answer" : "field"}
       data-decided={looksDecided ? "true" : "false"}
+      data-settled={settled ? "true" : "false"}
       data-incomplete={incomplete ? "true" : "false"}
     >
       <div className="flex items-baseline justify-between gap-3">
@@ -294,50 +345,122 @@ function PropCard({
               age chip. Both are the card admitting something, and "Last number
               20 hours ago" beside a row that has never had a number at all is
               the less true of the two — it answers a question the reader did
-              not ask yet and hides the one they will. */}
-          {variant !== "sentence" && incomplete === null && (
+              not ask yet and hides the one they will.
+
+              A SETTLED CARD GETS NEITHER (UX-P207). Freshness answers "is this
+              current?", and on a closed question that is not what the reader is
+              asking — worse, on `sinner-competes` it answered `0.3h` and made a
+              decided question look like the freshest thing on the page. The
+              liquidity mark goes with it: whether a book is thin is advice
+              about a trade nobody can make any more. */}
+          {variant !== "sentence" && incomplete === null && settled === null && (
             <FreshnessMark market={market} variant={variant} />
           )}
           {/* UX-P157. Beside the freshness chip and NOT merged into it: a
               question can be quoted four minutes ago on a market nobody will
               trade at, which is the whole of Q428's residual, and one mark
               standing for both facts would make that case unsayable. */}
-          <LiquidityMark
-            facts={market}
-            observedAt={market.observed_at}
-            onReveal={toggleReveal}
-          />
-          {answer && (
-            <span
-              className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
-                isLive ? "text-text-primary" : "text-text-secondary"
-              }`}
-              data-testid="prop-probability"
-            >
-              {formatPropProbability(answer.probability)}
-            </span>
+          {settled === null && (
+            <LiquidityMark
+              facts={market}
+              observedAt={market.observed_at}
+              onReveal={toggleReveal}
+            />
+          )}
+          {/* THE HEADLINE. On an open question it is the probability; on a
+              settled one it is the RESULT, in the same slot and the same
+              weight, because that is the answer to the question printed beside
+              it. A register that knows a card closed but not how it came out
+              prints nothing here rather than a number — see the muted line. */}
+          {settled !== null ? (
+            settled.answer !== null && (
+              <span
+                className="shrink-0 text-[17px] font-bold tracking-tight text-text-primary"
+                data-testid="prop-settled-answer"
+              >
+                {settled.answer}
+              </span>
+            )
+          ) : (
+            answer && (
+              <span
+                className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
+                  isLive ? "text-text-primary" : "text-text-secondary"
+                }`}
+                data-testid="prop-probability"
+              >
+                {formatPropProbability(answer.probability)}
+              </span>
+            )
           )}
         </span>
       </div>
 
-      {(answer || looksDecided) && (
-        <div className="mt-px text-[11.5px] text-text-muted">
-          {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
-          {looksDecided && (
-            <span data-testid="prop-decided">
-              {answer ? " · " : ""}Looks decided
+      {settled !== null ? (
+        <div className="mt-px text-[11.5px] text-text-muted" data-testid="prop-settled">
+          <span>Settled</span>
+          {/* THE LAST READING IS KEPT, AND DEMOTED. Deleting it would throw away
+              a true fact — the market really did close at 1% — and printing it
+              in the headline would make a finished question look open. It is
+              here, muted, said to be the last one. */}
+          {answer && answer.probability !== null && (
+            <span data-testid="prop-settled-last">
+              {" · last reading "}
+              {formatPropProbability(answer.probability)}
+            </span>
+          )}
+          {/* A FIELD CARD KEEPS SEVERAL READINGS, so the numbers are in the list
+              below rather than on this line. Same sentence, same slot, same
+              promise as the answer card's — the two shapes must not read as two
+              different features.
+
+              ⚠️ AND IT IS COUNTED, NOT ASSUMED (UX-P212, CERT-537). This was
+              `rows.length > 0`, which is a test for SUBJECTS; a comparison keeps
+              the ones it has no number for, so the card claimed readings it did
+              not have. The count also decides the plural: one surviving number
+              is a reading, and always pluralising is the same overstatement one
+              order of magnitude down. Zero prints nothing at all — the answer
+              card's `probability !== null` gate, generalised to a list. */}
+          {readings > 0 && (
+            <span data-testid="prop-settled-lasts">
+              {readings === 1 ? " · last reading" : " · last readings"}
+            </span>
+          )}
+          {settled.answer === null && (
+            <span data-testid="prop-settled-unknown">
+              {" · result not published"}
             </span>
           )}
         </div>
+      ) : (
+        (answer || looksDecided) && (
+          <div className="mt-px text-[11.5px] text-text-muted">
+            {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
+            {looksDecided && (
+              <span data-testid="prop-decided">
+                {answer ? " · " : ""}Looks decided
+              </span>
+            )}
+          </div>
+        )
       )}
-      {variant === "sentence" && incomplete === null && (
+      {variant === "sentence" && incomplete === null && settled === null && (
         <FreshnessMark market={market} variant={variant} />
       )}
 
       {/* A field market ranks instead. There is deliberately no headline
           number here: "who will win a slam" has no single answer, and picking
-          the leader to fill the slot is exactly the guess this card refuses. */}
-      {answer === null && rows.length > 0 && (
+          the leader to fill the slot is exactly the guess this card refuses.
+
+          ⚠️ AND ONLY WHILE THE QUESTION IS OPEN (UX-P211, CERT-516). This list
+          was gated on the card's SHAPE alone, so UX-P207's settled treatment —
+          which was built against the one-outcome `sinner-competes` specimen and
+          never met this rendering — silenced the headline, the age chip and the
+          card-level mark while leaving live-styled probabilities and a mark per
+          row directly underneath a printed result. The settled version of the
+          list is below; it holds the same rows and makes no claim to be
+          current. */}
+      {answer === null && settled === null && rows.length > 0 && (
         <ol className="mt-1.5 space-y-0.5" data-testid="prop-field">
           {rows.map((outcome) => (
             <li
@@ -385,13 +508,52 @@ function PropCard({
         </ol>
       )}
 
+      {/* THE SAME ROWS, AFTER THE QUESTION CLOSED (UX-P211).
+
+          Not a deletion, for the reason the muted line above already gives on
+          the answer card: the market really did close at those numbers, and
+          throwing that away loses a true fact. What it loses instead is every
+          signal that says "act on this" — no liquidity mark, because whether a
+          book is thin is advice about a trade nobody can make; no confident
+          type, because none of these is current however recently it was quoted;
+          and no "yet" on a subject we never got a number for, because there is
+          no longer a later in which one could arrive. */}
+      {answer === null && settled !== null && rows.length > 0 && (
+        <ol className="mt-1.5 space-y-0.5" data-testid="prop-settled-field">
+          {rows.map((outcome) => (
+            <li
+              key={outcome.entity_key}
+              className="flex items-baseline justify-between gap-3 text-[12px]"
+              data-testid="prop-settled-field-row"
+              data-priced={outcome.probability === null ? "false" : "true"}
+            >
+              <span className="min-w-0 truncate text-text-secondary">
+                {outcome.display_name}
+              </span>
+              {outcome.probability === null ? (
+                <span
+                  className="shrink-0 text-text-muted"
+                  data-testid="prop-settled-field-missing"
+                >
+                  No number
+                </span>
+              ) : (
+                <span className="shrink-0 tabular-nums text-text-secondary">
+                  {formatPropProbability(outcome.probability)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+
       {incomplete && (
         <p
           className="mt-1.5 text-[11.5px] leading-snug text-accent-warning"
           data-testid="prop-incomplete"
           data-missing={incomplete.subjects.length + incomplete.undeclared}
         >
-          {incompleteComparisonNote(incomplete)}
+          {incompleteComparisonNote(incomplete, settled !== null)}
         </p>
       )}
 
@@ -539,20 +701,35 @@ export default function TournamentProps({
   // standing over a section of live numbers is a footnote about nothing.
   // An incomplete comparison prints its own sentence instead of an age chip, so
   // it does not summon the definition of an age nothing on screen is showing.
+  //
+  // ⚠️ AND NEITHER DOES A SETTLED CARD (UX-P211), for exactly that reason and
+  // not a new one. A settled card is never `fresh` — `propIsPresentedAsLive`
+  // refuses it — so it satisfied this test while having already dropped its age
+  // chip, and the section printed the definition of a unit that appeared
+  // nowhere beneath it.
   const anyQuiet = shown.some(
     (market) =>
       propIncompleteComparison(market) === null &&
+      propSettlement(market) === null &&
       propFreshness(market).state !== "fresh"
   );
   // The same gate for the mark, over the CARD and every row it prints: a field
   // card can be unmarked itself while a tail row inside it carries a mark, and
   // an unexplained symbol is worse than the number it sits beside.
+  //
+  // ⚠️ A SETTLED CARD CONTRIBUTES NEITHER (UX-P211, CERT-516's second half).
+  // This scanned every card's outcomes regardless of settlement, so a section
+  // whose only marks had just been suppressed still printed the legend for
+  // them — an explainer for a symbol that is not on screen, about a trade
+  // nobody can make. The card gate and this one have to agree or one of them
+  // is describing a page that is not being rendered.
   const anyThin = shown.some(
     (market) =>
-      isMarked(readLiquidity(market.liquidity)) ||
-      (market.outcomes ?? []).some((outcome) =>
-        isMarked(readLiquidity(outcome.liquidity))
-      )
+      propSettlement(market) === null &&
+      (isMarked(readLiquidity(market.liquidity)) ||
+        (market.outcomes ?? []).some((outcome) =>
+          isMarked(readLiquidity(outcome.liquidity))
+        ))
   );
 
   return (

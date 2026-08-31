@@ -37,12 +37,23 @@
 
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
+import type { PlayerImage } from "./slate";
 
 export interface ResultPlayer {
   entity_key: string;
   display_name: string;
   seed: number | null;
   is_winner: boolean;
+  /**
+   * The register-pinned face + flag (ruling 8, wired here by UX-P206).
+   *
+   * The SAME block `build_slate` puts on a live row and `build_board` puts on
+   * a contender — one pin per player, read by `player_image`, so the person
+   * who was on the page an hour ago is the same person in the result. Optional
+   * so a payload cached from before the field existed still renders: the
+   * avatar falls through to initials rather than throwing.
+   */
+  image?: PlayerImage | null;
   /**
    * What the market gave this player BEFORE the match (UX-P146), 0-1, or
    * `null` where no match market was ever registered for the pair.
@@ -97,6 +108,36 @@ export interface TournamentResults {
   source_errors: string[];
   /** How many `matches` carry a pre-match probability (UX-P146). */
   with_prematch?: number;
+  /**
+   * Ruling 8's coverage gate, counted in PLAYER SLOTS (`2 * count`), not rows
+   * (UX-P206). `player_slots - with_face - with_flag` is the initials tail.
+   * Optional on payloads cached from before the fields existed.
+   */
+  player_slots?: number;
+  with_face?: number;
+  with_flag?: number;
+}
+
+/**
+ * Ruling 8's gate, computed rather than remembered (UX-P206).
+ *
+ * Alex: *"enable ONLY if coverage is ~complete per draw — half-covered looks
+ * worse than none."* The thing the gate is about is whether the COLUMN is
+ * uniform, and a flag makes it uniform exactly as a face does — that is the
+ * whole reason `PlayerAvatar` has a flag step. So the fraction that matters is
+ * any-image, not face.
+ *
+ * Returns `null` when the payload does not carry the counts (an old cache), so
+ * a caller can tell "not measured" from "measured at zero" — gotcha #53.
+ */
+export function resultsImageCoverage(
+  results: TournamentResults | null | undefined
+): { slots: number; withImage: number; withFace: number; fraction: number } | null {
+  const slots = results?.player_slots;
+  if (typeof slots !== "number" || slots <= 0) return null;
+  const withFace = results?.with_face ?? 0;
+  const withImage = withFace + (results?.with_flag ?? 0);
+  return { slots, withImage, withFace, fraction: withImage / slots };
 }
 
 /**

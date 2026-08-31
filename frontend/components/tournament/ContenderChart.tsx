@@ -8,6 +8,7 @@ import {
   TIMEFRAMES,
   axisSpanDays,
   axisTicks,
+  axisWindow,
   chartGeometry,
   chartSeriesFor,
   chartableRows,
@@ -78,9 +79,9 @@ const HEIGHT = 96;
  *
  * `axisTicks` emits one set of ticks for every width and tags each with the
  * narrowest plot its label fits in; this is the half that spends the tag. The
- * axis therefore goes 4 labels → 7 → 13 as the window grows, from a single
- * server render, with no viewport measurement anywhere — see `axisTicks` for
- * the slot arithmetic and the clearance budget behind those three counts.
+ * axis therefore gets denser as the window grows, from a single server render,
+ * with no viewport measurement anywhere — see `axisTicks` for the step ladder
+ * and the label pitch that decide how many labels each width earns.
  *
  * `block` rather than `inline` on the way back because these classes are shared
  * by an SVG `<line>` and an HTML `<span>`: SVG renders on any display value
@@ -92,11 +93,23 @@ const HEIGHT = 96;
  * chart is, not two.
  */
 const TICK_TIER_VISIBILITY: Record<AxisTickTier, string> = {
-  end: "",
   major: "",
   wide: "hidden lg:block",
   fine: "hidden 2xl:block",
 };
+
+/**
+ * Half a `26 Aug` label as a fraction of the NARROWEST plot (~15 of 358px).
+ *
+ * A centred label needs this much room on each side or it hangs off the card.
+ * UX-P207 made this a position test rather than an index test: the axis used to
+ * place its first and last ticks ON the domain's ends, so "first in the array"
+ * and "at the left edge" were the same thing. They are not any more — the grid
+ * is anchored on the latest reading, so the leftmost tick can sit a little way
+ * in and wants centring like any other. Keying the alignment off the index
+ * would shove that label ~15px right of the rule it belongs to.
+ */
+const LABEL_HALF_FRACTION = 15 / 358;
 
 export default function ContenderChart({
   rows,
@@ -158,6 +171,9 @@ export default function ContenderChart({
   // live possibilities.
   const ticks = axisTicks(geometry, timeframe);
   const spanDays = axisSpanDays(geometry);
+  // NOT named `window` — this is a client component and shadowing the global
+  // inside a render body is a trap for whoever adds a `window.matchMedia` here.
+  const axisRange = axisWindow(geometry);
   const anyLive = series.some((entry) => entry.isLive);
   const atCeiling = series.length >= MAX_SERIES_COUNT;
   const pickerVisible = pickerExpanded
@@ -255,8 +271,8 @@ export default function ContenderChart({
           preserveAspectRatio="none"
           role="img"
           aria-label={
-            spanDays !== null
-              ? `Probability history for ${series.length} contenders over ${spanDays} days, ${ticks[0]?.label} to ${ticks[ticks.length - 1]?.label}`
+            spanDays !== null && axisRange !== null
+              ? `Probability history for ${series.length} contenders over ${spanDays} days, ${axisRange.from} to ${axisRange.to}`
               : `Probability history for ${series.length} contenders`
           }
           data-testid="chart-svg"
@@ -323,9 +339,8 @@ export default function ContenderChart({
           data-testid="chart-axis"
           data-ticks={ticks.length}
         >
-          {ticks.map((tick, index) => {
-            const first = index === 0;
-            const last = index === ticks.length - 1;
+          {ticks.map((tick) => {
+            const fraction = tick.x / WIDTH;
             return (
               <span
                 key={tick.date}
@@ -334,12 +349,14 @@ export default function ContenderChart({
                 }`}
                 data-tier={tick.tier}
                 style={{
-                  left: `${(tick.x / WIDTH) * 100}%`,
-                  transform: first
-                    ? "none"
-                    : last
-                      ? "translateX(-100%)"
-                      : "translateX(-50%)",
+                  left: `${fraction * 100}%`,
+                  // By POSITION, not by index — see LABEL_HALF_FRACTION.
+                  transform:
+                    fraction <= LABEL_HALF_FRACTION
+                      ? "none"
+                      : fraction >= 1 - LABEL_HALF_FRACTION
+                        ? "translateX(-100%)"
+                        : "translateX(-50%)",
                 }}
                 data-testid="chart-axis-label"
                 data-date={tick.date}

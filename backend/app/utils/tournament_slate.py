@@ -865,6 +865,9 @@ def build_results(
     # register still pins the market that published it.
     prematch_by_pair = _prematch_by_pair(reg, prices or {})
     with_prematch = 0
+    # Which avatar step each of the two slots on each row lands on (UX-P206).
+    with_face = 0
+    with_flag = 0
 
     for draw, found_by_pair in sorted(by_draw.items()):
         for found in found_by_pair.values():
@@ -890,6 +893,13 @@ def build_results(
             if prematch:
                 with_prematch += 1
 
+            for entry in entries:
+                image = player_image(entry)
+                if image and image.get("url"):
+                    with_face += 1
+                elif image and image.get("flag_url"):
+                    with_flag += 1
+
             rows.append({
                 "matchup_key": matchup_by_pair.get(
                     (draw, tuple(sorted(keys))),
@@ -905,6 +915,13 @@ def build_results(
                 "players": [
                     {"entity_key": key, "display_name": entry.get("display_name"),
                      "seed": entry.get("seed"), "is_winner": key == winner_key,
+                     # THE PLAYER'S FACE (UX-P206). The register-pinned block,
+                     # through the same `player_image` the board and the slate
+                     # read — so a finished match draws the same person, from
+                     # the same verified pin, as the row that was live an hour
+                     # ago. `None` where the register holds neither a picture
+                     # nor a flag, which the renderer turns into initials.
+                     "image": player_image(entry),
                      # WHAT THE MARKET SAID BEFORE IT (UX-P146). `None` where no
                      # match market was ever registered for this pair — an
                      # absence the section states rather than fills in. See
@@ -945,6 +962,18 @@ def build_results(
         # section prints this ratio: a prior shown on 12 rows and absent on 64
         # reads as a bug unless the page says which it is.
         "with_prematch": with_prematch,
+        # IMAGE COVERAGE, IN PLAYER SLOTS, NOT ROWS (UX-P206).
+        #
+        # Alex's ruling-8 gate is coverage — "enable ONLY if coverage is
+        # ~complete per draw; half-covered looks worse than none" — and a gate
+        # nobody can read after the fact is a gate that gets re-argued from
+        # memory.  These three sum to `2 * count` and say which of the three
+        # avatar steps each slot landed on, so the day the register loses a
+        # tranche of pins the payload says so instead of the page quietly
+        # filling with grey initials.
+        "player_slots": 2 * len(rows),
+        "with_face": with_face,
+        "with_flag": with_flag,
         "source_competitions": (results or {}).get("stats", {}).get("final", 0),
         "source_scored": (results or {}).get("stats", {}).get("scored", 0),
         # UX-P147: how the unscored ones ended, counted at the source rather
