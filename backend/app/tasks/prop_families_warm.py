@@ -241,6 +241,21 @@ def coverage_ceiling_teams(period_seconds: int = 3600) -> int:
 async def _refresh_prop_families(team_id: int, cap: int, token: str | None = None) -> dict:
     """Rebuild and re-cache ONE team's prop families. Never raises.
 
+    🔴 THIS IS THE DESTINATION OF "SERVE NOW, COMPLETE IN THE BACKGROUND", SO ITS
+    TERMINAL IS PART OF THE CONTRACT (CERT-557). LAT-P164 gave the cold reader a
+    2.5 s budget and let it DEFER the roster branch, on the promise that the
+    rebuild dispatched behind it runs unbudgeted and publishes the whole answer.
+    A dispatch does not keep that promise on its own — the dispatched task has to
+    tell the truth about whether it kept it. Three terminals, and the middle one
+    is the one this cert added:
+
+    ==========  ===============================================================
+    complete    the envelope came back `quality: full`. `rebuilt: 1`.
+    partial     the build wrote, and fell short — it lost a branch to the 12 s
+                expiry. `rebuilt: 0`, with `quality_reasons` naming the branch.
+    failed      the build produced nothing storable, or threw.
+    ==========  ===============================================================
+
     `token` is the refresh-lock owner token the DISPATCHER acquired: the acquire
     and the release live in different processes, so ownership travels in the
     message (#1678 finding 1). It is optional only so a message already in the
@@ -261,10 +276,15 @@ async def _refresh_prop_families(team_id: int, cap: int, token: str | None = Non
 
     from app.routes.prop_families import (
         build_and_cache_prop_families,
+        envelope_quality,
         prop_families_cache_keys,
     )
     from app.tasks.base import get_task_session
-    from app.utils.event_concept_cache import get_client, release_refresh_lock
+    from app.utils.event_concept_cache import (
+        QUALITY_FULL,
+        get_client,
+        release_refresh_lock,
+    )
     from sqlalchemy import select
 
     from app.models import Team
@@ -287,7 +307,7 @@ async def _refresh_prop_families(team_id: int, cap: int, token: str | None = Non
                     "reason": "unknown_team",
                     "rebuilt": 0,
                 }
-            _payload, degraded = await asyncio.wait_for(
+            _stamped, degraded = await asyncio.wait_for(
                 build_and_cache_prop_families(team, db, cap, rc),
                 timeout=PER_TEAM_TIMEOUT_SECONDS,
             )
@@ -303,7 +323,50 @@ async def _refresh_prop_families(team_id: int, cap: int, token: str | None = Non
         # write a degraded payload, so the mirror this task exists to keep alive
         # is exactly as old as it was before.
         return {"terminal": "failed", "team_id": team_id, "rebuilt": 0, "degraded": True}
-    return {"terminal": "complete", "team_id": team_id, "rebuilt": 1}
+
+    # 🔴 `degraded` IS NOT THE COMPLETION TEST, AND READING IT AS ONE WAS A FALSE
+    # GREEN (CERT-557). `degraded` is True only when the build produced NOTHING
+    # storable. A build that kept the cheap rows and lost the roster branch to the
+    # 12 s expiry is `degraded=False` — and it is also `quality: partial`, carrying
+    # `branch_timeout:outcome_roster`, with real content missing from what it just
+    # wrote to the primary. This function used to stamp that `terminal: complete,
+    # rebuilt: 1`.
+    #
+    # That matters more here than anywhere else in the tier, because THIS task is
+    # the destination of the whole "serve a budgeted page now, complete it in the
+    # background" contract the reader budget is built on. If the completion can
+    # fall short and report success, the deferral is not a deferral — it is a loss
+    # with a green tick on it, and `task_verdict` (this task is in
+    # `ENFORCED_TASKS`) is looking straight at the tick.
+    #
+    # `partial`, not `failed`: the rebuild ran, it wrote, and the page is better
+    # than it was. What it did not do is COMPLETE, and `partial` is the terminal
+    # this repo already uses for a run that fell short of its contract without
+    # erroring (CERT-515/518, one function below). `rebuilt` stays 0 — it counts
+    # completed rebuilds, and a caller reading `rebuilt` to answer "is this key
+    # settled" must get "no".
+    quality, reasons = envelope_quality(_stamped)
+    if quality != QUALITY_FULL:
+        logger.warning(
+            "refresh_prop_families: rebuild for team %s fell short (%s: %s) — "
+            "reported partial, not complete",
+            team_id, quality, ",".join(reasons),
+        )
+        return {
+            "terminal": "partial",
+            "team_id": team_id,
+            "rebuilt": 0,
+            "quality": quality,
+            "quality_reasons": reasons,
+            # The primary WAS written — a partial with content is still served,
+            # and an operator reading this summary must not conclude the key was
+            # left untouched. "Fell short" and "did nothing" are different facts
+            # (gotcha #53), and only naming the first one hides the second.
+            # `quality is None` means no envelope came back at all, which is the
+            # one shape on this branch that really did store nothing.
+            "stored": quality is not None,
+        }
+    return {"terminal": "complete", "team_id": team_id, "rebuilt": 1, "quality": quality}
 
 
 def _read_cursor(rc) -> int:
@@ -332,8 +395,11 @@ async def _warm_prop_families() -> dict:
 
     Returns the verdict the beat reports: how many teams the predicate selected,
     how many were rebuilt, how many were skipped because a reader already held
-    that team's refresh lock (the correct outcome, not a miss), and how many were
-    deferred to the next pass because the budget ran out.
+    that team's refresh lock (the correct outcome, not a miss), how many were
+    deferred to the next pass because the budget ran out, and — CERT-563 — how
+    many WROTE but fell short of `quality: full`. `rebuilt` counts completed
+    rebuilds only; a build that lost a branch to the 12 s expiry is `partial`,
+    and any `partial` downgrades the pass terminal below green.
     """
     import asyncio
     import time
@@ -345,10 +411,12 @@ async def _warm_prop_families() -> dict:
     from app.routes.prop_families import (
         _INCLUDED_STATUSES,
         build_and_cache_prop_families,
+        envelope_quality,
         prop_families_cache_keys,
     )
     from app.tasks.base import get_task_session
     from app.utils.event_concept_cache import (
+        QUALITY_FULL,
         acquire_refresh_lock,
         get_client,
         release_refresh_lock,
@@ -471,6 +539,10 @@ async def _warm_prop_families() -> dict:
     locked_out = 0
     failed = 0
     deferred = 0
+    # Teams whose build WROTE and fell short of `quality: full` — see the
+    # envelope read in the loop below and the terminal at the bottom.
+    partial = 0
+    partial_reasons: set[str] = set()
     last_done: int | None = None
 
     for position, team_id in enumerate(ordered):
@@ -503,7 +575,40 @@ async def _warm_prop_families() -> dict:
             if degraded:
                 failed += 1
             else:
-                rebuilt += 1
+                # 🔴 THE PAYLOAD IS READ, NOT DISCARDED (CERT-563). This branch
+                # used to be `rebuilt += 1` on the strength of `degraded` alone,
+                # and `degraded` is True only when the build stored NOTHING. A
+                # build that keeps the cheap rows and loses the roster branch to
+                # the 12 s expiry is `degraded=False` AND `quality: partial`
+                # carrying `branch_timeout:outcome_roster` — real prop content
+                # missing from what it just wrote to the mirror. The pass counted
+                # that as a rebuild and returned `terminal: complete`, and this
+                # task is in `ENFORCED_TASKS`, so `verdict_for` read the tick and
+                # called the pass an AUTHORITATIVE green.
+                #
+                # It is the same false green CERT-557 found in
+                # `_refresh_prop_families` — left live in the SIBLING producer,
+                # which is the one that keeps the user-facing 24 h mirror warm.
+                # Fixing one reader of a two-reader field is why `envelope_quality`
+                # is exported: both callers now ask the same function the same
+                # question.
+                #
+                # `rebuilt` counts COMPLETED rebuilds and nothing else, because a
+                # caller reading `rebuilt` to answer "is this team settled" must
+                # get "no". The team is counted, by name of the branch it lost, in
+                # `partial`/`partial_reasons`, and the terminal at the bottom of
+                # the pass turns that into a non-green verdict.
+                _quality, _reasons = envelope_quality(_payload)
+                if _quality != QUALITY_FULL:
+                    partial += 1
+                    partial_reasons.update(_reasons)
+                    logger.warning(
+                        "warm_prop_families: rebuild for team %s fell short "
+                        "(%s: %s) — counted partial, not rebuilt",
+                        team_id, _quality, ",".join(sorted(_reasons)),
+                    )
+                else:
+                    rebuilt += 1
         except Exception:
             # One bad team must never wipe the pass (gotcha #42).
             logger.warning(
@@ -524,7 +629,7 @@ async def _warm_prop_families() -> dict:
     # (`app/utils/task_verdict.py`).
     if not ordered:
         terminal = "complete"
-    elif rebuilt or (locked_out and not failed):
+    elif rebuilt or partial or (locked_out and not failed):
         terminal = "complete"
     else:
         terminal = "failed"
@@ -561,7 +666,17 @@ async def _warm_prop_families() -> dict:
     #
     # `partial` names both cases. A real `failed` is never softened: the
     # downgrade only ever applies to a terminal that would otherwise read green.
-    if terminal == "complete" and (coverage_exceeded or failed):
+    #
+    # 🔴 AND A BUILD THAT FELL SHORT IS THE THIRD CASE ON THE SAME LINE
+    # (CERT-563). `coverage_exceeded` is "the rotation cannot get round the set"
+    # and `failed` is "a team threw"; `partial` is "a team's build wrote content
+    # with a branch missing from it". All three leave a page a person can reach
+    # holding less than the tier promises, and all three used to be outvoted by a
+    # single healthy sibling. They join the SAME downgrade rather than getting a
+    # branch of their own precisely so a future counter cannot be added beside
+    # them and forgotten here — that omission is what CERT-518 and CERT-521 each
+    # blocked on, one counter at a time.
+    if terminal == "complete" and (coverage_exceeded or failed or partial):
         terminal = "partial"
 
     return {
@@ -570,6 +685,16 @@ async def _warm_prop_families() -> dict:
         "rebuilt": rebuilt,
         "locked_out": locked_out,
         "failed": failed,
+        # Builds that WROTE and fell short. `rebuilt` counts completed rebuilds
+        # only, so a reader adding `rebuilt + locked_out + failed` and expecting
+        # the slice size needs this term to balance — "fell short" and "did
+        # nothing" are different facts and only naming the second hides the first
+        # (gotcha #53).
+        "partial": partial,
+        # WHICH branch was missing, deduped and ordered so the summary is stable
+        # enough to diff between passes. Bounded by the branch vocabulary, not by
+        # the team count.
+        "partial_reasons": sorted(partial_reasons),
         "deferred": deferred,
         "truncated": truncated,
         # 0 on a healthy pass; the number of teams the rotation can no longer

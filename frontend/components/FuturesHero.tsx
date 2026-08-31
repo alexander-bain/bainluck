@@ -5,6 +5,16 @@ interface FuturesHeroProps {
   probability: number | null;
   outcomeName?: string;
   movement?: number | null;
+  /**
+   * UX-P233 (board item 11) — the window the `movement` figure covers, e.g.
+   * "last move · Aug 28". The pill used to render a bare `↓ 71.5 pts` with no
+   * baseline at all, directly above a caption reading "Amazon up 13.5 pts from
+   * opening" — two true numbers about one outcome that read as a contradiction.
+   * Built by `movementWindowLabel` in `lib/futuresDetailDisplay`, which is also
+   * where the reason it may never say "24h" is written down.
+   *
+   * This prop already existed and was never passed by any caller.
+   */
   movementLabel?: string;
   sourceCount?: number;
   resolveDate?: string;
@@ -103,14 +113,25 @@ export function FuturesHero({
               </div>
               <div className="absolute right-0 bottom-2 flex flex-col items-end gap-1.5">
                 {movementStr && (
-                  <span
-                    className={`inline-flex items-center font-mono text-[13px] font-bold px-2 py-0.5 rounded-full ${
-                      movementUp
-                        ? "text-accent-live bg-accent-live/15"
-                        : "text-accent-danger bg-accent-danger/15"
-                    }`}
-                  >
-                    {movementStr}
+                  <span className="flex flex-col items-end gap-0.5">
+                    <span
+                      data-testid="hero-movement"
+                      className={`inline-flex items-center font-mono text-[13px] font-bold px-2 py-0.5 rounded-full ${
+                        movementUp
+                          ? "text-accent-live bg-accent-live/15"
+                          : "text-accent-danger bg-accent-danger/15"
+                      }`}
+                    >
+                      {movementStr}
+                    </span>
+                    {movementLabel && (
+                      <span
+                        data-testid="hero-movement-window"
+                        className="text-[11px] text-text-muted"
+                      >
+                        {movementLabel}
+                      </span>
+                    )}
                   </span>
                 )}
                 {outcomeName && (
@@ -125,12 +146,13 @@ export function FuturesHero({
                   <span className="text-[64px]">{pct}</span>
                   <span className="text-[28px]">%</span>
                 </div>
-                <div className="flex items-center gap-2 mt-2">
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
                   {outcomeName && (
                     <span className="text-[13px] font-semibold text-text-primary">{outcomeName}</span>
                   )}
                   {movementStr && (
                     <span
+                      data-testid="hero-movement"
                       className={`inline-flex items-center font-mono text-[12px] font-bold px-2 py-0.5 rounded-full ${
                         movementUp
                           ? "text-accent-live bg-accent-live/15"
@@ -138,6 +160,14 @@ export function FuturesHero({
                       }`}
                     >
                       {movementStr}
+                    </span>
+                  )}
+                  {movementStr && movementLabel && (
+                    <span
+                      data-testid="hero-movement-window"
+                      className="text-[11px] text-text-muted"
+                    >
+                      {movementLabel}
                     </span>
                   )}
                 </div>

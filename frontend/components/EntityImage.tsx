@@ -8,6 +8,14 @@ import {
   flagUrl,
 } from "@/lib/images";
 
+/**
+ * The "we have no colour for this" slate. UX-P235 keys the placeholder treatment
+ * off this exact value: a caller that passes a REAL colour (a team's own) is giving
+ * information and keeps the solid disc; the default is a non-answer and becomes a
+ * visible placeholder instead of impersonating a brand mark.
+ */
+const DEFAULT_FALLBACK_COLOR = "#6B7280";
+
 interface EntityImageProps {
   /** Image source type */
   type: "player" | "wikipedia" | "flag";
@@ -36,7 +44,7 @@ export default function EntityImage({
   name,
   espnId,
   sport,
-  fallbackColor = "#6B7280",
+  fallbackColor = DEFAULT_FALLBACK_COLOR,
   size = 24,
   className = "",
 }: EntityImageProps) {
@@ -88,7 +96,25 @@ export default function EntityImage({
     );
   }
 
-  // Fallback: colored initial circle
+  // UX-P235 (board item 14) — THE FALLBACK NOW LOOKS LIKE A FALLBACK.
+  //
+  // Alex: *"love that when I click in it tries to show logos for the companies"* —
+  // the ambition stays. But the old chip was a SOLID slate disc with bold white
+  // initials, which on a row of real brand marks reads as a designed logo tile:
+  // Amazon's grey "A" looked like Amazon's mark rather than like "we don't know".
+  // A wrong logo is worse than no logo, and a fallback that impersonates one is a
+  // quiet version of the same lie.
+  //
+  // So: a muted outlined chip, not a filled disc. Same size and position, so
+  // nothing shifts; visibly a placeholder, so a reader can tell at a glance which
+  // rows we actually resolved. `aria-label` says so too, because the initials
+  // alone are not an accessible name for the entity.
+  //
+  // 🔴 UNLESS THE CALLER GAVE US A REAL COLOUR, AND THAT DISTINCTION IS THE POINT.
+  // `RelatedFutures` and `TeamPropFamilies` pass a TEAM colour: that disc is not
+  // impersonating a logo, it IS information — the team's own colour, which a reader
+  // recognises. Only the default slate is a non-answer dressed as an answer, so
+  // only the default becomes a placeholder. Both paths keep the same geometry.
   const initials = name
     .split(" ")
     .map((w) => w.charAt(0))
@@ -96,14 +122,24 @@ export default function EntityImage({
     .slice(0, 2)
     .toUpperCase();
 
+  const isPlaceholder = fallbackColor === DEFAULT_FALLBACK_COLOR;
+
   return (
     <div
-      className={`rounded-full flex-shrink-0 flex items-center justify-center font-bold text-white/90 ${className}`}
+      role="img"
+      aria-label={isPlaceholder ? `${name} (no logo available)` : name}
+      title={name}
+      data-testid={isPlaceholder ? "entity-image-placeholder" : "entity-image-initials"}
+      className={`rounded-full flex-shrink-0 flex items-center justify-center ${
+        isPlaceholder
+          ? "font-medium border border-dashed border-surface-border bg-surface-elevated text-text-muted"
+          : "font-bold text-white/90"
+      } ${className}`}
       style={{
         width: size,
         height: size,
-        backgroundColor: fallbackColor,
-        fontSize: Math.max(8, size * 0.38),
+        ...(isPlaceholder ? {} : { backgroundColor: fallbackColor }),
+        fontSize: Math.max(8, size * (isPlaceholder ? 0.34 : 0.38)),
       }}
     >
       {initials}

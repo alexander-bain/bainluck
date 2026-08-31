@@ -827,6 +827,18 @@ _DEDUP_NAME_STOPWORDS = _TRACE_STOPWORDS | {
     "2030",
 }
 
+#: The `?sport=` / `llm_sport_category` values that name the golf tier.
+#:
+#: Q472 (CERT-542): lifted out of `_score_golf_tournaments`'s inline literal so
+#: the route-level skip and the scorer's own refusal read ONE vocabulary. A gate
+#: and the guard behind it holding two copies of one list is exactly how
+#: `cycling` fell out of the concept allowlist one tier down (UX-P177), and the
+#: two must agree here or the tier is either run-and-discarded or, as CERT-542
+#: found, run-and-appended. `all` is the wildcard the `?sport=` contract has
+#: always carried; `golf` is a live `llm_sport_category` value (79 open markets,
+#: measured on production 2026-08-31).
+GOLF_TIER_SPORTS: frozenset[str] = frozenset({"golf", "all"})
+
 DISCOVER_SPORTS_CATEGORIES = (
     "basketball",
     "football",
@@ -1754,6 +1766,15 @@ async def get_feed(
     sport: Optional[str] = Query(
         None, description="Filter by sport category (e.g., basketball, football)"
     ),
+    category: Optional[str] = Query(
+        None,
+        description=(
+            "Browse one category exactly (the /categories/<slug> surface). "
+            "Matches llm_sport_category with equality — unlike `sport`, which is "
+            "a substring match — and includes head-to-head matchup markets, "
+            "which Discover's curation excludes."
+        ),
+    ),
     include_events: bool = Query(True, description="Include game events in feed"),
     include_futures: bool = Query(True, description="Include futures markets in feed"),
     my_teams_only: bool = Query(
@@ -1999,6 +2020,30 @@ async def get_feed(
             )
         return lg
 
+    # Q467: both checks are BEFORE the cache read, so a refused request never
+    # mints a cache entry.
+    if category is not None:
+        # Bounded for the same reason a static tag is (`MAX_TAG_LENGTH`): the
+        # category is a cache-key input, and an unbounded one is unbounded key
+        # cardinality on a Redis instance shared with the Celery broker.
+        if len(category) > _cb_limits.MAX_TAG_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"category exceeds {_cb_limits.MAX_TAG_LENGTH} characters "
+                    f"({len(category)})"
+                ),
+            )
+        if mode == "sports":
+            # Sports mode takes a different, faster futures path that has no
+            # category filter. Serving it would answer a category browse with
+            # the whole sports feed under that category's heading — a wrong
+            # answer wearing a 200, which is worse than a refusal.
+            raise HTTPException(
+                status_code=400,
+                detail="category is not supported with mode=sports",
+            )
+
     if not debug and not exclude_reviewed:
         _cache_status = "miss"
         # LAT-P089: the request SHAPE, held once. The private key and the
@@ -2015,6 +2060,7 @@ async def get_feed(
             event_pct=event_pct,
             my_teams_only=my_teams_only,
             mode=mode,
+            category=category,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -2619,7 +2665,13 @@ async def get_feed(
                 event_items = await _score_events(
                     db,
                     now,
-                    sport,
+                    # A category browse narrows the EVENTS half too, or
+                    # /categories/table-tennis would list every live game on
+                    # the site under a table-tennis heading. Events have no
+                    # `llm_sport_category`, so the category is applied through
+                    # the existing `Sport.key` filter — the same substring match
+                    # `sport=` has always used on this half.
+                    sport or category,
                     ctx,
                     my_teams_only=my_teams_only,
                     my_team_names=my_team_names,
@@ -2644,11 +2696,24 @@ async def get_feed(
             sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
             if sport_tags and "sport:golf" not in sport_tags:
                 _skip_golf = True
+        # Q472 (CERT-542): a category browse is the same claim in a different
+        # parameter, and this gate could not hear it. `/categories/economics`
+        # ran the golf tier with `sport=None`, appended the tournaments
+        # DIRECTLY to `feed_items`, and nothing downstream filters by category —
+        # so the page heading stopped describing its own content. Category
+        # eligibility is a route-wide contract, not a futures-pool one.
+        if category is not None and category not in GOLF_TIER_SPORTS:
+            _skip_golf = True
         if not _skip_golf:
             try:
                 _golf_prov_sink: dict = {}
                 tournament_items = await _score_golf_tournaments(
-                    db, now, sport, ctx, stages=_timings,
+                    # `sport or category` — the same precedence the events half
+                    # already uses, and it makes the scorer's own refusal agree
+                    # with the gate above by construction rather than by the
+                    # gate being right. Two layers reading ONE vocabulary
+                    # (`GOLF_TIER_SPORTS`); neither is load-bearing alone.
+                    db, now, sport or category, ctx, stages=_timings,
                     provenance_sink=_golf_prov_sink,
                 )
                 _golf_provenance = _golf_prov_sink.get("golf")
@@ -2684,6 +2749,40 @@ async def get_feed(
                 static_tag_filter
             )
             _skip_concepts = _skip_concepts or _tag_skip
+        if category is not None:
+            # Q472 (CERT-542): the gate above was the whole category story too,
+            # and it said nothing — so `/categories/economics` built the concept
+            # tier with NO filter and appended UFC cards and grand tours to an
+            # economics page. Asked of the module that owns the vocabulary, for
+            # the reason the paragraph above gives: `feed.py` is where a second
+            # copy of this list goes to lose `cycling`.
+            from app.utils.event_concept_population import (
+                concept_filter_for_category,
+                narrow_concept_filters,
+            )
+
+            _cat_skip, _cat_concept_filter = concept_filter_for_category(category)
+            if _cat_skip:
+                _skip_concepts = True
+            else:
+                # Both a tag and a category may have spoken. A category page
+                # carrying a sport tag admits only what BOTH name; an empty
+                # intersection is a page with no concept tier, never the union
+                # of two filters.
+                #
+                # Q474 (CERT-561): that intersection was written here over the
+                # two filters' LITERAL STRINGS, and `CONCEPT_SOURCES` registers
+                # two names for one source on purpose — `category=mma` against
+                # `tags=["sport:ufc"]` intersected `("mma",)` with `("ufc",)` to
+                # empty and skipped the tier for a request whose halves name the
+                # same UFC source. Asked of the module that owns the vocabulary,
+                # which resolves both sides to source IDENTITY before comparing
+                # them, for the same reason the paragraph above gives: an alias
+                # is a way of saying a source, not the source.
+                _narrow_skip, _concept_sport_filter = narrow_concept_filters(
+                    _concept_sport_filter, _cat_concept_filter
+                )
+                _skip_concepts = _skip_concepts or _narrow_skip
         if not _skip_concepts:
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes
@@ -2716,20 +2815,38 @@ async def get_feed(
                     time_bucket as _shared_time_bucket,
                 )
 
+                # The ONE value this build is a function of. `sport` (the
+                # ?sport= param) keeps precedence; the derived filter speaks
+                # only when the caller named no sport, which is what all three
+                # readers of this path do — `/categories/[slug]` and
+                # `RelatedByTag` send `tags` or `category` and nothing else.
+                _concept_build_filter = sport or _concept_sport_filter
+
+                # Q472 (CERT-542): the key used to stand in for that argument
+                # with the two things it was DERIVED from (`sport` and the tag
+                # tuple). A third derivation source makes the stand-in wrong
+                # rather than merely indirect — `?category=mma` and plain
+                # Discover carry the same sport and the same (empty) tags, build
+                # DIFFERENT artifacts, and would have shared one entry: whichever
+                # arrived first would publish its answer to the other, so a
+                # category browse could serve Discover's whole concept tier, or
+                # Discover could serve one category's slice of it. Key on the
+                # argument itself and the stand-in is retired. Normalised so the
+                # string and one-tuple spellings of one filter still share, and
+                # bounded by construction: a category that names no source skips
+                # above and never reaches this key at all.
                 _concept_key = (
-                    sport or "all",
-                    tuple(sorted(static_tag_filter or ())),
+                    ("all",)
+                    if not _concept_build_filter
+                    else (_concept_build_filter,)
+                    if isinstance(_concept_build_filter, str)
+                    else tuple(sorted(_concept_build_filter)),
                     _shared_time_bucket(now, _shared_clock_bucket_s()),
                 )
 
                 async def _build_concepts():
-                    # `sport` (the ?sport= param) keeps precedence; the
-                    # tag-derived filter only speaks when the caller named no
-                    # sport, which is exactly what both readers of this path do
-                    # — `/categories/[slug]` and `RelatedByTag` send `tags` and
-                    # nothing else.
                     return await _score_event_concepts(
-                        db, now, sport or _concept_sport_filter, ctx
+                        db, now, _concept_build_filter, ctx
                     )
 
                 concept_items = await _shared_get_or_build(
@@ -2819,6 +2936,7 @@ async def get_feed(
                             my_team_sport_categories=my_team_sport_categories,
                             tag_filter=dynamic_tag_filter or None,
                             static_tag_filter=static_tag_filter or None,
+                            category_filter=category,
                             timing_records=_timings,
                             timing_started_at=_started_at,
                             config=discover_config,
@@ -2874,6 +2992,7 @@ async def get_feed(
                                         ),
                                         tag_filter=dynamic_tag_filter or None,
                                         static_tag_filter=static_tag_filter or None,
+                                        category_filter=category,
                                         config=_relaxed_config,
                                         # Queue 305 (#1475): reuse the primary
                                         # pass's already-hydrated base (skips the
@@ -6846,14 +6965,15 @@ async def _compute_ordered_candidate_ids(
     sport_filter: Optional[str],
     static_tag_filter: Optional[list[str]] = None,
     *,
+    category_filter: Optional[str] = None,
     mark_timing=None,
 ) -> tuple[list[int], dict[str, int], list[int]]:
     """Run the Discover futures candidate pools and return the ordered ID union.
 
     This is the user-independent candidate discovery extracted from
     ``_score_futures`` (Queue 285). It depends ONLY on ``now``, ``sport_filter``,
-    and ``static_tag_filter`` — never on the user, session, limit, offset, or
-    personalization — so its output is exactly the ordered, order-preserving
+    ``static_tag_filter`` and ``category_filter`` — never on the user, session,
+    limit, offset, or personalization — so its output is exactly the ordered, order-preserving
     deduped ``market_ids`` list the feed consumes before loading any ORM rows.
 
     Both the request-path direct-query fallback (``_score_futures``) and the
@@ -6878,7 +6998,7 @@ async def _compute_ordered_candidate_ids(
             mark_timing(stage)
 
     id_filters, pool_specs = _discover_candidate_pool_specs(
-        now, sport_filter, static_tag_filter
+        now, sport_filter, static_tag_filter, category_filter
     )
 
     external_curator_recall_ids = await _external_curator_recall_market_ids(
@@ -6925,6 +7045,7 @@ def _discover_candidate_pool_specs(
     now: datetime,
     sport_filter: Optional[str] = None,
     static_tag_filter: Optional[list[str]] = None,
+    category_filter: Optional[str] = None,
 ) -> tuple[list, list[tuple[str, Any, int]]]:
     """Single source of truth for the Discover futures candidate pools.
 
@@ -6942,12 +7063,29 @@ def _discover_candidate_pool_specs(
       candidate?" trace, which used to keep a private copy of these specs and had
       drifted (Queue 286).
 
-    Depends ONLY on ``now``, ``sport_filter`` and ``static_tag_filter`` — never on
-    the user, session, limit, offset, or personalization. That user-independence
-    is what makes the candidate base (``app.utils.candidate_base``) shareable
-    across response-cache keys; ``tests/test_feed_candidate_pool_specs.py`` guards
-    it, and ``pool_specs`` names double as the ``futures.pool_*`` timing stages
-    and the ``pool_counts`` provenance keys.
+    Depends ONLY on ``now``, ``sport_filter``, ``static_tag_filter`` and
+    ``category_filter`` — never on the user, session, limit, offset, or
+    personalization. That user-independence is what makes the candidate base
+    (``app.utils.candidate_base``) shareable across response-cache keys;
+    ``tests/test_feed_candidate_pool_specs.py`` guards it, and ``pool_specs``
+    names double as the ``futures.pool_*`` timing stages and the ``pool_counts``
+    provenance keys.
+
+    ``category_filter`` is the ``/categories/<slug>`` BROWSE filter and is not a
+    looser ``sport_filter``. Two differences, both load-bearing:
+
+    * It matches ``llm_sport_category`` EXACTLY. ``sport_filter`` is a substring
+      ``ILIKE``, so ``sport=tennis`` also selects ``table_tennis`` — harmless
+      while the matchup exclusion below hid every table-tennis row, and a
+      wrong-category page the moment it does not.
+    * It drops the head-to-head exclusion. ``% vs %`` keeps game lines out of
+      *Discover*, which is a curated feed. A category page is a browse surface
+      whose tile promises a count, and for the matchup sports the matchups ARE
+      the content: 13,431 of 13,431 open table-tennis markets are ``% vs %``
+      named, as are 757 of 758 cricket. Excluding them is what made the largest
+      category on the site render an empty page.
+
+    Discover passes no ``category_filter``, so its pools are unchanged.
     """
     base_filters = [
         FuturesMarket.status == "open",
@@ -6956,11 +7094,18 @@ def _discover_candidate_pool_specs(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        ~FuturesMarket.name.like("% vs %"),
-        ~FuturesMarket.name.like("% vs. %"),
     ]
+    if not category_filter:
+        base_filters.extend(
+            [
+                ~FuturesMarket.name.like("% vs %"),
+                ~FuturesMarket.name.like("% vs. %"),
+            ]
+        )
 
     id_filters = list(base_filters)
+    if category_filter:
+        id_filters.append(FuturesMarket.llm_sport_category == category_filter)
     if sport_filter:
         id_filters.append(
             or_(
@@ -7135,6 +7280,7 @@ async def _score_futures(
     preloaded_base: dict | None = None,
     broaden_config: dict[str, float | bool] | None = None,
     capture_broadened: dict | None = None,
+    category_filter: Optional[str] = None,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -7256,11 +7402,25 @@ async def _score_futures(
         # SQL ran on this reused build.
         mark_timing("market_load_reused")
     else:
-        _cb_base_ids, _cb_provenance, _cb_curator_ids = (
-            await _candidate_base.get_candidate_base(
-                now, sport_filter, static_tag_filter, stages=None
+        if category_filter:
+            # The shared base identity is (sport_filter, static_tag_filter) — it
+            # has NO category segment, so a category browse must never read or
+            # publish it. Reusing the key would serve Discover's own candidates
+            # to a category page, and publishing under it would serve a single
+            # category's candidates to Discover. Category browse therefore always
+            # takes the direct-query path and publishes nothing; the route-level
+            # response cache (which DOES key on category) absorbs the repeats.
+            _cb_base_ids, _cb_provenance, _cb_curator_ids = (
+                None,
+                _candidate_base.PROV_DISABLED,
+                None,
             )
-        )
+        else:
+            _cb_base_ids, _cb_provenance, _cb_curator_ids = (
+                await _candidate_base.get_candidate_base(
+                    now, sport_filter, static_tag_filter, stages=None
+                )
+            )
         if _cb_base_ids is not None:
             market_ids = list(_cb_base_ids)
             external_curator_recall_ids = set(_cb_curator_ids or [])
@@ -7278,6 +7438,7 @@ async def _score_futures(
                 now,
                 sport_filter,
                 static_tag_filter,
+                category_filter=category_filter,
                 mark_timing=mark_timing,
             )
             external_curator_recall_ids = set(_cb_curator_ids)
@@ -8877,7 +9038,7 @@ async def _score_golf_tournaments(
     verifies the shared publisher without exposing keys/IDs/user/session data.
     """
     # If sport filter is set and doesn't match golf, skip
-    if sport_filter and sport_filter not in ("golf", "all"):
+    if sport_filter and sport_filter not in GOLF_TIER_SPORTS:
         return []
 
     from app.utils.golf_base import get_golf_base

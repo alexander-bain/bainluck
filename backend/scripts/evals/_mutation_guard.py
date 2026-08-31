@@ -55,15 +55,95 @@ that must mutate a real file because their oracle is a pytest run.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import signal
 import sys
+import time
+import uuid
 from pathlib import Path
 
-MANIFEST_DIR = Path("/tmp/bainluck_mutation_guard")
+#: 🔴 THE MANIFEST AND THE BACKUPS ARE WORKTREE-UNIQUE (#2330, CERT-563).
+#:
+#: `/tmp` is shared by every checkout of this repo on this machine, and this
+#: guard's recovery is UNCONDITIONAL: `start()` calls `recover()`, which restores
+#: every target named by every manifest it finds. So two batteries running in two
+#: worktrees — a build lane and the cert window, which is the ordinary case, not a
+#: rare one — did this to each other:
+#:
+#:   1. run A writes mutant M to A's source file and starts its oracle;
+#:   2. run B starts, `recover()` reads A's live manifest, decides A is a dead run
+#:      and copies A's backup back over A's file — un-applying M *mid-oracle*;
+#:   3. A's suite passes, because the mutant is no longer there;
+#:   4. A prints `SURVIVED` for M, and `0 harness failures`.
+#:
+#: A false SURVIVED is the expensive direction: it reads as a missing assertion,
+#: so the next session goes and writes a guard for a defect that was already
+#: guarded. CERT-563 blocked on exactly one of these (`M18c` in
+#: `prop_families_cache_mutations.py`, killed 1/1 when re-run alone). Backups
+#: collided the same way — both runs used one path per FILENAME, so A could
+#: restore B's bytes into A's tree when the two trees were on different branches.
+#:
+#: Two changes close it. The paths below are derived from the repo root, so two
+#: worktrees cannot share a manifest or a backup; and `recover()` refuses to
+#: restore anything belonging to a LIVE pid or to a tree that is not this one, so
+#: even a shared or hand-repointed directory cannot resurrect the collision.
+#:
+#: `futures_source_breakdown_loose_scan_mutations.py` fixed this for itself in
+#: #2330 by repointing `MANIFEST_DIR`. One harness of twenty-odd — which is the
+#: shape ruling 022 warns about and this module's own docstring quotes: a second
+#: path that still works is a second path that still gets used. The default is
+#: now correct, so no harness needs to know.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+#: Short, stable, and derived — never a literal, so a new worktree is namespaced
+#: the moment it exists rather than when somebody remembers.
+TREE = hashlib.sha1(str(_REPO_ROOT).encode()).hexdigest()[:10]
+
+_DEFAULT_MANIFEST_DIR = Path(f"/tmp/bainluck_mutation_guard_{TREE}")
+
+#: Where manifests lived before this was namespaced. Swept by `recover()` — under
+#: the same live-pid and same-tree refusals — so residue written by a run that
+#: predates this change is still recovered instead of being stranded, and swept
+#: ONLY while nobody has repointed `MANIFEST_DIR` (a test that redirects it must
+#: not reach into the real `/tmp` and start restoring another lane's files).
+LEGACY_MANIFEST_DIR = Path("/tmp/bainluck_mutation_guard")
+
+MANIFEST_DIR = _DEFAULT_MANIFEST_DIR
+
+
+def _tree_scoped(path: Path) -> Path:
+    """`path`, namespaced to this worktree. Idempotent."""
+    if TREE in path.name:
+        return path
+    if path.suffix:  # a single-FILE backup path
+        return path.with_name(f"{path.stem}_{TREE}{path.suffix}")
+    return path.with_name(f"{path.name}_{TREE}")
+
+
+def _pid_is_alive(pid: object) -> bool:
+    """True when `pid` names a process that still exists.
+
+    Conservative in the safe direction on both edges. An unreadable pid reads as
+    ALIVE, and pid reuse can only produce a false ALIVE — both of which mean "do
+    not restore", which leaves residue for `--check` and the residue scanner to
+    announce loudly. The opposite error would silently overwrite a live run's
+    source file, which is the whole defect this is closing.
+    """
+    if not isinstance(pid, int):
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by somebody else
+    except OSError:
+        return True
+    return True
 
 
 class MutationAborted(BaseException):
@@ -80,8 +160,58 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _manifest_path(label: str) -> Path:
-    return MANIFEST_DIR / f"{label}.json"
+#: 🔴 RUN-UNIQUE, NOT JUST TREE-UNIQUE (CERT-579).
+#:
+#: CERT-563 namespaced the manifest and the backups by CHECKOUT, which closed the
+#: two-worktree collision. It did not close the same collision inside ONE
+#: checkout, because the names were still derived from the LABEL — and a label is
+#: a property of the harness, not of the run. Two concurrent runs of one harness
+#: in one tree therefore shared a manifest and a backup path, and the cert's
+#: two-process probe showed exactly what that costs:
+#:
+#:   1. run A copies the pristine target to the shared backup, mutates the target;
+#:   2. run B starts and copies the NOW-MUTATED target over that same backup —
+#:      the pristine bytes are gone;
+#:   3. A restores from the backup, and `restore_all` correctly detects the sha
+#:      mismatch and returns False;
+#:   4. `guarded_targets` **threw that False away**, so both runs exited 0 with
+#:      the target still mutated and the shared manifest already unlinked by
+#:      whichever finished second.
+#:
+#: The residue survives with no manifest naming it, which is the one state
+#: `--check` and the residue scanner cannot see.
+#:
+#: So the identity of a backup is (tree, label, RUN) and the run half is this. The
+#: pid alone is not enough — pids are reused, and a stale manifest from a dead run
+#: whose pid has been recycled reads as LIVE and is then never recovered — so a
+#: random component is carried alongside it.
+_RUN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _manifest_path(label: str, run: str | None = None) -> Path:
+    """The manifest for `label`, scoped to a RUN when one is given.
+
+    `run=None` keeps the pre-CERT-579 shape and is what `--check` and the tests
+    use to talk about "the manifest for this label" generically; a real guard
+    always passes its own run id, so two live guards in one checkout cannot name
+    the same file.
+    """
+    if run is None:
+        return MANIFEST_DIR / f"{label}.json"
+    return MANIFEST_DIR / f"{label}.{run}.json"
+
+
+def _run_scoped(path: Path) -> Path:
+    """`path`, namespaced to THIS run as well as this tree. Idempotent.
+
+    Applied to the resolved backup path rather than to the caller's spec, so all
+    three backup shapes this module accepts — a directory, a single file path,
+    and a per-target dict — are covered in one place and a new shape cannot
+    quietly skip it.
+    """
+    if f".{_RUN}" in path.name:
+        return path
+    return path.with_name(f"{path.stem}.{_RUN}{path.suffix}")
 
 
 def recover(verbose: bool = True) -> int:
@@ -90,16 +220,56 @@ def recover(verbose: bool = True) -> int:
     Returns the number of files restored. Safe to call when nothing is
     pending, which is why every guarded run calls it on the way in.
     """
-    if not MANIFEST_DIR.exists():
-        return 0
+    # The legacy directory is swept only while nobody has repointed the manifest
+    # dir: a caller that redirects `MANIFEST_DIR` (a test, or a harness with its
+    # own namespace) is declaring where its manifests live, and must not have this
+    # function reach into the shared `/tmp` on its behalf.
+    dirs = [MANIFEST_DIR]
+    if MANIFEST_DIR == _DEFAULT_MANIFEST_DIR:
+        dirs.append(LEGACY_MANIFEST_DIR)
 
     restored = 0
-    for manifest in sorted(MANIFEST_DIR.glob("*.json")):
+    for manifest in sorted(m for d in dirs if d.exists() for m in d.glob("*.json")):
         try:
             data = json.loads(manifest.read_text())
         except Exception:
             if verbose:
                 print(f"  guard: unreadable manifest {manifest} — leaving it in place")
+            continue
+
+        # 🔴 A LIVE PID IS A RUN IN FLIGHT, NOT A DEAD ONE (CERT-563). This
+        # function exists to clean up after a SIGKILL, and it used to assume that
+        # every manifest it could see belonged to a corpse. A concurrent battery
+        # in another worktree is not a corpse, and restoring its targets
+        # un-applies the mutant it is measuring — turning a killed mutant into a
+        # reported SURVIVED with no harness failure to give it away.
+        if _pid_is_alive(data.get("pid")):
+            if verbose:
+                print(
+                    f"  guard: {manifest} belongs to LIVE pid {data.get('pid')} "
+                    f"({data.get('label')}) — a run in flight, not residue. "
+                    "Left alone."
+                )
+            continue
+
+        # 🔴 AND NEVER RESTORE ANOTHER CHECKOUT'S RUN (CERT-563). Manifests name
+        # ABSOLUTE paths, so one written in another worktree resolves perfectly
+        # well — straight into that worktree's working files. The test is who
+        # WROTE it, not where the files are: a harness may legitimately guard a
+        # target outside its own tree (the guard's own suite does exactly that
+        # with `tmp_path`), and a path test would refuse those too.
+        #
+        # A manifest with no `root` predates this field. It is still recovered —
+        # the live-pid refusal above is what protects it — because stranding real
+        # residue to close a narrower hole would be the worse trade.
+        foreign = bool(data.get("root")) and data.get("root") != str(_REPO_ROOT)
+        if foreign:
+            if verbose:
+                print(
+                    f"  guard: {manifest} was written by the checkout at "
+                    f"{data.get('root')}, not {_REPO_ROOT} — another worktree's "
+                    "run. Left alone."
+                )
             continue
 
         for target_s, entry in (data.get("targets") or {}).items():
@@ -121,24 +291,44 @@ def recover(verbose: bool = True) -> int:
                     f"  🔴 guard: RESTORED {target} — left mutated by a dead run "
                     f"({data.get('label')}). That run's verdicts are void."
                 )
-        manifest.unlink(missing_ok=True)
+        # A manifest naming somebody else's files is NOT ours to retire: deleting
+        # it would destroy the only breadcrumb its own tree has (gotcha #53 — the
+        # silent case must stay loud for the reader who can act on it).
+        if not foreign:
+            manifest.unlink(missing_ok=True)
 
     return restored
 
 
 class _Guard:
     def __init__(self, targets, backup_dir, label: str):
+        # Every caller-supplied backup path is namespaced to this worktree —
+        # harnesses pass `/tmp` literals and two checkouts otherwise share one
+        # backup per FILENAME, so a crash in either could restore the other's
+        # bytes into this tree. `_tree_scoped` is idempotent, so a harness that
+        # already namespaced its own path (#2330) is left exactly as it is.
         self._backup_spec = (
-            {Path(k): Path(v) for k, v in backup_dir.items()}
+            {Path(k): _tree_scoped(Path(v)) for k, v in backup_dir.items()}
             if isinstance(backup_dir, dict)
             else backup_dir
         )
         self.targets = [Path(t) for t in targets]
-        self.backup_dir = Path("/tmp") if isinstance(backup_dir, dict) else Path(backup_dir)
+        self.backup_dir = (
+            Path("/tmp")
+            if isinstance(backup_dir, dict)
+            else _tree_scoped(Path(backup_dir))
+        )
         self.label = label
+        # CERT-579: this run's half of the (tree, label, run) identity. Read off
+        # the module constant rather than generated here, so every guard in one
+        # process agrees and `recover()` can recognise our own manifests.
+        self._run = _RUN
         self.backups: dict[Path, Path] = {}
         self.original: dict[Path, str] = {}
         self._prev_handlers: dict[int, object] = {}
+        # CERT-595: one open file handle per TARGET, in the order they were
+        # acquired. A single handle could only ever exclude an identical set.
+        self._lock_fhs: list = []
 
     # -- signals -------------------------------------------------------
     def _install(self) -> None:
@@ -154,12 +344,136 @@ class _Guard:
             with contextlib.suppress(ValueError, OSError, TypeError):
                 signal.signal(sig, handler)
 
+    # -- the target lock -----------------------------------------------
+    def _lock_paths(self) -> list[Path]:
+        """🔴 CERT-595: ONE LOCK PER TARGET, NOT ONE PER TARGET SET.
+
+        CERT-588's repair keyed a single lock on the whole sorted target set. The
+        intent was right — serialization is the cost of sharing a file — but
+        equality of whole sets is strictly weaker than OVERLAP, and overlap is
+        what actually shares a file. The cert's probe ran A over `{a, shared}`
+        against B over `{shared, c}`: the two sets hash differently, so both runs
+        took different locks and both walked straight in. A observed B's mutant, B
+        observed restored bytes, both exited 0, and `shared` finished dirty with
+        no manifest naming it — the exact silent false-verdict class CERT-588 was
+        supposed to close, one door further out.
+
+        So the key is the TARGET, and a guard holds one lock for each of them.
+        Two runs serialize precisely when they share at least one file, and
+        disjoint harnesses still never queue.
+
+        **Sorted by resolved path, and that ordering is load-bearing.** Every
+        guard in the system acquires in the same total order, which is what makes
+        a deadlock cycle impossible: A holding `shared` and waiting on `c` while B
+        holds `c` and waits on `shared` cannot arise if both take `c` before
+        `shared`. Deduped for the same reason — two entries resolving to one path
+        would have this process block on its own lock through a second fd.
+        """
+        seen: dict[str, Path] = {}
+        for target in self.targets:
+            resolved = str(target.resolve())
+            if resolved in seen:
+                continue
+            key = hashlib.sha1(resolved.encode()).hexdigest()[:16]
+            # The stem is a reader's affordance only — the hash is the identity,
+            # so two same-named files in different directories never collide.
+            hint = "".join(c if c.isalnum() else "_" for c in target.name)[:32]
+            seen[resolved] = MANIFEST_DIR / f"target-{hint}-{key}.lock"
+        return [seen[k] for k in sorted(seen)]
+
+    def _acquire(self) -> None:
+        """🔴 CERT-588: SERIALIZE THE WHOLE GUARDED CONTEXT, NOT JUST THE BYTES.
+
+        CERT-579's repair gave every run its own backup, which fixed the
+        *dirty-tree* symptom: the file always ends up pristine. The cert showed
+        the ship is broader, and it is right. `start()` calls `recover()`, and a
+        LIVE manifest is only skipped — so the second run happily copies the
+        first run's ALREADY-MUTATED target into its own private backup and then
+        mutates the same file. Its synchronized probe: A wrote `A`, B wrote `B`,
+        **A's oracle read `B`**, both exited 0, the final file pristine, no
+        manifest left behind.
+
+        Nothing about the final bytes can detect that. A run scored ANOTHER run's
+        mutant as its own and banked a KILLED or SURVIVED that describes neither.
+        That is the same one-sided, silent corruption CERT-563 opened, arriving
+        through a different door — and it is why "the tree is clean afterwards"
+        was never the property worth asserting. **The property is that a run's
+        oracle observes only that run's mutation**, and the only way to have it
+        on a shared file is to be the only writer for the whole context.
+
+        So the guard now holds an exclusive OS lock PER TARGET (CERT-595 — a
+        single lock over the whole set only excluded runs whose sets were EQUAL,
+        see `_lock_paths`), from before the first backup until after the restore.
+        Keyed on the TARGETS rather than the label so two different harnesses
+        that touch disjoint files still run in parallel — serialization is the
+        cost of sharing a file, and nothing should pay it that is not sharing one.
+
+        Bounded wait, then FAIL CLOSED. A battery legitimately holds this for
+        many minutes, so a short timeout would turn ordinary overlap into a
+        spurious failure; an unbounded one would turn a wedged holder into a
+        silent hang, which is the failure mode this module exists to refuse.
+
+        **The deadline spans the whole acquisition, not each lock.** A run over
+        twenty targets must not be able to wait twenty timeouts; the promise the
+        caller is given is a bound on `start()`, not on any one `flock`. And a
+        timeout part-way through releases everything already taken before it
+        raises, so a refusal never leaves this process wedging the runs behind it.
+        """
+        timeout_s = float(os.getenv("MUTATION_GUARD_LOCK_TIMEOUT_S", "600"))
+        deadline = time.monotonic() + timeout_s
+        self._lock_fhs = []
+        for lock_path in self._lock_paths():
+            fh = open(lock_path, "w")  # noqa: SIM115 — held for the context
+            announced = False
+            while True:
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fh.write(f"{os.getpid()} {self.label}\n")
+                    fh.flush()
+                    self._lock_fhs.append(fh)
+                    break
+                except BlockingIOError:
+                    if not announced:
+                        print(
+                            f"  guard: waiting for another run to release {lock_path.name} "
+                            f"— that target is already being mutated (up to {timeout_s:.0f}s)"
+                        )
+                        announced = True
+                    if time.monotonic() >= deadline:
+                        fh.close()
+                        # Never hold a partial set through a refusal.
+                        self._release()
+                        raise RuntimeError(
+                            f"mutation guard '{self.label}' could not take the target lock "
+                            f"{lock_path} within {timeout_s:.0f}s. Another run is mutating "
+                            "that file. Refusing to start rather than scoring this run's "
+                            "oracle against somebody else's mutant (CERT-588/CERT-595). "
+                            "If no such run exists, a previous one died holding the lock — "
+                            "`python3 -m scripts.evals._mutation_guard --check` will say so."
+                        )
+                    time.sleep(0.25)
+
+    def _release(self) -> None:
+        # Reverse order, mirroring the sorted acquisition. Not required for
+        # correctness with flock, but it keeps the lifecycle readable as a stack
+        # and matches what the acquisition ordering comment promises.
+        for fh in reversed(getattr(self, "_lock_fhs", []) or []):
+            with contextlib.suppress(Exception):
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            with contextlib.suppress(Exception):
+                fh.close()
+        self._lock_fhs = []
+
     # -- lifecycle -----------------------------------------------------
     def start(self) -> "_Guard":
+        MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+        # BEFORE `recover()` and before any backup is taken: `recover()` writes to
+        # the very files another run may be mid-oracle on, so it is inside the
+        # mutual exclusion, not outside it.
+        self._acquire()
         recover()
         if not isinstance(self._backup_spec, dict) and not self.backup_dir.suffix:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
-        MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
 
         entries = {}
         for target in self.targets:
@@ -169,13 +483,28 @@ class _Guard:
                 backup = self.backup_dir
             else:
                 backup = self.backup_dir / target.name
+            # CERT-579: the LAST thing done to every backup path, whichever of
+            # the three shapes produced it, so a concurrent run of this same
+            # harness in this same checkout cannot copy its mutated target over
+            # our pristine one.
+            backup = _run_scoped(backup)
             shutil.copy2(target, backup)
             self.backups[target] = backup
             self.original[target] = sha(target)
             entries[str(target)] = {"backup": str(backup), "sha": self.original[target]}
 
-        _manifest_path(self.label).write_text(
-            json.dumps({"label": self.label, "pid": os.getpid(), "targets": entries}, indent=2)
+        _manifest_path(self.label, self._run).write_text(
+            json.dumps(
+                {
+                    "label": self.label,
+                    "pid": os.getpid(),
+                    # Which checkout wrote this. `recover()` refuses to restore
+                    # from a manifest naming a different one (CERT-563).
+                    "root": str(_REPO_ROOT),
+                    "targets": entries,
+                },
+                indent=2,
+            )
         )
         self._install()
         return self
@@ -197,13 +526,14 @@ class _Guard:
                     f"Backup: {backup}. Do not commit this tree."
                 )
         if clean:
-            _manifest_path(self.label).unlink(missing_ok=True)
+            _manifest_path(self.label, self._run).unlink(missing_ok=True)
         elif verbose:
-            print(f"  guard: manifest kept at {_manifest_path(self.label)} — the tree is dirty")
+            print(f"  guard: manifest kept at {_manifest_path(self.label, self._run)} — the tree is dirty")
         return clean
 
     def finish(self) -> None:
         self._uninstall()
+        self._release()
 
 
 @contextlib.contextmanager
@@ -218,8 +548,34 @@ def guarded_targets(targets, backup_dir, label: str):
     try:
         yield guard
     finally:
-        guard.restore_all()
+        # 🔴 CERT-579: THE VERDICT IS NOT OPTIONAL.
+        #
+        # `restore_all` has always returned False when the bytes it put back are
+        # not the bytes it took, and this discarded it. That is how the cert's
+        # two-process probe ended with **both runs exiting 0 and the target still
+        # mutated**: the mismatch WAS detected, printed, and then thrown away, so
+        # the harness scored its mutants against a dirty tree and the caller had
+        # no way to know. A check whose result nobody reads is not a check —
+        # exactly the shape of the residue scanner printing its finding and then
+        # printing CLEAN over it (#2391).
+        #
+        # Raising from `finally` while another exception is in flight replaces it
+        # as the propagating exception and chains the original as `__context__`,
+        # so nothing is lost from the traceback. That order is deliberate: a tree
+        # left mutated is more urgent than whatever the harness was failing on,
+        # because it is the state that escapes the process and reaches a commit.
+        clean = guard.restore_all()
         guard.finish()
+        if not clean:
+            raise RuntimeError(
+                f"mutation guard '{label}' could NOT restore its targets to their "
+                "original bytes — this tree is DIRTY and must not be committed. "
+                "Run `python3 -m scripts.evals._mutation_guard --check` and see the "
+                "per-file lines above for which target and which backup. The usual "
+                "cause is a second run of this same harness racing this one; each "
+                "run now owns its own backup, so a collision here means a backup "
+                "was removed or overwritten from outside the guard."
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -229,7 +585,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"guard: restored {n} file(s) left behind by dead runs")
         return 0
     if "--check" in argv:
-        pending = sorted(MANIFEST_DIR.glob("*.json")) if MANIFEST_DIR.exists() else []
+        # The same two directories `recover()` sweeps, for the same reason: a
+        # manifest this command cannot see is a mutation this command reports as
+        # absent.
+        _dirs = [MANIFEST_DIR]
+        if MANIFEST_DIR == _DEFAULT_MANIFEST_DIR:
+            _dirs.append(LEGACY_MANIFEST_DIR)
+        pending = sorted(m for d in _dirs if d.exists() for m in d.glob("*.json"))
         if not pending:
             print("guard: no mutation in flight")
             return 0

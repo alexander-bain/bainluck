@@ -1,0 +1,29 @@
+{
+  "_why": [
+    "Needles whose anchor matches their target MORE THAN ONCE. Every harness in",
+    "this directory refuses such a mutant as HARNESS-FAIL, so each line here is a",
+    "mutant that DOES NOT RUN — the battery's denominator counts it and its power",
+    "does not. Seven of them were discovered the day this check was added",
+    "(CERT-563) and they belong to four different lanes' harnesses, so failing on",
+    "them immediately would have taken master red on debt nobody here owns.",
+    "",
+    "This is therefore a RATCHET, the same shape as frontend/typecheck-baseline.json:",
+    "anything not listed here fails the scan. Fixing one prints a nudge and does not",
+    "fail, because blocking a lane for repairing a guard would be perverse.",
+    "",
+    "To clear an entry: make the needle unique (usually by extending it with the",
+    "next line that differs), confirm the harness scores the mutant KILLED rather",
+    "than HARNESS-FAIL, and delete the line. Tracked on the issue below."
+  ],
+  "_issue": "#2391",
+  "_recorded": "2026-08-31 (LAT-P167, CERT-563 repair)",
+  "known_ambiguous": [
+    "game_markets_shared_cache_mutations:M14",
+    "outcome_evidence_class_mutations:M1",
+    "outcome_evidence_class_mutations:M3",
+    "outcome_evidence_class_mutations:M4",
+    "search_tier_split_mutations:M6-no-rearm",
+    "search_word_test_mutations:fragment-boundary-always-exempts",
+    "search_word_test_mutations:fragment-boundary-back-to-length"
+  ]
+}

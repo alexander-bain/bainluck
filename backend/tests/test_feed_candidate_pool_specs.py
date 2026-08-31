@@ -122,16 +122,27 @@ def test_movement_pool_uses_denormalized_column_not_correlated_subquery():
 
 
 def test_specs_are_user_independent():
-    """Only (now, sport_filter, static_tag_filter) may shape the pools.
+    """Only (now, sport_filter, static_tag_filter, category_filter) may shape
+    the pools.
 
     User/session/limit/offset independence is what makes the candidate base
     shareable across response-cache keys (Queue 285); a new request-scoped
     parameter here would silently poison every page that reuses the base.
+
+    Q467 added ``category_filter`` — user-independent like the other three, but
+    deliberately NOT part of the shared base identity, so ``_score_futures``
+    takes the direct-query path whenever it is set. That bypass is guarded by
+    ``tests/test_feed_category_browse_q467.py``.
     """
     params = list(
         inspect.signature(feed_mod._discover_candidate_pool_specs).parameters
     )
-    assert params == ["now", "sport_filter", "static_tag_filter"]
+    assert params == [
+        "now",
+        "sport_filter",
+        "static_tag_filter",
+        "category_filter",
+    ]
 
 
 def test_sport_and_static_tag_filters_reach_every_pool():

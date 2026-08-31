@@ -38,7 +38,15 @@ import EntityImage from "@/components/EntityImage";
 import RelatedByTag from "@/components/RelatedByTag";
 import { isNonSportsCategory, isInternationalSport, flagUrl } from "@/lib/images";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
-import { movementExplanation as movementExplanationHelper, pickHeroOutcome } from "@/lib/futuresDetailDisplay";
+import {
+  asOfLabel,
+  movementExplanation as movementExplanationHelper,
+  movementWindowLabel,
+  pickHeroOutcome,
+  sortFuturesOutcomes,
+} from "@/lib/futuresDetailDisplay";
+import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
+import { PinButton } from "@/components/PinButton";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
@@ -109,8 +117,10 @@ function isGenericOutcomeName(name: string): boolean {
   return false;
 }
 
-type SortField = "probability" | "change" | "name";
-type SortDirection = "asc" | "desc";
+// UX-P230: aliases of the sorter's own types, so the buttons and the comparator
+// can never disagree about which fields exist.
+type SortField = FuturesSortField;
+type SortDirection = FuturesSortDirection;
 
 export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketId = parseInt(params.id, 10);
@@ -271,34 +281,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     ? relatedEventsData.events
     : [];
 
-  // Sort outcomes
+  // Sort outcomes. UX-P230: the comparators live in futuresDetailDisplay so all
+  // six field×direction combinations can be exercised, not just the page default.
+  // UX-P232 (CERT-598): the settled flag goes with them. On a resolved market the
+  // hero features the GRADED WINNER (`pickHeroOutcome` below), whose frozen last
+  // price is routinely not the highest on the board — so without this the section
+  // headed "Final Results" led with a loser. `market.status`, never `is_winner`
+  // alone: a stray flag must not make a live market claim a result.
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
-
-    const sorted = [...market.outcomes].sort((a, b) => {
-      let comparison = 0;
-
-      switch (sortField) {
-        case "probability":
-          comparison = (b.probability ?? 0) - (a.probability ?? 0);
-          break;
-        case "change":
-          // Sort by actual change value, not absolute value
-          // Descending shows biggest gainers first, ascending shows biggest losers first
-          const aChange = a.probability_change_24h ?? 0;
-          const bChange = b.probability_change_24h ?? 0;
-          comparison = bChange - aChange;
-          break;
-        case "name":
-          comparison = a.name.localeCompare(b.name);
-          break;
-      }
-
-      return sortDirection === "asc" ? comparison : -comparison;
-    });
-
-    return sorted;
-  }, [market?.outcomes, sortField, sortDirection]);
+    return sortFuturesOutcomes(
+      market.outcomes,
+      sortField,
+      sortDirection,
+      market.status === "resolved",
+    );
+  }, [market?.outcomes, market?.status, sortField, sortDirection]);
 
   // The leader is always the outcome with highest probability (independent of sort)
   const leader = useMemo(() => {
@@ -456,6 +454,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // UX-P233 (board item 11): "as of Aug 28" when the prices are older than a day,
+  // null when they are current. One line for the whole table — see the render.
+  const marketAsOf = asOfLabel(leader?.last_updated);
   // #883 L2-49: on a resolved market the hero features the actual WINNER (which
   // may differ from the highest-probability outcome), labeled as final — not a
   // live probability. Falls back to the leader if no winner is flagged yet.
@@ -527,6 +528,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         probability={heroOutcome?.probability ?? null}
         outcomeName={heroOutcome ? (isGenericOutcomeName(heroOutcome.name) ? "Yes" : heroOutcome.name) : undefined}
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
+        // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
+        // with no window at all, directly above a caption reading "Amazon up 13.5
+        // pts from opening" — two true numbers about one outcome, reading as a
+        // contradiction. It now says which window it covers. NOT "24h": see
+        // `movementWindowLabel` for why the payload disproves that word.
+        movementLabel={movementWindowLabel(leader?.last_updated)}
         sourceCount={market.source_count ?? undefined}
         // UX-P054 (#1719) — the third copy of the "Resolves <date>" rule, and the
         // one the authority guard could not see: it named this line as its blind
@@ -626,17 +633,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         <p className="text-[13px] leading-relaxed text-text-secondary mb-4 max-w-2xl">{market.hook_description}</p>
       )}
 
-      {/* Legacy hero kept for share/pin actions */}
+      {/* UX-P234 (board item 15): the pin. This used to be a bare word inside a
+          container whose own comment read "Legacy hero kept for share/pin actions"
+          — scaffolding that shipped. It is now the SAME affordance the Discover
+          feed and the card surfaces use (`components/PinButton`), so a pin looks
+          like a pin wherever a reader meets one. That comment is retired with the
+          thing it described; there is no legacy hero here, only the pin. */}
       <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={() => togglePin(marketId)}
-          disabled={isMaxReached && !marketIsPinned}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-            marketIsPinned ? "bg-amber-500/10 text-amber-600" : "bg-surface-elevated text-text-secondary hover:text-text-primary"
-          } ${isMaxReached && !marketIsPinned ? "cursor-not-allowed opacity-30" : ""}`}
-        >
-          {marketIsPinned ? "Pinned" : "Pin"}
-        </button>
+        <PinButton
+          pinned={marketIsPinned}
+          onToggle={() => togglePin(marketId)}
+          atMax={isMaxReached}
+          noun="market"
+          variant="labelled"
+        />
       </div>
 
       {/* #883 blend-only: cross-source CombinedMarketCard removed — one blended
@@ -837,6 +847,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
             <span>📊</span>
             {isResolved ? "Final Results" : "All Outcomes"}
+            {/* UX-P233 (board item 11): ONE as-of for the whole table, so every
+                number under it is interpretable without repeating a date on all
+                eight rows. Absent entirely when the prices are genuinely fresh —
+                a label on a current price is noise, not honesty. Read from the
+                leader, whose `last_updated` every row on 109441 shares. */}
+            {!isResolved && marketAsOf && (
+              <span
+                data-testid="market-as-of"
+                className="text-xs font-normal text-text-muted"
+              >
+                {marketAsOf}
+              </span>
+            )}
           </h2>
           {sortedOutcomes.length > 25 && (
             <button
@@ -860,7 +883,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             onClick={() => toggleSort("probability")}
           />
           <SortButton
-            label="24h Change"
+            // UX-P233: was "24h Change". It sorts `probability_change_24h`, which
+            // CAL-P159 proved is a per-write delta that freezes — every row on
+            // 109441 is dated 2026-08-28. A control that names a window the data
+            // does not have is the same false claim as the badge beside it.
+            label="Last move"
             field="change"
             currentField={sortField}
             direction={sortDirection}
@@ -978,6 +1005,10 @@ function OutcomeRow({
 
   return (
     <div
+      // UX-P230: the rendered order is the thing under guard — name it on the row
+      // so a test reads what the page actually painted, not what a helper returned.
+      data-testid="outcome-row"
+      data-outcome-name={outcome.name}
       className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
         isSelected
           ? "bg-blue-50 border border-blue-200"
@@ -1068,21 +1099,33 @@ function OutcomeRow({
         </div>
       </div>
 
-      {/* Opening vs Current comparison */}
+      {/* Opening price. UX-P233 (board item 11): this column was the ONLY one of
+          the row's three numbers that named its own baseline, which is exactly why
+          the other two read as if they shared it. All three are labelled now. */}
       {outcome.opening_probability !== null && (
         <div className="text-xs text-text-secondary text-right shrink-0">
-          <div>
-            Open: {formatProbability(outcome.opening_probability)}
+          <div className="text-[10px] uppercase tracking-wide text-text-muted">
+            Open
+          </div>
+          <div data-testid="outcome-open">
+            {formatProbability(outcome.opening_probability)}
           </div>
         </div>
       )}
 
-      {/* 24h Change */}
+      {/* The last recorded move. UX-P233: was headed "24h Change" and printed a
+          bare badge. It is a PER-WRITE delta (CAL-P159), so on 109441 Disney reads
+          +1.5 while Disney fell from an opening 22% to 7% — both true, of different
+          windows, and with neither stated the badge simply looked wrong. */}
       <div className="w-20 text-right shrink-0">
+        <div className="text-[10px] uppercase tracking-wide text-text-muted">
+          Last move
+        </div>
         {isResolved && outcome.is_winner !== null ? (
           <span className="text-xs text-text-muted">-</span>
         ) : change !== null && change !== 0 ? (
           <span
+            data-testid="outcome-change"
             className={`text-xs font-medium px-2 py-0.5 rounded-full ${
               change > 0
                 ? "bg-emerald-500/15 text-emerald-400"
@@ -1097,8 +1140,17 @@ function OutcomeRow({
         )}
       </div>
 
-      {/* Current probability and odds */}
+      {/* The latest recorded probability. UX-P233: "Latest", never "Now" — on
+          109441 every row's last write is 2026-08-28, so a column headed "Now"
+          would be the same unprovable freshness claim the movement badge was
+          making. WHEN that latest reading was taken is stated once for the whole
+          market, above the table, rather than repeated on all eight rows. */}
       <div className="text-right shrink-0">
+        {!isResolved && (
+          <div className="text-[10px] uppercase tracking-wide text-text-muted">
+            Latest
+          </div>
+        )}
         {isResolved && outcome.is_winner === true ? (
           <>
             <div className="font-mono text-base tabular-nums font-bold text-emerald-600">

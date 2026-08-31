@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -409,6 +410,7 @@ def main() -> int:
     # search over the replacement could ever distinguish from ordinary code.
     residue: list[str] = []
     drift: list[str] = []
+    ambiguous: list[str] = []
     cache: dict[Path, str] = {}
     for pair in pairs:
         if pair.target not in cache:
@@ -417,10 +419,30 @@ def main() -> int:
             except OSError:
                 cache[pair.target] = ""
         text = cache[pair.target]
-        if pair.needle in text:
-            continue
         rel = pair.target.relative_to(REPO) if pair.target.is_relative_to(REPO) else pair.target
-        if pair.repl and pair.repl in text:
+        hits = text.count(pair.needle)
+        if hits == 1:
+            continue
+        if hits > 1:
+            # 🔴 A NEEDLE THAT MATCHES TWICE IS AS DEAD AS ONE THAT MATCHES NONE
+            # (CERT-563). Every harness in this directory refuses to run a mutant
+            # whose anchor is not unique — it scores HARNESS-FAIL — so an
+            # ambiguous needle is a mutant that never runs, exactly like a
+            # drifted one. This scan could not see it: it asked `in`, which is
+            # true for one match and for five.
+            #
+            # Measured: adding `QUALITY_FULL` to a SECOND function's import block
+            # made `prop_families_cache_mutations:M20`'s anchor match twice. The
+            # scan said CLEAN and the 32-minute battery said HARNESS-FAIL. The
+            # cheap check has to be the one that knows.
+            ambiguous.append(
+                (
+                    str(pair),
+                    f"{rel}  <-  {pair}  (needle matches {hits}x; the anchor is "
+                    "not unique, so the mutant cannot be applied)",
+                )
+            )
+        elif pair.repl and pair.repl in text:
             residue.append(f"{rel}  <-  {pair}  (mutant present, original absent)")
         else:
             drift.append(f"{rel}  <-  {pair}  (needle drifted; harness needs re-targeting)")
@@ -433,16 +455,74 @@ def main() -> int:
         )
         print("    They write no target file, so they cannot leave residue.")
     if drift:
-        print(f"  {len(drift)} needle(s) no longer present AND no mutant either — harness DRIFT,")
-        print("  not residue. These mutants would score NOT-APPLIED, never a false kill.")
+        print(f"  🔴 {len(drift)} needle(s) no longer present AND no mutant either — harness DRIFT,")
+        print("  not residue. These mutants score NOT-APPLIED, never a false kill —")
+        print("  but a mutant that never runs is a guard that catches nothing.")
         for d in drift:
             print(f"     {d}")
+    # The ambiguity ratchet. See `ambiguous_needle_baseline.json` for why this is
+    # a baseline and not a plain failure: the check found SEVEN on the day it was
+    # written, across four lanes' harnesses, and failing on other people's debt
+    # the moment you notice it takes master red for everyone.
+    _baseline_path = Path(__file__).resolve().parent / "ambiguous_needle_baseline.json"
+    try:
+        _known = set(json.loads(_baseline_path.read_text())["known_ambiguous"])
+    except Exception as exc:  # noqa: BLE001 — a missing baseline must be LOUD
+        print(f"🔴 could not read {_baseline_path.name}: {exc!r}")
+        print("   Without it every ambiguous needle is unclassifiable. Refusing to grade.")
+        return 2
+
+    new_ambiguous = [msg for key, msg in ambiguous if key not in _known]
+    fixed_ambiguous = sorted(_known - {key for key, _ in ambiguous})
+    if ambiguous:
+        print(f"  {len(ambiguous)} needle(s) match MORE than once — the harness")
+        print("  refuses these as HARNESS-FAIL, so they never run either.")
+        for _key, msg in ambiguous:
+            print(f"     {msg}")
+    if fixed_ambiguous:
+        print(
+            f"  ✅ {len(fixed_ambiguous)} baselined needle(s) are unique again — "
+            f"please delete them from {_baseline_path.name}: "
+            + ", ".join(fixed_ambiguous)
+        )
+    if new_ambiguous:
+        print(f"  🔴 {len(new_ambiguous)} of them are NEW (not in {_baseline_path.name}):")
+        for msg in new_ambiguous:
+            print(f"     {msg}")
     if residue:
         print(f"🔴 RESIDUE: {len(residue)} target(s) hold the MUTANT and not the original")
         for r in residue:
             print(f"     {r}")
         return 1
-    print("  ✅ every needle present in its own target — no mutant is sitting in a target file")
+    # 🔴 AND DRIFT IS NOW FATAL, BECAUSE THE SUMMARY USED TO CONTRADICT THE
+    # FINDING FOUR LINES ABOVE IT (CERT-563). This scan printed the drift, then
+    # printed "✅ every needle present in its own target" and exited 0 — two
+    # statements about the same tree, one of them false, and the reassuring one
+    # last. I read the green line in this very session and went on to run a
+    # 32-minute battery that failed on the drift the scan had already found.
+    #
+    # There is no reading under which a drifted or ambiguous needle is
+    # acceptable: the mutant does not run, so the denominator says N and the
+    # power is N-1, and every "killed" total quoted from that run overstates the
+    # guard. Cheap and loud beats expensive and late (gotcha #53, gotcha #54 —
+    # the exit code's VALUE is the result, so it has to carry this).
+    if drift or new_ambiguous:
+        print(
+            f"🔴 NOT CLEAN — {len(drift)} drifted and {len(new_ambiguous)} newly "
+            "ambiguous needle(s). Re-target them; do not quote a kill count from a "
+            "battery run in this state."
+        )
+        return 1
+    if ambiguous:
+        print(
+            f"  ⚠️  {len(ambiguous)} baselined ambiguous needle(s) remain — known "
+            "debt, not this run's. Every other needle is present exactly once."
+        )
+    else:
+        print(
+            "  ✅ every needle present EXACTLY ONCE in its own target — no mutant "
+            "is sitting in a target file"
+        )
 
     # ---- PASS B: the broad sweep. Catches a mutant COPIED somewhere that is
     # not a declared target — the only case Pass A structurally cannot see.

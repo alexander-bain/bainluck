@@ -5,13 +5,27 @@ import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars } from "./shared";
-import type { CardActionCallbacks } from "./types";
+import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 interface ComparisonCardProps extends CardActionCallbacks {
   item: FeedItem;
   data: FeedFuturesData;
+  /**
+   * UX-P234 (board item 16), added by the CERT-606 repair.
+   *
+   * 🔴 THIS CARD WAS THE MISSED RENDERING. `DiscoverCard` routes a FUTURES item
+   * here — not to `FuturesCard` — when its `suggested_format` is
+   * `outcome_distribution` and it has >=4 outcomes. The first version of this ship
+   * threaded the pin through all four of `FuturesCard`'s ActionBars and its guard
+   * counted them, so it looked exhaustive; it was exhaustive within ONE component
+   * and blind to the fact that a futures item has TWO possible components.
+   *
+   * The same market therefore showed a pin or not depending on how the feed chose
+   * to format it. Optional, like the ActionBar prop it feeds.
+   */
+  pin?: ActionBarProps["pin"];
   liked: boolean;
   setLiked: (v: boolean) => void;
   onDismiss?: () => void;
@@ -19,7 +33,7 @@ interface ComparisonCardProps extends CardActionCallbacks {
 }
 
 export function ComparisonCard({
-  item, data, liked, setLiked, onDismiss, trending,
+  item, data, liked, setLiked, onDismiss, trending, pin,
   onDetailClick, onShare, onContextExpand, onContextCollapse,
 }: ComparisonCardProps) {
   const catStyle = getCat(data.llm_sport_category);
@@ -128,6 +142,7 @@ export function ComparisonCard({
         </div>
 
         <ActionBar
+          pin={pin}
           liked={liked}
           setLiked={setLiked}
           shareUrl={shareUrl}

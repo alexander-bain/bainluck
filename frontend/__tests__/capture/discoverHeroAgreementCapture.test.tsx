@@ -267,13 +267,30 @@ describe("UX-P162 capture", () => {
     expect(feedCardHtml(data)).toContain("56%");
   });
 
-  it("the live pool is unchanged, which is the honest headline", () => {
+  // UX-P238 amended this row, and the amendment is the finding.
+  //
+  // `beforeDiscoverHtml` is the genuinely deployed pre-UX-P162 render: the
+  // headline is `top_outcomes[0]` and it is rounded raw. UX-P162 measured that
+  // no live card's headline moved under the card rule, and that was true — of
+  // headlines that were index 0. `renderedCardPercents` rounds index 0 once and
+  // DERIVES index 1 as `100 - index0`, so raw rounding and the card rule can
+  // only ever differ on index 1, and index 1 was never a headline.
+  //
+  // UX-P238 made it one: a card whose leader is the negation of its own question
+  // now headlines the affirmative side. So exactly one live card in this pool
+  // moves, for BOTH reasons at once — a different outcome AND, on that outcome,
+  // the point of difference UX-P162 always predicted (raw `round(27.5) = 28`
+  // against the derived `100 - 73 = 27`).
+  it("the live pool is unchanged except the card UX-P238 re-headlined", () => {
     const cards = twoOutcomeLiveCards();
     expect(cards.length).toBeGreaterThan(0);
-    for (const c of cards) {
-      const data = asData(c);
-      expect(heroText(beforeDiscoverHtml(data))).toBe(heroText(discoverHtml(data)));
-    }
+    const moved = cards
+      .filter((c) => {
+        const data = asData(c);
+        return heroText(beforeDiscoverHtml(data)) !== heroText(discoverHtml(data));
+      })
+      .map((c) => c.name);
+    expect(moved).toEqual(["Will Neuralink's valuation hit (HIGH) $47.5B by August 31?"]);
   });
 
   it("renders the page, and writes it when UX_CAPTURE_DIR is set", () => {
