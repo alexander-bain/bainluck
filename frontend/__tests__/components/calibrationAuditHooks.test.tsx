@@ -53,6 +53,7 @@ import { MATCHED_BUCKET_MIN_SIDE_N } from "@/lib/calibrationMath";
 import * as fs from "fs";
 import * as path from "path";
 import * as React from "react";
+import * as ts from "typescript";
 
 /**
  * The files the calibration surface's hooks are declared in.
@@ -620,6 +621,558 @@ const GUARDED_HOOKS: readonly string[] = [
   ...UX_P078_HOOKS,
 ];
 
+// ---------------------------------------------------------------------------
+// The pack is READ THROUGH THE TYPESCRIPT AST, not as text.
+//
+// UX-P229 round 3, after CERT-585. Rounds 1 and 2 read the spec as a string and
+// each was defeated by a spelling. CERT-582 assembled a hook name from parts
+// (`"calibration-" + "computed-hook"`). Round 2 answered by asserting the SHAPE
+// of every `data-testid="..."` literal — and CERT-585 walked straight past it by
+// leaving the shape alone and poisoning what feeds it: replacing one element of
+// `STAT_HOOKS` with `["calibration","stat","outcomes"].join("-")` keeps the
+// allowed `data-testid="${hook}"` selector, keeps PACK_HOOKS at 13, keeps every
+// illegal/missed list empty — and the hook Playwright actually uses is captured
+// by nobody.
+//
+// The sibling file (`discoverAuditHooks.test.tsx`, CERT-584 -> CERT-587) lost
+// twice the same way and stopped reading text. So does this one. Selectors are
+// RESOLVED: a selector argument either evaluates to a set of strings this file
+// can compute — whose hooks are extracted and demanded — or it fails LOUDLY.
+// There is no third outcome, and no spelling changes that.
+//
+// WHERE THIS DIFFERS FROM THE DISCOVER PORT, AND WHY (UX-P228-4: the same defect
+// class needs different repairs in two files, and the discriminator is
+// measured). Discover's pack is fully literal, so it can afford a whole-file
+// "exactly one binding of this name" rule. Calibration's legitimately reaches
+// its hooks two indirect ways, and a guard that reds a spec doing nothing wrong
+// is a guard someone deletes:
+//
+//   1. `for (const hook of STAT_HOOKS)` — so an ARRAY resolves to a list and the
+//      loop variable resolves to its elements; and
+//   2. `readActivityValue(ACTIVITY_MOVED)` — a local `const` arrow taking the
+//      hook as a PARAMETER, so the body is walked once PER CALL SITE with the
+//      parameter bound to the resolved argument.
+//
+// Both are fail-closed: an array with one unresolvable element makes the whole
+// array unresolvable, and a function that is referenced anywhere other than in
+// call position (so its callers are unknown) is walked once with its parameters
+// poisoned, which reds. `hook` is bound twice in this spec — once by the loop
+// and once by the parameter — which is exactly why the resolution is scoped
+// rather than name-censused.
+// ---------------------------------------------------------------------------
+
+/**
+ * What an expression can evaluate to. `strings` is the set of values it may
+ * take; `list` is an array literal's contents. `null` anywhere means "this file
+ * cannot compute it", and null is always loud.
+ */
+type Val =
+  | { kind: "strings"; values: string[] }
+  | { kind: "list"; values: string[] };
+
+/**
+ * Name -> which argument carries the selector.
+ *
+ * Module scope so a test can assert the map still COVERS what the spec calls.
+ * The Discover port's battery M16 deleted an entry from the equivalent map and
+ * the run stayed green: every call of that API silently stopped being checked
+ * while the resolver reported nothing unresolved, because it had stopped
+ * looking. A fail-closed check that can be silently unwired is not fail-closed.
+ */
+const SELECTOR_ARG: Record<string, number> = {
+  locator: 0,
+  waitForSelector: 0,
+  getByTestId: 0,
+  $: 0,
+  $$: 0,
+};
+
+/**
+ * The selector-taking APIs that MUST be understood if the pack uses one.
+ * Hardcoded on purpose: it is the one list a reviewer has to eyeball.
+ */
+const REQUIRED_SELECTOR_APIS = ["locator", "waitForSelector", "getByTestId"] as const;
+
+type PackRead = {
+  /** Every selector string the pack can produce. */
+  selectors: string[];
+  /** Selector arguments this file cannot compute. Non-empty is a failure. */
+  unresolved: string[];
+  /** Every function name called anywhere in the spec. */
+  calledNames: Set<string>;
+};
+
+/** `=`, `+=`, `??=` and the rest — the documented contiguous SyntaxKind range. */
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+/** Every plain name a binding introduces, flattened through destructuring. */
+function boundNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((el) => (ts.isBindingElement(el) ? boundNames(el.name) : []));
+}
+
+function readPack(file: string, src: string): PackRead {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+
+  const selectors: string[] = [];
+  const unresolved: string[] = [];
+  const calledNames = new Set<string>();
+
+  /**
+   * Every name written anywhere in the file, in ANY scope. Deliberately coarse:
+   * a write to `x` in one function distrusts `x` everywhere. Over-refusing is a
+   * loud red on a spec that could have been read; under-refusing is CERT-587,
+   * where a stale initializer was handed back as though it were the value.
+   */
+  const written = new Set<string>();
+  function markWrite(target: ts.Node): void {
+    const t = ts.isParenthesizedExpression(target) ? target.expression : target;
+    if (ts.isIdentifier(t)) written.add(t.text);
+    else if (ts.isArrayLiteralExpression(t)) t.elements.forEach(markWrite);
+    else if (ts.isSpreadElement(t)) markWrite(t.expression);
+    else if (ts.isObjectLiteralExpression(t)) {
+      for (const p of t.properties) {
+        if (ts.isShorthandPropertyAssignment(p)) written.add(p.name.text);
+        else if (ts.isPropertyAssignment(p)) markWrite(p.initializer);
+        else if (ts.isSpreadAssignment(p)) markWrite(p.expression);
+      }
+    }
+    // A member write (`obj.x = 1`) rebinds nothing and is deliberately ignored.
+  }
+  (function census(n: ts.Node): void {
+    if (ts.isBinaryExpression(n) && isAssignmentOperator(n.operatorToken.kind)) {
+      markWrite(n.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      markWrite(n.operand);
+    } else if (
+      (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      !ts.isVariableDeclarationList(n.initializer)
+    ) {
+      markWrite(n.initializer);
+    }
+    ts.forEachChild(n, census);
+  })(sf);
+
+  type Slot = { val: Val | null };
+  type FnRec = {
+    fn: ts.ArrowFunction | ts.FunctionExpression;
+    env: Env;
+    inlined: boolean;
+    escaped: boolean;
+  };
+  type Env = { vars: Map<string, Slot>; fns: Map<string, FnRec>; parent: Env | null };
+
+  const newEnv = (parent: Env | null): Env => ({
+    vars: new Map(),
+    fns: new Map(),
+    parent,
+  });
+  function lookupVar(env: Env, name: string): Slot | undefined {
+    for (let e: Env | null = env; e; e = e.parent) {
+      const s = e.vars.get(name);
+      if (s) return s;
+    }
+    return undefined;
+  }
+  function lookupFn(env: Env, name: string): FnRec | undefined {
+    for (let e: Env | null = env; e; e = e.parent) {
+      const f = e.fns.get(name);
+      if (f) return f;
+    }
+    return undefined;
+  }
+
+  const asStrings = (v: Val | null): string[] | null =>
+    v && v.kind === "strings" ? v.values : null;
+  const cross = (a: string[], b: string[]): string[] =>
+    a.flatMap((x) => b.map((y) => x + y));
+
+  function unwrap(n: ts.Node): ts.Node {
+    return ts.isParenthesizedExpression(n) || ts.isAsExpression(n)
+      ? unwrap(n.expression)
+      : n;
+  }
+
+  function resolve(n: ts.Node, env: Env, depth = 0): Val | null {
+    if (depth > 24) return null;
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+      return { kind: "strings", values: [n.text] };
+    }
+    if (ts.isIdentifier(n)) return lookupVar(env, n.text)?.val ?? null;
+    if (ts.isParenthesizedExpression(n) || ts.isAsExpression(n)) {
+      return resolve(n.expression, env, depth + 1);
+    }
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const l = asStrings(resolve(n.left, env, depth + 1));
+      const r = asStrings(resolve(n.right, env, depth + 1));
+      return l && r ? { kind: "strings", values: cross(l, r) } : null;
+    }
+    if (ts.isTemplateExpression(n)) {
+      let acc = [n.head.text];
+      for (const span of n.templateSpans) {
+        const v = asStrings(resolve(span.expression, env, depth + 1));
+        if (!v) return null;
+        acc = cross(cross(acc, v), [span.literal.text]);
+      }
+      return { kind: "strings", values: acc };
+    }
+    if (ts.isArrayLiteralExpression(n)) {
+      const out: string[] = [];
+      for (const el of n.elements) {
+        const v = asStrings(resolve(el, env, depth + 1));
+        // One unreadable element makes the whole array unreadable. This is the
+        // CERT-585 joint: the cert poisoned exactly one STAT_HOOKS entry.
+        if (!v) return null;
+        out.push(...v);
+      }
+      return { kind: "list", values: out };
+    }
+    return null;
+  }
+
+  /** Register a scope's own declarations before its statements are walked. */
+  function declareScope(stmts: readonly ts.Statement[], env: Env): void {
+    // Poison first, resolve second: a name is never readable merely because it
+    // was declared, and a forward reference resolves to null rather than to
+    // whatever happens to be in an outer scope.
+    for (const st of stmts) {
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        for (const nm of boundNames(d.name)) env.vars.set(nm, { val: null });
+      }
+    }
+    for (const st of stmts) {
+      if (!ts.isVariableStatement(st)) continue;
+      if (!(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || !d.initializer) continue;
+        if (written.has(d.name.text)) continue; // stays poisoned
+        const init = unwrap(d.initializer);
+        if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+          // Deferred: the body is walked at each CALL SITE so its parameters
+          // carry real values, and once with them poisoned if it escapes or is
+          // never called.
+          env.fns.set(d.name.text, { fn: init, env, inlined: false, escaped: false });
+          env.vars.delete(d.name.text);
+          continue;
+        }
+        env.vars.set(d.name.text, { val: resolve(d.initializer, env) });
+      }
+    }
+  }
+
+  let inlineDepth = 0;
+
+  function walkFnBody(rec: FnRec, args: (Val | null)[]): void {
+    const e = newEnv(rec.env);
+    rec.fn.parameters.forEach((p, i) => {
+      const v = ts.isIdentifier(p.name) ? asStrings(args[i] ?? null) : null;
+      for (const nm of boundNames(p.name)) {
+        e.vars.set(nm, {
+          val: v && !written.has(nm) ? { kind: "strings", values: v } : null,
+        });
+      }
+    });
+    inlineDepth += 1;
+    try {
+      if (inlineDepth <= 4) walk(rec.fn.body, e);
+    } finally {
+      inlineDepth -= 1;
+    }
+  }
+
+  /** Anything left uncalled, or referenced as a value, is read with its
+   *  parameters poisoned — so a selector inside it reds rather than vanishing. */
+  function finishFns(env: Env): void {
+    for (const rec of env.fns.values()) {
+      if (rec.inlined && !rec.escaped) continue;
+      walkFnBody(rec, []);
+    }
+  }
+
+  function walk(n: ts.Node, env: Env): void {
+    if (ts.isSourceFile(n) || ts.isBlock(n)) {
+      const e = ts.isSourceFile(n) ? env : newEnv(env);
+      declareScope(n.statements, e);
+      n.statements.forEach((s) => walk(s, e));
+      finishFns(e);
+      return;
+    }
+
+    if (ts.isVariableStatement(n)) {
+      for (const d of n.declarationList.declarations) {
+        // A deferred function's body is not walked here.
+        if (ts.isIdentifier(d.name) && env.fns.has(d.name.text)) continue;
+        if (d.initializer) walk(d.initializer, env);
+      }
+      return;
+    }
+
+    if (ts.isForOfStatement(n)) {
+      const e = newEnv(env);
+      const init = n.initializer;
+      if (ts.isVariableDeclarationList(init)) {
+        const src = resolve(n.expression, env);
+        const items = src && src.kind === "list" ? src.values : null;
+        const readable = !!items && !!(init.flags & ts.NodeFlags.Const);
+        for (const d of init.declarations) {
+          for (const nm of boundNames(d.name)) {
+            e.vars.set(nm, {
+              val:
+                readable && ts.isIdentifier(d.name) && !written.has(nm)
+                  ? { kind: "strings", values: items! }
+                  : null,
+            });
+          }
+        }
+      }
+      walk(n.expression, env);
+      walk(n.statement, e);
+      return;
+    }
+
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const name = ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : ts.isIdentifier(callee)
+          ? callee.text
+          : "";
+      if (name) calledNames.add(name);
+
+      const idx = SELECTOR_ARG[name];
+      if (idx !== undefined && n.arguments.length > idx) {
+        const arg = n.arguments[idx];
+        const v = asStrings(resolve(arg, env));
+        if (!v) {
+          unresolved.push(`${name}(${arg.getText().replace(/\s+/g, " ").slice(0, 80)})`);
+        } else {
+          // `getByTestId` takes the bare name; normalise it to the attribute
+          // form so one extraction reads both spellings.
+          selectors.push(
+            ...(name === "getByTestId" ? v.map((s) => `data-testid="${s}"`) : v)
+          );
+        }
+      }
+
+      const rec = ts.isIdentifier(callee) ? lookupFn(env, callee.text) : undefined;
+      if (rec) {
+        rec.inlined = true;
+        walkFnBody(
+          rec,
+          n.arguments.map((a) => resolve(a, env))
+        );
+      } else {
+        walk(callee, env);
+      }
+      n.arguments.forEach((a) => walk(a, env));
+      return;
+    }
+
+    if (ts.isIdentifier(n)) {
+      // A deferred function named outside call position has callers this file
+      // cannot see. Mark it, so `finishFns` reads it poisoned as well.
+      const rec = lookupFn(env, n.text);
+      if (rec) rec.escaped = true;
+      return;
+    }
+
+    if (
+      ts.isArrowFunction(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isFunctionDeclaration(n) ||
+      ts.isMethodDeclaration(n)
+    ) {
+      // An anonymous callback — `test("...", async ({ page }) => { ... })`.
+      // Its parameters have no known values, which is correct: `page` is not a
+      // selector, and anything that IS one reds.
+      const e = newEnv(env);
+      for (const p of n.parameters) {
+        for (const nm of boundNames(p.name)) e.vars.set(nm, { val: null });
+      }
+      if (n.body) walk(n.body, e);
+      return;
+    }
+
+    // Over-covering extraction: ANY string literal mentioning the attribute is
+    // read, wherever it sits. The safe direction — it cannot hide a hook, only
+    // demand one that turns out to be prose.
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      n.text.includes("data-testid")
+    ) {
+      selectors.push(n.text);
+    }
+
+    ts.forEachChild(n, (c) => walk(c, env));
+  }
+
+  walk(sf, newEnv(null));
+  return { selectors, unresolved, calledNames };
+}
+
+/** The hook set a pack read yields. Shared so the attacks below exercise the
+ *  same extraction PACK_HOOKS is built from, not a copy of it. */
+function hooksOf(read: PackRead): string[] {
+  return [
+    ...new Set(
+      read.selectors
+        .flatMap((s) => [...s.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]))
+        .filter((h) => h.startsWith("calibration"))
+        // `<hook>-value` is StatCard's thread-through, addressed as a suffix of
+        // a hook already on the list; it is not separately declared.
+        .map((h) => h.replace(/-value$/, ""))
+    ),
+  ].sort();
+}
+
+/**
+ * The resolver is ATTACKED here, not described.
+ *
+ * Three certs on this pair of files (CERT-582, CERT-585 here; CERT-584 and
+ * CERT-587 on the Discover sibling) all found the same shape: the guard's
+ * rationale lived in a comment, and the comment was true of the code the author
+ * was picturing. What closes that is running the attack. Each row is a spec
+ * source this file must handle in exactly one of two ways — resolve it, or fail
+ * LOUDLY — and the row says which, so a case that starts passing for a new
+ * reason is a red rather than a relief.
+ *
+ * `readPack` and `hooksOf` here are the same functions the real spec goes
+ * through above.
+ */
+const RESOLVER_ATTACKS: ReadonlyArray<{
+  name: string;
+  src: string;
+  /** true ⇒ the selector argument must be reported unresolved. */
+  loud: boolean;
+  /** Hooks the extraction must yield. Only meaningful when `loud` is false. */
+  hooks?: string[];
+}> = [
+  {
+    name: "CERT-585: one STAT_HOOKS element assembled at runtime",
+    // The cert's attack verbatim in shape: the `${hook}` selector keeps its
+    // allowed form and the poison is in what feeds it.
+    src: `const STAT_HOOKS = [
+  ["calibration", "stat", "outcomes"].join("-"),
+  "calibration-stat-ece",
+] as const;
+for (const hook of STAT_HOOKS) { page.locator(\`[data-testid="\${hook}"]\`); }`,
+    loud: true,
+  },
+  {
+    name: "CERT-587 (sibling): a `let` selector widened by compound assignment",
+    src: `let SELECTOR = '[data-testid="calibration-page"]';
+SELECTOR += ', [data-' + 'testid="calibration-reassigned"]';
+page.locator(SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "a hook array built by a call, not written out",
+    src: `const STAT_HOOKS = buildHooks();
+for (const hook of STAT_HOOKS) { page.locator(\`[data-testid="\${hook}"]\`); }`,
+    loud: true,
+  },
+  {
+    name: "a parameter fed an argument the file cannot compute",
+    src: `const read = (hook) => page.locator(\`[data-testid="\${hook}"]\`);
+read(pickHook());`,
+    loud: true,
+  },
+  {
+    name: "a hook-taking function that escapes as a value",
+    // Passed to `forEach`, so its real callers are outside this file's reach.
+    // Inlining the one direct call must NOT license the escaped reference.
+    src: `const read = (hook) => page.locator(\`[data-testid="\${hook}"]\`);
+read("calibration-stat-ece");
+HOOKS.forEach(read);`,
+    loud: true,
+  },
+  {
+    name: "a parameter reassigned inside the function body",
+    // The ONE legal shape where the write census is load-bearing rather than
+    // redundant. A `const` — top-level or `for..of` — cannot be assigned to at
+    // all, so clause 2 already covers those; a PARAMETER can, and inlining the
+    // call site would otherwise bind `hook` to the caller's value while the
+    // body uses another. Battery row C9b holds this open.
+    src: `const read = (hook) => { hook = "calibration-substituted"; return page.locator(\`[data-testid="\${hook}"]\`); };
+read("calibration-stat-ece");`,
+    loud: true,
+  },
+  {
+    name: "a `for..of` over a `let` array",
+    src: `let HOOKS = ["calibration-stat-ece"];
+for (const hook of HOOKS) { page.locator(\`[data-testid="\${hook}"]\`); }`,
+    loud: true,
+  },
+  {
+    name: "the pack's `for..of` over a literal array is SUPPORTED",
+    src: `const STAT_HOOKS = [
+  "calibration-stat-outcomes",
+  "calibration-stat-ece",
+] as const;
+for (const hook of STAT_HOOKS) { page.locator(\`[data-testid="\${hook}"]\`); }`,
+    loud: false,
+    hooks: ["calibration-stat-ece", "calibration-stat-outcomes"],
+  },
+  {
+    name: "the pack's hook-as-parameter is SUPPORTED, per call site",
+    src: `const MOVED = "calibration-activity-moved";
+const UNCHANGED = "calibration-activity-unchanged";
+const read = (hook) => page.locator(\`[data-testid="\${hook}-value"]\`);
+read(MOVED);
+read(UNCHANGED);`,
+    loud: false,
+    hooks: ["calibration-activity-moved", "calibration-activity-unchanged"],
+  },
+  {
+    name: "CERT-582's computed hook name is SUPPORTED, not banned",
+    src: `const HOOK = "calibration-" + "computed-hook";
+page.locator(\`[data-testid="\${HOOK}"]\`);`,
+    loud: false,
+    hooks: ["calibration-computed-hook"],
+  },
+  {
+    name: "CERT-584's split attribute name is SUPPORTED",
+    src: `const SELECTOR = "[data-" + 'testid="calibration-split"]';
+page.locator(SELECTOR);`,
+    loud: false,
+    hooks: ["calibration-split"],
+  },
+  {
+    name: "the control's control: an ordinary selector resolves clean",
+    src: `const PAGE_ROOT = '[data-testid="calibration-page"]';
+test("loads", async ({ page }) => { await page.locator(PAGE_ROOT).first(); });`,
+    loud: false,
+    hooks: ["calibration-page"],
+  },
+];
+
+describe("the pack resolver fails closed — attacked, not asserted", () => {
+  test.each(RESOLVER_ATTACKS.map((a) => [a.name, a] as const))("%s", (_name, attack) => {
+    const r = readPack("attack.spec.ts", attack.src);
+    if (attack.loud) {
+      expect(`unresolved: ${r.unresolved.length}`).not.toBe("unresolved: 0");
+    } else {
+      expect(JSON.stringify(r.unresolved)).toBe("[]");
+      expect(hooksOf(r)).toEqual(attack.hooks);
+    }
+  });
+
+  test("the attack table exercises both outcomes", () => {
+    // Without this the table degenerates the day someone drops the awkward
+    // half: all-loud would pass a resolver that resolves nothing, all-clean a
+    // resolver that never fails.
+    expect(RESOLVER_ATTACKS.some((a) => a.loud)).toBe(true);
+    expect(RESOLVER_ATTACKS.some((a) => !a.loud)).toBe(true);
+  });
+});
+
 describe("the tripwire guards every hook the pack actually selects", () => {
   // The gap this closes: the lists above are hand-maintained, and nothing tied
   // them to the pack. `calibration-overall-split` was selected by the pack and
@@ -638,11 +1191,26 @@ describe("the tripwire guards every hook the pack actually selects", () => {
   // (`STAT_HOOKS`) and its selector constants. Deliberately not restricted to
   // selector syntax: a hook named only in a comment is over-covered, which
   // costs a line here and cannot hide a real hole.
+  const PACK = readPack("calibration.spec.ts", SPEC);
+
+  /**
+   * The union of two readings, and the union is the point.
+   *
+   * The RESOLVED reading (`hooksOf`) is what the pack can actually select: it
+   * follows `STAT_HOOKS` through its `for..of`, and `ACTIVITY_MOVED` through
+   * `readActivityValue`'s parameter, to the real strings Playwright receives.
+   * The RAW reading is the over-covering half — a bare `calibration-…` token
+   * anywhere in the file, comments included. Over-covering costs a line in
+   * `GUARDED_HOOKS` and cannot hide a hole, so both are kept and neither is
+   * allowed to shrink the other.
+   */
+  const RESOLVED_HOOKS = hooksOf(PACK);
   const PACK_HOOKS = [
-    ...new Set([...SPEC.matchAll(/calibration-[a-z0-9-]+/g)].map((m) => m[0])),
+    ...new Set([
+      ...RESOLVED_HOOKS,
+      ...[...SPEC.matchAll(/calibration-[a-z0-9-]+/g)].map((m) => m[0]),
+    ]),
   ]
-    // `<hook>-value` is StatCard's thread-through, addressed by the pack as a
-    // suffix of a hook already on the list; it is not separately declared.
     .filter((h) => !h.endsWith("-value"))
     .sort();
 
@@ -651,58 +1219,48 @@ describe("the tripwire guards every hook the pack actually selects", () => {
     expect(PACK_HOOKS.length).toBeGreaterThanOrEqual(10);
   });
 
-  /**
-   * The extraction reads WHOLE literals, so its precondition is that the pack
-   * writes them whole. CERT-582 blocked round 1 for leaving that as an
-   * assumption: `"calibration-" + "computed-hook"` is a selector Playwright
-   * honours and `/calibration-[a-z0-9-]+/` cannot see, so a new pack dependency
-   * could stay unguarded with CI green. The precondition is an assertion now.
-   *
-   * Comments are stripped first (UX-P213-2 / UX-P224-3). The spec's header
-   * discusses `data-testid` in prose, and counting those would red this on day
-   * one — the extraction above deliberately keeps reading the raw text, where
-   * over-covering a hook named only in a comment is the safe direction.
-   */
-  const SPEC_CODE = SPEC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-
-  const SELECTOR_TESTIDS = [...SPEC_CODE.matchAll(/data-testid="([^"]*)"/g)].map(
-    (m) => m[1]
-  );
-
-  test("every testid the pack selects is whole — never assembled from parts", () => {
-    // Two shapes are legal, and both were measured against the current spec:
-    // a whole literal, or the `${hook}` interpolation the stat-card and
-    // activity loops use, which is fed from literal arrays in the same file
-    // (`STAT_HOOKS`, `ACTIVITY_MOVED`, `ACTIVITY_UNCHANGED`) that the raw-text
-    // extraction above already reads. Anything else — a concatenation, a
-    // computed prefix, an interpolation of anything but `hook` — is a selector
-    // this file cannot follow, and it fails here rather than silently.
-    expect(SELECTOR_TESTIDS.length).toBeGreaterThan(0);
-    const illegal = SELECTOR_TESTIDS.filter(
-      (id) => !/^[a-z0-9-]+$/.test(id) && id !== "${hook}" && id !== "${hook}-value"
-    );
-    expect(illegal).toEqual([]);
+  test("the RESOLVED reading is not silently empty either", () => {
+    // The raw reading alone would satisfy the count above forever, which is how
+    // CERT-585 kept PACK_HOOKS at 13 while the resolver's answer was gone. The
+    // two readings are asserted separately so one cannot cover for the other.
+    expect(RESOLVED_HOOKS.length).toBeGreaterThanOrEqual(10);
   });
 
-  test("every literal selector in the pack is one the extraction actually captured", () => {
-    // The shape check alone is not enough: `data-testid="calibration-" + x`
-    // leaves the whole-literal `calibration-`, which passes the shape test and
-    // is invisible to `/calibration-[a-z0-9-]+/`. Requiring the two readings to
-    // agree is what closes that seam — a literal the extraction did not capture
-    // means the two are looking at different things, which is the bug.
-    const missed = SELECTOR_TESTIDS.filter((id) => /^[a-z0-9-]+$/.test(id))
-      .map((id) => id.replace(/-value$/, ""))
-      .filter((id) => id.startsWith("calibration"))
-      .filter((id) => !PACK_HOOKS.includes(id));
-    expect(missed).toEqual([]);
+  test("every selector the pack builds is one this file can resolve", () => {
+    // The fail-closed joint, and the whole answer to CERT-585.
+    //
+    // Round 2 asserted the SHAPE of the `data-testid="${hook}"` template and
+    // trusted whatever fed `hook`. The cert poisoned one element of `STAT_HOOKS`
+    // with a `.join("-")`, left the shape untouched, and the guard never
+    // noticed the hook it could no longer see. Shape is not provenance. Any
+    // selector argument that does not resolve to a concrete set of strings
+    // fails here instead.
+    expect(`unresolved: ${JSON.stringify(PACK.unresolved)}`).toBe("unresolved: []");
   });
 
-  test("the pack reaches its hooks only through `data-testid=`", () => {
-    // The other way round the extraction: Playwright's `getByTestId` takes a
-    // bare name with no `data-testid` in the text at all. Unused today; if it
-    // is ever used, this reds and the extraction has to learn it.
-    expect(occurrences(SPEC_CODE, "getByTestId")).toBe(0);
+  test("the resolver still understands every selector API the pack calls", () => {
+    // Anti-vacuity for the check above, and the reason "some selectors were
+    // found" is not enough. The Discover port's battery deleted one entry from
+    // SELECTOR_ARG: the resolvability test stayed green because the resolver
+    // had simply stopped looking at those calls, while the literal scan kept
+    // the selector list non-empty. A check that can be unwired without anything
+    // going red is decoration.
+    const used = REQUIRED_SELECTOR_APIS.filter((api) => PACK.calledNames.has(api));
+    expect(used.filter((api) => !(api in SELECTOR_ARG))).toEqual([]);
+    expect(PACK.selectors.length).toBeGreaterThan(0);
   });
+
+  // WITHDRAWN, and the withdrawal is the finding. This slot briefly held
+  // "every hook the resolver reaches is one the raw reading also captured",
+  // justified as making drift between the two readings visible. Battery row C2
+  // killed it: writing `const ACTIVITY_MOVED = "calibration-" + "activity-moved"`
+  // leaves no contiguous token for the raw scan, so a spelling this file
+  // deliberately SUPPORTS would have failed here. The check re-imposed the
+  // exact text rule the repair exists to drop, one test lower down. There is no
+  // sound version of it: the resolver reaching a name the text cannot show is
+  // the feature, not the drift. What actually protects the resolved reading
+  // from emptying is the unresolvability joint and the API-coverage companion
+  // above — both measured (battery C6, C7), not this.
 
   // STATED GAP, measured (battery M8, a scored survivor). This check is
   // ONE-DIRECTIONAL: pack ⊆ guarded. A hook REMOVED from the pack is not
