@@ -70,10 +70,25 @@ BACKEND = EVALS.parents[1]
 #: The one file this ship edits.
 TARGET = BACKEND / "app" / "routes" / "events.py"
 
-#: The oracle. The shipped guard suite, run out of process against the mutated
-#: file — never a re-implementation of its assertions here, which would only
+#: The oracle. The shipped guard suites, run out of process against the mutated
+#: file — never a re-implementation of their assertions here, which would only
 #: prove that this file's copy of them still fails.
-ORACLE = "tests/test_lat_p143_typeahead_outcome_arm.py"
+#:
+#: 🔴 EVERY SUITE THAT OWNS A LINE THIS HARNESS MUTATES, AND THAT IS A RULE
+#: (CERT-570). This was a single file, and the CERT-567 repair put its guards in
+#: a NEW one — so the three mutants aimed at the repair were scored against a
+#: suite that had never heard of it. Two of them SURVIVED on the first run, and
+#: neither survival meant "no assertion exists": the assertions existed, in a
+#: file the oracle did not open.
+#:
+#: That is the same defect CERT-563 named one harness over — a needle re-pointed
+#: at new code without its suite enrolled is a guard that catches nothing and
+#: reports a pass. Adding a mutant here without adding the suite that kills it is
+#: how a battery's denominator grows while its power does not.
+ORACLE = [
+    "tests/test_lat_p143_typeahead_outcome_arm.py",
+    "tests/test_lat_p166_typeahead_outcome_probe.py",
+]
 
 MUTATES_WORKING_TREE = True
 
@@ -168,8 +183,13 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M10-OPEN-FILTER-DROPPED-FROM-THE-ARM",
         "the ordering walk is only cheap because it walks the OPEN set",
-        "            .where(arm, *open_now)",
-        "            .where(arm)",
+        # CERT-570 re-target: the CERT-567 repair renamed the final predicate to
+        # `candidate` (it is now either the `= ANY(:ids)` fast path or the
+        # original `arm`), so the old needle drifted and the scanner correctly
+        # reported this mutant as NOT-APPLIED. The mutation is unchanged in
+        # meaning — drop the open-status filter from the ordering walk.
+        "            .where(candidate, *open_now)",
+        "            .where(candidate)",
     ),
     # ------------------------------------------------------------------ #
     # Direction 2: it stops being honest.
@@ -189,8 +209,15 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M13-NO-STATEMENT-TIMEOUT",
         "no SET LOCAL: the arm is unbounded again and rides the request deadline",
-        '        await db.execute(text(f"SET LOCAL statement_timeout = {int(bound_ms)}"))',
-        "        pass",
+        # CERT-570 re-target. The CERT-567 repair moved this line inside
+        # `_arm_statement_timeout`, so the old needle drifted — and because the
+        # bare `        pass` it mutated to occurs seven times in `events.py`
+        # anyway, the scanner read "needle absent, mutant present" and reported
+        # RESIDUE on a clean tree. Both halves are fixed: the needle is the line
+        # where it now lives, and the replacement carries its own id so it can
+        # never be confused with somebody else's `pass`.
+        '            await db.execute(text(f"SET LOCAL statement_timeout = {int(left)}"))',
+        "            pass  # M13: no statement timeout is applied",
     ),
     (
         "M14-SHED-LOOKS-LIKE-NO-MATCHES",
@@ -246,6 +273,49 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         '    _ta_degraded = False\n    _ta_mark("events_assemble")\n    if _ta_outcome_arm is not None:',
         "    _ta_degraded = False\n    if _ta_outcome_arm is not None:",
     ),
+    # ------------------------------------------------------------------ #
+    # Direction 3: the arm's WALL BUDGET stops binding (CERT-567 / CERT-570).
+    #
+    # Re-targeting a drifted needle proves a repair is REACHABLE, never that it
+    # is GUARDED. These are the defect CERT-567 actually found, plus the two
+    # ways of reintroducing it that a re-target alone would not have covered.
+    # ------------------------------------------------------------------ #
+    (
+        "M21-SECOND-STATEMENT-UNARMED",
+        "CERT-567 exactly: arm once, then run the ordering walk against a "
+        "timeout the probe has already spent — two statements under one bound, "
+        "so the arm can take twice its declared budget",
+        # 🔴 VERBATIM, NEVER `\\n`-ESCAPED. Pass B of `scan_mutation_residue.py`
+        # flags a file holding a REPLACEMENT whose NEEDLE is absent, and an
+        # escaped needle is absent from this file by construction — so the first
+        # draft of this mutant reported itself as residue on a clean tree. The
+        # sibling loose-scan harness writes the same rule in its docstring.
+        """        if not await _arm_statement_timeout():
+            return None
+
+        result = await db.execute(""",
+        """        result = await db.execute(""",
+    ),
+    (
+        "M22-REARM-USES-THE-WHOLE-BUDGET-AGAIN",
+        "re-arm with the ORIGINAL budget rather than what remains — the full "
+        "bound is re-applied before every statement, which is the unbounded arm "
+        "wearing a re-arm's clothes",
+        """        left = _arm_remaining_ms()
+        if left <= 0:
+            return False""",
+        """        left = bound_ms
+        if left <= 0:
+            return False""",
+    ),
+    (
+        "M23-REMAINING-TRUNCATES-INSTEAD-OF-CEILING",
+        "truncate the remainder and a 2,000 ms arm declares 1,999 — LAT-P143's "
+        "'the bound IS the arm budget' contract breaks by 1 ms and the guard "
+        "that owns it goes red",
+        "        return -int(-left_ms // 1)",
+        "        return int(left_ms)",
+    ),
 ]
 
 
@@ -256,7 +326,7 @@ def sha256(path: Path) -> str:
 def run_oracle() -> bool:
     """True when the guards PASS — i.e. the mutant SURVIVED."""
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", ORACLE, "-q", "--no-header", "-x"],
+        [sys.executable, "-m", "pytest", *ORACLE, "-q", "--no-header", "-x"],
         cwd=BACKEND,
         capture_output=True,
         text=True,
@@ -281,7 +351,7 @@ def main() -> int:
 
     print("LAT-P143 mutation battery — the clause that changes no result")
     print(f"target  : {TARGET.relative_to(BACKEND)}")
-    print(f"oracle  : {ORACLE}")
+    print(f"oracle  : {' + '.join(ORACLE)}")
     print(f"mutants : {len(MUTANTS)}\n")
 
     killed, survived, broken = 0, [], []
