@@ -388,6 +388,11 @@ def build_match_row(
         #
         # So the second condition does not consult the flag at all.
         #
+        # ⚠️ THAT SENTENCE WAS NOT TRUE WHEN IT WAS WRITTEN, and CERT-548 is what
+        # it cost. Q468 freed the NEAR end and left the FAR end conjoined with
+        # the flag, then wrote the rule as though both were done. It is true now
+        # — see the CERT-548 block below, which is the change that made it so.
+        #
         # ═══ CERT-544: AND IT MUST NOT CONSULT THE STAMP AS A DAY EITHER ═══
         #
         # The first version of this said "a ceremony stamp names a day, so the
