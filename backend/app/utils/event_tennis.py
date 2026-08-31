@@ -41,12 +41,38 @@ _RESOLVED_WINDOW_DAYS = 30
 # resolved winner. Display-only; never authoritative (gotcha #21).
 _WON_PRICE_THRESHOLD = 0.97
 
+#: ATP/WTA TOUR TIERS. A tier says how many ranking points a tournament awards —
+#: it is a PROPERTY of a tournament, never its identity, and no two tournaments
+#: in one city differ only by tier. One source names its markets "ATP 1000
+#: Montreal: Winner" while the other names the same tournament "ATP Montreal
+#: Winner", and because `list_tennis_tournament_concepts` keys its groups on the
+#: EXACT token set while `select_winner_field` matches by SUBSET, the two layers
+#: disagreed: the rail printed both renderings as two separate tournaments, and
+#: both cards opened the SAME event page. Measured in production 2026-08-29 —
+#: `/hub/tennis` served 12 upcoming cards for 10 tournaments (ATP Montreal and
+#: WTA Toronto each listed twice), and all four keys resolved to just two events.
+#:
+#: The set is CLOSED and externally defined (the tours publish it), so it is
+#: vocabulary rather than a tuned threshold — the same shape as `_SLAM_PATTERNS`.
+#: ⚠️ Only `1000` occurs in the corpus: a census of all 1,677 open tennis markets
+#: on 2026-08-29 found it exactly TWICE, both of them the duplicate pair above,
+#: and found no `125`/`250`/`500` at all. RE-MEASURED 2026-08-30 over 1,591 open
+#: tennis markets (`truncated: false`) — unchanged: `1000` ×2 (ids 57718610 "ATP
+#: 1000 Montreal: Winner" and 58076256 "WTA 1000 Toronto: Winner", both
+#: `resolution_date = NULL`), `125`/`250`/`500` ×0. Those three are therefore a
+#: strict no-op on the measured corpus and are listed because the naming
+#: convention that produced "ATP 1000" produces "ATP 250" the week a 250-level
+#: event is served. Numeric tokens ARE common elsewhere in the corpus (`2` ×199,
+#: `1` ×119, `3` ×93, `16` ×87) but they live in match and prop titles, which
+#: `is_winner_field` excludes before either caller sees them.
+_TOUR_TIER_TOKENS = {"125", "250", "500", "1000"}
+
 # Tokens stripped when deriving the tournament name from a market title.
 _TENNIS_STOPWORDS = {
     "winner", "champion", "champ", "tennis", "atp", "wta", "mens", "men", "s",
     "womens", "women", "singles", "doubles", "the", "2024", "2025", "2026",
     "2027", "2028", "final", "title",
-}
+} | _TOUR_TIER_TOKENS
 
 # A tournament's winner FIELD must have at least this many real competitors.
 # Two is the definition of a field, not a tuned number: one outcome is a yes/no
@@ -350,7 +376,31 @@ async def list_tennis_tournament_concepts(
         slug = clean_slug(winner.name or "")
         if not slug:
             continue
-        status = tennis_status(winner.status, winner.resolution_date, now)
+        # A group can hold one tournament as rendered by SEVERAL sources, and they
+        # do not all know the same facts. `winner` is chosen for the fullest DRAW
+        # (the L2-65 alias-convergence tie-break) — that decides identity, name and
+        # slug, and it must keep deciding them. It does NOT follow that the richest
+        # draw also carries the date: measured 2026-08-29, the two markets that the
+        # tier-token fix merges are exactly the ones where it does not. "ATP 1000
+        # Montreal: Winner" has 69 outcomes and `resolution_date = NULL`; "ATP
+        # Montreal Winner" has 46 and knows the tournament ends 2026-09-13. Reading
+        # the date off `winner` alone would have merged the duplicate card and, in
+        # the same move, downgraded the survivor from `live` with a date to
+        # `upcoming` with none — trading a visible duplicate for a silent
+        # subtraction, which is a worse bug than the one being fixed.
+        #
+        # So identity comes from the winner and the DATE comes from the group: the
+        # winner's own date when it has one, else the earliest a sibling knows.
+        # This is not guessing a date we do not have — it is reading one we DO
+        # have, off another rendering of the same tournament.
+        end_at = winner.resolution_date
+        if end_at is None:
+            sibling_dates = [
+                m.resolution_date for m in ms if m.resolution_date is not None
+            ]
+            if sibling_dates:
+                end_at = min(sibling_dates)
+        status = tennis_status(winner.status, end_at, now)
         if status not in statuses:
             continue
         concepts.append(
@@ -359,14 +409,17 @@ async def list_tennis_tournament_concepts(
                 "name": winner.name,
                 "domain": "tennis",
                 "status": status,
-                "start_date": (
-                    winner.resolution_date.isoformat()
-                    if winner.resolution_date is not None
-                    else None
-                ),
+                # The GROUP's date, not the winner's own — see the block above.
+                # ⚠️ This key is misnamed: it carries `resolution_date`, which is
+                # when the winner market RESOLVES, i.e. at or after the tournament
+                # ENDS. That is a separate defect (UX-P178) and is deliberately NOT
+                # fixed here; what matters for this ship is that it is the value the
+                # card PRINTS, so serving the group's date is what keeps the
+                # surviving Montreal card from losing the date it had before.
+                "start_date": (end_at.isoformat() if end_at is not None else None),
                 "is_major": False,
                 "entry_count": _real_count(winner),
-                "_sort": winner.resolution_date,
+                "_sort": end_at,
             }
         )
 

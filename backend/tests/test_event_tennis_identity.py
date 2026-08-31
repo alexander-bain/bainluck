@@ -27,12 +27,15 @@ production market set, measured the same day.
 
 import json
 import pathlib
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.utils.event_tennis import (
     _MIN_FIELD_OUTCOMES,
+    _TENNIS_STOPWORDS,
+    _TOUR_TIER_TOKENS,
     canonical_slug_tokens,
     canonical_tokens,
     is_winner_field,
@@ -390,5 +393,220 @@ class TestHubRailNeverLinksABrokenShelf:
             assert slug in emitted, f"{slug} vanished from the hub rail"
 
     async def test_the_rail_is_not_silently_empty(self):
-        """Guard the guard — an empty rail would pass the three above vacuously."""
-        assert len(await self._emitted()) >= 12
+        """Guard the guard — an empty rail would pass the three above vacuously.
+
+        The floor was 12 and is 11 because UX-P182 stopworded the ATP/WTA tour
+        tiers: over this corpus "ATP 1000 Montreal: Winner"/"ATP Montreal Winner"
+        and "WTA 1000 Toronto: Winner"/"WTA Toronto Winner" are each ONE
+        tournament, and the rail used to emit both renderings of both. This
+        number moves WITH that fix; it is not a threshold to relax when a future
+        change makes the rail shorter. `TestTourTiersAreNotIdentity` below pins
+        the merge itself, so a regression that re-splits them fails there loudly
+        rather than here as an off-by-two.
+        """
+        assert len(await self._emitted()) >= 11
+
+
+# ---------------------------------------------------------------------------
+# 6. A tour tier is a property, not an identity (UX-P182)
+# ---------------------------------------------------------------------------
+#
+# Measured live on /api/hub/tennis 2026-08-29: the rail served **12 upcoming
+# cards for 10 tournaments**. "ATP Montreal Winner" and "ATP 1000 Montreal:
+# Winner" were two cards, as were "WTA Toronto Winner" and "WTA 1000 Toronto:
+# Winner" — and all four keys, fetched from production, resolved to just TWO
+# event pages. The rail keys its groups on the EXACT token set while
+# `select_winner_field` matches by SUBSET, so the resolver had always treated
+# each pair as one tournament and only the rail disagreed. The reader saw the
+# disagreement as a duplicate that opened the page it had just come from.
+
+
+class TestTourTiersAreNotIdentity:
+    """The token-space half, the rail half, and the two controls that matter."""
+
+    _PAIRS = (
+        ("ATP 1000 Montreal: Winner", "ATP Montreal Winner", "montreal"),
+        ("WTA 1000 Toronto: Winner", "WTA Toronto Winner", "toronto"),
+    )
+
+    def test_the_tier_token_is_gone_from_the_identity_space(self):
+        for tiered, plain, city in self._PAIRS:
+            assert canonical_tokens(tiered) == canonical_tokens(plain) == {city}
+
+    def test_a_tier_in_the_slug_and_a_tier_in_the_name_agree(self):
+        """Both spellings of the URL have to land in the same token set, or the
+        rail merges while the resolver 404s the survivor's key."""
+        assert canonical_slug_tokens("atp-1000-montreal-winner") == {"montreal"}
+        assert canonical_slug_tokens("atp-montreal-winner") == {"montreal"}
+
+    async def _emitted(self):
+        rows = [r for r in CORPUS if r["status"] == "open"]
+        db = _FakeDB(_markets_with_outcomes(rows))
+        return await list_tennis_tournament_concepts(db, limit=50)
+
+    async def test_the_rail_emits_one_card_per_tournament(self):
+        """The ship. Drives the REAL lister over the REAL production corpus."""
+        names = [c["name"] for c in await self._emitted()]
+        for city in ("Montreal", "Toronto"):
+            hits = [n for n in names if city.lower() in n.lower()]
+            assert len(hits) == 1, f"{city} is listed {len(hits)}x: {hits}"
+
+    async def test_the_surviving_card_is_the_fullest_draw(self):
+        """Identity still comes from the richest field (L2-65), so the card and
+        the page it opens finally print the same title."""
+        names = {c["name"] for c in await self._emitted()}
+        assert "ATP 1000 Montreal: Winner" in names
+        assert "WTA 1000 Toronto: Winner" in names
+
+    async def test_the_survivors_key_still_resolves(self):
+        """A merge that produced a card pointing at nothing would be a broken
+        shelf — the exact failure class section 5 exists for."""
+        for c in await self._emitted():
+            slug = c["key"].split(":", 2)[2]
+            assert _resolve(slug) is not None, f"{slug} lost its page"
+
+    async def test_both_old_urls_still_open_the_same_page(self):
+        """Nobody's bookmark breaks: both spellings resolved to one market before
+        the fix and must still resolve to that same one after it."""
+        for tiered_slug, plain_slug, expected in (
+            (
+                "atp-1000-montreal-winner",
+                "atp-montreal-winner",
+                "ATP 1000 Montreal: Winner",
+            ),
+            (
+                "wta-1000-toronto-winner",
+                "wta-toronto-winner",
+                "WTA 1000 Toronto: Winner",
+            ),
+        ):
+            assert _resolve(tiered_slug) == expected
+            assert _resolve(plain_slug) == expected
+
+    # -- controls ----------------------------------------------------------
+
+    def test_a_non_tier_number_is_still_identity(self):
+        """`1000` is stripped because it is a TIER, not because it is a number.
+        The corpus is full of numerics (`2` x199, `16` x87) and none of them may
+        start collapsing tournaments together."""
+        assert "16" in canonical_tokens("ATP 16 Springfield Winner")
+        assert canonical_tokens("ATP 16 Springfield Winner") != canonical_tokens(
+            "ATP Springfield Winner"
+        )
+
+    def test_the_1793_collision_is_still_impossible(self):
+        """The whole reason this token space exists. Widening it is how
+        `us-open-2026` came to serve Cincinnati."""
+        us = canonical_tokens("US Open Men's Singles Winner")
+        cincy = canonical_tokens("Cincinnati Open: Winner")
+        assert not us <= cincy and not cincy <= us
+
+    def test_the_tiers_are_the_closed_published_set(self):
+        assert _TOUR_TIER_TOKENS == {"125", "250", "500", "1000"}
+        assert _TOUR_TIER_TOKENS <= _TENNIS_STOPWORDS
+
+
+class TestMergingNeverSubtractsTheDate:
+    """The regression the merge would have shipped if it had stopped at grouping.
+
+    `winner` is the fullest DRAW, and the fullest draw is not the row that knows
+    the most. Measured 2026-08-29: "ATP 1000 Montreal: Winner" has 69 outcomes
+    and `resolution_date = NULL`; "ATP Montreal Winner" has 46 and knows the
+    tournament ends 2026-09-13. Reading the date off `winner` alone turns one
+    duplicated-but-dated card into one deduplicated UNDATED card, downgraded from
+    `live` to `upcoming` — a silent subtraction traded for a visible duplicate.
+
+    ⚠️ The key asserted below is `start_date`, and it is misnamed: the rail serves
+    `resolution_date` — an END — under it. That is a SEPARATE defect (UX-P178) and
+    is deliberately not fixed by this ship. What matters here is that `start_date`
+    is the value the card actually PRINTS, so it is the one a merge can subtract.
+    """
+
+    def _pair(self):
+        # Gotcha #44: offset FIRST, then truncate — a fixed date settles and the
+        # rail drops the row, asserting everything over an empty list.
+        ends = (datetime.now(timezone.utc) + timedelta(days=5)).replace(microsecond=0)
+        rich = SimpleNamespace(
+            id=57718610,
+            name="ATP 1000 Montreal: Winner",
+            status="open",
+            resolution_date=None,  # the fullest draw, and it has no date
+            volume_24h=3294,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(69)],
+        )
+        dated = SimpleNamespace(
+            id=58728642,
+            name="ATP Montreal Winner",
+            status="open",
+            resolution_date=ends,  # the smaller draw, and it does
+            volume_24h=67053,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(46)],
+        )
+        return rich, dated, ends
+
+    async def _rail(self, markets):
+        return await list_tennis_tournament_concepts(_FakeDB(markets), limit=50)
+
+    async def test_the_two_renderings_become_one_card(self):
+        rich, dated, _ = self._pair()
+        assert len(await self._rail([rich, dated])) == 1
+
+    async def test_the_survivor_keeps_the_date_its_sibling_knew(self):
+        rich, dated, ends = self._pair()
+        (card,) = await self._rail([rich, dated])
+        assert card["name"] == "ATP 1000 Montreal: Winner"  # identity from the draw
+        assert card["start_date"] == ends.isoformat()  # date from the group
+
+    async def test_the_survivor_keeps_its_live_status(self):
+        rich, dated, _ = self._pair()
+        (card,) = await self._rail([rich, dated])
+        assert card["status"] == "live"
+
+    async def test_alone_the_undated_rendering_still_admits_no_date(self):
+        """The control. A date is borrowed from a SIBLING, never invented — with
+        no sibling to read, the rail still says it does not know."""
+        rich, _, _ = self._pair()
+        (card,) = await self._rail([rich])
+        assert card["start_date"] is None and card["status"] == "upcoming"
+
+    async def test_the_winners_own_date_wins_when_it_has_one(self):
+        """Identity's row is still preferred; the sibling is a fallback, not an
+        override."""
+        rich, dated, ends = self._pair()
+        rich.resolution_date = ends + timedelta(days=2)
+        (card,) = await self._rail([rich, dated])
+        assert card["start_date"] == (ends + timedelta(days=2)).isoformat()
+
+    async def test_the_earliest_sibling_date_is_the_one_borrowed(self):
+        """`min`, not `max`, and the difference is user-visible: a tournament that
+        ends this week must not borrow a later rendering's date and read as though
+        it runs for another month. Surfaced as a surviving mutant — the rule was
+        implemented and unasserted."""
+        rich, dated, ends = self._pair()
+        late = SimpleNamespace(
+            id=58728643,
+            name="ATP Montreal: Winner",
+            status="open",
+            resolution_date=ends + timedelta(days=20),
+            volume_24h=41,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(12)],
+        )
+        (card,) = await self._rail([rich, late, dated])
+        assert card["start_date"] == ends.isoformat()
+
+    async def test_the_borrowed_date_also_orders_the_rail(self):
+        """The card carries the group's date, so the rail must SORT on it too. A
+        `_sort` still reading the winner's own `resolution_date` reads None for the
+        merged card and drops it to the undated tail — the date is on the card and
+        the card is in the wrong place. Also a surviving mutant."""
+        rich, dated, ends = self._pair()
+        later = SimpleNamespace(
+            id=99001,
+            name="WTA Hamburg Winner",
+            status="open",
+            resolution_date=ends + timedelta(days=10),
+            volume_24h=500,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(30)],
+        )
+        names = [c["name"] for c in await self._rail([later, rich, dated])]
+        assert names == ["ATP 1000 Montreal: Winner", "WTA Hamburg Winner"], names
