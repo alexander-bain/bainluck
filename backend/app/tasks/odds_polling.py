@@ -1257,6 +1257,32 @@ async def _poll_all_odds():
                         logger.warning("Error polling %s: %s", sport_key, e)
                     continue
 
+            # 🔴 THE BOUNDARY RE-READ (CERT-541). `absolute_stop_hit` could only
+            # ever be set by a guard read taken BEFORE an odds call — so if the
+            # LAST (or only) odds response is the one whose recorded
+            # `remaining` crosses the 500-unit absolute stop, there is no next
+            # sport left to observe it, and the scores loop spends again after
+            # the system has recorded "no exceptions, no priority sports,
+            # nothing". A one-sport pass leaks every time.
+            #
+            # The guard has to be on the CONSUMING path, not merely upstream of
+            # it. `record_odds_api_quota` has already written every response's
+            # reading by the time the loop exits, so one read here sees the
+            # whole pass — including its own last call.
+            #
+            # `quiet=True`: this task announces what it DOES, immediately below.
+            if not absolute_stop_hit:
+                _boundary_ok, boundary_reason = check_quota_guard(
+                    "poll_odds", quiet=True,
+                )
+                if "absolute_stop" in boundary_reason:
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP reached by the pass's own last "
+                        "odds call (%s) — skipping the scores fetch",
+                        boundary_reason,
+                    )
+                    absolute_stop_hit = True
+
             # Fetch scores for sports with events that have started.
             # Rate-limited per-sport: ESPN-matched sports already get scores every
             # 60s from ESPN sync, so we only need the Odds API scores as a backup
@@ -1303,6 +1329,32 @@ async def _poll_all_odds():
                         espn_covered_sports.add(sport_key)
 
             for sport_key in sports_for_scores:
+                # 🔴 THE SAME CLASS, ONE LEVEL DOWN — and it is closed here
+                # rather than waited for. The boundary read above sees the odds
+                # loop's last call, but `get_scores` calls are Odds API calls
+                # too and they also record quota, so a scores response can be
+                # the one that crosses the absolute stop and every remaining
+                # score in the same pass would spend past it. Nine blocks on
+                # this branch have all been "the guard is upstream of the
+                # consuming path instead of ON it"; a re-read placed only at the
+                # boundary is upstream of THIS loop.
+                #
+                # It is FIRST in the body for the same reason the odds loop's
+                # is: below the ESPN-covered or 404 `continue`, it is
+                # unreachable for exactly the passes that take them.
+                # `quiet=True` — the task announces what it does, immediately.
+                _score_ok, score_reason = check_quota_guard(
+                    "poll_odds", sport_key=sport_key, quiet=True,
+                )
+                if "absolute_stop" in score_reason:
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP mid-scores (%s) — halting the "
+                        "remaining score fetches",
+                        score_reason,
+                    )
+                    absolute_stop_hit = True
+                    break
+
                 if sport_key in espn_covered_sports:
                     continue
 

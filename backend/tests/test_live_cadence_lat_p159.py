@@ -580,7 +580,7 @@ class _FakeRedis:
 
 async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
                     last_poll_age_s=100.0, score_sports=(), sports=None,
-                    sport_404=()):
+                    sport_404=(), boundary=None):
     """Execute the real `_poll_all_odds` and hand back its Odds API ledger.
 
     `sports` drives a MULTI-sport pass (the sport-data query returns one live
@@ -606,12 +606,21 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
     service.last_requests_used = None        # and would hit the real recorder
 
     guard_calls = []
+    passwide_calls = []
 
     def _guard(_task_type, sport_key=None, quiet=False):
         # `quiet` is accepted and ignored on purpose: it must not be able to
         # change a verdict, and `TestAPerSportReReadDoesNotFloodTheBreakersOwnLog`
         # asserts that against the REAL guard rather than this stub.
         if sport_key is None:
+            # TWO pass-wide reads exist and they are not the same moment: the
+            # outer one at the top, and the boundary one between the odds loop
+            # and the scores fetch. `boundary=` models quota MOVING across the
+            # pass — which is the only way to reach CERT-541's defect, where the
+            # pass's own last odds response is what crosses the absolute stop.
+            passwide_calls.append(len(passwide_calls))
+            if boundary is not None and len(passwide_calls) > 1:
+                return boundary
             return outer
         guard_calls.append(sport_key)
         if isinstance(per_sport, dict):
@@ -637,6 +646,7 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
         result = await odds_polling._poll_all_odds()
 
     service.guard_calls = guard_calls
+    service.passwide_guard_reads = len(passwide_calls)
     return result, service
 
 
@@ -952,6 +962,110 @@ class TestAMidPassTighteningIsNeverWidenedBack:
         assert service.get_odds.await_count == 0, (
             "a later ok reading widened the pass back out — a re-read may only "
             "ADD constraint, never remove it"
+        )
+
+
+class TestThePassesOwnLastCallCannotOutrunTheBreaker:
+    """🔴 CERT-541. `absolute_stop_hit` could only be set by a guard read taken
+    BEFORE an odds call — so if the LAST (or only) odds response is the one whose
+    recorded `remaining` crosses the 500-unit absolute stop, there is no next
+    sport left to observe it, and the scores loop spends anyway. **A one-sport
+    pass leaked every single time.**
+
+    The class again: the guard was upstream of the consuming path instead of ON
+    it. `record_odds_api_quota` has written every response's reading by the time
+    the loop exits, so one read at the boundary sees the whole pass including
+    its own last call.
+    """
+
+    async def test_the_boundary_read_happens_at_all(self):
+        # Control. If there is only ever ONE pass-wide guard read, every zero
+        # below is bought by something else entirely.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("basketball_nba",),
+        )
+        assert service.passwide_guard_reads == 2, (
+            f"expected the outer read AND the loop/scores boundary read, got "
+            f"{service.passwide_guard_reads}"
+        )
+
+    async def test_scores_still_fire_when_the_boundary_read_is_clean(self):
+        # The other control: the boundary read must not become a blanket "never
+        # fetch scores". Quota is fine at both reads, so scores fetch.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            boundary=(True, "ok_599000"), score_sports=("basketball_nba",),
+        )
+        assert service.get_odds.await_count == 1
+        assert service.get_scores.await_count == 1, (
+            "the boundary read is refusing scores in the ordinary case"
+        )
+
+    async def test_a_one_sport_pass_whose_own_call_crosses_the_stop_skips_scores(self):
+        # 🔴 The exact defect. The pass starts fine, makes its ONE odds call, and
+        # that response is what records `remaining=400`. There is no second sport
+        # to notice. Before CERT-541's repair, scores spent anyway.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            boundary=(False, "absolute_stop_400"),
+            score_sports=("basketball_nba",),
+        )
+        assert service.get_odds.await_count == 1, (
+            "the odds call never happened, so nothing could have crossed the "
+            "stop and this test proves nothing"
+        )
+        assert service.get_scores.await_count == 0, (
+            "the pass's own last odds response crossed the absolute stop and the "
+            "independent scores fetch spent anyway"
+        )
+
+    async def test_the_same_holds_for_the_LAST_sport_of_a_multi_sport_pass(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            sports=("basketball_nba", "baseball_mlb"),
+            boundary=(False, "absolute_stop_400"),
+            score_sports=("icehockey_nhl",),
+        )
+        assert service.get_odds.await_count == 2, "both sports must have polled"
+        assert service.get_scores.await_count == 0
+
+
+class TestAScoreFetchCannotOutrunTheBreakerEither:
+    """The same class one level down, closed rather than waited for.
+
+    `get_scores` calls are Odds API calls and they record quota too, so a scores
+    response can be the one that crosses the absolute stop — and every remaining
+    score in the same pass would spend past it. A re-read placed only at the
+    loop/scores boundary is upstream of THIS loop, which is the exact sentence
+    that has now been written about this branch nine times.
+    """
+
+    async def test_two_score_sports_really_do_fetch_twice(self):
+        # Control first: without it, "stopped at the second" is indistinguishable
+        # from "there was never a second".
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("baseball_mlb", "icehockey_nhl"),
+        )
+        assert service.get_scores.await_count == 2
+
+    async def test_a_mid_scores_crossing_halts_the_remaining_fetches(self):
+        # `per_sport` is keyed, so the SCORES loop's own re-read for the second
+        # score sport returns the stop. The first score fetch has happened; the
+        # second must not.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"),
+            per_sport={
+                "basketball_nba": (True, "ok_600000"),   # the odds sport
+                "baseball_mlb": (True, "ok_600000"),     # score sport 1
+                "icehockey_nhl": (False, "absolute_stop_400"),   # score sport 2
+            },
+            score_sports=("baseball_mlb", "icehockey_nhl"),
+        )
+        assert service.get_scores.await_count == 1, (
+            "a scores response crossed the absolute stop and the remaining "
+            "score fetches spent past it"
         )
 
 
