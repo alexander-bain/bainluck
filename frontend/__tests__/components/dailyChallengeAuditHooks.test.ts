@@ -15,9 +15,40 @@
 //      too. That is the L2-227 shape — coverage that exists on paper and
 //      selects nothing.
 //
-// Asserted at the source, like `calibrationAuditHooks.test.tsx` and
-// `discoverAuditHooks.test.tsx`: both pages are large client components behind
-// fetch/localStorage, and rendering them would prove less and break more.
+// ─── WHY THIS IS ASSERTED AT THE SOURCE (measured, UX-P226) ───
+//
+// This file used to justify the source anchor by saying both pages "are large
+// client components behind fetch/localStorage, and rendering them would prove
+// less and break more" — the sentence `calibrationAuditHooks.test.tsx` and
+// `discoverAuditHooks.test.tsx` also carry, and the one UX-P223 named as the
+// origin of three straight cert blocks on movable source anchors. Half of it
+// was never measured, and it is wrong:
+//
+//   - "break more" is FALSE. Both pages render fine on the existing
+//     `renderToStaticMarkup` / node rail — 30ms and 7ms, no jsdom, behind the
+//     module mocks every component suite here already uses.
+//   - "prove less" is TRUE, and understates it: a static render proves NOTHING
+//     for this suite. Both pages open on `useState(true)` that only a
+//     `useEffect` clears, and effects do not run without a DOM, so the markup
+//     is the spinner and nothing else — 262 bytes for Daily, 417 for the
+//     challenge, carrying ZERO of the seven hooks below. Better mocks cannot
+//     reach past a page-internal state gate, and jsdom is absent from
+//     `node_modules` with the npm registry unreachable from the sandbox.
+//
+// The two directions above are also source questions by nature, not by
+// convenience: direction 2 reads a Playwright spec, which is not a component
+// and can never be rendered at all, and direction 1 asserts each hook is
+// declared EXACTLY ONCE — a deduplication property of the file. The seven
+// hooks span five mutually exclusive branches (loading / empty / page on
+// Daily; loading / error / page on the challenge), so no single render sees
+// more than one of them, and a render can never see a duplicate on a branch it
+// did not take.
+//
+// THE GAP THIS LEAVES, STATED: a hook that MIGRATES between branches — moved
+// from the empty state into the main return, say — keeps its count of one and
+// stays green here. That is the CERT-562 shape. This suite is the cheap
+// tripwire for drop / rename / duplicate / orphan-selector; the browser rail
+// driving a real page is what catches a hook on the wrong screen.
 
 import * as fs from "fs";
 import * as path from "path";
