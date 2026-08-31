@@ -563,26 +563,46 @@ async def get_entertainment(db: AsyncSession):
         )
         return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
+    # TWO lists, and the difference between them is the point (CERT-540).
+    #
+    # `featured_eligible` — survivors of `should_exclude_from_featured`. This is
+    # what TRENDING reads. The predicate used to be computed twice in this
+    # function, once here and once in the trending loop below; UX-P194-1 made
+    # them share one list, and this is that list, with its membership unchanged.
+    #
+    # `spotlight_eligible` — the same survivors that also earned a theme, i.e.
+    # everything this page is actually willing to RENDER in a section. This is
+    # what the CROSS-SOURCE SPOTLIGHT reads. CERT-540 blocked feeding it
+    # `featured_eligible`: `_classify_theme` returning `"excluded"` is this
+    # page's topical rejection, and a market rejected by it was still able to
+    # headline the page above the sections that had dropped it.
+    #
+    # ⚠️ They are deliberately NOT collapsed into one list. Narrowing trending
+    # to the themed set would be a silent ranking change nobody asked for —
+    # exactly the hazard UX-P214 paid for when it merged two computations and
+    # gave a consumer it was not thinking about an untested dependency.
+    #
+    # ⚠️ A NEW GATE GOES ABOVE THE APPEND IT BELONGS TO. The coupling is
+    # positional; `TestTheSpotlightIsASubsetOfWhatThePageRenders` notices.
     themed: dict[str, list] = defaultdict(list)
+    featured_eligible: list = []
+    spotlight_eligible: list = []
     for m in all_markets:
         exclude = should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         )
         if exclude:
             continue
+        featured_eligible.append(m)
         theme = _classify_theme(m)
         if theme == "excluded":
             continue
+        spotlight_eligible.append(m)
         themed[theme].append(m)
 
     # Build all enriched rows for trending scoring
     all_rows = []
-    for m in all_markets:
-        exclude = should_exclude_from_featured(
-            m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
-        )
-        if exclude:
-            continue
+    for m in featured_eligible:
         row = _market_row(m)
         if row and _is_interesting(row):
             all_rows.append(row)
@@ -595,9 +615,12 @@ async def get_entertainment(db: AsyncSession):
         themed.get("social_media", []), 15
     )
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`
+    # and not the wider trending pool. A market this page already refused to put
+    # in a theme section must not reappear as its headline source disagreement.
+    # UX-P194-1 / CERT-540.
     cross_source = find_cross_source_markets(
-        list(all_markets), market_row_fn=_cross_source_row_fn
+        list(spotlight_eligible), market_row_fn=_cross_source_row_fn
     )
 
     total = sum(len(v) for v in themed.values())

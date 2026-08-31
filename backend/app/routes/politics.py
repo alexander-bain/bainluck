@@ -658,6 +658,33 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
 
     stale_cutoff = now - timedelta(days=7)
     themed: dict[str, list] = defaultdict(list)
+    # The markets this page is willing to RENDER — appended at the BOTTOM of
+    # this loop, so every rejection gate in it counts, not just the first one.
+    #
+    # 🔴 CERT-540 BLOCKED THE FIRST VERSION, WHICH APPENDED HERE AT THE TOP.
+    # UX-P194-1 fed the spotlight the survivors of `should_exclude_from_featured`
+    # alone, on the reasoning that the three gates below answer "is this market
+    # on-topic / decided", not "is it fit to feature", and that a production
+    # census showed 0 of 8 live cards failing them. That census was evidence of
+    # PRESENT ABSENCE and not a class guard, and the cert built two pairs that
+    # walked through it: a settled-open winner pair and an NBA pair mislabelled
+    # `llm_sport_category='politics'`. Both were absent from every theme section
+    # and both still came back as the page's sole spotlight card.
+    #
+    # The rule is now the simple one, and it is the same on all three category
+    # routes: THE SPOTLIGHT IS FED WHAT THE PAGE ACCEPTED. A market that could
+    # not earn a theme section cannot headline the page above them.
+    #
+    # ⚠️ A NEW GATE GOES ABOVE THIS APPEND, NOT BELOW IT. The coupling is
+    # positional, and `TestTheSpotlightIsASubsetOfWhatThePageRenders` in
+    # tests/integration/test_route_category_spotlight_featured_gate_uxp194.py
+    # is what notices when it is broken.
+    #
+    # Measured on production 2026-08-31, before this repair: of the 19 live
+    # spotlight cards across the three pages, the three gates below remove
+    # **0** — 8 of 8 `/politics`, 8 of 8 `/entertainment`, 3 of 3 `/economics`
+    # survive. The class closes at no cost to today's page.
+    spotlight_eligible: list = []
     for m in all_markets:
         if should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
@@ -677,6 +704,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
             continue
         if m.resolution_date and m.resolution_date < stale_cutoff:
             continue
+        spotlight_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
     _t = _mark("theme_classify", _t)
@@ -761,9 +789,11 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     senate_map = _build_senate_map(congressional_markets)
     _t = _mark("congressional", _t)
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`.
+    # A market this page already refused to put in a theme section must not
+    # reappear as its headline source disagreement. UX-P194-1 / CERT-540.
     cross_source = find_cross_source_markets(
-        list(all_markets), market_row_fn=_cross_source_row_fn
+        list(spotlight_eligible), market_row_fn=_cross_source_row_fn
     )
     _t = _mark("cross_source", _t)
 

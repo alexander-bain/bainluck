@@ -406,13 +406,26 @@ async def get_economics(db: AsyncSession):
         )
         return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
-    # Classify into themes — exclude resolved, extreme, and title-stale markets
+    # Classify into themes — exclude resolved, extreme, and title-stale markets.
+    # ``spotlight_eligible`` is the set this page is willing to RENDER, kept so
+    # the cross-source spotlight below is fed those markets rather than the raw
+    # query result. UX-P194-1 / CERT-540.
+    #
+    # On THIS page the two coincide: `_classify_theme` always returns a theme
+    # (worst case `"other"`), so there is no second rejection gate here the way
+    # `/politics` and `/entertainment` have one. The name and the append
+    # position still match its siblings on purpose — the sibling routes were
+    # blocked for appending ABOVE their later gates, and the cheapest way to
+    # keep this one from acquiring the same defect is for a new gate to have an
+    # obvious place to go: ABOVE the append.
     themed: dict[str, list] = defaultdict(list)
+    spotlight_eligible: list = []
     for m in all_markets:
         if should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
             continue
+        spotlight_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
 
@@ -678,9 +691,11 @@ async def get_economics(db: AsyncSession):
     # rendering an empty card under a header that claimed `count` markets.
     gov_distributions = [d for m in gov_markets if (d := _distribution_row(m))]
 
-    # Cross-source spotlight
+    # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`.
+    # A market this page already refused to put in a theme section must not
+    # reappear as its headline source disagreement. UX-P194-1 / CERT-540.
     cross_source = find_cross_source_markets(
-        all_markets, market_row_fn=_cross_source_row_fn
+        spotlight_eligible, market_row_fn=_cross_source_row_fn
     )
 
     # Count total active markets
