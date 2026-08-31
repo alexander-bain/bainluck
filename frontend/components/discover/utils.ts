@@ -8,6 +8,7 @@ import type {
   FeedBundleData,
 } from "@/lib/types";
 import { marketEventKey, tournamentEventKey, eventPath } from "@/lib/eventKey";
+import { heroOutcome } from "@/lib/discover/heroOutcome";
 // UX-P053 (#1717) — the ONE formatter for "Resolves <date>", shared with the
 // tournament card rather than reimplemented here. See `resolvesLabel` below.
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -144,7 +145,13 @@ export function suppressBareZeroFuturesCard(
     ?.suggested_format;
   // Ladder-style formats don't show a bare hero number — leave them alone.
   if (format === "outcome_distribution" || format === "threshold_heatmap") return false;
-  const leaderProb = data.top_outcomes?.[0]?.probability ?? null;
+  // UX-P238 — this guard exists to stop a bare sub-1% hero rendering, so it has
+  // to read the number the hero ACTUALLY prints. Once the card headlines the
+  // affirmative side of a negation pair, `top_outcomes[0]` is the 99% No side
+  // and this check would wave through the sub-1% print it was written to catch.
+  // (Deliberately not quoting the boundary string: `probabilityDisplay.ts` is
+  // its one home and an anti-drift guard scans for a second quoted copy.)
+  const leaderProb = heroOutcome(data.top_outcomes)?.probability ?? null;
   // Only the sub-1% ("0%" when rounded) leader is the problem; a null leader
   // already renders name-only (no bare hero), so it's fine.
   if (leaderProb == null || leaderProb >= 0.01) return false;
