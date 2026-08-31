@@ -23,7 +23,22 @@ import pytest
 
 from app.utils import durable_state as ds
 
-NOW = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+# LAT-P169/#2398: this anchor used to be the literal
+# ``datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)``, and it detonated on
+# 2026-08-31 at 12:00:00Z, taking every lane's CI red on shard 4.
+#
+# The reader it feeds bounds durable evidence at
+# :data:`app.services.durable_snapshots.SENTINEL_MAX_AGE_S` = 30 days, and
+# 2026-08-01T12:00:00Z + 30 days IS 2026-08-31T12:00:00Z. For thirty days the
+# fixture was "fresh"; at that instant it became "ancient",
+# ``read_sentinel_evidence`` started returning ``None``, and four tests below began
+# failing on code nobody had touched. A fixed literal against a ROLLING bound is a
+# bomb whose fuse is exactly as long as the bound.
+#
+# Gotcha #44 — offset FIRST, then truncate. One minute back so the row is
+# unambiguously in the past; microseconds dropped so the value is stable within a
+# run. The guard that refuses a future literal here is its own ship (#2388).
+NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 SCORECARD = {
     "mode": "live",
     "verdict": "GREEN",

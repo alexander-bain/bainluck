@@ -190,12 +190,17 @@ class TestBranchPredicateShape:
         team = _team(roster=["Patrick Mahomes", "Travis Kelce", "Chris Jones"])
         _payload, db = await _build(team)
         branch_sql = [_sql(s) for s in _branch_stmts(db)]
-        assert len(branch_sql) == 3
+        # LAT-P164 split each name branch by pattern class, so a rostered team
+        # runs FOUR name branches behind the FK branch, not two.
+        assert len(branch_sql) == 5
         name_sql = branch_sql[1:]
         for sql in name_sql:
             assert "ILIKE ANY" in sql.upper(), sql
-        assert any("futures_outcomes.name ILIKE ANY" in s for s in name_sql)
-        assert any("futures_markets.name ILIKE ANY" in s for s in name_sql)
+        # BOTH columns, on BOTH pattern classes. Counting `ILIKE ANY` branches
+        # would pass if the split lost a column, which is the failure this guard
+        # exists for.
+        assert sum("futures_outcomes.name ILIKE ANY" in s for s in name_sql) == 2
+        assert sum("futures_markets.name ILIKE ANY" in s for s in name_sql) == 2
 
     async def test_no_branch_is_an_n_way_or_of_ilikes(self):
         """The defect this replaces, spelled as the thing that must not come back.
@@ -210,13 +215,32 @@ class TestBranchPredicateShape:
 
     async def test_every_pattern_is_carried_into_the_array(self):
         """Cheaper SQL that silently drops patterns would be a matching
-        regression wearing a latency fix's clothes."""
+        regression wearing a latency fix's clothes.
+
+        🔴 LAT-P164 IS EXACTLY THAT RISK, so this guard got STRONGER rather than
+        looser. The patterns no longer live in one array: the team's own name
+        drives the two cheap branches and the roster drives the two expensive
+        ones. So assert per CLASS and per COLUMN — every roster name must reach
+        BOTH roster branches and the team name must reach BOTH team-name
+        branches. A union-only check ("every pattern appears somewhere") would
+        pass if the split sent the roster to one column and dropped the other.
+        """
         roster = ["Patrick Mahomes", "Travis Kelce"]
         team = _team(roster=roster)
         _payload, db = await _build(team)
-        sql = _sql(_branch_stmts(db)[1])
-        for name in roster + ["Kansas City Chiefs"]:
-            assert name in sql, f"{name} missing from the branch array"
+        by_branch = [_sql(s) for s in _branch_stmts(db)]
+        assert len(by_branch) == 5
+        outcome_team, market_team, outcome_roster, market_roster = by_branch[1:]
+
+        for sql in (outcome_team, market_team):
+            assert "Kansas City Chiefs" in sql, sql
+            for name in roster:
+                # The cheap branches must carry ONLY the team name — a roster
+                # name leaking back in restores the 40-probe cost this ship removes.
+                assert name not in sql, f"{name} leaked into a team-name branch"
+        for sql in (outcome_roster, market_roster):
+            for name in roster:
+                assert name in sql, f"{name} missing from the roster branch array"
 
     async def test_fk_branch_is_still_first_and_index_shaped(self):
         team = _team(roster=["Patrick Mahomes"])
@@ -589,6 +613,40 @@ class TestWarmerVerdicts:
             await warm._warm_prop_families()
         assert built == [3, 4, 1, 2]
 
+    async def test_ignoring_the_cursor_starves_the_tail_outright(self):
+        """The rotation test above kills `cursor = -1` only by ORDER, and CERT-563
+        asked for an oracle that does not depend on that.
+
+        With a pass big enough to cover everyone, ignoring the cursor reorders the
+        same four builds and the damage is invisible in the SET — so the kill
+        rests entirely on the sequence the recorder happened to see. When the set
+        is larger than one pass, which is the production case the cursor exists
+        for (82 teams and climbing, `MAX_TEAMS_PER_PASS` slices them), ignoring it
+        does something much worse than reorder: the pass rebuilds the SAME head
+        every hour and the tail is never warmed at all. Teams 3 and 4 go cold
+        forever.
+
+        Asserting the set, not the sequence, is what makes this deterministic:
+        there is no ordering assumption left to be right by accident.
+        """
+        from app.tasks import prop_families_warm as warm
+
+        rc = _FakeRedis()
+        rc.setex(warm.CURSOR_KEY, 100, "2")
+        built: list[int] = []
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3, 4])), \
+             patch.object(warm, "MAX_TEAMS_PER_PASS", 2), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(built)):
+            await warm._warm_prop_families()
+
+        # The teams the LAST pass did not reach are the ones this pass takes.
+        assert set(built) == {3, 4}, built
+        assert 1 not in built and 2 not in built, built
+        # And it hands the next pass the other half.
+        assert rc.store[warm.CURSOR_KEY] == b"4"
+
     async def test_the_cursor_is_written_with_where_the_pass_stopped(self):
         """The rotation test above cannot carry this assertion and a mutation
         battery proved it: its pass wraps back to the id it started after, so
@@ -632,7 +690,7 @@ class TestWarmerVerdicts:
             if team.id == 2:
                 raise RuntimeError("boom")
             built.append(team.id)
-            return {"families": []}, False
+            return _stamped_as(cache_mod.QUALITY_FULL), False
 
         with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
              patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
@@ -650,6 +708,139 @@ class TestWarmerVerdicts:
         assert verdict.verdict == tv.PARTIAL, verdict
         assert verdict.authoritative is True, verdict
         assert verdict.is_green is False, verdict
+
+    async def test_a_build_that_fell_short_is_not_counted_as_a_rebuild(self):
+        """🔴 CERT-563's blocker: the hourly producer's own false green.
+
+        CERT-557 closed this in `_refresh_prop_families` and left it live in the
+        SIBLING producer — the one that keeps the user-facing 24 h mirror warm.
+        The loop read only `degraded`, which is True solely when the build stored
+        NOTHING. A build that keeps the cheap rows and loses the roster branch to
+        the 12 s expiry is `degraded=False` AND `quality: partial` carrying
+        `branch_timeout:outcome_roster`: real prop content missing from what it
+        just wrote. The pass counted it `rebuilt` and returned `terminal:
+        complete`, and `warm_prop_families` is in `ENFORCED_TASKS`, so
+        `verdict_for` read that tick as an AUTHORITATIVE green.
+
+        Asserted end to end, through `verdict_for`, because the cert's finding
+        was not "the counter is wrong" — it was that the HEALTH GATE could not
+        see it. A counter no classifier reads is CERT-518's defect exactly.
+        """
+        from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+        built: list[int] = []
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(
+                       built, "partial", ("branch_timeout:outcome_roster",))):
+            out = await warm._warm_prop_families()
+
+        # Both builds ran and wrote — this is not a failure, and must not be
+        # reported as one.
+        assert built == [1, 2]
+        assert out["failed"] == 0, out
+        # `rebuilt` counts COMPLETED rebuilds. A caller asking "is this team
+        # settled" must get no.
+        assert out["rebuilt"] == 0, out
+        assert out["partial"] == 2, out
+        # Named, so an operator learns WHICH branch was lost without a log dive.
+        assert out["partial_reasons"] == ["branch_timeout:outcome_roster"], out
+
+        # The half the cert actually blocked on.
+        assert out["terminal"] == "partial", out
+        verdict = tv.verdict_for("warm_prop_families", out)
+        assert verdict.verdict == tv.PARTIAL, verdict
+        assert verdict.authoritative is True, verdict
+        assert verdict.is_green is False, verdict
+
+    async def test_one_short_build_outvotes_its_healthy_siblings(self):
+        """The `rebuilt=2, failed=1` shape of CERT-521, one counter over.
+
+        A single healthy sibling used to outvote a team whose mirror was left
+        cold. The same arithmetic would have hidden a short build behind two good
+        ones, so the downgrade is asserted with the majority GREEN — the case a
+        weaker guard passes.
+        """
+        from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+        built: list[int] = []
+
+        async def _short_on_three(team, db, cap, client=None):
+            built.append(team.id)
+            if team.id == 3:
+                return _stamped_as("partial", ["branch_timeout:outcome_roster"]), False
+            return _stamped_as(cache_mod.QUALITY_FULL), False
+
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_short_on_three):
+            out = await warm._warm_prop_families()
+
+        assert built == [1, 2, 3]
+        assert out["rebuilt"] == 2 and out["partial"] == 1 and out["failed"] == 0, out
+        assert out["terminal"] == "partial", out
+        assert tv.verdict_for("warm_prop_families", out).is_green is False
+
+    async def test_an_unstamped_payload_is_not_read_as_complete(self):
+        """The shape a caller must not mistake for `full` (`envelope_quality`'s
+        own words). `quality is None` means no envelope came back at all — the
+        one non-degraded shape that really did store nothing — and reading an
+        absent field as a pass is gotcha #53 in the tier's own vocabulary."""
+        from app.tasks import prop_families_warm as warm
+        from app.utils import task_verdict as tv
+
+        rc = _FakeRedis()
+
+        async def _unstamped(team, db, cap, client=None):
+            return {"families": []}, False
+
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_unstamped):
+            out = await warm._warm_prop_families()
+
+        assert out["rebuilt"] == 0 and out["partial"] == 1, out
+        assert out["terminal"] == "partial", out
+        assert tv.verdict_for("warm_prop_families", out).is_green is False
+
+    async def test_the_warmer_and_the_refresh_read_quality_the_same_way(self):
+        """One field, two producers, one reader — asserted, not hoped for.
+
+        The defect CERT-557 and CERT-563 each found once was the SAME field being
+        read two ways by two call sites. Both now call `envelope_quality`, and
+        this pins that: the same stamped payload must produce a non-green terminal
+        from both entry points. A future edit that reverts one of them fails here
+        rather than in a cert eight commits later.
+        """
+        from app.tasks import prop_families_warm as warm
+
+        short = _stamped_as("partial", ["branch_timeout:outcome_roster"])
+
+        rc = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _session_for_warm([1])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_recording_build(
+                       [], "partial", ("branch_timeout:outcome_roster",))):
+            warm_out = await warm._warm_prop_families()
+
+        rc2 = _FakeRedis()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc2), \
+             patch("app.tasks.base.get_task_session", _session_with_team(_team())), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=_async_return((short, False))):
+            refresh_out = await warm._refresh_prop_families(560, 400, None)
+
+        assert warm_out["terminal"] == "partial", warm_out
+        assert refresh_out["terminal"] == "partial", refresh_out
+        assert warm_out["rebuilt"] == 0 and refresh_out["rebuilt"] == 0
 
     async def test_an_all_clean_pass_is_still_green(self):
         """The control for the guard above: the downgrade must fire on a real
@@ -758,10 +949,16 @@ class TestRefreshVerdicts:
         rc = _FakeRedis()
         keys = route.prop_families_cache_keys(560, 400)
         rc.set(keys.refresh_lock, "tok", nx=True, ex=120)
+        # CERT-557: the double returns a STAMPED payload, because the terminal is
+        # now read off the envelope rather than off `degraded` alone. The old
+        # double returned a bare `{"families": []}` — an unstamped shape this
+        # builder never actually produces on its non-degraded paths — and a
+        # double that cannot express the difference between full and partial
+        # cannot witness the bug the split closes.
         with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
              patch("app.tasks.base.get_task_session", _session_with_team(_team())), \
              patch("app.routes.prop_families.build_and_cache_prop_families",
-                   side_effect=_async_return(({"families": []}, False))):
+                   side_effect=_async_return((_stamped_as("full"), False))):
             out = await warm._refresh_prop_families(560, 400, "tok")
         assert out["terminal"] == "complete" and out["rebuilt"] == 1
         assert rc.store.get(keys.refresh_lock) is None
@@ -870,6 +1067,20 @@ def _async_return(value):
     return _inner
 
 
+def _stamped_as(quality, reasons=()):
+    """A payload shaped like one `build_and_cache_prop_families` really returns.
+
+    CERT-557 made the envelope load-bearing for the refresh task's terminal, so
+    a double that omits it is no longer describing the function it stands in for.
+    """
+    from app.utils.event_concept_cache import ENVELOPE_FIELD
+
+    return {
+        "families": [],
+        ENVELOPE_FIELD: {"quality": quality, "quality_reasons": list(reasons)},
+    }
+
+
 class _AsyncCM:
     def __init__(self, db):
         self._db = db
@@ -881,11 +1092,24 @@ class _AsyncCM:
         return False
 
 
-def _recording_build(sink):
-    """Stand in for `build_and_cache_prop_families`, recording the team ORDER."""
+def _recording_build(sink, quality=cache_mod.QUALITY_FULL, reasons=()):
+    """Stand in for `build_and_cache_prop_families`, recording the team ORDER.
+
+    🔴 IT USED TO RETURN `{"families": []}` WITH NO ENVELOPE, AND THAT WAS A
+    HOLE, NOT A SIMPLIFICATION (CERT-563). The real builder stamps an envelope on
+    every path it returns `degraded=False` from, so the unstamped shape this
+    double produced is one production never emits — and the warmer's completion
+    question is asked OF that envelope. A double that erases the field cannot
+    witness the difference between a complete build and a truncated one, which is
+    exactly the difference the warmer was getting wrong.
+
+    `_stamped_as` is the one payload double in this file, shared with the refresh
+    tests CERT-557 added: two doubles disagreeing about the shape of one return
+    value is how the first false green got in.
+    """
     async def _inner(team, db, cap, client=None):
         sink.append(team.id)
-        return {"families": []}, False
+        return _stamped_as(quality, reasons), False
     return _inner
 
 

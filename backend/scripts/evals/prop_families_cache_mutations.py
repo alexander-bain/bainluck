@@ -76,18 +76,18 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "revert the outcome branch to the 41-way OR — the 13,107 ms plan",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "FuturesOutcome.name.ilike(any_(_pats))))",
+        "_ilike_any(FuturesOutcome.name, _team_pats)))",
         "        branches.append((_BRANCH_OUTCOME_NAME, "
-        "or_(*[FuturesOutcome.name.ilike(p) for p in _name_pats])))",
+        "or_(*[FuturesOutcome.name.ilike(p) for p in _team_pats])))",
     ),
     (
         "M2",
         ROUTE,
         "revert the market branch to the 41-way OR — the 2,990 ms plan",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "FuturesMarket.name.ilike(any_(_pats))))",
+        "_ilike_any(FuturesMarket.name, _team_pats)))",
         "        branches.append((_BRANCH_MARKET_NAME, "
-        "or_(*[FuturesMarket.name.ilike(p) for p in _name_pats])))",
+        "or_(*[FuturesMarket.name.ilike(p) for p in _team_pats])))",
     ),
     # -- the predicate: go faster by answering less ---------------------------
     (
@@ -95,18 +95,20 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "drop every roster pattern — 41 probes become 1 and the player props go "
         "with them. The endpoint gets 13 seconds faster and stops being correct.",
-        """    for player in _roster_player_names(team):
-        _name_pats.append(f"%{_escape_like(player)}%")""",
-        """    for player in []:
-        _name_pats.append(f"%{_escape_like(player)}%")""",
+        """    _roster_pats: list[str] = [
+        f"%{_escape_like(player)}%" for player in _roster_player_names(team)
+    ]""",
+        """    _roster_pats: list[str] = [
+        f"%{_escape_like(player)}%" for player in []
+    ]""",
     ),
     (
         "M4",
         ROUTE,
         "stop escaping LIKE metacharacters — a team called `100%` then matches "
         "the whole table",
-        '        _name_pats.append(f"%{_escape_like(team.name.strip())}%")',
-        '        _name_pats.append(f"%{team.name.strip()}%")',
+        '        _team_pats.append(f"%{_escape_like(team.name.strip())}%")',
+        '        _team_pats.append(f"%{team.name.strip()}%")',
     ),
     (
         "M5",
@@ -255,7 +257,10 @@ async def resolve_team""",
         WARM,
         "a pass whose every build degraded reads complete — nothing was written, "
         "every mirror is as old as it was, and the pass claims success (#1884)",
-        """    elif rebuilt or (locked_out and not failed):
+        # CERT-563 re-target: the branch gained `or partial` when a build that
+        # WROTE and fell short stopped counting as a completed rebuild. Same
+        # mutation, same meaning — make the healthy terminal unconditional.
+        """    elif rebuilt or partial or (locked_out and not failed):
         terminal = "complete\"""",
         """    elif True:
         terminal = "complete\"""",
@@ -316,10 +321,26 @@ async def resolve_team""",
         # Anchored on the pair, not on the import alone: BOTH task functions
         # open a task session, so the single line matches twice and a harness
         # failure is not a kill.
+        #
+        # CERT-557 re-target: `_refresh_prop_families` now also imports
+        # `QUALITY_FULL`, so the second line of the pair became a parenthesised
+        # import and the old needle drifted. The pair is still `_refresh_`'s and
+        # still unique (`_warm_prop_families` does not import `QUALITY_FULL`),
+        # which is what the anchor exists for.
+        #
+        # CERT-563 re-target, and the SECOND time this anchor has moved for the
+        # same reason. `_warm_prop_families` now imports `QUALITY_FULL` too, so
+        # the three-line pair matched TWICE and the mutant scored HARNESS-FAIL.
+        # Extended by the line that still differs: `_refresh_` takes
+        # `get_client` next, the warmer takes `acquire_refresh_lock`.
         """    from app.tasks.base import get_task_session
-    from app.utils.event_concept_cache import get_client, release_refresh_lock""",
+    from app.utils.event_concept_cache import (
+        QUALITY_FULL,
+        get_client,""",
         """    from app.services.database import async_session_maker as get_task_session
-    from app.utils.event_concept_cache import get_client, release_refresh_lock""",
+    from app.utils.event_concept_cache import (
+        QUALITY_FULL,
+        get_client,""",
     ),
     (
         "M21",
@@ -362,6 +383,30 @@ async def resolve_team""",
         "unknown and a pass that dispatched nothing reads GREEN",
         '    "warm_prop_families",              # terminal + selected + dispatched',
         '    # "warm_prop_families",            # terminal + selected + dispatched',
+    ),
+    # -- the producer's completion honesty (CERT-563) -------------------------
+    #
+    # The exact defect the cert blocked on, both halves of it. `_refresh_` got
+    # the same pair from CERT-557; the producer had none, which is how the fix
+    # was applied to one of two call sites and the battery still read 29/29.
+    (
+        "M24",
+        WARM,
+        "read the boolean, not the envelope — a build that kept the cheap rows "
+        "and lost the roster branch to the 12 s expiry counts as a completed "
+        "rebuild, and the enforced verdict for the pass goes back to GREEN",
+        """                _quality, _reasons = envelope_quality(_payload)
+                if _quality != QUALITY_FULL:""",
+        """                _quality, _reasons = envelope_quality(_payload)
+                if False:""",
+    ),
+    (
+        "M24b",
+        WARM,
+        "count the short build but never downgrade the terminal — CERT-518's "
+        "defect exactly: a detector whose detection the health gate cannot see",
+        '    if terminal == "complete" and (coverage_exceeded or failed or partial):',
+        '    if terminal == "complete" and (coverage_exceeded or failed):',
     ),
 ]
 

@@ -185,6 +185,131 @@ def concept_filter_for_tags(
     return (False, applicable) if applicable else (True, None)
 
 
+def concept_filter_for_category(
+    category: str | None,
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Translate a ``/categories/<slug>`` browse filter into a concept-tier filter.
+
+    The `category` sibling of `concept_filter_for_tags`, and derived from the
+    same `CONCEPT_SOURCES` for the same reason: `routes/feed.py` already grew
+    one hand-written copy of this vocabulary, lost `cycling` out of it, and
+    skipped the tier that holds the grand tours on the one surface where they
+    belong (UX-P177). A second copy for a second caller is that trap again with
+    a different name.
+
+    Returns ``(skip, sport_filter)``, the same shape:
+
+    * **no category** -> ``(False, None)``. Discover and every pre-existing
+      caller, unchanged: no constraint, every source runs.
+    * **a category naming a source** -> ``(False, (alias,))``. ONLY that source.
+    * **any other category** -> ``(True, None)``. The concept tier has nothing
+      to put on an economics page, so it is skipped rather than built and
+      appended — which is precisely what CERT-542 found it doing.
+
+    That `llm_sport_category` and the source aliases share a vocabulary is
+    checked, not assumed: measured on production 2026-08-31, `mma` (240 open
+    markets), `motorsports` (144) and `cycling` (17) are all live
+    `llm_sport_category` values and all three name a source. `ufc` and `f1` are
+    aliases with no category of their own; admitting them costs nothing and is
+    what keeps this derived from `CONCEPT_SOURCES` rather than from a list.
+    """
+    if not category:
+        return False, None
+    if category in CONCEPT_SPORT_ALIASES:
+        return False, (category,)
+    return True, None
+
+
+def concept_sources_named(
+    sport_filter: str | Collection[str] | None,
+) -> frozenset[str]:
+    """The registered source LABELS a filter selects — its canonical identity.
+
+    An alias is a way of SAYING a source, never the source itself. UFC answers
+    to both `mma` and `ufc`; F1 to both `motorsports` and `f1`. Two filters that
+    share no alias can still name the same source, so anything that compares
+    two filters has to compare them HERE, in labels, and not in the strings the
+    caller happened to spell.
+
+    Answered by asking `_source_applies` — the same predicate `list_all_concepts`
+    uses to decide what to build — rather than by re-deriving membership. A
+    canonicaliser that disagrees with the selector it is canonicalising for is
+    worse than none.
+
+    No filter selects everything, exactly as it does at build time.
+    """
+    return frozenset(
+        s.label for s in CONCEPT_SOURCES if _source_applies(s.aliases, sport_filter)
+    )
+
+
+def concept_filter_for_sources(labels: Collection[str]) -> tuple[str, ...]:
+    """A filter that selects exactly the named sources, and no others.
+
+    The inverse of `concept_sources_named`, and deliberately built from every
+    non-wildcard alias each source answers to rather than from its label. A
+    label happens to be one of its own aliases for all three sources registered
+    today, and a fix resting on that is a fix resting on a coincidence — the
+    fourth source can be registered with a label that is not an alias, and this
+    would then quietly select nothing.
+
+    `all` is excluded for the reason `CONCEPT_SPORT_ALIASES` excludes it: it is
+    every source's alias, so emitting it would turn a narrowing into a wildcard.
+    """
+    wanted = set(labels)
+    return tuple(
+        sorted(
+            {
+                alias
+                for source in CONCEPT_SOURCES
+                if source.label in wanted
+                for alias in source.aliases
+                if alias != "all"
+            }
+        )
+    )
+
+
+def narrow_concept_filters(
+    first: Collection[str] | None, second: Collection[str] | None
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Intersect two concept filters by SOURCE IDENTITY, not by alias string.
+
+    A `/categories/<slug>` page carrying a `sport:` tag has two claims about the
+    concept tier, and it must serve what BOTH name — never the union, which is
+    the foreign-card defect CERT-542 blocked, and never the empty set merely
+    because the two halves spelled one source differently, which is the defect
+    CERT-561 blocked.
+
+    Q472 wrote that intersection over the literal strings, so
+    `category=mma` (`("mma",)`) against `tags=["sport:ufc"]` (`("ufc",)`) came
+    out EMPTY and skipped the tier for a request whose two halves name one
+    registered source. `CONCEPT_SOURCES` gives UFC and F1 two names each on
+    purpose; treating aliases as identities is the same class of mistake this
+    module was created to end, one level down — not a second list that drifts,
+    but the one list read as though its rows had a single name.
+
+    Returns ``(skip, sport_filter)``:
+
+    * **one side silent** -> that side's filter, passed through UNCHANGED. Not
+      re-expanded through the registry: the value is already correct, and
+      rewriting it would churn the shared concept cache key for every
+      single-filter request without changing what gets built.
+    * **both speak, sharing at least one source** -> ``(False, (alias, …))``
+      selecting exactly the shared sources.
+    * **both speak, sharing none** -> ``(True, None)``. Skipped, not built and
+      discarded.
+    """
+    if not first:
+        return False, tuple(second) if second else None
+    if not second:
+        return False, tuple(first)
+    both = concept_sources_named(first) & concept_sources_named(second)
+    if not both:
+        return True, None
+    return False, concept_filter_for_sources(both)
+
+
 def _source_applies(
     aliases: tuple[str, ...], sport_filter: str | Collection[str] | None
 ) -> bool:
