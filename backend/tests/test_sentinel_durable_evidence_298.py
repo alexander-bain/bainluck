@@ -23,7 +23,26 @@ import pytest
 
 from app.utils import durable_state as ds
 
-NOW = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+# LAT-P166/#2388: THIS ANCHOR WAS A TIME BOMB AND IT DETONATED ON 2026-08-31 AT
+# 12:00:00Z, TAKING EVERY LANE'S CI RED ON SHARD 4.
+#
+# It used to be the literal `datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)`.
+# The reader it feeds bounds durable evidence at
+# :data:`app.services.durable_snapshots.SENTINEL_MAX_AGE_S` = 30 days, and
+# 2026-08-01T12:00:00Z + 30 days IS 2026-08-31T12:00:00Z. For thirty days the
+# fixture was "fresh"; at that instant it became "ancient", `read_sentinel_evidence`
+# started returning `None`, and four tests began failing on code nobody had touched.
+#
+# 🔴 THE TELL THAT IT WAS THE CLOCK AND NOT A COMMIT: master's own CI run at this
+# exact SHA passed at 05:56Z and the same tree failed at 12:24Z. If a suite goes red
+# with no diff between the green and red runs, compare the two run TIMES before you
+# read a single line of the diff.
+#
+# Gotcha #44 — offset FIRST, then truncate, and never let an anchor be a literal it
+# can outlive. One minute back so the row is unambiguously in the past, microseconds
+# dropped so the value is stable within a run. `TestTheAnchorCannotExpireAgain`
+# below fails loudly if anyone puts a literal back.
+NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 SCORECARD = {
     "mode": "live",
     "verdict": "GREEN",
@@ -364,3 +383,47 @@ class TestRailFallsBackAdditively:
             out = await admin_mod.get_board_sentinel_last(MagicMock(), "s")
 
         assert out == {"verdict": "GREEN"}  # verbatim, no provenance block
+
+
+# --- The anchor itself -------------------------------------------------------
+
+
+class TestTheAnchorCannotExpireAgain:
+    """LAT-P166/#2388. The module's `NOW` outlived its own freshness window.
+
+    A fixed literal against a ROLLING bound is a bomb with a fuse exactly as long as
+    the bound. It sat green for thirty days, which is precisely why nobody caught it
+    in review: on the day it was written, and on every day for a month after, it was
+    correct. These two tests are cheap and they are the only thing standing between a
+    later reader's tidy-looking literal and another silent thirty-day fuse.
+    """
+
+    def test_the_anchor_is_comfortably_inside_the_readers_max_age(self):
+        from app.services.durable_snapshots import SENTINEL_MAX_AGE_S
+
+        age_s = (datetime.now(timezone.utc) - NOW).total_seconds()
+        assert 0 <= age_s < SENTINEL_MAX_AGE_S / 2, (
+            f"the fixture anchor is {age_s:.0f}s old against a "
+            f"{SENTINEL_MAX_AGE_S:.0f}s bound. If this is a hardcoded datetime it "
+            "will pass until it silently crosses the bound and takes shard 4 red "
+            "on a day nobody changed anything. Anchor it to the real clock."
+        )
+
+    def test_the_anchor_tracks_the_clock_rather_than_a_literal(self):
+        """The assertion above passes for a literal too — right up until it doesn't.
+
+        This one is the durable half: re-evaluate the anchor expression and require
+        it to MOVE with the clock. A literal cannot.
+        """
+        import importlib
+
+        mod = importlib.import_module(__name__)
+        first = mod.NOW
+        recomputed = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(
+            microsecond=0
+        )
+        drift = abs((recomputed - first).total_seconds())
+        assert drift < 3600, (
+            f"the anchor is {drift:.0f}s away from a clock-relative value, so it is "
+            "a literal. See this class's docstring."
+        )
