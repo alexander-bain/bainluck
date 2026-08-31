@@ -1,0 +1,79 @@
+
+=== kalshi/economics — TRUTH monotonicity on cumulative ladders (RAW CELL) ===
+  ladders_under_two_graded_legs          588
+  ladders_testable_truth                 4033
+  legs_testable_truth                    154016
+  ladders_auth                           3875
+  legs_auth                              132651
+  truth_pairs_auth                       128776
+  truth_reversal_pairs_auth              16
+  ladders_truth_broken_auth              13
+  legs_truth_broken_auth                 282
+  ladders_guess                          158
+  legs_guess                             21365
+  truth_pairs_guess                      21207
+  truth_reversal_pairs_guess             148
+  ladders_truth_broken_guess             35
+  legs_truth_broken_guess                5753
+  TRUTH-BROKEN SHARE [auth ]   0.3% of ladders  (282 legs)
+  TRUTH-BROKEN SHARE [guess]  22.2% of ladders  (5753 legs)
+
+  --- price law, restricted to authoritative + truth-coherent ladders ---
+  ladders_price_testable_clean_truth     1872
+  price_pairs_clean_truth                51827
+  price_reversal_pairs_clean_truth       6724
+  ladders_price_broken_clean_truth       1141
+  legs_price_broken_clean_truth          57281
+  rows_longshot_winner                   34
+  rows_lock_loser                        644
+  PRICE-BROKEN SHARE  61.0% of clean-truth ladders
+
+  worst AUTHORITATIVE truth reversals:
+    30784010 [quantity] 'S&P price on Jun 2, 2026 at 4pm EDT?'  3 reversals / 60 legs
+        above 7000 graded LOST  but  above 7025 graded WON
+    25926870 [quantity] 'Italy inflation rate YoY prel for May 2026'  2 reversals / 15 legs
+        above 2.6 graded LOST  but  above 2.7 graded WON
+    109223 [quantity] 'How high will gas prices in Texas get this year?'  1 reversals / 21 legs
+        above 3.4 graded LOST  but  above 3.6 graded WON
+    109224 [quantity] 'How high will gas prices in New York get this year?'  1 reversals / 19 legs
+        above 3.6 graded LOST  but  above 3.7 graded WON
+    109225 [quantity] 'How high will gas prices in Florida get this year?'  1 reversals / 15 legs
+        above 3.5 graded LOST  but  above 3.9 graded WON
+    109226 [quantity] 'How high will gas prices in California get this year?'  1 reversals / 25 legs
+        above 5.5 graded LOST  but  above 5.6 graded WON
+    12927353 [quantity] 'Mexico unemployment rate in April'  1 reversals / 11 legs
+        above 2 graded LOST  but  above 2.2 graded WON
+    16758384 [quantity] 'Breakfast prices on May 7, 2026'  1 reversals / 5 legs
+        above 92.82 graded LOST  but  above 92.92 graded WON
+
+  worst GUESS-CONTAINING truth reversals:
+    1873247 [quantity] 'S&P price on Feb 27, 2026 at 2pm EST?'  29 reversals / 400 legs
+        above 5945 graded LOST  but  above 5950 graded WON
+    1837834 [quantity] 'S&P price on Feb 27, 2026 at 11am EST?'  28 reversals / 400 legs
+        above 5945 graded LOST  but  above 5950 graded WON
+    1860554 [quantity] 'S&P price on Feb 27, 2026 at 1pm EST?'  27 reversals / 400 legs
+        above 5945 graded LOST  but  above 5950 graded WON
+    1837833 [quantity] 'Nasdaq-100 price on Feb 27, 2026 at 11am EST?'  9 reversals / 400 legs
+        above 23390 graded LOST  but  above 23400 graded WON
+    1860553 [quantity] 'Nasdaq-100 price on Feb 27, 2026 at 1pm EST?'  5 reversals / 400 legs
+        above 23540 graded LOST  but  above 23550 graded WON
+    1873246 [quantity] 'Nasdaq-100 price on Feb 27, 2026 at 2pm EST?'  4 reversals / 400 legs
+        above 23540 graded LOST  but  above 23550 graded WON
+    1157153 [quantity] 'Nasdaq-100 price on Feb 24, 2026 at 12pm EST?'  3 reversals / 400 legs
+        above 24810 graded LOST  but  above 24820 graded WON
+    3071679 [quantity] 'Nasdaq-100 price on Mar 9, 2026 at 4pm EDT?'  3 reversals / 60 legs
+        above 24000 graded LOST  but  above 24100 graded WON
+
+  longshot winners / lock losers inside clean ladders (worst 10):
+    108581 'Fed funds rate after Mar 2027 meeting?'  above 0 @ 0.995 -> LOST
+    108581 'Fed funds rate after Mar 2027 meeting?'  above 0.5 @ 0.995 -> LOST
+    12704835 'Initial jobless claims for the week ending April 25,'  above 190000 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 28500 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 28600 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 27200 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 27300 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 27400 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 27500 @ 0.995 -> LOST
+    29210338 'Nasdaq-100 price on Jun 1, 2026 at 4pm EDT?'  above 27800 @ 0.995 -> LOST
+
+  wrote artifacts/cal-p134/truth-monotonicity-kalshi-economics.json

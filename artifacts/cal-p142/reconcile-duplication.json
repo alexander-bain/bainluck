@@ -1,0 +1,92 @@
+{
+ "cells": [
+  {
+   "cell": "kalshi/baseball",
+   "population_drift_pct": 0.152,
+   "exact_rows": 169425,
+   "exact_distinct": 99084,
+   "exact_inflation": 1.7099,
+   "cheap_rows": 168942,
+   "cheap_distinct": 129469,
+   "cheap_inflation": 1.3049,
+   "row_drift_pct": -0.285,
+   "distinct_drift_pct": 30.666,
+   "mode": "DISTINCT_INFLATED",
+   "row_coverage": 0.9971,
+   "outcome_coverage": 1.3067
+  },
+  {
+   "cell": "kalshi/basketball",
+   "population_drift_pct": 1.112,
+   "exact_rows": 109702,
+   "exact_distinct": 62407,
+   "exact_inflation": 1.7578,
+   "cheap_rows": 91687,
+   "cheap_distinct": 61982,
+   "cheap_inflation": 1.4793,
+   "row_drift_pct": -16.422,
+   "distinct_drift_pct": -0.681,
+   "mode": "REPLICA_SHORT",
+   "row_coverage": 0.8358,
+   "outcome_coverage": 0.9932
+  },
+  {
+   "cell": "polymarket/baseball",
+   "population_drift_pct": 0.0,
+   "exact_rows": 45240,
+   "exact_distinct": 25107,
+   "exact_inflation": 1.8019,
+   "cheap_rows": 41177,
+   "cheap_distinct": 24902,
+   "cheap_inflation": 1.6536,
+   "row_drift_pct": -8.981,
+   "distinct_drift_pct": -0.817,
+   "mode": "REPLICA_SHORT",
+   "row_coverage": 0.9102,
+   "outcome_coverage": 0.9918
+  },
+  {
+   "cell": "polymarket/basketball",
+   "population_drift_pct": 0.0,
+   "exact_rows": 13116,
+   "exact_distinct": 7419,
+   "exact_inflation": 1.7679,
+   "cheap_rows": 8426,
+   "cheap_distinct": 7426,
+   "cheap_inflation": 1.1347,
+   "row_drift_pct": -35.758,
+   "distinct_drift_pct": 0.094,
+   "mode": "REPLICA_SHORT",
+   "row_coverage": 0.6424,
+   "outcome_coverage": 1.0009
+  },
+  {
+   "cell": "polymarket/hockey",
+   "population_drift_pct": 0.0,
+   "exact_rows": 2281,
+   "exact_distinct": 1670,
+   "exact_inflation": 1.3659,
+   "cheap_rows": 1779,
+   "cheap_distinct": 1677,
+   "cheap_inflation": 1.0608,
+   "row_drift_pct": -22.008,
+   "distinct_drift_pct": 0.419,
+   "mode": "REPLICA_SHORT",
+   "row_coverage": 0.7799,
+   "outcome_coverage": 1.0042
+  }
+ ],
+ "withdrawn": [],
+ "discordant_pairs": [
+  [
+   "kalshi/baseball",
+   "polymarket/basketball"
+  ],
+  [
+   "kalshi/basketball",
+   "polymarket/basketball"
+  ]
+ ],
+ "pairs_compared": 10,
+ "triage_safe": false
+}

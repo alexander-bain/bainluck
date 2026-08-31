@@ -1,0 +1,50 @@
+CAL-P140 HOLD LEDGER — the conveyor's step 1, as a number
+  19 queued cells: 5 banked, 5 held_on_alex, 6 off_by_ruling, 3 refused_with_measurement
+
+  STEP 1 — 'the highest-excess cell with no banked design yet':
+  🔴 SELECTS THE EMPTY SET. Every queued cell is banked, refused, held or off.
+     This is calibration-908's finding, re-measured against the live board.
+
+  WHAT EACH UNANSWERED QUESTION IS BLOCKING, biggest first:
+    13-CAL      143,495 total   kalshi/entertainment
+             HOLD RULE E2 — its stated justification ('100% winners is one-sided capture') is measured false: the capture i
+                 18,763  cell blocked outright
+                 59,902  banked design cannot LAND: polymarket/esports
+                 64,830  banked design cannot LAND: kalshi/economics
+             ⛔ cannot be answered before 12-CAL
+    12-CAL      143,495 total   (no cell directly)
+             the curve publishes winners and drops losers for lone claims — clean_vms' `has_winner >= 1` drops 432 authorit
+                143,495  transitive, via its dependents
+    19-CAL       37,730 total   polymarket/soccer
+             polymarket/soccer is not established — same precedent as the six CAL-P120 removed
+                 37,730  cell blocked outright
+    20-CAL       26,340 total   polymarket/basketball, polymarket/hockey
+             polymarket/basketball AND polymarket/hockey are scored over 43.44%- and 26.79%-duplicate rows — both need the 
+                 26,340  cell blocked outright
+    17-CAL       16,976 total   kalshi/golf
+             kalshi/golf is not established (sigma 1.42, confirmed 1.48) — take it off the board
+                 16,976  cell blocked outright
+    14-CAL       16,498 total   polymarket/cricket
+             polymarket/cricket admits no rule at all — 1,971 candidates searched exhaustively
+                 16,498  cell blocked outright
+
+  the board, by disposition:
+     1. polymarket/baseball                          78,265  banked
+     2. kalshi/economics                             64,830  banked
+     3. polymarket/esports                           59,902  banked
+     4. polymarket/soccer                            37,730  held_on_alex  [19-CAL]
+     5. odds_api_bookmaker/basketball_nba            27,298  off_by_ruling
+     6. kalshi/crypto                                21,049  banked
+     7. kalshi/entertainment                         18,763  refused_with_measurement  [13-CAL]
+     8. odds_api_bookmaker/baseball_mlb_preseason    18,672  off_by_ruling
+     9. kalshi/golf                                  16,976  held_on_alex  [17-CAL]
+    10. polymarket/cricket                           16,498  held_on_alex  [14-CAL]
+    11. polymarket/basketball                        16,395  held_on_alex  [20-CAL]
+    12. polymarket/golf                              15,834  refused_with_measurement
+    13. odds_api_bookmaker/icehockey_nhl             12,035  off_by_ruling
+    14. odds_api_bookmaker/basketball_wncaab         12,006  off_by_ruling
+    15. polymarket/economics                         11,608  refused_with_measurement
+    16. polymarket/hockey                             9,945  held_on_alex  [20-CAL]
+    17. kalshi/tech                                   9,578  banked
+    18. odds_api_bookmaker/basketball_wnba            8,351  off_by_ruling
+    19. odds_api_bookmaker/basketball_euroleague      5,092  off_by_ruling

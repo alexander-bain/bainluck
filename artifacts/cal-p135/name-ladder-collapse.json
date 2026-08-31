@@ -1,0 +1,175 @@
+{
+  "basketball": {
+    "category": "basketball",
+    "markets_total": 25825,
+    "markets_priced": 6076,
+    "blindness": {
+      "names_with_ou_rung": 13850,
+      "names_with_spread_rung": 4907,
+      "parsed_by_name_grammars": 152,
+      "ou_names_parsed_by_name_grammars": 0,
+      "ou_markets_with_yes_leg": 15,
+      "ou_families_multi_rung_with_identity": 1091,
+      "ou_name_only_keys": 1586,
+      "ou_name_only_keys_spanning_multi_event": 781,
+      "ou_name_only_keys_spanning_multi_event_pct": 49.2
+    },
+    "shipped_key": {
+      "families": 65,
+      "families_multi_rung": 2,
+      "families_ambiguous": 0,
+      "families_eligible": 2,
+      "families_condemned": 0,
+      "violation_pairs": 0,
+      "markets_dropped": 0
+    },
+    "cross_event_collapse": {
+      "eligible_spanning_multi_event": 0,
+      "eligible_spanning_multi_event_pct": 0.0,
+      "condemned_spanning_multi_event": 0,
+      "condemned_spanning_multi_event_pct": 0.0,
+      "violation_pairs_from_multi_event": 0,
+      "violation_pairs_from_multi_event_pct": 0.0
+    },
+    "refined_key": {
+      "families_eligible": 2,
+      "families_condemned": 0,
+      "violation_pairs": 0,
+      "markets_dropped": 0
+    },
+    "worst_collapsed_families": []
+  },
+  "esports": {
+    "category": "esports",
+    "markets_total": 102194,
+    "markets_priced": 78959,
+    "blindness": {
+      "names_with_ou_rung": 25432,
+      "names_with_spread_rung": 10054,
+      "parsed_by_name_grammars": 19836,
+      "ou_names_parsed_by_name_grammars": 19766,
+      "ou_markets_with_yes_leg": 17874,
+      "ou_families_multi_rung_with_identity": 2594,
+      "ou_name_only_keys": 11,
+      "ou_name_only_keys_spanning_multi_event": 11,
+      "ou_name_only_keys_spanning_multi_event_pct": 100.0
+    },
+    "shipped_key": {
+      "families": 51,
+      "families_multi_rung": 17,
+      "families_ambiguous": 11,
+      "families_eligible": 6,
+      "families_condemned": 2,
+      "violation_pairs": 2,
+      "markets_dropped": 6
+    },
+    "cross_event_collapse": {
+      "eligible_spanning_multi_event": 1,
+      "eligible_spanning_multi_event_pct": 16.7,
+      "condemned_spanning_multi_event": 0,
+      "condemned_spanning_multi_event_pct": 0.0,
+      "violation_pairs_from_multi_event": 0,
+      "violation_pairs_from_multi_event_pct": 0.0
+    },
+    "refined_key": {
+      "families_eligible": 1776,
+      "families_condemned": 1296,
+      "violation_pairs": 3005,
+      "markets_dropped": 13840
+    },
+    "worst_collapsed_families": [
+      {
+        "key": "will valve add first cs2 operation <rung> ?",
+        "direction": "inc",
+        "rungs": 4,
+        "events_spanned": 2,
+        "member_ids": [
+          115767,
+          20566004,
+          20566005,
+          20566006
+        ]
+      }
+    ]
+  },
+  "baseball": {
+    "category": "baseball",
+    "markets_total": 64889,
+    "markets_priced": 11786,
+    "blindness": {
+      "names_with_ou_rung": 44839,
+      "names_with_spread_rung": 10281,
+      "parsed_by_name_grammars": 53,
+      "ou_names_parsed_by_name_grammars": 0,
+      "ou_markets_with_yes_leg": 0,
+      "ou_families_multi_rung_with_identity": 17196,
+      "ou_name_only_keys": 1416,
+      "ou_name_only_keys_spanning_multi_event": 1298,
+      "ou_name_only_keys_spanning_multi_event_pct": 91.7
+    },
+    "shipped_key": {
+      "families": 35,
+      "families_multi_rung": 1,
+      "families_ambiguous": 0,
+      "families_eligible": 1,
+      "families_condemned": 0,
+      "violation_pairs": 0,
+      "markets_dropped": 0
+    },
+    "cross_event_collapse": {
+      "eligible_spanning_multi_event": 0,
+      "eligible_spanning_multi_event_pct": 0.0,
+      "condemned_spanning_multi_event": 0,
+      "condemned_spanning_multi_event_pct": 0.0,
+      "violation_pairs_from_multi_event": 0,
+      "violation_pairs_from_multi_event_pct": 0.0
+    },
+    "refined_key": {
+      "families_eligible": 1,
+      "families_condemned": 0,
+      "violation_pairs": 0,
+      "markets_dropped": 0
+    },
+    "worst_collapsed_families": []
+  },
+  "soccer": {
+    "category": "soccer",
+    "markets_total": 190155,
+    "markets_priced": 44266,
+    "blindness": {
+      "names_with_ou_rung": 107313,
+      "names_with_spread_rung": 17819,
+      "parsed_by_name_grammars": 18,
+      "ou_names_parsed_by_name_grammars": 0,
+      "ou_markets_with_yes_leg": 2,
+      "ou_families_multi_rung_with_identity": 31050,
+      "ou_name_only_keys": 32924,
+      "ou_name_only_keys_spanning_multi_event": 238,
+      "ou_name_only_keys_spanning_multi_event_pct": 0.7
+    },
+    "shipped_key": {
+      "families": 9,
+      "families_multi_rung": 2,
+      "families_ambiguous": 0,
+      "families_eligible": 2,
+      "families_condemned": 1,
+      "violation_pairs": 1,
+      "markets_dropped": 7
+    },
+    "cross_event_collapse": {
+      "eligible_spanning_multi_event": 0,
+      "eligible_spanning_multi_event_pct": 0.0,
+      "condemned_spanning_multi_event": 0,
+      "condemned_spanning_multi_event_pct": 0.0,
+      "violation_pairs_from_multi_event": 0,
+      "violation_pairs_from_multi_event_pct": 0.0
+    },
+    "refined_key": {
+      "families_eligible": 2,
+      "families_condemned": 1,
+      "violation_pairs": 1,
+      "markets_dropped": 7
+    },
+    "worst_collapsed_families": []
+  }
+}

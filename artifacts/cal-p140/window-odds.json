@@ -1,0 +1,114 @@
+{
+  "instrument": "CAL-P140 window-odds",
+  "condition": "22 of 24",
+  "deadline_ms": 1380000,
+  "bands": [
+    {
+      "band": "whole-ring",
+      "note": "all three regimes pooled \u2014 printed only so the pooling error is visible",
+      "beats": 168,
+      "clean": 66,
+      "misses": 102,
+      "miss_rate": 0.6071,
+      "class_counts": {
+        "CLEAN": 66,
+        "BD_EARLY_CANCEL": 18,
+        "B_WINDOW_EXHAUSTION": 15,
+        "C_DEPLOY_KILL": 33,
+        "A_GATE_REFUSAL": 35,
+        "UNCLASSIFIED": 1
+      },
+      "oldest": "2026-08-23T06:39:33.220341+00:00",
+      "newest": "2026-08-30T05:26:33.752872+00:00"
+    },
+    {
+      "band": "post-v3921, key-outage excluded",
+      "note": "THE OPERATIVE BAND: D repaired, A's key-outage saturation removed",
+      "beats": 15,
+      "clean": 8,
+      "misses": 7,
+      "miss_rate": 0.4667,
+      "class_counts": {
+        "B_WINDOW_EXHAUSTION": 2,
+        "CLEAN": 8,
+        "BD_EARLY_CANCEL": 1,
+        "C_DEPLOY_KILL": 4
+      },
+      "oldest": "2026-08-28T19:40:52.750701+00:00",
+      "newest": "2026-08-30T05:26:33.752872+00:00"
+    },
+    {
+      "band": "post-rebaseline",
+      "note": "the live window itself \u2014 too short to be a rate, printed as the check",
+      "beats": 7,
+      "clean": 5,
+      "misses": 2,
+      "miss_rate": 0.2857,
+      "class_counts": {
+        "CLEAN": 5,
+        "B_WINDOW_EXHAUSTION": 1,
+        "C_DEPLOY_KILL": 1
+      },
+      "oldest": "2026-08-29T23:35:53.922062+00:00",
+      "newest": "2026-08-30T05:26:33.752872+00:00"
+    }
+  ],
+  "operative_rate_bootstrap": {
+    "point": 0.4667,
+    "ci90": [
+      0.3333,
+      0.6
+    ],
+    "draws": 2000,
+    "block": 3,
+    "seed": 20260830,
+    "n_beats": 15
+  },
+  "live_window": {
+    "beats_so_far": 7,
+    "misses_so_far": 2,
+    "budget": 2,
+    "beats_remaining": 17
+  },
+  "forecasts": [
+    {
+      "miss_rate": 0.4667,
+      "beats_remaining": 17,
+      "budget_left": 0,
+      "expected_further_misses": 7.93,
+      "p_condition_met": 0.0
+    },
+    {
+      "miss_rate": 0.3333,
+      "beats_remaining": 17,
+      "budget_left": 0,
+      "expected_further_misses": 5.67,
+      "p_condition_met": 0.001,
+      "counterfactual": "optimistic end of the measured rate's 90% CI (15 beats, moving-block bootstrap)"
+    },
+    {
+      "miss_rate": 0.6,
+      "beats_remaining": 17,
+      "budget_left": 0,
+      "expected_further_misses": 10.2,
+      "p_condition_met": 0.0,
+      "counterfactual": "pessimistic end of the same CI"
+    },
+    {
+      "miss_rate": 0.2727,
+      "beats_remaining": 17,
+      "budget_left": 0,
+      "expected_further_misses": 4.64,
+      "p_condition_met": 0.0045,
+      "counterfactual": "no releases during the window (class C suppressed)"
+    },
+    {
+      "miss_rate": 0.05,
+      "beats_remaining": 17,
+      "budget_left": 0,
+      "expected_further_misses": 0.85,
+      "p_condition_met": 0.4181,
+      "counterfactual": "the amendment's own healthy 0.95 publish rate \u2014 a ceiling, not a forecast"
+    }
+  ]
+}

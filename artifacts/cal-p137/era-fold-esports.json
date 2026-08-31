@@ -1,0 +1,2136 @@
+{
+  "category": "esports",
+  "population_check_vs_cal_p136": {
+    "compared": true,
+    "p136_rows": 102194,
+    "p137_rows": 102232,
+    "only_in_p136": 0,
+    "only_in_p137": 38,
+    "price_drifted": 0,
+    "price_drift_pct": 0.0,
+    "structurally_mismatched": 0,
+    "example_structural": [],
+    "ok": false
+  },
+  "markets_with_more_than_one_leg_of_a_name": {
+    "yes": 0,
+    "over": 0,
+    "under": 0
+  },
+  "composition": {
+    "markets": 102232,
+    "legs_by_branch": {
+      "over:cal": 925,
+      "over:cal_eq_open": 4297,
+      "over:none": 96846,
+      "over:open": 164,
+      "under:cal": 339,
+      "under:cal_eq_open": 3798,
+      "under:none": 97902,
+      "under:open": 193,
+      "yes:cal": 12079,
+      "yes:cal_eq_open": 63349,
+      "yes:none": 23246,
+      "yes:open": 3558
+    },
+    "priced_leg_branch": {
+      "cal": 12604,
+      "cal_eq_open": 67030,
+      "open": 3647
+    },
+    "over_leg_carries_BOTH_branches": 5160
+  },
+  "arms": {
+    "D_package_coalesce": {
+      "laddered": 16724,
+      "markets_drop": 9396,
+      "markets_ambiguous": 0,
+      "markets_coherent": 7328,
+      "drop_rate_of_laddered_pct": 56.18,
+      "families_condemned": 853,
+      "families_multi_rung": 2211,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 17825,
+        "yes": 78986,
+        "half_pair": 1126,
+        "over": 4295
+      }
+    },
+    "F_cal_branch_only": {
+      "laddered": 15650,
+      "markets_drop": 8740,
+      "markets_ambiguous": 0,
+      "markets_coherent": 6910,
+      "drop_rate_of_laddered_pct": 55.85,
+      "families_condemned": 781,
+      "families_multi_rung": 2054,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 21527,
+        "yes": 75428,
+        "half_pair": 1195,
+        "over": 4082
+      }
+    },
+    "G_open_branch_only": {
+      "laddered": 16608,
+      "markets_drop": 9386,
+      "markets_ambiguous": 0,
+      "markets_coherent": 7222,
+      "drop_rate_of_laddered_pct": 56.51,
+      "families_condemned": 850,
+      "families_multi_rung": 2172,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 18788,
+        "yes": 78117,
+        "half_pair": 1258,
+        "over": 4069
+      }
+    },
+    "H_cal_era_only": {
+      "laddered": 1684,
+      "markets_drop": 1020,
+      "markets_ambiguous": 0,
+      "markets_coherent": 664,
+      "drop_rate_of_laddered_pct": 60.57,
+      "families_condemned": 97,
+      "families_multi_rung": 231,
+      "families_ambiguous": 0,
+      "price_legs": {
+        "no_leg": 89045,
+        "yes": 12079,
+        "half_pair": 952,
+        "over": 156
+      }
+    }
+  },
+  "era_association": {
+    "eligible_families": 2211,
+    "by_branch_set": {
+      "cal": {
+        "families": 64,
+        "condemned": 4,
+        "violating_pairs": 7,
+        "markets": 217,
+        "condemn_rate_pct": 6.25
+      },
+      "cal+cal_eq_open": {
+        "families": 295,
+        "condemned": 222,
+        "violating_pairs": 495,
+        "markets": 4430,
+        "condemn_rate_pct": 75.25
+      },
+      "cal+cal_eq_open+open": {
+        "families": 23,
+        "condemned": 21,
+        "violating_pairs": 54,
+        "markets": 399,
+        "condemn_rate_pct": 91.3
+      },
+      "cal+open": {
+        "families": 1,
+        "condemned": 1,
+        "violating_pairs": 1,
+        "markets": 17,
+        "condemn_rate_pct": 100.0
+      },
+      "cal_eq_open": {
+        "families": 1590,
+        "condemned": 501,
+        "violating_pairs": 731,
+        "markets": 10433,
+        "condemn_rate_pct": 31.51
+      },
+      "cal_eq_open+open": {
+        "families": 196,
+        "condemned": 100,
+        "violating_pairs": 131,
+        "markets": 923,
+        "condemn_rate_pct": 51.02
+      },
+      "open": {
+        "families": 42,
+        "condemned": 4,
+        "violating_pairs": 4,
+        "markets": 305,
+        "condemn_rate_pct": 9.52
+      }
+    },
+    "pure_vs_mixed": {
+      "mixed": {
+        "families": 515,
+        "condemned": 344,
+        "violating_pairs": 681,
+        "markets": 5769,
+        "condemn_rate_pct": 66.8
+      },
+      "pure": {
+        "families": 1696,
+        "condemned": 509,
+        "violating_pairs": 742,
+        "markets": 10955,
+        "condemn_rate_pct": 30.01
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_pct": 40.3,
+      "eligible_that_are_mixed_pct": 23.3
+    }
+  },
+  "as_of_reach": {
+    "priced_markets": 83281,
+    "priced_leg_has_opening_captured_at": 73657,
+    "priced_leg_has_price_changed_at": 1942,
+    "opening_captured_at_coverage_pct": 88.44,
+    "price_changed_at_coverage_pct": 2.33,
+    "note": "the CAL branch carries no as-of at all; where coverage is ~0 hypothesis (a) is UNANSWERABLE from futures_outcomes and needs the price-history table (lesson 21)"
+  },
+  "as_of_spread": {
+    "eligible_families": 2211,
+    "dated_families": 1139,
+    "dated_share_of_eligible_pct": 51.5,
+    "by_rung_as_of_spread": {
+      "<1h": {
+        "families": 969,
+        "condemned": 208,
+        "condemn_rate_pct": 21.47
+      },
+      "1h-1d": {
+        "families": 144,
+        "condemned": 38,
+        "condemn_rate_pct": 26.39
+      },
+      "1d-7d": {
+        "families": 25,
+        "condemned": 7,
+        "condemn_rate_pct": 28.0
+      },
+      ">7d": {
+        "families": 1,
+        "condemned": 1,
+        "condemn_rate_pct": 100.0
+      }
+    }
+  },
+  "violation_shape": {
+    "eligible_families": 2211,
+    "condemned_families": 853,
+    "by_rung_count": {
+      "2": {
+        "families": 759,
+        "condemned": 87,
+        "condemn_rate_pct": 11.46
+      },
+      "3": {
+        "families": 484,
+        "condemned": 173,
+        "condemn_rate_pct": 35.74
+      },
+      "4": {
+        "families": 95,
+        "condemned": 53,
+        "condemn_rate_pct": 55.79
+      },
+      "5+": {
+        "families": 873,
+        "condemned": 540,
+        "condemn_rate_pct": 61.86
+      }
+    },
+    "by_magnitude": {
+      "<=0.5pp": {
+        "pairs": 129,
+        "pct": 9.1
+      },
+      "0.5-2pp": {
+        "pairs": 377,
+        "pct": 26.5
+      },
+      "2-5pp": {
+        "pairs": 147,
+        "pct": 10.3
+      },
+      "5-10pp": {
+        "pairs": 155,
+        "pct": 10.9
+      },
+      ">10pp": {
+        "pairs": 615,
+        "pct": 43.2
+      }
+    },
+    "worst_reversal_per_condemned_family": {
+      "median_pp": 29.75,
+      "p90_pp": 56.0
+    }
+  },
+  "settled_step_test": {
+    "eligible_families": 2211,
+    "contradictory": 2,
+    "contradictory_and_condemned": 2,
+    "near_boundary_but_not_settled": 227,
+    "by_settlement_mix": {
+      "all_live": {
+        "families": 1406,
+        "condemned": 402,
+        "condemn_rate_pct": 28.59
+      },
+      "all_settled": {
+        "families": 181,
+        "condemned": 17,
+        "condemn_rate_pct": 9.39
+      },
+      "mixed_settlement": {
+        "families": 624,
+        "condemned": 434,
+        "condemn_rate_pct": 69.55
+      }
+    },
+    "concentration": {
+      "condemned_that_are_mixed_settlement_pct": 50.9,
+      "eligible_that_are_mixed_settlement_pct": 28.2
+    },
+    "contradictory_share_of_all_settled_pct": 1.1
+  },
+  "leg_swap_test": {
+    "condemned_families": 853,
+    "min_flips_histogram": {
+      "1": 223,
+      "2": 35,
+      "3": 7,
+      "4+": 43
+    },
+    "no_assignment_fixes_it": 545,
+    "one_flip_share_of_condemned_pct": 26.1,
+    "flip_matches_the_other_leg_pct": 72.2,
+    "over_under_pairs_checked": 72
+  },
+  "worst_examples": [
+    {
+      "worst_reversal_pp": 99.5,
+      "direction": "dec",
+      "family_key": "polymarket:442009  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "18.5": 0.9945,
+        "19.5": 0.9,
+        "20.5": 0.995,
+        "21.5": 1.0,
+        "22.5": 0.005,
+        "23.5": 1.0,
+        "24.5": 1.0,
+        "25.5": 0.5,
+        "26.5": 0.65,
+        "27.5": 0.5,
+        "28.5": 0.57,
+        "29.5": 0.49,
+        "30.5": 0.5,
+        "31.5": 0.005,
+        "32.5": 0.1
+      },
+      "members": [
+        {
+          "market_id": 17343882,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "price": 0.65,
+          "branch": "cal"
+        },
+        {
+          "market_id": 17343884,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "price": 0.57,
+          "branch": "cal"
+        },
+        {
+          "market_id": 17343885,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "price": 0.49,
+          "branch": "cal"
+        },
+        {
+          "market_id": 17343889,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 17343892,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 18242672,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321584,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321586,
+          "name": "Total Kills Over/Under 22.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321587,
+          "name": "Total Kills Over/Under 21.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 18321588,
+          "name": "Total Kills Over/Under 23.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 18321589,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 18321590,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "price": 0.1,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321591,
+          "name": "Total Kills Over/Under 20.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321592,
+          "name": "Total Kills Over/Under 19.5 in Game 1?",
+          "price": 0.9,
+          "branch": "cal"
+        },
+        {
+          "market_id": 18321593,
+          "name": "Total Kills Over/Under 18.5 in Game 1?",
+          "price": 0.9945,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 98.9,
+      "direction": "dec",
+      "family_key": "polymarket:421129  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "38.5": 1.0,
+        "39.5": 1.0,
+        "40.5": 1.0,
+        "41.5": 0.5005,
+        "42.5": 0.5005,
+        "43.5": 0.99,
+        "44.5": 0.5,
+        "45.5": 0.99,
+        "46.5": 0.001,
+        "47.5": 0.001,
+        "48.5": 0.001,
+        "49.5": 0.001,
+        "50.5": 0.001,
+        "51.5": 0.001,
+        "52.5": 0.001,
+        "53.5": 0.001,
+        "54.5": 0.99,
+        "55.5": 0.001,
+        "56.5": 0.5,
+        "57.5": 0.001,
+        "58.5": 0.99,
+        "59.5": 0.5
+      },
+      "members": [
+        {
+          "market_id": 16620481,
+          "name": "Total Kills Over/Under 47.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620483,
+          "name": "Total Kills Over/Under 49.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620485,
+          "name": "Total Kills Over/Under 50.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620487,
+          "name": "Total Kills Over/Under 48.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620489,
+          "name": "Total Kills Over/Under 46.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620512,
+          "name": "Total Kills Over/Under 52.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620513,
+          "name": "Total Kills Over/Under 51.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620516,
+          "name": "Total Kills Over/Under 53.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620517,
+          "name": "Total Kills Over/Under 54.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620518,
+          "name": "Total Kills Over/Under 55.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620519,
+          "name": "Total Kills Over/Under 56.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620520,
+          "name": "Total Kills Over/Under 57.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620521,
+          "name": "Total Kills Over/Under 58.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620522,
+          "name": "Total Kills Over/Under 59.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620523,
+          "name": "Total Kills Over/Under 45.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620525,
+          "name": "Total Kills Over/Under 44.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620526,
+          "name": "Total Kills Over/Under 42.5 in Game 1?",
+          "price": 0.5005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620527,
+          "name": "Total Kills Over/Under 41.5 in Game 1?",
+          "price": 0.5005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620528,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620529,
+          "name": "Total Kills Over/Under 43.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620530,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620531,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 98.9,
+      "direction": "dec",
+      "family_key": "polymarket:393341  ||  total kills <rung> in game 2?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "40.5": 1.0,
+        "41.5": 1.0,
+        "42.5": 1.0,
+        "43.5": 1.0,
+        "44.5": 1.0,
+        "45.5": 1.0,
+        "46.5": 1.0,
+        "47.5": 1.0,
+        "48.5": 1.0,
+        "49.5": 1.0,
+        "50.5": 0.001,
+        "51.5": 0.001,
+        "52.5": 0.001,
+        "53.5": 0.001,
+        "54.5": 0.001,
+        "55.5": 0.001,
+        "56.5": 0.001,
+        "57.5": 0.001,
+        "58.5": 0.001,
+        "59.5": 0.001,
+        "60.5": 0.001,
+        "61.5": 0.001,
+        "62.5": 0.01,
+        "63.5": 0.01,
+        "64.5": 0.01,
+        "65.5": 0.001,
+        "66.5": 0.99,
+        "67.5": 0.001,
+        "68.5": 0.001,
+        "69.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 13808593,
+          "name": "Total Kills Over/Under 65.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808594,
+          "name": "Total Kills Over/Under 61.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808595,
+          "name": "Total Kills Over/Under 62.5 in Game 2?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808596,
+          "name": "Total Kills Over/Under 63.5 in Game 2?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808597,
+          "name": "Total Kills Over/Under 66.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808598,
+          "name": "Total Kills Over/Under 60.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808599,
+          "name": "Total Kills Over/Under 64.5 in Game 2?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808601,
+          "name": "Total Kills Over/Under 67.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808602,
+          "name": "Total Kills Over/Under 69.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808603,
+          "name": "Total Kills Over/Under 68.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808619,
+          "name": "Total Kills Over/Under 53.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808620,
+          "name": "Total Kills Over/Under 52.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808621,
+          "name": "Total Kills Over/Under 44.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808622,
+          "name": "Total Kills Over/Under 45.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808624,
+          "name": "Total Kills Over/Under 42.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808625,
+          "name": "Total Kills Over/Under 43.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808626,
+          "name": "Total Kills Over/Under 41.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808627,
+          "name": "Total Kills Over/Under 54.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808628,
+          "name": "Total Kills Over/Under 40.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808629,
+          "name": "Total Kills Over/Under 55.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808630,
+          "name": "Total Kills Over/Under 46.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808652,
+          "name": "Total Kills Over/Under 49.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808654,
+          "name": "Total Kills Over/Under 51.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808657,
+          "name": "Total Kills Over/Under 50.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808659,
+          "name": "Total Kills Over/Under 48.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808661,
+          "name": "Total Kills Over/Under 47.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808664,
+          "name": "Total Kills Over/Under 57.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808665,
+          "name": "Total Kills Over/Under 56.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808666,
+          "name": "Total Kills Over/Under 59.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808667,
+          "name": "Total Kills Over/Under 58.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 98.0,
+      "direction": "dec",
+      "family_key": "polymarket:421129  ||  total kills <rung> in game 2?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "44.5": 1.0,
+        "45.5": 1.0,
+        "46.5": 1.0,
+        "47.5": 1.0,
+        "48.5": 1.0,
+        "49.5": 1.0,
+        "50.5": 1.0,
+        "51.5": 1.0,
+        "52.5": 1.0,
+        "53.5": 1.0,
+        "54.5": 1.0,
+        "55.5": 1.0,
+        "56.5": 1.0,
+        "57.5": 1.0,
+        "58.5": 1.0,
+        "59.5": 0.99,
+        "60.5": 0.99,
+        "61.5": 0.99,
+        "62.5": 0.001,
+        "63.5": 0.5,
+        "64.5": 0.001,
+        "65.5": 0.5,
+        "66.5": 0.001,
+        "67.5": 0.2,
+        "68.5": 0.99,
+        "69.5": 0.5,
+        "70.5": 0.001,
+        "71.5": 0.2,
+        "72.5": 0.001,
+        "73.5": 0.01,
+        "74.5": 0.99,
+        "75.5": 0.2
+      },
+      "members": [
+        {
+          "market_id": 16620480,
+          "name": "Total Kills Over/Under 46.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620482,
+          "name": "Total Kills Over/Under 47.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620484,
+          "name": "Total Kills Over/Under 48.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620486,
+          "name": "Total Kills Over/Under 49.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620488,
+          "name": "Total Kills Over/Under 50.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620511,
+          "name": "Total Kills Over/Under 52.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620514,
+          "name": "Total Kills Over/Under 51.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620515,
+          "name": "Total Kills Over/Under 53.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620532,
+          "name": "Total Kills Over/Under 54.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620533,
+          "name": "Total Kills Over/Under 45.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620534,
+          "name": "Total Kills Over/Under 44.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620535,
+          "name": "Total Kills Over/Under 55.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620536,
+          "name": "Total Kills Over/Under 56.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620537,
+          "name": "Total Kills Over/Under 59.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620538,
+          "name": "Total Kills Over/Under 57.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620539,
+          "name": "Total Kills Over/Under 58.5 in Game 2?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620540,
+          "name": "Total Kills Over/Under 60.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620541,
+          "name": "Total Kills Over/Under 61.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620542,
+          "name": "Total Kills Over/Under 65.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620543,
+          "name": "Total Kills Over/Under 66.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620544,
+          "name": "Total Kills Over/Under 62.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620545,
+          "name": "Total Kills Over/Under 64.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620546,
+          "name": "Total Kills Over/Under 63.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620547,
+          "name": "Total Kills Over/Under 69.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620548,
+          "name": "Total Kills Over/Under 70.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620549,
+          "name": "Total Kills Over/Under 68.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620550,
+          "name": "Total Kills Over/Under 67.5 in Game 2?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620551,
+          "name": "Total Kills Over/Under 74.5 in Game 2?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620552,
+          "name": "Total Kills Over/Under 71.5 in Game 2?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620553,
+          "name": "Total Kills Over/Under 73.5 in Game 2?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620554,
+          "name": "Total Kills Over/Under 72.5 in Game 2?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16620555,
+          "name": "Total Kills Over/Under 75.5 in Game 2?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 98.0,
+      "direction": "dec",
+      "family_key": "polymarket:477696  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "56.5": 0.01,
+        "57.5": 0.99,
+        "58.5": 0.99,
+        "59.5": 0.99,
+        "60.5": 0.99,
+        "61.5": 0.99,
+        "62.5": 0.99,
+        "63.5": 0.001,
+        "64.5": 0.001,
+        "65.5": 0.001,
+        "66.5": 0.001,
+        "67.5": 0.001,
+        "68.5": 0.001,
+        "69.5": 0.001,
+        "70.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 20568639,
+          "name": "Total Kills Over/Under 64.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568640,
+          "name": "Total Kills Over/Under 63.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568641,
+          "name": "Total Kills Over/Under 65.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568642,
+          "name": "Total Kills Over/Under 66.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568643,
+          "name": "Total Kills Over/Under 67.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568644,
+          "name": "Total Kills Over/Under 68.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568645,
+          "name": "Total Kills Over/Under 69.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568646,
+          "name": "Total Kills Over/Under 70.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568651,
+          "name": "Total Kills Over/Under 56.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568653,
+          "name": "Total Kills Over/Under 59.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568654,
+          "name": "Total Kills Over/Under 61.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568655,
+          "name": "Total Kills Over/Under 57.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568656,
+          "name": "Total Kills Over/Under 58.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568657,
+          "name": "Total Kills Over/Under 60.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 20568658,
+          "name": "Total Kills Over/Under 62.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 85.0,
+      "direction": "dec",
+      "family_key": "polymarket:583776  ||  map 1 total rounds: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "21.5": 0.45,
+        "24.5": 0.1,
+        "30.5": 0.95
+      },
+      "members": [
+        {
+          "market_id": 35417817,
+          "name": "Map 1 Total Rounds: Over/Under 21.5",
+          "price": 0.45,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 35800075,
+          "name": "Map 1 Total Rounds: Over/Under 30.5",
+          "price": 0.95,
+          "branch": "open"
+        },
+        {
+          "market_id": 35800076,
+          "name": "Map 1 Total Rounds: Over/Under 24.5",
+          "price": 0.1,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 85.0,
+      "direction": "dec",
+      "family_key": "polymarket:577578  ||  map 1 total rounds: <rung>",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "20.5": 0.62,
+        "21.5": 0.495,
+        "22.5": 0.38,
+        "24.5": 0.1,
+        "25.5": 0.95,
+        "26.5": 0.001
+      },
+      "members": [
+        {
+          "market_id": 34674571,
+          "name": "Map 1 Total Rounds: Over/Under 21.5",
+          "price": 0.495,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34674578,
+          "name": "Map 1 Total Rounds: Over/Under 20.5",
+          "price": 0.62,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34674585,
+          "name": "Map 1 Total Rounds: Over/Under 22.5",
+          "price": 0.38,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34753984,
+          "name": "Map 1 Total Rounds: Over/Under 24.5",
+          "price": 0.1,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 34753991,
+          "name": "Map 1 Total Rounds: Over/Under 25.5",
+          "price": 0.95,
+          "branch": "open"
+        },
+        {
+          "market_id": 34754028,
+          "name": "Map 1 Total Rounds: Over/Under 26.5",
+          "price": 0.001,
+          "branch": "open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.0,
+      "direction": "dec",
+      "family_key": "polymarket:451333  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "37.5": 0.9995,
+        "38.5": 0.9995,
+        "39.5": 0.9995,
+        "40.5": 0.001,
+        "41.5": 0.2,
+        "42.5": 0.2,
+        "43.5": 0.001,
+        "44.5": 0.2,
+        "45.5": 0.2,
+        "46.5": 0.2,
+        "47.5": 0.01,
+        "48.5": 0.001,
+        "49.5": 0.001,
+        "50.5": 0.01,
+        "51.5": 0.001,
+        "52.5": 0.001,
+        "53.5": 0.001,
+        "54.5": 0.01,
+        "55.5": 0.2,
+        "56.5": 0.2,
+        "57.5": 0.2,
+        "58.5": 0.99,
+        "59.5": 0.01,
+        "60.5": 0.0005,
+        "61.5": 0.001,
+        "62.5": 0.2,
+        "63.5": 0.99
+      },
+      "members": [
+        {
+          "market_id": 16633816,
+          "name": "Total Kills Over/Under 52.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633817,
+          "name": "Total Kills Over/Under 54.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633820,
+          "name": "Total Kills Over/Under 53.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633821,
+          "name": "Total Kills Over/Under 51.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633823,
+          "name": "Total Kills Over/Under 50.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633848,
+          "name": "Total Kills Over/Under 49.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633850,
+          "name": "Total Kills Over/Under 48.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633851,
+          "name": "Total Kills Over/Under 47.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633852,
+          "name": "Total Kills Over/Under 55.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16633853,
+          "name": "Total Kills Over/Under 62.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633854,
+          "name": "Total Kills Over/Under 59.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633855,
+          "name": "Total Kills Over/Under 63.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633856,
+          "name": "Total Kills Over/Under 58.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633857,
+          "name": "Total Kills Over/Under 61.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633858,
+          "name": "Total Kills Over/Under 60.5 in Game 1?",
+          "price": 0.0005,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633859,
+          "name": "Total Kills Over/Under 56.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633860,
+          "name": "Total Kills Over/Under 57.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633862,
+          "name": "Total Kills Over/Under 43.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633863,
+          "name": "Total Kills Over/Under 46.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633864,
+          "name": "Total Kills Over/Under 45.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633865,
+          "name": "Total Kills Over/Under 44.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633866,
+          "name": "Total Kills Over/Under 42.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633867,
+          "name": "Total Kills Over/Under 41.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 16633868,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "price": 0.001,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633869,
+          "name": "Total Kills Over/Under 37.5 in Game 1?",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633870,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "price": 0.9995,
+          "branch": "cal"
+        },
+        {
+          "market_id": 16633871,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "price": 0.9995,
+          "branch": "cal"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 79.0,
+      "direction": "dec",
+      "family_key": "polymarket:393345  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "37.5": 1.0,
+        "38.5": 1.0,
+        "39.5": 1.0,
+        "40.5": 0.5,
+        "41.5": 0.2,
+        "42.5": 0.2,
+        "43.5": 0.2,
+        "44.5": 0.2,
+        "45.5": 0.2,
+        "46.5": 0.2,
+        "47.5": 0.2,
+        "48.5": 0.2,
+        "49.5": 0.2,
+        "50.5": 0.2,
+        "51.5": 0.2,
+        "52.5": 0.2,
+        "53.5": 0.2,
+        "54.5": 0.2,
+        "55.5": 0.99,
+        "56.5": 0.99
+      },
+      "members": [
+        {
+          "market_id": 13808681,
+          "name": "Total Kills Over/Under 41.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808682,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808683,
+          "name": "Total Kills Over/Under 52.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808684,
+          "name": "Total Kills Over/Under 53.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808685,
+          "name": "Total Kills Over/Under 54.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808686,
+          "name": "Total Kills Over/Under 55.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808687,
+          "name": "Total Kills Over/Under 56.5 in Game 1?",
+          "price": 0.99,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808688,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808689,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808690,
+          "name": "Total Kills Over/Under 37.5 in Game 1?",
+          "price": 1.0,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808731,
+          "name": "Total Kills Over/Under 45.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808733,
+          "name": "Total Kills Over/Under 48.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808734,
+          "name": "Total Kills Over/Under 47.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808735,
+          "name": "Total Kills Over/Under 46.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808736,
+          "name": "Total Kills Over/Under 50.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808737,
+          "name": "Total Kills Over/Under 49.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808738,
+          "name": "Total Kills Over/Under 51.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808739,
+          "name": "Total Kills Over/Under 44.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808740,
+          "name": "Total Kills Over/Under 43.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 13808741,
+          "name": "Total Kills Over/Under 42.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 75.0,
+      "direction": "dec",
+      "family_key": "polymarket:541413  ||  total kills <rung> in game 2?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "46.5": 0.5,
+        "47.5": 0.5,
+        "48.5": 0.5,
+        "49.5": 0.5,
+        "50.5": 0.5,
+        "51.5": 0.5,
+        "52.5": 0.5,
+        "53.5": 0.5,
+        "62.5": 0.2,
+        "63.5": 0.95,
+        "64.5": 0.95,
+        "65.5": 0.95,
+        "66.5": 0.95
+      },
+      "members": [
+        {
+          "market_id": 29385077,
+          "name": "Total Kills Over/Under 52.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385079,
+          "name": "Total Kills Over/Under 51.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385083,
+          "name": "Total Kills Over/Under 53.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385085,
+          "name": "Total Kills Over/Under 48.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385086,
+          "name": "Total Kills Over/Under 50.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385088,
+          "name": "Total Kills Over/Under 46.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385096,
+          "name": "Total Kills Over/Under 47.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29385097,
+          "name": "Total Kills Over/Under 49.5 in Game 2?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530019,
+          "name": "Total Kills Over/Under 62.5 in Game 2?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530020,
+          "name": "Total Kills Over/Under 63.5 in Game 2?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530021,
+          "name": "Total Kills Over/Under 66.5 in Game 2?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530022,
+          "name": "Total Kills Over/Under 65.5 in Game 2?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530023,
+          "name": "Total Kills Over/Under 64.5 in Game 2?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 75.0,
+      "direction": "dec",
+      "family_key": "polymarket:541663  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "68.5": 0.2,
+        "69.5": 0.2,
+        "70.5": 0.95,
+        "71.5": 0.95,
+        "73.5": 0.01,
+        "75.5": 0.01
+      },
+      "members": [
+        {
+          "market_id": 29530363,
+          "name": "Total Kills Over/Under 68.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530364,
+          "name": "Total Kills Over/Under 69.5 in Game 1?",
+          "price": 0.2,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530366,
+          "name": "Total Kills Over/Under 70.5 in Game 1?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530367,
+          "name": "Total Kills Over/Under 71.5 in Game 1?",
+          "price": 0.95,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530368,
+          "name": "Total Kills Over/Under 73.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 29530369,
+          "name": "Total Kills Over/Under 75.5 in Game 1?",
+          "price": 0.01,
+          "branch": "cal_eq_open"
+        }
+      ]
+    },
+    {
+      "worst_reversal_pp": 74.5,
+      "direction": "dec",
+      "family_key": "polymarket:518354  ||  total kills <rung> in game 1?",
+      "distinct_group_ids": 1,
+      "distinct_event_ids": 1,
+      "rungs": {
+        "24.5": 0.995,
+        "25.5": 0.995,
+        "26.5": 0.605,
+        "27.5": 0.5,
+        "28.5": 0.5,
+        "29.5": 0.5,
+        "30.5": 0.5,
+        "31.5": 0.5,
+        "32.5": 0.995,
+        "33.5": 0.995,
+        "34.5": 0.995,
+        "35.5": 0.995,
+        "36.5": 0.995,
+        "37.5": 0.005,
+        "38.5": 0.005,
+        "39.5": 0.005,
+        "40.5": 0.75,
+        "41.5": 0.005,
+        "42.5": 0.005,
+        "43.5": 0.005,
+        "44.5": 0.005
+      },
+      "members": [
+        {
+          "market_id": 26435731,
+          "name": "Total Kills Over/Under 30.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 26435732,
+          "name": "Total Kills Over/Under 27.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 26435733,
+          "name": "Total Kills Over/Under 31.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 26435734,
+          "name": "Total Kills Over/Under 28.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 26435735,
+          "name": "Total Kills Over/Under 29.5 in Game 1?",
+          "price": 0.5,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 27882187,
+          "name": "Total Kills Over/Under 26.5 in Game 1?",
+          "price": 0.605,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172472,
+          "name": "Total Kills Over/Under 32.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172475,
+          "name": "Total Kills Over/Under 24.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172476,
+          "name": "Total Kills Over/Under 25.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172477,
+          "name": "Total Kills Over/Under 33.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172478,
+          "name": "Total Kills Over/Under 34.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172480,
+          "name": "Total Kills Over/Under 36.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172481,
+          "name": "Total Kills Over/Under 35.5 in Game 1?",
+          "price": 0.995,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172482,
+          "name": "Total Kills Over/Under 41.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172483,
+          "name": "Total Kills Over/Under 38.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172484,
+          "name": "Total Kills Over/Under 39.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172485,
+          "name": "Total Kills Over/Under 40.5 in Game 1?",
+          "price": 0.75,
+          "branch": "cal"
+        },
+        {
+          "market_id": 28172486,
+          "name": "Total Kills Over/Under 37.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172487,
+          "name": "Total Kills Over/Under 43.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172488,
+          "name": "Total Kills Over/Under 42.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        },
+        {
+          "market_id": 28172489,
+          "name": "Total Kills Over/Under 44.5 in Game 1?",
+          "price": 0.005,
+          "branch": "cal_eq_open"
+        }
+      ]
+    }
+  ],
+  "holdout_at": 28607831,
+  "holdout": {
+    "early": {
+      "rows": 51116,
+      "D_package_coalesce": {
+        "laddered": 10164,
+        "markets_drop": 5610,
+        "markets_ambiguous": 0,
+        "markets_coherent": 4554,
+        "drop_rate_of_laddered_pct": 55.19,
+        "families_condemned": 329,
+        "families_multi_rung": 734,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 11204,
+          "yes": 37618,
+          "half_pair": 1105,
+          "over": 1189
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 1545,
+        "markets_drop": 948,
+        "markets_ambiguous": 0,
+        "markets_coherent": 597,
+        "drop_rate_of_laddered_pct": 61.36,
+        "families_condemned": 88,
+        "families_multi_rung": 203,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 39419,
+          "yes": 10740,
+          "half_pair": 844,
+          "over": 113
+        }
+      },
+      "era_association": {
+        "eligible_families": 734,
+        "by_branch_set": {
+          "cal": {
+            "families": 52,
+            "condemned": 4,
+            "violating_pairs": 7,
+            "markets": 192,
+            "condemn_rate_pct": 7.69
+          },
+          "cal+cal_eq_open": {
+            "families": 241,
+            "condemned": 186,
+            "violating_pairs": 434,
+            "markets": 3714,
+            "condemn_rate_pct": 77.18
+          },
+          "cal+cal_eq_open+open": {
+            "families": 21,
+            "condemned": 19,
+            "violating_pairs": 49,
+            "markets": 367,
+            "condemn_rate_pct": 90.48
+          },
+          "cal+open": {
+            "families": 1,
+            "condemned": 1,
+            "violating_pairs": 1,
+            "markets": 17,
+            "condemn_rate_pct": 100.0
+          },
+          "cal_eq_open": {
+            "families": 397,
+            "condemned": 113,
+            "violating_pairs": 194,
+            "markets": 5555,
+            "condemn_rate_pct": 28.46
+          },
+          "cal_eq_open+open": {
+            "families": 6,
+            "condemned": 5,
+            "violating_pairs": 8,
+            "markets": 94,
+            "condemn_rate_pct": 83.33
+          },
+          "open": {
+            "families": 16,
+            "condemned": 1,
+            "violating_pairs": 1,
+            "markets": 225,
+            "condemn_rate_pct": 6.25
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 269,
+            "condemned": 211,
+            "violating_pairs": 492,
+            "markets": 4192,
+            "condemn_rate_pct": 78.44
+          },
+          "pure": {
+            "families": 465,
+            "condemned": 118,
+            "violating_pairs": 202,
+            "markets": 5972,
+            "condemn_rate_pct": 25.38
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 64.1,
+          "eligible_that_are_mixed_pct": 36.6
+        }
+      }
+    },
+    "late": {
+      "rows": 51116,
+      "D_package_coalesce": {
+        "laddered": 6555,
+        "markets_drop": 3507,
+        "markets_ambiguous": 0,
+        "markets_coherent": 3048,
+        "drop_rate_of_laddered_pct": 53.5,
+        "families_condemned": 523,
+        "families_multi_rung": 1523,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "yes": 41368,
+          "no_leg": 6621,
+          "over": 3106,
+          "half_pair": 21
+        }
+      },
+      "H_cal_era_only": {
+        "laddered": 132,
+        "markets_drop": 45,
+        "markets_ambiguous": 0,
+        "markets_coherent": 87,
+        "drop_rate_of_laddered_pct": 34.09,
+        "families_condemned": 5,
+        "families_multi_rung": 27,
+        "families_ambiguous": 0,
+        "price_legs": {
+          "no_leg": 49626,
+          "yes": 1339,
+          "half_pair": 108,
+          "over": 43
+        }
+      },
+      "era_association": {
+        "eligible_families": 1523,
+        "by_branch_set": {
+          "cal": {
+            "families": 13,
+            "condemned": 1,
+            "violating_pairs": 1,
+            "markets": 40,
+            "condemn_rate_pct": 7.69
+          },
+          "cal+cal_eq_open": {
+            "families": 57,
+            "condemned": 33,
+            "violating_pairs": 46,
+            "markets": 514,
+            "condemn_rate_pct": 57.89
+          },
+          "cal+cal_eq_open+open": {
+            "families": 1,
+            "condemned": 1,
+            "violating_pairs": 2,
+            "markets": 9,
+            "condemn_rate_pct": 100.0
+          },
+          "cal+open": {
+            "families": 1,
+            "condemned": 0,
+            "violating_pairs": 0,
+            "markets": 13,
+            "condemn_rate_pct": 0.0
+          },
+          "cal_eq_open": {
+            "families": 1235,
+            "condemned": 390,
+            "violating_pairs": 539,
+            "markets": 5080,
+            "condemn_rate_pct": 31.58
+          },
+          "cal_eq_open+open": {
+            "families": 190,
+            "condemned": 95,
+            "violating_pairs": 123,
+            "markets": 819,
+            "condemn_rate_pct": 50.0
+          },
+          "open": {
+            "families": 26,
+            "condemned": 3,
+            "violating_pairs": 3,
+            "markets": 80,
+            "condemn_rate_pct": 11.54
+          }
+        },
+        "pure_vs_mixed": {
+          "mixed": {
+            "families": 249,
+            "condemned": 129,
+            "violating_pairs": 171,
+            "markets": 1355,
+            "condemn_rate_pct": 51.81
+          },
+          "pure": {
+            "families": 1274,
+            "condemned": 394,
+            "violating_pairs": 543,
+            "markets": 5200,
+            "condemn_rate_pct": 30.93
+          }
+        },
+        "concentration": {
+          "condemned_that_are_mixed_pct": 24.7,
+          "eligible_that_are_mixed_pct": 16.3
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+================================================================================================
+CAL-P151 — the six cricket families on the PRODUCER'S OWN CHAIN
+================================================================================================
+
+[1/4] COLLECT the cricket population by primary key
+  COALESCE(c,'uncategorized')='cricket' <=> c='cricket' (NULL -> 'uncategorized' != 'cricket'); NOT valid for 'uncategorized'
+    chunk 0-2,000,000 failed; halving to 1,000,000
+    chunk 57,000,000-58,000,000 failed; halving to 500,000
+    chunk 57,000,000-57,500,000 failed; halving to 250,000
+  7,992 resolved cricket markets — by source: {'kalshi': 1348, 'polymarket': 6644}
+
+[2/4] SCOPE PROOF — could chunking change virtual-question identity?
+  keys where a cricket market shares a group/event with a foreign one: 7
+    event   14798532 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14798618 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14798622 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14798627 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14798691 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14856015 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+    event   14898695 kalshi      total=2   cricket=1   gate unfiltered=False filtered=False
+  keys whose >=3 gate would FLIP: 0
+  ✅ every mixed key answers the gate identically either way.
+
+[3/4] CHUNK on component boundaries
+  5,626 components (largest 21 markets) packed into 20 chunks of [395, 399, 400, 400, 400, 400, 399, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 399] markets
+
+[4/4] THE FOLD — which families reach `deduped`?   [chain: base]
+  chunk 1 (395 markets, 803 ms) -> 12 families   [395/7,992 folded]
+  chunk 2 (399 markets, 648 ms) -> 11 families   [794/7,992 folded]
+  chunk 3 (400 markets, 899 ms) -> 6 families   [1,194/7,992 folded]
+  chunk 4 (400 markets, 1202 ms) -> 6 families   [1,594/7,992 folded]
+  chunk 5 (400 markets, 247 ms) -> 4 families   [1,994/7,992 folded]
+  chunk 6 (400 markets, 233 ms) -> 2 families   [2,394/7,992 folded]
+  chunk 7 (399 markets, 304 ms) -> 12 families   [2,793/7,992 folded]
+  chunk 8 (400 markets, 289 ms) -> 10 families   [3,193/7,992 folded]
+  chunk 9 (400 markets, 163 ms) -> 6 families   [3,593/7,992 folded]
+  chunk 10 (400 markets, 302 ms) -> 8 families   [3,993/7,992 folded]
+  chunk 11 (400 markets, 1099 ms) -> 9 families   [4,393/7,992 folded]
+  chunk 12 (400 markets, 951 ms) -> 9 families   [4,793/7,992 folded]
+  chunk 13 (400 markets, 1137 ms) -> 6 families   [5,193/7,992 folded]
+  chunk 14 (400 markets, 1420 ms) -> 6 families   [5,593/7,992 folded]
+  chunk 15 (400 markets, 510 ms) -> 6 families   [5,993/7,992 folded]
+  chunk 16 (400 markets, 560 ms) -> 4 families   [6,393/7,992 folded]
+  chunk 17 (400 markets, 391 ms) -> 2 families   [6,793/7,992 folded]
+  chunk 18 (400 markets, 266 ms) -> 0 families   [7,193/7,992 folded]
+  chunk 19 (400 markets, 157 ms) -> 7 families   [7,593/7,992 folded]
+  chunk 20 (399 markets, 574 ms) -> 2 families   [7,992/7,992 folded]
+
+RESULT — polymarket/cricket   [chain: base]
+
+family                      norm     pub  pub_dist  phantom   reach   mean_p realized  gap_pp
+---------------------------------------------------------------------------------------------
+match_winner               1,327   1,124       770      354   84.7%   0.5037   0.6263  +12.27
+toss match double            746     699       699        0   93.7%   0.3396   0.3391   -0.05
+team top batter              724     676       672        4   93.4%   0.3385   0.3417   +0.32
+most sixes                   660     625       625        0   94.7%   0.3351   0.3392   +0.41
+completed match?             210      55        30       25   26.2%   0.4907   0.6182  +12.75
+who wins the toss?           150      56        33       23   37.3%   0.5170   0.3750  -14.20
+more markets                  80      25        13       12   31.2%   0.4980   0.6800  +18.20
+---------------------------------------------------------------------------------------------
+POOLED                             3,260     2,842      418           0.4019   0.4466   +4.48
+
+  `pub` is what the payload COUNTS; `pub_dist` is how many distinct
+  outcomes those rows represent. `phantom` = pub - pub_dist is D5's
+  fan-out, measured inside this cell: 418 of 3,260 rows (12.8%).
+
+WHY A FAMILY DOES NOT ARRIVE — per-rung exclusions over `normalized`:
+family                       no-winner field-incompl   orphan-part     draw-auth     malformed      illiquid   poly-placeh
+--------------------------------------------------------------------------------------------------------------------------
+match_winner                        21             0             0             6             0             0            10
+toss match double                    3            33             0             2             0             0            13
+team top batter                      0            42             0             0             0             0            11
+most sixes                           3            21             0             0             0             0            11
+completed match?                     0             0             0             0             0             0            75
+who wins the toss?                   0             0             0             0             0             0            44
+more markets                         2             0             0            49             0             0             0
+
+banked -> /Users/bain/bainluck-dev/calibration/artifacts/cal-p151/cricket-population-fold-base.json

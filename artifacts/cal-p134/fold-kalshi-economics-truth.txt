@@ -1,0 +1,47 @@
+  TRUTH PRE-PASS — the shipped predicate, whole cell, one sweep
+    markets_scanned                        7590
+    markets_not_a_ladder                   2999
+    ladders                                4591
+    ladders_under_two_graded_legs          545
+    ladders_auth                           3888
+    ladders_guess                          158
+    truth_pairs_auth                       128891
+    truth_reversal_pairs_auth              16
+    ladders_truth_broken_auth              13
+    truth_pairs_guess                      21207
+    truth_reversal_pairs_guess             148
+    ladders_truth_broken_guess             35
+    price_pairs                            65537
+    price_reversal_pairs                   7721
+    ladders_price_broken                   1215
+    legs_truth_broken                      6041
+    legs_price_broken                      70580
+    legs_clean                             80434
+
+kalshi/economics   (--by truth, width 1000000, 268s)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=  30181  ECE=  5.39  gap=  -0.66
+    payload          n=  28613  ECE=  5.29  gap=  -0.47
+    delta            n=  +1568 (+5.48%)  ECE=+0.10  gap=-0.19
+
+  class                    n   share     ECE      gap
+  b_price_reversed     19212   63.7%     6.5    -0.89
+  z_not_a_cumulative_ladder    7674   25.4%    3.38     +1.8
+  c_ladder_clean        3191   10.6%     6.9     -5.7
+  a_truth_reversed       104    0.3%   17.79   +15.57
+
+  HOLDOUT on market_id 25928982
+    OLD
+      b_price_reversed      9146    6.22     +0.2
+      z_not_a_cumulative_ladder    4662    3.68    +1.29
+      c_ladder_clean         815    6.44    -3.13
+      a_truth_reversed        67   26.49   +26.49
+    NEW
+      b_price_reversed     10066    6.75    -1.88
+      z_not_a_cumulative_ladder    3012    3.86    +2.59
+      c_ladder_clean        2376    7.32    -6.58
+      a_truth_reversed        37   14.04     -4.2
+
+  wrote artifacts/cal-p134/fold-truth-kalshi-economics.json

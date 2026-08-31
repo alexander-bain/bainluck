@@ -19,6 +19,7 @@ Anchored to what the 2026-08-25 measurement actually found, not to hypotheticals
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -490,6 +491,173 @@ def test_a_stale_prop_is_never_presented_as_live():
     assert props[0]["price_state"] == "stale"
     assert props[0]["outcomes"][0]["probability"] == pytest.approx(0.22)
     assert props[0]["outcomes"][0]["probability_is_live"] is False
+
+
+# ---------------------------------------------------------------------------
+# A TIME-BOUNDED QUESTION STOPS BEING A QUESTION (Q465)
+#
+# Alex, an hour into opening day: "The 'Will Sinner actually play?' prop doesn't
+# make sense now that the tourney has started." The card was printing a live
+# probability under a question the world had already answered.
+#
+# The renderer reads exactly three keys and they are named by the UX lane's
+# already-built half: `settled` (explicit true), `settled_answer` (a STRING),
+# `settled_at`. A near-miss on any of these ships the fix dead, so each is
+# asserted by name below.
+# ---------------------------------------------------------------------------
+
+def test_a_prop_that_declares_no_settlement_renders_exactly_as_before():
+    """THE FAIL-SAFE. Absent field => nothing about the card changes."""
+    prices = {700001: {"probability": 0.22, "observed_at": NOW - timedelta(minutes=5)}}
+    card = build_props(_register(props=[_prop()]), prices=prices, now=NOW)[0]
+    assert card["settled"] is False
+    assert card["settled_answer"] is None
+    assert card["settled_at"] is None
+    # Still a live question in every other respect.
+    assert card["price_state"] == "live"
+    assert card["outcomes"][0]["probability"] == pytest.approx(0.22)
+
+
+def test_a_question_answered_before_now_renders_settled_with_its_answer():
+    settles = (NOW - timedelta(hours=6)).isoformat()
+    card = build_props(
+        _register(props=[_prop(settles_at=settles, settled_answer="No")]),
+        prices={700001: {"probability": 0.01, "observed_at": NOW}},
+        now=NOW,
+    )[0]
+    assert card["settled"] is True
+    assert card["settled_answer"] == "No"
+    assert card["settled_at"] == settles
+    # The card is STILL RENDERED — settled is a rendering, not a deletion. The
+    # last reading travels so the renderer can demote it to a muted line.
+    assert card["outcomes"][0]["probability"] == pytest.approx(0.01)
+
+
+def test_a_question_whose_instant_has_not_arrived_is_still_live():
+    """The instant is a boundary, not a flag: before it, nothing changes."""
+    card = build_props(
+        _register(props=[_prop(
+            settles_at=(NOW + timedelta(hours=2)).isoformat(),
+            settled_answer="No",
+        )]),
+        prices={700001: {"probability": 0.4, "observed_at": NOW}},
+        now=NOW,
+    )[0]
+    assert card["settled"] is False
+    assert card["settled_answer"] is None
+
+
+def test_a_settled_question_with_no_answer_is_withheld_not_printed_as_live():
+    """The one case where showing nothing beats showing the card.
+
+    We can prove the question is answered and we do not hold the answer.
+    Printing it would put a decided question in the live type, which is the
+    defect being fixed — so it is withheld, and the caller logs it rather than
+    letting a card disappear silently (gotcha #53).
+    """
+    props = build_props(
+        _register(props=[_prop(settles_at=(NOW - timedelta(hours=1)).isoformat())]),
+        prices={700001: {"probability": 0.01, "observed_at": NOW}},
+        now=NOW,
+    )
+    assert props == []
+
+
+def test_an_unparseable_instant_never_settles_a_card_by_accident():
+    """A typo must not silently mark a live question answered, in either
+    direction. It leaves the card live; the register validator is what refuses
+    it (`PROP_SETTLES_AT_NOT_ISO`, structural)."""
+    card = build_props(
+        _register(props=[_prop(settles_at="the first ball", settled_answer="No")]),
+        prices={700001: {"probability": 0.4, "observed_at": NOW}},
+        now=NOW,
+    )[0]
+    assert card["settled"] is False
+    assert card["settled_answer"] is None
+
+
+def test_a_naive_settles_at_is_read_as_utc_and_never_500s_the_route():
+    """CERT-527. `is_iso8601` ACCEPTS an offset-less instant, so
+    `2026-08-30T15:05:00` passes the register's own gate — and comparing it
+    with an aware `now` raises `TypeError`, which is a 500 on the whole
+    tournament route from data the validator called valid.
+
+    UTC is the right reading rather than a shrug: every writer in this codebase
+    stamps UTC, and `tournament_board._hours_since` already states the same rule.
+    """
+    from app.utils.tournament_register import is_iso8601
+    # Offset STRIPPED from an instant already in the past, so the assertion is
+    # about the missing tzinfo and not about the clock (gotcha #44: offset
+    # first, then strip — never a literal that drifts past NOW).
+    naive = (NOW - timedelta(hours=6)).replace(tzinfo=None).isoformat()
+    # The premise: the gate really does let this through.
+    assert is_iso8601(naive) is True
+
+    card = build_props(
+        _register(props=[_prop(settles_at=naive, settled_answer="No")]),
+        prices={}, now=NOW,
+    )[0]
+    assert card["settled"] is True
+    assert card["settled_answer"] == "No"
+    # Normalised on the way out, so the client is never handed a bare instant.
+    assert card["settled_at"].endswith("+00:00")
+
+    # ...and the boundary still works on a naive stamp in the FUTURE, which is
+    # the arm a naive-as-UTC coercion could silently invert.
+    future = (NOW + timedelta(hours=3)).replace(tzinfo=None).isoformat()
+    later = build_props(
+        _register(props=[_prop(settles_at=future, settled_answer="No")]),
+        prices={}, now=NOW,
+    )[0]
+    assert later["settled"] is False
+
+
+def test_the_committed_register_answers_the_sinner_question():
+    """THE SHIP, on the real file (Q465).
+
+    Alex's exact card. Read at any instant after the first ball, it must render
+    settled and say "No" — Jannik Sinner is not one of the 128 named men in
+    ESPN's Round 1, and the register carries that verdict because the Kalshi
+    market still reads `status='open'` (gotcha #33).
+    """
+    register = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "data" / "tournament_registers" / "us-open-2026.json"
+        ).read_text()
+    )
+    after = datetime(2026, 8, 30, 20, 0, tzinfo=timezone.utc)
+    cards = {c["key"]: c for c in build_props(register, prices={}, now=after)}
+    sinner = cards["sinner-competes"]
+    assert sinner["settled"] is True
+    assert sinner["settled_answer"] == "No"
+    assert sinner["settled_at"] == "2026-08-30T15:05:00+00:00"
+
+    # CERT-527: the committed provenance must state a count that can be
+    # re-measured. The first version said "128 competitions"; ESPN returns 64
+    # competitions carrying 128 named athletes, and both tour payloads repeat
+    # the same 64 — so the original number was a double-count across tours, not
+    # a reading of the draw. The verdict was right and its evidence was not.
+    prop = next(p for p in register["props"] if p["key"] == "sinner-competes")
+    measured = prop["evidence"]["settled_evidence"]["measured"]
+    assert measured == {
+        "r1_competitions": 64,
+        "r1_named_athletes": 128,
+        "sinner_present": False,
+    }
+
+    # ...and BEFORE the first ball the same file renders it as a live question,
+    # so the field is a boundary in time and not a permanent relabelling.
+    before = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
+    early = {c["key"]: c for c in build_props(register, prices={}, now=before)}
+    assert early["sinner-competes"]["settled"] is False
+
+    # The other four curated questions are NOT time-bounded and must be
+    # untouched — this fix has a named subject, not a blast radius.
+    for key in ("usa-men-final-berth", "second-major", "sabalenka-title-defence",
+                "usa-women-quarterfinal-count"):
+        assert cards[key]["settled"] is False, key
+        assert cards[key]["settled_answer"] is None, key
 
 
 # ---------------------------------------------------------------------------

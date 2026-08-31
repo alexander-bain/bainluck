@@ -105,6 +105,7 @@ from app.utils.ladder_coherence import (  # noqa: E402
 from app.utils import ladder_monotonicity  # noqa: E402
 
 ladder_report = ladder_monotonicity.ladder_report
+outcome_ladder_report = ladder_monotonicity.outcome_ladder_report
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
 #: The db-query row path's silent truncation point.
@@ -946,9 +947,17 @@ CASE WHEN d.market_id = ANY({_id_array(_LADDER['drop'], lo, hi)})
 MONO_ROWS_SQL = """
 SELECT fm.id AS market_id,
        MAX(fm.name) AS name,
+       MAX(fm.group_id) AS group_id,
+       MAX(fm.event_id) AS event_id,
        MAX(CASE WHEN lower(btrim(fo.name)) = 'yes'
                 THEN COALESCE(fo.calibration_probability, fo.opening_probability)
-           END) AS yes_price
+           END) AS yes_price,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'over'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS over_price,
+       MAX(CASE WHEN lower(btrim(fo.name)) = 'under'
+                THEN COALESCE(fo.calibration_probability, fo.opening_probability)
+           END) AS under_price
 FROM futures_markets fm
 JOIN futures_outcomes fo ON fo.market_id = fm.id
 WHERE fm.source = '{source}'
@@ -956,6 +965,33 @@ WHERE fm.source = '{source}'
   AND fm.id >= {lo} AND fm.id < {hi}
 GROUP BY fm.id
 """
+
+#: Positional names for :data:`MONO_ROWS_SQL`. db-query returns rows as ARRAYS,
+#: so the pre-pass zips rather than indexes — adding a column in the middle of
+#: the SELECT used to shift every downstream index by one, silently.
+MONO_COLUMNS = ("market_id", "name", "group_id", "event_id",
+                "yes_price", "over_price", "under_price")
+
+#: CAL-P136. Which column, if any, identifies the LADDER a market belongs to —
+#: and it is a per-SOURCE fact, not a per-cell preference.
+#:
+#: 🔴 MEASURED, AND THE TWO SOURCES ARE OPPOSITE. On Polymarket ``group_id`` is
+#: ``polymarket:{event.id}`` and genuinely groups: 3.08 markets per group on
+#: ``polymarket/tech``, 3.25 on ``polymarket/economics``, and 100% coverage on
+#: all four sports cells. On Kalshi ``group_id`` is the market's own ticker —
+#: ``kalshi:KXAAAGASD-26MAY25`` — and is ONE PER MARKET: 342 markets, 342
+#: distinct group_ids on a ``kalshi/economics`` slice; 3,983/3,983 on
+#: ``kalshi/crypto``.
+#:
+#: So scoping the family key by ``group_id`` on Kalshi does not refine the
+#: partition, it DESTROYS it: every family becomes a singleton, no singleton is
+#: ever condemned (ruling 105), and the cell reports as clean. That is lesson 22
+#: with the safety guard replaced by a join key, and it is why this is a table
+#: keyed by source rather than a flag the operator remembers to set.
+#:
+#: ``None`` means "this source has no ladder identity" and reproduces every
+#: measurement taken before CAL-P136 byte for byte.
+MONO_CONTEXT_COLUMN = {"polymarket": "group_id", "kalshi": None}
 
 #: Filled by :func:`mono_context` before the sweep starts.
 _MONO: dict | None = None
@@ -984,6 +1020,13 @@ def mono_context(source: str, category: str, width: int) -> dict:
     The verdict is computed by ``app.utils.ladder_monotonicity.ladder_report`` —
     the module a shipping caller would use — and this function never re-derives
     a family key, a direction or a violation.
+
+    CAL-P136 changed WHICH ROWS reach it, in two ways, and neither changes the
+    law. ``price_key=None`` lets the module pick the leg that prices the
+    proposition, so the Polymarket totals book — which has no ``yes`` leg at all
+    on baseball and two on soccer — stops being dropped before the grammar runs.
+    ``context_key`` comes from :data:`MONO_CONTEXT_COLUMN` and is ``None`` on
+    Kalshi for the measured reason recorded there.
     """
     rng = db_query(
         f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
@@ -1001,8 +1044,16 @@ def mono_context(source: str, category: str, width: int) -> dict:
         rows.extend(_pull_mono_rows(source, category, e, nxt))
         e = nxt
 
+    if source not in MONO_CONTEXT_COLUMN:
+        raise RuntimeError(
+            f"--by mono has no measured ladder identity for source {source!r}; "
+            f"add it to MONO_CONTEXT_COLUMN with the cardinality that justifies "
+            f"it. Guessing here is how a cell reports clean because every "
+            f"family became a singleton.")
     return ladder_report(
-        [{"market_id": r[0], "name": r[1], "yes_price": r[2]} for r in rows])
+        [dict(zip(MONO_COLUMNS, r)) for r in rows],
+        price_key=None,
+        context_key=MONO_CONTEXT_COLUMN[source])
 
 
 def mono_dim(lo: int, hi: int) -> tuple[str, str, str]:
@@ -1027,14 +1078,108 @@ CASE WHEN d.market_id = ANY({_id_array(_MONO['drop'], lo, hi)})
 """, "", "")
 
 
+#: CAL-P134. The OUTCOME site as Kalshi writes it. ``MONO_ROWS_SQL`` keys on a
+#: leg literally named ``yes``, which is why ``--by mono`` read ``kalshi/economics``
+#: as 46 families: the cell's 4,621 cumulative ladders have no such leg. This
+#: pulls the legs themselves and, like the mono pre-pass, carries NO name filter
+#: — Python stays the only definition of a rung, so there is no Postgres
+#: rendering of the grammar to reconcile against later.
+TRUTH_ROWS_SQL = """
+SELECT fm.id AS market_id,
+       fo.name AS leg,
+       COALESCE(fo.calibration_probability, fo.opening_probability) AS price,
+       fo.is_winner,
+       fo.resolution_source
+FROM futures_markets fm
+JOIN futures_outcomes fo ON fo.market_id = fm.id
+WHERE fm.source = '{source}'
+  AND COALESCE(fm.llm_sport_category, 'uncategorized') = '{category}'
+  AND fm.id >= {lo} AND fm.id < {hi}
+"""
+
+#: Filled by :func:`truth_context` before the sweep starts.
+_TRUTH: dict | None = None
+
+
+def _pull_truth_rows(source: str, category: str, lo: int, hi: int,
+                     depth: int = 0) -> list:
+    """Every outcome leg in an id range, or a split. Same cap discipline as mono."""
+    sql = TRUTH_ROWS_SQL.format(source=source, category=category, lo=lo, hi=hi)
+    try:
+        r = db_query(sql, limit=ROW_CAP)
+    except QueryTimeout:
+        r = None
+    if r is not None and r["row_count"] < ROW_CAP:
+        return r["rows"]
+    if depth > 26 or hi - lo <= 1:
+        raise RuntimeError(f"truth pre-pass chunk {lo}-{hi} irreducible at depth {depth}")
+    mid = lo + (hi - lo) // 2
+    return (_pull_truth_rows(source, category, lo, mid, depth + 1)
+            + _pull_truth_rows(source, category, mid, hi, depth + 1))
+
+
+def truth_context(source: str, category: str, width: int) -> dict:
+    """Sweep the cell's outcome legs once and hand the shipped predicate all of them.
+
+    The verdict is ``ladder_monotonicity.outcome_ladder_report``; this function
+    never re-derives a rung, a direction or a reversal.
+    """
+    rng = db_query(
+        f"SELECT MIN(id) AS lo, MAX(id) AS hi FROM futures_markets "
+        f"WHERE source = '{source}'", limit=5)
+    lo, hi = rng["rows"][0]
+
+    rows: list = []
+    e = lo
+    n_chunks = 0
+    while e <= hi:
+        nxt = min(e + width, hi + 1)
+        n_chunks += 1
+        print(f"    truth pre-pass [{n_chunks}] ids {e}-{nxt} ({len(rows)} legs)",
+              file=sys.stderr, flush=True)
+        rows.extend(_pull_truth_rows(source, category, e, nxt))
+        e = nxt
+
+    markets: dict = {}
+    for mid, leg, price, win, rsrc in rows:
+        markets.setdefault(mid, []).append(
+            {"name": leg, "price": price, "is_winner": win,
+             "resolution_source": rsrc})
+    return outcome_ladder_report(markets)
+
+
+def truth_dim(lo: int, hi: int) -> tuple[str, str, str]:
+    """The dimension expression for ONE chunk, from the outcome-site verdict.
+
+    ⚠️ ``a_truth_reversed`` is NOT a leakage-free arm — it is selected using
+    ``is_winner``. It is here because a self-contradictory label set contains a
+    proven grading error, which is the pass2_loser argument, not the CAL-P133
+    one. ``b_price_reversed`` and ``c_ladder_clean`` are leakage-free, and
+    ``z_not_a_cumulative_ladder`` is the untouched control doctrine 18 grades a
+    row-dropping fix against.
+    """
+    if _TRUTH is None:  # pragma: no cover - main() fills it first
+        raise RuntimeError("truth_context() must run before the sweep")
+    return (f"""
+CASE WHEN d.market_id = ANY({_id_array(_TRUTH['truth_broken'], lo, hi)})
+          THEN 'a_truth_reversed'
+     WHEN d.market_id = ANY({_id_array(_TRUTH['price_broken'], lo, hi)})
+          THEN 'b_price_reversed'
+     WHEN d.market_id = ANY({_id_array(_TRUTH['clean'], lo, hi)})
+          THEN 'c_ladder_clean'
+     ELSE 'z_not_a_cumulative_ladder' END
+""", "", "")
+
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
-PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim}
+PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
 
 #: The pre-pass each per-chunk dimension needs before the sweep can start.
 #: Keyed the same way, so adding a dimension to one table without the other is a
 #: KeyError at start-up rather than an empty partition at the end (gotcha #53).
-PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context}
+PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context,
+                     "truth": truth_context}
 
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
 DIMENSIONS = {
@@ -1247,15 +1392,17 @@ def main() -> int:
     ap.add_argument("--out")
     args = ap.parse_args()
 
-    global _LADDER, _MONO
+    global _LADDER, _MONO, _TRUTH
     ladder_census = None
     if args.by in PER_CHUNK_DIMENSIONS:
         context = PER_CHUNK_CONTEXT[args.by](
             args.source, args.category, args.width)
-        if args.by == "ladder":
-            _LADDER = context
-        else:
-            _MONO = context
+        # A table, not an if/else. The two-branch form silently routed a THIRD
+        # per-chunk dimension's context into ``_MONO``, which is an empty
+        # partition at the end rather than an error at the start — the same
+        # failure the PER_CHUNK_CONTEXT guard was added to stop.
+        _SLOT = {"ladder": "_LADDER", "mono": "_MONO", "truth": "_TRUTH"}
+        globals()[_SLOT[args.by]] = context
         ladder_census = context["census"]
         print(f"  {args.by.upper()} PRE-PASS — the shipped predicate, "
               f"whole cell, one sweep")

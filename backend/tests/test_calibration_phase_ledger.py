@@ -1147,7 +1147,14 @@ def test_every_read_and_publish_stretch_is_a_named_stage():
         "serialize", "redis_client", "baseline_read", "publish_gate",
         "durable_publish", "redis_accelerate",
     ):
-        assert f'runner.stage("{stage}")' in src, stage
+        # D22: a SOFT stage is still a named stage. ``soft_stage`` opens
+        # ``self.stage(name)`` internally, so the stretch is measured and named
+        # exactly as before; only the call site spells it differently, because
+        # these two reads are now allowed to fail without ending the beat.
+        assert (
+            f'runner.stage("{stage}")' in src
+            or f'runner.soft_stage(db, "{stage}")' in src
+        ), stage
 
 
 def test_stages_accumulate_and_are_recorded_even_when_the_body_raises():

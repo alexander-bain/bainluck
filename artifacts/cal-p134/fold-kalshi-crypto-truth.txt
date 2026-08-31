@@ -1,0 +1,44 @@
+  TRUTH PRE-PASS — the shipped predicate, whole cell, one sweep
+    markets_scanned                        3716
+    markets_not_a_ladder                   2620
+    ladders                                1096
+    ladders_under_two_graded_legs          18
+    ladders_auth                           1078
+    ladders_guess                          0
+    truth_pairs_auth                       36591
+    truth_reversal_pairs_auth              0
+    ladders_truth_broken_auth              0
+    truth_pairs_guess                      0
+    truth_reversal_pairs_guess             0
+    ladders_truth_broken_guess             0
+    price_pairs                            5817
+    price_reversal_pairs                   1379
+    ladders_price_broken                   482
+    legs_truth_broken                      0
+    legs_price_broken                      19381
+    legs_clean                             18336
+
+kalshi/crypto   (--by truth, width 1000000, 92s)
+  curve generated 2026-08-29T00:36:47.978149+00:00  population q268
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   4624  ECE=  7.12  gap=  +1.29
+    payload          n=   4565  ECE=   7.6  gap=  +1.84
+    delta            n=    +59 (+1.29%)  ECE=-0.48  gap=-0.55
+
+  class                    n   share     ECE      gap
+  b_price_reversed      4149   89.7%    7.21    +1.89
+  c_ladder_clean         402    8.7%    9.21    -2.39
+  z_not_a_cumulative_ladder      73    1.6%   20.21   -12.68
+
+  HOLDOUT on market_id 57542639
+    OLD
+      b_price_reversed      2098    7.02    +4.31
+      c_ladder_clean         129    7.67    +2.57
+      z_not_a_cumulative_ladder      65   21.89   -13.02
+    NEW
+      b_price_reversed      2051    9.94    -0.59
+      c_ladder_clean         273    11.4    -4.73
+      z_not_a_cumulative_ladder       8   24.38    -10.0
+
+  wrote artifacts/cal-p134/fold-truth-kalshi-crypto.json
