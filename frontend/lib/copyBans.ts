@@ -448,6 +448,16 @@ const READING =
 const OUR_SUBJECT =
   "(?:comparison|chart|card|series|history|record|reading|quote|number|price|probability|figure|estimate|data)";
 
+/**
+ * A thing a venue puts a reading ON. The object of "nobody ever quoted ___".
+ *
+ * Separate from `READING` because the claim "nobody ever quoted this match" is
+ * about the MARKET, not about the number — and separate from `OUR_SUBJECT`
+ * because a match is not a thing on our page that can be incomplete.
+ */
+const MARKET_OBJECT =
+  "(?:match|market|question|game|event|leg|contest|line|outcome|prop)";
+
 const rx = (source: string) => new RegExp(source, "i");
 
 /** Why-text shared by the patterns that quantify over an archive we do not hold. */
@@ -466,8 +476,26 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     why: NOT_THE_ARCHIVE,
   },
   {
+    // ⚠️ CERT-546: THE LAST UNBOUND VERB PATTERN, AND IT WAS THE ONE I DID NOT
+    // TOUCH. UX-P213 wrote this as a bare verb list with no object, and the
+    // CERT-539 repair narrowed its three siblings while leaving this one alone
+    // because the cert had not named it. It matched "We never had a chance
+    // after halftime." — ordinary supported sports prose, the exact
+    // build-breaking false-positive class CERT-539's P2 was about.
+    //
+    // 🔴 THE LESSON: A CERT'S FINDING LIST IS A SAMPLE, NOT A CENSUS. Having
+    // been told three patterns were out of scope, the job was to check ALL of
+    // them against the scope, not to fix the three that were named. There were
+    // four.
+    //
+    // It now requires an object from `READING`, like every other verb rule
+    // here. This makes it largely a subset of `never-had-a-reading` below, and
+    // the overlap is deliberate — this file's own note: "a sentence that can
+    // only be caught by one pattern is one regex edit away from being served."
     id: "we-never-had",
-    pattern: /\bwe (have )?never (had|held|received|saw|seen|got|read|recorded)\b/i,
+    pattern: rx(
+      String.raw`\bwe (?:have |had )?never (?:had|held|received|saw|seen|got|read|recorded) (?:a |an |any )?${READING}s?\b`
+    ),
     why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-537)",
   },
   // ── CERT-539: the four grammar families that walked around the six above ──
@@ -489,8 +517,20 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
   },
   {
     // "We have not once received a number for this market."
+    //
+    // ⚠️ CERT-546. THE UX-P215b REPORT NAMED THIS PATTERN AS THE MOST LIKELY
+    // THING WRONG WITH THE REPAIR — "the one pattern not composed from a
+    // constant" — and the cert found exactly that: it matched "The quarterback
+    // has not once received a snap under center." Writing the self-disclosure
+    // was not the same as acting on it. **If you can name the weak line, fix
+    // the weak line.**
+    //
+    // The object is what carries the scope, so the verbs stay a literal list
+    // and `READING` supplies the object, exactly like its siblings.
     id: "not-once-received",
-    pattern: /\bnot once (?:received|got|read|saw|seen|recorded|held|had)\b/i,
+    pattern: rx(
+      String.raw`\bnot once (?:received|got|read|saw|seen|recorded|held|had) (?:a |an |any )?${READING}s?\b`
+    ),
     why: "an all-of-history quantifier in a different word; same unsupportable claim (CERT-539)",
   },
   {
@@ -526,9 +566,19 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // Was `/\b(nobody|no one|no-one) ever\b/`, which rejected "Nobody ever
     // scored more than 30 points in this game." Bound to QUOTING, which is the
     // thing we cannot distinguish from not having read.
+    // ⚠️ CERT-546 DID NOT NAME THIS ONE AND IT HAD THE SAME DEFECT. The
+    // CERT-539 repair bound it to a verb list, which is only half a scope: the
+    // verbs collide with ordinary sports prose the moment the object is not
+    // ours. "Nobody ever reported the score.", "Nobody ever offered him a
+    // contract.", "Nobody ever posted a better time." — all three would have
+    // failed a build. Found by sweeping every pattern against the declared
+    // scope after CERT-546, rather than repairing only the two it listed.
+    //
+    // The object now has to be a reading or a thing we quote a reading ON.
     id: "nobody-ever",
-    pattern:
-      /\b(?:nobody|no one|no-one) ever (?:quoted|priced|offered|published|reported|posted|listed|traded)\b/i,
+    pattern: rx(
+      String.raw`\b(?:nobody|no one|no-one) ever (?:quoted|priced|offered|published|reported|posted|listed|traded) (?:this |that |the |a |an |any )?(?:${READING}|${MARKET_OBJECT})s?\b`
+    ),
     why: "we cannot tell a market nobody quoted from one we were not reading (CERT-537)",
   },
   {
