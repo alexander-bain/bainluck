@@ -25,7 +25,12 @@ import {
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
-import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import {
+  initialFeedRequest,
+  nextFeedRequest,
+  dedupeById,
+  shouldLoadNextPage,
+} from "@/lib/discover/feedPaging";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
@@ -797,6 +802,13 @@ export default function DiscoverPage() {
   // remounts (L2-238: an unavailable page swaps the spinner for a retry, so the
   // node this observes is destroyed and rebuilt — an observer left watching the
   // detached node would silently kill infinite scroll after a successful retry).
+  //
+  // 🔴 LAT-P172: `isLoading` is a REQUIRED dependency, not a completeness tidy.
+  // The sentinel is now gated on `!isLoading`, so on a cold load the node does
+  // not exist when this effect first runs. Without `isLoading` here the effect
+  // would never re-run, `sentinelRef.current` would stay null, and infinite
+  // scroll would be dead on every cold load — the fix would trade one uninvited
+  // fetch for no pagination at all.
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -810,7 +822,7 @@ export default function DiscoverPage() {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [feedUnavailable]);
+  }, [feedUnavailable, isLoading]);
 
   const handleDismiss = useCallback((itemId: string) => {
     // L2-242 — a dismiss is seen/dismiss evidence: never share the warm feed on
@@ -1106,12 +1118,38 @@ export default function DiscoverPage() {
     setChallengeIndex(next);
   }, [challengeIndex, challengeItems.length, completeChallenge]);
 
-  // Load more from API when client-side items run out
+  // Load more from API when client-side items run out. The predicate lives in
+  // `lib/discover/feedPaging` (LAT-P171) — inline it fired on the FIRST commit,
+  // racing a duplicate `offset=1` feed build against the `offset=0` request that
+  // gates the first card. See `shouldLoadNextPage` for the full account.
+  //
+  // LAT-P172: `initialVisibleCount` is what keeps the SECOND uninvited build off
+  // the cold path. Without it the predicate is true the moment page one lands
+  // (`visibleCount` is seeded to PAGE_SIZE, which is the page size), so a cold
+  // load fetched page two before the reader had scrolled at all.
+  //
+  // 🔴 CERT-603: `loadedCount` is the RAW pre-filter count and it is a SEPARATE
+  // argument from `renderedCount` on purpose. `processedItems` is downstream of
+  // the L2-215 renderability filter, staleness, dismissal and suppression, so a
+  // good non-empty page can render zero rows. Passing only `processedItems`
+  // made "no page has landed" and "every row was filtered" the same state, and
+  // the auto-pager stopped for good — a blank tab that L2-215 (see the comment
+  // above `processedItems`) exists to prevent.
+  const loadedCount = page1Items.length + allItems.length;
   useEffect(() => {
-    if (visibleCount >= processedItems.length - 5 && hasMore && !loadingMore) {
+    if (
+      shouldLoadNextPage({
+        visibleCount,
+        loadedCount,
+        renderedCount: processedItems.length,
+        initialVisibleCount: PAGE_SIZE,
+        hasMore,
+        loadingMore,
+      })
+    ) {
       loadNextPage();
     }
-  }, [visibleCount, processedItems.length, hasMore, loadingMore, loadNextPage]);
+  }, [visibleCount, loadedCount, processedItems.length, hasMore, loadingMore, loadNextPage]);
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
@@ -1297,7 +1335,19 @@ export default function DiscoverPage() {
           <FeedUnavailableNotice onRetry={handleRetryUnavailable} variant="inline" />
         )}
 
-        {!feedUnavailable && (visibleCount < processedItems.length || hasMore) && (
+        {/* LAT-P172 — the sentinel must not be observed against the SKELETON.
+            `hasMore` is optimistically true from the first commit, so this node
+            rendered underneath `DiscoverSkeletonGrid`'s nine placeholders while
+            page one was still in flight. Nine placeholders are ~870 px in the
+            three-column desktop layout, well inside the observer's 400 px
+            rootMargin, so on a desktop viewport the observer intersected an
+            empty page and advanced `visibleCount` before a single card existed.
+            That is the signal `shouldLoadNextPage` now reads as "the reader
+            scrolled", and it was being forged by a loading state. Gated on
+            `!isLoading`, which SWR holds true only until the first payload —
+            background revalidation keeps `data`, so the sentinel does not
+            flicker out from under an infinite scroll already in progress. */}
+        {!isLoading && !feedUnavailable && (visibleCount < processedItems.length || hasMore) && (
           <div ref={sentinelRef} className="h-10 flex items-center justify-center mt-4">
             <div className="w-5 h-5 border-2 border-text-muted/30 border-t-text-muted rounded-full animate-spin" />
           </div>
