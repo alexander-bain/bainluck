@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -105,10 +106,11 @@ def _rows(ticker="KXATPMATCH-26AUG30BUBWOL", a="Alexander Bublik",
     ]
 
 
-def _build(rows, register=None, slack=96.0):
+def _build(rows, register=None, window=None):
+    kwargs = {} if window is None else {"match_window_days": window}
     return census_mod.build_census(
         rows, register or _register(), draw="mens-singles",
-        observed_at="2026-08-31T04:00:00+00:00", date_slack_hours=slack,
+        observed_at="2026-08-31T04:00:00+00:00", **kwargs,
     )
 
 
@@ -160,14 +162,206 @@ def test_the_same_two_players_at_a_different_tournament_are_refused_on_the_date(
 
     Bublik and Wolf may also have met a fortnight earlier, and that market is
     in this window. Same names, same draw, different date — refused.
+
+    ⚠️ WIDENED, NOT REWRITTEN (CERT-534). This test asserted the condemned
+    contract: it proved a refusal SIXTEEN DAYS out and never went near the
+    boundary, so it stayed green while everything from four days before the
+    fixture onward was being pinned. Its original fortnight case is kept below
+    as the far negative control — only the reason string moved, because the
+    two directions are now refused under different names.
     """
     matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG14BUBWOL"))
     assert matches == []
-    assert [r["reason"] for r in rejected] == ["DATE_DISAGREES_WITH_FIXTURE"]
+    assert [r["reason"] for r in rejected] == ["DATE_PRECEDES_THE_FIXTURE"]
 
     # ...and the correct date still passes, so the rule is a discriminator and
     # not a blanket refusal.
     matches, _ = _build(_rows(ticker="KXATPMATCH-26AUG30BUBWOL"))
+    assert len(matches) == 1
+
+
+def test_a_same_pair_market_THREE_DAYS_BEFORE_the_fixture_is_refused():
+    """CERT-534, AND IT IS THE WHOLE POINT OF THE DISCRIMINATOR.
+
+    The blocked version compared the ticker date to the fixture with a
+    SYMMETRIC ±96h tolerance, so an otherwise-valid same-player market dated
+    Aug 27 was pinned onto the Aug 30 US Open fixture. That is a real Kalshi
+    price, for a real match between these two players, under the wrong one —
+    and on the page it looks perfectly plausible, which is exactly why the
+    census has a date rule at all.
+
+    Reproduced on the blocked bytes before the fix: PINNED.
+    """
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG27BUBWOL"))
+    assert matches == []
+    assert [r["reason"] for r in rejected] == ["DATE_PRECEDES_THE_FIXTURE"]
+
+
+def test_the_backward_boundary_is_the_fixtures_own_DAY_and_has_no_slack():
+    """ONE DAY EARLY IS STILL ANOTHER TOURNAMENT.
+
+    The backward direction gets zero room, because measured over all 177
+    registered-pair candidates on production not one legitimate market is
+    ticker-dated after its fixture's stamp — the whole real population sits
+    between -24h and 0. A backward window describes nothing that exists and
+    admits everything that must be refused.
+    """
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG29BUBWOL"))
+    assert matches == []
+    assert [r["reason"] for r in rejected] == ["DATE_PRECEDES_THE_FIXTURE"]
+
+    # The fixture's own day is the first accepted value, not the last refused.
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG30BUBWOL"))
+    assert rejected == []
+    assert len(matches) == 1
+
+
+def test_the_stamp_is_read_as_a_DAY_so_a_ticker_hours_BEFORE_it_still_pins():
+    """THE 88 PINS DEPEND ON THIS AND A NAIVE FLOOR WOULD DESTROY THEM ALL.
+
+    The ticker names a day at 00:00Z; the stamp is an instant later that day —
+    04:00Z for the main draw, and as late as 23:45Z for a qualifying evening
+    match. So EVERY real pin's ticker sits 4 to 24 hours BEFORE its own
+    fixture's stamp. A floor placed at the stamp rather than at the stamp's
+    day would refuse all 88 committed pins while looking strictly safer.
+    """
+    register = _register()
+    # A qualifying-shaped stamp: a real per-match evening start, the widest
+    # legitimate gap measured on production (-23.8h).
+    register["matchups"][0]["scheduled_date"] = "2026-08-30T23:45:00Z"
+
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG30BUBWOL"),
+                               register=register)
+    assert rejected == []
+    assert len(matches) == 1
+
+
+def test_a_first_round_played_AFTER_the_ceremony_stamp_is_still_pinned():
+    """FIXING ONLY OPENING DAY IS NOT THE SHIP (CERT-544, sibling queue).
+
+    All 96 main-draw fixtures carry ONE stamp — the draw ceremony — so the
+    stamp names the tournament's opening day, not each match's day. A first
+    round is played across several days. A day-equality rule would price
+    opening day and refuse every day-two and day-three market, re-creating the
+    blank the queue exists to fill.
+    """
+    for ticker in ("KXATPMATCH-26AUG31BUBWOL", "KXATPMATCH-26SEP01BUBWOL"):
+        matches, rejected = _build(_rows(ticker=ticker))
+        assert rejected == [], ticker
+        assert len(matches) == 1, ticker
+
+
+def test_the_forward_window_is_bounded_and_the_boundary_is_where_it_says():
+    """The forward half has room, not licence. Both sides of the edge are
+    asserted, so widening or narrowing the constant fails this test."""
+    window = census_mod.MATCH_WINDOW_DAYS
+    assert window == 7
+
+    # The last accepted day...
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26SEP06BUBWOL"))
+    assert rejected == []
+    assert len(matches) == 1
+
+    # ...and the first refused one.
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26SEP07BUBWOL"))
+    assert matches == []
+    assert [r["reason"] for r in rejected] == ["DATE_DISAGREES_WITH_FIXTURE"]
+
+
+def test_the_window_flag_actually_REACHES_the_rule(tmp_path, monkeypatch):
+    """A NEW PARAMETER THAT NEVER ARRIVES IS A REAL BUG, NOT A HYPOTHETICAL.
+
+    Q467 shipped one on this same board — a pre-warm beat that omitted its new
+    argument, so the `Query` object itself was used as the value. And this
+    flag cannot be proven from production data: every real candidate is dated
+    on or before its fixture's day, so the forward bound is not exercised and
+    `--match-window-days 0` and the default return the identical 88 pins. The
+    wiring has to be asserted directly or it is not asserted at all.
+    """
+    seen = {}
+
+    def fake_build_census(rows, register, *, draw, observed_at, match_window_days):
+        seen[draw] = match_window_days
+        return [], []
+
+    monkeypatch.setattr(census_mod, "fetch_candidates", lambda series, **kw: [])
+    monkeypatch.setattr(census_mod, "build_census", fake_build_census)
+
+    register = tmp_path / "register.json"
+    register.write_text(json.dumps(_register()))
+    out = tmp_path / "census.json"
+    monkeypatch.setattr("sys.argv", [
+        "fetch_kalshi_match_census.py",
+        "--register", str(register),
+        "--observed-at", "2026-08-31T04:00:00+00:00",
+        "--out", str(out),
+        "--match-window-days", "3",
+    ])
+
+    assert census_mod.main() == 0
+    assert seen and set(seen.values()) == {3}, f"the flag did not arrive: {seen}"
+
+    # ...and the default is the constant, not a second copy of the number.
+    seen.clear()
+    monkeypatch.setattr("sys.argv", [
+        "fetch_kalshi_match_census.py",
+        "--register", str(register),
+        "--observed-at", "2026-08-31T04:00:00+00:00",
+        "--out", str(out),
+    ])
+    assert census_mod.main() == 0
+    assert set(seen.values()) == {census_mod.MATCH_WINDOW_DAYS}
+
+
+def test_an_offsetless_stamp_is_read_as_UTC_and_NOT_as_the_machines_local_time():
+    """THE MUTANT THAT SURVIVED THE FIRST BATTERY, AND WHY IT MATTERS.
+
+    Deleting the explicit ``replace(tzinfo=utc)`` does not crash and does not
+    even fail: ``astimezone`` reads a naive datetime as MACHINE-LOCAL time and
+    converts it happily. So the register's offset-less stamp would silently
+    mean a different instant on a machine in a different timezone — and the
+    end-to-end test below could not see it, because this machine's offset does
+    not happen to move the day.
+
+    The zone is therefore PINNED rather than inherited. A test whose answer
+    depends on where it runs is not a guard (gotcha #44's family): at UTC+9 a
+    naive ``02:00`` read as local is the PREVIOUS UTC day, which moves the
+    floor a whole day and would re-admit exactly the markets CERT-534 blocked.
+    """
+    import time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tokyo"
+    time.tzset()
+    try:
+        naive = datetime(2026, 8, 30, 2, 0, 0)
+        assert census_mod._utc_day(naive) == datetime(
+            2026, 8, 30, tzinfo=timezone.utc
+        ), "a naive stamp was read as local time, not UTC"
+
+        # ...and the same instant written with its offset agrees, which is the
+        # whole claim: the two spellings are the same day.
+        aware = datetime(2026, 8, 30, 2, 0, 0, tzinfo=timezone.utc)
+        assert census_mod._utc_day(naive) == census_mod._utc_day(aware)
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+def test_an_offsetless_register_stamp_is_read_as_UTC_rather_than_crashing():
+    """CERT-527's class, one script over: the register's own validator accepts
+    an offset-less instant, so comparing it with an aware ticker date raised a
+    TypeError and took the whole census down on data the register called
+    well-formed."""
+    register = _register()
+    register["matchups"][0]["scheduled_date"] = "2026-08-30T04:00:00"
+
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-26AUG30BUBWOL"),
+                               register=register)
+    assert rejected == []
     assert len(matches) == 1
 
 

@@ -42,7 +42,8 @@ REJECTED BY NAME and counted:
 
 * the ticker window is every ATP/WTA match on earth in those weeks, so a
   Cincinnati market between two US Open entrants is a real hazard — it is
-  refused because it must also agree with the fixture's DATE (``--date-slack``);
+  refused because it must also agree with the fixture's DAY (see
+  ``MATCH_WINDOW_DAYS``: never before it, and not long after it);
 * a market whose two outcomes match two players who are not paired in the
   register is refused, never "helpfully" paired;
 * two markets matching one fixture is an ambiguity, so BOTH are refused rather
@@ -69,7 +70,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,45 @@ TICKER_MONTHS = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
     "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
 }
+
+
+#: How long AFTER the day the register stamps a fixture the match may still be
+#: played — the forward half of the date rule, and the only half that gets any
+#: room at all.
+#:
+#: CERT-534 blocked a SYMMETRIC ±96h tolerance: it accepted a same-pair market
+#: dated three days BEFORE an Aug 30 fixture, which is precisely the
+#: wrong-tournament market the discriminator exists to refuse. The number was
+#: inherited from an earlier version that compared ``resolution_date`` — a
+#: CLOSE time, days after the match, so it genuinely needed days of slack.
+#: CERT-529's repair moved the comparison to the TICKER date and the tolerance
+#: never followed it.
+#:
+#: Measured over every one of the 177 candidate markets on production whose
+#: pair IS a registered fixture: the delta ``ticker - stamp`` runs from -4.0h
+#: (all 88 main-draw pins) to -23.8h (qualifying), plus one -46.8h row that is
+#: refused anyway for having no opening price. **Not one is positive.** The
+#: ticker names a DAY at 00:00Z; the stamp is an instant later on that same
+#: day. So the backward half of a symmetric window describes nothing real — it
+#: is pure hazard surface, and it is the half CERT-534 walked through. It now
+#: gets ZERO slack: a market dated before the fixture's day is refused,
+#: categorically.
+#:
+#: The forward half cannot be zero. The 96 main-draw fixtures all carry ONE
+#: stamp — ``2026-08-30T04:00:00+00:00``, the draw ceremony — so the stamp
+#: names the tournament's opening day and not each match's day, and a
+#: day-equality rule would price opening day and refuse every day-two first
+#: round. (That is CERT-544's finding on the sibling queue: fixing only
+#: opening day is not the ship.)
+#:
+#: Seven days is safe forward in a way it is NOT backward, for a reason
+#: specific to this hazard: two players meet at most ONCE in a tournament, so a
+#: same-pair collision is always another event, and the next tour stop after a
+#: Slam's first day is more than a week out. If a spurious market does land in
+#: the window alongside the real one, ``AMBIGUOUS_TWO_MARKETS_ONE_FIXTURE``
+#: refuses BOTH rather than choosing. Nothing protects the backward direction
+#: that way, which is why it gets none.
+MATCH_WINDOW_DAYS = 7
 
 
 def ticker_date(external_id: str) -> datetime | None:
@@ -206,7 +246,7 @@ def build_census(
     *,
     draw: str,
     observed_at: str,
-    date_slack_hours: float,
+    match_window_days: int = MATCH_WINDOW_DAYS,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     by_market: dict[Any, list[dict[str, Any]]] = {}
     for row in rows:
@@ -253,12 +293,26 @@ def build_census(
         # fixture and an identically-named market from another tournament.
         #
         # A discriminator that cannot run has not passed. It refuses.
+        #
+        # CERT-534: it also has to refuse in the direction the hazard actually
+        # comes from. The rule is ASYMMETRIC and the two halves are refused
+        # under different names, because they mean different things — see
+        # `MATCH_WINDOW_DAYS`. Comparing against the stamp's DAY rather than the
+        # stamp itself is load-bearing: every real pin's ticker sits 4 to 24
+        # hours BEFORE its stamp (00:00Z against an afternoon start), so a floor
+        # placed at the instant would refuse all 88 of them.
         scheduled = _moment(fixture.get("scheduled_date"))
         played = ticker_date(sides[0]["market_ext"])
         if scheduled is None or played is None:
             reject("DATE_UNREADABLE_SO_UNVERIFIABLE")
             continue
-        if abs((played - scheduled).total_seconds()) > date_slack_hours * 3600:
+        opens = _utc_day(scheduled)
+        if played < opens:
+            # Another tournament. A match cannot be played before the day its
+            # own register stamps it.
+            reject("DATE_PRECEDES_THE_FIXTURE")
+            continue
+        if played > opens + timedelta(days=match_window_days):
             reject("DATE_DISAGREES_WITH_FIXTURE")
             continue
 
@@ -348,6 +402,21 @@ def _moment(value: Any) -> datetime | None:
         return None
 
 
+def _utc_day(moment: datetime) -> datetime:
+    """Midnight UTC on the day this instant falls on.
+
+    A naive stamp is READ AS UTC rather than compared against an aware one,
+    which is the rule ``tournament_board._hours_since`` already states. The
+    register's validator accepts an offset-less instant, so the alternative is
+    a ``TypeError`` on data the register itself called well-formed — CERT-527's
+    finding on the sibling queue, one script over.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    moment = moment.astimezone(timezone.utc)
+    return datetime(moment.year, moment.month, moment.day, tzinfo=timezone.utc)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", required=True)
@@ -358,9 +427,10 @@ def main() -> int:
         help="only markets our ingest first saw on or after this date",
     )
     parser.add_argument(
-        "--date-slack-hours", type=float, default=96.0,
-        help="how far a market's resolution_date may sit from the fixture's start "
-             "(a Kalshi resolution date is a CLOSE time, not a start — gotcha #14)",
+        "--match-window-days", type=int, default=MATCH_WINDOW_DAYS,
+        help="how many days AFTER the day the register stamps a fixture the match "
+             "may still be played. A market dated BEFORE that day is refused "
+             "outright and this does not loosen it (CERT-534)",
     )
     args = parser.parse_args()
 
@@ -373,7 +443,7 @@ def main() -> int:
         print(f"{series}: {len(rows)} outcome rows in the window", file=sys.stderr)
         found, refused = build_census(
             rows, register, draw=draw, observed_at=args.observed_at,
-            date_slack_hours=args.date_slack_hours,
+            match_window_days=args.match_window_days,
         )
         matches.extend(found)
         rejected.extend(refused)
