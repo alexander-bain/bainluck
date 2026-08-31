@@ -972,28 +972,42 @@ async def _poll_all_odds():
                     sports_skipped += 1
                     absolute_stop_hit = True
                     break
-                if not sport_ok:
-                    # A deny is a deny in every mode. Under FULL_STOP the
-                    # priority filter below would also catch this; above it,
-                    # nothing else would.
-                    sports_skipped += 1
-                    continue
-
-                # Monotonic latch — within one pass a re-read may only ADD
-                # constraint, never remove it (CERT-528's rule, now applied to
-                # the MODE and not only to the conservation floor). A failed
-                # re-read, or one taken after quota refilled, can never widen
-                # what an earlier read already narrowed.
+                # 🔴 THE LATCH RUNS BEFORE EVERY EARLY EXIT BELOW THE BREAK
+                # (CERT-540). It used to sit under the `not sport_ok` continue,
+                # which meant the ONE reading that most certainly proves the
+                # breaker has tripped — a DENY — was the one reading discarded
+                # without recording it. A non-priority sport reading
+                # `full_stop_9000` skipped itself and told the pass nothing, so
+                # the next sport's `ok_*` (quota refilled) or fail-open
+                # `redis_error` re-widened a pass that had already SEEN full
+                # stop, and spent the constrained API.
                 #
-                # `conservation_*` is returned only when remaining is at or
-                # below QUOTA_GUARD_FULL_STOP (redis_state.check_quota_guard),
-                # so it is a full-stop-band reading like `full_stop_*` — the
-                # priority sport is simply the one allowed through it.
+                # Same family as CERT-523 (a floor applied below its only gate),
+                # CERT-518/521 (counters that never reached the verdict) and
+                # CERT-535 (a recheck behind an unreachable condition): the code
+                # knew, and the thing that acts on it did not. **State is
+                # recorded before control flow leaves, always** — a `continue`
+                # is an exit, and an exit above an assignment deletes it.
+                #
+                # Monotonic — within one pass a re-read may only ADD constraint,
+                # never remove it (CERT-528's rule, applied to the MODE and not
+                # only to the conservation floor). `conservation_*` is returned
+                # only when remaining is at or below QUOTA_GUARD_FULL_STOP
+                # (redis_state.check_quota_guard), so it is a full-stop-band
+                # reading like `full_stop_*` — the priority sport is simply the
+                # one allowed through it.
                 if "conservation" in sport_reason or "full_stop" in sport_reason:
                     quota_full_stop = True
                     quota_conservation = True
                 if "live_only" in sport_reason:
                     quota_live_only = True
+
+                if not sport_ok:
+                    # A deny is a deny in every mode. Under FULL_STOP the
+                    # priority filter below would also catch this; above it,
+                    # nothing else would. The mode it implies is already latched.
+                    sports_skipped += 1
+                    continue
 
                 # Skip sports that returned 404 (cached for 24h)
                 if r:

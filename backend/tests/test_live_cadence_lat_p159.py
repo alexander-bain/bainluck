@@ -892,6 +892,47 @@ class TestAMidPassTighteningIsNeverWidenedBack:
             "a deny was only honoured inside an outer FULL_STOP"
         )
 
+    #: 🔴 CERT-540. The readings that FOLLOW a full-stop DENY. `ok_*` is quota
+    #: refilling (or a racing writer); `redis_error` and `no_redis` are
+    #: `check_quota_guard`'s two fail-open escapes, which return True and say
+    #: nothing about the band. All three used to reopen the pass, because the
+    #: deny took `continue` before the latch ran.
+    REOPENING_READS_AFTER_A_DENY = ["ok_600000", "redis_error", "no_redis"]
+
+    @pytest.mark.parametrize("second", REOPENING_READS_AFTER_A_DENY)
+    async def test_a_full_stop_DENY_still_constrains_the_next_sport(self, second):
+        """🔴 CERT-540, and it is the sharpest ordering bug in the chain.
+
+        A DENY is the reading that most certainly proves the breaker has
+        tripped — and it was the one reading thrown away, because
+        `if not sport_ok: continue` sat ABOVE the latch. Sport one reads
+        `full_stop_9000`, skips itself, and tells the pass nothing. Sport two
+        reads `ok`/`redis_error` and polls, after the task has already SEEN
+        full stop.
+
+        `icehockey_nhl` is deliberately NON-priority: if the latch works, the
+        priority filter is what stops it, and if the latch does not run there
+        is no filter to stop it with.
+        """
+        assert "icehockey_nhl" not in QUOTA_GUARD_PRIORITY_SPORTS
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"),
+            per_sport={
+                "soccer_epl": (False, "full_stop_9000"),
+                "icehockey_nhl": (True, second),
+            },
+            sports=("soccer_epl", "icehockey_nhl"),
+            last_poll_age_s=86_400.0,      # a day: no interval can be what gates it
+        )
+        assert service.guard_calls == ["soccer_epl", "icehockey_nhl"], (
+            f"the pass did not reach the second sport at all: "
+            f"{service.guard_calls} — this zero would be vacuous"
+        )
+        assert service.get_odds.await_count == 0, (
+            f"a full-stop DENY was discarded before the latch, and a following "
+            f"{second!r} reopened the pass and spent the Odds API"
+        )
+
     async def test_a_later_ok_reading_cannot_reopen_what_an_earlier_one_closed(self):
         # Quota reads `conservation_*` on sport one and then — refill, or a
         # racing writer — `ok_*` on sport two. Sport two is a priority live
