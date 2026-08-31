@@ -825,6 +825,18 @@ _DEDUP_NAME_STOPWORDS = _TRACE_STOPWORDS | {
     "2030",
 }
 
+#: The `?sport=` / `llm_sport_category` values that name the golf tier.
+#:
+#: Q472 (CERT-542): lifted out of `_score_golf_tournaments`'s inline literal so
+#: the route-level skip and the scorer's own refusal read ONE vocabulary. A gate
+#: and the guard behind it holding two copies of one list is exactly how
+#: `cycling` fell out of the concept allowlist one tier down (UX-P177), and the
+#: two must agree here or the tier is either run-and-discarded or, as CERT-542
+#: found, run-and-appended. `all` is the wildcard the `?sport=` contract has
+#: always carried; `golf` is a live `llm_sport_category` value (79 open markets,
+#: measured on production 2026-08-31).
+GOLF_TIER_SPORTS: frozenset[str] = frozenset({"golf", "all"})
+
 DISCOVER_SPORTS_CATEGORIES = (
     "basketball",
     "football",
@@ -2682,11 +2694,24 @@ async def get_feed(
             sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
             if sport_tags and "sport:golf" not in sport_tags:
                 _skip_golf = True
+        # Q472 (CERT-542): a category browse is the same claim in a different
+        # parameter, and this gate could not hear it. `/categories/economics`
+        # ran the golf tier with `sport=None`, appended the tournaments
+        # DIRECTLY to `feed_items`, and nothing downstream filters by category —
+        # so the page heading stopped describing its own content. Category
+        # eligibility is a route-wide contract, not a futures-pool one.
+        if category is not None and category not in GOLF_TIER_SPORTS:
+            _skip_golf = True
         if not _skip_golf:
             try:
                 _golf_prov_sink: dict = {}
                 tournament_items = await _score_golf_tournaments(
-                    db, now, sport, ctx, stages=_timings,
+                    # `sport or category` — the same precedence the events half
+                    # already uses, and it makes the scorer's own refusal agree
+                    # with the gate above by construction rather than by the
+                    # gate being right. Two layers reading ONE vocabulary
+                    # (`GOLF_TIER_SPORTS`); neither is load-bearing alone.
+                    db, now, sport or category, ctx, stages=_timings,
                     provenance_sink=_golf_prov_sink,
                 )
                 _golf_provenance = _golf_prov_sink.get("golf")
@@ -2722,6 +2747,31 @@ async def get_feed(
                 static_tag_filter
             )
             _skip_concepts = _skip_concepts or _tag_skip
+        if category is not None:
+            # Q472 (CERT-542): the gate above was the whole category story too,
+            # and it said nothing — so `/categories/economics` built the concept
+            # tier with NO filter and appended UFC cards and grand tours to an
+            # economics page. Asked of the module that owns the vocabulary, for
+            # the reason the paragraph above gives: `feed.py` is where a second
+            # copy of this list goes to lose `cycling`.
+            from app.utils.event_concept_population import (
+                concept_filter_for_category,
+            )
+
+            _cat_skip, _cat_concept_filter = concept_filter_for_category(category)
+            if _cat_skip:
+                _skip_concepts = True
+            elif _cat_concept_filter and _concept_sport_filter:
+                # Both a tag and a category spoke. A category page carrying a
+                # sport tag admits only what BOTH name; an empty intersection is
+                # a page with no concept tier, never the union of two filters.
+                _narrowed = tuple(
+                    a for a in _cat_concept_filter if a in _concept_sport_filter
+                )
+                _skip_concepts = _skip_concepts or not _narrowed
+                _concept_sport_filter = _narrowed or None
+            elif _cat_concept_filter:
+                _concept_sport_filter = _cat_concept_filter
         if not _skip_concepts:
             try:
                 # #2143: the concept build is principal-INDEPENDENT — it takes
@@ -2754,20 +2804,38 @@ async def get_feed(
                     time_bucket as _shared_time_bucket,
                 )
 
+                # The ONE value this build is a function of. `sport` (the
+                # ?sport= param) keeps precedence; the derived filter speaks
+                # only when the caller named no sport, which is what all three
+                # readers of this path do — `/categories/[slug]` and
+                # `RelatedByTag` send `tags` or `category` and nothing else.
+                _concept_build_filter = sport or _concept_sport_filter
+
+                # Q472 (CERT-542): the key used to stand in for that argument
+                # with the two things it was DERIVED from (`sport` and the tag
+                # tuple). A third derivation source makes the stand-in wrong
+                # rather than merely indirect — `?category=mma` and plain
+                # Discover carry the same sport and the same (empty) tags, build
+                # DIFFERENT artifacts, and would have shared one entry: whichever
+                # arrived first would publish its answer to the other, so a
+                # category browse could serve Discover's whole concept tier, or
+                # Discover could serve one category's slice of it. Key on the
+                # argument itself and the stand-in is retired. Normalised so the
+                # string and one-tuple spellings of one filter still share, and
+                # bounded by construction: a category that names no source skips
+                # above and never reaches this key at all.
                 _concept_key = (
-                    sport or "all",
-                    tuple(sorted(static_tag_filter or ())),
+                    ("all",)
+                    if not _concept_build_filter
+                    else (_concept_build_filter,)
+                    if isinstance(_concept_build_filter, str)
+                    else tuple(sorted(_concept_build_filter)),
                     _shared_time_bucket(now, _shared_clock_bucket_s()),
                 )
 
                 async def _build_concepts():
-                    # `sport` (the ?sport= param) keeps precedence; the
-                    # tag-derived filter only speaks when the caller named no
-                    # sport, which is exactly what both readers of this path do
-                    # — `/categories/[slug]` and `RelatedByTag` send `tags` and
-                    # nothing else.
                     return await _score_event_concepts(
-                        db, now, sport or _concept_sport_filter, ctx
+                        db, now, _concept_build_filter, ctx
                     )
 
                 concept_items = await _shared_get_or_build(
@@ -8937,7 +9005,7 @@ async def _score_golf_tournaments(
     verifies the shared publisher without exposing keys/IDs/user/session data.
     """
     # If sport filter is set and doesn't match golf, skip
-    if sport_filter and sport_filter not in ("golf", "all"):
+    if sport_filter and sport_filter not in GOLF_TIER_SPORTS:
         return []
 
     from app.utils.golf_base import get_golf_base

@@ -185,6 +185,41 @@ def concept_filter_for_tags(
     return (False, applicable) if applicable else (True, None)
 
 
+def concept_filter_for_category(
+    category: str | None,
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Translate a ``/categories/<slug>`` browse filter into a concept-tier filter.
+
+    The `category` sibling of `concept_filter_for_tags`, and derived from the
+    same `CONCEPT_SOURCES` for the same reason: `routes/feed.py` already grew
+    one hand-written copy of this vocabulary, lost `cycling` out of it, and
+    skipped the tier that holds the grand tours on the one surface where they
+    belong (UX-P177). A second copy for a second caller is that trap again with
+    a different name.
+
+    Returns ``(skip, sport_filter)``, the same shape:
+
+    * **no category** -> ``(False, None)``. Discover and every pre-existing
+      caller, unchanged: no constraint, every source runs.
+    * **a category naming a source** -> ``(False, (alias,))``. ONLY that source.
+    * **any other category** -> ``(True, None)``. The concept tier has nothing
+      to put on an economics page, so it is skipped rather than built and
+      appended — which is precisely what CERT-542 found it doing.
+
+    That `llm_sport_category` and the source aliases share a vocabulary is
+    checked, not assumed: measured on production 2026-08-31, `mma` (240 open
+    markets), `motorsports` (144) and `cycling` (17) are all live
+    `llm_sport_category` values and all three name a source. `ufc` and `f1` are
+    aliases with no category of their own; admitting them costs nothing and is
+    what keeps this derived from `CONCEPT_SOURCES` rather than from a list.
+    """
+    if not category:
+        return False, None
+    if category in CONCEPT_SPORT_ALIASES:
+        return False, (category,)
+    return True, None
+
+
 def _source_applies(
     aliases: tuple[str, ...], sport_filter: str | Collection[str] | None
 ) -> bool:
