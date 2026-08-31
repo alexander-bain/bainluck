@@ -12921,6 +12921,9 @@ from app.utils.outcome_display import (  # noqa: E402
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
 )
+from app.utils.duplicate_condition_outcomes import (  # noqa: E402
+    drop_duplicate_legs as _drop_duplicate_legs,
+)
 
 
 def _build_search_top_outcomes(
@@ -12934,7 +12937,18 @@ def _build_search_top_outcomes(
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
     """
-    real = [o for o in market.outcomes if not _is_placeholder_outcome_name(o.name)]
+    # Q480: one condition, one outcome. A Polymarket parent can hold both the bare
+    # rung (`0x…`, named "90+") and that same condition's `_yes`/`_no` legs (named
+    # literally "Yes"/"No") — 1,455 such markets, 2,910 duplicate rows. The legs
+    # carry the sub-market's own price, so a 64.5% "No" outranks every real answer
+    # and headlines the dropdown. Dropped on the ORM rows, BEFORE the sort, the
+    # `[:limit]` slice and `_normalize_search_outcome_probs`, so the phantom never
+    # reaches a top-N slot and never sits in the normalization divisor.
+    real = [
+        o
+        for o in _drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+        if not _is_placeholder_outcome_name(o.name)
+    ]
     real.sort(key=lambda o: o.current_probability or 0, reverse=True)
     top = real[:limit]
     if lean:

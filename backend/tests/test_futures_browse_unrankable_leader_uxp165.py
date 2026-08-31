@@ -70,6 +70,10 @@ class FakeOutcome:
     def __init__(self, oid, name, prob, movement=None):
         self.id = oid
         self.name = name
+        # Q480: the display path reads `external_id` to drop a `_yes`/`_no`
+        # leg that duplicates a bare rung on the same market. None = not a
+        # leg, which is the pass-through case for these doubles.
+        self.external_id = None
         self.current_probability = prob
         self.probability_change_24h = movement
 

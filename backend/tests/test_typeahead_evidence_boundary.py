@@ -56,6 +56,9 @@ def _outcome(name, prob):
         id=abs(hash(name)) % 100000,
         name=name,
         current_probability=prob,
+        # Q480: the display path reads `external_id` to drop a `_yes`/`_no`
+        # leg duplicating a bare rung. None = not a leg (pass-through).
+        external_id=None,
         current_american_odds=None,
         rank=None,
         probability_change_24h=None,
