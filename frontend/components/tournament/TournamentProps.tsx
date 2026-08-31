@@ -16,6 +16,7 @@ import {
   propIncompleteComparison,
   propIsPresentedAsLive,
   propIsResolved,
+  propSettlement,
   type PropMarket,
   type PropOutcome,
 } from "@/lib/tournamentProps";
@@ -263,6 +264,10 @@ function PropCard({
   // hidden, and the label says "looks", because that is the strength of the
   // evidence we have. Real settlement detection is lane1's.
   const looksDecided = propIsResolved(market);
+  // AND A CARD THE REGISTER SAYS IS CLOSED SHOWS A RESULT, NOT A PRICE
+  // (UX-P207, Alex's ruling 2 — settled means settled). Non-null only when the
+  // payload says so; this component infers nothing. See `propSettlement`.
+  const settled = propSettlement(market);
   // THE NON-HOVER PATH ON THE WEB, and the rehearsal for the native one
   // (UX-P157). A phone browser has no hover either, so the same tap that a
   // SwiftUI long-press will perform opens the same sentence here. Card-local
@@ -283,6 +288,7 @@ function PropCard({
       data-freshness={fresh.state}
       data-shape={answer ? "answer" : "field"}
       data-decided={looksDecided ? "true" : "false"}
+      data-settled={settled ? "true" : "false"}
       data-incomplete={incomplete ? "true" : "false"}
     >
       <div className="flex items-baseline justify-between gap-3">
@@ -294,43 +300,89 @@ function PropCard({
               age chip. Both are the card admitting something, and "Last number
               20 hours ago" beside a row that has never had a number at all is
               the less true of the two — it answers a question the reader did
-              not ask yet and hides the one they will. */}
-          {variant !== "sentence" && incomplete === null && (
+              not ask yet and hides the one they will.
+
+              A SETTLED CARD GETS NEITHER (UX-P207). Freshness answers "is this
+              current?", and on a closed question that is not what the reader is
+              asking — worse, on `sinner-competes` it answered `0.3h` and made a
+              decided question look like the freshest thing on the page. The
+              liquidity mark goes with it: whether a book is thin is advice
+              about a trade nobody can make any more. */}
+          {variant !== "sentence" && incomplete === null && settled === null && (
             <FreshnessMark market={market} variant={variant} />
           )}
           {/* UX-P157. Beside the freshness chip and NOT merged into it: a
               question can be quoted four minutes ago on a market nobody will
               trade at, which is the whole of Q428's residual, and one mark
               standing for both facts would make that case unsayable. */}
-          <LiquidityMark
-            facts={market}
-            observedAt={market.observed_at}
-            onReveal={toggleReveal}
-          />
-          {answer && (
-            <span
-              className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
-                isLive ? "text-text-primary" : "text-text-secondary"
-              }`}
-              data-testid="prop-probability"
-            >
-              {formatPropProbability(answer.probability)}
-            </span>
+          {settled === null && (
+            <LiquidityMark
+              facts={market}
+              observedAt={market.observed_at}
+              onReveal={toggleReveal}
+            />
+          )}
+          {/* THE HEADLINE. On an open question it is the probability; on a
+              settled one it is the RESULT, in the same slot and the same
+              weight, because that is the answer to the question printed beside
+              it. A register that knows a card closed but not how it came out
+              prints nothing here rather than a number — see the muted line. */}
+          {settled !== null ? (
+            settled.answer !== null && (
+              <span
+                className="shrink-0 text-[17px] font-bold tracking-tight text-text-primary"
+                data-testid="prop-settled-answer"
+              >
+                {settled.answer}
+              </span>
+            )
+          ) : (
+            answer && (
+              <span
+                className={`shrink-0 text-[17px] font-bold tabular-nums tracking-tight ${
+                  isLive ? "text-text-primary" : "text-text-secondary"
+                }`}
+                data-testid="prop-probability"
+              >
+                {formatPropProbability(answer.probability)}
+              </span>
+            )
           )}
         </span>
       </div>
 
-      {(answer || looksDecided) && (
-        <div className="mt-px text-[11.5px] text-text-muted">
-          {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
-          {looksDecided && (
-            <span data-testid="prop-decided">
-              {answer ? " · " : ""}Looks decided
+      {settled !== null ? (
+        <div className="mt-px text-[11.5px] text-text-muted" data-testid="prop-settled">
+          <span>Settled</span>
+          {/* THE LAST READING IS KEPT, AND DEMOTED. Deleting it would throw away
+              a true fact — the market really did close at 1% — and printing it
+              in the headline would make a finished question look open. It is
+              here, muted, said to be the last one. */}
+          {answer && answer.probability !== null && (
+            <span data-testid="prop-settled-last">
+              {" · last reading "}
+              {formatPropProbability(answer.probability)}
+            </span>
+          )}
+          {settled.answer === null && (
+            <span data-testid="prop-settled-unknown">
+              {" · result not published"}
             </span>
           )}
         </div>
+      ) : (
+        (answer || looksDecided) && (
+          <div className="mt-px text-[11.5px] text-text-muted">
+            {answer && <span data-testid="prop-answer">{answer.display_name}</span>}
+            {looksDecided && (
+              <span data-testid="prop-decided">
+                {answer ? " · " : ""}Looks decided
+              </span>
+            )}
+          </div>
+        )
       )}
-      {variant === "sentence" && incomplete === null && (
+      {variant === "sentence" && incomplete === null && settled === null && (
         <FreshnessMark market={market} variant={variant} />
       )}
 

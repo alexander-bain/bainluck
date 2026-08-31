@@ -412,11 +412,15 @@ export function seriesPoints(
  * through `renderToStaticMarkup`, where no viewport exists at all. So density
  * is expressed as a TIER on each tick and spent by a CSS breakpoint at the call
  * site, which is the same trick `GRID_SIZING` uses for the grid's two widths.
+ *
+ * UX-P207 dropped a fourth member, `end`. It existed because the first and last
+ * OBSERVED dates were placed unconditionally; they are not placed at all now,
+ * and a tier that names a rule nobody applies is a trap for the next reader.
  */
-export type AxisTickTier = "end" | "major" | "wide" | "fine";
+export type AxisTickTier = "major" | "wide" | "fine";
 
 export interface AxisTick {
-  /** ISO date, `YYYY-MM-DD` — the domain value. */
+  /** ISO date, `YYYY-MM-DD` — the calendar value the tick names. */
   date: string;
   /** Where it sits on the drawn x-axis, in viewBox units. */
   x: number;
@@ -427,200 +431,200 @@ export interface AxisTick {
 }
 
 /**
- * X-AXIS TICKS (UX-P139, Alex's item 6: "The chart needs x-axis orientation —
- * dates/ticks").
+ * ═══ UX-P207: THE AXIS IS A CALENDAR GRID, NOT A SAMPLE OF THE DATA ═══
  *
- * The chart has always had a fixed, labelled 0–100 y-axis and an ENTIRELY
- * unlabelled x. A reader could see a line fall and not know whether that
- * happened over a day or a month — which matters most on exactly this page,
- * where "the fields have been dark for weeks" and "the price moved this
- * morning" are both live possibilities and look identical without a date.
+ * Alex, on the live `/tournaments/us-open` on opening day: *"The x-axis in the
+ * chart is weird."* It was, and this is the exact sequence he read, reproduced
+ * from the production payload (men's board, 16 observed dates, 1 Aug → 31 Aug)
+ * against the axis this replaces, at `lg`:
  *
- * THREE TICKS, and the count is the whole design. The axis is 320 viewBox
- * units wide inside a 358px content box; a `26 Aug` label is ~34px, so four
- * labels collide at the ends and two leave the middle unanchored. First, last
- * and one interior date: first and last because they bound the window.
+ *   1 Aug ── 6 Aug ─ 10 Aug ─────────────────────────── 26 Aug ── 31 Aug
+ *   0%       16.7%    30.0%                              83.3%     100%
+ *   gaps:      16.7    13.3            53.3                16.7
  *
- * ═══ UX-P146: THE INTERIOR TICK IS CHOSEN BY THE CALENDAR NOW ═══
+ * Four labels in the first third, then a 53%-wide stretch of axis with nothing
+ * on it. A reader cannot use that: the eye reads regular ticks as a ruler, so
+ * an irregular one does not say "these are the days we have readings for", it
+ * says "this chart is broken".
  *
- * It used to be the MEDIAN OBSERVATION — `dates[floor(n/2)]`, drawn at exactly
- * 50% — which on the real men's board put "8 Aug" at the midpoint of a window
- * running 28 Jul → 27 Aug, whose true midpoint is 12 Aug. Four days of error,
- * stated as a fact, in the one place on the chart a reader goes to orient
- * themselves. See `dateX` for the full arithmetic and why the whole scale was
- * wrong, not just this label.
+ * ═══ THE CAUSE WAS THE ONE RULE EVERY EARLIER PASS PROTECTED ═══
  *
- * Now: take the calendar midpoint of the window, then SNAP to the observed date
- * nearest it, and place that date at its own true x. Snapping keeps the old
- * design's one real virtue — an axis tick labels a day something was actually
- * read — while the position is honest about where that day falls.
+ * UX-P139 through UX-P147 all held that *an axis tick must label a day
+ * something was actually read*, so each candidate position was SNAPPED to the
+ * nearest observed date. That rule is what bends the axis. This board has a
+ * **fifteen-day hole** (11 Aug → 25 Aug, no readings), and every candidate
+ * inside it snaps back to 10 Aug or forward to 26 Aug, collides with the tick
+ * already there, and is dropped. The hole gets no labels at all, and the
+ * labels that survive cluster wherever the data happens to be dense — so the
+ * axis's spacing is a picture of the SAMPLING, drawn on top of a plot whose
+ * x is calendar time. Two different scales in one strip.
  *
- * A snapped tick can land near an edge (a domain of one old reading and a
- * recent clump), where its label would collide with the first or last one. In
- * that case the interior tick is DROPPED rather than nudged: two accurate
- * labels beat three where one is in the wrong place, and moving a tick off its
- * date is the defect this whole change exists to remove.
+ * So the rule is reversed, deliberately: **ticks are calendar positions, and
+ * a tick may name a day nothing was read.** That is what a time axis is. It
+ * costs nothing true — the LINE still has no point in the hole, gaps still stay
+ * gaps — and it buys the thing the hole was hiding: with `17 Aug` and `24 Aug`
+ * on the axis, the fifteen-day hole is legible AS fifteen days. Under the old
+ * rule the same hole was an unlabelled void that could have been any length.
+ *
+ * ═══ THE STEP, AND WHY IT IS A CALENDAR NUMBER ═══
+ *
+ * One step for the whole axis, taken from `STEP_LADDER_DAYS` — the smallest
+ * rung that divides the window into at most `MAX_INTERVALS` — and every tick
+ * is a whole number of steps back from the LATEST reading. Anchoring on the
+ * latest rather than on a calendar boundary (a Monday, a 1st) is deliberate:
+ * the newest reading is where the endpoint dot is and where the reader's eye
+ * starts, so it is the one position that must carry a label. The cost is that
+ * the leftmost tick can sit up to one step inside the left edge — 2 of 30 days
+ * on the men's board, 6.7% of the plot — which is what a real time axis looks
+ * like and is not what Alex was pointing at.
+ *
+ * The ladder is `1, 2, 7, 14, 28, 91, 182, 364`: days, then weeks, then
+ * quarters, then a year. Nothing between 2 and 7, because a 3-, 4- or 5-day
+ * step produces labels a reader cannot count in their head. On today's data
+ * this lands where the directive asked it to — **weekly for the month-long
+ * men's window, daily for the six-day women's one** — without the timeframe
+ * button having to say so, which matters because the button cannot: `ALL` on
+ * the women's board is five days, and a table keyed on `1M`/`ALL` would give
+ * that five-day window a monthly step.
+ *
+ * `1D` is in the ladder's reach and unreachable in practice: the server's trend
+ * series carries one point per DAY (`TournamentTrendPoint.date`), so a one-day
+ * window holds one point, `timeframeIsDrawable` is false, and the button
+ * renders disabled. An hourly axis needs an hourly series first — named here
+ * so the next reader does not go looking for the bug.
+ *
+ * ═══ THE THREE DENSITIES, FROM ONE SERVER RENDER ═══
+ *
+ * Unchanged in spirit from UX-P147 and unchanged in mechanism: this module
+ * cannot measure a viewport (the chart is server-rendered, and the capture rig
+ * has no viewport at all), so each tick carries the tier naming the narrowest
+ * plot its label fits in and `ContenderChart` spends the tiers with `lg:` and
+ * `2xl:`. What changed is how a tier is decided. It used to be a property of
+ * the SLOT (`k % 4`), which is why the count could not respond to the data;
+ * it is now a STRIDE computed from the label pitch — take every tick at `2xl`,
+ * every `n`th at `lg`, every `m`th on a phone, with `m` a multiple of `n` so
+ * the phone's axis is always a SUBSET of the desktop's at identical positions.
+ * A stride keeps the spacing even at every width, which a per-slot tier could
+ * not promise and, on this data, did not deliver (the women's board showed
+ * 40/20/40 on a phone).
  */
-/**
- * ═══ UX-P147: THREE TICKS WAS RIGHT ARITHMETIC AND A SPARSE AXIS ═══
- *
- * Alex, on the UX-P146 re-mock: the x-axis is *"still oddly sparse"* even after
- * the calendar-spacing fix, and he asked for more tick density until it reads
- * well. He is right, and the reason three survived is that the count was
- * measured ONCE, on a phone, and then inherited by a plot that is now 2.3×
- * wider. `28 Jul ————————— 12 Aug ————————— 27 Aug` across 817px is two
- * 400-pixel stretches with nothing in them; a reader cannot place a crossing
- * they are looking at to nearer than a fortnight.
- *
- * ═══ WHY THE ANSWER IS A TIER AND NOT A NUMBER ═══
- *
- * There is one set of ticks and three plot widths (~358px phone, ~486px `lg`,
- * ~817px `2xl`), and this module cannot measure which one it is in — the chart
- * is server-rendered, and a viewport hook would make the first client render
- * disagree with the server's and would return nothing at all in the capture
- * rig. So every tick is emitted WITH a tier naming the narrowest window its
- * label fits in, and `ContenderChart` spends the tiers with `lg:` and `2xl:`.
- * The picture gets denser as the window gets wider, from one server render.
- *
- * ═══ THE SLOTS, AND WHY TWELFTHS ═══
- *
- * Interior candidates are the calendar positions `k/12` of the window, each
- * SNAPPED to the nearest observed date and drawn at that date's own true x —
- * the UX-P146 rule, unchanged, and the whole reason the axis is honest: a tick
- * labels a day something was actually read, and it sits where that day falls.
- *
- * Twelfths because they subdivide cleanly three times, and each subdivision is
- * a tier that lands at a real breakpoint:
- *
- *   `major` k ∈ {4, 8}                thirds        →  4 labels, phone up
- *   `wide`  k ∈ {2, 6, 10}            sixths        →  7 labels, `lg` up
- *   `fine`  k ∈ {1,3,5,7,9,11}        twelfths      → 13 labels, `2xl` up
- *
- * Against a `26 Aug` label at ~30px plus 8px of air, that is 119px of room per
- * label on the phone, 81px at `lg` and 68px at `2xl` — every tier more
- * generous than the 38px it needs, at the width it first appears.
- *
- * ═══ THREE WAYS A CANDIDATE STILL LOSES ═══
- *
- * 1. **It snaps onto a date already taken.** Two slots inside the men's board's
- *    eight-day hole both snap to 17 Aug. Deduped, keeping the coarser tier —
- *    which is what makes the tick still visible on a phone.
- * 2. **Its label would collide.** Every kept tick claims `LABEL_CLEARANCE`
- *    either side, measured as a FRACTION of the plot at the width its tier
- *    first appears; a candidate landing inside a coarser neighbour's claim is
- *    dropped, never nudged. Moving a tick off its date is the defect UX-P146
- *    existed to remove and this must not quietly reintroduce it.
- * 3. **It is the same date as an end.** A one-week window has fewer distinct
- *    days than slots, and the axis should thin out rather than repeat itself.
- *
- * Coarse tiers are placed FIRST so a fine tick can never take a slot a major
- * one wanted — the axis a phone shows is always a subset of the axis a desktop
- * shows, at the same positions, which is what makes widening the window feel
- * like zooming in rather than like a different chart.
- */
-const TICK_SLOTS = 12;
 
-/** Half-label plus air, as a fraction of the plot, per tier's first width. */
-const LABEL_CLEARANCE: Record<AxisTickTier, number> = {
-  // 38px of claim on each side of a label. Ends are placed unconditionally and
-  // carry the phone's clearance, because they are visible at every width.
-  end: 38 / 358,
-  major: 38 / 358,
-  wide: 38 / 486,
-  fine: 38 / 817,
+/** Plot width, in px, that each tier's breakpoint first gives this chart. */
+const TIER_PLOT_PX: Record<AxisTickTier, number> = {
+  // Measured on the same element `lg:h-40` / `2xl:h-56` were measured against
+  // (see `ContenderChart`'s viewBox note for the end-to-end arithmetic): ~358px
+  // on a phone, ~486px at `lg`, ~817px at `2xl`.
+  major: 358,
+  wide: 486,
+  fine: 817,
 };
 
-/** Interior slot -> tier. Coarsest subdivision a slot belongs to wins. */
-function slotTier(k: number): AxisTickTier {
-  if (k % 4 === 0) return "major";
-  if (k % 2 === 0) return "wide";
-  return "fine";
+/**
+ * Centre-to-centre px two neighbouring labels need.
+ *
+ * A `26 Aug` label is ~30px at `text-[9.5px]` in tabular figures (6 glyphs, and
+ * tabular means the widest date is the same width as the narrowest). 44 leaves
+ * 14px of air, which is more than the 8px the previous pass budgeted, because
+ * this axis puts labels at even intervals — if the pitch is wrong here it is
+ * wrong for EVERY pair on the axis rather than for one unlucky snap.
+ */
+const LABEL_PITCH_PX = 44;
+
+/** Calendar steps a person can count in their head. Ascending. */
+const STEP_LADDER_DAYS = [1, 2, 7, 14, 28, 91, 182, 364];
+
+/** The most intervals the finest tier will draw across the window. */
+const MAX_INTERVALS = 12;
+
+/**
+ * The tick step for a window, in days — the smallest ladder rung that keeps the
+ * axis under `MAX_INTERVALS` intervals.
+ *
+ * Exported because it is the sentence the axis is built on, and a guard that
+ * has to re-derive it from rendered tick positions is testing arithmetic it
+ * just re-implemented.
+ */
+export function axisStepDays(spanDays: number): number {
+  for (const step of STEP_LADDER_DAYS) {
+    if (spanDays / step <= MAX_INTERVALS) return step;
+  }
+  return STEP_LADDER_DAYS[STEP_LADDER_DAYS.length - 1];
+}
+
+/**
+ * How many steps apart two labels must be, per tier, so neither pair overlaps.
+ *
+ * The coarser strides are rounded UP onto a multiple of the finer one. That
+ * rounding is what keeps each tier's own set of labels EVENLY SPACED: the set a
+ * screen shows is `{k : k % major === 0}` ∪ `{k : k % wide === 0}`, and unless
+ * `major` is a multiple of `wide` that union has two different gaps in it. With
+ * `major = 3, wide = 2` the `lg` axis reads 0, 2, 3, 4, 6, 8, 9 — which is the
+ * ragged axis this queue exists to remove, arrived at from the other direction.
+ *
+ * ⚠️ **AT `MAX_INTERVALS = 12` THE ROUNDING IS UNREACHABLE, AND IT STAYS.** The
+ * ladder guarantees `fractionPerStep ≥ 1/12`, so `needed` is at most
+ * `ceil(44 / (358/12)) = 2` for every tier and at least 1 — and every pair
+ * drawn from `{1, 2}` with `major ≥ wide` already nests. The line is therefore
+ * dead code TODAY and load-bearing the moment anyone raises `MAX_INTERVALS` or
+ * widens `LABEL_PITCH_PX`, which is exactly when nobody will be thinking about
+ * it. `axisTickStrides` is exported so the property can be asserted directly
+ * rather than through an `axisTicks` call that cannot reach it — a guard that
+ * routes through the unreachable path is a guard that passes for the wrong
+ * reason.
+ */
+export function axisTickStrides(
+  fractionPerStep: number
+): Record<AxisTickTier, number> {
+  return tickStrides(fractionPerStep);
+}
+
+function tickStrides(fractionPerStep: number): Record<AxisTickTier, number> {
+  const needed = (tier: AxisTickTier) =>
+    Math.max(1, Math.ceil(LABEL_PITCH_PX / (fractionPerStep * TIER_PLOT_PX[tier])));
+  const fine = needed("fine");
+  const wide = fine * Math.ceil(needed("wide") / fine);
+  const major = wide * Math.ceil(needed("major") / wide);
+  return { major, wide, fine };
+}
+
+/** `2026-08-12` from a whole-day count since the epoch. Inverse of `dayNumber`. */
+function isoFromDay(day: number): string {
+  return new Date(day * 86_400_000).toISOString().slice(0, 10);
 }
 
 export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisTick[] {
+  // The step comes from the DRAWN WINDOW, not from which button is pressed —
+  // see the note above on `ALL` over a five-day field.
   void timeframe;
   const dates = geometry.dates;
   if (dates.length < 2) return [];
 
-  const first = dates[0];
-  const last = dates[dates.length - 1];
-  const firstX = dateX(first, geometry);
-  const lastX = dateX(last, geometry);
-  if (firstX === null || lastX === null) return [];
+  const firstDay = dayNumber(dates[0]);
+  const lastDay = dayNumber(dates[dates.length - 1]);
+  if (firstDay === null || lastDay === null || lastDay <= firstDay) return [];
 
-  const tick = (date: string, x: number, tier: AxisTickTier): AxisTick => ({
-    date,
-    x,
-    label: shortDateLabel(date),
-    tier,
-  });
+  const span = lastDay - firstDay;
+  const step = axisStepDays(span);
+  const strides = tickStrides(step / span);
 
-  const kept: AxisTick[] = [tick(first, firstX, "end"), tick(last, lastX, "end")];
-  if (dates.length < 3) return kept;
-
-  const firstDay = dayNumber(first);
-  const lastDay = dayNumber(last);
-  if (firstDay === null || lastDay === null) return kept;
-
-  const interior = dates.slice(1, -1);
-  const taken = new Set<string>([first, last]);
-
-  // Coarsest first — see the note above on why the phone's axis must be a
-  // subset of the desktop's rather than a different sampling of it.
-  const order = [...Array(TICK_SLOTS - 1).keys()]
-    .map((index) => index + 1)
-    .sort((a, b) => {
-      const rank: Record<AxisTickTier, number> = { end: 0, major: 1, wide: 2, fine: 3 };
-      return rank[slotTier(a)] - rank[slotTier(b)] || a - b;
+  const out: AxisTick[] = [];
+  // `k` counts steps back from the LATEST reading, so `k = 0` is the right-hand
+  // edge and is visible at every width (0 is a multiple of every stride).
+  for (let k = 0; lastDay - k * step >= firstDay; k += 1) {
+    const tier =
+      k % strides.major === 0 ? "major" : k % strides.wide === 0 ? "wide"
+      : k % strides.fine === 0 ? "fine" : null;
+    if (tier === null) continue;
+    const date = isoFromDay(lastDay - k * step);
+    out.push({
+      date,
+      x: ((lastDay - k * step - firstDay) * geometry.width) / span,
+      label: shortDateLabel(date),
+      tier,
     });
-
-  for (const k of order) {
-    const tier = slotTier(k);
-    const targetDay = firstDay + ((lastDay - firstDay) * k) / TICK_SLOTS;
-
-    let nearest: string | null = null;
-    let bestGap = Infinity;
-    for (const date of interior) {
-      if (taken.has(date)) continue;
-      const day = dayNumber(date);
-      if (day === null) continue;
-      const gap = Math.abs(day - targetDay);
-      if (gap < bestGap) {
-        bestGap = gap;
-        nearest = date;
-      }
-    }
-    if (nearest === null) continue;
-
-    const x = dateX(nearest, geometry);
-    if (x === null) continue;
-    const fraction = x / geometry.width;
-
-    // A candidate must clear every tick already placed — but only at the width
-    // where the two are ever on screen TOGETHER, which is the width the FINER
-    // of the two first appears at. Two labels that never coexist cannot
-    // collide, and the coarser one's budget is the phone's.
-    //
-    // Hence `min`, and it is the whole difference between a dense axis and the
-    // sparse one Alex is looking at: taking the coarser budget would let an
-    // end label's 38-of-358 claim (0.106 of the plot) veto a `fine` tick that
-    // only ever draws at 817px, where 0.106 is 87 pixels of empty axis. The
-    // first draft of this did exactly that and produced six ticks where the
-    // arithmetic says thirteen.
-    const clashes = kept.some((other) => {
-      const clearance = Math.min(
-        LABEL_CLEARANCE[tier],
-        LABEL_CLEARANCE[other.tier]
-      );
-      return Math.abs(other.x / geometry.width - fraction) < clearance;
-    });
-    if (clashes) continue;
-
-    taken.add(nearest);
-    kept.push(tick(nearest, x, tier));
   }
 
-  return kept.sort((a, b) => a.x - b.x);
+  return out.reverse();
 }
 
 /** `2026-08-26` -> `26 Aug`. Day-first, because the month repeats and the day does not. */
@@ -643,6 +647,29 @@ export function shortDateLabel(iso: string): string {
  * buttons are answering and which the buttons alone cannot confirm (`ALL` on a
  * field with four readings is four days, not all of history).
  */
+/**
+ * The drawn window's two ends, labelled — `{ from: "1 Aug", to: "31 Aug" }`.
+ *
+ * UX-P207. The accessible label used to name the FIRST AND LAST TICK as the
+ * window's bounds, which was true only because the axis pinned ticks to the
+ * domain's ends. It does not any more, so a screen reader would have been told
+ * the chart covers "3 Aug to 31 Aug" while the sighted footer beside it said
+ * "30d shown" — the same disagreement, in two modalities, that this queue
+ * exists to remove. Both now read the DOMAIN, from one function, and the ticks
+ * are what they always should have been: positions inside the window, not the
+ * definition of it.
+ */
+export function axisWindow(
+  geometry: ChartGeometry
+): { from: string; to: string } | null {
+  const dates = geometry.dates;
+  if (dates.length < 2) return null;
+  return {
+    from: shortDateLabel(dates[0]),
+    to: shortDateLabel(dates[dates.length - 1]),
+  };
+}
+
 export function axisSpanDays(geometry: ChartGeometry): number | null {
   const dates = geometry.dates;
   if (dates.length < 2) return null;

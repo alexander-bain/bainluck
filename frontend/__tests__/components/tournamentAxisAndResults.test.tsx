@@ -14,11 +14,15 @@ import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import {
   axisSpanDays,
+  axisStepDays,
+  axisTickStrides,
   axisTicks,
+  axisWindow,
   chartGeometry,
   chartSeriesFor,
   seriesPoints,
   shortDateLabel,
+  type AxisTick,
 } from "@/lib/contenderChart";
 import {
   DRAW_ORDER,
@@ -83,226 +87,250 @@ describe("item 6 — the chart's x-axis", () => {
   const selection = rows.map((r) => r.entity_key);
   const geometry = chartGeometry(chartSeriesFor(rows, selection), "ALL", 320, 96);
 
-  /* ═══ UX-P147: THE COUNT IS A TIER NOW, NOT A NUMBER ═══
+  /* ═══ UX-P207: THE AXIS IS A CALENDAR GRID, NOT A SAMPLE OF THE DATA ═══
    *
-   * Alex, on the UX-P146 re-mock: the axis is "still oddly sparse" — increase
-   * the density until it reads well. It was sparse because THREE was measured
-   * once on a 358px phone and then inherited by a plot that is 817px at `2xl`.
-   * `axisTicks` now emits every candidate with a `tier` naming the narrowest
-   * plot its label fits in, and the component spends the tiers with `lg:` and
-   * `2xl:`. The test that stood here asserted `toHaveLength(3)` and is
-   * replaced, not deleted — the properties it protected (ends are the real
-   * ends, at 0 and the full width) are asserted below and everywhere else.
+   * Alex, on the live page on opening day: "The x-axis in the chart is weird."
+   *
+   * Every contract in this block up to UX-P147 rested on one rule — an axis
+   * tick must label a day something was actually read — and that rule is what
+   * bent the axis. Candidates were SNAPPED to the nearest observation, so on a
+   * board with a fifteen-day hole every candidate inside the hole snapped back
+   * onto a tick already placed and was dropped. The surviving labels clustered
+   * where the readings were dense. The tests that asserted the snapping
+   * ("always bounds the window with its two real ends", "places ticks by the
+   * CALENDAR, not by position in the list", "the interior ticks are calendar
+   * positions") are REPLACED, not deleted: everything they were protecting —
+   * one scale for the line and the ticks, no repeated dates, no invented
+   * scale — is asserted below, on a rule that also survives a hole.
    */
 
-  it("always bounds the window with its two real ends", () => {
-    const ticks = axisTicks(geometry);
-    expect(ticks[0].date).toBe(geometry.dates[0]);
-    expect(ticks[ticks.length - 1].date).toBe(geometry.dates[geometry.dates.length - 1]);
-    expect(ticks[0].x).toBe(0);
-    expect(ticks[ticks.length - 1].x).toBe(320);
-    expect(ticks[0].tier).toBe("end");
-    expect(ticks[ticks.length - 1].tier).toBe("end");
+  /** Every whole day from `from` to `to`, inclusive — a dense daily domain. */
+  function dailyDates(from: string, days: number): string[] {
+    const base = Math.round(Date.parse(`${from}T00:00:00Z`) / 86_400_000);
+    return Array.from({ length: days }, (_unused, i) =>
+      new Date((base + i) * 86_400_000).toISOString().slice(0, 10)
+    );
+  }
+
+  /**
+   * THE PRODUCTION MEN'S BOARD, 2026-08-31 — the payload Alex was looking at.
+   * Sixteen observed dates: 1–10 Aug daily, then a FIFTEEN-DAY HOLE, then
+   * 26–31 Aug. The hole is the whole reason this queue exists.
+   */
+  const PRODUCTION_MENS_DATES = [...dailyDates("2026-08-01", 10), ...dailyDates("2026-08-26", 6)];
+
+  const atTier = (ticks: AxisTick[], tiers: string[]) =>
+    ticks.filter((tick) => tiers.includes(tick.tier));
+  const PHONE = ["major"];
+  const LG = ["major", "wide"];
+  const XXL = ["major", "wide", "fine"];
+  /** The three plot widths the tiers are spent at — see `TIER_PLOT_PX`. */
+  const PLOT_PX: Record<string, number> = { major: 358, wide: 486, fine: 817 };
+
+  /** The gaps between consecutive ticks, in viewBox units, rounded to kill float noise. */
+  const gapsOf = (ticks: AxisTick[]) =>
+    ticks.slice(1).map((tick, i) => Number((tick.x - ticks[i].x).toFixed(6)));
+
+  it("PROOF ON THE PAYLOAD ALEX READ: the ticks he filed, and the ticks now", () => {
+    // He filed: "1 Aug, 6 Aug, 10 Aug, then a gap to 26 Aug, 30 Aug". That is
+    // the `lg` row of the shipped axis on this exact domain, reproduced in
+    // `artifacts-ux-p207/axis-before.txt`: five labels at 0 / 16.7 / 30.0 /
+    // 83.3 / 100 percent — gaps of 16.7, 13.3, 53.3 and 16.7. Four labels
+    // crammed into the first third and half the axis empty.
+    const ticks = axisTicks({ dates: PRODUCTION_MENS_DATES, width: 320, height: 96 });
+
+    // AFTER: one weekly step, anchored on the latest reading.
+    expect(ticks.map((tick) => tick.label)).toEqual([
+      "3 Aug", "10 Aug", "17 Aug", "24 Aug", "31 Aug",
+    ]);
+    // Evenly spaced — the ship, stated as arithmetic. Every gap is 7 of 30 days.
+    expect(new Set(gapsOf(ticks)).size).toBe(1);
+    expect(gapsOf(ticks)[0]).toBeCloseTo((7 * 320) / 30, 6);
+
+    // The old axis is gone, not merely rearranged: the two labels that only
+    // existed because the readings were dense there are not on the axis.
+    expect(ticks.map((tick) => tick.label)).not.toContain("6 Aug");
+    expect(ticks.map((tick) => tick.label)).not.toContain("26 Aug");
+  });
+
+  it("labels days NOTHING WAS READ, which is what makes the hole measurable", () => {
+    // The rule this reverses is the one every earlier pass protected. It has to
+    // go: 17 Aug and 24 Aug are inside the fifteen-day hole and no reading
+    // exists on either, and they are exactly the two labels that let a reader
+    // see the hole is a fortnight rather than "some unlabelled distance".
+    const ticks = axisTicks({ dates: PRODUCTION_MENS_DATES, width: 320, height: 96 });
+    const unobserved = ticks.filter((tick) => !PRODUCTION_MENS_DATES.includes(tick.date));
+    expect(unobserved.map((tick) => tick.label)).toEqual(["17 Aug", "24 Aug"]);
+
+    // And the LINE still has nothing in the hole — "gaps stay gaps" is about
+    // the data, and no tick invents a reading.
+    const holed = [row({ trend: PRODUCTION_MENS_DATES.map((date) => ({ date, probability: 0.4 })) })];
+    const drawn = seriesPoints(
+      chartSeriesFor(holed, [holed[0].entity_key])[0],
+      { dates: PRODUCTION_MENS_DATES, width: 320, height: 96 },
+      "ALL"
+    );
+    const xs = drawn.split(" ").map((pair) => Number(pair.split(",")[0]));
+    const holeStart = ((9 - 0) * 320) / 30; // 10 Aug
+    const holeEnd = ((25 - 0) * 320) / 30; // 26 Aug
+    expect(xs.some((x) => x > holeStart + 0.01 && x < holeEnd - 0.01)).toBe(false);
+  });
+
+  it("takes its step from the CALENDAR, and from the drawn window not the button", () => {
+    // The directive's ask, and the reason it cannot be a table keyed on the
+    // timeframe button: `ALL` on the women's board is five days.
+    expect(axisStepDays(30)).toBe(7); // a month  -> weekly
+    expect(axisStepDays(5)).toBe(1); //  the women's ALL -> daily
+    expect(axisStepDays(6)).toBe(1); //  a week   -> daily
+    expect(axisStepDays(90)).toBe(14);
+    expect(axisStepDays(365)).toBe(91);
+    // Only steps a reader can count in their head — never 3, 4, 5 or 6 days.
+    for (let span = 1; span <= 800; span += 1) {
+      expect([1, 2, 7, 14, 28, 91, 182, 364]).toContain(axisStepDays(span));
+      expect(span / axisStepDays(span)).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("is evenly spaced at EVERY width, over every window length", () => {
+    // The defect was irregular spacing, so the guard is regular spacing — and
+    // it has to hold per TIER, because a tier is what a given screen sees. An
+    // axis that is even at `2xl` and ragged on a phone is the women's board
+    // before this change (40% / 20% / 40%).
+    for (const span of [1, 2, 3, 5, 6, 7, 10, 12, 13, 20, 24, 30, 45, 60, 90, 120, 200, 400, 900]) {
+      const dates = dailyDates("2024-01-01", span + 1);
+      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      for (const [name, tiers] of [["phone", PHONE], ["lg", LG], ["2xl", XXL]] as const) {
+        const visible = atTier(ticks, tiers as string[]);
+        expect(visible.length).toBeGreaterThanOrEqual(2);
+        const gaps = new Set(gapsOf(visible));
+        expect(`${span}d ${name}: ${[...gaps]}`).toBe(`${span}d ${name}: ${[...gaps].slice(0, 1)}`);
+      }
+    }
+  });
+
+  it("anchors the grid on the LATEST reading, which is where the eye starts", () => {
+    // The endpoint dot is at the right edge and is the number the reader came
+    // for, so the right edge always carries a label. The left edge may not —
+    // the leftmost tick can sit up to one step in, which is what a time axis
+    // looks like and is not what was filed.
+    for (const span of [5, 12, 29, 30, 45, 200]) {
+      const dates = dailyDates("2024-03-01", span + 1);
+      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      expect(ticks[ticks.length - 1].x).toBe(320);
+      expect(ticks[ticks.length - 1].date).toBe(dates[dates.length - 1]);
+      expect(ticks[0].x).toBeGreaterThanOrEqual(0);
+      expect(ticks[0].x).toBeLessThan((axisStepDays(span) * 320) / span);
+    }
+  });
+
+  it("nests the strides, so no tier's own labels can come out ragged", () => {
+    /* The set a screen shows is a UNION of two arithmetic progressions, and a
+     * union of strides 3 and 2 is not a progression at all — it reads 0, 2, 3,
+     * 4, 6, 8, 9. That is the defect this queue removes, reached from the other
+     * side, so the rounding that prevents it is asserted here.
+     *
+     * ⚠️ ASSERTED THROUGH THE EXPORTED HELPER ON PURPOSE. At `MAX_INTERVALS =
+     * 12` no window can drive the strides apart, so a guard written against
+     * `axisTicks` would pass on every input and prove nothing — the battery's
+     * P5 plant (drop the rounding) came back GREEN through that route and this
+     * test is what it caught. The pitch fractions below are BELOW anything the
+     * ladder can produce; they exist to exercise the arithmetic the day the
+     * ladder changes.
+     */
+    for (const fraction of [1 / 12, 1 / 15, 1 / 18, 1 / 24, 1 / 30, 1 / 40, 1 / 60]) {
+      const { major, wide, fine } = axisTickStrides(fraction);
+      expect(major % wide).toBe(0);
+      expect(wide % fine).toBe(0);
+      expect(major).toBeGreaterThanOrEqual(wide);
+      expect(wide).toBeGreaterThanOrEqual(fine);
+      // …and each tier's own pitch clears 44px at the width it first appears.
+      for (const [stride, px] of [[major, 358], [wide, 486], [fine, 817]] as const) {
+        expect(stride * fraction * px).toBeGreaterThanOrEqual(44);
+      }
+    }
+    // The one the ladder actually reaches, spelled out: a 1/18 window wants
+    // stride 3 on a phone and 2 at `lg`, and 3 is rounded to 4 so the union
+    // stays a progression.
+    expect(axisTickStrides(1 / 18)).toEqual({ major: 4, wide: 2, fine: 1 });
   });
 
   it("gets denser as the window widens, and a narrow axis is a SUBSET of a wide one", () => {
     // The property that makes widening the window feel like zooming in rather
     // than like a different chart: every label a phone shows is still there, at
     // the same position, when the desktop adds more between them.
-    const dates = [
-      ...Array.from({ length: 21 }, (_unused, i) =>
-        new Date(Date.UTC(2026, 6, 28 + i)).toISOString().slice(0, 10)
-      ),
-      "2026-08-26",
-      "2026-08-27",
-    ];
-    const ticks = axisTicks({ dates, width: 320, height: 96 });
-    const upTo = (tiers: string[]) => ticks.filter((t) => tiers.includes(t.tier));
-
-    const phone = upTo(["end", "major"]);
-    const desktop = upTo(["end", "major", "wide"]);
-    const wide = ticks;
-
-    // Four, six, ten on the real men's board — against three before.
-    expect(phone.map((t) => t.label)).toEqual(["28 Jul", "7 Aug", "17 Aug", "27 Aug"]);
-    expect(desktop).toHaveLength(6);
-    expect(wide).toHaveLength(10);
-
-    // Subset, positions included.
-    for (const tick of phone) {
-      expect(desktop).toContainEqual(tick);
-      expect(wide).toContainEqual(tick);
+    for (const span of [10, 12, 20, 24, 60, 120, 900]) {
+      const ticks = axisTicks({ dates: dailyDates("2024-05-01", span + 1), width: 320, height: 96 });
+      const phone = atTier(ticks, PHONE);
+      const lg = atTier(ticks, LG);
+      for (const tick of phone) expect(lg).toContainEqual(tick);
+      for (const tick of lg) expect(ticks).toContainEqual(tick);
+      expect(phone.length).toBeLessThanOrEqual(lg.length);
+      expect(lg.length).toBeLessThanOrEqual(ticks.length);
     }
-    for (const tick of desktop) expect(wide).toContainEqual(tick);
   });
 
   it("never draws two labels closer than they can be read at their own width", () => {
-    const dates = [
-      ...Array.from({ length: 21 }, (_unused, i) =>
-        new Date(Date.UTC(2026, 6, 28 + i)).toISOString().slice(0, 10)
-      ),
-      "2026-08-26",
-      "2026-08-27",
-    ];
-    const ticks = axisTicks({ dates, width: 320, height: 96 });
-    // A `26 Aug` label is ~30px; 38px is the claim each one makes. The plot is
-    // 358px on a phone, ~486px at `lg`, ~817px at `2xl`.
-    const plotAt: Record<string, number> = { end: 358, major: 358, wide: 486, fine: 817 };
-    for (let i = 0; i < ticks.length; i += 1) {
-      for (let j = i + 1; j < ticks.length; j += 1) {
-        // The two share a screen only from the FINER tier's width up — which
-        // is the WIDER plot of the pair, because a finer tier appears later.
-        const px = Math.max(plotAt[ticks[i].tier], plotAt[ticks[j].tier]);
-        const apart = (Math.abs(ticks[i].x - ticks[j].x) / 320) * px;
-        expect(apart).toBeGreaterThanOrEqual(38);
+    // 44px centre to centre: a `26 Aug` label is ~30px at `text-[9.5px]` in
+    // tabular figures, plus 14px of air.
+    for (const span of [1, 5, 7, 10, 12, 13, 24, 30, 45, 60, 90, 200, 400, 900]) {
+      const ticks = axisTicks({ dates: dailyDates("2024-07-01", span + 1), width: 320, height: 96 });
+      for (const [tiers, px] of [[PHONE, 358], [LG, 486], [XXL, 817]] as const) {
+        const visible = atTier(ticks, tiers as string[]);
+        for (let i = 1; i < visible.length; i += 1) {
+          const apart = ((visible[i].x - visible[i - 1].x) / 320) * (px as number);
+          expect(apart).toBeGreaterThanOrEqual(44);
+        }
+      }
+      // …and the same, stated the way the render will actually see it: two
+      // labels only ever share a screen from the FINER tier's width up.
+      for (let i = 0; i < ticks.length; i += 1) {
+        for (let j = i + 1; j < ticks.length; j += 1) {
+          const px = Math.max(PLOT_PX[ticks[i].tier], PLOT_PX[ticks[j].tier]);
+          expect((Math.abs(ticks[i].x - ticks[j].x) / 320) * px).toBeGreaterThanOrEqual(44);
+        }
       }
     }
   });
 
-  it("thins out rather than repeating a date, when there are fewer days than slots", () => {
-    // A week-long window has six interior days for eleven interior slots. It
-    // must not label the same day twice, and it must not invent a day.
-    const week = {
-      dates: Array.from({ length: 7 }, (_unused, i) =>
-        new Date(Date.UTC(2026, 7, 20 + i)).toISOString().slice(0, 10)
-      ),
-      width: 320,
-      height: 96,
-    };
-    const ticks = axisTicks(week);
-    expect(new Set(ticks.map((t) => t.date)).size).toBe(ticks.length);
-    for (const tick of ticks) expect(week.dates).toContain(tick.date);
+  it("never repeats a date and never leaves the drawn window", () => {
+    for (const span of [1, 2, 5, 12, 30, 91, 400]) {
+      const dates = dailyDates("2025-02-01", span + 1);
+      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      expect(new Set(ticks.map((t) => t.date)).size).toBe(ticks.length);
+      for (const tick of ticks) {
+        expect(tick.date >= dates[0]).toBe(true);
+        expect(tick.date <= dates[dates.length - 1]).toBe(true);
+        expect(tick.x).toBeGreaterThanOrEqual(0);
+        expect(tick.x).toBeLessThanOrEqual(320);
+      }
+    }
   });
 
-  /* ═══ UX-P146: THE AXIS IS A CALENDAR NOW, NOT A LIST ═══
-   *
-   * Alex, on the UX-P145 desktop artifact: the headline chart's x-axis has
-   * weird spacing. It did. UX-P139 spaced every point by its INDEX in the list
-   * of observed dates, so a day and a fortnight were the same step, and the
-   * interior tick was the median OBSERVATION rather than the middle of the
-   * window. The tests below are the replacement contract; the one they replace
-   * asserted the ordinal placement directly.
-   */
-
-  it("places ticks by the CALENDAR, not by position in the list", () => {
+  it("the LINE uses the same scale as the ticks — they cannot disagree", () => {
+    // The failure this exists to stop is the one the pre-UX-P146 design
+    // accepted knowingly: a tick placed by one rule and a point placed by
+    // another, so the label sits where the line is not. A tick's x must be the
+    // x the line WOULD have at that date, whether or not a reading exists.
     const ticks = axisTicks(geometry);
     const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
     const first = day(geometry.dates[0]);
     const last = day(geometry.dates[geometry.dates.length - 1]);
     for (const tick of ticks) {
-      // Still a real observed date — an axis must not label a day nothing was
-      // read. Only its POSITION changed.
-      expect(geometry.dates).toContain(tick.date);
       expect(tick.x).toBeCloseTo(((day(tick.date) - first) * 320) / (last - first), 5);
     }
-  });
-
-  it("the interior ticks are calendar positions, not positions in the list", () => {
-    // The fixture domain is 28 Jul, 11 Aug, 20 Aug, 26 Aug — deliberately
-    // uneven, with only two interior days for eleven interior slots, so both
-    // survive at the coarsest tier and the axis is four labels at every width.
-    const ticks = axisTicks(geometry);
-    expect(ticks.map((t) => t.date)).toEqual([
-      "2026-07-28", "2026-08-11", "2026-08-20", "2026-08-26",
-    ]);
-    // 11 Aug is 14 of 29 days in — just under half — and it is drawn there.
-    // The ORDINAL axis this replaced put it one third of the way across, at
-    // index 1 of 3, and labelled the two-thirds mark "20 Aug".
-    expect(ticks[1].x / 320).toBeCloseTo(14 / 29, 3);
-    expect(ticks[2].x / 320).toBeCloseTo(23 / 29, 3);
-    expect(Math.abs(ticks[1].x - 320 / 3)).toBeGreaterThan(40);
-  });
-
-  it("PROOF ON REAL DATA: the gap the old axis deleted", () => {
-    // The production men's board carries 23 observed dates: 2026-07-28 through
-    // 08-17 daily, then an EIGHT-DAY HOLE, then 08-26 and 08-27.
-    const dates = [
-      ...Array.from({ length: 21 }, (_unused, i) =>
-        new Date(Date.UTC(2026, 6, 28 + i)).toISOString().slice(0, 10)
-      ),
-      "2026-08-26",
-      "2026-08-27",
-    ];
-    expect(dates).toHaveLength(23);
-    expect(dates[20]).toBe("2026-08-17");
-
-    const real = { dates, width: 320, height: 96 };
-    const ticks = axisTicks(real);
-
-    // BEFORE: index-spaced. The interior tick was `dates[11]` = 08-08, drawn at
-    // exactly 50% and read by a user as the midpoint of a 30-day window whose
-    // true midpoint is 12 Aug.
-    expect(dates[11]).toBe("2026-08-08");
-    // AFTER: 12 Aug is on the axis, and it is not at 50%, because 12 Aug is
-    // not the middle of 28 Jul → 27 Aug once the eight-day hole is drawn at
-    // its true width.
-    const midpoint = ticks.find((tick) => tick.date === "2026-08-12");
-    expect(midpoint).toBeDefined();
-    expect((midpoint as { x: number }).x).toBe(160);
-    // ...and the hole itself is now legible as a hole: 17 Aug to 27 Aug is a
-    // third of the axis with nothing in it, because that is a third of the
-    // window with nothing in it.
-    const seventeenth = ticks.find((tick) => tick.date === "2026-08-17");
-    expect((seventeenth as { x: number }).x).toBeCloseTo((20 * 320) / 30, 1);
-    expect(ticks.filter((tick) => tick.date > "2026-08-17" && tick.date < "2026-08-27"))
-      .toEqual([]);
-
-    // And the squash. The last nine calendar days used to occupy 2 of 22 steps
-    // — 9% of the axis — while the first eleven days took 50% of it. Now every
-    // day is worth the same width, so the two stretches are drawn in
-    // proportion to the time they cover.
-    const width = (fromIso: string, toIso: string) => {
-      const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
-      return ((day(toIso) - day(fromIso)) * 320) / (day(dates[22]) - day(dates[0]));
-    };
-    const tail = width("2026-08-18", "2026-08-27"); // 9 days
-    const head = width("2026-07-28", "2026-08-08"); // 11 days
-    // Comparable stretches, comparable widths — the old axis drew these at
-    // 28.8 and 160.0, a 5.6x distortion.
-    expect(tail / head).toBeGreaterThan(0.7);
-    expect(tail / head).toBeLessThan(1.0);
-    const oldTail = (2 * 320) / 22;
-    const oldHead = (11 * 320) / 22;
-    expect(oldHead / oldTail).toBeGreaterThan(5);
-  });
-
-  it("drops the interior tick rather than nudge it into an edge", () => {
-    // One old reading and a recent clump: the calendar midpoint has no nearby
-    // observation, so the nearest one sits hard against the right-hand label.
-    // Two accurate ticks beat three with one in the wrong place.
-    const lopsided = {
-      dates: ["2026-01-01", "2026-08-25", "2026-08-26", "2026-08-27"],
-      width: 320,
-      height: 96,
-    };
-    const ticks = axisTicks(lopsided);
-    expect(ticks).toHaveLength(2);
-    expect(ticks.map((t) => t.date)).toEqual(["2026-01-01", "2026-08-27"]);
-  });
-
-  it("the LINE uses the same scale as the ticks — they cannot disagree", () => {
-    // The failure this exists to stop is the one the old design accepted
-    // knowingly: a tick placed by one rule and a point placed by another, so
-    // the label sits where the line is not.
-    const series = chartSeriesFor(rows, selection);
-    const drawn = seriesPoints(series[0], geometry, "ALL");
+    // And where a reading DOES exist on a tick's date, the drawn point lands on
+    // the rule: 26 Aug is both the last observation and the last tick.
+    const drawn = seriesPoints(chartSeriesFor(rows, selection)[0], geometry, "ALL");
     const xs = drawn.split(" ").map((pair) => Number(pair.split(",")[0]));
-    const ticks = axisTicks(geometry);
-    // Every tick's x is one of the drawn x's, because every tick is an observed
-    // date and this series carries all four of them.
-    for (const tick of ticks) {
-      expect(xs.some((value) => Math.abs(value - tick.x) < 0.15)).toBe(true);
-    }
-    // And the spacing is uneven in exactly the way the data is: 14 days, then
-    // 9, then 6.
-    expect(xs[1] - xs[0]).toBeCloseTo((14 * 320) / 29, 1);
-    expect(xs[2] - xs[1]).toBeCloseTo((9 * 320) / 29, 1);
-    expect(xs[3] - xs[2]).toBeCloseTo((6 * 320) / 29, 1);
+    expect(ticks[ticks.length - 1].date).toBe("2026-08-26");
+    expect(xs[xs.length - 1]).toBeCloseTo(ticks[ticks.length - 1].x, 5);
   });
 
   it("offers no ticks for a domain that cannot be drawn", () => {
     expect(axisTicks({ dates: [], width: 320, height: 96 })).toEqual([]);
     expect(axisTicks({ dates: ["2026-08-26"], width: 320, height: 96 })).toEqual([]);
+    // A domain of two entries on the SAME day has no width to divide.
+    expect(axisTicks({ dates: ["2026-08-26", "2026-08-26"], width: 320, height: 96 })).toEqual([]);
   });
 
   it("labels a date day-first, because the month repeats and the day does not", () => {
@@ -318,55 +346,96 @@ describe("item 6 — the chart's x-axis", () => {
     expect(axisSpanDays({ dates: ["2026-08-26"], width: 320, height: 96 })).toBeNull();
   });
 
+  it("names the window from the DOMAIN, not from the ticks", () => {
+    // UX-P207. The ticks no longer sit on the domain's ends, so reading the
+    // window off them would have told a screen reader "29 Jul to 26 Aug" while
+    // the footer beside it said "29d shown" — the same disagreement this queue
+    // is removing, in two modalities.
+    expect(axisWindow(geometry)).toEqual({ from: "28 Jul", to: "26 Aug" });
+    expect(axisWindow({ dates: ["2026-08-26"], width: 320, height: 96 })).toBeNull();
+    const ticks = axisTicks(geometry);
+    expect(ticks[0].label).not.toBe("28 Jul");
+  });
+
   it("RENDERS the ticks and their labels", () => {
     const html = renderToStaticMarkup(
       <ContenderChart rows={rows} draw="mens-singles" selection={selection} onToggle={() => {}} />
     );
     expect(html).toContain('data-testid="chart-axis"');
-    expect((html.match(/data-testid="chart-axis-tick"/g) ?? []).length).toBe(4);
-    expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBe(4);
-    expect(html).toContain("28 Jul");
-    expect(html).toContain("26 Aug");
+    // 28 Jul → 26 Aug is 29 days, so a weekly step: 29 Jul, 5, 12, 19, 26 Aug.
+    expect((html.match(/data-testid="chart-axis-tick"/g) ?? []).length).toBe(5);
+    expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBe(5);
+    for (const label of ["29 Jul", "5 Aug", "12 Aug", "19 Aug", "26 Aug"]) {
+      expect(html).toContain(`>${label}</span>`);
+    }
     expect(html).toContain('data-testid="chart-span"');
     expect(html).toContain("29d shown");
   });
 
   it("spends the tier at the breakpoint — one render, three densities", () => {
-    // UX-P147. The rule that must not regress is that a `wide` or `fine` tick
-    // is HIDDEN below its breakpoint rather than absent from the markup: the
-    // chart is server-rendered once, and the density has to come from CSS or
-    // it cannot come at all.
-    const dates = [
-      ...Array.from({ length: 21 }, (_unused, i) =>
-        new Date(Date.UTC(2026, 6, 28 + i)).toISOString().slice(0, 10)
-      ),
-      "2026-08-26",
-      "2026-08-27",
-    ];
-    const dense = [
-      row({ trend: dates.map((date) => ({ date, probability: 0.4 })) }),
-    ];
-    const html = renderToStaticMarkup(
-      <ContenderChart
-        rows={dense}
-        draw="mens-singles"
-        selection={dense.map((r) => r.entity_key)}
-        onToggle={() => {}}
-      />
-    );
-    // Every tier is present in the DOM…
-    expect(html).toContain('data-tier="major"');
-    expect(html).toContain('data-tier="wide"');
-    expect(html).toContain('data-tier="fine"');
-    // …and only the coarse ones are visible without a breakpoint.
-    const ticks = [...html.matchAll(/data-testid="chart-axis-label"[^>]*/g)].map(String);
-    expect(ticks).toHaveLength(10);
-    for (const tick of [...html.matchAll(/<span class="([^"]*)"[^>]*data-tier="(\w+)"/g)]) {
-      const [, className, tier] = tick;
-      if (tier === "wide") expect(className).toContain("hidden lg:block");
-      if (tier === "fine") expect(className).toContain("hidden 2xl:block");
-      if (tier === "end" || tier === "major") expect(className).not.toContain("hidden");
+    // UX-P147's rule, unchanged and still load-bearing: a `wide` or `fine` tick
+    // is HIDDEN below its breakpoint rather than absent from the markup. The
+    // chart is server-rendered once, so the density has to come from CSS or it
+    // cannot come at all.
+    //
+    // TWO fixtures, because one cannot show both breakpoints. A 12-day window
+    // thins on the phone only (`major` 2, `wide` 2, `fine` 1 → `2xl:`); a
+    // 10-day window thins on the phone and `lg` agrees with `2xl` (`major` 2,
+    // `wide` 1 → `lg:`). Asserting both is what proves each CSS string is
+    // reachable rather than decorative.
+    for (const [span, tier, className] of [
+      [12, "fine", "hidden 2xl:block"],
+      [10, "wide", "hidden lg:block"],
+    ] as const) {
+      const dates = dailyDates("2026-08-01", span + 1);
+      const dense = [row({ trend: dates.map((date) => ({ date, probability: 0.4 })) })];
+      const html = renderToStaticMarkup(
+        <ContenderChart
+          rows={dense}
+          draw="mens-singles"
+          selection={dense.map((r) => r.entity_key)}
+          onToggle={() => {}}
+        />
+      );
+      expect(html).toContain('data-tier="major"');
+      expect(html).toContain(`data-tier="${tier}"`);
+      for (const match of html.matchAll(/<span class="([^"]*)"[^>]*data-tier="(\w+)"/g)) {
+        const [, classNames, rendered] = match;
+        if (rendered === "major") expect(classNames).not.toContain("hidden");
+        else expect(classNames).toContain(className);
+      }
     }
+  });
+
+  it("aligns each label on its own rule, by POSITION and not by index", () => {
+    // The leftmost tick is no longer AT the left edge, so the old
+    // `index === 0 ? "none"` would have shoved it ~15px right of the rule it
+    // labels. 29 Jul sits at 1 of 29 days — inside the half-label margin, so it
+    // stays left-aligned — while 5 Aug is interior and must be centred.
+    const html = renderToStaticMarkup(
+      <ContenderChart rows={rows} draw="mens-singles" selection={selection} onToggle={() => {}} />
+    );
+    const styleFor = (label: string) => {
+      const at = html.indexOf(`>${label}</span>`);
+      const open = html.lastIndexOf("<span", at);
+      return /style="([^"]*)"/.exec(html.slice(open, at))?.[1] ?? "";
+    };
+    expect(styleFor("29 Jul")).not.toContain("translateX");
+    expect(styleFor("5 Aug")).toContain("translateX(-50%)");
+    expect(styleFor("12 Aug")).toContain("translateX(-50%)");
+    expect(styleFor("26 Aug")).toContain("translateX(-100%)");
+
+    // A tick a whisker inside the left edge is CENTRED, not left-aligned — the
+    // index rule could not tell those two apart and this one must.
+    const wide = [row({ trend: dailyDates("2026-08-01", 31).map((d) => ({ date: d, probability: 0.4 })) })];
+    const wideHtml = renderToStaticMarkup(
+      <ContenderChart rows={wide} draw="mens-singles" selection={wide.map((r) => r.entity_key)}
+        onToggle={() => {}} />
+    );
+    // 3 Aug is 2 of 30 days = 6.7%, outside the 4.2% half-label margin.
+    const at = wideHtml.indexOf(">3 Aug</span>");
+    const open = wideHtml.lastIndexOf("<span", at);
+    expect(/style="([^"]*)"/.exec(wideHtml.slice(open, at))?.[1]).toContain("translateX(-50%)");
   });
 
   it("labels live OUTSIDE the svg, which is non-uniformly scaled", () => {
@@ -386,6 +455,9 @@ describe("item 6 — the chart's x-axis", () => {
     const html = renderToStaticMarkup(
       <ContenderChart rows={rows} draw="mens-singles" selection={selection} onToggle={() => {}} />
     );
+    // The DOMAIN's ends, so the spoken window and the printed "29d shown"
+    // describe the same thing. The first tick is 29 Jul; saying that here would
+    // under-report the window by a day.
     expect(html).toContain("over 29 days, 28 Jul to 26 Aug");
   });
 });
