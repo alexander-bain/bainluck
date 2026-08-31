@@ -1028,6 +1028,55 @@ describe("UX-P206 — a finished match draws its players", () => {
     expect(html).toContain("7-6, 6-3");
   });
 
+  /**
+   * The inner HTML of the `n`th element carrying `data-testid`, found by walking
+   * the tag depth from its opening tag to the matching close.
+   *
+   * 🔴 THIS EXISTS BECAUSE THE GUARD BELOW WAS VACUOUS AND **CERT-512 BLOCKED
+   * ON IT**. The version it replaces compared two string positions —
+   * `html.indexOf('result-player') < html.indexOf('player-avatar')` — and the
+   * cert's plant re-emitted every avatar just AFTER its name cell closed, which
+   * is exactly the fourth-grid-child regression the guard is named for. The
+   * avatar was still later in the string than the first cell, so the whole
+   * focused file stayed **GREEN at 52/52**.
+   *
+   * "Appears after" is not "is inside" — the same class as
+   * `reference_containment_check_cannot_see_early_exit`. Containment needs the
+   * element's own extent, so this walks it. `renderToStaticMarkup` emits
+   * well-formed markup, and every container in this subtree is a `span`, `div`
+   * or `li`, so a depth counter over the opening tag's own name is exact; `img`
+   * is self-closing and never opens depth.
+   *
+   * Reproduced on `827c5bd9`'s own checked-out bytes and re-run against this
+   * guard: `artifacts-ux-p207/battery-cert512-out.txt`.
+   */
+  function innerHtmlOf(html: string, testid: string, nth = 0): string {
+    const marker = `data-testid="${testid}"`;
+    let from = -1;
+    for (let i = 0; i <= nth; i += 1) from = html.indexOf(marker, from + 1);
+    if (from < 0) throw new Error(`no ${testid}[${nth}] in the markup`);
+    const open = html.lastIndexOf("<", from);
+    const tag = /^<(\w+)/.exec(html.slice(open, open + 12))?.[1];
+    if (!tag) throw new Error(`could not read the tag of ${testid}[${nth}]`);
+    const start = html.indexOf(">", from) + 1;
+    let depth = 1;
+    let at = start;
+    while (depth > 0) {
+      const nextOpen = html.indexOf(`<${tag}`, at);
+      const nextClose = html.indexOf(`</${tag}>`, at);
+      if (nextClose < 0) throw new Error(`unbalanced <${tag}> in the markup`);
+      if (nextOpen >= 0 && nextOpen < nextClose) {
+        depth += 1;
+        at = nextOpen + 1;
+      } else {
+        depth -= 1;
+        if (depth === 0) return html.slice(start, nextClose);
+        at = nextClose + 1;
+      }
+    }
+    return "";
+  }
+
   it("keeps the three grid tracks — the avatar rides INSIDE the name cell", () => {
     // UX-P147's columns are the reason this section is legible. An avatar added
     // as a fourth grid child would silently re-flow every prior and every score
@@ -1036,9 +1085,23 @@ describe("UX-P206 — a finished match draws its players", () => {
       <TournamentResults results={withFaces()} draw="mens-singles" />
     );
     expect(html).toContain("grid-cols-[minmax(0,1fr)_max-content_max-content]");
-    const cell = html.indexOf('data-testid="result-player"');
-    const avatar = html.indexOf('data-testid="player-avatar"');
-    expect(cell).toBeLessThan(avatar);
+
+    // CONTAINMENT, WALKED — see `innerHtmlOf`. BOTH cells, because an avatar
+    // that only escapes the loser's cell is the same defect on half the rows,
+    // and inspecting the row's first player is how the sibling guard in this
+    // file was vacuous once already.
+    const cells = [0, 1].map((nth) => innerHtmlOf(html, "result-player", nth));
+    for (const cell of cells) {
+      expect(cell).toContain('data-testid="player-avatar"');
+    }
+    // …and NOTHING is loose in the row outside a name cell, which is what a
+    // fourth grid child IS. Every avatar the row draws is accounted for by the
+    // two cells — the containment check above cannot see an EXTRA one.
+    const row = innerHtmlOf(html, "result-row");
+    const count = (chunk: string) =>
+      (chunk.match(/data-testid="player-avatar"/g) ?? []).length;
+    expect(count(row)).toBe(2);
+    expect(cells.reduce((total, cell) => total + count(cell), 0)).toBe(count(row));
   });
 });
 
