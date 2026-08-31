@@ -16693,15 +16693,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693711,
+          "outcome_id": 222298785,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182655",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Tsitsipas vs Fils",
+            "db_status": "open",
+            "source_labels": [
+              "Stefanos Tsitsipas",
+              "Arthur Fils"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30TSIFIL",
+          "sides": {
+            "stefanos-tsitsipas": {
+              "outcome_id": 222298785,
+              "outcome_external_id": "KXATPMATCH-26AUG30TSIFIL-TSI",
+              "source_label": "Stefanos Tsitsipas"
+            },
+            "arthur-fils": {
+              "outcome_id": 222298784,
+              "outcome_external_id": "KXATPMATCH-26AUG30TSIFIL-FIL",
+              "source_label": "Arthur Fils"
+            }
           }
         },
         {
@@ -16739,15 +16757,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693728,
+          "outcome_id": 222298818,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182656",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Lehecka vs Carreno Busta",
+            "db_status": "resolved",
+            "source_labels": [
+              "Jiri Lehecka",
+              "Pablo Carreno Busta"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30LEHCAR",
+          "sides": {
+            "jiri-lehecka": {
+              "outcome_id": 222298818,
+              "outcome_external_id": "KXATPMATCH-26AUG30LEHCAR-LEH",
+              "source_label": "Jiri Lehecka"
+            },
+            "pablo-carreno-busta": {
+              "outcome_id": 222298819,
+              "outcome_external_id": "KXATPMATCH-26AUG30LEHCAR-CAR",
+              "source_label": "Pablo Carreno Busta"
+            }
           }
         },
         {
@@ -16831,15 +16867,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693712,
+          "outcome_id": 222298786,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182659",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Tirante vs Mannarino",
+            "db_status": "open",
+            "source_labels": [
+              "Thiago Agustin Tirante",
+              "Adrian Mannarino"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30TIRMAN",
+          "sides": {
+            "thiago-agustin-tirante": {
+              "outcome_id": 222298786,
+              "outcome_external_id": "KXATPMATCH-26AUG30TIRMAN-TIR",
+              "source_label": "Thiago Agustin Tirante"
+            },
+            "adrian-mannarino": {
+              "outcome_id": 222298787,
+              "outcome_external_id": "KXATPMATCH-26AUG30TIRMAN-MAN",
+              "source_label": "Adrian Mannarino"
+            }
           }
         },
         {
@@ -16877,15 +16931,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693705,
+          "outcome_id": 222298772,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182660",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Zverev vs Sonego",
+            "db_status": "open",
+            "source_labels": [
+              "Alexander Zverev",
+              "Lorenzo Sonego"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30ZVESON",
+          "sides": {
+            "alexander-zverev": {
+              "outcome_id": 222298772,
+              "outcome_external_id": "KXATPMATCH-26AUG30ZVESON-ZVE",
+              "source_label": "Alexander Zverev"
+            },
+            "lorenzo-sonego": {
+              "outcome_id": 222298773,
+              "outcome_external_id": "KXATPMATCH-26AUG30ZVESON-SON",
+              "source_label": "Lorenzo Sonego"
+            }
           }
         },
         {
@@ -16923,15 +16995,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693719,
+          "outcome_id": 222298800,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182661",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Prizmic vs Shevchenko",
+            "db_status": "resolved",
+            "source_labels": [
+              "Dino Prizmic",
+              "Aleksandr Shevchenko"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30PRISHE",
+          "sides": {
+            "dino-prizmic": {
+              "outcome_id": 222298800,
+              "outcome_external_id": "KXATPMATCH-26AUG30PRISHE-PRI",
+              "source_label": "Dino Prizmic"
+            },
+            "aleksandr-shevchenko": {
+              "outcome_id": 222298801,
+              "outcome_external_id": "KXATPMATCH-26AUG30PRISHE-SHE",
+              "source_label": "Aleksandr Shevchenko"
+            }
           }
         },
         {
@@ -16969,15 +17059,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693731,
+          "outcome_id": 222298825,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182662",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Hanfmann vs Tabilo",
+            "db_status": "open",
+            "source_labels": [
+              "Yannick Hanfmann",
+              "Alejandro Tabilo"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30HANTAB",
+          "sides": {
+            "yannick-hanfmann": {
+              "outcome_id": 222298825,
+              "outcome_external_id": "KXATPMATCH-26AUG30HANTAB-HAN",
+              "source_label": "Yannick Hanfmann"
+            },
+            "alejandro-tabilo": {
+              "outcome_id": 222298824,
+              "outcome_external_id": "KXATPMATCH-26AUG30HANTAB-TAB",
+              "source_label": "Alejandro Tabilo"
+            }
           }
         },
         {
@@ -17061,15 +17169,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693737,
+          "outcome_id": 222298837,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182665",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Faria vs Brooksby",
+            "db_status": "resolved",
+            "source_labels": [
+              "Jaime Faria",
+              "Jenson Brooksby"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30FARBRO",
+          "sides": {
+            "jaime-faria": {
+              "outcome_id": 222298837,
+              "outcome_external_id": "KXATPMATCH-26AUG30FARBRO-FAR",
+              "source_label": "Jaime Faria"
+            },
+            "jenson-brooksby": {
+              "outcome_id": 222298836,
+              "outcome_external_id": "KXATPMATCH-26AUG30FARBRO-BRO",
+              "source_label": "Jenson Brooksby"
+            }
           }
         },
         {
@@ -17107,15 +17233,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693732,
+          "outcome_id": 222298826,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182666",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Halys vs Diaz Acosta",
+            "db_status": "open",
+            "source_labels": [
+              "Quentin Halys",
+              "Facundo Diaz Acosta"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30HALDIA",
+          "sides": {
+            "quentin-halys": {
+              "outcome_id": 222298826,
+              "outcome_external_id": "KXATPMATCH-26AUG30HALDIA-HAL",
+              "source_label": "Quentin Halys"
+            },
+            "facundo-diaz-acosta": {
+              "outcome_id": 222298827,
+              "outcome_external_id": "KXATPMATCH-26AUG30HALDIA-DIA",
+              "source_label": "Facundo Diaz Acosta"
+            }
           }
         },
         {
@@ -17153,15 +17297,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693751,
+          "outcome_id": 222298864,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182669",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Arnaldi vs Duckworth",
+            "db_status": "open",
+            "source_labels": [
+              "Matteo Arnaldi",
+              "James Duckworth"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30ARNDUC",
+          "sides": {
+            "matteo-arnaldi": {
+              "outcome_id": 222298864,
+              "outcome_external_id": "KXATPMATCH-26AUG30ARNDUC-ARN",
+              "source_label": "Matteo Arnaldi"
+            },
+            "james-duckworth": {
+              "outcome_id": 222298865,
+              "outcome_external_id": "KXATPMATCH-26AUG30ARNDUC-DUC",
+              "source_label": "James Duckworth"
+            }
           }
         },
         {
@@ -17199,15 +17361,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693738,
+          "outcome_id": 222298838,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182670",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Etcheverry vs Kopriva",
+            "db_status": "resolved",
+            "source_labels": [
+              "Tomas Martin Etcheverry",
+              "Vit Kopriva"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30ETCKOP",
+          "sides": {
+            "tomas-martin-etcheverry": {
+              "outcome_id": 222298838,
+              "outcome_external_id": "KXATPMATCH-26AUG30ETCKOP-ETC",
+              "source_label": "Tomas Martin Etcheverry"
+            },
+            "vit-kopriva": {
+              "outcome_id": 222298839,
+              "outcome_external_id": "KXATPMATCH-26AUG30ETCKOP-KOP",
+              "source_label": "Vit Kopriva"
+            }
           }
         },
         {
@@ -17245,15 +17425,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693725,
+          "outcome_id": 222298812,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182672",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Merida vs Fucsovics",
+            "db_status": "resolved",
+            "source_labels": [
+              "Daniel Merida",
+              "Marton Fucsovics"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MERFUC",
+          "sides": {
+            "daniel-merida": {
+              "outcome_id": 222298812,
+              "outcome_external_id": "KXATPMATCH-26AUG30MERFUC-MER",
+              "source_label": "Daniel Merida"
+            },
+            "marton-fucsovics": {
+              "outcome_id": 222298813,
+              "outcome_external_id": "KXATPMATCH-26AUG30MERFUC-FUC",
+              "source_label": "Marton Fucsovics"
+            }
           }
         },
         {
@@ -17291,15 +17489,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693742,
+          "outcome_id": 222298847,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182673",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Cilic vs Rublev",
+            "db_status": "resolved",
+            "source_labels": [
+              "Marin Cilic",
+              "Andrey Rublev"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30CILRUB",
+          "sides": {
+            "marin-cilic": {
+              "outcome_id": 222298847,
+              "outcome_external_id": "KXATPMATCH-26AUG30CILRUB-CIL",
+              "source_label": "Marin Cilic"
+            },
+            "andrey-rublev": {
+              "outcome_id": 222298846,
+              "outcome_external_id": "KXATPMATCH-26AUG30CILRUB-RUB",
+              "source_label": "Andrey Rublev"
+            }
           }
         },
         {
@@ -17337,15 +17553,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693748,
+          "outcome_id": 222298858,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182674",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Berrettini vs Wawrinka",
+            "db_status": "open",
+            "source_labels": [
+              "Matteo Berrettini",
+              "Stan Wawrinka"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30BERWAW",
+          "sides": {
+            "matteo-berrettini": {
+              "outcome_id": 222298858,
+              "outcome_external_id": "KXATPMATCH-26AUG30BERWAW-BER",
+              "source_label": "Matteo Berrettini"
+            },
+            "stan-wawrinka": {
+              "outcome_id": 222298859,
+              "outcome_external_id": "KXATPMATCH-26AUG30BERWAW-WAW",
+              "source_label": "Stan Wawrinka"
+            }
           }
         },
         {
@@ -17383,15 +17617,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693720,
+          "outcome_id": 222298803,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182675",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Navone vs Djokovic",
+            "db_status": "open",
+            "source_labels": [
+              "Mariano Navone",
+              "Novak Djokovic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30NAVDJO",
+          "sides": {
+            "mariano-navone": {
+              "outcome_id": 222298803,
+              "outcome_external_id": "KXATPMATCH-26AUG30NAVDJO-NAV",
+              "source_label": "Mariano Navone"
+            },
+            "novak-djokovic": {
+              "outcome_id": 222298802,
+              "outcome_external_id": "KXATPMATCH-26AUG30NAVDJO-DJO",
+              "source_label": "Novak Djokovic"
+            }
           }
         },
         {
@@ -17429,15 +17681,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693716,
+          "outcome_id": 222298794,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182676",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Shelton vs Griekspoor",
+            "db_status": "open",
+            "source_labels": [
+              "Ben Shelton",
+              "Tallon Griekspoor"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30SHEGRI",
+          "sides": {
+            "ben-shelton": {
+              "outcome_id": 222298794,
+              "outcome_external_id": "KXATPMATCH-26AUG30SHEGRI-SHE",
+              "source_label": "Ben Shelton"
+            },
+            "tallon-griekspoor": {
+              "outcome_id": 222298795,
+              "outcome_external_id": "KXATPMATCH-26AUG30SHEGRI-GRI",
+              "source_label": "Tallon Griekspoor"
+            }
           }
         },
         {
@@ -17475,15 +17745,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693707,
+          "outcome_id": 222298777,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182678",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Van Assche vs Norrie",
+            "db_status": "resolved",
+            "source_labels": [
+              "Luca Van Assche",
+              "Cameron Norrie"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30VANNOR",
+          "sides": {
+            "luca-van-assche": {
+              "outcome_id": 222298777,
+              "outcome_external_id": "KXATPMATCH-26AUG30VANNOR-VAN",
+              "source_label": "Luca Van Assche"
+            },
+            "cameron-norrie": {
+              "outcome_id": 222298776,
+              "outcome_external_id": "KXATPMATCH-26AUG30VANNOR-NOR",
+              "source_label": "Cameron Norrie"
+            }
           }
         },
         {
@@ -17521,15 +17809,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693739,
+          "outcome_id": 222298841,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182679",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Dzumhur vs Hurkacz",
+            "db_status": "open",
+            "source_labels": [
+              "Damir Dzumhur",
+              "Hubert Hurkacz"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30DZUHUR",
+          "sides": {
+            "damir-dzumhur": {
+              "outcome_id": 222298841,
+              "outcome_external_id": "KXATPMATCH-26AUG30DZUHUR-DZU",
+              "source_label": "Damir Dzumhur"
+            },
+            "hubert-hurkacz": {
+              "outcome_id": 222298840,
+              "outcome_external_id": "KXATPMATCH-26AUG30DZUHUR-HUR",
+              "source_label": "Hubert Hurkacz"
+            }
           }
         },
         {
@@ -17567,15 +17873,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693729,
+          "outcome_id": 222298821,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182680",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Kecmanovic vs Shapovalov",
+            "db_status": "resolved",
+            "source_labels": [
+              "Miomir Kecmanovic",
+              "Denis Shapovalov"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30KECSHA",
+          "sides": {
+            "miomir-kecmanovic": {
+              "outcome_id": 222298821,
+              "outcome_external_id": "KXATPMATCH-26AUG30KECSHA-KEC",
+              "source_label": "Miomir Kecmanovic"
+            },
+            "denis-shapovalov": {
+              "outcome_id": 222298820,
+              "outcome_external_id": "KXATPMATCH-26AUG30KECSHA-SHA",
+              "source_label": "Denis Shapovalov"
+            }
           }
         },
         {
@@ -17613,15 +17937,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693749,
+          "outcome_id": 222298860,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182685",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Bergs vs Taberner",
+            "db_status": "open",
+            "source_labels": [
+              "Zizou Bergs",
+              "Carlos Taberner"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30BERTAB",
+          "sides": {
+            "zizou-bergs": {
+              "outcome_id": 222298860,
+              "outcome_external_id": "KXATPMATCH-26AUG30BERTAB-BER",
+              "source_label": "Zizou Bergs"
+            },
+            "carlos-taberner": {
+              "outcome_id": 222298861,
+              "outcome_external_id": "KXATPMATCH-26AUG30BERTAB-TAB",
+              "source_label": "Carlos Taberner"
+            }
           }
         },
         {
@@ -17659,15 +18001,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693710,
+          "outcome_id": 222298783,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182694",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Ugo Carabelli vs Struff",
+            "db_status": "open",
+            "source_labels": [
+              "Camilo Ugo Carabelli",
+              "Jan-Lennard Struff"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30UGOSTR",
+          "sides": {
+            "camilo-ugo-carabelli": {
+              "outcome_id": 222298783,
+              "outcome_external_id": "KXATPMATCH-26AUG30UGOSTR-UGO",
+              "source_label": "Camilo Ugo Carabelli"
+            },
+            "jan-lennard-struff": {
+              "outcome_id": 222298782,
+              "outcome_external_id": "KXATPMATCH-26AUG30UGOSTR-STR",
+              "source_label": "Jan-Lennard Struff"
+            }
           }
         },
         {
@@ -17705,15 +18065,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693743,
+          "outcome_id": 222298849,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182697",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Choinski vs Van de Zandschulp",
+            "db_status": "open",
+            "source_labels": [
+              "Jan Choinski",
+              "Botic Van de Zandschulp"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30CHOVAN",
+          "sides": {
+            "jan-choinski": {
+              "outcome_id": 222298849,
+              "outcome_external_id": "KXATPMATCH-26AUG30CHOVAN-CHO",
+              "source_label": "Jan Choinski"
+            },
+            "botic-van-de-zandschulp": {
+              "outcome_id": 222298848,
+              "outcome_external_id": "KXATPMATCH-26AUG30CHOVAN-VAN",
+              "source_label": "Botic Van de Zandschulp"
+            }
           }
         },
         {
@@ -17751,15 +18129,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693750,
+          "outcome_id": 222298862,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182701",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Auger-Aliassime vs Hijikata",
+            "db_status": "open",
+            "source_labels": [
+              "Felix Auger-Aliassime",
+              "Rinky Hijikata"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30AUGHIJ",
+          "sides": {
+            "felix-auger-aliassime": {
+              "outcome_id": 222298862,
+              "outcome_external_id": "KXATPMATCH-26AUG30AUGHIJ-AUG",
+              "source_label": "Felix Auger-Aliassime"
+            },
+            "rinky-hijikata": {
+              "outcome_id": 222298863,
+              "outcome_external_id": "KXATPMATCH-26AUG30AUGHIJ-HIJ",
+              "source_label": "Rinky Hijikata"
+            }
           }
         },
         {
@@ -17797,15 +18193,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693736,
+          "outcome_id": 222298835,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182702",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Fery vs Musetti",
+            "db_status": "open",
+            "source_labels": [
+              "Arthur Fery",
+              "Lorenzo Musetti"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30FERMUS",
+          "sides": {
+            "arthur-fery": {
+              "outcome_id": 222298835,
+              "outcome_external_id": "KXATPMATCH-26AUG30FERMUS-FER",
+              "source_label": "Arthur Fery"
+            },
+            "lorenzo-musetti": {
+              "outcome_id": 222298834,
+              "outcome_external_id": "KXATPMATCH-26AUG30FERMUS-MUS",
+              "source_label": "Lorenzo Musetti"
+            }
           }
         },
         {
@@ -17843,15 +18257,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693730,
+          "outcome_id": 222298822,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182703",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Jodar vs Kokkinakis",
+            "db_status": "open",
+            "source_labels": [
+              "Rafael Jodar",
+              "Thanasi Kokkinakis"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30JODKOK",
+          "sides": {
+            "rafael-jodar": {
+              "outcome_id": 222298822,
+              "outcome_external_id": "KXATPMATCH-26AUG30JODKOK-JOD",
+              "source_label": "Rafael Jodar"
+            },
+            "thanasi-kokkinakis": {
+              "outcome_id": 222298823,
+              "outcome_external_id": "KXATPMATCH-26AUG30JODKOK-KOK",
+              "source_label": "Thanasi Kokkinakis"
+            }
           }
         },
         {
@@ -17889,15 +18321,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693718,
+          "outcome_id": 222298799,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182705",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Safiullin vs Alcaraz",
+            "db_status": "open",
+            "source_labels": [
+              "Roman Safiullin",
+              "Carlos Alcaraz"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30SAFALC",
+          "sides": {
+            "roman-safiullin": {
+              "outcome_id": 222298799,
+              "outcome_external_id": "KXATPMATCH-26AUG30SAFALC-SAF",
+              "source_label": "Roman Safiullin"
+            },
+            "carlos-alcaraz": {
+              "outcome_id": 222298798,
+              "outcome_external_id": "KXATPMATCH-26AUG30SAFALC-ALC",
+              "source_label": "Carlos Alcaraz"
+            }
           }
         },
         {
@@ -17935,15 +18385,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693713,
+          "outcome_id": 222298789,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182706",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Sweeny vs Moutet",
+            "db_status": "open",
+            "source_labels": [
+              "Dane Sweeny",
+              "Corentin Moutet"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30SWEMOU",
+          "sides": {
+            "dane-sweeny": {
+              "outcome_id": 222298789,
+              "outcome_external_id": "KXATPMATCH-26AUG30SWEMOU-SWE",
+              "source_label": "Dane Sweeny"
+            },
+            "corentin-moutet": {
+              "outcome_id": 222298788,
+              "outcome_external_id": "KXATPMATCH-26AUG30SWEMOU-MOU",
+              "source_label": "Corentin Moutet"
+            }
           }
         },
         {
@@ -17981,15 +18449,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693726,
+          "outcome_id": 222298815,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182708",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Marozsan vs Zheng",
+            "db_status": "open",
+            "source_labels": [
+              "Fabian Marozsan",
+              "Michael Zheng"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MARZHE",
+          "sides": {
+            "fabian-marozsan": {
+              "outcome_id": 222298815,
+              "outcome_external_id": "KXATPMATCH-26AUG30MARZHE-MAR",
+              "source_label": "Fabian Marozsan"
+            },
+            "michael-zheng": {
+              "outcome_id": 222298814,
+              "outcome_external_id": "KXATPMATCH-26AUG30MARZHE-ZHE",
+              "source_label": "Michael Zheng"
+            }
           }
         },
         {
@@ -18027,15 +18513,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693744,
+          "outcome_id": 222298851,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182710",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Cerundolo vs Ruud",
+            "db_status": "resolved",
+            "source_labels": [
+              "Juan Manuel Cerundolo",
+              "Casper Ruud"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30CERRUU",
+          "sides": {
+            "juan-manuel-cerundolo": {
+              "outcome_id": 222298851,
+              "outcome_external_id": "KXATPMATCH-26AUG30CERRUU-CER",
+              "source_label": "Juan Manuel Cerundolo"
+            },
+            "casper-ruud": {
+              "outcome_id": 222298850,
+              "outcome_external_id": "KXATPMATCH-26AUG30CERRUU-RUU",
+              "source_label": "Casper Ruud"
+            }
           }
         },
         {
@@ -18073,15 +18577,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693714,
+          "outcome_id": 222298790,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182712",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Svajda vs Altmaier",
+            "db_status": "open",
+            "source_labels": [
+              "Zachary Svajda",
+              "Daniel Altmaier"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30SVAALT",
+          "sides": {
+            "zachary-svajda": {
+              "outcome_id": 222298790,
+              "outcome_external_id": "KXATPMATCH-26AUG30SVAALT-SVA",
+              "source_label": "Zachary Svajda"
+            },
+            "daniel-altmaier": {
+              "outcome_id": 222298791,
+              "outcome_external_id": "KXATPMATCH-26AUG30SVAALT-ALT",
+              "source_label": "Daniel Altmaier"
+            }
           }
         },
         {
@@ -18119,15 +18641,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693741,
+          "outcome_id": 222298845,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182721",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Comesana vs Cobolli",
+            "db_status": "open",
+            "source_labels": [
+              "Francisco Comesana",
+              "Flavio Cobolli"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30COMCOB",
+          "sides": {
+            "francisco-comesana": {
+              "outcome_id": 222298845,
+              "outcome_external_id": "KXATPMATCH-26AUG30COMCOB-COM",
+              "source_label": "Francisco Comesana"
+            },
+            "flavio-cobolli": {
+              "outcome_id": 222298844,
+              "outcome_external_id": "KXATPMATCH-26AUG30COMCOB-COB",
+              "source_label": "Flavio Cobolli"
+            }
           }
         },
         {
@@ -18165,15 +18705,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693708,
+          "outcome_id": 222298778,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182729",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Vallejo vs Monfils",
+            "db_status": "open",
+            "source_labels": [
+              "Adolfo Daniel Vallejo",
+              "Gael Monfils"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30VALMON",
+          "sides": {
+            "adolfo-daniel-vallejo": {
+              "outcome_id": 222298778,
+              "outcome_external_id": "KXATPMATCH-26AUG30VALMON-VAL",
+              "source_label": "Adolfo Daniel Vallejo"
+            },
+            "gael-monfils": {
+              "outcome_id": 222298779,
+              "outcome_external_id": "KXATPMATCH-26AUG30VALMON-MON",
+              "source_label": "Gael Monfils"
+            }
           }
         },
         {
@@ -18211,15 +18769,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693735,
+          "outcome_id": 222298832,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182732",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Fritz vs Blanch",
+            "db_status": "open",
+            "source_labels": [
+              "Taylor Fritz",
+              "Darwin Blanch"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30FRIBLA",
+          "sides": {
+            "taylor-fritz": {
+              "outcome_id": 222298832,
+              "outcome_external_id": "KXATPMATCH-26AUG30FRIBLA-FRI",
+              "source_label": "Taylor Fritz"
+            },
+            "darwin-blanch": {
+              "outcome_id": 222298833,
+              "outcome_external_id": "KXATPMATCH-26AUG30FRIBLA-BLA",
+              "source_label": "Darwin Blanch"
+            }
           }
         },
         {
@@ -18257,15 +18833,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693747,
+          "outcome_id": 222298857,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182734",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Borges vs Tien",
+            "db_status": "open",
+            "source_labels": [
+              "Nuno Borges",
+              "Learner Tien"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30BORTIE",
+          "sides": {
+            "nuno-borges": {
+              "outcome_id": 222298857,
+              "outcome_external_id": "KXATPMATCH-26AUG30BORTIE-BOR",
+              "source_label": "Nuno Borges"
+            },
+            "learner-tien": {
+              "outcome_id": 222298856,
+              "outcome_external_id": "KXATPMATCH-26AUG30BORTIE-TIE",
+              "source_label": "Learner Tien"
+            }
           }
         },
         {
@@ -18303,15 +18897,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693724,
+          "outcome_id": 222298811,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182736",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Misolic vs Cerundolo",
+            "db_status": "open",
+            "source_labels": [
+              "Filip Misolic",
+              "Francisco Cerundolo"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MISCER",
+          "sides": {
+            "filip-misolic": {
+              "outcome_id": 222298811,
+              "outcome_external_id": "KXATPMATCH-26AUG30MISCER-MIS",
+              "source_label": "Filip Misolic"
+            },
+            "francisco-cerundolo": {
+              "outcome_id": 222298810,
+              "outcome_external_id": "KXATPMATCH-26AUG30MISCER-CER",
+              "source_label": "Francisco Cerundolo"
+            }
           }
         },
         {
@@ -18349,15 +18961,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693745,
+          "outcome_id": 222298853,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182739",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Burruchaga vs Khachanov",
+            "db_status": "open",
+            "source_labels": [
+              "Roman Andres Burruchaga",
+              "Karen Khachanov"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30BURKHA",
+          "sides": {
+            "roman-andres-burruchaga": {
+              "outcome_id": 222298853,
+              "outcome_external_id": "KXATPMATCH-26AUG30BURKHA-BUR",
+              "source_label": "Roman Andres Burruchaga"
+            },
+            "karen-khachanov": {
+              "outcome_id": 222298852,
+              "outcome_external_id": "KXATPMATCH-26AUG30BURKHA-KHA",
+              "source_label": "Karen Khachanov"
+            }
           }
         },
         {
@@ -18395,15 +19025,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693734,
+          "outcome_id": 222298831,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182750",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Giron vs Buse",
+            "db_status": "open",
+            "source_labels": [
+              "Marcos Giron",
+              "Ignacio Buse"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30GIRBUS",
+          "sides": {
+            "marcos-giron": {
+              "outcome_id": 222298831,
+              "outcome_external_id": "KXATPMATCH-26AUG30GIRBUS-GIR",
+              "source_label": "Marcos Giron"
+            },
+            "ignacio-buse": {
+              "outcome_id": 222298830,
+              "outcome_external_id": "KXATPMATCH-26AUG30GIRBUS-BUS",
+              "source_label": "Ignacio Buse"
+            }
           }
         },
         {
@@ -18441,15 +19089,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693723,
+          "outcome_id": 222298809,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182751",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Molcan vs Bonzi",
+            "db_status": "open",
+            "source_labels": [
+              "Alex Molcan",
+              "Benjamin Bonzi"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MOLBON",
+          "sides": {
+            "alex-molcan": {
+              "outcome_id": 222298809,
+              "outcome_external_id": "KXATPMATCH-26AUG30MOLBON-MOL",
+              "source_label": "Alex Molcan"
+            },
+            "benjamin-bonzi": {
+              "outcome_id": 222298808,
+              "outcome_external_id": "KXATPMATCH-26AUG30MOLBON-BON",
+              "source_label": "Benjamin Bonzi"
+            }
           }
         },
         {
@@ -18533,15 +19199,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693727,
+          "outcome_id": 222298816,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182758",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Majchrzak vs Medjedovic",
+            "db_status": "resolved",
+            "source_labels": [
+              "Kamil Majchrzak",
+              "Hamad Medjedovic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MAJMED",
+          "sides": {
+            "kamil-majchrzak": {
+              "outcome_id": 222298816,
+              "outcome_external_id": "KXATPMATCH-26AUG30MAJMED-MAJ",
+              "source_label": "Kamil Majchrzak"
+            },
+            "hamad-medjedovic": {
+              "outcome_id": 222298817,
+              "outcome_external_id": "KXATPMATCH-26AUG30MAJMED-MED",
+              "source_label": "Hamad Medjedovic"
+            }
           }
         },
         {
@@ -18579,15 +19263,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693709,
+          "outcome_id": 222298780,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182760",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Vacherot vs Kovacevic",
+            "db_status": "open",
+            "source_labels": [
+              "Valentin Vacherot",
+              "Aleksandar Kovacevic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30VACKOV",
+          "sides": {
+            "valentin-vacherot": {
+              "outcome_id": 222298780,
+              "outcome_external_id": "KXATPMATCH-26AUG30VACKOV-VAC",
+              "source_label": "Valentin Vacherot"
+            },
+            "aleksandar-kovacevic": {
+              "outcome_id": 222298781,
+              "outcome_external_id": "KXATPMATCH-26AUG30VACKOV-KOV",
+              "source_label": "Aleksandar Kovacevic"
+            }
           }
         },
         {
@@ -18671,15 +19373,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693721,
+          "outcome_id": 222298804,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182767",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Nakashima vs Baez",
+            "db_status": "open",
+            "source_labels": [
+              "Brandon Nakashima",
+              "Sebastian Baez"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30NAKBAE",
+          "sides": {
+            "brandon-nakashima": {
+              "outcome_id": 222298804,
+              "outcome_external_id": "KXATPMATCH-26AUG30NAKBAE-NAK",
+              "source_label": "Brandon Nakashima"
+            },
+            "sebastian-baez": {
+              "outcome_id": 222298805,
+              "outcome_external_id": "KXATPMATCH-26AUG30NAKBAE-BAE",
+              "source_label": "Sebastian Baez"
+            }
           }
         },
         {
@@ -18717,15 +19437,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693733,
+          "outcome_id": 222298829,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182769",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Gorzny vs Collignon",
+            "db_status": "open",
+            "source_labels": [
+              "Sebastian Gorzny",
+              "Raphael Collignon"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30GORCOL",
+          "sides": {
+            "sebastian-gorzny": {
+              "outcome_id": 222298829,
+              "outcome_external_id": "KXATPMATCH-26AUG30GORCOL-GOR",
+              "source_label": "Sebastian Gorzny"
+            },
+            "raphael-collignon": {
+              "outcome_id": 222298828,
+              "outcome_external_id": "KXATPMATCH-26AUG30GORCOL-COL",
+              "source_label": "Raphael Collignon"
+            }
           }
         },
         {
@@ -18763,15 +19501,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693722,
+          "outcome_id": 222298807,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182774",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Munar vs Atmane",
+            "db_status": "resolved",
+            "source_labels": [
+              "Jaume Munar",
+              "Terence Atmane"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30MUNATM",
+          "sides": {
+            "jaume-munar": {
+              "outcome_id": 222298807,
+              "outcome_external_id": "KXATPMATCH-26AUG30MUNATM-MUN",
+              "source_label": "Jaume Munar"
+            },
+            "terence-atmane": {
+              "outcome_id": 222298806,
+              "outcome_external_id": "KXATPMATCH-26AUG30MUNATM-ATM",
+              "source_label": "Terence Atmane"
+            }
           }
         },
         {
@@ -18809,15 +19565,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693715,
+          "outcome_id": 222298793,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182778",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Shimabukuro vs Rinderknech",
+            "db_status": "resolved",
+            "source_labels": [
+              "Sho Shimabukuro",
+              "Arthur Rinderknech"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXATPMATCH-26AUG30SHIRIN",
+          "sides": {
+            "sho-shimabukuro": {
+              "outcome_id": 222298793,
+              "outcome_external_id": "KXATPMATCH-26AUG30SHIRIN-SHI",
+              "source_label": "Sho Shimabukuro"
+            },
+            "arthur-rinderknech": {
+              "outcome_id": 222298792,
+              "outcome_external_id": "KXATPMATCH-26AUG30SHIRIN-RIN",
+              "source_label": "Arthur Rinderknech"
+            }
           }
         },
         {
@@ -18855,15 +19629,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693970,
+          "outcome_id": 222299303,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182590",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Ito vs Selekhmeteva",
+            "db_status": "open",
+            "source_labels": [
+              "Aoi Ito",
+              "Oksana Selekhmeteva"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30ITOSEL",
+          "sides": {
+            "aoi-ito": {
+              "outcome_id": 222299303,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ITOSEL-ITO",
+              "source_label": "Aoi Ito"
+            },
+            "oksana-selekhmeteva": {
+              "outcome_id": 222299302,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ITOSEL-SEL",
+              "source_label": "Oksana Selekhmeteva"
+            }
           }
         },
         {
@@ -18901,15 +19693,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693949,
+          "outcome_id": 222299261,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182591",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Rakhimova vs Krejcikova",
+            "db_status": "open",
+            "source_labels": [
+              "Kamilla Rakhimova",
+              "Barbora Krejcikova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30RAKKRE",
+          "sides": {
+            "kamilla-rakhimova": {
+              "outcome_id": 222299261,
+              "outcome_external_id": "KXWTAMATCH-26AUG30RAKKRE-RAK",
+              "source_label": "Kamilla Rakhimova"
+            },
+            "barbora-krejcikova": {
+              "outcome_id": 222299260,
+              "outcome_external_id": "KXWTAMATCH-26AUG30RAKKRE-KRE",
+              "source_label": "Barbora Krejcikova"
+            }
           }
         },
         {
@@ -18947,15 +19757,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693948,
+          "outcome_id": 222299258,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182592",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Sabalenka vs Osorio",
+            "db_status": "open",
+            "source_labels": [
+              "Aryna Sabalenka",
+              "Camila Osorio"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30SABOSO",
+          "sides": {
+            "aryna-sabalenka": {
+              "outcome_id": 222299258,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SABOSO-SAB",
+              "source_label": "Aryna Sabalenka"
+            },
+            "camila-osorio": {
+              "outcome_id": 222299259,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SABOSO-OSO",
+              "source_label": "Camila Osorio"
+            }
           }
         },
         {
@@ -18993,15 +19821,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693939,
+          "outcome_id": 222299240,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182594",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Vandewinkel vs Pliskova",
+            "db_status": "open",
+            "source_labels": [
+              "Hanne Vandewinkel",
+              "Karolina Pliskova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30VANPLI",
+          "sides": {
+            "hanne-vandewinkel": {
+              "outcome_id": 222299240,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VANPLI-VAN",
+              "source_label": "Hanne Vandewinkel"
+            },
+            "karolina-pliskova": {
+              "outcome_id": 222299241,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VANPLI-PLI",
+              "source_label": "Karolina Pliskova"
+            }
           }
         },
         {
@@ -19039,15 +19885,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693976,
+          "outcome_id": 222299315,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182595",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Chwalinska vs Townsend",
+            "db_status": "open",
+            "source_labels": [
+              "Maja Chwalinska",
+              "Taylor Townsend"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30CHWTOW",
+          "sides": {
+            "maja-chwalinska": {
+              "outcome_id": 222299315,
+              "outcome_external_id": "KXWTAMATCH-26AUG30CHWTOW-CHW",
+              "source_label": "Maja Chwalinska"
+            },
+            "taylor-townsend": {
+              "outcome_id": 222299314,
+              "outcome_external_id": "KXWTAMATCH-26AUG30CHWTOW-TOW",
+              "source_label": "Taylor Townsend"
+            }
           }
         },
         {
@@ -19085,15 +19949,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693952,
+          "outcome_id": 222299266,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182596",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Preston vs Parks",
+            "db_status": "open",
+            "source_labels": [
+              "Taylah Preston",
+              "Alycia Parks"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30PREPAR",
+          "sides": {
+            "taylah-preston": {
+              "outcome_id": 222299266,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PREPAR-PRE",
+              "source_label": "Taylah Preston"
+            },
+            "alycia-parks": {
+              "outcome_id": 222299267,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PREPAR-PAR",
+              "source_label": "Alycia Parks"
+            }
           }
         },
         {
@@ -19131,15 +20013,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693944,
+          "outcome_id": 222299250,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182598",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Starodubtseva vs Seidel",
+            "db_status": "open",
+            "source_labels": [
+              "Yuliia Starodubtseva",
+              "Ella Seidel"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30STASEI",
+          "sides": {
+            "yuliia-starodubtseva": {
+              "outcome_id": 222299250,
+              "outcome_external_id": "KXWTAMATCH-26AUG30STASEI-STA",
+              "source_label": "Yuliia Starodubtseva"
+            },
+            "ella-seidel": {
+              "outcome_id": 222299251,
+              "outcome_external_id": "KXWTAMATCH-26AUG30STASEI-SEI",
+              "source_label": "Ella Seidel"
+            }
           }
         },
         {
@@ -19177,15 +20077,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693950,
+          "outcome_id": 222299263,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182600",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Quevedo vs Mertens",
+            "db_status": "open",
+            "source_labels": [
+              "Kaitlin Quevedo",
+              "Elise Mertens"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30QUEMER",
+          "sides": {
+            "kaitlin-quevedo": {
+              "outcome_id": 222299263,
+              "outcome_external_id": "KXWTAMATCH-26AUG30QUEMER-QUE",
+              "source_label": "Kaitlin Quevedo"
+            },
+            "elise-mertens": {
+              "outcome_id": 222299262,
+              "outcome_external_id": "KXWTAMATCH-26AUG30QUEMER-MER",
+              "source_label": "Elise Mertens"
+            }
           }
         },
         {
@@ -19223,15 +20141,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693938,
+          "outcome_id": 222299239,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182601",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Vidmanova vs Bouzas Maneiro",
+            "db_status": "open",
+            "source_labels": [
+              "Darja Vidmanova",
+              "Jessica Bouzas Maneiro"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30VIDBOU",
+          "sides": {
+            "darja-vidmanova": {
+              "outcome_id": 222299239,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VIDBOU-VID",
+              "source_label": "Darja Vidmanova"
+            },
+            "jessica-bouzas-maneiro": {
+              "outcome_id": 222299238,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VIDBOU-BOU",
+              "source_label": "Jessica Bouzas Maneiro"
+            }
           }
         },
         {
@@ -19269,15 +20205,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693974,
+          "outcome_id": 222299311,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182602",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Frodin vs Rybakina",
+            "db_status": "open",
+            "source_labels": [
+              "Thea Frodin",
+              "Elena Rybakina"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30FRORYB",
+          "sides": {
+            "thea-frodin": {
+              "outcome_id": 222299311,
+              "outcome_external_id": "KXWTAMATCH-26AUG30FRORYB-FRO",
+              "source_label": "Thea Frodin"
+            },
+            "elena-rybakina": {
+              "outcome_id": 222299310,
+              "outcome_external_id": "KXWTAMATCH-26AUG30FRORYB-RYB",
+              "source_label": "Elena Rybakina"
+            }
           }
         },
         {
@@ -19315,15 +20269,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693943,
+          "outcome_id": 222299249,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182603",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Stephens vs Tauson",
+            "db_status": "open",
+            "source_labels": [
+              "Sloane Stephens",
+              "Clara Tauson"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30STETAU",
+          "sides": {
+            "sloane-stephens": {
+              "outcome_id": 222299249,
+              "outcome_external_id": "KXWTAMATCH-26AUG30STETAU-STE",
+              "source_label": "Sloane Stephens"
+            },
+            "clara-tauson": {
+              "outcome_id": 222299248,
+              "outcome_external_id": "KXWTAMATCH-26AUG30STETAU-TAU",
+              "source_label": "Clara Tauson"
+            }
           }
         },
         {
@@ -19361,15 +20333,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693946,
+          "outcome_id": 222299255,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182604",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Snigur vs Shnaider",
+            "db_status": "open",
+            "source_labels": [
+              "Daria Snigur",
+              "Diana Shnaider"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30SNISHN",
+          "sides": {
+            "daria-snigur": {
+              "outcome_id": 222299255,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SNISHN-SNI",
+              "source_label": "Daria Snigur"
+            },
+            "diana-shnaider": {
+              "outcome_id": 222299254,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SNISHN-SHN",
+              "source_label": "Diana Shnaider"
+            }
           }
         },
         {
@@ -19453,15 +20443,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693954,
+          "outcome_id": 222299271,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182608",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Podoroska vs Waltert",
+            "db_status": "open",
+            "source_labels": [
+              "Nadia Podoroska",
+              "Simona Waltert"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30PODWAL",
+          "sides": {
+            "nadia-podoroska": {
+              "outcome_id": 222299271,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PODWAL-POD",
+              "source_label": "Nadia Podoroska"
+            },
+            "simona-waltert": {
+              "outcome_id": 222299270,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PODWAL-WAL",
+              "source_label": "Simona Waltert"
+            }
           }
         },
         {
@@ -19499,15 +20507,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693969,
+          "outcome_id": 222299301,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182610",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Jacquemot vs Bouzkova",
+            "db_status": "open",
+            "source_labels": [
+              "Elsa Jacquemot",
+              "Marie Bouzkova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30JACBOU",
+          "sides": {
+            "elsa-jacquemot": {
+              "outcome_id": 222299301,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JACBOU-JAC",
+              "source_label": "Elsa Jacquemot"
+            },
+            "marie-bouzkova": {
+              "outcome_id": 222299300,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JACBOU-BOU",
+              "source_label": "Marie Bouzkova"
+            }
           }
         },
         {
@@ -19545,15 +20571,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693964,
+          "outcome_id": 222299290,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182611",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Keys vs Korneeva",
+            "db_status": "open",
+            "source_labels": [
+              "Madison Keys",
+              "Alina Korneeva"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30KEYKOR",
+          "sides": {
+            "madison-keys": {
+              "outcome_id": 222299290,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KEYKOR-KEY",
+              "source_label": "Madison Keys"
+            },
+            "alina-korneeva": {
+              "outcome_id": 222299291,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KEYKOR-KOR",
+              "source_label": "Alina Korneeva"
+            }
           }
         },
         {
@@ -19591,15 +20635,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693957,
+          "outcome_id": 222299276,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182612",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Osaka vs Zakharova",
+            "db_status": "open",
+            "source_labels": [
+              "Naomi Osaka",
+              "Anastasia Zakharova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30OSAZAK",
+          "sides": {
+            "naomi-osaka": {
+              "outcome_id": 222299276,
+              "outcome_external_id": "KXWTAMATCH-26AUG30OSAZAK-OSA",
+              "source_label": "Naomi Osaka"
+            },
+            "anastasia-zakharova": {
+              "outcome_id": 222299277,
+              "outcome_external_id": "KXWTAMATCH-26AUG30OSAZAK-ZAK",
+              "source_label": "Anastasia Zakharova"
+            }
           }
         },
         {
@@ -19637,15 +20699,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693975,
+          "outcome_id": 222299313,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182613",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Cocciaretto vs Siniakova",
+            "db_status": "open",
+            "source_labels": [
+              "Elisabetta Cocciaretto",
+              "Katerina Siniakova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30COCSIN",
+          "sides": {
+            "elisabetta-cocciaretto": {
+              "outcome_id": 222299313,
+              "outcome_external_id": "KXWTAMATCH-26AUG30COCSIN-COC",
+              "source_label": "Elisabetta Cocciaretto"
+            },
+            "katerina-siniakova": {
+              "outcome_id": 222299312,
+              "outcome_external_id": "KXWTAMATCH-26AUG30COCSIN-SIN",
+              "source_label": "Katerina Siniakova"
+            }
           }
         },
         {
@@ -19683,15 +20763,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693951,
+          "outcome_id": 222299265,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182615",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Putintseva vs Bencic",
+            "db_status": "open",
+            "source_labels": [
+              "Yulia Putintseva",
+              "Belinda Bencic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30PUTBEN",
+          "sides": {
+            "yulia-putintseva": {
+              "outcome_id": 222299265,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PUTBEN-PUT",
+              "source_label": "Yulia Putintseva"
+            },
+            "belinda-bencic": {
+              "outcome_id": 222299264,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PUTBEN-BEN",
+              "source_label": "Belinda Bencic"
+            }
           }
         },
         {
@@ -19729,15 +20827,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693955,
+          "outcome_id": 222299272,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182616",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Pegula vs Ruse",
+            "db_status": "open",
+            "source_labels": [
+              "Jessica Pegula",
+              "Elena-Gabriela Ruse"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30PEGRUS",
+          "sides": {
+            "jessica-pegula": {
+              "outcome_id": 222299272,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PEGRUS-PEG",
+              "source_label": "Jessica Pegula"
+            },
+            "elena-gabriela-ruse": {
+              "outcome_id": 222299273,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PEGRUS-RUS",
+              "source_label": "Elena-Gabriela Ruse"
+            }
           }
         },
         {
@@ -19775,15 +20891,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693937,
+          "outcome_id": 222299237,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182617",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Volynets vs Noskova",
+            "db_status": "open",
+            "source_labels": [
+              "Katie Volynets",
+              "Linda Noskova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30VOLNOS",
+          "sides": {
+            "katie-volynets": {
+              "outcome_id": 222299237,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VOLNOS-VOL",
+              "source_label": "Katie Volynets"
+            },
+            "linda-noskova": {
+              "outcome_id": 222299236,
+              "outcome_external_id": "KXWTAMATCH-26AUG30VOLNOS-NOS",
+              "source_label": "Linda Noskova"
+            }
           }
         },
         {
@@ -19821,15 +20955,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693936,
+          "outcome_id": 222299235,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182618",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Williams vs Kenin",
+            "db_status": "open",
+            "source_labels": [
+              "Venus Williams",
+              "Sofia Kenin"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30WILKEN",
+          "sides": {
+            "venus-williams": {
+              "outcome_id": 222299235,
+              "outcome_external_id": "KXWTAMATCH-26AUG30WILKEN-WIL",
+              "source_label": "Venus Williams"
+            },
+            "sofia-kenin": {
+              "outcome_id": 222299234,
+              "outcome_external_id": "KXWTAMATCH-26AUG30WILKEN-KEN",
+              "source_label": "Sofia Kenin"
+            }
           }
         },
         {
@@ -19867,15 +21019,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693947,
+          "outcome_id": 222299256,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182619",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Sawangkaew vs Udvardy",
+            "db_status": "open",
+            "source_labels": [
+              "Mananchaya Sawangkaew",
+              "Panna Udvardy"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30SAWUDV",
+          "sides": {
+            "mananchaya-sawangkaew": {
+              "outcome_id": 222299256,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SAWUDV-SAW",
+              "source_label": "Mananchaya Sawangkaew"
+            },
+            "panna-udvardy": {
+              "outcome_id": 222299257,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SAWUDV-UDV",
+              "source_label": "Panna Udvardy"
+            }
           }
         },
         {
@@ -19913,15 +21083,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693965,
+          "outcome_id": 222299293,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182620",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Kessler vs Alexandrova",
+            "db_status": "open",
+            "source_labels": [
+              "McCartney Kessler",
+              "Ekaterina Alexandrova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30KESALE",
+          "sides": {
+            "mccartney-kessler": {
+              "outcome_id": 222299293,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KESALE-KES",
+              "source_label": "McCartney Kessler"
+            },
+            "ekaterina-alexandrova": {
+              "outcome_id": 222299292,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KESALE-ALE",
+              "source_label": "Ekaterina Alexandrova"
+            }
           }
         },
         {
@@ -19959,15 +21147,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693978,
+          "outcome_id": 222299318,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182621",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Birrell vs Marcinko",
+            "db_status": "open",
+            "source_labels": [
+              "Kimberly Birrell",
+              "Petra Marcinko"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30BIRMAR",
+          "sides": {
+            "kimberly-birrell": {
+              "outcome_id": 222299318,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BIRMAR-BIR",
+              "source_label": "Kimberly Birrell"
+            },
+            "petra-marcinko": {
+              "outcome_id": 222299319,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BIRMAR-MAR",
+              "source_label": "Petra Marcinko"
+            }
           }
         },
         {
@@ -20005,15 +21211,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693982,
+          "outcome_id": 222299326,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182622",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Li vs Ruzic",
+            "db_status": "open",
+            "source_labels": [
+              "Ann Li",
+              "Antonia Ruzic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30ANNRUZ",
+          "sides": {
+            "ann-li": {
+              "outcome_id": 222299326,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ANNRUZ-ANN",
+              "source_label": "Ann Li"
+            },
+            "antonia-ruzic": {
+              "outcome_id": 222299327,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ANNRUZ-RUZ",
+              "source_label": "Antonia Ruzic"
+            }
           }
         },
         {
@@ -20051,15 +21275,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693973,
+          "outcome_id": 222299309,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182624",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Gibson vs Vekic",
+            "db_status": "open",
+            "source_labels": [
+              "Talia Gibson",
+              "Donna Vekic"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30GIBVEK",
+          "sides": {
+            "talia-gibson": {
+              "outcome_id": 222299309,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GIBVEK-GIB",
+              "source_label": "Talia Gibson"
+            },
+            "donna-vekic": {
+              "outcome_id": 222299308,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GIBVEK-VEK",
+              "source_label": "Donna Vekic"
+            }
           }
         },
         {
@@ -20097,15 +21339,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693971,
+          "outcome_id": 222299305,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182625",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Grabher vs Cirstea",
+            "db_status": "open",
+            "source_labels": [
+              "Julia Grabher",
+              "Sorana Cirstea"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30GRACIR",
+          "sides": {
+            "julia-grabher": {
+              "outcome_id": 222299305,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GRACIR-GRA",
+              "source_label": "Julia Grabher"
+            },
+            "sorana-cirstea": {
+              "outcome_id": 222299304,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GRACIR-CIR",
+              "source_label": "Sorana Cirstea"
+            }
           }
         },
         {
@@ -20143,15 +21403,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693963,
+          "outcome_id": 222299289,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182626",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Kraus vs Muchova",
+            "db_status": "open",
+            "source_labels": [
+              "Sinja Kraus",
+              "Karolina Muchova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30KRAMUC",
+          "sides": {
+            "sinja-kraus": {
+              "outcome_id": 222299289,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KRAMUC-KRA",
+              "source_label": "Sinja Kraus"
+            },
+            "karolina-muchova": {
+              "outcome_id": 222299288,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KRAMUC-MUC",
+              "source_label": "Karolina Muchova"
+            }
           }
         },
         {
@@ -20189,15 +21467,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693983,
+          "outcome_id": 222299328,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182628",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Andreeva vs Tjen",
+            "db_status": "open",
+            "source_labels": [
+              "Mirra Andreeva",
+              "Janice Tjen"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30ANDTJE",
+          "sides": {
+            "mirra-andreeva": {
+              "outcome_id": 222299328,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ANDTJE-AND",
+              "source_label": "Mirra Andreeva"
+            },
+            "janice-tjen": {
+              "outcome_id": 222299329,
+              "outcome_external_id": "KXWTAMATCH-26AUG30ANDTJE-TJE",
+              "source_label": "Janice Tjen"
+            }
           }
         },
         {
@@ -20235,15 +21531,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693942,
+          "outcome_id": 222299246,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182629",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Svitolina vs Sierra",
+            "db_status": "open",
+            "source_labels": [
+              "Elina Svitolina",
+              "Solana Sierra"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30SVISIE",
+          "sides": {
+            "elina-svitolina": {
+              "outcome_id": 222299246,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SVISIE-SVI",
+              "source_label": "Elina Svitolina"
+            },
+            "solana-sierra": {
+              "outcome_id": 222299247,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SVISIE-SIE",
+              "source_label": "Solana Sierra"
+            }
           }
         },
         {
@@ -20281,15 +21595,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693968,
+          "outcome_id": 222299299,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182630",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Joint vs Samsonova",
+            "db_status": "open",
+            "source_labels": [
+              "Maya Joint",
+              "Liudmila Samsonova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30JOISAM",
+          "sides": {
+            "maya-joint": {
+              "outcome_id": 222299299,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JOISAM-JOI",
+              "source_label": "Maya Joint"
+            },
+            "liudmila-samsonova": {
+              "outcome_id": 222299298,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JOISAM-SAM",
+              "source_label": "Liudmila Samsonova"
+            }
           }
         },
         {
@@ -20373,15 +21705,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693956,
+          "outcome_id": 222299274,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182632",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Paolini vs Erjavec",
+            "db_status": "open",
+            "source_labels": [
+              "Jasmine Paolini",
+              "Veronika Erjavec"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30PAOERJ",
+          "sides": {
+            "jasmine-paolini": {
+              "outcome_id": 222299274,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PAOERJ-PAO",
+              "source_label": "Jasmine Paolini"
+            },
+            "veronika-erjavec": {
+              "outcome_id": 222299275,
+              "outcome_external_id": "KXWTAMATCH-26AUG30PAOERJ-ERJ",
+              "source_label": "Veronika Erjavec"
+            }
           }
         },
         {
@@ -20465,15 +21815,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693972,
+          "outcome_id": 222299307,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182635",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Golubic vs Parry",
+            "db_status": "open",
+            "source_labels": [
+              "Viktorija Golubic",
+              "Diane Parry"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30GOLPAR",
+          "sides": {
+            "viktorija-golubic": {
+              "outcome_id": 222299307,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GOLPAR-GOL",
+              "source_label": "Viktorija Golubic"
+            },
+            "diane-parry": {
+              "outcome_id": 222299306,
+              "outcome_external_id": "KXWTAMATCH-26AUG30GOLPAR-PAR",
+              "source_label": "Diane Parry"
+            }
           }
         },
         {
@@ -20511,15 +21879,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693967,
+          "outcome_id": 222299296,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182636",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Jovic vs Frech",
+            "db_status": "open",
+            "source_labels": [
+              "Iva Jovic",
+              "Magdalena Frech"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30JOVFRE",
+          "sides": {
+            "iva-jovic": {
+              "outcome_id": 222299296,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JOVFRE-JOV",
+              "source_label": "Iva Jovic"
+            },
+            "magdalena-frech": {
+              "outcome_id": 222299297,
+              "outcome_external_id": "KXWTAMATCH-26AUG30JOVFRE-FRE",
+              "source_label": "Magdalena Frech"
+            }
           }
         },
         {
@@ -20557,15 +21943,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693959,
+          "outcome_id": 222299280,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182637",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Navarro vs Boisson",
+            "db_status": "open",
+            "source_labels": [
+              "Emma Navarro",
+              "Lois Boisson"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30NAVBOI",
+          "sides": {
+            "emma-navarro": {
+              "outcome_id": 222299280,
+              "outcome_external_id": "KXWTAMATCH-26AUG30NAVBOI-NAV",
+              "source_label": "Emma Navarro"
+            },
+            "lois-boisson": {
+              "outcome_id": 222299281,
+              "outcome_external_id": "KXWTAMATCH-26AUG30NAVBOI-BOI",
+              "source_label": "Lois Boisson"
+            }
           }
         },
         {
@@ -20603,15 +22007,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693962,
+          "outcome_id": 222299287,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182638",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Krueger vs Anisimova",
+            "db_status": "open",
+            "source_labels": [
+              "Ashlyn Krueger",
+              "Amanda Anisimova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30KRUANI",
+          "sides": {
+            "ashlyn-krueger": {
+              "outcome_id": 222299287,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KRUANI-KRU",
+              "source_label": "Ashlyn Krueger"
+            },
+            "amanda-anisimova": {
+              "outcome_id": 222299286,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KRUANI-ANI",
+              "source_label": "Amanda Anisimova"
+            }
           }
         },
         {
@@ -20649,15 +22071,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693979,
+          "outcome_id": 222299320,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182640",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Bejlek vs Bucsa",
+            "db_status": "open",
+            "source_labels": [
+              "Sara Bejlek",
+              "Cristina Bucsa"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30BEJBUC",
+          "sides": {
+            "sara-bejlek": {
+              "outcome_id": 222299320,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BEJBUC-BEJ",
+              "source_label": "Sara Bejlek"
+            },
+            "cristina-bucsa": {
+              "outcome_id": 222299321,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BEJBUC-BUC",
+              "source_label": "Cristina Bucsa"
+            }
           }
         },
         {
@@ -20695,15 +22135,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693958,
+          "outcome_id": 222299279,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182642",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Oliynykova vs Brantmeier",
+            "db_status": "open",
+            "source_labels": [
+              "Oleksandra Oliynykova",
+              "Reese Brantmeier"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30OLIBRA",
+          "sides": {
+            "oleksandra-oliynykova": {
+              "outcome_id": 222299279,
+              "outcome_external_id": "KXWTAMATCH-26AUG30OLIBRA-OLI",
+              "source_label": "Oleksandra Oliynykova"
+            },
+            "reese-brantmeier": {
+              "outcome_id": 222299278,
+              "outcome_external_id": "KXWTAMATCH-26AUG30OLIBRA-BRA",
+              "source_label": "Reese Brantmeier"
+            }
           }
         },
         {
@@ -20741,15 +22199,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693966,
+          "outcome_id": 222299295,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182644",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Kasatkina vs Badosa",
+            "db_status": "open",
+            "source_labels": [
+              "Daria Kasatkina",
+              "Paula Badosa"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30KASBAD",
+          "sides": {
+            "daria-kasatkina": {
+              "outcome_id": 222299295,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KASBAD-KAS",
+              "source_label": "Daria Kasatkina"
+            },
+            "paula-badosa": {
+              "outcome_id": 222299294,
+              "outcome_external_id": "KXWTAMATCH-26AUG30KASBAD-BAD",
+              "source_label": "Paula Badosa"
+            }
           }
         },
         {
@@ -20787,15 +22263,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693945,
+          "outcome_id": 222299253,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182645",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Sonmez vs Gauff",
+            "db_status": "open",
+            "source_labels": [
+              "Zeynep Sonmez",
+              "Coco Gauff"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30SONGAU",
+          "sides": {
+            "zeynep-sonmez": {
+              "outcome_id": 222299253,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SONGAU-SON",
+              "source_label": "Zeynep Sonmez"
+            },
+            "coco-gauff": {
+              "outcome_id": 222299252,
+              "outcome_external_id": "KXWTAMATCH-26AUG30SONGAU-GAU",
+              "source_label": "Coco Gauff"
+            }
           }
         },
         {
@@ -20833,15 +22327,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693961,
+          "outcome_id": 222299285,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182646",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Lee vs Boulter",
+            "db_status": "open",
+            "source_labels": [
+              "Carol Young Suh Lee",
+              "Katie Boulter"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30LEEBOU",
+          "sides": {
+            "carol-young-suh-lee": {
+              "outcome_id": 222299285,
+              "outcome_external_id": "KXWTAMATCH-26AUG30LEEBOU-LEE",
+              "source_label": "Carol Young Suh Lee"
+            },
+            "katie-boulter": {
+              "outcome_id": 222299284,
+              "outcome_external_id": "KXWTAMATCH-26AUG30LEEBOU-BOU",
+              "source_label": "Katie Boulter"
+            }
           }
         },
         {
@@ -20879,15 +22391,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693960,
+          "outcome_id": 222299283,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182648",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Maria vs Ostapenko",
+            "db_status": "open",
+            "source_labels": [
+              "Tatjana Maria",
+              "Jelena Ostapenko"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30MAROST",
+          "sides": {
+            "tatjana-maria": {
+              "outcome_id": 222299283,
+              "outcome_external_id": "KXWTAMATCH-26AUG30MAROST-MAR",
+              "source_label": "Tatjana Maria"
+            },
+            "jelena-ostapenko": {
+              "outcome_id": 222299282,
+              "outcome_external_id": "KXWTAMATCH-26AUG30MAROST-OST",
+              "source_label": "Jelena Ostapenko"
+            }
           }
         },
         {
@@ -20925,15 +22455,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693953,
+          "outcome_id": 222299269,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182650",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Potapova vs Valentova",
+            "db_status": "open",
+            "source_labels": [
+              "Anastasia Potapova",
+              "Tereza Valentova"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30POTVAL",
+          "sides": {
+            "anastasia-potapova": {
+              "outcome_id": 222299269,
+              "outcome_external_id": "KXWTAMATCH-26AUG30POTVAL-POT",
+              "source_label": "Anastasia Potapova"
+            },
+            "tereza-valentova": {
+              "outcome_id": 222299268,
+              "outcome_external_id": "KXWTAMATCH-26AUG30POTVAL-VAL",
+              "source_label": "Tereza Valentova"
+            }
           }
         },
         {
@@ -21017,15 +22565,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693940,
+          "outcome_id": 222299242,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182652",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Tagger vs Korpatsch",
+            "db_status": "open",
+            "source_labels": [
+              "Lilli Tagger",
+              "Tamara Korpatsch"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30TAGKOR",
+          "sides": {
+            "lilli-tagger": {
+              "outcome_id": 222299242,
+              "outcome_external_id": "KXWTAMATCH-26AUG30TAGKOR-TAG",
+              "source_label": "Lilli Tagger"
+            },
+            "tamara-korpatsch": {
+              "outcome_id": 222299243,
+              "outcome_external_id": "KXWTAMATCH-26AUG30TAGKOR-KOR",
+              "source_label": "Tamara Korpatsch"
+            }
           }
         },
         {
@@ -21063,15 +22629,33 @@
         {
           "source": "kalshi",
           "kind": "match",
-          "market_id": null,
-          "outcome_id": null,
-          "status": "missing",
+          "market_id": 59693977,
+          "outcome_id": 222299317,
+          "status": "live",
           "terminal_result": null,
           "evidence": {
-            "kind": "draw-fixture-census-absent",
-            "observed_at": "2026-08-27T18:00:00+00:00",
-            "espn_competition_id": "182653",
-            "note": "fixture from the released draw; no match market pinned at this source when the draw was ingested"
+            "kind": "kalshi-match-market-census",
+            "observed_at": "2026-08-31T04:00:00+00:00",
+            "market_name": "Blinkova vs Kalinskaya",
+            "db_status": "open",
+            "source_labels": [
+              "Anna Blinkova",
+              "Anna Kalinskaya"
+            ],
+            "note": "pinned after the draw ingest, which recorded this source as missing because no match market existed at ceremony time"
+          },
+          "market_external_id": "KXWTAMATCH-26AUG30BLIKAL",
+          "sides": {
+            "anna-blinkova": {
+              "outcome_id": 222299317,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BLIKAL-BLI",
+              "source_label": "Anna Blinkova"
+            },
+            "anna-kalinskaya": {
+              "outcome_id": 222299316,
+              "outcome_external_id": "KXWTAMATCH-26AUG30BLIKAL-KAL",
+              "source_label": "Anna Kalinskaya"
+            }
           }
         },
         {
