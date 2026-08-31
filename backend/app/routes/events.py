@@ -9358,6 +9358,95 @@ async def _rebuild_related_futures(event_id: int) -> None:
         )
 
 
+#: LAT-P163 (#2379): the bookmaker-liquidity count, as a LOOSE INDEX SCAN.
+#:
+#: `ix_fos_outcome_bookmaker` is `(outcome_id, bookmaker)` and it was already
+#: being used — the index was never the problem. The problem is that Postgres
+#: has no index SKIP scan, so `count(DISTINCT bookmaker) GROUP BY outcome_id`
+#: reads EVERY index entry for every outcome and then sorts them, to report a
+#: number that is almost always 1 or 2. `futures_odds_snapshots` is an
+#: append-only 195.6M-row / 51 GB table, so "every entry for this outcome" grows
+#: without bound for as long as we keep pricing it: measured on production over
+#: 300 outcomes, **365,275 index entries and 68,657 heap fetches to produce 300
+#: small integers** (max value 5). The cost is a function of how long we have
+#: held the market, not of the answer.
+#:
+#: The recursive form asks the index the question it can actually answer fast —
+#: "the smallest bookmaker for this outcome above the last one you gave me" —
+#: which is one index probe per DISTINCT bookmaker, plus one to learn there are
+#: no more. `bookmaker` has exactly 11 distinct values fleet-wide (`pg_stats`
+#: n_distinct, null_frac 0), so the probe count is bounded by 12 per outcome and
+#: is in practice ~2.4.
+#:
+#: It is EXACTLY the same answer, not an approximation and not a time window:
+#: proven on production by a FULL OUTER JOIN of the two forms over two disjoint
+#: 300-outcome sets — 0 mismatches, sums 420=420 and 1062=1062 — including that
+#: an outcome with no snapshots yields NO ROW from either form, which is what
+#: keeps the caller's `.get(id, 1)` default reachable.
+#:
+#: 🔴 THIS IS THE SECOND COPY OF THIS WALK AND IT IS NOT YET SHARED.
+#: `routes/futures.py::_get_source_breakdown` (LAT-P147) already runs the same
+#: recursion over the same index for the market-detail page, and the seed here
+#: is spelled to MATCH it — same `unnest(CAST(... AS integer[]))` bind, same
+#: `o(outcome_id)` alias, same `p.bookmaker > ...` step — so the two read as one
+#: pattern rather than two dialects. They are not yet one fragment because that
+#: edit lands in a second hot route whose SQL would have to be re-proved
+#: byte-identical, which is a different slice; filed as #2380.
+#:
+#: The bind spelling is load-bearing and is inherited rather than invented:
+#: `CAST(...)` not `::integer[]`, because asyncpg parses `::` as a bind, and an
+#: array rather than an expanding `IN`, because the seed reads the ids as a
+#: relation and an expanding `IN` cannot be a FROM item.
+#:
+#: The walk is correct only because `bookmaker` is NOT NULL — the same premise
+#: the sibling records. A NULL would sort into the walk and `>` would terminate
+#: it early, undercounting rather than failing.
+_BOOKMAKER_COUNT_SQL = text(
+    """
+    WITH RECURSIVE pairs AS (
+        SELECT o.outcome_id,
+               (SELECT s.bookmaker
+                  FROM futures_odds_snapshots s
+                 WHERE s.outcome_id = o.outcome_id
+                 ORDER BY s.bookmaker
+                 LIMIT 1) AS bookmaker
+          FROM unnest(CAST(:outcome_ids AS integer[])) AS o(outcome_id)
+        UNION ALL
+        SELECT p.outcome_id,
+               (SELECT s.bookmaker
+                  FROM futures_odds_snapshots s
+                 WHERE s.outcome_id = p.outcome_id
+                   AND s.bookmaker > p.bookmaker
+                 ORDER BY s.bookmaker
+                 LIMIT 1)
+          FROM pairs p
+         WHERE p.bookmaker IS NOT NULL
+    )
+    SELECT p.outcome_id, count(*) AS bm_count
+      FROM pairs p
+     WHERE p.bookmaker IS NOT NULL
+     GROUP BY p.outcome_id
+    """
+)
+
+
+async def _count_bookmakers_per_outcome(
+    db: AsyncSession, outcome_ids: list[int]
+) -> dict[int, int]:
+    """`{outcome_id: distinct bookmakers}` for the liquidity term.
+
+    Outcomes with no snapshot rows are ABSENT from the mapping rather than
+    present with `0` — the two are different claims (gotcha #53) and the caller
+    distinguishes them by defaulting to 1.
+    """
+    if not outcome_ids:
+        return {}
+    result = await db.execute(
+        _BOOKMAKER_COUNT_SQL, {"outcome_ids": list(outcome_ids)}
+    )
+    return {row.outcome_id: row.bm_count for row in result.all()}
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -9823,19 +9912,7 @@ async def _build_related_futures(
 
     # 7. Count bookmakers per outcome for liquidity scoring
     outcome_ids = [o.id for o in outcomes]
-    bookmaker_counts = {}
-    if outcome_ids:
-        from app.models import FuturesOddsSnapshot
-        bm_result = await db.execute(
-            select(
-                FuturesOddsSnapshot.outcome_id,
-                func.count(func.distinct(FuturesOddsSnapshot.bookmaker)).label("bm_count"),
-            )
-            .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
-            .group_by(FuturesOddsSnapshot.outcome_id)
-        )
-        for row in bm_result.all():
-            bookmaker_counts[row.outcome_id] = row.bm_count
+    bookmaker_counts = await _count_bookmakers_per_outcome(db, outcome_ids)
 
     now = datetime.now(timezone.utc)
     home_futures = []

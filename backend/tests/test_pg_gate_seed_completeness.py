@@ -48,6 +48,7 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_calibration_vm_variant_join_pg.py",
@@ -59,25 +60,48 @@ COVERED = (
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
 
-#: `INSERT INTO <table> (<cols>)`, tolerating the string concatenation these
-#: statements are written with (`"INSERT INTO t (a, b, " "c) VALUES ..."`).
-_INSERT_RE = re.compile(
-    r"INSERT\s+INTO\s+(\w+)\s*\(((?:[^()]|\"\s*\")*)\)\s*(?:\"\s*\")?\s*VALUES",
-    re.IGNORECASE,
-)
+#: Adjacent Python string literals, so the source is un-concatenated ONCE up
+#: front instead of the pattern below having to tolerate a `" "` join at each
+#: place one might appear.
+#:
+#: 🔴 LAT-P163: it used to tolerate the join only INSIDE the column list, so
+#: `"INSERT INTO t "` newline `"(a, b) VALUES ..."` — the join sitting between
+#: the table name and the opening paren — matched nothing. That is not a
+#: cosmetic miss. `test_bookmaker_count_real_postgres.py` was written that way
+#: and this file parsed **1 of its 3 INSERTs**, silently skipping the two that
+#: carried the client-side-default columns, which is exactly the defect class
+#: this file is named after. The "no INSERT was parsed" tripwire could not fire,
+#: because one statement HAD parsed. A guard that checks a subset is worse than
+#: no guard: it is counted.
+_LITERAL_JOIN_RE = re.compile(r'"\s*(?:\n\s*)?"')
+
+#: `INSERT INTO <table> (<cols>) VALUES`, against already-joined source.
+_INSERT_RE = re.compile(r"INSERT\s+INTO\s+(\w+)\s*\(([^()]*)\)\s*VALUES", re.IGNORECASE)
+
+#: Every literal `INSERT INTO` in the source, matched or not. The count of these
+#: must equal the count the pattern above extracts, or the pattern is reading a
+#: subset and nothing else in this file can tell.
+_INSERT_ANY_RE = re.compile(r"INSERT\s+INTO", re.IGNORECASE)
 
 
 def _columns(raw: str) -> set[str]:
-    """Column names out of an INSERT's column list, un-concatenating the source."""
-    joined = re.sub(r'"\s*\n?\s*"', "", raw)
-    return {c.strip() for c in joined.split(",") if c.strip()}
+    """Column names out of an INSERT's column list."""
+    return {c.strip() for c in raw.split(",") if c.strip()}
+
+
+def _joined_source(path: Path) -> str:
+    return _LITERAL_JOIN_RE.sub("", path.read_text())
 
 
 def _inserts(path: Path):
     return [
         (m.group(1).lower(), _columns(m.group(2)))
-        for m in _INSERT_RE.finditer(path.read_text())
+        for m in _INSERT_RE.finditer(_joined_source(path))
     ]
+
+
+def _insert_keywords(path: Path) -> int:
+    return len(_INSERT_ANY_RE.findall(_joined_source(path)))
 
 
 def _required(table_name: str) -> set[str]:
@@ -109,6 +133,19 @@ def test_pg_gate_inserts_supply_every_not_null_column(filename):
         "of it. Either it stopped seeding that way (drop it from COVERED) or the "
         "regex stopped matching (fix the regex) — silently checking nothing is "
         "the one outcome this file exists to prevent."
+    )
+
+    # LAT-P163: and silently checking SOME of it is the outcome the assertion
+    # above cannot see. Parsing one statement out of three satisfies "not empty"
+    # while leaving the other two unchecked, which is how this file was green
+    # over `test_bookmaker_count_real_postgres.py` while two of its INSERTs were
+    # invisible to it.
+    keywords = _insert_keywords(path)
+    assert len(statements) == keywords, (
+        f"{filename} contains {keywords} `INSERT INTO` statements but only "
+        f"{len(statements)} parsed. The unparsed ones are NOT being checked and "
+        "nothing else here can tell. Fix the pattern rather than the file — a "
+        "seed that this check cannot read is a seed it is not guarding."
     )
 
     missing = []
