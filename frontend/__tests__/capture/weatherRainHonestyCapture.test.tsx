@@ -141,7 +141,18 @@ describe("UX-P170 · loading and loaded-empty stop being the same thing", () => 
   test("the left card says what is happening instead of pulsing", () => {
     const text = visibleText(render(SERVED_BEFORE));
     expect(text).toContain("No live rain markets right now");
-    expect(text).toContain("appear here when they reopen");
+    // UX-P219: the second line still has to be THERE — that is what this row
+    // has always been about — but it no longer promises a refill. The sentence
+    // it used to pin, "…appear here when they reopen", broke ruling 142 and was
+    // the whole of `app/weather`'s entry in the copy-ban debt list. Its
+    // replacement, and the other three cards that said the same thing, are
+    // guarded per-card in `weatherEmptyStatesStateWhatTheyAre.test.tsx`.
+    // Smart quotes, not `"`: this file's `visibleText` replaces the `&ldquo;`
+    // ENTITY, but `renderToStaticMarkup` has already resolved it to the
+    // character by then, so the replacement never fires. Asserting the
+    // character is asserting what the reader is served.
+    expect(text).toContain("This card tracks daily “will it rain?” questions.");
+    expect(text).not.toContain("appear here");
   });
 
   test("a fully empty payload gives BOTH cards an honest state", () => {
