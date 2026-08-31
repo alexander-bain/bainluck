@@ -104,20 +104,33 @@ MAX_PAIR_DEVIATION = 0.12
 #: was meant to be dropped, with no single place to look.
 MATCH_STALE_AFTER_HOURS = 6.0
 
-#: How much of a *ceremony stamp* is actually a claim (CERT-532).
+#: How much of a *ceremony stamp* is actually a claim (CERT-532, CERT-544).
 #:
-#: A draw-ceremony fixture's ``scheduled_date`` is what ESPN publishes before an
-#: order of play exists — midnight in the venue's own time, ``04:00Z`` for the
-#: US Open — so it names a DAY and not a start.  Measuring six elapsed hours
-#: against it retires the whole main draw at 6am local, and that is the empty
-#: card doctrine 3 is about.  A pinned fixture the scoreboard never mentioned is
-#: therefore carried until the day its stamp names has itself elapsed, and the
-#: ordinary window runs from there.
+#: A draw-ceremony fixture's ``scheduled_date`` is not a start.  It is what ESPN
+#: publishes before an order of play exists, and the register writes it once for
+#: the whole ceremony: **96 of 96 pinned US Open main-draw fixtures carry the
+#: single value 2026-08-30T04:00:00+00:00**, the tournament's opening day.
+#: Measuring elapsed time against it therefore says nothing about any
+#: individual match.
 #:
-#: 24 hours rather than a timezone lookup on purpose: the placeholder IS local
-#: midnight expressed in UTC, so one day later is the next local midnight
-#: whatever the venue, and this module keeps knowing nothing about venues.
-CEREMONY_STAMP_NAMES_A_DAY_HOURS = 24.0
+#: CERT-532's repair called it "the day the stamp names" and allowed 24 hours.
+#: CERT-544 showed why that is still the same mistake: one instant shared by the
+#: whole draw expires for the whole draw at once, so from day two onward a
+#: truncated scoreboard could empty the card again — every day of the tournament
+#: except the first.
+#:
+#: So the stamp is read for the only thing it can support.  A draw ceremony
+#: opens a tournament of bounded length, so it bounds **the register's own
+#: relevance** and nothing finer.  Inside this window a pinned fixture is never
+#: retired by the clock; only ESPN's explicit ``decided`` retires it.  Outside
+#: it, the register describes a tournament that is over and the clock may clear
+#: it away.
+#:
+#: 21 days: a grand slam main draw runs 14 from the ceremony, and the slack is
+#: deliberate — being late to clear a finished register costs a stale row on a
+#: page nobody is loading, while being early costs the live card mid-tournament,
+#: which is the whole defect.
+CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS = 24.0 * 21
 
 #: A move smaller than this is noise, not a story. Same dead band as the board's
 #: trend direction, so "moved" means one thing across the whole page.
@@ -364,27 +377,38 @@ def build_match_row(
         # have thought of. It cannot close the class, because the class is a
         # consumer reading ABSENCE from the map as a fact about the match.
         #
-        # So the second condition does not consult the flag at all. It says
-        # what is actually true about the value being measured: a ceremony
-        # stamp names a day, so the clock may not retire a pinned fixture until
-        # that day has elapsed. On the fixture's own day no false-complete map
-        # of any shape can empty the card, which is the property this queue
-        # needs and the flag could never guarantee.
+        # So the second condition does not consult the flag at all.
         #
-        # It has a far end, deliberately: at `24h + the window` the fixture
-        # does retire, or a pinned match ESPN never once mentioned would hold a
-        # place on "what is on" forever. And an explicit `decided` outranks all
-        # of this the same minute, above — the exemption is about SILENCE.
+        # ═══ CERT-544: AND IT MUST NOT CONSULT THE STAMP AS A DAY EITHER ═══
+        #
+        # The first version of this said "a ceremony stamp names a day, so the
+        # clock may not retire a pinned fixture until that day has elapsed",
+        # and allowed 24 hours. But the stamp is written ONCE FOR THE WHOLE
+        # CEREMONY — 96 of 96 pinned fixtures share `2026-08-30T04:00Z` — so it
+        # names opening day for every match in the draw, including the final
+        # two weeks later. The bound expired for all 96 at once at 06:01 ET on
+        # day two, and the card could empty itself again on every day of the
+        # tournament except the first. Fixing the opening-day blank alone is
+        # not the ship.
+        #
+        # The stamp is now read only for what it can support. A draw ceremony
+        # opens a tournament of bounded length, so it bounds the REGISTER'S
+        # RELEVANCE and nothing finer. Inside that window the clock has no
+        # authority over a pinned fixture at all: absence is never a fact about
+        # the match, and the only thing that retires one is ESPN's explicit
+        # `decided`, handled above. Outside it, the register describes a
+        # tournament that is over.
         #
         # The cost is named: a pinned fixture that really did finish, on a day
-        # ESPN's scoreboard never covered, lingers up to a day longer than it
-        # used to. That is the ambiguous case, and it is the direction to be
-        # wrong in — a match shown an extra day is a smaller lie than a draw
-        # that vanishes on the morning it is played.
+        # ESPN's scoreboard never covered while it was `post`, now lingers for
+        # the rest of the tournament rather than a day. That is the ambiguous
+        # case, and it is still the direction to be wrong in — a stale row is a
+        # smaller lie than a draw that vanishes on the morning it is played,
+        # and it takes a sustained scoreboard outage to reach at all.
         retire = True
         if comp_id:
             retire = order_of_play_complete and started < (
-                cutoff - timedelta(hours=CEREMONY_STAMP_NAMES_A_DAY_HOURS)
+                cutoff - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS)
             )
         if retire:
             return None, "ALREADY_PLAYED"

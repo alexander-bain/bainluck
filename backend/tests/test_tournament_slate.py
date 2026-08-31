@@ -31,7 +31,9 @@ from app.utils.tournament_slate import (
     build_bracket,
     build_props,
     build_results,
+    CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS,
     build_slate,
+    espn_competition_id,
     normalize_pair,
 )
 
@@ -1903,7 +1905,7 @@ def test_the_midnight_placeholder_no_longer_empties_the_card_on_a_match_day():
     day_later = build_slate(
         _register(matchups=[_drawn_matchup(
             scheduled_date=(
-                NOW - timedelta(hours=24 + MATCH_STALE_AFTER_HOURS + 1)
+                NOW - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1)
             ).isoformat()
         )]),
         prices=_prices(),
@@ -2038,7 +2040,7 @@ def test_one_failed_tour_does_not_empty_the_card_of_its_live_fixtures():
     stale = build_slate(
         _register(matchups=[_drawn_matchup(
             scheduled_date=(
-                NOW - timedelta(hours=24 + MATCH_STALE_AFTER_HOURS + 1)
+                NOW - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1)
             ).isoformat()
         )]),
         prices=_prices(),
@@ -2408,7 +2410,7 @@ class TestANamedShellIsNotAScoreboard:
         assert result["order_of_play_complete"] is True
 
 
-class TestAPinnedFixtureSurvivesItsOwnDay:
+class TestAPinnedFixtureSurvivesTheTournament:
     """CERT-532's real reach: *"a nonempty but truncated map has the same
     uncovered shape for any omitted pinned id."*
 
@@ -2423,12 +2425,24 @@ class TestAPinnedFixtureSurvivesItsOwnDay:
     defect this queue exists to prevent, reachable without any flag being
     wrong.
 
-    So the fix does not live in the flag. A ceremony stamp names a DAY, not a
-    start, and the clock may only retire a pinned fixture once the day it
-    names has actually elapsed. `started + 24h` is the next local midnight in
-    the venue's own time without this module needing to know the venue's
-    timezone — the placeholder is local midnight expressed in UTC, so a day
-    later is exactly one day later.
+    So the fix does not live in the flag. The clock has no authority over a
+    pinned fixture while the register that pins it is still current: absence
+    is never a fact about the match, and only ESPN's explicit `decided`
+    retires one.
+
+    CERT-544 CORRECTED THE FAR END OF THIS. It was first written as "a
+    ceremony stamp names a DAY" with a 24-hour allowance, which is still the
+    placeholder-as-event-time mistake: the stamp is written once for the whole
+    ceremony, so it names OPENING day for all 96 fixtures and the bound
+    expired for the entire draw at once on day two. The window is now the
+    tournament the ceremony opens — see
+    `TestTheCeremonyStampNamesTheDrawNotTheDay`, which owns that claim, and
+    `CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS`.
+
+    The cases below say "on its own day" only in the weak sense of "while the
+    register is current"; every bound here is expressed in terms of that
+    constant rather than a literal, because a literal detaching from the rule
+    it guards is exactly what CERT-544 caught.
     """
 
     def _pinned(self, hours_ago):
@@ -2447,7 +2461,7 @@ class TestAPinnedFixtureSurvivesItsOwnDay:
 
     def test_a_falsely_complete_map_can_no_longer_empty_the_card(self):
         """The cert's consequence, end to end: a pinned id missing from a map
-        that CLAIMS to be whole, on the fixture's own day, is kept."""
+        that CLAIMS to be whole, while the register is current, is kept."""
         slate = self._slate(self._pinned(MATCH_STALE_AFTER_HOURS + 4), complete=True)
         assert slate["count"] == 1, slate["dropped"]
         assert slate["dropped"] == {}
@@ -2458,28 +2472,28 @@ class TestAPinnedFixtureSurvivesItsOwnDay:
         assert slate["count"] == 1, slate["dropped"]
         assert slate["dropped"] == {}
 
-    def test_an_INCOMPLETE_read_still_exempts_a_fixture_PAST_the_day_bound(self):
+    def test_an_INCOMPLETE_read_still_exempts_a_fixture_PAST_the_window(self):
         """CERT-517's exemption is unconditional in time, and stays that way.
 
-        The day bound is a SECOND, independent reason to keep a pinned fixture,
-        not a ceiling placed over the first. Under a partial fetch the absence
+        The window bound is a SECOND, independent reason to keep a pinned
+        fixture, not a ceiling placed over the first. Under a partial fetch the absence
         is a fact about the fetch at any age, so a week-old pinned fixture is
         still kept — exactly as CERT-517 graded it.
 
         Without this the conjunction could be dropped to a bare day bound and
         nothing would notice: every other test here reads a complete map.
         """
-        slate = self._slate(self._pinned(24 + MATCH_STALE_AFTER_HOURS + 1), complete=False)
+        slate = self._slate(self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1), complete=False)
         assert slate["count"] == 1, slate["dropped"]
         assert slate["dropped"] == {}
 
-    def test_the_day_ends_and_the_fixture_does_retire(self):
+    def test_the_window_ends_and_the_fixture_does_retire(self):
         """The far end of the bound, or the slate grows forever.
 
         A pinned fixture that ESPN never once mentioned must still leave "what
-        is on" — the exemption buys it its own day and not a tenancy.
+        is on" — the exemption buys it the tournament and not a tenancy.
         """
-        slate = self._slate(self._pinned(24 + MATCH_STALE_AFTER_HOURS + 1), complete=True)
+        slate = self._slate(self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1), complete=True)
         assert slate["count"] == 0
         assert slate["dropped"] == {"ALREADY_PLAYED": 1}
 
@@ -2514,3 +2528,111 @@ class TestAPinnedFixtureSurvivesItsOwnDay:
         )
         assert slate["count"] == 0
         assert slate["dropped"] == {"DECIDED": 1}
+
+
+class TestTheCeremonyStampNamesTheDrawNotTheDay:
+    """CERT-544, red-first, on the committed register's own value.
+
+    Q468's far end measured 24 hours from the fixture's `scheduled_date`,
+    calling that "the day the stamp names". The stamp does not name a day.
+    **96 of 96 pinned US Open main-draw fixtures carry the single value
+    `2026-08-30T04:00:00+00:00`** — one instant for the whole draw ceremony,
+    not one per match day. So the bound expired for EVERY pinned fixture at
+    06:01 ET on day two, and a truncated or falsely-complete scoreboard could
+    empty the card again on every day of the tournament except the first.
+
+    The repair prevented the opening-day blank and nothing after it, which is
+    not the ship. Same class a fourth time: a placeholder read as an event time.
+
+    What the stamp DOES support is the tournament it opens. A draw ceremony
+    instant is the start of a tournament of bounded length, so it can bound the
+    register's own relevance and nothing finer. Inside that window absence is
+    never authoritative for a pinned fixture — only an explicit `decided` is.
+    """
+
+    #: The committed register's actual shared value, not a constructed one.
+    CEREMONY_STAMP = "2026-08-30T04:00:00+00:00"
+
+    def _register_at_ceremony_stamp(self):
+        return _register(
+            matchups=[_drawn_matchup(scheduled_date=self.CEREMONY_STAMP)]
+        )
+
+    def _slate_at(self, when, *, complete=True):
+        return build_slate(
+            self._register_at_ceremony_stamp(),
+            prices=_prices(),
+            now=datetime.fromisoformat(when),
+            # Nonempty and claiming to be whole — and it omits our fixture.
+            order_of_play=_listed(comp_id="999999"),
+            order_of_play_complete=complete,
+        )
+
+    def test_the_committed_register_really_does_share_one_stamp(self):
+        """The premise, asserted rather than quoted — a guard resting on a
+        claim about a data file must read the file."""
+        import json
+        from pathlib import Path
+
+        register = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "data" / "tournament_registers" / "us-open-2026.json"
+            ).read_text()
+        )
+        pinned = [
+            m for m in register["matchups"]
+            if ((m.get("sources") or [{}])[0].get("evidence") or {}).get(
+                "espn_competition_id"
+            )
+            or espn_competition_id(m)
+        ]
+        stamps = {m.get("scheduled_date") for m in pinned}
+        assert len(pinned) >= 90, len(pinned)
+        assert stamps == {self.CEREMONY_STAMP}, stamps
+
+    def test_day_two_of_the_tournament_still_lists_its_matches(self):
+        """The cert's executed evidence, to the minute it used."""
+        slate = self._slate_at("2026-08-31T10:01:00+00:00")
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_the_LAST_day_of_a_grand_slam_still_lists_its_matches(self):
+        """Two weeks out from the ceremony stamp — the final, which is the
+        furthest a main-draw fixture can be from the draw."""
+        slate = self._slate_at("2026-09-13T18:00:00+00:00")
+        assert slate["count"] == 1, slate["dropped"]
+        assert slate["dropped"] == {}
+
+    def test_a_register_the_tournament_has_outlived_does_retire(self):
+        """The bound the cert asked for, at the only granularity the stamp
+        supports: the tournament, not the day."""
+        slate = self._slate_at("2026-10-15T12:00:00+00:00")
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_an_explicit_decided_still_retires_it_on_day_two(self):
+        """Inside the window the exemption is total, so the source's own word
+        is the ONLY thing retiring a pinned fixture — it has to keep working."""
+        slate = build_slate(
+            self._register_at_ceremony_stamp(),
+            prices=_prices(),
+            now=datetime.fromisoformat("2026-08-31T10:01:00+00:00"),
+            order_of_play=_listed(comp_id="182655", state="decided"),
+            order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"DECIDED": 1}
+
+    def test_the_qualifying_draw_is_untouched_by_the_wider_window(self):
+        """Qualifying carries no pinned id and real per-match times, so it
+        keeps the plain six-hour rule. Widening the pinned exemption must not
+        leak into the population the clock is actually for."""
+        stamp = (NOW - timedelta(hours=MATCH_STALE_AFTER_HOURS + 4)).isoformat()
+        slate = build_slate(
+            _register(matchups=[_matchup(scheduled_date=stamp, evidence=None)]),
+            prices=_prices(), now=NOW,
+            order_of_play=_listed(comp_id="999999"), order_of_play_complete=True,
+        )
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
