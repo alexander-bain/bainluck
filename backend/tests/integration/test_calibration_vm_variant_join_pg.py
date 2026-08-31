@@ -121,15 +121,30 @@ ALL_IDS = sorted(ALL_LEGS)
 # admitted and the old two-column join let its outcomes ride a SIBLING
 # variant's admission row.
 #
-# So: one more virtual market, on its own event, whose two variants are
-# asymmetric.
+# So: one more virtual market, on its own event, whose variants are asymmetric.
 #
 #   * the LOSS variant — two one-outcome markets, both graded FALSE by an
 #     eligible authority. `has_winner = 0`, so the `has_winner >= 1` arm
-#     refuses it; `market_count = 2`, so D13's lone-claim arm
-#     (`market_count = 1 AND total_outcomes = 1 AND graded >= 1`) refuses it
-#     too — the counts in `vm_stats` are per VARIANT, not per market.
+#     refuses it. Under the RETIRED per-variant arm
+#     (`market_count = 1 AND total_outcomes = 1 AND graded >= 1`) D13's arm
+#     refused it too, because those counts were per VARIANT.
 #   * the WINNER variant — two one-outcome markets that won, so it IS admitted.
+#   * the UNKNOWN variant (CAL-P155) — one graded loss beside one lone claim
+#     nothing ever graded.
+#
+# 🔴 CAL-P155 — ALEX RULED OPTION A AND THIS SECTION IS INVERTED, NOT DELETED.
+# `alex-inbox/calibration-919`, 2026-08-30: the arm counts PER MARKET
+# (`graded_lone_claims >= 1 AND ungraded_lone_claims = 0`), so each of those two
+# graded lone claims is admitted on its own account. The LOSS variant now
+# publishes. Every assertion below moved with the ruling and each one names it,
+# because what is not acceptable is either behaviour being true by accident.
+#
+# The UNKNOWN variant is new here and it is the one arm that could not be proved
+# anywhere else: admission is variant-grained, so admitting a variant admits all
+# its members' outcomes, and a single-outcome market nothing ever graded has NO
+# downstream rung to catch it — rung 1 requires `n_outcomes >= 2` on purpose. So
+# the arm refuses that variant whole, fail-closed, and this fixture is the only
+# thing that executes that decision against a real Postgres.
 #
 # Single-outcome markets on purpose: `no_winner_markets` (Queue 299 rung 1)
 # needs `n_outcomes >= 2`, and `malformed_binaries` needs exactly 2. Neither
@@ -139,12 +154,28 @@ ASYM_EVENT_ID = 771500011
 ASYM_SPORT_ID = 77151
 ASYM_LOSS_LEGS = {771511: 0.15, 771512: 0.35}
 ASYM_WIN_LEGS = {771513: 0.55, 771514: 0.75}
+#: CAL-P155: the fail-closed variant. One AFFIRMATIVE graded loss (771515) and
+#: one lone claim whose `is_winner` was never written (771516, seeded NULL — not
+#: the False default, which is the ambiguity gotcha #21 is about).
+ASYM_UNKNOWN_LEGS = {771515: 0.45, 771516: 0.65}
+ASYM_UNGRADED_LEG = 771516
 ASYM_LEG_CATEGORY = {
     **{mid: "cricket" for mid in ASYM_LOSS_LEGS},
     **{mid: "baseball" for mid in ASYM_WIN_LEGS},
+    **{mid: "tennis" for mid in ASYM_UNKNOWN_LEGS},
 }
-ASYM_LEGS = {**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS}
+#: `None` means seed `is_winner` NULL. `False` is an affirmative graded loss.
+ASYM_LEG_WINNER = {
+    **{mid: False for mid in ASYM_LOSS_LEGS},
+    **{mid: True for mid in ASYM_WIN_LEGS},
+    771515: False,
+    ASYM_UNGRADED_LEG: None,
+}
+ASYM_LEGS = {**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS, **ASYM_UNKNOWN_LEGS}
 ASYM_IDS = sorted(ASYM_LEGS)
+#: What the RULED producer publishes from this fixture: both admitted variants
+#: whole, and nothing from the unknown-truth one.
+ASYM_PUBLISHED = sorted({**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS})
 
 # Four DISTINCT prices on purpose. `mode_prices` deletes a price shared by more
 # than GREATEST(eligible/2, 2) legs; with every price unique no mode can form,
@@ -344,7 +375,10 @@ async def _seed_asym(session):
             price=price,
             category=ASYM_LEG_CATEGORY[mid],
             event_id=ASYM_EVENT_ID,
-            winner=mid in ASYM_WIN_LEGS,
+            # Three-valued on purpose (CAL-P155): True / False / None is
+            # winner / graded loss / never graded, and the last two are the
+            # pair `is_winner`'s False default cannot tell apart.
+            winner=ASYM_LEG_WINNER[mid],
         )
     await session.commit()
 
@@ -544,32 +578,41 @@ async def test_the_cricket_shape_deduplicates_and_loses_nothing():
 # is deliberately NOT a narrowing of the fixture above — the cert named that
 # escape by name and refused it in advance.
 #
-# THE RULING (alex-inbox/calibration-919, option B — the lane's recommendation,
-# taken on the "if you say nothing" default). The exclusion STANDS and is
-# written down as ruled rather than accidental:
+# THE RULING (alex-inbox/calibration-919, option A — Alex, 2026-08-30, reversing
+# CAL-P151's option B). The exclusion is LIFTED and the arm counts per MARKET:
 #
-#   * Per-VARIANT is the shipped behaviour. A variant is the unit `vm_stats`
-#     aggregates and the unit `clean_vms` admits; admitting a lone claim
-#     per-MARKET instead would change the published population by an unmeasured
-#     amount, and the freeze-lift it would ride is mid-cert.
-#   * Per-MARKET (option A) is arguably more correct by D13's own argument —
-#     each of these rows IS "a complete, scoreable prediction" — and it is
-#     staged as its own queue, behind its own rebuild, not smuggled in here.
+#   * Per-MARKET is the shipped behaviour. Each of these rows IS "a complete,
+#     scoreable prediction" by D13's own argument, and they were excluded only
+#     because they were counted together. Alex was given the choice with the
+#     population cost declared UNMEASURED and took it knowingly; the freeze-lift
+#     batch rebuilds on the new population.
+#   * Per-VARIANT (option B) is what shipped from CAL-P151 to CAL-P154 and is
+#     now retired. It is pinned as ABSENT, not merely un-asserted.
 #   * What is NOT acceptable is either one being true by accident. Hence this
-#     gate: if the arm is ever changed to per-market, the assertion below fails
-#     and names the ruling it is reversing.
+#     gate: it executes the reverted two-column join as well, so a green here
+#     means the two mechanisms — D5's exact join and D13's per-market arm — are
+#     each doing their own work and neither is covering for the other.
 # =============================================================================
 
 
-async def test_the_asymmetric_premise_a_loss_only_variant_is_not_admitted():
-    """CERT-485 P1-a, the premise — asserted, because it is what the cert found.
+async def test_the_asymmetric_premise_every_scoreable_variant_is_admitted():
+    """CERT-485 P1-a, the premise — RE-ASSERTED under the ruling that reversed it.
 
-    Two variants of one virtual market. One is admitted, one is refused, and the
-    refused one is refused for the stated reason and no other: `has_winner = 0`
-    closes the first arm, `market_count = 2` closes D13's. `graded = 2` is
-    asserted too — these are AFFIRMATIVE losses, so the row is not being
-    excluded as unknown truth (Queue 299 rung 1), which is a different and
-    already-ruled exclusion.
+    Three variants of one virtual market:
+
+    * ``baseball`` — two winners. Admitted by the ``has_winner >= 1`` arm, and
+      untouched by any of this.
+    * ``cricket`` — two AFFIRMATIVE graded losses, ``has_winner = 0``. This is
+      the variant CERT-485 found. The retired per-variant arm refused it for
+      ``market_count = 2``; the ruled per-market arm admits it, because
+      ``graded_lone_claims = 2`` and nothing in it is ungraded.
+    * ``tennis`` — one graded loss and one lone claim nothing ever graded.
+      REFUSED, fail-closed: ``ungraded_lone_claims = 1``.
+
+    The third variant is why the second is not a tautology. If the arm were
+    simply ``graded_lone_claims >= 1`` the two would be indistinguishable here,
+    and a never-graded row would publish as a confident loss off ``is_winner``'s
+    False default.
     """
     from sqlalchemy import text
 
@@ -583,29 +626,44 @@ async def test_the_asymmetric_premise_a_loss_only_variant_is_not_admitted():
                     "WITH "
                     + ctes
                     + " SELECT category, market_count, total_outcomes, has_winner, "
-                    "graded, eligible FROM vm_stats WHERE vm_id = :vm "
-                    "ORDER BY category"
+                    "graded, eligible, graded_lone_claims, ungraded_lone_claims "
+                    "FROM vm_stats WHERE vm_id = :vm ORDER BY category"
                 ),
                 {"vm": f"e:{ASYM_EVENT_ID}"},
             )
         ).all()
-        assert [s.category for s in stats] == ["baseball", "cricket"], (
-            "PREMISE GONE: the asymmetric vm must still hold two variants "
+        assert [s.category for s in stats] == ["baseball", "cricket", "tennis"], (
+            "PREMISE GONE: the asymmetric vm must still hold three variants "
             f"(got {stats!r})"
         )
-        loss = {s.category: s for s in stats}["cricket"]
-        win = {s.category: s for s in stats}["baseball"]
+        by_cat = {s.category: s for s in stats}
+        loss, win, unknown = by_cat["cricket"], by_cat["baseball"], by_cat["tennis"]
 
         assert loss.has_winner == 0 and loss.graded == 2, (
             "the loss variant must carry two AFFIRMATIVE graded losses and no "
             f"winner, or this gate is testing unknown truth instead (got {loss!r})"
         )
         assert loss.market_count == 2 and loss.total_outcomes == 2, (
-            "the loss variant must hold TWO lone claims — one would be admitted "
-            f"by D13's arm and there would be no finding (got {loss!r})"
+            "the loss variant must hold TWO lone claims — one would have been "
+            f"admitted by the RETIRED arm and there would be no finding to "
+            f"reverse (got {loss!r})"
+        )
+        assert (loss.graded_lone_claims, loss.ungraded_lone_claims) == (2, 0), (
+            "the per-MARKET counts are what the ruled arm reads; if they do not "
+            f"see two graded lone claims here the columns are wrong (got {loss!r})"
         )
         assert loss.eligible == 2
         assert win.has_winner == 2 and win.market_count == 2
+
+        assert unknown.has_winner == 0 and unknown.graded == 1, (
+            "the unknown variant must carry exactly one AFFIRMATIVE grade — the "
+            f"other leg's is_winner must be NULL, not False (got {unknown!r})"
+        )
+        assert (unknown.graded_lone_claims, unknown.ungraded_lone_claims) == (1, 1), (
+            "the fail-closed case needs BOTH: a scoreable claim that would be "
+            "admitted on its own, and an ungraded one that refuses the variant. "
+            f"got={unknown!r}"
+        )
 
         admitted = [
             r.category
@@ -621,32 +679,43 @@ async def test_the_asymmetric_premise_a_loss_only_variant_is_not_admitted():
                 )
             ).all()
         ]
-        assert admitted == ["baseball"], (
-            "PREMISE GONE: `clean_vms` must admit exactly the winner variant. "
-            "If the loss variant is now admitted, D13's arm was changed to "
-            "per-market (option A of alex-inbox/calibration-919) — that is a "
-            "ruling reversal and a published-population change, and it must be "
-            f"landed with a rebuild and a measured headline, not here. got={admitted!r}"
+        assert admitted == ["baseball", "cricket"], (
+            "RULED (alex-inbox/calibration-919, option A — Alex 2026-08-30): "
+            "`clean_vms` admits the winner variant AND the two-graded-losses "
+            "variant, and refuses the one holding unknown truth. If `cricket` "
+            "is missing, D13's arm went back to per-VARIANT and that is a "
+            "ruling reversal. If `tennis` is present, the fail-closed conjunct "
+            "is gone and a never-graded row is about to publish as a loss "
+            f"(gotcha #21). got={admitted!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
 
 
-async def test_loss_only_variant_rows_are_excluded_and_the_old_join_published_them():
-    """CERT-485 P1-a, the behaviour — and the row loss stated out loud.
+async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings():
+    """CERT-485 P1-a, the behaviour — under option A, and it is NOT the accident.
 
-    RED-FIRST IN REVERSE. Every other arm in this file executes the reverted
-    join to prove the DEFECT comes back. Here the reverted join is what proves
-    the finding is real: under the two-column key the loss-only variant's rows
-    published, riding the sibling variant's admission row. So this arm is the
-    evidence for the cert's claim and the fixed arm is the disclosed
-    consequence — the population D5 ships is two rows smaller on this fixture,
-    on purpose.
+    🔴 THE POINT OF THIS ARM IS THAT TWO DIFFERENT MECHANISMS PUBLISH THE SAME
+    FOUR OUTCOME IDS, AND ONLY ONE OF THEM IS CORRECT. Before D5, the two-column
+    join published the loss legs by matching a SIBLING variant's admission row —
+    so they published **under the sibling's category, `baseball`**, a bucket
+    their markets are not members of. Under the ruled per-market arm they
+    publish because their own variant is admitted, **under `cricket`**.
 
-    THE FALSIFIER, and it is the one that matters. D5 must not lose the WINNER
-    variant's rows. A join that removes duplicates by removing rows nobody
-    ruled on is the failure mode this whole file is written against, so the
-    surviving set is asserted exactly, not merely counted.
+    Counting rows cannot tell those apart. The category can, and does: a test
+    that asserted only `sorted(ids) == ASYM_IDS` would go green if D5 were
+    reverted, which is the whole finding undone. So the assertion is on the
+    (id, category) pairs.
+
+    THE FALSIFIER, unchanged and still the one that matters: the WINNER
+    variant's rows must survive intact. A join that removes duplicates by
+    removing rows nobody ruled on is the failure mode this file is written
+    against.
+
+    AND THE UNKNOWN VARIANT MUST NOT APPEAR. `tennis` holds a scoreable graded
+    loss beside a never-graded lone claim; the arm refuses the pair. If a
+    `tennis` row publishes, an ungraded outcome just entered the curve as a
+    confident loss and no downstream rung will remove it.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
 
@@ -656,34 +725,44 @@ async def test_loss_only_variant_rows_are_excluded_and_the_old_join_published_th
         before = await _rows(session, _reverted(ctes), ASYM_IDS)
         after = await _rows(session, ctes, ASYM_IDS)
 
-        assert sorted(oid for oid, _ in before) == ASYM_IDS, (
-            "the two-column join must publish ALL FOUR outcomes — the loss-only "
-            "variant's two rows ride the winner variant's `clean_vms` row. If "
-            "they do not, the P1-a finding is no longer reproducible by this "
-            f"fixture and the disclosure below is describing nothing. got={before!r}"
-        )
-        # Multiplicity, so the two effects are not confused. The loss rows match
-        # exactly ONE clean_vms row (the sibling), so nothing here is doubled —
-        # this fixture isolates row LOSS from row duplication.
-        assert len(before) == len(ASYM_IDS), (
-            f"the asymmetric fixture must not also duplicate (got {before!r})"
-        )
-        # And they published under the SIBLING's category, which is the tell:
-        # the row was admitted by a variant its market is not a member of.
+        # THE ACCIDENT, still reproducible. The loss legs ride the sibling's
+        # admission row and land in the SIBLING'S bucket.
         assert {oid: cat for oid, cat in before if oid in ASYM_LOSS_LEGS} == {
             oid: "baseball" for oid in ASYM_LOSS_LEGS
         }, (
             "the loss rows must publish under the sibling variant's category "
             f"under the old join — that IS the accident. got={before!r}"
         )
-
-        assert sorted(oid for oid, _ in after) == sorted(ASYM_WIN_LEGS), (
-            "RULED (alex-inbox/calibration-919, option B): the loss-only variant "
-            "is excluded per-VARIANT and the winner variant is untouched. A "
-            "change here is a change to the published population — if the loss "
-            "rows came back, D13's arm went per-market; if a winner row went "
-            f"missing, D5 is losing rows nobody ruled on. got={after!r}"
+        # Multiplicity, so the two effects are not confused: the loss rows match
+        # exactly ONE clean_vms row, so nothing here is doubled. This fixture
+        # isolates row LOSS from row duplication.
+        assert len(before) == len({oid for oid, _ in before}), (
+            f"the asymmetric fixture must not also duplicate (got {before!r})"
         )
-        assert all(cat == "baseball" for _, cat in after)
+
+        # THE RULING. Same four ids as the accident produced — and a different,
+        # correct bucketing.
+        assert sorted(oid for oid, _ in after) == ASYM_PUBLISHED, (
+            "RULED (alex-inbox/calibration-919, option A — Alex 2026-08-30): the "
+            "two graded lone claims publish on their own account and the winner "
+            "variant is untouched. If the loss rows are missing, D13's arm went "
+            "back to per-VARIANT. If a winner row is missing, D5 is losing rows "
+            "nobody ruled on. If a `tennis` leg is here, the fail-closed "
+            f"conjunct is gone. got={after!r}"
+        )
+        assert {oid: cat for oid, cat in after} == {
+            **{oid: "cricket" for oid in ASYM_LOSS_LEGS},
+            **{oid: "baseball" for oid in ASYM_WIN_LEGS},
+        }, (
+            "🔴 EVERY ROW MUST PUBLISH UNDER ITS OWN VARIANT'S CATEGORY. The "
+            "loss legs under `baseball` would mean D5 was reverted and these "
+            "rows are riding the sibling again — the same four ids, the wrong "
+            f"mechanism, and the accident back in the curve. got={after!r}"
+        )
+        assert not [oid for oid, _ in after if oid in ASYM_UNKNOWN_LEGS], (
+            "the unknown-truth variant published. `is_winner` is nullable with "
+            "a False default, so its never-graded leg is now a confident loss "
+            f"in the calibration curve (gotcha #21). got={after!r}"
+        )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)

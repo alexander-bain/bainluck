@@ -2587,9 +2587,42 @@ def _calibration_population_ctes(
                     COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded,
                     COUNT(*) FILTER (WHERE fo.opening_probability IS NOT NULL
                                       AND fo.opening_probability > 0
-                                      AND fo.opening_probability < 1) AS eligible
+                                      AND fo.opening_probability < 1) AS eligible,
+                    -- D13 option A (Alex 2026-08-30, CAL-P155): the lone-claim
+                    -- counts, PER MEMBER MARKET. Every other column here is a
+                    -- fact about the VARIANT, and that is exactly why the arm
+                    -- below could not be written correctly before these
+                    -- existed: ``market_count = 1 AND total_outcomes = 1`` is
+                    -- the only way a variant-grained aggregate can say "this
+                    -- holds one lone claim", and it says it by ALSO requiring
+                    -- that nothing else shares the variant.
+                    --
+                    -- ``mrs.n_outcomes`` is the market's outcome count AS
+                    -- CAPTURED -- the same basis Queue 299 rung 1 counts on --
+                    -- so "lone claim" means the same thing in both places.
+                    -- ``COUNT(DISTINCT fo.market_id)`` because a market with
+                    -- ``n_outcomes = 1`` contributes exactly one row and the
+                    -- DISTINCT costs nothing, while making the column's grain
+                    -- unmistakable to the next reader.
+                    COUNT(DISTINCT fo.market_id) FILTER (
+                        WHERE mrs.n_outcomes = 1
+                          AND fo.is_winner IS NOT NULL) AS graded_lone_claims,
+                    COUNT(DISTINCT fo.market_id) FILTER (
+                        WHERE mrs.n_outcomes = 1
+                          AND fo.is_winner IS NULL) AS ungraded_lone_claims
                 FROM virtual_market vm
                 JOIN futures_outcomes fo ON fo.market_id = vm.market_id{vm_stats_roster_predicate}
+                -- LEFT, and ruling 125 is why. ``market_result_shape`` is one
+                -- row per ``market_id`` and every market reaching this join has
+                -- one (both relations are built over ``market_info`` joined to
+                -- ``futures_outcomes``), so an inner join would be equivalent
+                -- TODAY. A join added to a population CTE to compute a new
+                -- column must not be able to change which rows that CTE
+                -- aggregates over, and only the outer form guarantees that
+                -- without depending on an argument. The two FILTERs above are
+                -- NULL-safe by construction: a missing ``mrs`` row fails
+                -- ``mrs.n_outcomes = 1`` and counts toward neither column.
+                LEFT JOIN market_result_shape mrs ON mrs.market_id = vm.market_id
                 GROUP BY vm.vm_id, vm.source, vm.category, vm.is_grouped,
                          vm.mutually_exclusive
             ),
@@ -2617,31 +2650,57 @@ def _calibration_population_ctes(
                         -- exactly as rung 1 intends. ``graded >= 1`` refuses a
                         -- row whose ``is_winner`` was never written at all.
                         --
-                        -- 🔴 THE COUNTS ARE PER VARIANT, NOT PER MARKET, AND
-                        -- THAT IS RULED — not accidental (CERT-485 P1-a,
-                        -- alex-inbox/calibration-919 option B, #1978 CAL-P151).
-                        -- TWO independently-graded lone claims that land in the
-                        -- SAME variant carry ``market_count = 2``, so this arm
-                        -- refuses both; if neither won, the variant has no
-                        -- ``has_winner`` either and the whole variant is
-                        -- excluded. Each of those rows is individually the
-                        -- thing this arm calls "a complete, scoreable
-                        -- prediction", so the exclusion is a real one and it is
-                        -- disclosed here rather than discovered later.
-                        -- Before D5 they published anyway — the two-column join
-                        -- below matched a SIBLING variant's admission row. D5
-                        -- did not create this exclusion, it removed the
-                        -- accident that hid it.
-                        -- Admitting per MARKET (option A) is arguably more
-                        -- correct by this arm's own argument, but it MOVES THE
-                        -- PUBLISHED POPULATION and therefore wants its own
-                        -- queue, its own rebuild and its own measured headline.
+                        -- 🔴 THE ARM COUNTS PER MARKET. ALEX RULED IT (option A,
+                        -- alex-inbox/calibration-919, 2026-08-30; #1978
+                        -- CAL-P155), REVERSING CAL-P151's option B.
+                        --
+                        -- The retired form was ``market_count = 1 AND
+                        -- total_outcomes = 1 AND graded >= 1``, and those counts
+                        -- are per VARIANT. So TWO independently-graded lone
+                        -- claims landing in the SAME variant carried
+                        -- ``market_count = 2`` and the arm refused BOTH; with no
+                        -- winner anywhere in the variant the first arm refused
+                        -- them too, and every one of those rows is individually
+                        -- the thing this arm calls "a complete, scoreable
+                        -- prediction". They were excluded only because they were
+                        -- counted together. CERT-485 found it as a row loss
+                        -- (P1-a) — before D5 they published anyway, by matching
+                        -- a SIBLING variant's admission row through the
+                        -- two-column join; D5 did not create the exclusion, it
+                        -- removed the accident that hid it. Alex was given both
+                        -- options with the population cost declared UNMEASURED
+                        -- and chose A knowingly.
+                        --
+                        -- ``ungraded_lone_claims = 0`` IS A FAIL-CLOSED RESIDUE
+                        -- AND IT IS NARROWER THAN WHAT IT REPLACES. Admission is
+                        -- variant-grained — ``ranked_outcomes`` joins ONE
+                        -- ``clean_vms`` row per variant — so admitting a variant
+                        -- admits every member's outcomes, and the downstream
+                        -- rungs must be able to remove the ones that are not
+                        -- scoreable. For members with ``n_outcomes >= 2`` they
+                        -- can: this arm only ever fires with ``has_winner = 0``,
+                        -- so every such member has ``win_count = 0`` and
+                        -- ``no_winner_markets`` drops it, exactly as rung 1
+                        -- intends. For a single-outcome member nothing ever
+                        -- graded there is NO rung — rung 1 requires
+                        -- ``n_outcomes >= 2`` on purpose — and it would publish
+                        -- as a confident loss, because ``is_winner`` is nullable
+                        -- with a False default (gotcha #21). So the arm refuses
+                        -- the variant instead. The graded claim beside it is
+                        -- held back, which is the same coupling this ruling
+                        -- removes, on a strictly smaller population and in the
+                        -- safe direction: refusing a scoreable row costs
+                        -- coverage, publishing unknown truth as a loss corrupts
+                        -- the curve. Closing it properly needs a per-market rung
+                        -- and its own queue; it is not smuggled in here.
+                        --
                         -- Pinned both directions by ``tests/integration/
                         -- test_calibration_vm_variant_join_pg.py`` (the
-                        -- asymmetric fixture): flipping this arm to per-market
-                        -- fails there by name.
-                        OR (market_count = 1 AND total_outcomes = 1
-                            AND graded >= 1)
+                        -- asymmetric fixture, which seeds exactly the two-lone-
+                        -- claim variant this admits) and by
+                        -- ``tests/test_calibration_lost_losses_12cal.py``.
+                        OR (graded_lone_claims >= 1
+                            AND ungraded_lone_claims = 0)
                   )
             ),
             ranked_outcomes AS MATERIALIZED (

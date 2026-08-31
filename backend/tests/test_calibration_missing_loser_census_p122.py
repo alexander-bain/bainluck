@@ -73,20 +73,38 @@ def test_clean_vms_no_longer_drops_a_claim_for_losing():
     another CTE but keeps its effect still satisfies it.
     """
     from app.tasks.precompute_calibration import _calibration_population_ctes
+    from app.utils.sql_comment_strip import strip_sql_comments
 
     sql = _calibration_population_ctes()
-    assert mlc.CLEAN_VMS_GATE_RETIRED not in sql, (
+    assert mlc.CLEAN_VMS_GATE_RETIRED not in strip_sql_comments(sql), (
         "clean_vms still carries the bare `eligible >= 1 AND has_winner >= 1` "
         "gate — the 12-CAL repair is not in this build."
     )
     # And it is the gate on clean_vms specifically, not some other CTE's. The
     # terminator is a LINE: splitting on a bare ")," truncates the body at the
     # first parenthesised aside inside a comment.
-    body = sql.split("clean_vms AS (", 1)[1].split("\n            ),", 1)[0]
+    #
+    # 🔴 COMMENTS STRIPPED (CAL-P155). The arm's comment block has to quote the
+    # predicate it explains, so every check below was satisfiable by prose —
+    # `"ungraded_lone_claims = 0" in body` would pass off the paragraph that
+    # argues for it, whether or not the SQL carried it.
+    body = strip_sql_comments(
+        sql.split("clean_vms AS (", 1)[1].split("\n            ),", 1)[0]
+    )
     assert mlc.CLEAN_VMS_GATE_FRAGMENT in body
-    assert "graded >= 1" in body, (
+    assert "graded_lone_claims >= 1" in body, (
         "the restored arm must require an AFFIRMATIVE grade; without it a row "
         "nothing ever graded publishes as a confident loss"
+    )
+    # CAL-P155 / D13 option A: the affirmative-grade conjunct is now PER MARKET,
+    # and its fail-closed partner has to be here too. Without
+    # `ungraded_lone_claims = 0` a variant admitted by this arm can carry a
+    # single-outcome member nothing ever graded, and NO downstream rung removes
+    # it — rung 1 requires `n_outcomes >= 2` on purpose — so it would publish as
+    # a confident loss off `is_winner`'s False default (gotcha #21).
+    assert "ungraded_lone_claims = 0" in body, (
+        "the per-market arm dropped its fail-closed conjunct; an ungraded lone "
+        "claim in an admitted variant has no rung to catch it"
     )
 
 
@@ -118,25 +136,35 @@ def test_orphan_partition_still_requires_a_declared_field():
 # 2. THE ARM SPLIT.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("mc,tout", [(1, 1)])
-def test_lone_claim_is_one_market_one_outcome(mc, tout):
-    assert mlc.classify_vm(mc, tout) == mlc.ARM_LONE
-
-
-@pytest.mark.parametrize("mc,tout", [
-    (1, 2),    # one market, two captured outcomes — rung 1 owns it
-    (2, 2),    # a real group that graded nobody
-    (1, 37),   # a wide bundle that graded nobody
-    (3, 1),    # three markets, one captured outcome: a group, not a lone claim
+@pytest.mark.parametrize("glc,ulc,why", [
+    (1, 0, "the solitary lone claim — the class this instrument was built on"),
+    (2, 0, "TWO lone claims in one variant: option A's whole point. Under the "
+           "retired per-VARIANT arm this was market_count=2 and fell in the "
+           "OTHER arm, beside genuine unknown truth"),
+    (9, 0, "wider still, and still every member is a scoreable graded claim"),
 ])
-def test_everything_wider_is_the_other_arm(mc, tout):
-    assert mlc.classify_vm(mc, tout) == mlc.ARM_OTHER
+def test_a_graded_lone_claim_is_the_defect_arm_however_many_share_its_variant(
+    glc, ulc, why
+):
+    assert mlc.classify_vm(glc, ulc) == mlc.ARM_LONE, why
+
+
+@pytest.mark.parametrize("glc,ulc,why", [
+    (0, 0, "no lone claim at all — a multi-outcome vm that graded nobody"),
+    (0, 1, "one lone claim and nothing ever graded it: rung 1's UNKNOWN truth"),
+    (0, 4, "several, all ungraded"),
+    (1, 1, "FAIL-CLOSED: a graded claim beside an ungraded one refuses the "
+           "whole variant rather than publishing unknown truth as a loss"),
+    (3, 1, "one ungraded member is enough to refuse — the conjunct is = 0"),
+])
+def test_everything_else_is_the_other_arm(glc, ulc, why):
+    assert mlc.classify_vm(glc, ulc) == mlc.ARM_OTHER, why
 
 
 def test_the_two_arms_are_the_only_arms():
     """A third label would silently vanish from the printed census."""
-    seen = {mlc.classify_vm(mc, t)
-            for mc in range(1, 5) for t in range(1, 40)}
+    seen = {mlc.classify_vm(g, u)
+            for g in range(0, 5) for u in range(0, 5)}
     assert seen == {mlc.ARM_LONE, mlc.ARM_OTHER}
 
 
@@ -173,7 +201,11 @@ def test_the_dropped_statement_reads_vm_stats_not_clean_vms():
 def test_the_kept_statement_reads_the_published_population():
     sql = mlc.kept_lone_sql("kalshi", "entertainment", 0, 10)
     assert "FROM deduped d" in sql
-    assert "vs.market_count = 1 AND vs.total_outcomes = 1" in sql
+    assert "vs.graded_lone_claims >= 1 AND vs.ungraded_lone_claims = 0" in sql, (
+        "the kept half must select the SAME class the producer admits; if it "
+        "still reads the retired per-variant counts the two halves of this "
+        "census are two different populations"
+    )
 
 
 def test_eligibility_is_the_imported_allowlist_not_a_copy():
