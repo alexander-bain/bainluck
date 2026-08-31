@@ -257,7 +257,10 @@ async def resolve_team""",
         WARM,
         "a pass whose every build degraded reads complete — nothing was written, "
         "every mirror is as old as it was, and the pass claims success (#1884)",
-        """    elif rebuilt or (locked_out and not failed):
+        # CERT-563 re-target: the branch gained `or partial` when a build that
+        # WROTE and fell short stopped counting as a completed rebuild. Same
+        # mutation, same meaning — make the healthy terminal unconditional.
+        """    elif rebuilt or partial or (locked_out and not failed):
         terminal = "complete\"""",
         """    elif True:
         terminal = "complete\"""",
@@ -324,12 +327,20 @@ async def resolve_team""",
         # import and the old needle drifted. The pair is still `_refresh_`'s and
         # still unique (`_warm_prop_families` does not import `QUALITY_FULL`),
         # which is what the anchor exists for.
+        #
+        # CERT-563 re-target, and the SECOND time this anchor has moved for the
+        # same reason. `_warm_prop_families` now imports `QUALITY_FULL` too, so
+        # the three-line pair matched TWICE and the mutant scored HARNESS-FAIL.
+        # Extended by the line that still differs: `_refresh_` takes
+        # `get_client` next, the warmer takes `acquire_refresh_lock`.
         """    from app.tasks.base import get_task_session
     from app.utils.event_concept_cache import (
-        QUALITY_FULL,""",
+        QUALITY_FULL,
+        get_client,""",
         """    from app.services.database import async_session_maker as get_task_session
     from app.utils.event_concept_cache import (
-        QUALITY_FULL,""",
+        QUALITY_FULL,
+        get_client,""",
     ),
     (
         "M21",

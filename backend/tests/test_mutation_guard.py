@@ -420,6 +420,106 @@ def test_no_mutant_is_sitting_in_a_harness_target_right_now():
     )
 
 
+def test_a_drifted_or_newly_ambiguous_needle_FAILS_the_scan():
+    """The scan used to find drift, print it, and then exit 0 saying CLEAN.
+
+    🔴 TWO STATEMENTS ABOUT ONE TREE, ONE OF THEM FALSE, AND THE REASSURING ONE
+    LAST (CERT-563). Pass A printed `N needle(s) no longer present` and four
+    lines later `✅ every needle present in its own target`, then returned 0. In
+    the session that found this, the green line was read and believed, and the
+    drift it contradicted was discovered thirty-two minutes later by the battery
+    that could not apply the mutant.
+
+    Both states mean the same thing — the mutant DOES NOT RUN, so the
+    denominator says N and the power is N-1 — and neither may pass. Ambiguity is
+    ratcheted rather than simply fatal: see `ambiguous_needle_baseline.json`.
+
+    Exercised through the real scanner on a synthetic harness, so it tests the
+    shipped exit code and not a re-implementation of it.
+    """
+    scanner = EVALS / "scan_mutation_residue.py"
+    # `harvest()` is replaced so the scanner's REAL Pass A and its REAL exit code
+    # run over one synthetic pair. Re-implementing the check here would only
+    # prove that this file's copy of it works.
+    probe = textwrap.dedent(
+        f"""
+        import sys, pathlib
+        sys.path.insert(0, {str(EVALS)!r})
+        import scan_mutation_residue as s
+        target = pathlib.Path({str(EVALS / "scan_mutation_residue.py")!r})
+        pair = s.Pair("synthetic_probe_mutations", "M-PROBE", NEEDLE,
+                      "ZZZ-NOT-PRESENT-ANYWHERE-ZZZ", target)
+        s.harvest = lambda: ([pair], [])
+        sys.argv = ["scan", "--all-tracked"]
+        sys.exit(s.main())
+        """
+    )
+    for label, needle, expect in (
+        # Absent from the target: the mutant can never be applied.
+        ("drifted", "THIS TEXT IS NOT IN THE TARGET ANYWHERE AT ALL", "drifted"),
+        # Present many times, and NOT in the baseline: the harness would refuse
+        # it as HARNESS-FAIL, so it can never be applied either.
+        ("newly ambiguous", "import ", "newly ambiguous"),
+    ):
+        result = subprocess.run(
+            [sys.executable, "-c", probe.replace("NEEDLE", repr(needle))],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(EVALS.parents[1]),
+        )
+        assert result.returncode == 1, (
+            f"a {label} needle did not fail the scan (exit {result.returncode}). "
+            "This is the false green CERT-563 was written about.\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        assert "NOT CLEAN" in result.stdout, result.stdout
+        assert expect in result.stdout, result.stdout
+
+    # And the real tree, with its real baseline, must be clean — this is the
+    # control that keeps the two assertions above from passing vacuously.
+    clean = subprocess.run(
+        [sys.executable, str(scanner)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=str(EVALS.parents[1]),
+    )
+    assert clean.returncode == 0, f"{clean.stdout}\n{clean.stderr}"
+    assert "🔴 NOT CLEAN" not in clean.stdout
+
+
+def test_the_ambiguity_baseline_matches_the_tree_it_describes():
+    """A ratchet whose baseline has rotted is a ratchet nobody is holding.
+
+    Every entry must still be genuinely ambiguous — a stale line silently
+    licenses a real regression under the same name — and the scan prints a nudge
+    (not a failure) when one becomes unique, because failing a lane for REPAIRING
+    a guard would be perverse. This asserts the file is well-formed and that the
+    scan agrees with it, which is the part a nudge cannot enforce.
+    """
+    baseline = json.loads((EVALS / "ambiguous_needle_baseline.json").read_text())
+    known = baseline["known_ambiguous"]
+    assert known, "an empty baseline should be DELETED, not kept as an empty list"
+    assert len(known) == len(set(known)), "duplicate entries in the baseline"
+    assert baseline["_issue"].startswith("#"), "the debt must name its issue"
+    for entry in known:
+        assert ":" in entry, f"{entry!r} is not a `harness:mutant-id` pair"
+
+    result = subprocess.run(
+        [sys.executable, str(EVALS / "scan_mutation_residue.py")],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=str(EVALS.parents[1]),
+    )
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert f"{len(known)} baselined ambiguous needle(s) remain" in result.stdout, (
+        "the scan and the baseline disagree about how many ambiguous needles "
+        f"exist. Baseline says {len(known)}.\n{result.stdout}"
+    )
+
+
 def test_an_unresolvable_base_exits_2_not_1():
     """A scan that CANNOT RUN must not borrow the code that means "residue found".
 
