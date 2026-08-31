@@ -100,6 +100,23 @@ class HubConfig:
     # Heading over the `upcoming` rail. "Cards" is combat vocabulary; a tennis
     # slam and a golf major are tournaments. Neutral default on the client.
     upcoming_label: str = "Upcoming"
+    # ── UX-P210 (repairing CERT-525): the SAME heading with no phase claim in it ──
+    #
+    # `upcoming_label` asserts a phase about every card underneath it, and that
+    # assertion is only sometimes true. Every rail lister here admits `live`
+    # alongside `upcoming` by default, and the tennis one also admits `unknown`
+    # (UX-P209/CERT-519: it has no trustworthy start signal, so it declines to
+    # claim one). A live US Open sitting under "Upcoming Tournaments" is the
+    # same false phase claim CERT-519 blocked on the per-card pill, moved one
+    # level up — which is exactly what CERT-525 found.
+    #
+    # So the config declares BOTH words and the CLIENT chooses, because the
+    # client is what renders the claim and only the client knows which cards
+    # ended up on the rail. This field carries no phase vocabulary at all: it is
+    # the noun the rail is a list of, and it is true whatever phase those cards
+    # are in. `test_route_hub.py` asserts every config declares one and that no
+    # phase word ever gets into it.
+    upcoming_label_neutral: str = "Events"
 
 
 # The combat hubs' shared vocabulary — MMA and boxing are the same sport shape
@@ -134,6 +151,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         prop_classifier_domain="ufc",
         section_labels=_COMBAT_SECTION_LABELS,
         upcoming_label="Upcoming Cards",
+        upcoming_label_neutral="Cards",
     ),
     # B5 (L2-86): boxing drops in as ONE config entry — the combat engine
     # (event_combat/event_boxing) supplies the upcoming lister + prop classifier,
@@ -153,6 +171,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         prop_classifier_domain="boxing",
         section_labels=_COMBAT_SECTION_LABELS,
         upcoming_label="Upcoming Cards",
+        upcoming_label_neutral="Cards",
     ),
     # B6 (L2-87): golf + tennis hubs drop in as config over the winner-field event
     # concepts. Each links to the per-event surface (/event/event:golf|tennis:<slug>);
@@ -173,6 +192,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         # `season_stats` section printed "Fighter Stats" over five golf markets
         # until UX-P167 (#2167).
         upcoming_label="Upcoming Tournaments",
+        upcoming_label_neutral="Tournaments",
     ),
     "tennis": HubConfig(
         slug="tennis",
@@ -189,6 +209,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         # section printed "Fight Markets" over 103 tennis markets during US Open
         # week until UX-P167 (#2167).
         upcoming_label="Upcoming Tournaments",
+        upcoming_label_neutral="Tournaments",
     ),
     # L2-92 (B4): esports drops in as a sections-ONLY hub. The data is messy —
     # thousands of per-map "Team A vs Team B" matchup rows across LoL/CS2/Valorant/
@@ -213,6 +234,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         # no rail today (no `concept_domain`), so wiring one later cannot
         # resurrect "Upcoming Cards" by omission.
         upcoming_label="Upcoming Tournaments",
+        upcoming_label_neutral="Tournaments",
     ),
 }
 
@@ -461,6 +483,7 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         # which the client renders as its neutral defaults.
         "section_labels": dict(cfg.section_labels),
         "upcoming_label": cfg.upcoming_label,
+        "upcoming_label_neutral": cfg.upcoming_label_neutral,
         "upcoming": upcoming,
         "sections": sections,
         "total_markets": sum(len(v) for v in sections.values()),

@@ -50,6 +50,8 @@ import path from "path";
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCANNED_DIRS = [path.join("app", "hub"), path.join("components", "hub")];
 const HOME = path.join("components", "hub", "HubStatusPill.tsx");
+/** UX-P210: the rail — the single home of the HEADING's phase decision. */
+const RAIL = path.join("components", "hub", "HubUpcomingRail.tsx");
 
 /** The pill's discriminator: the line every copy of it has to contain. */
 const DISCRIMINATOR = /status\s*===\s*["']live["']/;
@@ -114,6 +116,7 @@ describe("the scan is looking at the right files", () => {
     // pass. Both scanned directories must exist and the home must be in them.
     expect(FILES.length).toBeGreaterThan(1);
     expect(FILES).toContain(HOME);
+    expect(FILES).toContain(RAIL);
     expect(FILES).toContain(path.join("app", "hub", "[competition]", "page.tsx"));
   });
 
@@ -141,15 +144,155 @@ describe("no second copy of the hub status pill", () => {
     expect(copies).toEqual([]);
   });
 
-  it("keeps the page that renders the rail on the shared import", () => {
+  it("keeps the component that renders the rail on the shared import", () => {
     /**
      * The converse, and it is not redundant: the check above passes trivially
-     * if the page stops rendering a pill at all. This names the consumer, so
-     * an extraction that moves the usage elsewhere without carrying the import
+     * if nothing renders a pill at all. This names the consumer, so an
+     * extraction that moves the usage elsewhere without carrying the import
      * lands here rather than in production.
+     *
+     * UX-P210 moved that consumer. The rail — heading and cards together — is
+     * now `components/hub/HubUpcomingRail.tsx`, because CERT-525's finding was
+     * about what SURROUNDS the card and a route file cannot be rendered by a
+     * guard. The page keeps the section, so both links are checked: page →
+     * rail → pill. Breaking either one is what this catches.
      */
+    const rail = read(RAIL);
+    expect(rail).toContain("@/components/hub/HubStatusPill");
+    expect(rail).toContain("<StatusPill status={card.status} />");
+
     const page = read(path.join("app", "hub", "[competition]", "page.tsx"));
-    expect(page).toContain("@/components/hub/HubStatusPill");
-    expect(page).toContain("<StatusPill status={card.status} />");
+    expect(page).toContain("@/components/hub/HubUpcomingRail");
+    expect(page).toContain("<HubUpcomingRail");
+  });
+});
+
+/**
+ * UX-P210 (CERT-525) — THE RAIL HEADING HAS ONE HOME FOR THE SAME REASON.
+ *
+ * The pill's collision story applies unchanged to the heading: it is the second
+ * place on this surface that states a phase, `program/ux-148` is already
+ * rewriting this rail in a different file, and two branches editing disjoint
+ * files merge silently with the wrong copy surviving. A rendered guard imports
+ * the good one by name and passes while the page renders the other.
+ *
+ * The phase RULE (`hubUpcomingHeading`) is what must have one home — not the
+ * `<h2>`, which is markup. So the scan looks for a source that prints the
+ * served `upcoming_label` without routing through the rule.
+ */
+describe("no second decision about what the rail heading claims", () => {
+  /** Reading the served affirmative label — the input to the decision. */
+  const READS_SERVED_LABEL = /upcoming_label\b/;
+  /** The one function allowed to turn that into a heading. */
+  const ROUTES_THROUGH_THE_RULE = /hubUpcomingHeading/;
+  /** Handing the label to the rail, which is not a decision — it is the wiring. */
+  const DELEGATES_TO_THE_RAIL = /<HubUpcomingRail/;
+
+  /**
+   * Deciding, rather than forwarding. The page reads `data.upcoming_label` and
+   * must keep doing so — it is where the payload arrives — so a rule of "reads
+   * the label" alone would fire on the correct file. The unscoped first draft of
+   * this check did exactly that (UX-P205-4 again: a grep for the expression is
+   * not a census of the defect). What is banned is holding the label and
+   * turning it into a heading yourself.
+   */
+  function decidesTheHeadingAlone(src: string): boolean {
+    if (!READS_SERVED_LABEL.test(src)) return false;
+    return !ROUTES_THROUGH_THE_RULE.test(src) && !DELEGATES_TO_THE_RAIL.test(src);
+  }
+
+  it("can report a positive — a hand-rolled heading is recognised", () => {
+    // PROVE THE SWEEP CAN SEE ITS TARGET (UX-P204) before trusting its silence.
+    // This is the shape CERT-525 blocked, as it stood in `page.tsx`.
+    expect(
+      decidesTheHeadingAlone(`<h2>{data.upcoming_label || "Upcoming"}</h2>`),
+    ).toBe(true);
+    // And the two legitimate shapes are not confused with it.
+    expect(decidesTheHeadingAlone(read(RAIL))).toBe(false);
+    expect(
+      decidesTheHeadingAlone(`<HubUpcomingRail label={data.upcoming_label} />`),
+    ).toBe(false);
+  });
+
+  it("has a rail that really does route its heading through the rule", () => {
+    /**
+     * The other half of the control: the rail's exemption has to be earned, and
+     * it is earned by CALLING the rule, not by being named `RAIL`. It never
+     * reads `upcoming_label` itself — the page hands it down as a `label` prop —
+     * which is why the rogue predicate's first clause already lets it past, and
+     * why this second assertion is the one doing the work.
+     */
+    const rail = read(RAIL);
+    expect(READS_SERVED_LABEL.test(rail)).toBe(false);
+    expect(ROUTES_THROUGH_THE_RULE.test(rail)).toBe(true);
+  });
+
+  it("keeps the page delegating rather than deciding", () => {
+    // Names the wiring, so an "improvement" that inlines the heading back into
+    // the route file — where no guard can render it — lands here.
+    const page = read(path.join("app", "hub", "[competition]", "page.tsx"));
+    expect(READS_SERVED_LABEL.test(page)).toBe(true);
+    expect(DELEGATES_TO_THE_RAIL.test(page)).toBe(true);
+  });
+
+  /**
+   * ── THE SECOND CLAUSE, AND ux-148's REAL BYTES ARE WHY IT EXISTS ───────────
+   *
+   * The clause above keys on the served label, and that is not the only way to
+   * make the claim. `git show
+   * origin/program/ux-148-us-open-start-date-and-marquee:.../page.tsx` on
+   * 2026-08-31 renders the heading as a STRING LITERAL — `<h2 …>Upcoming
+   * Cards</h2>` — reading no payload field at all. (Its base predates UX-P167,
+   * so it would also print combat vocabulary over the tennis rail; that half is
+   * UX-P167's guard to catch, not this one's.) A detector for the label
+   * expression is blind to it, which is UX-P205-4 in the other direction: the
+   * defect is the CLAIM, and the expression was only one of its spellings.
+   *
+   * So a hub heading may not contain a phase word as literal text. The rail's
+   * own `<h2>` renders `{heading}` — an expression — and every section heading
+   * renders `sectionLabel(...)`, so nothing legitimate here spells one out. The
+   * pill is not a heading and is untouched by this.
+   */
+  const HEADING_BLOCK = /<h2\b[^>]*>([\s\S]*?)<\/h2>/g;
+  const PHASE_WORD_LITERAL = /\b(upcoming|live|final|settled)\b/i;
+
+  function headingLiteralsClaimingAPhase(src: string): string[] {
+    return Array.from(src.matchAll(HEADING_BLOCK))
+      .map((m) => m[1])
+      // Strip interpolations and comments — only text a reader would see.
+      .map((inner) => inner.replace(/\{[\s\S]*?\}/g, " ").replace(/\s+/g, " ").trim())
+      .filter((text) => PHASE_WORD_LITERAL.test(text));
+  }
+
+  it("can report a positive — ux-148's hard-coded heading is recognised", () => {
+    // Verbatim from that branch, kept as a FIXTURE so the bite is proved
+    // against the bytes rather than against a description of them.
+    const UX148_HEADING = `
+            <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
+              Upcoming Cards
+            </h2>`;
+    expect(headingLiteralsClaimingAPhase(UX148_HEADING)).toEqual(["Upcoming Cards"]);
+    // And the shapes that are fine stay fine.
+    expect(headingLiteralsClaimingAPhase(`<h2>{heading}</h2>`)).toEqual([]);
+    expect(headingLiteralsClaimingAPhase(`<h2>{sectionLabel(key)}</h2>`)).toEqual([]);
+    expect(headingLiteralsClaimingAPhase(`<h2>Something went wrong</h2>`)).toEqual([]);
+  });
+
+  it("spells no phase word into a hub heading", () => {
+    const spelled = FILES.flatMap((f) =>
+      headingLiteralsClaimingAPhase(read(f)).map((t) => `${f}: ${t}`),
+    );
+    expect(spelled).toEqual([]);
+  });
+
+  it("lets no hub source print the served label on its own authority", () => {
+    const rogue = FILES.filter((f) => f !== RAIL && decidesTheHeadingAlone(read(f)));
+    /**
+     * WHEN THIS GOES RED, the fix is not to add the file to an allowlist. It is
+     * to render `<HubUpcomingRail>` instead of hand-rolling a heading, or — if
+     * the surface genuinely is not this rail — to call `hubUpcomingHeading` and
+     * honour a `null` by printing nothing.
+     */
+    expect(rogue).toEqual([]);
   });
 });
