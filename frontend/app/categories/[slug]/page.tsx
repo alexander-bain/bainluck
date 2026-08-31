@@ -19,11 +19,6 @@ import {
   useEngagementTime,
 } from "@/hooks";
 
-// Map category slugs to sport tag values
-function slugToTag(slug: string): string {
-  return `sport:${slug}`;
-}
-
 const PAGE_SIZE = 50;
 
 export default function CategoryPage({
@@ -42,7 +37,12 @@ export default function CategoryPage({
 
   const { user, isLoading: authLoading } = useAuthContext();
 
-  const tags = useMemo(() => [slugToTag(slug)], [slug]);
+  // The slug IS the category key the tiles count (`llm_sport_category`), so it
+  // goes to the feed as `category=`, not as a `sport:<slug>` tag. The tag
+  // vocabulary is a fixed 22-value allowlist that the classifier long ago
+  // outgrew — 26 of the 48 counted categories, `table_tennis` (the largest on
+  // the site) among them, carry no `sport:` tag at all, so every one of their
+  // pages was structurally empty no matter how many markets the tile promised.
 
   const [extraItems, setExtraItems] = useState<FeedItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -59,7 +59,7 @@ export default function CategoryPage({
       : user
         ? ["feed-category", slug, user.uid]
         : ["feed-category-anon", slug],
-    () => fetchFeed({ limit: PAGE_SIZE, tags }),
+    () => fetchFeed({ limit: PAGE_SIZE, category: slug }),
     {
       refreshInterval: 30000,
       onSuccess: (data) => {
@@ -78,14 +78,18 @@ export default function CategoryPage({
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const result = await fetchFeed({ limit: PAGE_SIZE, offset: allItems.length, tags });
+      const result = await fetchFeed({
+        limit: PAGE_SIZE,
+        offset: allItems.length,
+        category: slug,
+      });
       setExtraItems((prev) => [...prev, ...result.items]);
       setHasMore(result.has_more);
     } catch (e) {
       console.error("Load more failed:", e);
     }
     setLoadingMore(false);
-  }, [loadingMore, hasMore, allItems.length, tags]);
+  }, [loadingMore, hasMore, allItems.length, slug]);
 
   const feedSections = useMemo(() => {
     if (allItems.length === 0) return [];

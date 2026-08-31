@@ -926,6 +926,12 @@ async def _prewarm_feed_shape(
                     limit=shape["limit"],
                     offset=shape["offset"],
                     sport=None,
+                    # The warmer only warms the anonymous Discover/sports first
+                    # paints; the /categories/<slug> browse shapes are not warmed.
+                    # This must still be passed EXPLICITLY — an omitted route
+                    # parameter arrives as the `Query(...)` object itself, which
+                    # is truthy and would stringify into the cache key.
+                    category=None,
                     include_events=shape["include_events"],
                     include_futures=shape["include_futures"],
                     my_teams_only=False,

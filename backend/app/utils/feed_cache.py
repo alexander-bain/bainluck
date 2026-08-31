@@ -203,6 +203,7 @@ def feed_page_base_cache_key(
     event_pct: Optional[float] = None,
     my_teams_only: bool = False,
     mode: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -226,6 +227,11 @@ def feed_page_base_cache_key(
         f"{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:"
         f"{my_teams_only}:{mode or 'discover'}"
     )
+    if category:
+        # Same prepended, length-delimited form as ``feed_response_cache_key``,
+        # for the same two reasons. Here the docstring's warning is literal:
+        # omitting `category` would serve page 2 of another category's list.
+        parts = f"cat={len(category)}:{category}|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -313,6 +319,7 @@ def feed_response_cache_key(
     event_pct: Optional[float] = None,
     my_teams_only: bool = False,
     mode: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -339,6 +346,18 @@ def feed_response_cache_key(
         f"{include_events}:{include_futures}:{tags or ''}:{event_pct or ''}:"
         f"{my_teams_only}:{mode or 'discover'}"
     )
+    if category:
+        # PREPENDED and length-delimited, deliberately, on both counts.
+        #
+        # Prepended: every existing key begins ``feed:``, so a category-browse
+        # key can never collide with a Discover / sports key — and a request
+        # with no category hashes the byte-identical string it always did, so
+        # shipping this does not cold-start the whole response cache.
+        #
+        # Length-delimited: `sport`, `tags` and `mode` are all free-form strings
+        # in `parts`, so a bare separator is forgeable. `cat=<len>:<value>` is
+        # not: two different categories cannot produce the same prefix.
+        parts = f"cat={len(category)}:{category}|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

@@ -1074,6 +1074,7 @@ export async function fetchFeed(
     event_pct?: number;
     tags?: string[];
     mode?: string;
+    category?: string;
   },
   // L2-242 / C133 — for the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor, omit `x-session-id` so the backend serves the
@@ -1097,6 +1098,7 @@ export async function fetchFeed(
   if (params?.event_pct != null) searchParams.set("event_pct", params.event_pct.toString());
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
   if (params?.mode) searchParams.set("mode", params.mode);
+  if (params?.category) searchParams.set("category", params.category);
 
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the
