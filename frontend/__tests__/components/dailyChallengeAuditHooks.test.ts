@@ -15,9 +15,60 @@
 //      too. That is the L2-227 shape — coverage that exists on paper and
 //      selects nothing.
 //
-// Asserted at the source, like `calibrationAuditHooks.test.tsx` and
-// `discoverAuditHooks.test.tsx`: both pages are large client components behind
-// fetch/localStorage, and rendering them would prove less and break more.
+// ─── WHY THIS IS ASSERTED AT THE SOURCE (measured, UX-P226) ───
+//
+// This file used to justify the source anchor by saying both pages "are large
+// client components behind fetch/localStorage, and rendering them would prove
+// less and break more" — the sentence `calibrationAuditHooks.test.tsx` and
+// `discoverAuditHooks.test.tsx` also carry, and the one UX-P223 named as the
+// origin of three straight cert blocks on movable source anchors. Half of it
+// was never measured, and it is wrong:
+//
+//   - "break more" is FALSE. Both pages render fine on the existing
+//     `renderToStaticMarkup` / node rail — 30ms and 7ms, no jsdom, behind the
+//     module mocks every component suite here already uses.
+//   - "prove less" is TRUE, and understates it: a static render proves NOTHING
+//     for this suite. Both pages open on `useState(true)` that only a
+//     `useEffect` clears, and effects do not run without a DOM, so the markup
+//     is the spinner and nothing else — 262 bytes for Daily, 417 for the
+//     challenge, carrying ZERO of the seven hooks below. Better mocks cannot
+//     reach past a page-internal state gate, and jsdom is absent from
+//     `node_modules` with the npm registry unreachable from the sandbox.
+//
+// The two directions above are also source questions by nature, not by
+// convenience:
+//
+//   - direction 2 reads a Playwright spec. That is not a component; there is
+//     nothing to render, at any point, under any harness.
+//   - direction 1 asserts each hook is declared EXACTLY ONCE. That is a
+//     deduplication property of the FILE, and a render is the wrong instrument
+//     for it in principle: rendering shows you what the branch you took
+//     contains, and can never show you the ABSENCE of a second declaration on
+//     a branch you did not take.
+//
+// CERT-575 blocked an earlier draft of this header for adding a third reason
+// that was simply false — that "no single render sees more than one" hook. It
+// does. Read off the page structure (NOT off a render — see the loading gate
+// above, which is why these sets cannot currently be observed):
+//
+//     Daily      loading   -> {}
+//                empty     -> { daily-empty-state }
+//                playing   -> { daily-page, daily-guess-higher, daily-guess-lower }
+//                completed -> { daily-page, daily-share }
+//     Challenge  loading   -> {}
+//                error     -> { challenge-error }
+//                loaded    -> { challenge-page }
+//
+// `daily-page` is on the <main> wrapper and `QuestionCard` / `SummaryCard`
+// render inside it, so three hooks co-render in the playing state. What is
+// true, and all the argument needs, is that no render carries all seven, and
+// that the two directions above are not render questions to begin with.
+//
+// THE GAP THIS LEAVES, STATED: a hook that MIGRATES between branches — moved
+// from the empty state into the main return, say — keeps its count of one and
+// stays green here. That is the CERT-562 shape. This suite is the cheap
+// tripwire for drop / rename / duplicate / orphan-selector; the browser rail
+// driving a real page is what catches a hook on the wrong screen.
 
 import * as fs from "fs";
 import * as path from "path";
