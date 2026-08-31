@@ -3885,6 +3885,11 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         "status": market.status,
         "source": market.source,
         "external_id": market.external_id,
+        # The shape field (#194 / market_shape.py). Every surface keys its render
+        # kernel off this ONE value — see frontend/lib/marketShape.ts. It was
+        # classified and stored but never served, so the detail page had no way to
+        # dispatch and fell back to the generic ranked table for every shape.
+        "market_type": market.market_type,
         "mutually_exclusive": market.mutually_exclusive,
         "commence_time": market.commence_time.isoformat() if hasattr(market, 'commence_time') and market.commence_time else None,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
@@ -3983,6 +3988,8 @@ async def get_group(
             "group_type": m.group_type,
             "group_position": m.group_position,
             "canonical_market_key": m.canonical_market_key,
+            # Shape field (#194) — same contract as the detail payload above.
+            "market_type": m.market_type,
             "market_tier": m.market_tier,
             "llm_sport_category": m.llm_sport_category,
             "status": m.status,
