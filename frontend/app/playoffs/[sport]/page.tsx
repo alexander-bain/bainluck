@@ -855,13 +855,15 @@ export default function PlayoffGridPage({
 
             {/* Empty state */}
             {!isLoading && !gridError && !gridTimedOut && sections && sections.every((s) => s.data.participants.length === 0) && (
-              <div className="text-center py-12">
+              <div className="text-center py-12" data-empty-state-name="playoffs-no-championship-odds">
+                {/* Ruling 142: "available yet" and "will appear" both described
+                    a future. Both lines now describe the grid as it stands. */}
                 <p className="text-text-secondary text-lg mb-2">
-                  No championship odds available yet
+                  No championship odds right now
                 </p>
                 <p className="text-text-secondary/60 text-sm">
-                  Odds will appear when sportsbooks and prediction markets publish{" "}
-                  {league.label} championship markets.
+                  This grid covers {league.label} championship markets from
+                  sportsbooks and prediction markets.
                 </p>
               </div>
             )}

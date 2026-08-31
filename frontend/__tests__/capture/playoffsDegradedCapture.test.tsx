@@ -191,7 +191,11 @@ describe("the 503 — the page stops overwriting the server's reason", () => {
       render(undefined, { error: apiError(503, DETAIL_503.detail), slug: "la-liga" })
     );
     expect(text).toContain("not an empty league");
-    expect(text).not.toContain("No championship odds available yet");
+    // UX-P220, ruling 142: tracks the empty state's SHIPPED headline. Left
+    // spelling the retired "…available yet" wording, this row would have gone
+    // vacuous — passing because the string no longer exists anywhere, not
+    // because the degraded state declines to render the empty one.
+    expect(text).not.toContain("No championship odds right now");
   });
 
   it("CONTROL — falls back to the generic line when the server sent no reason", () => {

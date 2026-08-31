@@ -418,12 +418,13 @@ function MyTeamsFeed({ principal }: { principal: string }) {
       {feedData && !feedData.requires_auth && (
         <>
           {!hasContent ? (
-            <div className="text-center py-12">
+            <div className="text-center py-12" data-empty-state-name="my-stuff-no-teams">
               <p className="text-sm text-text-secondary mb-1">
                 No games or markets right now for your teams
               </p>
+              {/* Ruling 142: state what the page follows, not when it refills. */}
               <p className="text-xs text-text-muted">
-                Check back when your teams are playing
+                This page follows the teams you have saved.
               </p>
             </div>
           ) : (

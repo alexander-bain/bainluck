@@ -77,8 +77,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import SERVED_BEFORE from "../fixtures/uxp173_playoffs_laliga_before.json";
 import SERVED_AFTER from "../fixtures/uxp173_playoffs_laliga_after.json";
 
-const EMPTY_LINE = "No championship odds available yet";
-const CLAIM = "Odds will appear when sportsbooks and prediction markets publish";
+// UX-P220, ruling 142: both lines were rewritten because "available yet" and
+// "will appear" described a future rather than the grid as it stands. These
+// constants track the SHIPPED copy — the rows below are about whether the empty
+// state renders at all, not about which words it uses, and they go vacuous if
+// the constants are allowed to drift off the component.
+const EMPTY_LINE = "No championship odds right now";
+const CLAIM = "This grid covers";
 
 let gridPayload: unknown;
 

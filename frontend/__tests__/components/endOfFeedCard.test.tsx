@@ -26,14 +26,19 @@ describe("EndOfFeedCard (L2-109 Item 1)", () => {
     const html = renderToStaticMarkup(<EndOfFeedCard count={137} onRefresh={noop} />);
     expect(html).toContain("all caught up");
     expect(html).toContain("137 markets explored");
-    expect(html).toContain("check back soon");
+    // UX-P220, ruling 142: was "check back soon" — a promise of a refill nobody
+    // had committed to, and the debt list said so while this row held it in
+    // place. The sub-line now states what the feed holds.
+    expect(html).toContain("that is every market in your feed right now");
   });
 
   test("omits the count phrasing in the empty (zero-item) state", () => {
     const html = renderToStaticMarkup(<EndOfFeedCard count={0} onRefresh={noop} />);
     expect(html).toContain("all caught up");
     expect(html).not.toContain("markets explored");
-    expect(html).toContain("new markets open throughout the day");
+    // CERT-558 P3: with no count prefix this arm used to open lowercase, so it
+    // is its own sentence now and this row is capital-sensitive on purpose.
+    expect(html).toContain("That is every market in your feed right now");
   });
 
   test("renders a refresh affordance (web has no pull-to-refresh)", () => {

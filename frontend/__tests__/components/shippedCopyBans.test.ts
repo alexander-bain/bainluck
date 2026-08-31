@@ -604,6 +604,42 @@ const EXEMPT: Record<string, string[]> = {
  * render guard, because this map's absence assertion cannot see a sub-line that
  * is deleted instead of rewritten —
  * `__tests__/capture/weatherEmptyStatesStateWhatTheyAre.test.tsx`.
+ *
+ * ═══ RULING 142 IS PAID IN FULL — UX-P220, 2026-08-31 ═══
+ *
+ * UX-P219 paid `app/weather` and, in doing so, found why the debt had survived
+ * two sweeps: a green capture was asserting the banned sentence VERBATIM, so
+ * the debt list said "we owe a fix" while a test said "keep it exactly as it
+ * is". A census of this build found the remaining debt was not six surfaces
+ * but SEVEN SENTENCES, several of them shared:
+ *
+ *   • `components/discover/EndOfFeedCard.tsx` — "new markets open throughout
+ *     the day, so check back soon" → "…that is every market in your feed right
+ *     now." One sentence; it was the whole of `app/search`'s debt and half of
+ *     `shared`'s, because the card bundles into both. The Refresh button and
+ *     the category links under it are the affordance the promise was standing
+ *     in for, and they were already there.
+ *   • `app/discover/page.tsx` — the daily challenge's "Check back after the
+ *     feed refreshes." → where the challenge draws its questions FROM.
+ *   • `components/OddsChart.tsx` — "Win probability will update live once the
+ *     game starts" → "This chart plots win probability minute by minute." One
+ *     sentence carrying TWO of `shared`'s three promise ids (`once-the` and
+ *     `will-populate`), which is why the map made the debt look wider than it
+ *     was.
+ *   • `app/categories`, `app/my-stuff`, `app/sports`, `app/hub` — four empty
+ *     states saying "Check back…" in four voices; each now says what its page
+ *     lists or follows.
+ *   • `app/playoffs` — "No championship odds available yet / Odds will appear
+ *     when sportsbooks and prediction markets publish…". Both lines went: the
+ *     headline's "yet" was a promise the rules do not catch, and shipping it
+ *     next to a rewritten sub-line would have been half a fix.
+ *
+ * Six keys are DELETED and `shared` keeps only its ruling-138 ids, so OWED now
+ * holds nothing but ruling 138. The `ruling 142 is closed` test below makes
+ * that structural, and the per-site render guard —
+ * `__tests__/capture/emptyStatesStateWhatTheyAre.test.tsx` — pins each site,
+ * because this map's absence assertion cannot see a sentence that is rewritten
+ * on one surface and still shipping on another.
  */
 const OWED: Record<string, string[]> = {
   // The methodology page still says "price" throughout, for the reason in
@@ -611,7 +647,6 @@ const OWED: Record<string, string[]> = {
   "app/calibration": ["price-family", "blend"],
   "app/privacy": ["price-family"],
   "app/politics": ["price-family"],
-  "app/categories": ["check-back"],
   // "the price at the pump", "Gas price", "Inflation & Consumer Prices" —
   // ruling 138 explicitly SPARES these: they are prices of goods in the world,
   // which is what those markets are about. Listed so the exemption is visible.
@@ -621,14 +656,16 @@ const OWED: Record<string, string[]> = {
   // clean, so the key is deleted rather than left as an empty array.
   "app/futures": ["price-family"],
   "app/events": ["price-family", "blend"],
-  "app/search": ["check-back"],
-  "app/hub": ["check-back"],
-  "app/my-stuff": ["check-back"],
-  "app/sports": ["check-back"],
-  "app/playoffs": ["will-populate"],
-  // Components shared across routes: the marketing blurbs on the landing
-  // shell, `lib/priceCadenceCopy.ts`, and the live-game chart caption.
-  shared: ["blend", "price-family", "check-back", "once-the", "will-populate"],
+  // `app/categories`, `app/search`, `app/hub`, `app/my-stuff`, `app/sports` and
+  // `app/playoffs` sat here until UX-P220. Each held ruling-142 entries only, so
+  // with the last promise rewritten the keys are deleted rather than emptied —
+  // the same treatment `app/about` got in UX-P155, and what makes any future
+  // promise on those surfaces an UNLISTED pair rather than a forgiven one.
+  //
+  // Components shared across routes: the marketing blurbs on the landing shell
+  // and `lib/priceCadenceCopy.ts`. The live-game chart caption was the third
+  // and is gone; `check-back`, `once-the` and `will-populate` went with it.
+  shared: ["blend", "price-family"],
 };
 
 /**
@@ -750,6 +787,27 @@ describe("the built bundle — the bytes Vercel uploads", () => {
       ids.filter((id) => ATTRIBUTION_AWARE_IDS.has(id)).map((id) => `${surface} → ${id}`)
     );
     expect(venueDebt).toEqual([]);
+  });
+
+  it("ruling 142 is closed: no future-promise rule may be carried as debt again", () => {
+    // UX-P220. Same shape as ruling 141 above, and for the same reason: the
+    // difference between "paid" and "small" should be structural, not an empty
+    // space in a list that the next queue can quietly refill.
+    //
+    // Ruling 142's debt outlived two sweeps because nothing stopped a surface
+    // being ADDED back. `app/weather` was paid by UX-P219; the last six —
+    // categories, search, hub, my-stuff, sports, playoffs — plus all three of
+    // `shared`'s promise ids were paid here. Re-listing any of them would be a
+    // one-line diff that reads like housekeeping; this makes it delete a test
+    // with a ruling number on it.
+    //
+    // Read off `FUTURE_PROMISE_BANS` rather than spelled out, so a fourth
+    // promise rule added to the ruling is covered without touching this file.
+    const promiseIds = new Set(FUTURE_PROMISE_BANS.map((b) => b.id));
+    const promiseDebt = Object.entries(OWED).flatMap(([surface, ids]) =>
+      ids.filter((id) => promiseIds.has(id)).map((id) => `${surface} → ${id}`)
+    );
+    expect(promiseDebt).toEqual([]);
   });
 
   (present ? it : it.skip)("the debt list has no dead entries — it can only be paid down", () => {

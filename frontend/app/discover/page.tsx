@@ -427,7 +427,10 @@ function FeedItemShell({
   );
 }
 
-function ChallengeModal({
+// Exported for `__tests__/capture/emptyStatesRenderTheirOwnBranch.test.tsx`,
+// which renders the no-cards branch. Three certs blocked a source-only anchor on
+// this empty state; a render needs the component to be reachable.
+export function ChallengeModal({
   items,
   currentIndex,
   completed,
@@ -501,9 +504,16 @@ function ChallengeModal({
               onNextQuestion={onNextQuestion}
             />
           ) : (
-            <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
+            <div
+              className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md"
+              data-empty-state-name="challenge-no-cards"
+            >
               <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
-              <p className="mt-2 text-sm text-text-secondary">Check back after the feed refreshes.</p>
+              {/* Ruling 142: say where the challenge gets its questions, not
+                  when more will arrive. */}
+              <p className="mt-2 text-sm text-text-secondary">
+                The daily challenge draws its questions from the live feed.
+              </p>
               <Button
                 type="button"
                 onClick={onClose}
