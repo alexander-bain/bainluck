@@ -38,7 +38,14 @@ Three properties make it safe to put on the hot path:
    a cross-request cached ORM row) is a live P0 whose seven-day watch opened at
    T0 = 2026-08-24T17:23:50Z with zero days banked. This is the mechanical form
    of "we are not doing that again", and it is why `futures.market_load`
-   (567-617ms of hydrated rows) is left on the table by this change.
+   (567-617ms of hydrated rows) was left on the table by this change.
+
+   **LAT-P174 took `market_load` WITHOUT relaxing this rule** (#2143 residual,
+   2026-08-31). An ORM row still cannot enter here; what enters is a plain
+   table of the loaded COLUMN VALUES, and the hydrated objects are rebuilt per
+   request as inert snapshots (`app/utils/futures_market_snapshot.py`). The
+   refusal above is the reason that module exists, not an obstacle it went
+   around: the guard is what forced the carrier to change.
 
 2. **Copies in, copies out.** The stored artifact is deep-copied on store and on
    every read. The feed's display chain mutates items in place (`_rank_score`,
@@ -151,13 +158,33 @@ class NotPlainData(TypeError):
 # The ONLY namespaces whose reuse may be named on the public `X-Feed-Shared`
 # response header. A fixed allowlist of fixed strings — never a key, never a
 # principal, never a query parameter. Anything else shares silently.
-SHARED_ARTIFACT_NAMES: frozenset[str] = frozenset({"concepts", "canonical_counts"})
+SHARED_ARTIFACT_NAMES: frozenset[str] = frozenset(
+    {"concepts", "canonical_counts", "market_load"}
+)
 
 #: Per-namespace entry cap. Concepts key on (sport_filter, hour-bucket) and
 #: canonical counts on a digest of the candidate key set, so the live cardinality
 #: is small; the cap exists so an unexpected key explosion cannot grow a
 #: process-global dict without bound.
 MAX_ENTRIES_PER_NAMESPACE = 64
+
+#: Namespaces whose entries are big enough that the count cap has to be a MEMORY
+#: bound rather than a key-explosion backstop (LAT-P174).
+#:
+#: The default 64 is sized for artifacts of a few kilobytes. `market_load` holds
+#: the loaded column values of the whole candidate base — measured at ~1.2 MB
+#: encoded for 700 markets / 2,223 outcomes, and several times that as live
+#: Python lists. Sixty-four of those is hundreds of megabytes on a dyno, so the
+#: cap that is a formality for a small artifact is the whole safety property for
+#: a large one.
+#:
+#: Six, because the live key cardinality is the number of distinct candidate
+#: bases in flight within one TTL — one per `(sport_filter, static_tag_filter)`
+#: shape the surfaces actually request — and an entry rotates when the base's ID
+#: set changes. Undershooting costs a rebuild, which is exactly today's
+#: behaviour; overshooting costs resident memory on the flagship route, which is
+#: not recoverable by failing open.
+MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6}
 
 #: Default staleness bound. The concept build embeds `now`-derived text and pin
 #: state, so the TTL is what bounds how wrong that can be. 60s is far below the
@@ -513,8 +540,18 @@ def shared_build_stats() -> dict[str, int]:
     return out
 
 
-def _evict_if_needed(entries: dict[tuple, tuple[float, Any]]) -> None:
-    while len(entries) > MAX_ENTRIES_PER_NAMESPACE:
+def max_entries_for(namespace: str) -> int:
+    """The entry cap for `namespace` — the per-namespace override, else default."""
+    return MAX_ENTRIES_BY_NAMESPACE.get(namespace, MAX_ENTRIES_PER_NAMESPACE)
+
+
+def _evict_if_needed(
+    entries: dict[tuple, tuple[float, Any]], namespace: Optional[str] = None
+) -> None:
+    cap = MAX_ENTRIES_PER_NAMESPACE
+    if namespace is not None:
+        cap = max_entries_for(namespace)
+    while len(entries) > cap:
         oldest = min(entries.items(), key=lambda kv: kv[1][0])[0]
         entries.pop(oldest, None)
 
@@ -861,7 +898,7 @@ async def get_or_build(
             # Promote into L1 so this worker's NEXT request skips the hop too.
             entries = _store.setdefault(namespace, {})
             entries[key] = (_clock(), copy.deepcopy(value))
-            _evict_if_needed(entries)
+            _evict_if_needed(entries, namespace)
             _note_reuse(namespace, reuse_sink, SHARED_TIER_CROSS_WORKER)
             return value
 
@@ -882,7 +919,7 @@ async def get_or_build(
 
         entries = _store.setdefault(namespace, {})
         entries[key] = (_clock(), copy.deepcopy(built))
-        _evict_if_needed(entries)
+        _evict_if_needed(entries, namespace)
         # Snapshot for the publisher too: the caller mutates its cards in place
         # (`_rank_score`, bundling, pin flags), and the publish runs after this
         # function has handed `built` back.

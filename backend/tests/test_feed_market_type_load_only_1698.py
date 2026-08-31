@@ -62,11 +62,23 @@ def test_an_unloaded_column_raises_on_access_rather_than_returning_none():
 
 
 def _load_only_blocks() -> list[str]:
-    """The two `load_only(...)` argument lists in the feed serializer queries."""
+    """The `load_only(...)` argument lists behind the feed serializer queries.
+
+    LAT-P174 moved one of the two out of `feed.py` and into
+    `futures_market_snapshot.MARKET_COLUMNS`, which is simultaneously the query's
+    load surface (`market_load_options()` builds the `load_only` from it) and the
+    wire format of the shared hydration artifact. It is rendered here in the same
+    `FuturesMarket.<column>` form as the literal blocks so this guard keeps
+    covering BOTH sites — a source scan that only knows the old home would go
+    quietly half-blind, which is the exact species of failure #1698 was.
+    """
     from app.routes import feed
+    from app.utils import futures_market_snapshot as fms
 
     src = inspect.getsource(feed)
-    return re.findall(r"load_only\(\s*\n(.*?)\n\s*\)", src, flags=re.S)
+    literal = re.findall(r"load_only\(\s*\n(.*?)\n\s*\)", src, flags=re.S)
+    derived = "\n".join(f"FuturesMarket.{column}," for column in fms.MARKET_COLUMNS)
+    return literal + [derived]
 
 
 def test_both_feed_load_only_lists_select_market_type():

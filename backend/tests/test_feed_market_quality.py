@@ -1296,17 +1296,30 @@ class TestFabricatedMidpointWiring:
         # L2-172 / gotcha: a column read inside GET /api/feed but absent from
         # load_only lazy-loads per outcome and crashes the async route. There are TWO
         # such lists (discover path and sports-mode path); both must carry the book.
+        #
+        # LAT-P174 moved ONE of the two out of `feed.py` and into
+        # `futures_market_snapshot.OUTCOME_COLUMNS`, where it is both the query's
+        # load_only and the wire format of the shared hydration artifact. Counting
+        # only `feed.py` would now silently drop that list out of this guard's
+        # coverage — which is the failure mode this guard exists to prevent — so the
+        # count spans both homes and the total claim is unchanged.
         import inspect
 
         from app.routes import feed as feed_module
+        from app.utils import futures_market_snapshot as fms
 
         src = inspect.getsource(feed_module)
-        assert src.count("FuturesOutcome.current_probability") == 2, (
+
+        def _sites(column: str) -> int:
+            name = column.split(".", 1)[1]
+            return src.count(column) + (1 if name in fms.OUTCOME_COLUMNS else 0)
+
+        assert _sites("FuturesOutcome.current_probability") == 2, (
             "expected exactly two outcome load_only lists — if this changed, the "
             "assertions below need to follow"
         )
-        assert src.count("FuturesOutcome.current_yes_bid") == 2
-        assert src.count("FuturesOutcome.current_yes_ask") == 2
+        assert _sites("FuturesOutcome.current_yes_bid") == 2
+        assert _sites("FuturesOutcome.current_yes_ask") == 2
 
 
 class TestFeedQualityDebug:

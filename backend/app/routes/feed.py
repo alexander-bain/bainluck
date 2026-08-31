@@ -192,6 +192,8 @@ from app.utils.personalization import (
     compute_futures_multiplier,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
+from app.utils import futures_market_snapshot as _futures_snapshot
+from app.utils import principal_independent_cache as _pic
 from app.utils.principal_independent_cache import (
     bind_reuse_sink as _bind_shared_reuse_sink,
 )
@@ -7206,60 +7208,17 @@ async def _score_futures(
     # Base filters + the ordered candidate-ID pools now live in
     # ``_compute_ordered_candidate_ids`` (Queue 285) so both the request-path
     # direct-query fallback and the precompute beat build the identical base.
-    base_options = [
-        load_only(
-            FuturesMarket.id,
-            FuturesMarket.name,
-            FuturesMarket.source,
-            FuturesMarket.external_id,
-            FuturesMarket.sport_id,
-            FuturesMarket.category,
-            FuturesMarket.llm_sport_category,
-            FuturesMarket.market_tier,
-            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
-            # Omitted, the attribute access lazy-loads, and a lazy load under async
-            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
-            # WHOLE futures pool rather than dropping one card (gotcha #42).
-            FuturesMarket.market_type,
-            FuturesMarket.canonical_market_key,
-            FuturesMarket.group_id,
-            FuturesMarket.group_type,
-            FuturesMarket.image_url,
-            FuturesMarket.hook_description,
-            FuturesMarket.hook_generated_at,
-            FuturesMarket.hook_leader_at_generation,
-            FuturesMarket.market_metadata,
-            FuturesMarket.curation_score_adj,
-            FuturesMarket.volume_24h,
-            FuturesMarket.updated_at,
-            FuturesMarket.commence_time,
-            FuturesMarket.resolution_date,
-            FuturesMarket.status,
-            FuturesMarket.created_at,
-            FuturesMarket.llm_league,
-            FuturesMarket.llm_gender,
-            FuturesMarket.llm_level,
-        ),
-        selectinload(FuturesMarket.outcomes).load_only(
-            FuturesOutcome.id,
-            FuturesOutcome.name,
-            FuturesOutcome.team_id,
-            FuturesOutcome.current_probability,
-            FuturesOutcome.probability_change_24h,
-            FuturesOutcome.rank,
-            FuturesOutcome.rank_change_24h,
-            FuturesOutcome.opening_probability,
-            # L2-172: needed for the has_closing_line calibration signal; deferred
-            # here would lazy-load per outcome and crash this async route.
-            FuturesOutcome.calibration_probability,
-            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
-            # rule as the line above — omitting these lazy-loads per outcome and
-            # crashes the async route.
-            FuturesOutcome.current_yes_bid,
-            FuturesOutcome.current_yes_ask,
-        ),
-        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
-    ]
+    #
+    # LAT-P174 (#2143 residual): the load surface moved to
+    # ``app/utils/futures_market_snapshot.py`` and the options are BUILT from it.
+    # That file's column tuples are also the wire format of the shared hydration
+    # artifact below, and the whole point is that the query and the snapshot
+    # cannot disagree about what is loaded — so there is one list, in one place,
+    # rather than two that a future column has to be added to twice. The two
+    # comments that used to live on individual columns here (#1698 on
+    # ``market_type``, L2-172 / UX-P011 on the outcome price fields) moved with
+    # them; the rule they state is unchanged and is why the list is a contract.
+    base_options = _futures_snapshot.market_load_options()
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
@@ -7357,13 +7316,66 @@ async def _score_futures(
         if not market_ids:
             return []
 
-        markets_result = await db.execute(
-            select(FuturesMarket)
-            .options(*base_options)
-            .where(FuturesMarket.id.in_(market_ids))
+        # LAT-P174 (#2143 residual) — SHARE THE HYDRATION.
+        #
+        # Measured on production 2026-08-31 for a returning reader (117 recorded
+        # impressions), server-side stage header, `x-feed-cache: miss`:
+        #
+        #     x-feed-elapsed-ms 1533.04
+        #     futures.market_load 588.48   futures.scoring_loop 433.64
+        #     events 219.28  personalization 113.08  golf 88.19  ranking 41.78
+        #
+        # 38% of the request, and principal-INDEPENDENT by construction: the
+        # only input is the ordered candidate-ID list, which `candidate_base`
+        # already shares because the pools depend on `(now, sport_filter,
+        # static_tag_filter)` alone. Two principals a second apart issue this
+        # identical SELECT and get identical rows — and LAT-P173 measured who
+        # pays for that: a returning reader misses BY CONSTRUCTION (any recorded
+        # interaction makes `ctx != PersonalizationContext()`, forfeiting both
+        # the LAT-P089 shared entry and the LAT-P141 page base), so the reader
+        # who uses the product waits 892-1,533ms where a stranger waits 6-28ms.
+        #
+        # `principal_independent_cache` refused this artifact for a stated
+        # reason — "a hydrated ORM row therefore CANNOT enter this cache ...
+        # which is why `futures.market_load` is left on the table" — and THAT
+        # REFUSAL IS NOT RELAXED HERE. `assert_plain_data` still rejects an ORM
+        # instance. What changes is the carrier: the shared value is a plain
+        # table of the loaded COLUMN VALUES, and the objects the scoring loop
+        # reads are rebuilt per request as inert snapshots holding no session,
+        # no identity map and no lazy loaders (#2107, gotcha #6).
+        #
+        # Staleness is bounded by the shared TTL (60s default). That is strictly
+        # tighter than what these same rows already reach a reader through: the
+        # anonymous response entry serves 60s fresh plus a 60s stale mirror, and
+        # the prices themselves are repolled on a 2-minute cadence. The key
+        # carries NO clock component for the same reason `canonical_counts`
+        # carries none — LAT-P104 measured a clock-bucketed key throwing away
+        # still-fresh entries, and the TTL is the bound here regardless.
+        _snapshot_key = (
+            "market_load",
+            _futures_snapshot.SNAPSHOT_SCHEMA_VERSION,
+            _pic.digest_of(str(mid) for mid in market_ids),
         )
+
+        async def _build_market_rows():
+            result = await db.execute(
+                select(FuturesMarket)
+                .options(*base_options)
+                .where(FuturesMarket.id.in_(market_ids))
+            )
+            return _futures_snapshot.to_plain(result.scalars().unique().all())
+
+        _snapshot_payload = await _pic.get_or_build(
+            "market_load", _snapshot_key, _build_market_rows
+        )
+        # A payload this build cannot read is a MISS, never an empty feed: an
+        # unreadable shape must send us back through the builder, not report
+        # that there are no candidate markets (gotcha #53).
+        if not _futures_snapshot.is_snapshot_payload(_snapshot_payload):
+            _snapshot_payload = await _build_market_rows()
         markets_by_id = {
-            market.id: market for market in markets_result.scalars().unique().all()
+            market.id: market
+            for market in _futures_snapshot.from_plain(_snapshot_payload)
         }
         markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
         mark_timing("market_load")
