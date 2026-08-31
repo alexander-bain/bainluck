@@ -328,6 +328,32 @@ jobs:
             exit 1
           fi
 
+      - name: Bookmaker-count equivalence (real Postgres)
+        # LAT-P163/#2379. The same class as the odds-enrichment gate above, one
+        # table over: `count(DISTINCT bookmaker) GROUP BY outcome_id` cannot skip
+        # either, so the related-futures build read every snapshot row of every
+        # outcome on the page — measured 365,275 index entries and 68,657 heap
+        # fetches to produce 300 integers whose maximum was 7. The loose-index-scan
+        # rewrite is only safe if the counts are IDENTICAL, and the two forms share
+        # no code, so an executing server is the only thing that can grade it.
+        #
+        # It is also the only thing that can grade the two mechanisms the rewrite
+        # rests on: `CAST($1 AS integer[])` resolving the bound array's type under
+        # asyncpg, and a WITH RECURSIVE correlated to its left side. No mock
+        # session has a type resolver.
+        #
+        # Same skip-detection as every gate in this job, for the same reason:
+        # pytest exits 0 when every test skips, so a gate that silently did not
+        # run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_bookmaker_count_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/bookmaker_count.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/bookmaker_count.txt; then
+            echo "::error::bookmaker-count equivalence SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Kalshi cliff-drain bind contract (real Postgres)
         # #1884. The drain shipped with 39 green unit tests and threw
         # asyncpg.DataError on the FIRST statement of every run: it bound its
