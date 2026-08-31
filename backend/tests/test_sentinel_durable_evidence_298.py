@@ -434,20 +434,24 @@ class TestTheAnchorCannotExpireAgain:
         _assert_now_is_clock_derived(pathlib.Path(__file__).read_text())
 
     def test_the_anchor_guard_can_actually_FAIL(self):
-        """The control, and this file has now earned one twice over.
+        """The control, and this file has now earned one THREE times over.
 
-        Two certs in a row found the ANCHOR fine and the GUARD hollow — first a
-        value comparison that any fresh literal satisfied (CERT-568), then a
-        first-binding AST scan that a shadowing literal walked straight past
-        (CERT-571). Each time the suite was green and each time the bomb was
-        still armed. A guard nobody has watched fail is a guard nobody knows the
-        shape of, so the three known attacks are pinned here as source strings
-        and each one must raise.
+        Three certs in a row found the ANCHOR fine and the GUARD hollow: a value
+        comparison any fresh literal satisfied (CERT-568); a first-binding AST
+        scan a shadowing literal walked past (CERT-571); and a `tree.body` scan
+        that missed a rebinding nested one level down under `if`/`try`
+        (CERT-577). Every time the suite was green and every time the bomb was
+        armed.
+
+        A guard nobody has watched fail is a guard nobody knows the shape of, so
+        every known attack is pinned here as a source string and each must raise.
+        The list only grows — an attack that has been closed still runs, because
+        the cheapest way to reopen one is to rewrite the guard for the next.
 
         In memory, never on disk: `scripts/evals/_mutation_guard.py` says an
         in-process harness that mutates a STRING is strictly the better design
-        because it cannot leave residue in a real file, and there is no reason
-        this one needs a file.
+        because it cannot leave residue in a real file, and nothing here needs
+        a file.
         """
         import pytest as _pytest
 
@@ -465,14 +469,42 @@ class TestTheAnchorCannotExpireAgain:
                 f"{real}\nNOW: datetime = "
                 "datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)"
             ),
+            # 🔴 CERT-577's two, and the reason the scan is now scope-based
+            # rather than depth-based: both of these execute at module scope and
+            # both are invisible to a `tree.body` walk.
+            "a rebinding nested under `if`": f"{real}\nif True:\n    {literal}",
+            "a rebinding nested under `try`": (
+                f"{real}\ntry:\n    {literal}\nexcept Exception:\n    pass"
+            ),
+            # The same class through the other binding forms, which are stores
+            # rather than assignment statements.
+            "a rebinding nested two levels down": (
+                f"{real}\nif True:\n    if True:\n        {literal}"
+            ),
+            "a `for` target rebinds it": (
+                f"{real}\nfor NOW in [datetime(2026, 8, 31, tzinfo=timezone.utc)]:\n    pass"
+            ),
+            "a `with ... as` target rebinds it": (
+                f"{real}\nimport contextlib\n"
+                "with contextlib.nullcontext("
+                "datetime(2026, 8, 31, tzinfo=timezone.utc)) as NOW:\n    pass"
+            ),
         }
         for name, src in attacks.items():
             with _pytest.raises(AssertionError):
                 _assert_now_is_clock_derived(src)
 
         # And the control's control: the real anchor must still pass, or every
-        # `raises` above could be passing for an unrelated reason.
+        # `raises` above could be passing for an unrelated reason. A `NOW` bound
+        # inside a FUNCTION is a local and must NOT trip the guard — the scope
+        # rule has to cut both ways or the next author cannot write a helper.
         _assert_now_is_clock_derived(real)
+        _assert_now_is_clock_derived(
+            f"{real}\ndef _helper():\n    NOW = 1\n    return NOW"
+        )
+        _assert_now_is_clock_derived(
+            f"{real}\nclass _C:\n    NOW = 2"
+        )
 
 
 def _assert_now_is_clock_derived(src: str) -> None:
@@ -505,28 +537,67 @@ def _assert_now_is_clock_derived(src: str) -> None:
     #
     # `AnnAssign` is included because `NOW: datetime = <literal>` binds just as
     # effectively and would otherwise walk straight past an `ast.Assign` scan.
+    #
+    # 🔴 AND "MODULE LEVEL" IS NOT `tree.body` (CERT-577). The first version of
+    # this scan read only the direct children of the module, and the cert walked
+    # around it in one line: `if True:\n    NOW = datetime(...)` — or the same
+    # thing under `try:` — is nested one level down in the AST and executes at
+    # module scope exactly like a top-level statement. Both attacks left the
+    # guard green with the bomb re-armed.
+    #
+    # **The rule is SCOPE, not DEPTH.** Everything that is not a new binding
+    # scope is module level however deeply it is nested, so this recurses
+    # through executable bodies (`if` / `try` / `for` / `while` / `with` / `match`)
+    # and stops only at `def` / `async def` / `class` / `lambda`, where a
+    # `NOW = ...` is a LOCAL and cannot touch the fixture.
+    #
+    # It also collects every STORE, not just assignment statements — `for NOW in
+    # ...`, `with ... as NOW`, `NOW += ...` and walrus all rebind the anchor, and
+    # a scan that only knows about `Assign` calls each of them clean.
+    def _module_level_now_stores(node, out):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                continue  # a new scope — `NOW` in there is not this anchor
+            if (
+                isinstance(child, ast.Name)
+                and child.id == "NOW"
+                and isinstance(child.ctx, ast.Store)
+            ):
+                out.append(child)
+            _module_level_now_stores(child, out)
+        return out
+
+    stores = _module_level_now_stores(tree, [])
+    assert stores, "module-level `NOW` binding not found"
+    assert len(stores) == 1, (
+        f"`NOW` is bound {len(stores)} times at module scope, on lines "
+        f"{sorted(n.lineno for n in stores)}. The LAST one executed wins at "
+        "runtime, so a guard that inspects any single binding can be satisfied "
+        "by a dead one while a literal elsewhere becomes the real fixture "
+        "anchor. Nesting it under `if`/`try`/`for`/`with` does not make it a "
+        "different scope. Keep exactly one binding."
+    )
+
+    # The sole store must belong to a plain assignment whose value we can read.
+    # A `for`/`with`/augmented/walrus binding reaches here and is refused by
+    # name, rather than falling through to an attribute error.
     assigns = [
         n
-        for n in tree.body
+        for n in ast.walk(tree)
         if (
             isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "NOW" for t in n.targets)
+            and any(t is stores[0] for t in n.targets)
         )
-        or (
-            isinstance(n, ast.AnnAssign)
-            and isinstance(n.target, ast.Name)
-            and n.target.id == "NOW"
-            and n.value is not None
-        )
+        or (isinstance(n, ast.AnnAssign) and n.target is stores[0] and n.value is not None)
     ]
-    assert assigns, "module-level `NOW` assignment not found"
     assert len(assigns) == 1, (
-        f"`NOW` is bound {len(assigns)} times at module level, on lines "
-        f"{[n.lineno for n in assigns]}. The LAST one wins at runtime, so a "
-        "guard that inspects any single binding can be satisfied by a dead "
-        "one while a literal below it becomes the real fixture anchor. Keep "
-        "exactly one binding.\n"
-        + "\n".join(f"    line {n.lineno}: {ast.unparse(n)}" for n in assigns)
+        f"`NOW` is bound on line {stores[0].lineno} by something other than a "
+        "plain assignment with a readable right-hand side (a `for`, `with`, "
+        "augmented or walrus binding). The anchor must be a single assignment "
+        "that calls the clock."
     )
     assign = assigns[0]
 
