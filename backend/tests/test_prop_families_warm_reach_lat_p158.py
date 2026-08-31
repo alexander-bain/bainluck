@@ -102,12 +102,31 @@ def _session_for(team_ids):
     return _factory
 
 
-def _built_recorder():
+def _built_recorder(quality=None, reasons=()):
+    """A stand-in for `build_and_cache_prop_families` that records the team ORDER.
+
+    🔴 THE PAYLOAD CARRIES AN ENVELOPE (CERT-563). The real builder stamps one on
+    every path it returns `degraded=False` from, and the producer's terminal is
+    read OFF that envelope — so the unstamped payload this used to return is a
+    shape production never emits, and it made these tests describe a pass whose
+    completion could not be judged. `quality=None` means "stamp a healthy build",
+    which is what every caller here wants; the tests that need a truncated one
+    pass it explicitly.
+    """
+    from app.utils.event_concept_cache import ENVELOPE_FIELD, QUALITY_FULL
+
     built: list = []
 
     async def _build(team, db, cap, rc=None, **kw):
         built.append(int(getattr(team, "id", team)))
-        return {"families": [], "total_families": 0}, False
+        return {
+            "families": [],
+            "total_families": 0,
+            ENVELOPE_FIELD: {
+                "quality": QUALITY_FULL if quality is None else quality,
+                "quality_reasons": list(reasons),
+            },
+        }, False
 
     return built, _build
 

@@ -395,8 +395,11 @@ async def _warm_prop_families() -> dict:
 
     Returns the verdict the beat reports: how many teams the predicate selected,
     how many were rebuilt, how many were skipped because a reader already held
-    that team's refresh lock (the correct outcome, not a miss), and how many were
-    deferred to the next pass because the budget ran out.
+    that team's refresh lock (the correct outcome, not a miss), how many were
+    deferred to the next pass because the budget ran out, and — CERT-563 — how
+    many WROTE but fell short of `quality: full`. `rebuilt` counts completed
+    rebuilds only; a build that lost a branch to the 12 s expiry is `partial`,
+    and any `partial` downgrades the pass terminal below green.
     """
     import asyncio
     import time
@@ -408,10 +411,12 @@ async def _warm_prop_families() -> dict:
     from app.routes.prop_families import (
         _INCLUDED_STATUSES,
         build_and_cache_prop_families,
+        envelope_quality,
         prop_families_cache_keys,
     )
     from app.tasks.base import get_task_session
     from app.utils.event_concept_cache import (
+        QUALITY_FULL,
         acquire_refresh_lock,
         get_client,
         release_refresh_lock,
@@ -534,6 +539,10 @@ async def _warm_prop_families() -> dict:
     locked_out = 0
     failed = 0
     deferred = 0
+    # Teams whose build WROTE and fell short of `quality: full` — see the
+    # envelope read in the loop below and the terminal at the bottom.
+    partial = 0
+    partial_reasons: set[str] = set()
     last_done: int | None = None
 
     for position, team_id in enumerate(ordered):
@@ -566,7 +575,40 @@ async def _warm_prop_families() -> dict:
             if degraded:
                 failed += 1
             else:
-                rebuilt += 1
+                # 🔴 THE PAYLOAD IS READ, NOT DISCARDED (CERT-563). This branch
+                # used to be `rebuilt += 1` on the strength of `degraded` alone,
+                # and `degraded` is True only when the build stored NOTHING. A
+                # build that keeps the cheap rows and loses the roster branch to
+                # the 12 s expiry is `degraded=False` AND `quality: partial`
+                # carrying `branch_timeout:outcome_roster` — real prop content
+                # missing from what it just wrote to the mirror. The pass counted
+                # that as a rebuild and returned `terminal: complete`, and this
+                # task is in `ENFORCED_TASKS`, so `verdict_for` read the tick and
+                # called the pass an AUTHORITATIVE green.
+                #
+                # It is the same false green CERT-557 found in
+                # `_refresh_prop_families` — left live in the SIBLING producer,
+                # which is the one that keeps the user-facing 24 h mirror warm.
+                # Fixing one reader of a two-reader field is why `envelope_quality`
+                # is exported: both callers now ask the same function the same
+                # question.
+                #
+                # `rebuilt` counts COMPLETED rebuilds and nothing else, because a
+                # caller reading `rebuilt` to answer "is this team settled" must
+                # get "no". The team is counted, by name of the branch it lost, in
+                # `partial`/`partial_reasons`, and the terminal at the bottom of
+                # the pass turns that into a non-green verdict.
+                _quality, _reasons = envelope_quality(_payload)
+                if _quality != QUALITY_FULL:
+                    partial += 1
+                    partial_reasons.update(_reasons)
+                    logger.warning(
+                        "warm_prop_families: rebuild for team %s fell short "
+                        "(%s: %s) — counted partial, not rebuilt",
+                        team_id, _quality, ",".join(sorted(_reasons)),
+                    )
+                else:
+                    rebuilt += 1
         except Exception:
             # One bad team must never wipe the pass (gotcha #42).
             logger.warning(
@@ -587,7 +629,7 @@ async def _warm_prop_families() -> dict:
     # (`app/utils/task_verdict.py`).
     if not ordered:
         terminal = "complete"
-    elif rebuilt or (locked_out and not failed):
+    elif rebuilt or partial or (locked_out and not failed):
         terminal = "complete"
     else:
         terminal = "failed"
@@ -624,7 +666,17 @@ async def _warm_prop_families() -> dict:
     #
     # `partial` names both cases. A real `failed` is never softened: the
     # downgrade only ever applies to a terminal that would otherwise read green.
-    if terminal == "complete" and (coverage_exceeded or failed):
+    #
+    # 🔴 AND A BUILD THAT FELL SHORT IS THE THIRD CASE ON THE SAME LINE
+    # (CERT-563). `coverage_exceeded` is "the rotation cannot get round the set"
+    # and `failed` is "a team threw"; `partial` is "a team's build wrote content
+    # with a branch missing from it". All three leave a page a person can reach
+    # holding less than the tier promises, and all three used to be outvoted by a
+    # single healthy sibling. They join the SAME downgrade rather than getting a
+    # branch of their own precisely so a future counter cannot be added beside
+    # them and forgotten here — that omission is what CERT-518 and CERT-521 each
+    # blocked on, one counter at a time.
+    if terminal == "complete" and (coverage_exceeded or failed or partial):
         terminal = "partial"
 
     return {
@@ -633,6 +685,16 @@ async def _warm_prop_families() -> dict:
         "rebuilt": rebuilt,
         "locked_out": locked_out,
         "failed": failed,
+        # Builds that WROTE and fell short. `rebuilt` counts completed rebuilds
+        # only, so a reader adding `rebuilt + locked_out + failed` and expecting
+        # the slice size needs this term to balance — "fell short" and "did
+        # nothing" are different facts and only naming the second hides the first
+        # (gotcha #53).
+        "partial": partial,
+        # WHICH branch was missing, deduped and ordered so the summary is stable
+        # enough to diff between passes. Bounded by the branch vocabulary, not by
+        # the team count.
+        "partial_reasons": sorted(partial_reasons),
         "deferred": deferred,
         "truncated": truncated,
         # 0 on a healthy pass; the number of teams the rotation can no longer

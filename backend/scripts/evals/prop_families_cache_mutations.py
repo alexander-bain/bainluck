@@ -373,6 +373,30 @@ async def resolve_team""",
         '    "warm_prop_families",              # terminal + selected + dispatched',
         '    # "warm_prop_families",            # terminal + selected + dispatched',
     ),
+    # -- the producer's completion honesty (CERT-563) -------------------------
+    #
+    # The exact defect the cert blocked on, both halves of it. `_refresh_` got
+    # the same pair from CERT-557; the producer had none, which is how the fix
+    # was applied to one of two call sites and the battery still read 29/29.
+    (
+        "M24",
+        WARM,
+        "read the boolean, not the envelope — a build that kept the cheap rows "
+        "and lost the roster branch to the 12 s expiry counts as a completed "
+        "rebuild, and the enforced verdict for the pass goes back to GREEN",
+        """                _quality, _reasons = envelope_quality(_payload)
+                if _quality != QUALITY_FULL:""",
+        """                _quality, _reasons = envelope_quality(_payload)
+                if False:""",
+    ),
+    (
+        "M24b",
+        WARM,
+        "count the short build but never downgrade the terminal — CERT-518's "
+        "defect exactly: a detector whose detection the health gate cannot see",
+        '    if terminal == "complete" and (coverage_exceeded or failed or partial):',
+        '    if terminal == "complete" and (coverage_exceeded or failed):',
+    ),
 ]
 
 

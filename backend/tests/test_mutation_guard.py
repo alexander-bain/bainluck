@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,189 @@ def test_a_clean_run_leaves_no_manifest_behind(target, tmp_path):
     assert "exit clean" in result.stdout, result.stderr
     assert target.read_text() == ORIGINAL
     assert not list(manifest_dir.glob("*.json"))
+
+
+def test_a_live_run_is_never_recovered_by_a_concurrent_one(target, tmp_path):
+    """🔴 CERT-563's blocker, as a test: the false SURVIVED.
+
+    `start()` calls `recover()` unconditionally, and `recover()` used to assume
+    every manifest it could see belonged to a corpse. Two batteries in two
+    worktrees — a build lane and the cert window, which is the ORDINARY pairing —
+    therefore did this:
+
+      1. run A mutates its source file and starts its oracle;
+      2. run B starts, recovers A's live manifest, and copies A's backup back
+         over A's file *while A's suite is running*;
+      3. A's suite passes, because the mutant is no longer on disk;
+      4. A reports `SURVIVED`, with `0 harness failures` to give it away.
+
+    A false SURVIVED is the expensive direction — it reads as a missing
+    assertion, so the next session writes a guard for a defect that was already
+    guarded. It cost CERT-563 a BLOCK on `M18c`, which kills 1/1 when re-run
+    alone.
+
+    The control that makes this test mean something is
+    `test_sigkill_leaves_a_breadcrumb_that_the_next_run_restores_from` directly
+    above: same manifest, same directory, same `recover()` call — and it DOES
+    restore, because there the pid is genuinely dead. The distinction being
+    asserted is liveness, not visibility.
+    """
+    manifest_dir = tmp_path / "manifests"
+    ready, release = tmp_path / "ready", tmp_path / "release"
+    sleeper = tmp_path / "sleeper.py"
+    sleeper.write_text(
+        textwrap.dedent(
+            f"""
+            import sys, time
+            sys.path.insert(0, {str(EVALS)!r})
+            from pathlib import Path
+            import _mutation_guard as g
+            g.MANIFEST_DIR = Path({str(manifest_dir)!r})
+            with g.guarded_targets([{str(target)!r}], {str(tmp_path / "bk")!r}, "t-live"):
+                Path({str(target)!r}).write_text("MUTATED\\n")
+                Path({str(ready)!r}).write_text("x")
+                for _ in range(600):
+                    if Path({str(release)!r}).exists():
+                        break
+                    time.sleep(0.05)
+            """
+        )
+    )
+    proc = subprocess.Popen([sys.executable, str(sleeper)])
+    try:
+        for _ in range(600):
+            if ready.exists():
+                break
+            time.sleep(0.05)
+        assert ready.exists(), "the concurrent run never reached its mutation"
+        assert target.read_text() == MUTANT
+        assert len(list(manifest_dir.glob("*.json"))) == 1
+
+        recoverer = tmp_path / "recover.py"
+        recoverer.write_text(
+            textwrap.dedent(
+                f"""
+                import sys
+                sys.path.insert(0, {str(EVALS)!r})
+                from pathlib import Path
+                import _mutation_guard as g
+                g.MANIFEST_DIR = Path({str(manifest_dir)!r})
+                print("restored", g.recover())
+                """
+            )
+        )
+        out = subprocess.run(
+            [sys.executable, str(recoverer)], capture_output=True, text=True, timeout=60
+        )
+        assert "restored 0" in out.stdout, out.stdout
+        assert "LIVE pid" in out.stdout
+        # The mutant is still on disk, so the run that wrote it is still
+        # measuring what it thinks it is measuring.
+        assert target.read_text() == MUTANT
+        # And its breadcrumb survives: deleting it would strand the residue if
+        # the live run went on to be SIGKILLed.
+        assert len(list(manifest_dir.glob("*.json"))) == 1
+    finally:
+        release.write_text("x")
+        proc.wait(timeout=60)
+
+    # The live run finished normally and cleaned up after itself.
+    assert target.read_text() == ORIGINAL
+    assert not list(manifest_dir.glob("*.json"))
+
+
+def test_a_manifest_written_by_another_checkout_is_left_alone(target, tmp_path):
+    """Manifests name ABSOLUTE paths, so another worktree's resolves perfectly
+    well — straight into that worktree's working files.
+
+    The refusal keys on who WROTE the manifest, not on where the target lives: a
+    harness may legitimately guard a file outside its own tree (every test in
+    this module does, via `tmp_path`), so a containment test on the path would
+    refuse the honest case along with the foreign one.
+    """
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    backup = tmp_path / "bk.py"
+    backup.write_text(ORIGINAL)
+    target.write_text(MUTANT)
+    (manifest_dir / "t-foreign.json").write_text(
+        json.dumps(
+            {
+                "label": "t-foreign",
+                "pid": 999999,  # dead, so ONLY the root check can refuse this
+                "root": "/some/other/worktree",
+                "targets": {str(target): {"backup": str(backup), "sha": "deadbeef"}},
+            }
+        )
+    )
+    out = _run(
+        f"""
+        import _mutation_guard as g
+        g.MANIFEST_DIR = Path({str(manifest_dir)!r})
+        print("restored", g.recover())
+        """,
+        tmp_path,
+    )
+    assert "restored 0" in out.stdout, out.stdout
+    assert "another worktree's run" in out.stdout
+    assert target.read_text() == MUTANT
+    assert list(manifest_dir.glob("*.json")), "the owning tree's breadcrumb was destroyed"
+
+
+def test_a_manifest_with_no_root_is_still_recovered(target, tmp_path):
+    """The compatibility half, asserted rather than assumed.
+
+    `root` is new. Residue written by a run that predates it must still be
+    recovered — stranding real residue to close a narrower hole would be the
+    worse trade, and the live-pid refusal already covers the dangerous case.
+    """
+    manifest_dir = tmp_path / "manifests"
+    manifest_dir.mkdir()
+    backup = tmp_path / "bk.py"
+    backup.write_text(ORIGINAL)
+    target.write_text(MUTANT)
+    (manifest_dir / "t-legacy.json").write_text(
+        json.dumps(
+            {
+                "label": "t-legacy",
+                "pid": 999999,
+                "targets": {str(target): {"backup": str(backup), "sha": "deadbeef"}},
+            }
+        )
+    )
+    out = _run(
+        f"""
+        import _mutation_guard as g
+        g.MANIFEST_DIR = Path({str(manifest_dir)!r})
+        print("restored", g.recover())
+        """,
+        tmp_path,
+    )
+    assert "restored 1" in out.stdout, out.stdout
+    assert target.read_text() == ORIGINAL
+
+
+def test_the_default_manifest_and_backup_paths_are_worktree_unique():
+    """The other half of the same defect: two checkouts sharing one `/tmp` path.
+
+    Backups collided by FILENAME, so a crash in either worktree could restore
+    the other's bytes into this tree — a corruption, not just a wrong verdict.
+    `_tree_scoped` is asserted IDEMPOTENT because one harness already namespaced
+    itself by hand (#2330) and must not end up double-suffixed.
+    """
+    sys.path.insert(0, str(EVALS))
+    import _mutation_guard as g
+
+    assert g.TREE in g.MANIFEST_DIR.name
+    assert g.MANIFEST_DIR != g.LEGACY_MANIFEST_DIR
+
+    scoped_dir = g._tree_scoped(Path("/tmp/some_guard_backups"))
+    assert scoped_dir.name == f"some_guard_backups_{g.TREE}"
+    assert g._tree_scoped(scoped_dir) == scoped_dir
+
+    scoped_file = g._tree_scoped(Path("/tmp/some_backup.py"))
+    assert scoped_file.name == f"some_backup_{g.TREE}.py"
+    assert g._tree_scoped(scoped_file) == scoped_file
 
 
 def test_no_mutant_is_sitting_in_a_harness_target_right_now():
