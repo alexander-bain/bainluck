@@ -36,6 +36,7 @@ jest.mock("@/lib/analytics", () => ({
 
 import * as fs from "fs";
 import * as path from "path";
+import * as ts from "typescript";
 
 import EndOfFeedCard from "../../components/discover/EndOfFeedCard";
 import DiscoverSkeletonGrid from "../../components/discover/DiscoverSkeletonGrid";
@@ -69,37 +70,186 @@ function occurrences(haystack: string, needle: string): number {
 const SPEC_DIR = path.join(__dirname, "..", "..", "e2e", "specs");
 
 /**
- * Comments stripped before anything is counted (UX-P213-2 / UX-P224-3: a source
- * census that reads comments errs in BOTH directions). `discover-smoke.spec.ts`
- * has a prose mention of `data-testid` in its header that is not a selector;
- * counting it would red the literalness check below on day one.
+ * The pack is read through the TypeScript AST, not as text.
+ *
+ * UX-P228 round 2, after CERT-584. Round 1 read `data-testid="..."` out of the
+ * raw source, and the cert defeated it by splitting the ATTRIBUTE NAME:
+ * `"[data-" + "testid=\"discover-computed-attr\"]"` contains no contiguous
+ * `data-testid`, so both the census and the extraction saw nothing while
+ * Playwright received a perfectly valid selector.
+ *
+ * Patching that regex would have moved the hole one level out again — the same
+ * shape the latency lane hit three certs running. A text guard cannot prove
+ * "the pack selects nothing I have not seen", because the pack is code. So the
+ * selector strings are RESOLVED instead: a selector either evaluates to a
+ * string this file can compute, and its hooks are extracted and demanded, or it
+ * does not, and that fails LOUDLY. There is no third outcome.
+ *
+ * Two useful consequences. Comments need no stripping — the parser never sees
+ * them, so UX-P213-2's census hazard does not arise. And concatenation is now
+ * *supported* rather than banned, so the guard costs the pack no expressiveness.
  */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+type Resolution = {
+  file: string;
+  selectors: string[];
+  unresolved: string[];
+  /** Every function name called anywhere in the spec. */
+  calledNames: Set<string>;
+};
+
+/**
+ * Name -> which argument carries the selector. It is not always the first:
+ * `measureMainRegion(page, SELECTOR)` takes the page in slot 0.
+ *
+ * Module scope so a test can assert the map still COVERS what the specs call.
+ * Battery M16: deleting `locator` from here made every `locator()` argument
+ * stop being checked, and the run stayed green — the resolver reported nothing
+ * unresolved because it was no longer looking. A fail-closed check that can be
+ * silently unwired is not fail-closed.
+ */
+const SELECTOR_ARG: Record<string, number> = {
+  locator: 0,
+  waitForSelector: 0,
+  getByTestId: 0,
+  $: 0,
+  $$: 0,
+  measureMainRegion: 1,
+};
+
+/**
+ * The selector-taking APIs that MUST be understood if a spec uses them.
+ *
+ * Hardcoded on purpose: it is the one list a reviewer has to eyeball, and it is
+ * short. Anything here that a Discover spec calls but `SELECTOR_ARG` does not
+ * know is a hole, and reds.
+ */
+const REQUIRED_SELECTOR_APIS = [
+  "locator",
+  "waitForSelector",
+  "getByTestId",
+  "measureMainRegion",
+] as const;
+
+function resolveSpec(file: string, src: string): Resolution {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+
+  // Module-level string constants, resolved first: `SKELETON` is handed to a
+  // helper rather than to `locator()`, so a selector-call-only read would miss
+  // `discover-skeleton` entirely and then red on its own guarded list.
+  const consts = new Map<string, string>();
+
+  function literalOf(n: ts.Node): string | null {
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
+    if (ts.isIdentifier(n)) return consts.get(n.text) ?? null;
+    if (ts.isParenthesizedExpression(n) || ts.isAsExpression(n)) {
+      return literalOf(n.expression);
+    }
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const l = literalOf(n.left);
+      const r = literalOf(n.right);
+      return l !== null && r !== null ? l + r : null;
+    }
+    // `event-page.spec.ts` composes `HERO_ANY` from two other constants. A
+    // template whose every substitution resolves is just as static as a
+    // literal, and refusing it would red a spec that is doing nothing wrong.
+    if (ts.isTemplateExpression(n)) {
+      let out = n.head.text;
+      for (const span of n.templateSpans) {
+        const v = literalOf(span.expression);
+        if (v === null) return null;
+        out += v + span.literal.text;
+      }
+      return out;
+    }
+    return null;
+  }
+
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.initializer) {
+        const v = literalOf(d.initializer);
+        if (v !== null) consts.set(d.name.text, v);
+      }
+    }
+  }
+
+  // Every API that turns a string into an element reference. `getByTestId`
+  // takes a BARE hook name with no `data-testid` in the text at all, so it is
+  // resolved here rather than merely banned. `measureMainRegion` is this
+  // repo's own selector-taking helper — `event-page.spec.ts` reaches
+  // `discover-skeleton` only through it.
+  //
+  // STATED GAP (battery M17, a scored survivor): this is a list of NAMES. A new
+  // project helper that takes a selector is covered for literal arguments — the
+  // literal scan below sees those wherever they appear — but a COMPUTED
+  // argument to a helper not named here would be missed. Closing that needs a
+  // type checker, not a parser, and it is not this slice.
+  const selectors: string[] = [];
+  const unresolved: string[] = [];
+  const calledNames = new Set<string>();
+
+  function walk(n: ts.Node): void {
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const name = ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : ts.isIdentifier(callee)
+          ? callee.text
+          : "";
+      if (name) calledNames.add(name);
+      const idx = SELECTOR_ARG[name];
+      if (idx !== undefined && n.arguments.length > idx) {
+        const arg = n.arguments[idx];
+        const value = literalOf(arg);
+        if (value === null) {
+          unresolved.push(`${name}(${arg.getText().replace(/\s+/g, " ").slice(0, 80)})`);
+        } else {
+          // `getByTestId` is given the bare name; normalise it to the attribute
+          // form so one extraction reads both spellings.
+          selectors.push(name === "getByTestId" ? `data-testid="${value}"` : value);
+        }
+      }
+    }
+    // Over-covering extraction: ANY string literal mentioning the attribute is
+    // read, wherever it sits. This is the safe direction — it cannot hide a
+    // hook, it can only demand one that turns out to be prose — and it is what
+    // catches a selector handed straight to a helper without a constant.
+    if (
+      (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
+      n.text.includes("data-testid")
+    ) {
+      selectors.push(n.text);
+    }
+    ts.forEachChild(n, walk);
+  }
+  walk(sf);
+
+  return { file, selectors: [...selectors, ...consts.values()], unresolved, calledNames };
 }
 
-const SPEC_SOURCES: ReadonlyArray<readonly [string, string]> = fs
+const RESOLUTIONS: Resolution[] = fs
   .readdirSync(SPEC_DIR)
   .filter((f) => f.endsWith(".spec.ts"))
   .sort()
-  .map((f) => [f, stripComments(fs.readFileSync(path.join(SPEC_DIR, f), "utf8"))] as const);
-
-/** The specs that reach a Discover hook at all — the ones this suite answers for. */
-const DISCOVER_SPECS = SPEC_SOURCES.filter(([, src]) => src.includes("discover-"));
+  .map((f) => resolveSpec(f, fs.readFileSync(path.join(SPEC_DIR, f), "utf8")));
 
 /**
- * Anchored on the selector SYNTAX, not on the word "discover".
+ * The specs that reach a Discover hook at all — the ones this suite answers for.
  *
- * A bare `/discover-[a-z0-9-]+/` over the spec text also matches
- * `discover-latency.json` (an attachment filename in `discover-latency.spec.ts`)
- * and `discover-smoke` (a spec's own name) — neither is a hook, and a guard that
- * demanded coverage for them would be unkeepable. Reading `data-testid="..."`
- * literals excludes both without an ignore-list to maintain.
+ * Deliberately decided on the RAW text, which is the broader reading: a file is
+ * held to the strict resolvability rule below if the word appears anywhere in
+ * it, including a comment. Over-inclusion costs nothing here and under-inclusion
+ * would be the hole.
  */
+const DISCOVER_SPECS = RESOLUTIONS.filter((r) =>
+  fs.readFileSync(path.join(SPEC_DIR, r.file), "utf8").includes("discover-")
+);
+
 const PACK_HOOKS: string[] = [
   ...new Set(
-    SPEC_SOURCES.flatMap(([, src]) =>
-      [...src.matchAll(/data-testid="([a-z0-9-]+)"/g)].map((m) => m[1])
+    RESOLUTIONS.flatMap((r) => r.selectors).flatMap((s) =>
+      [...s.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1])
     ).filter((id) => id.startsWith("discover-"))
   ),
 ].sort();
@@ -121,38 +271,40 @@ describe("the guarded set still covers the pack", () => {
   test("the pack selects hooks at all — the extraction is not silently empty", () => {
     // Without this the whole describe passes vacuously the day the spec
     // directory moves, which is precisely when the tripwire is needed.
-    expect(SPEC_SOURCES.length).toBeGreaterThan(0);
+    expect(RESOLUTIONS.length).toBeGreaterThan(0);
     expect(PACK_HOOKS.length).toBeGreaterThan(0);
   });
 
-  test("the specs that reach Discover select it only by a LITERAL data-testid", () => {
-    // A reading of the extraction's one real precondition, made an assertion.
+  test("every selector the Discover specs build is one this file can resolve", () => {
+    // The fail-closed joint, and the whole answer to CERT-584.
     //
-    // A computed selector is the attack: `[data-testid="${hook}"]` or
-    // `'[data-testid="' + hook + '"]'` is a selector Playwright honours and a
-    // literal-reading extraction cannot see, so the hook would be selected by
-    // the rail and demanded by nobody. Three other specs (calibration,
-    // daily-challenge, search-answer) legitimately interpolate over their own
-    // hook lists, which is why this is scoped to the specs that actually reach
-    // Discover rather than applied to the whole directory — a guard that taxes
-    // files it does not answer for is a guard someone deletes.
+    // A selector assembled at runtime — from a helper, a variable the parser
+    // cannot follow, a template with a computed part — is a selector Playwright
+    // honours and this file cannot read. Rather than trying to enumerate the
+    // spellings that could hide one (which is what round 1 did, and lost), any
+    // selector argument that does not resolve to a concrete string fails here.
+    //
+    // Scoped to the specs that reach Discover: calibration, daily-challenge and
+    // search-answer legitimately interpolate over their own hook lists, and a
+    // guard that taxes files it does not answer for is a guard someone deletes.
     expect(DISCOVER_SPECS.length).toBeGreaterThan(0);
-    for (const [name, src] of DISCOVER_SPECS) {
-      const mentions = occurrences(src, "data-testid");
-      const literals = (src.match(/data-testid="[a-z0-9-]+"/g) ?? []).length;
-      expect(`${name}: ${literals}/${mentions} literal`).toBe(
-        `${name}: ${mentions}/${mentions} literal`
-      );
+    for (const r of DISCOVER_SPECS) {
+      expect(`${r.file}: ${JSON.stringify(r.unresolved)}`).toBe(`${r.file}: []`);
     }
   });
 
-  test("the pack selects test hooks only by `data-testid=`, which is what the extraction reads", () => {
-    // The extraction's one real hole would be a hook the pack reaches by some
-    // other spelling. Playwright's `getByTestId` is the obvious one; it is not
-    // used anywhere in the pack today, and if it ever is, this fails and the
-    // extraction has to learn it rather than quietly under-reporting.
-    for (const [name, src] of SPEC_SOURCES) {
-      expect(`${name}: ${occurrences(src, "getByTestId")}`).toBe(`${name}: 0`);
+  test("the resolver still understands every selector API the Discover specs call", () => {
+    // Anti-vacuity for the check above, and the reason it is not enough to
+    // assert "some selectors were found". Battery M16 deleted `locator` from
+    // SELECTOR_ARG: the resolvability test stayed green because the resolver
+    // had simply stopped looking at `locator()` calls, while module constants
+    // and the literal scan kept the selector list non-empty. A check that can
+    // be unwired without anything going red is decoration.
+    for (const r of DISCOVER_SPECS) {
+      const used = REQUIRED_SELECTOR_APIS.filter((api) => r.calledNames.has(api));
+      const unknown = used.filter((api) => !(api in SELECTOR_ARG));
+      expect(`${r.file}: ${JSON.stringify(unknown)}`).toBe(`${r.file}: []`);
+      expect(`${r.file}: ${r.selectors.length > 0}`).toBe(`${r.file}: true`);
     }
   });
 
