@@ -221,18 +221,26 @@ private func gameMarketLabel(_ f: RelatedFuture) -> String {
     return "\(shortMarket): \(outcome)"
 }
 
-private func isClinched(_ f: RelatedFuture) -> Bool {
+// These three are `internal` rather than `private` so `@testable import` can pin
+// them: they decide what a priceless row claims about itself, and that claim is
+// the whole point of the class guard in `MissingProbabilityRenderTests`.
+
+/// A row with no price is not clinched — `?? 0` is the safe default here.
+func isClinched(_ f: RelatedFuture) -> Bool {
     (f.probability ?? 0) >= 0.995
 }
 
-private func isEliminated(_ f: RelatedFuture) -> Bool {
+/// ...and it is not eliminated either, hence the deliberately opposite `?? 1`.
+/// Both defaults answer "we cannot say", which is correct for a boolean; the
+/// text below is where "we cannot say" has to stop being rendered as a number.
+func isEliminated(_ f: RelatedFuture) -> Bool {
     (f.probability ?? 1) <= 0.005
 }
 
-private func settledProbabilityText(_ f: RelatedFuture) -> String {
+func settledProbabilityText(_ f: RelatedFuture) -> String {
     if isClinched(f) { return "✓" }
     if isEliminated(f) { return "<1%" }
-    return formatProbability(f.probability ?? 0)
+    return formatProbabilityOrDash(f.probability)
 }
 
 private func sourceLabel(_ source: String?) -> String {
@@ -642,7 +650,9 @@ struct RelatedFuturesView: View {
                                     Capsule().fill(color)
                                         .frame(width: max(2, 30 * award.prob))
                                 }
-                            Text("\(Int((award.prob * 100).rounded()))%")
+                            // `award.prob` is the nil-coerced sort/geometry key;
+                            // the TEXT reads the optional it was derived from.
+                            Text(formatProbabilityOrDash(award.future.probability))
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundStyle(color)
                         }
@@ -713,7 +723,7 @@ struct RelatedFuturesView: View {
                                 }
                                 .frame(height: 6)
 
-                                Text("\(Int(((future.probability ?? 0) * 100).rounded()))%")
+                                Text(formatProbabilityOrDash(future.probability))
                                     .font(.system(size: 11, weight: .black, design: .monospaced))
                                     .frame(width: 32, alignment: .trailing)
                             }
@@ -1385,7 +1395,7 @@ private struct ChampionshipCard: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(formatProbability(future.probability ?? 0))
+                            Text(formatProbabilityOrDash(future.probability))
                                 .font(.system(size: 28, weight: .bold, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(teamColor)
@@ -1478,7 +1488,7 @@ private struct AwardCard: View {
                 // Probability + movement + odds
                 VStack(alignment: .trailing, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text(formatProbability(future.probability ?? 0))
+                        Text(formatProbabilityOrDash(future.probability))
                             .font(.title3)
                             .fontWeight(.bold)
                             .monospacedDigit()
@@ -1534,6 +1544,8 @@ private struct GameCell: View {
     let teamColor: Color
     let teamName: String
 
+    /// Geometry and colour only — a priceless row draws an empty bar and reads as
+    /// not-favoured, which is honest. The percent TEXT uses the optional directly.
     private var prob: Double { future.probability ?? 0 }
     private var favored: Bool { prob > 0.5 }
     private var opponent: String { extractOpponent(future.marketName, teamName: teamName) }
@@ -1563,7 +1575,7 @@ private struct GameCell: View {
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         HStack(spacing: 2) {
-                            Text("\(Int((prob * 100).rounded()))%")
+                            Text(formatProbabilityOrDash(future.probability))
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(favored ? teamColor : .secondary)
@@ -1887,7 +1899,7 @@ private struct StatPropCard: View {
                 )
 
                 // Gauge
-                StatGauge(probability: future.probability ?? 0, teamColor: teamColor, size: 48)
+                StatGauge(probability: future.probability, teamColor: teamColor, size: 48)
 
                 // Player name
                 Text(parsed.player ?? future.outcomeName)
@@ -1922,14 +1934,16 @@ private struct StatPropCard: View {
 // MARK: - Semi-circular Stat Gauge
 
 private struct StatGauge: View {
-    let probability: Double
+    /// Optional on purpose: a gauge with no price draws no arc and prints the
+    /// absent marker, rather than a full-confidence "0%" over an empty dial.
+    let probability: Double?
     let teamColor: Color
     var size: CGFloat = 48
 
-    private var pct: Int { Int((probability * 100).rounded()) }
+    private var pct: Int { Int(((probability ?? 0) * 100).rounded()) }
     private var radius: CGFloat { (size - 6) / 2 }
     private var circumference: CGFloat { .pi * radius }
-    private var offset: CGFloat { circumference * (1 - probability) }
+    private var offset: CGFloat { circumference * (1 - (probability ?? 0)) }
 
     var body: some View {
         VStack(spacing: -2) {
@@ -1942,22 +1956,25 @@ private struct StatGauge: View {
                 bgPath.addArc(center: center, radius: r, startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
                 ctx.stroke(bgPath, with: .color(.secondary.opacity(0.15)), lineWidth: 4)
 
-                // Colored arc
-                let endAngle = Angle.degrees(180 + probability * 180)
-                var fgPath = Path()
-                fgPath.addArc(center: center, radius: r, startAngle: .degrees(180), endAngle: endAngle, clockwise: false)
-                ctx.stroke(
-                    fgPath,
-                    with: .color(teamColor.opacity(pct >= 50 ? 0.85 : 0.5)),
-                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
-                )
+                // Colored arc — omitted entirely when there is no price, so the
+                // dial cannot imply a reading the payload never carried.
+                if let probability {
+                    let endAngle = Angle.degrees(180 + probability * 180)
+                    var fgPath = Path()
+                    fgPath.addArc(center: center, radius: r, startAngle: .degrees(180), endAngle: endAngle, clockwise: false)
+                    ctx.stroke(
+                        fgPath,
+                        with: .color(teamColor.opacity(pct >= 50 ? 0.85 : 0.5)),
+                        style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                    )
+                }
             }
             .frame(width: size, height: size * 0.5)
 
-            Text("\(pct)%")
+            Text(formatProbabilityOrDash(probability))
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(pct >= 50 ? teamColor : .secondary)
+                .foregroundStyle(probability != nil && pct >= 50 ? teamColor : .secondary)
         }
     }
 }
