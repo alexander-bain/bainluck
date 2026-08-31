@@ -230,6 +230,21 @@ describe("SURVIVORS — a real quantity ladder is untouched", () => {
     expect(renderCard("57774286")).toContain("Above 50% through");
   });
 
+  test("🔴 a market with NO stored shape renders exactly as it did before", () => {
+    // The veto reads the stored field ONLY. `resolveShape` would fall back to an
+    // outcome-name heuristic, and on this market that heuristic returns `field`
+    // (measured — its three outcome names are non-numeric and n>=3), which would
+    // veto the ladder. So letting the heuristic vote does not merely "add
+    // nothing": it changes the render of a market we have no authoritative answer
+    // for, on the strength of the same kind of regex guess that produced the
+    // wrong `suggested_format` in the first place.
+    //
+    // This is the only assertion that can observe that rule, because all four
+    // real specimens DO carry a stored shape.
+    const html = renderCard("59934347", { market_type: null });
+    expect(drewLadder(html)).toBe(true);
+  });
+
   // 59917975 — "Precipitation in NYC in September?" — DISJOINT bins
   // ('2-3"', '<2"', '3-4"'…), the case where ordering by probability would be
   // flat-out wrong. It parses as thresholds, so it never reaches the
