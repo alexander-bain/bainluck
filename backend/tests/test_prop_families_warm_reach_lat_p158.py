@@ -384,23 +384,102 @@ class TestCoverageArithmeticStillHolds:
             f"{cache_mod.STALE_TTL}s mirror — teams would go cold between warms"
         )
 
-    def test_the_coverage_ceiling_is_named_so_a_wider_set_cannot_creep_past_it(self):
-        """The population may grow (football season adds fixture-reachable teams).
-        Name the point at which the budget stops being enough, so crossing it is a
-        red test rather than a silently lapsing mirror."""
-        from app.tasks import celery_app
+    def test_the_ceiling_leaves_a_whole_pass_of_margin(self):
+        """🔴 CERT-515's finding. A cycle that closes exactly as the mirror expires
+        has covered nothing.
 
-        entry = celery_app.conf.beat_schedule["warm-prop-families"]
-        period_seconds = 3600 // len(entry["schedule"].minute)
+        The first version of this ceiling was `<= STALE_TTL`, which admits 240
+        teams: 24 passes x 3600 s = 86,400 s against an 86,400 s TTL. Zero margin —
+        the last team in the rotation is rebuilt at the instant its mirror dies.
+        The ceiling must be met with room, so it is one whole pass short of the TTL.
+        """
+        ceiling = warm.coverage_ceiling_teams()
         teams_per_pass = warm.PASS_BUDGET_SECONDS // warm.SLOWEST_MEASURED_BUILD_SECONDS
-        ceiling = (cache_mod.STALE_TTL // period_seconds) * teams_per_pass
+        cycle_s = math.ceil(ceiling / teams_per_pass) * 3600
 
-        assert warm.MEASURED_UNION_TEAMS <= ceiling, (
-            f"the measured union ({warm.MEASURED_UNION_TEAMS}) is already past the "
-            f"coverage ceiling ({ceiling}); PASS_BUDGET_SECONDS must be re-derived"
+        assert cycle_s <= cache_mod.STALE_TTL - 3600, (
+            f"a {ceiling}-team cycle takes {cycle_s}s against a "
+            f"{cache_mod.STALE_TTL}s mirror — that is {cache_mod.STALE_TTL - cycle_s}s "
+            "of margin, and the contract asks for a whole pass"
         )
-        # And the headroom is real, not marginal-by-luck.
-        assert ceiling >= 240
+        # The zero-margin population CERT-515 named must NOT be admitted.
+        assert ceiling < 240, f"ceiling {ceiling} still admits the zero-margin 240"
+
+    def test_the_measured_union_is_inside_the_ceiling_and_the_headroom_is_stated(self):
+        """The headroom is ONE team, and the guard says so rather than rounding it
+        up. CERT-515 blocked a claim of "240 ceiling, 11 teams of headroom" — both
+        numbers were wrong."""
+        ceiling = warm.coverage_ceiling_teams()
+        assert warm.MEASURED_UNION_TEAMS <= ceiling, (
+            f"the measured union ({warm.MEASURED_UNION_TEAMS}) is past the coverage "
+            f"ceiling ({ceiling}); PASS_BUDGET_SECONDS must be re-derived"
+        )
+        assert ceiling - warm.MEASURED_UNION_TEAMS <= 1, (
+            "the headroom grew without the census being re-measured — re-run it "
+            "rather than trusting a stale constant"
+        )
+
+    def test_the_ceiling_is_derived_from_the_budget_not_hard_coded(self):
+        """Re-budgeting the pass must move the ceiling, or the two drift apart."""
+        base = warm.coverage_ceiling_teams()
+        with patch.object(warm, "PASS_BUDGET_SECONDS", warm.PASS_BUDGET_SECONDS * 2):
+            assert warm.coverage_ceiling_teams() > base
+        with patch.object(warm, "COVERAGE_MARGIN_PASSES", 5):
+            assert warm.coverage_ceiling_teams() < base
+
+
+class TestSeasonalGrowthTripsAtRuntime:
+    """🔴 CERT-515's second half: a frozen constant cannot see seasonal growth.
+
+    `MEASURED_UNION_TEAMS` is a census taken on one day. Football season adds
+    fixture-reachable teams and no unit test can notice. The PASS can — it knows
+    exactly how many teams it selected — so the detection belongs there, in the
+    verdict, next to `truncated`.
+    """
+
+    async def test_a_population_past_the_ceiling_is_reported_in_the_verdict(self):
+        oversized = list(range(1, warm.coverage_ceiling_teams() + 12))
+        rc = _FakeRedis()
+        built, build = _built_recorder()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session(oversized)), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=build):
+            out = await warm._warm_prop_families()
+
+        assert out["coverage_exceeded"] == 11, out
+        assert out["coverage_ceiling"] == warm.coverage_ceiling_teams()
+
+    async def test_a_healthy_population_reports_zero_not_absent(self):
+        """0 and 'the field is missing' are different facts (gotcha #53)."""
+        rc = _FakeRedis()
+        built, build = _built_recorder()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session([1, 2, 3])), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=build):
+            out = await warm._warm_prop_families()
+
+        assert "coverage_exceeded" in out
+        assert out["coverage_exceeded"] == 0
+
+    async def test_the_detector_is_independent_of_the_per_pass_cap(self):
+        """`truncated` and `coverage_exceeded` answer different questions — how
+        many this pass skipped, versus how many the ROTATION can never reach. A
+        population between the two bounds must report one and not the other."""
+        ceiling = warm.coverage_ceiling_teams()
+        assert warm.MAX_TEAMS_PER_PASS < ceiling, "fixture assumes cap < ceiling"
+        between = list(range(1, warm.MAX_TEAMS_PER_PASS + 6))  # over cap, under ceiling
+        rc = _FakeRedis()
+        built, build = _built_recorder()
+        with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
+             patch("app.tasks.base.get_task_session", _team_lookup_session(between)), \
+             patch("app.routes.prop_families.build_and_cache_prop_families",
+                   side_effect=build):
+            out = await warm._warm_prop_families()
+
+        assert out["truncated"] > 0
+        assert out["coverage_exceeded"] == 0
 
     def test_the_pass_budget_bounds_the_work_not_the_population(self):
         """Why widening the set is not a load increase: a pass stops at

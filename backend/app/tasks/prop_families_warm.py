@@ -146,12 +146,27 @@ MIN_PROPS_TO_WARM = 2
 #:
 #:     ceil(population / (PASS_BUDGET_SECONDS // SLOWEST_MEASURED_BUILD_SECONDS))
 #:         * 3600  <=  STALE_TTL
-#:
-#: = ceil(229 / 10) = 23 passes = 82,800 s against 86,400 s — inside, with an hour
-#: to spare. The arithmetic tops out at **240** teams, not at `MAX_TEAMS_PER_PASS`.
-#: Past 240 the mirror lapses before the cycle closes and the budget has to be
-#: re-derived; the guard asserts that bound rather than any of these literals.
 MEASURED_UNION_TEAMS = 229
+
+#: 🔴 A CYCLE THAT FINISHES EXACTLY AS THE MIRROR EXPIRES HAS NOT COVERED ANYTHING
+#: (CERT-515). The first version of this ceiling was `<= STALE_TTL`, which admits
+#: 240 teams — 24 passes x 3600 s = 86,400 s against an 86,400 s TTL, i.e. **zero
+#: margin**: the last team in the rotation is rebuilt at the instant its mirror
+#: dies, and any pass that runs a second late leaves it cold. A budget bound must
+#: be met with room, not met exactly.
+#:
+#: One whole pass of slack, so the ceiling is
+#: `((STALE_TTL // period) - 1) * teams_per_pass` = (24 - 1) x 10 = **230**.
+#:
+#: ⚠️ THE MEASURED UNION IS 229. THE HEADROOM IS **ONE TEAM**, and the report says
+#: so rather than rounding it up — the previous claim of "240 ceiling, 11 teams of
+#: headroom" was wrong on both numbers. `PASS_BUDGET_SECONDS` was deliberately NOT
+#: raised to widen it: that is real added load on a database `pg:diagnose`
+#: currently rates RED on hit rate, and it is a measurement-lane call, not a build
+#: lane's. What the build lane owes instead is DETECTION — see
+#: `coverage_exceeded` in the pass verdict, which is what makes seasonal growth
+#: trip in PRODUCTION rather than only against a constant frozen in this file.
+COVERAGE_MARGIN_PASSES = 1
 
 #: Hard ceiling on how many teams one pass will consider. Not a target — a
 #: backstop, so a roster backfill or a schedule import cannot turn one beat tick
@@ -199,6 +214,23 @@ WARM_CAP = 400
 #: build is reported by this timeout rather than vanishing into a SIGKILL
 #: (project_celery_sigkill_untracked).
 PER_TEAM_TIMEOUT_SECONDS = 60
+
+
+def coverage_ceiling_teams(period_seconds: int = 3600) -> int:
+    """How many teams a full rotation can cover and still leave the mirror margin.
+
+    Derived from the same four constants the coverage contract is written in, so
+    re-measuring the slowest build or re-budgeting the pass moves the ceiling
+    instead of leaving a literal behind to rot (#2236's discipline).
+
+    `COVERAGE_MARGIN_PASSES` is why this is not simply `STALE_TTL // period`: a
+    cycle that closes exactly as the mirror expires has covered nothing (CERT-515).
+    """
+    from app.utils.event_concept_cache import STALE_TTL
+
+    teams_per_pass = max(1, PASS_BUDGET_SECONDS // SLOWEST_MEASURED_BUILD_SECONDS)
+    passes = max(1, (STALE_TTL // period_seconds) - COVERAGE_MARGIN_PASSES)
+    return passes * teams_per_pass
 
 
 async def _refresh_prop_families(team_id: int, cap: int, token: str | None = None) -> dict:
@@ -378,6 +410,25 @@ async def _warm_prop_families() -> dict:
         return {"terminal": "failed", "selected": 0, "rebuilt": 0}
 
     selected = len(team_ids)
+
+    # 🔴 THE POPULATION IS MEASURED HERE, EVERY PASS, BECAUSE A CONSTANT CANNOT SEE
+    # SEASONAL GROWTH (CERT-515). `MEASURED_UNION_TEAMS` is a census frozen on
+    # 2026-08-31 with ONE team of headroom; football season adds fixture-reachable
+    # teams and no unit test can notice. The pass can: it already knows exactly how
+    # many teams it selected, so it compares that against the derived ceiling and
+    # says so in its verdict. Same discipline as `truncated` directly below — no
+    # silent caps, and here, no silent lapse.
+    _ceiling = coverage_ceiling_teams()
+    coverage_exceeded = max(0, selected - _ceiling)
+    if coverage_exceeded:
+        logger.warning(
+            "warm_prop_families: %d teams selected exceeds the %d-team coverage "
+            "ceiling by %d — a full rotation no longer finishes inside the mirror, "
+            "so the tail of the set will go cold. Re-derive PASS_BUDGET_SECONDS or "
+            "tighten MIN_PROPS_TO_WARM.",
+            selected, _ceiling, coverage_exceeded,
+        )
+
     truncated = max(0, selected - MAX_TEAMS_PER_PASS)
     if truncated:
         # No silent caps: a pass that covered less than it selected says which
@@ -476,5 +527,9 @@ async def _warm_prop_families() -> dict:
         "failed": failed,
         "deferred": deferred,
         "truncated": truncated,
+        # 0 on a healthy pass; the number of teams the rotation can no longer
+        # reach inside the mirror once the population outgrows the budget.
+        "coverage_exceeded": coverage_exceeded,
+        "coverage_ceiling": _ceiling,
         "seconds": round(time.monotonic() - started, 1),
     }
