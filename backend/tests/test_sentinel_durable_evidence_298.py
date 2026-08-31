@@ -23,7 +23,28 @@ import pytest
 
 from app.utils import durable_state as ds
 
-NOW = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+#: The evidence anchor. A fixed AGE, never a fixed DATE.
+#:
+#: This was `datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)` — a literal
+#: calendar instant — while `read_sentinel_evidence` measures age against the
+#: REAL clock and refuses anything older than `SENTINEL_MAX_AGE_S` (30 days). So
+#: every row stamped `NOW` aged out at exactly 2026-08-31T12:00:00Z and four
+#: tests in this file went red on their own, thirty days after they were
+#: written, with no commit in between. Backend CI shard 4 read green at 11:30Z
+#: that day and red at 12:31Z. It does not self-heal: the anchor only gets older.
+#:
+#: Worse than four red tests, two SURVIVORS had gone vacuous —
+#: `test_a_stale_durable_row_is_not_served` and
+#: `test_nothing_anywhere_returns_none_so_the_rail_classifies` assert `is None`,
+#: and once the anchor itself was ancient they passed because EVERYTHING was
+#: None, not because the thing they name was refused.
+#:
+#: Gotcha #44: offset first, then truncate. Truncating the real clock to the
+#: hour keeps the anchor stable within a run (two reads in one test cannot
+#: straddle a boundary and disagree) while making every derived instant a fixed
+#: DISTANCE from now — `ancient` is always MAX_AGE+1h old, `newer` is always an
+#: hour ahead, and the scorecard is always under an hour old, on every clock.
+NOW = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 SCORECARD = {
     "mode": "live",
     "verdict": "GREEN",
@@ -364,3 +385,81 @@ class TestRailFallsBackAdditively:
             out = await admin_mod.get_board_sentinel_last(MagicMock(), "s")
 
         assert out == {"verdict": "GREEN"}  # verbatim, no provenance block
+
+
+# --- The anchor itself (Q474) -------------------------------------------------
+
+
+class TestTheEvidenceAnchorIsAnAgeNotADate:
+    """The regression guard for the 2026-08-31T12:00:00Z detonation.
+
+    A literal `NOW = datetime(2026, 8, 1, 12, 0, 0, …)` passed every gate for
+    thirty days and then failed four tests in this file with no commit in
+    between, because the code under test measures age against the real clock.
+    Nothing in the suite could see it coming; these two can.
+
+    Deliberately NOT proven with `scripts/clock_sweep.py`: that harness cannot
+    grade this file. Its fake `datetime` leaves some read in this path on the
+    real clock, so `test_evicted_redis_still_serves_the_retained_verdict` — which
+    never touches `NOW` — fails under it on BOTH trees, and its default
+    bootstrap additionally makes `utcnow()` and `now(utc)` disagree by the local
+    UTC offset. A harness that fails a test it should not is not evidence, so the
+    invariant is asserted directly here instead.
+    """
+
+    def test_the_anchor_is_always_recent_against_the_real_clock(self):
+        from app.services.durable_snapshots import SENTINEL_MAX_AGE_S
+
+        age_s = (datetime.now(timezone.utc) - NOW).total_seconds()
+        assert 0 <= age_s < 3600, (
+            f"the anchor is {age_s / 86400:.1f} days from now; it must be an AGE "
+            "measured from the real clock, never a calendar date"
+        )
+        assert age_s < SENTINEL_MAX_AGE_S, (
+            "the anchor is already older than the window the reader enforces — "
+            "this is the exact state that went red at 2026-08-31T12:00:00Z"
+        )
+
+    def test_the_derived_instants_keep_their_intended_side_of_the_window(self):
+        """`ancient` must be refused and the scorecard admitted, by construction
+        rather than by today's date happening to cooperate."""
+        from app.services.durable_snapshots import SENTINEL_MAX_AGE_S
+
+        real_now = datetime.now(timezone.utc)
+        ancient = NOW - timedelta(seconds=SENTINEL_MAX_AGE_S + 3600)
+        assert (real_now - ancient).total_seconds() > SENTINEL_MAX_AGE_S
+        assert (real_now - NOW).total_seconds() < SENTINEL_MAX_AGE_S
+        assert NOW + timedelta(hours=1) > real_now, (
+            "the `volatile ahead of durable` fixture stopped being ahead"
+        )
+
+    def test_no_calendar_literal_is_reintroduced_as_the_anchor(self):
+        """Anchored on the AST assignment, not on a substring.
+
+        A comment mentioning `datetime.now` would satisfy a `in src` check while
+        the literal lived on one line below."""
+        import ast
+        import inspect
+        import sys
+
+        module = sys.modules[__name__]
+        tree = ast.parse(inspect.getsource(module))
+        assigns = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "NOW" for t in node.targets
+            )
+        ]
+        assert len(assigns) == 1, f"expected one module-level NOW, found {len(assigns)}"
+        value = assigns[0].value
+        calls = [
+            n.func.attr
+            for n in ast.walk(value)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        ]
+        assert "now" in calls, (
+            "NOW is not derived from the clock — a calendar literal is back, and "
+            "it will go red silently once it ages past SENTINEL_MAX_AGE_S"
+        )
