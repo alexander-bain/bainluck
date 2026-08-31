@@ -162,8 +162,12 @@ describe("the fallbacks this must not break", () => {
     // Key on chrome ONLY the ranked table has. The first version of this test
     // asserted `toContain("All Outcomes")` — which the LADDER also prints, since
     // that is its title too. It passed with the shape gate deleted and a mutant
-    // walked straight through it. The sort pills exist only in the table.
-    expect(html).toContain("24h Change");
+    // walked straight through it.
+    // Q481: the replacement was `"24h Change"`, the sort pill's label — and master
+    // renamed that pill to "Last move" (UX-P233), so this assertion failed on the
+    // merged tree while the page rendered correctly. Now keyed on `OutcomeRow`'s
+    // own test hook, which the ladder never emits and no designer will reword.
+    expect(html).toContain('data-testid="outcome-row"');
     expect(html).toContain(">Amazon<"); // the table's own outcome row
   });
 
@@ -185,7 +189,8 @@ describe("the fallbacks this must not break", () => {
     // The ranked table draws initial avatars; the ladder never does. Their
     // presence is proof the ladder did not take over.
     expect(html).toContain(">A<"); // Amazon's initial avatar
-    expect(html).toContain("24h Change");
+    // Q481: was `"24h Change"`; see the note above — display copy moved under it.
+    expect(html).toContain('data-testid="outcome-row"');
   });
 
   test("a quantity market with a live threshold_group does not draw the ladder twice", () => {

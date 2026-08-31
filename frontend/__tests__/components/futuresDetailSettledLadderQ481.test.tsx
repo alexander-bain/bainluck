@@ -143,13 +143,19 @@ function resultsSection(html: string): string {
  * Chrome that belongs to exactly ONE arm.
  *
  * `QuantityGroup` gives every rung `aria-label="{label}: {pct}"`; no table row
- * carries one. The table has sort pills; the ladder has none. Q478 shipped a test
- * asserting `toContain("All Outcomes")` to tell these two apart and a mutant walked
- * through it, because the LADDER prints that same string as its own title. Neither
- * marker below is printed by both.
+ * carries one. `OutcomeRow` stamps `data-testid="outcome-row"`; the ladder never
+ * does. Neither marker is printed by both.
+ *
+ * 🔴 BOTH ARE TEST HOOKS, NOT DISPLAY COPY, AND THAT IS THE POINT. Q478 first told
+ * these two arms apart with `toContain("All Outcomes")` — which the LADDER prints
+ * as its own title — and a mutant walked through it. The replacement was
+ * `"24h Change"`, the sort pill's label, which held right up until master renamed
+ * that pill to "Last move" (UX-P233) and broke six assertions in this file and its
+ * Q478 sibling on the merged tree, while the page rendered perfectly correctly.
+ * A guard keyed on words a designer may reword is a guard with an expiry date.
  */
 const LADDER_ONLY = 'aria-label="Before April:';
-const TABLE_ONLY = "24h Change";
+const TABLE_ONLY = 'data-testid="outcome-row"';
 
 describe("🔴 CERT-605: a settled quantity market shows its RESULT, not four prices", () => {
   test("the results section says Won", () => {
