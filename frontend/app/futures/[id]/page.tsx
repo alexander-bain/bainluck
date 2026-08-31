@@ -287,9 +287,36 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // `threshold_groups` still owns the CROSS-MARKET ladder (many markets, one
   // question) — this covers the other half: one market whose own outcomes are the
   // rungs. Only one of the two ever draws, so the page can't print the ladder twice.
+  //
+  // Q481 (CERT-605) — A SETTLED MARKET NEVER LADDERS. Two measured reasons, and the
+  // second is why "just add Won/Lost chrome to the rungs" is not the fix:
+  //
+  //  1. The ladder cannot show a RESULT. `QuantityRung` carries no winner state, so
+  //     a resolved market drew four percentage bars under a "Final Results" heading
+  //     while suppressing the one render that says `Won`/`Lost`/`Settled`. That is
+  //     the `settled means settled` ruling broken on 278,151 markets — 96.6% of all
+  //     `quantity` rows (resolved 278,151 vs open 9,678, production 2026-08-31).
+  //  2. The ladder cannot ORDER a settled market either. Its rung order comes from
+  //     ascending price, and settlement collapses price: of 1,500 settled quantity
+  //     markets carrying a true winner, 1,260 (84%) hold two or fewer distinct
+  //     probabilities and 60 hold exactly one. With every rung at 0% or 100% the
+  //     order falls through to the stable-sort tiebreak — serve order — which for
+  //     109349 is `2027, October, April, July`, i.e. the backwards timeline this
+  //     queue exists to fix, now wearing a ladder's clothes. `opening_probability`
+  //     is not a rescue: only 891 of those 1,500 (59.4%) have it on every row.
+  //
+  // So the graded table renders instead, exactly as it did before Q478. This costs
+  // the ship NOTHING it ever measured: `census_quantity_ladder_q478.py` counts
+  // `WHERE m.market_type = 'quantity' AND m.status = 'open'`, so the whole
+  // 2,882 -> 9,491 win is open markets and every one of them still ladders.
+  // Laddering settled markets was unmeasured scope, not a claim.
+  // Teaching the ladder to grade AND to order itself without prices is filed as a
+  // follow-up; it needs an ordering signal that survives settlement, which is a
+  // data question, not a rendering one.
   const ownLadderRungs = useMemo(() => {
     if (marketShape !== SHAPE_QUANTITY) return [];
     if (thresholdEntries.length > 0) return [];
+    if (market?.status === "resolved") return [];
     const outcomes = market?.outcomes ?? [];
     if (outcomes.length < 2) return [];
     return buildOutcomeLadderRungs(
@@ -297,7 +324,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       ladderOrderFor(market?.mutually_exclusive),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marketShape, thresholdEntries.length, market?.outcomes, market?.mutually_exclusive]);
+  }, [
+    marketShape,
+    thresholdEntries.length,
+    market?.outcomes,
+    market?.mutually_exclusive,
+    market?.status,
+  ]);
   const hasOwnLadder = ownLadderRungs.length > 0;
   // Progression-ordered markets (e.g., playoff rounds)
   const progressionMarkets = groupMarkets
@@ -814,9 +847,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Q478 — the same ladder for a market whose OWN outcomes are the rungs.
           Rungs already carry their final position in `value`, so QuantityGroup's
           sort is a no-op over them rather than a second opinion. */}
+      {/* Q481 — the title is no longer a ternary on `isResolved`. `hasOwnLadder` is
+          false for every resolved market, so the "Final Results" arm was dead code
+          that read, to anyone scanning this file, as a settled path the ladder
+          handles. It never handled one — that is what CERT-605 blocked. A ladder
+          here always describes a live question. */}
       {hasOwnLadder && (
         <QuantityGroup
-          title={isResolved ? "Final Results" : "All Outcomes"}
+          title="All Outcomes"
           rungs={ownLadderRungs}
           wideLabels={ladderNeedsWideLabels(ownLadderRungs)}
         />
