@@ -61,6 +61,7 @@ import os
 import shutil
 import signal
 import sys
+import uuid
 from pathlib import Path
 
 #: 🔴 THE MANIFEST AND THE BACKUPS ARE WORKTREE-UNIQUE (#2330, CERT-563).
@@ -157,8 +158,58 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _manifest_path(label: str) -> Path:
-    return MANIFEST_DIR / f"{label}.json"
+#: 🔴 RUN-UNIQUE, NOT JUST TREE-UNIQUE (CERT-579).
+#:
+#: CERT-563 namespaced the manifest and the backups by CHECKOUT, which closed the
+#: two-worktree collision. It did not close the same collision inside ONE
+#: checkout, because the names were still derived from the LABEL — and a label is
+#: a property of the harness, not of the run. Two concurrent runs of one harness
+#: in one tree therefore shared a manifest and a backup path, and the cert's
+#: two-process probe showed exactly what that costs:
+#:
+#:   1. run A copies the pristine target to the shared backup, mutates the target;
+#:   2. run B starts and copies the NOW-MUTATED target over that same backup —
+#:      the pristine bytes are gone;
+#:   3. A restores from the backup, and `restore_all` correctly detects the sha
+#:      mismatch and returns False;
+#:   4. `guarded_targets` **threw that False away**, so both runs exited 0 with
+#:      the target still mutated and the shared manifest already unlinked by
+#:      whichever finished second.
+#:
+#: The residue survives with no manifest naming it, which is the one state
+#: `--check` and the residue scanner cannot see.
+#:
+#: So the identity of a backup is (tree, label, RUN) and the run half is this. The
+#: pid alone is not enough — pids are reused, and a stale manifest from a dead run
+#: whose pid has been recycled reads as LIVE and is then never recovered — so a
+#: random component is carried alongside it.
+_RUN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _manifest_path(label: str, run: str | None = None) -> Path:
+    """The manifest for `label`, scoped to a RUN when one is given.
+
+    `run=None` keeps the pre-CERT-579 shape and is what `--check` and the tests
+    use to talk about "the manifest for this label" generically; a real guard
+    always passes its own run id, so two live guards in one checkout cannot name
+    the same file.
+    """
+    if run is None:
+        return MANIFEST_DIR / f"{label}.json"
+    return MANIFEST_DIR / f"{label}.{run}.json"
+
+
+def _run_scoped(path: Path) -> Path:
+    """`path`, namespaced to THIS run as well as this tree. Idempotent.
+
+    Applied to the resolved backup path rather than to the caller's spec, so all
+    three backup shapes this module accepts — a directory, a single file path,
+    and a per-target dict — are covered in one place and a new shape cannot
+    quietly skip it.
+    """
+    if f".{_RUN}" in path.name:
+        return path
+    return path.with_name(f"{path.stem}.{_RUN}{path.suffix}")
 
 
 def recover(verbose: bool = True) -> int:
@@ -266,6 +317,10 @@ class _Guard:
             else _tree_scoped(Path(backup_dir))
         )
         self.label = label
+        # CERT-579: this run's half of the (tree, label, run) identity. Read off
+        # the module constant rather than generated here, so every guard in one
+        # process agrees and `recover()` can recognise our own manifests.
+        self._run = _RUN
         self.backups: dict[Path, Path] = {}
         self.original: dict[Path, str] = {}
         self._prev_handlers: dict[int, object] = {}
@@ -299,12 +354,17 @@ class _Guard:
                 backup = self.backup_dir
             else:
                 backup = self.backup_dir / target.name
+            # CERT-579: the LAST thing done to every backup path, whichever of
+            # the three shapes produced it, so a concurrent run of this same
+            # harness in this same checkout cannot copy its mutated target over
+            # our pristine one.
+            backup = _run_scoped(backup)
             shutil.copy2(target, backup)
             self.backups[target] = backup
             self.original[target] = sha(target)
             entries[str(target)] = {"backup": str(backup), "sha": self.original[target]}
 
-        _manifest_path(self.label).write_text(
+        _manifest_path(self.label, self._run).write_text(
             json.dumps(
                 {
                     "label": self.label,
@@ -337,9 +397,9 @@ class _Guard:
                     f"Backup: {backup}. Do not commit this tree."
                 )
         if clean:
-            _manifest_path(self.label).unlink(missing_ok=True)
+            _manifest_path(self.label, self._run).unlink(missing_ok=True)
         elif verbose:
-            print(f"  guard: manifest kept at {_manifest_path(self.label)} — the tree is dirty")
+            print(f"  guard: manifest kept at {_manifest_path(self.label, self._run)} — the tree is dirty")
         return clean
 
     def finish(self) -> None:
@@ -358,8 +418,34 @@ def guarded_targets(targets, backup_dir, label: str):
     try:
         yield guard
     finally:
-        guard.restore_all()
+        # 🔴 CERT-579: THE VERDICT IS NOT OPTIONAL.
+        #
+        # `restore_all` has always returned False when the bytes it put back are
+        # not the bytes it took, and this discarded it. That is how the cert's
+        # two-process probe ended with **both runs exiting 0 and the target still
+        # mutated**: the mismatch WAS detected, printed, and then thrown away, so
+        # the harness scored its mutants against a dirty tree and the caller had
+        # no way to know. A check whose result nobody reads is not a check —
+        # exactly the shape of the residue scanner printing its finding and then
+        # printing CLEAN over it (#2391).
+        #
+        # Raising from `finally` while another exception is in flight replaces it
+        # as the propagating exception and chains the original as `__context__`,
+        # so nothing is lost from the traceback. That order is deliberate: a tree
+        # left mutated is more urgent than whatever the harness was failing on,
+        # because it is the state that escapes the process and reaches a commit.
+        clean = guard.restore_all()
         guard.finish()
+        if not clean:
+            raise RuntimeError(
+                f"mutation guard '{label}' could NOT restore its targets to their "
+                "original bytes — this tree is DIRTY and must not be committed. "
+                "Run `python3 -m scripts.evals._mutation_guard --check` and see the "
+                "per-file lines above for which target and which backup. The usual "
+                "cause is a second run of this same harness racing this one; each "
+                "run now owns its own backup, so a collision here means a backup "
+                "was removed or overwritten from outside the guard."
+            )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -575,3 +575,147 @@ def test_every_on_disk_harness_is_guarded():
         "these harnesses mutate files on disk without the restore guard, so a "
         f"SIGTERM mid-run leaves a mutant in the tree: {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-579: two runs of ONE harness in ONE checkout
+# ---------------------------------------------------------------------------
+#
+# CERT-563 closed the two-WORKTREE collision by namespacing the manifest and the
+# backups on the repo root. CERT-579 showed the same collision survives inside a
+# single checkout, because the names were still derived from the LABEL and a
+# label belongs to the harness, not to the run. The cert's two-process probe had
+# both runs exit 0 with the target still mutated and the shared manifest already
+# unlinked — residue that nothing names, which is the one state `--check` and the
+# residue scanner cannot see.
+#
+# These pin both halves of the repair, and they pin them the way the cert found
+# it: by actually running two processes, not by asserting on path strings. A
+# string assertion would have passed against the broken code the moment somebody
+# added a token anywhere in the name.
+
+
+def _concurrency_probe(tmp_path, hold_a="3.0", hold_b="0.2"):
+    """Two guarded runs of the same label, overlapping, in this checkout.
+
+    Returns `(rc_a, rc_b, target_is_pristine, text)`.
+    """
+    import hashlib
+    import subprocess
+    import sys
+    import textwrap
+    import time
+
+    backend = Path(__file__).resolve().parents[1]
+    target = tmp_path / "victim.py"
+    pristine = "ORIGINAL PRISTINE CONTENT\n"
+    target.write_text(pristine)
+
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        textwrap.dedent(
+            f'''
+            import sys, time, pathlib
+            sys.path.insert(0, {str(backend)!r})
+            from scripts.evals._mutation_guard import guarded_targets
+            target = pathlib.Path(sys.argv[1]); hold = float(sys.argv[2]); tag = sys.argv[3]
+            with guarded_targets((target,), {str(tmp_path / "backups")!r}, "cert579_probe"):
+                target.write_text("MUTATED BY " + tag + "\\n")
+                time.sleep(hold)
+            '''
+        )
+    )
+
+    def _spawn(hold, tag):
+        return subprocess.Popen(
+            [sys.executable, str(worker), str(target), hold, tag],
+            cwd=str(backend), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+
+    a = _spawn(hold_a, "A")
+    time.sleep(1.0)  # A is inside its guard and has already mutated the target
+    b = _spawn(hold_b, "B")
+    a.communicate(); b.communicate()
+
+    text = target.read_text()
+    pristine_now = (
+        hashlib.sha256(text.encode()).hexdigest()
+        == hashlib.sha256(pristine.encode()).hexdigest()
+    )
+    return a.returncode, b.returncode, pristine_now, text
+
+
+def test_two_concurrent_runs_in_one_checkout_do_not_corrupt_the_target(tmp_path):
+    """CERT-579's exact probe. The target must come back pristine.
+
+    Before the fix this ended with both processes exiting 0 and the file reading
+    `MUTATED BY A` — run B copied A's already-mutated target over the shared
+    backup, so A's restore had nothing pristine to restore FROM.
+    """
+    rc_a, rc_b, pristine, text = _concurrency_probe(tmp_path)
+    assert pristine, (
+        "two concurrent runs of one harness in one checkout left the target "
+        f"mutated: {text!r} (A exit {rc_a}, B exit {rc_b}). Each run must own its "
+        "own backup — see `_run_scoped` and `_RUN`."
+    )
+
+
+def test_each_run_owns_its_backup_and_its_manifest(tmp_path):
+    """The mechanism, so a future edit cannot keep the probe green by accident.
+
+    Two guards built in one process for one label must not name the same backup
+    or the same manifest. This is the property the probe above depends on; if it
+    is ever true only because of timing, this fails first and says why.
+    """
+    import importlib
+
+    mg = importlib.import_module("scripts.evals._mutation_guard")
+
+    target = tmp_path / "t.py"
+    target.write_text("x = 1\n")
+    monkey_dir = tmp_path / "manifests"
+    original_dir = mg.MANIFEST_DIR
+    mg.MANIFEST_DIR = monkey_dir
+    try:
+        first = mg._Guard((target,), tmp_path / "b", "same_label").start()
+        # A second RUN is a second `_RUN`; simulate it the way a second process
+        # gets one, rather than trusting that this process can produce two.
+        saved = mg._RUN
+        mg._RUN = f"{saved}-second"
+        try:
+            second = mg._Guard((target,), tmp_path / "b", "same_label").start()
+            assert first.backups[target] != second.backups[target], (
+                "two runs of one label share a backup path — the second run's "
+                "`copy2` overwrites the first run's pristine bytes (CERT-579)"
+            )
+            assert mg._manifest_path("same_label", first._run) != mg._manifest_path(
+                "same_label", second._run
+            ), "two runs of one label share a manifest path (CERT-579)"
+            second.restore_all()
+            second.finish()
+        finally:
+            mg._RUN = saved
+        first.restore_all()
+        first.finish()
+    finally:
+        mg.MANIFEST_DIR = original_dir
+
+
+def test_a_failed_restore_is_raised_not_swallowed(tmp_path):
+    """The second half of CERT-579: the verdict must reach the caller.
+
+    `restore_all` always detected the mismatch and returned False. `guarded_targets`
+    threw that away, so the harness scored its mutants against a dirty tree and
+    exited 0. Deleting the backup from underneath the guard is the cheapest way to
+    force a restore failure without a second process.
+    """
+    from scripts.evals._mutation_guard import guarded_targets
+
+    target = tmp_path / "victim.py"
+    target.write_text("pristine\n")
+
+    with pytest.raises(RuntimeError, match="could NOT restore"):
+        with guarded_targets((target,), tmp_path / "backups", "cert579_restore_fails") as guard:
+            target.write_text("mutated\n")
+            # The backup vanishes — a stand-in for the concurrent overwrite.
+            guard.backups[target].unlink()
