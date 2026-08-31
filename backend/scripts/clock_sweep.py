@@ -15,10 +15,25 @@ installed before the application is imported. A target that reads no clock is
 invariant across every point; one that does will fail at some of them, and the
 failing points tell you where its boundary sits.
 
+The harness grades itself first (#2396)
+---------------------------------------
+Every run begins with a self-check at every point, and the sweep does not run
+at all unless it passes. The self-check proves BOTH that the clock actually
+moved AND that faking it did not change what a datetime *is* — because a fault
+in the patch produces red that is indistinguishable from a finding about the
+target. This tool spent eleven cycles reporting ``5 failed, 12 passed`` at all
+12 points, identically before and after a real repair, on a fixture that passes
+17/17 at the real clock; the cause was the patch, not the target. A harness
+that cannot fail loudly about itself is not an instrument.
+
+Exit codes: ``0`` invariant · ``1`` the target reads the clock · ``2`` HARNESS
+FAULT, no conclusion drawn about the target.
+
 Usage
 -----
     python3 scripts/clock_sweep.py tests/test_feed_phantom_midpoint_suppression.py
     python3 scripts/clock_sweep.py tests/foo.py --at 2026-08-11T00:00 --offsets -8,0,8
+    python3 scripts/clock_sweep.py tests/foo.py --self-check-only
 
 Default sweep: -8h / -2h / 0 / +2h / +8h around BOTH 00:00 and 12:00 UTC (the
 two boundaries a day-anchored fixture can straddle), plus two far-future points
@@ -32,14 +47,35 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 # Installed inside the child, before pytest or the app is imported.
-_BOOTSTRAP = r'''
+#
+# #2396 — WHY THE METACLASS. Swapping ``datetime.datetime`` for a plain
+# SUBCLASS silently breaks every ``isinstance(value, datetime)`` in the tree:
+# a genuine datetime — one from Postgres, from ``fromisoformat``, from
+# arithmetic, or even from this harness's own ``now()`` — is not an instance of
+# the subclass, so type checks start answering "no" and their callers report
+# perfectly good values as missing or unparseable. That is a fault in the
+# HARNESS, it does not depend on the faked instant, and it is indistinguishable
+# from a finding about the target: the sweep reported 5 failed / 12 passed
+# identically at all 12 points on a fixture that passes 17/17 at the real
+# clock, and reported it identically before and after a real repair.
+# ``__instancecheck__`` keeps type identity answering about the real class so
+# only the CLOCK moves. ``_self_check_problems`` below proves it still holds.
+_PATCH = r'''
 import datetime as _dt, sys
 
 _FAKE = _dt.datetime.fromisoformat({fake!r})
 _real = _dt.datetime
 
 
-class _FakeDateTime(_real):
+class _FakeMeta(type):
+    def __instancecheck__(cls, obj):
+        return isinstance(obj, _real)
+
+    def __subclasscheck__(cls, sub):
+        return issubclass(sub, _real)
+
+
+class _FakeDateTime(_real, metaclass=_FakeMeta):
     @classmethod
     def now(cls, tz=None):
         return _FAKE.astimezone(tz) if tz is not None else _FAKE.replace(tzinfo=None)
@@ -54,14 +90,84 @@ class _FakeDateTime(_real):
 
 
 _dt.datetime = _FakeDateTime
+'''
 
+_PYTEST_TAIL = r'''
 import pytest
 sys.exit(pytest.main({args!r}))
+'''
+
+# The self-check runs under the SAME patch the sweep uses, in a bare
+# interpreter (no pytest, no app import), and asserts two things that must both
+# hold or the sweep cannot be read:
+#
+#   1. the clock actually MOVED — otherwise every assertion below passes
+#      vacuously against the real clock and a no-op harness self-certifies;
+#   2. the patch did not change what a datetime IS — the #2396 fault.
+#
+# A harness that cannot see its own breakage reports absence of evidence as
+# evidence of absence (gotcha #53), which is exactly how this tool spent
+# eleven cycles reporting a false FAIL as a finding.
+_SELF_CHECK_TAIL = r'''
+from datetime import datetime, timedelta, timezone
+
+expected = datetime.fromisoformat({fake!r})
+problems = []
+
+seen = datetime.now(timezone.utc)
+if abs((seen - expected).total_seconds()) > 1:
+    problems.append("clock did not move: now()=%s but asked for %s" % (seen, expected))
+if datetime.utcnow().replace(tzinfo=timezone.utc) != expected.astimezone(timezone.utc):
+    problems.append("utcnow() disagrees with now()")
+
+for label, value in (
+    ("now()", seen),
+    ("utcnow()", datetime.utcnow()),
+    ("today()", datetime.today()),
+    ("fromisoformat()", expected),
+    ("now() - timedelta", seen - timedelta(hours=6)),
+):
+    if not isinstance(value, datetime):
+        problems.append("isinstance(%s, datetime) is False — the patch broke type identity" % label)
+
+for p in problems:
+    print("SELF-CHECK: " + p)
+sys.exit(1 if problems else 0)
 '''
 
 
 def _points(at: datetime, offsets: list[float]) -> list[datetime]:
     return [at + timedelta(hours=o) for o in offsets]
+
+
+def _run(source: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-c", source], capture_output=True, text=True
+    )
+
+
+def _self_check_problems(instant: datetime) -> list[str]:
+    """Return what the harness itself got wrong at ``instant`` ([] when sound).
+
+    A non-empty list means the sweep's own clock patch is faulty, so nothing it
+    reports about a target can be believed — the failures would be the tool's,
+    not the target's.
+    """
+    iso = instant.isoformat()
+    proc = _run(_PATCH.format(fake=iso) + _SELF_CHECK_TAIL.format(fake=iso))
+    if proc.returncode == 0:
+        return []
+    problems = [
+        ln.split("SELF-CHECK: ", 1)[1]
+        for ln in proc.stdout.splitlines()
+        if ln.startswith("SELF-CHECK: ")
+    ]
+    # A crash before any assertion could print is itself a harness fault, and
+    # must not read as "no problems found".
+    return problems or [
+        f"self-check exited {proc.returncode} without reporting; "
+        f"stderr tail: {(proc.stderr.strip().splitlines() or ['(none)'])[-1]}"
+    ]
 
 
 def main() -> int:
@@ -78,6 +184,11 @@ def main() -> int:
         "--no-future",
         action="store_true",
         help="skip the far-future points (which catch calendar-expiring fixtures)",
+    )
+    p.add_argument(
+        "--self-check-only",
+        action="store_true",
+        help="verify the harness at every point and exit without running the target",
     )
     args = p.parse_args()
 
@@ -101,14 +212,40 @@ def main() -> int:
     print(f"points : {len(instants)}   (real clock now {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC)")
     print("-" * 64)
 
+    # The harness grades itself BEFORE it grades anything else. Without this the
+    # tool's FAIL has no baseline: a broken patch and a clock-dependent target
+    # produce the same red, and #2396 is eleven cycles of exactly that.
+    broken = [(inst, _self_check_problems(inst)) for inst in instants]
+    broken = [(inst, probs) for inst, probs in broken if probs]
+    if broken:
+        print(f"HARNESS FAULT — the clock patch is unsound at {len(broken)}/{len(instants)} points.")
+        seen: set[str] = set()
+        for inst, problems in broken:
+            for problem in problems:
+                if problem not in seen:
+                    seen.add(problem)
+                    print(f"  {inst:%Y-%m-%d %H:%M} UTC   {problem}")
+        print("-" * 64)
+        print(
+            f"NO CONCLUSION about {args.target} — the sweep did not run. "
+            "Fix the harness first; a red here would have been the tool's, not the target's."
+        )
+        return 2
+    print(f"self-check: {len(instants)}/{len(instants)} points sound "
+          "(clock moves, datetime type identity intact)")
+
+    if args.self_check_only:
+        print("-" * 64)
+        print("self-check only — target not run.")
+        return 0
+    print("-" * 64)
+
     failures = []
     for inst in instants:
-        code = _BOOTSTRAP.format(
-            fake=inst.isoformat(), args=["-q", "--no-header", "-p", "no:cacheprovider", args.target]
+        code = _PATCH.format(fake=inst.isoformat()) + _PYTEST_TAIL.format(
+            args=["-q", "--no-header", "-p", "no:cacheprovider", args.target]
         )
-        proc = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True
-        )
+        proc = _run(code)
         tail = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]
         summary = tail[-1] if tail else "(no output)"
         ok = proc.returncode == 0
@@ -118,6 +255,7 @@ def main() -> int:
 
     print("-" * 64)
     if failures:
+        # Earned: the self-check above proved the only thing that moved is the clock.
         print(f"{len(failures)}/{len(instants)} points FAILED — the target reads the clock.")
         return 1
     print(f"all {len(instants)} points green — invariant to wall-clock time.")
