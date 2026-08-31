@@ -130,6 +130,15 @@ MATCH_STALE_AFTER_HOURS = 6.0
 #: deliberate — being late to clear a finished register costs a stale row on a
 #: page nobody is loading, while being early costs the live card mid-tournament,
 #: which is the whole defect.
+#:
+#: CERT-548: BOTH ends of this window are computed from the stamp and the clock
+#: ALONE.  The far end was for one revision conjoined with
+#: ``order_of_play_complete``, and that is the same category error the near end
+#: had — a fact about a request standing in for a fact about the tournament.  It
+#: bit hardest at the far end, because a tournament that is over is exactly the
+#: thing ESPN stops listing, so completeness reads false from then on and the
+#: bound could never fire again.  Nothing in this module's row rules reads the
+#: flag; it is reported in the slate payload and it decides nothing.
 CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS = 24.0 * 21
 
 #: A move smaller than this is noise, not a story. Same dead band as the board's
@@ -266,7 +275,6 @@ def build_match_row(
     cutoff: Optional[datetime],
     event_ids: Optional[dict[str, int]] = None,
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
-    order_of_play_complete: bool = True,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -294,13 +302,14 @@ def build_match_row(
     ``cutoff`` gates its refusal too, and for the same reason it gates the
     clock's: only a caller asking "what is on" wants a decided match withheld.
 
-    ``order_of_play_complete`` (CERT-517) is whether BOTH tours' scoreboards
-    were actually read.  ``fetch_tournament_results`` permits a per-tour failure
-    and the sync task caches the partial payload anyway — deliberately, because
-    half the results beat none — so "not in the map" has two very different
-    causes and only one of them is about the match.  It defaults to ``True``
-    because every caller that passes no map at all is on the pure clock
-    fallback, where the flag is not consulted.
+    This row builder takes **no completeness argument** (CERT-548).  It used to,
+    and the flag decided whether a pinned fixture the scoreboard never mentioned
+    was retired by the clock.  Both ends of that rule have since been shown to
+    be the wrong question — the near end by CERT-532, the far end by CERT-548 —
+    for the same reason twice: ``order_of_play_complete`` is a fact about a
+    REQUEST, and neither "is this match still to come" nor "is this tournament
+    over" can be answered from one.  It survives as a payload diagnostic on
+    ``build_slate``, which is what CERT-517 actually needed it for.
 
     Returns ``(row, None)`` or ``(None, reason)``.  Never both, never neither.
     """
@@ -405,11 +414,31 @@ def build_match_row(
         # case, and it is still the direction to be wrong in — a stale row is a
         # smaller lie than a draw that vanishes on the morning it is played,
         # and it takes a sustained scoreboard outage to reach at all.
-        retire = True
+        #
+        # ═══ CERT-548: AND THE FAR END IS NOT ABOUT THE SCOREBOARD EITHER ═══
+        #
+        # Q469 freed the NEAR end from `order_of_play_complete` and left the FAR
+        # end conjoined with it, so the bound only existed on a read we had
+        # called complete. **After a tournament ends ESPN stops listing it, and
+        # that is exactly when completeness reads false — permanently.** The
+        # register's fixtures then had no far end at all: a month past the
+        # ceremony all 96 pinned main-draw rows were still on "what is on".
+        #
+        # The two questions are about different things and only one of them is
+        # about the fetch. `order_of_play_complete` is a fact about a REQUEST.
+        # The far end is a claim about the REGISTER — "the tournament this
+        # ceremony opened is over" — and the clock and the ceremony stamp are the
+        # only two things that can answer it. Conjoining them made retirement
+        # conditional on the scoreboard mentioning a tournament it has no reason
+        # to mention any more: a condition that, once unmet, can never be met
+        # again. So neither end consults the flag, and the flag governs nothing
+        # here at all — it is reported in the payload and it does not decide.
         if comp_id:
-            retire = order_of_play_complete and started < (
+            retire = started < (
                 cutoff - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS)
             )
+        else:
+            retire = True
         if retire:
             return None, "ALREADY_PLAYED"
 
@@ -612,9 +641,16 @@ def build_slate(
     what this page did before Q463.
 
     ``order_of_play_complete`` says whether that map is the whole scoreboard or
-    the surviving half of a partial fetch (CERT-517).  It is not a diagnostic:
-    a pinned fixture missing from an INCOMPLETE map is kept, because its absence
-    is then a fact about the fetch and not about the match.
+    the surviving half of a partial fetch (CERT-517).  **It is a diagnostic and
+    nothing else** — it is reported in the payload and no row is built, kept or
+    dropped on it.  That is CERT-548's correction, and CERT-532's before it: the
+    flag is a fact about a request, so it cannot answer either question the row
+    rule asks, and gating retirement on it made a finished tournament — which no
+    scoreboard has any reason to keep listing — unretirable forever.
+
+    It earns the payload slot for the reason CERT-517 named.  A short slate under
+    a partial fetch and a short slate on a quiet day are otherwise the same
+    bytes, and only one of them is somebody's emergency.
     """
     reg = TournamentRegister(register)
     cutoff = now - timedelta(hours=max_stale_hours)
@@ -631,7 +667,6 @@ def build_slate(
             cutoff=cutoff,
             event_ids=event_ids,
             order_of_play=order_of_play,
-            order_of_play_complete=order_of_play_complete,
         )
         if row is None:
             reason = reason or "UNKNOWN"

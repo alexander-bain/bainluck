@@ -2207,8 +2207,16 @@ def test_the_route_hands_build_slate_the_order_of_play():
     assert "order_of_play=" in call
     # CERT-517: and the completeness context with it. The cached payload has
     # always carried `errors`/`tours_fetched`; this route DISCARDING them is the
-    # whole finding, so the arg that carries the reduction is guarded here or
-    # the repair is one deletion from being undone silently.
+    # whole finding, so the arg that carries the reduction is guarded here.
+    #
+    # CERT-548 CHANGED WHAT THIS GUARD IS FOR, and the note is corrected rather
+    # than left asserting a story that is no longer true. The flag no longer
+    # decides whether any row is kept — neither end of the pinned-fixture clock
+    # rule consults it. It is a DIAGNOSTIC, and this line is what keeps it an
+    # honest one: `build_slate` defaults it to True, so dropping the argument
+    # here does not fail, it makes every partial fetch REPORT ITSELF COMPLETE.
+    # A short slate would then look like a quiet day, which is the exact
+    # confusion CERT-517 asked for the field to prevent.
     assert "order_of_play_complete=" in call
 
 
@@ -2430,6 +2438,12 @@ class TestAPinnedFixtureSurvivesTheTournament:
     is never a fact about the match, and only ESPN's explicit `decided`
     retires one.
 
+    CERT-548 THEN CORRECTED THE SENTENCE ABOVE. "The fix does not live in the
+    flag" was written while the far end of the very same expression was still
+    conjoined with it, so a finished tournament — the one thing ESPN reliably
+    stops listing — could never retire. Neither end consults the flag now; see
+    `TestTheFarEndIsNotAFactAboutTheScoreboard`, which owns that claim.
+
     CERT-544 CORRECTED THE FAR END OF THIS. It was first written as "a
     ceremony stamp names a DAY" with a 24-hour allowance, which is still the
     placeholder-as-event-time mistake: the stamp is written once for the whole
@@ -2472,20 +2486,52 @@ class TestAPinnedFixtureSurvivesTheTournament:
         assert slate["count"] == 1, slate["dropped"]
         assert slate["dropped"] == {}
 
-    def test_an_INCOMPLETE_read_still_exempts_a_fixture_PAST_the_window(self):
-        """CERT-517's exemption is unconditional in time, and stays that way.
+    def test_an_INCOMPLETE_read_does_NOT_exempt_a_fixture_PAST_the_window(self):
+        """⚠️ THIS TEST ASSERTED THE CONDEMNED CONTRACT. CERT-548 CORRECTED IT.
 
-        The window bound is a SECOND, independent reason to keep a pinned
-        fixture, not a ceiling placed over the first. Under a partial fetch the absence
-        is a fact about the fetch at any age, so a week-old pinned fixture is
-        still kept — exactly as CERT-517 graded it.
+        It previously read `..._still_exempts_...` and claimed *"CERT-517's
+        exemption is unconditional in time, and stays that way"*, keeping a
+        pinned fixture past the window on a partial read. That is the defect the
+        cert found, stated as a rule and guarded: a finished tournament is
+        precisely what ESPN stops listing, so completeness reads false from then
+        on, and a fixture kept "because the fetch was partial" is kept forever.
+        The cert's probe put all 96 pinned main-draw rows on "what is on" a month
+        after the final.
 
-        Without this the conjunction could be dropped to a bare day bound and
-        nothing would notice: every other test here reads a complete map.
+        The old name conflated two things. CERT-517's exemption is about
+        ABSENCE FROM A MAP not being a fact about a MATCH — and that survives,
+        unconditionally and in the STRONGER form Q469 gave it, because inside the
+        window a pinned fixture is now kept on a complete read too. What does not
+        survive is absence from a map licensing a claim about the TOURNAMENT.
+
+        Kept as a real negative control, not deleted: this is still the only
+        assertion in this class driving the incomplete arm past the window, which
+        is what the old docstring correctly said was worth covering. It now
+        covers it with the right answer. Its sibling
+        `test_the_window_ends_and_the_fixture_does_retire` reads the complete arm
+        at the identical age, so the pair pins the far end's INDEPENDENCE from
+        the flag rather than either arm alone.
         """
         slate = self._slate(self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS + MATCH_STALE_AFTER_HOURS + 1), complete=False)
-        assert slate["count"] == 1, slate["dropped"]
-        assert slate["dropped"] == {}
+        assert slate["count"] == 0, slate["dropped"]
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_incomplete_exemption_INSIDE_the_window_is_what_CERT_517_bought(self):
+        """The claim the renamed test above used to be carrying, kept alive.
+
+        A partial fetch must not empty the card WHILE THE TOURNAMENT IS ON. This
+        is CERT-517's finding in its own terms and it is untouched — and it now
+        holds on a complete read as well, which is Q469's strengthening. Without
+        this the correction above could be read as "CERT-517 was wrong", and it
+        was not; it was applied to the wrong question at one end.
+        """
+        for complete in (True, False):
+            slate = self._slate(
+                self._pinned(CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS - 24),
+                complete=complete,
+            )
+            assert slate["count"] == 1, (complete, slate["dropped"])
+            assert slate["dropped"] == {}
 
     def test_the_window_ends_and_the_fixture_does_retire(self):
         """The far end of the bound, or the slate grows forever.
@@ -2636,3 +2682,109 @@ class TestTheCeremonyStampNamesTheDrawNotTheDay:
         )
         assert slate["count"] == 0
         assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+
+class TestTheFarEndIsNotAFactAboutTheScoreboard:
+    """CERT-548, red-first on `738507f0`'s own bytes.
+
+    Q469 freed the NEAR end of the pinned-fixture clock rule from
+    `order_of_play_complete` — inside the register's window absence is never a
+    fact about the match — and left the FAR end conjoined with it:
+
+        retire = order_of_play_complete and started < (cutoff - WINDOW)
+
+    So the bound only exists on a scoreboard read we called complete. **After a
+    tournament ends, ESPN stops listing it, and that is precisely when
+    completeness reads false forever.** The register's fixtures then have no far
+    end at all: the cert's exact merged-tree probe at 2026-10-15 kept all 96
+    pinned main-draw fixtures alive (`count=96`) where a complete read correctly
+    drops all 124.
+
+    ⚠️ THE CLASS, AND IT IS THIS QUEUE'S OWN, A SIXTH TIME. `order_of_play_complete`
+    is a fact about a FETCH. The far end is a claim about the REGISTER — "the
+    tournament this ceremony opened is over" — and the clock and the register are
+    the only two things it can be computed from. Q469 wrote that sentence into
+    the constant's docstring and then left the flag in the expression. A permanent
+    absence of the tournament from the scoreboard is the EXPECTED steady state of
+    a finished tournament, so gating its retirement on the scoreboard mentioning
+    it is a condition that can never again be met.
+
+    The near end keeps everything CERT-517 and CERT-532 bought, and keeps it
+    unconditionally: inside the window a pinned fixture is never retired by the
+    clock, complete read or not. `TestAPinnedFixtureSurvivesTheTournament` and
+    `TestTheCeremonyStampNamesTheDrawNotTheDay` own those claims.
+    """
+
+    CEREMONY_STAMP = "2026-08-30T04:00:00+00:00"
+
+    def _slate_at(self, when, *, complete):
+        return build_slate(
+            _register(matchups=[_drawn_matchup(scheduled_date=self.CEREMONY_STAMP)]),
+            prices=_prices(),
+            now=datetime.fromisoformat(when),
+            # A map that speaks — for somebody else's fixture, never ours.
+            order_of_play=_listed(comp_id="999999"),
+            order_of_play_complete=complete,
+        )
+
+    def test_a_finished_tournament_retires_even_though_espn_stopped_listing_it(self):
+        """THE CERT'S OWN PROBE, to its date.
+
+        A month past the ceremony, on the read a finished tournament actually
+        gets — incomplete, because the scoreboard has moved on. The register
+        describes something that is over, and "what is on" must not carry it.
+        """
+        slate = self._slate_at("2026-10-15T12:00:00+00:00", complete=False)
+        assert slate["count"] == 0
+        assert slate["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_far_end_reads_the_same_on_both_completeness_values(self):
+        """The general statement, not the one date.
+
+        The far end may not be a function of `order_of_play_complete` at all.
+        Asserting the two arms are EQUAL is what makes this survive somebody
+        re-introducing the conjunction anywhere in the expression, rather than
+        only at the one operator Q469 wrote it at.
+        """
+        for when in (
+            "2026-10-15T12:00:00+00:00",
+            "2026-11-30T12:00:00+00:00",
+            "2027-03-01T12:00:00+00:00",
+        ):
+            complete = self._slate_at(when, complete=True)
+            partial = self._slate_at(when, complete=False)
+            assert complete["count"] == partial["count"] == 0, (when, partial["dropped"])
+            assert complete["dropped"] == partial["dropped"] == {"ALREADY_PLAYED": 1}
+
+    def test_the_near_end_also_reads_the_same_on_both(self):
+        """The other half of the same equality, and the negative control that
+        stops this being satisfied by retiring everything.
+
+        Inside the window BOTH arms must KEEP the fixture. A repair that made
+        the far end unconditional by making the whole rule unconditional would
+        pass the two tests above and re-open the shipped defect.
+        """
+        for when in (
+            "2026-08-30T23:00:00+00:00",   # opening day, after the placeholder
+            "2026-08-31T10:01:00+00:00",   # CERT-544's minute, day two
+            "2026-09-13T18:00:00+00:00",   # the final
+        ):
+            complete = self._slate_at(when, complete=True)
+            partial = self._slate_at(when, complete=False)
+            assert complete["count"] == partial["count"] == 1, (when, partial["dropped"])
+            assert complete["dropped"] == partial["dropped"] == {}
+
+    def test_the_flag_still_reaches_the_payload_as_a_diagnostic(self):
+        """Freeing the clock rule from the flag must not DELETE the flag.
+
+        `order_of_play_complete` earns its place in the payload for the reason
+        CERT-517 named — a short slate under a partial fetch and a short slate
+        on a quiet day are otherwise the same bytes, and only one of them is
+        somebody's emergency. It is reported; it no longer decides.
+        """
+        assert self._slate_at("2026-08-31T10:01:00+00:00", complete=False)[
+            "order_of_play_complete"
+        ] is False
+        assert self._slate_at("2026-08-31T10:01:00+00:00", complete=True)[
+            "order_of_play_complete"
+        ] is True
