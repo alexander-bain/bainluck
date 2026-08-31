@@ -132,9 +132,12 @@ async def _seed(conn) -> dict[str, int]:
     `default=`**, which is applied by the ORM and is invisible to a raw INSERT —
     so omitting them does not silently take the default, it raises
     `NotNullViolation`. The first CI run of this file failed on exactly that.
-    `test_the_seed_names_every_not_null_column` below pins it against the live
-    metadata rather than against this list, so a new NOT NULL column added to any
-    of these three tables fails here instead of in CI.
+    The repo already owns this check: `tests/test_pg_gate_seed_completeness.py`
+    parses these INSERTs and compares their column lists against the live ORM
+    metadata, and its discovery arm fails if a raw-INSERT gate is not registered
+    in its `COVERED` tuple. This file is registered there. It parses the real
+    statement rather than a copied column list, which is why registering with it
+    is strictly better than the local twin this file briefly carried.
     """
     market_id = (
         await conn.execute(
@@ -170,76 +173,6 @@ async def _seed(conn) -> dict[str, int]:
                 {"o": outcome_id, "b": bookmaker},
             )
     return ids
-
-
-#: The columns `_seed` writes, per table. Compared against live metadata below.
-_SEEDED_COLUMNS = {
-    "futures_markets": {
-        "source",
-        "external_id",
-        "name",
-        "category",
-        "mutually_exclusive",
-        "status",
-    },
-    "futures_outcomes": {"market_id", "external_id", "name"},
-    "futures_odds_snapshots": {
-        "outcome_id",
-        "bookmaker",
-        "probability",
-        "reading_count",
-    },
-}
-
-
-def test_the_seed_names_every_not_null_column():
-    """A raw INSERT gets no client-side defaults, so every NOT NULL column
-    without a `server_default` has to be spelled out or the seed raises.
-
-    Needs no database, and that is the point: this is the check that turns a CI
-    round trip into a local failure. It reads the live metadata rather than a
-    copied list, so adding a NOT NULL column to any of these three tables fails
-    here rather than in the one job that can run the gate.
-    """
-    import app.models.models  # noqa: F401 — registers every table on Base
-    from app.services.database import Base
-
-    for table_name, seeded in _SEEDED_COLUMNS.items():
-        table = Base.metadata.tables[table_name]
-        required = {
-            column.name
-            for column in table.columns
-            if not column.nullable
-            and not column.primary_key
-            and column.server_default is None
-        }
-        missing = required - seeded
-        assert not missing, (
-            f"_seed does not write {sorted(missing)} on `{table_name}`, and "
-            f"those columns are NOT NULL with no server_default — a raw INSERT "
-            f"will raise NotNullViolation rather than take the ORM's default"
-        )
-
-
-async def _old_form(conn, outcome_ids: list[int]) -> dict[int, int]:
-    """The pre-LAT-P163 statement, kept as the ORACLE — not as a fallback.
-
-    It is spelled here rather than imported because the point of this file is
-    that the shipped helper agrees with a form that no longer exists in the
-    route. An import would make the comparison a tautology the moment the
-    route changed.
-    """
-    from app.models import FuturesOddsSnapshot
-
-    result = await conn.execute(
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            func.count(func.distinct(FuturesOddsSnapshot.bookmaker)),
-        )
-        .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
-        .group_by(FuturesOddsSnapshot.outcome_id)
-    )
-    return {row[0]: row[1] for row in result.all()}
 
 
 class _RecordingSession:
