@@ -175,6 +175,27 @@ async def _seed(conn) -> dict[str, int]:
     return ids
 
 
+async def _old_form(conn, outcome_ids: list[int]) -> dict[int, int]:
+    """The pre-LAT-P163 statement, kept as the ORACLE — not as a fallback.
+
+    It is spelled here rather than imported because the point of this file is
+    that the shipped helper agrees with a form that no longer exists in the
+    route. An import would make the comparison a tautology the moment the
+    route changed.
+    """
+    from app.models import FuturesOddsSnapshot
+
+    result = await conn.execute(
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            func.count(func.distinct(FuturesOddsSnapshot.bookmaker)),
+        )
+        .where(FuturesOddsSnapshot.outcome_id.in_(outcome_ids))
+        .group_by(FuturesOddsSnapshot.outcome_id)
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 class _RecordingSession:
     """Captures `(statement, params)` without touching a database."""
 
