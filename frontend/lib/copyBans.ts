@@ -356,13 +356,44 @@ export const FUTURE_PROMISE_BANS: CopyBan[] = [
  * That false positive was caught by the negative pins UX-P213 wrote, which is
  * the argument for keeping a list of true-and-supported copy beside every
  * content rule: widening this vocabulary is now a change with a safety net.
+ *
+ * ⚠️ `answer`, `figure` AND `value` WERE REMOVED BY CERT-547's SWEEP, and for a
+ * reason worth keeping: they are the only members that stay ambiguous even with
+ * `PAGE_SUBJECT` attached. "This game never had the answer anyone wanted." and
+ * "That contest never had a figure worth watching." are ordinary sports writing
+ * that satisfies BOTH halves of the scope — a demonstrative page subject and a
+ * reading noun — so the anchor cannot rescue them and nothing else can either.
+ * Every other member of this list is a word that, next to "this market", only
+ * our voice produces. Nothing is lost: our own copy says probability or number,
+ * never "we never had a value".
  */
-const READING =
-  "(?:number|price|probability|reading|quote|figure|estimate|value|answer|market|data)";
+export const READING_NOUNS = [
+  "number",
+  "price",
+  "probability",
+  "reading",
+  "quote",
+  "estimate",
+  "market",
+  "data",
+] as const;
 
 /** A thing on OUR page that can be incomplete — not an event in the world. */
-const OUR_SUBJECT =
-  "(?:comparison|chart|card|series|history|record|reading|quote|number|price|probability|figure|estimate|data)";
+export const OUR_SUBJECT_NOUNS = [
+  "comparison",
+  "chart",
+  "card",
+  "series",
+  "history",
+  "record",
+  "reading",
+  "quote",
+  "number",
+  "price",
+  "probability",
+  "estimate",
+  "data",
+] as const;
 
 /**
  * A thing a venue puts a reading ON. The object of "nobody ever quoted ___".
@@ -371,10 +402,131 @@ const OUR_SUBJECT =
  * about the MARKET, not about the number — and separate from `OUR_SUBJECT`
  * because a match is not a thing on our page that can be incomplete.
  */
-const MARKET_OBJECT =
-  "(?:match|market|question|game|event|leg|contest|line|outcome|prop)";
+export const MARKET_OBJECT_NOUNS = [
+  "match",
+  "market",
+  "question",
+  "game",
+  "event",
+  "leg",
+  "contest",
+  "line",
+  "outcome",
+  "prop",
+] as const;
+
+/**
+ * ⚠️ THE THREE LISTS ABOVE ARE EXPORTED SO A GUARD CAN ITERATE THEM.
+ *
+ * `shippedCopyBans.test.ts` requires every noun in all three to appear in at
+ * least one negative-control sentence. That is the mechanism that ends the
+ * CERT-539 → 546 → 547 cycle: each of those rounds was a noun (or a verb) that
+ * had never been tried against ordinary prose, found one cert at a time. A word
+ * can no longer enter the scope without the sentence that proves it safe
+ * arriving in the same commit.
+ *
+ * Same discipline as `ATTRIBUTION_LITERALS`' "every entry is still doing work",
+ * pointed the other way: there, every exemption must be load-bearing; here,
+ * every inclusion must be survivable.
+ */
+const alt = (words: readonly string[]) => `(?:${words.join("|")})`;
+
+const READING = alt(READING_NOUNS);
+const OUR_SUBJECT = alt(OUR_SUBJECT_NOUNS);
+const MARKET_OBJECT = alt(MARKET_OBJECT_NOUNS);
 
 const rx = (source: string) => new RegExp(source, "i");
+
+/* ═══════════════ CERT-547: THE SCOPE IS THE ANCHOR, NOT THE NOUN ═══════════════
+ *
+ * Three rounds tried to make the scope hold by purifying the noun lists, and
+ * each round traded one direction of error for the other. CERT-547 caught both
+ * at once: ordinary prose still failed ("Nobody ever reported the game was
+ * delayed", "We never had an answer for their press") while basic intended
+ * claims escaped ("We never received THE probability for this question").
+ *
+ * 🔴 A SWEEP OF ALL ELEVEN RULES FOUND EIGHT FALSE POSITIVES, NOT THE TWO THE
+ * CERT LISTED — `nobody-ever` alone fired on five, one for every pairing of a
+ * general verb with a `MARKET_OBJECT`. And the two failure directions turned
+ * out to be COUPLED: "This team never had the answer for their zone" was clean
+ * only because the determiner list omitted `the`, which is the very omission
+ * that caused the false negatives. Fixing either one alone re-opens the other,
+ * which is why rounds 2, 3 and 4 each bounced.
+ *
+ * ═══ WHY NOUN PURITY CANNOT WORK ═══
+ *
+ * There is no noun in this group's vocabulary that is safe on its own once the
+ * determiner is allowed to be `the`. Measured, every one of these is ordinary
+ * supported prose: "a figure like him in the clubhouse", "a value like that on
+ * this roster", "the answer for their zone", "the market cornered", "the data
+ * to justify the trade". Purifying the list until those pass leaves a list that
+ * no longer contains the words our real claims use.
+ *
+ * ═══ WHAT ACTUALLY SEPARATES THEM ═══
+ *
+ * The group's own scope sentence already said it: an all-of-history quantifier
+ * attached to OUR RECEIPT OF A NUMBER **for something on this page**. Every
+ * genuine specimen carries that second half explicitly — "for this market",
+ * "on this market", "for this question", "this question never had…", "this
+ * comparison", "this match". Ordinary prose about the world does not, because
+ * the world's nouns take `the` and `their`, while the thing on our page is
+ * pointed at with a DEMONSTRATIVE.
+ *
+ * So the scope moves out of the noun list and into `PAGE_SUBJECT`, and the
+ * vocabulary is free to stay broad. That is the opposite of the last three
+ * rounds and it is what makes this one stable: widening a noun can no longer
+ * widen the rule past our own page.
+ */
+
+/**
+ * The thing on THIS page a reading would belong to.
+ *
+ * The demonstrative is load-bearing and is the whole discriminator. "the game"
+ * is a game in the world; "this game" is the card the reader is looking at. A
+ * rule keyed on the bare noun cannot tell those apart, and every false positive
+ * across CERT-539/546/547 was on the `the`/`their` side of exactly that line.
+ */
+const PAGE_SUBJECT = `(?:this|that|these|those) ${MARKET_OBJECT}s?`;
+
+/**
+ * Determiners an intended claim may use.
+ *
+ * ⚠️ `the` IS THE ONE CERT-547 FOUND MISSING, and adding it is only safe
+ * because `PAGE_SUBJECT` now carries the scope — before that, `the` was
+ * accidentally load-bearing as a false-positive filter. See the block above.
+ */
+const DET = "(?:a |an |any |the |this |that |its |our |their |one |a single |even a )?";
+
+/**
+ * 🔴 THE PAGE SUBJECT IS USUALLY NOT A LITERAL, AND THE FIRST ANCHOR MISSED IT.
+ *
+ * Real copy names the subject with an interpolation — `There has never been a
+ * probability for ${marketName}.` — and `splitTemplateLiteral` hands the bundle
+ * scanner the fragment `"There has never been a probability for "`. The anchor
+ * it needs was compiled away before the scanner ever saw the chunk, so an
+ * anchor that only accepts a literal `this market` silently switches the whole
+ * group off on the ONE layer that guards production. The suite's own planted
+ * chunk caught this on the first run.
+ *
+ * A fragment that stops on a dangling preposition is exactly that shape, and
+ * ordinary complete prose does not have it — "We never had a quote from the
+ * coach." ends on its object, while "…a probability for " ends on the hole
+ * where the object was. So a trailing preposition counts as the anchor.
+ */
+const INTERPOLATED_SUBJECT = String.raw`\b(?:for|on|in|about|from|of)\s*$`;
+
+/**
+ * Require the claim and the page subject in the SAME clause, in either order.
+ *
+ * "This question never had a probability" puts the subject first; "We never
+ * received a probability for this question" puts it last. Both are the claim.
+ */
+const anchored = (core: string) =>
+  rx(
+    `(?:\\b${PAGE_SUBJECT}\\b[^.!?]{0,60}?${core}` +
+      `|${core}[^.!?]{0,60}?\\b${PAGE_SUBJECT}\\b` +
+      `|${core}[^.!?]{0,20}?${INTERPOLATED_SUBJECT})`
+  );
 
 /** Why-text shared by the patterns that quantify over an archive we do not hold. */
 const NOT_THE_ARCHIVE =
@@ -387,8 +539,13 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     why: NOT_THE_ARCHIVE,
   },
   {
+    // ⚠️ ANCHORED AFTER MY OWN SWEEP, NOT AFTER A CERT. Left unanchored in the
+    // first draft of this repair on the reasoning that "no ___ ever" is a
+    // distinctive enough frame; it is not. Measured: "No market ever felt out
+    // of reach for them.", "No data ever suggested he was slowing down." and
+    // "No number ever suited him better than 23." all fired.
     id: "no-reading-ever",
-    pattern: rx(String.raw`\bno ${READING}s?\b[^.!?]{0,40}\bever\b`),
+    pattern: anchored(String.raw`\bno ${READING}s?\b[^.!?]{0,40}\bever\b`),
     why: NOT_THE_ARCHIVE,
   },
   {
@@ -408,26 +565,33 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // here. This makes it largely a subset of `never-had-a-reading` below, and
     // the overlap is deliberate — this file's own note: "a sentence that can
     // only be caught by one pattern is one regex edit away from being served."
+    // ⚠️ CERT-547 CAUGHT IT AGAIN — "We never had an answer for their press."
+    // The CERT-546 repair gave it an object from `READING`, which was the right
+    // shape and the wrong scope: `answer` is an ordinary English noun and no
+    // amount of object-checking rescues it. It is now ANCHORED instead, so the
+    // sentence has to be about a reading for something on THIS page.
     id: "we-never-had",
-    pattern: rx(
-      String.raw`\bwe (?:have |had )?never (?:had|held|received|saw|seen|got|read|recorded) (?:a |an |any )?${READING}s?\b`
+    pattern: anchored(
+      String.raw`\bwe (?:have |had )?never (?:had|held|received|saw|seen|got|read|recorded) ${DET}${READING}s?\b`
     ),
     why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-537)",
   },
   // ── CERT-539: the four grammar families that walked around the six above ──
   {
     // "There has never been a probability for this market."
+    // ⚠️ Swept after CERT-547 and it was a false positive too, unnamed: "There
+    // has never been a value like that on this roster." Anchored.
     id: "there-was-never-a-reading",
-    pattern: rx(
-      String.raw`\bthere (?:has|have|had|was|were) never (?:been )?(?:a |an |any )?${READING}s?\b`
+    pattern: anchored(
+      String.raw`\bthere (?:has|have|had|was|were) never (?:been )?${DET}${READING}s?\b`
     ),
     why: NOT_THE_ARCHIVE,
   },
   {
     // "This question never had a probability." — the subject need not be "we".
     id: "never-had-a-reading",
-    pattern: rx(
-      String.raw`\bnever (?:had|held|carried|showed|shown|received|got|recorded|saw|seen) (?:a |an |any )?${READING}s?\b`
+    pattern: anchored(
+      String.raw`\bnever (?:had|held|carried|showed|shown|received|got|recorded|saw|seen) ${DET}${READING}s?\b`
     ),
     why: "a claim about our whole record, made from a payload that carries only the newest reading (CERT-539)",
   },
@@ -444,8 +608,8 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // The object is what carries the scope, so the verbs stay a literal list
     // and `READING` supplies the object, exactly like its siblings.
     id: "not-once-received",
-    pattern: rx(
-      String.raw`\bnot once (?:received|got|read|saw|seen|recorded|held|had) (?:a |an |any )?${READING}s?\b`
+    pattern: anchored(
+      String.raw`\bnot once (?:received|got|read|saw|seen|recorded|held|had) ${DET}${READING}s?\b`
     ),
     why: "an all-of-history quantifier in a different word; same unsupportable claim (CERT-539)",
   },
@@ -461,7 +625,7 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
   {
     // "A probability has never been available for this question."
     id: "reading-never-been",
-    pattern: rx(
+    pattern: anchored(
       String.raw`\b${READING}s?\b[^.!?]{0,30}\b(?:has|have|had|was|were) never been\b`
     ),
     why: NOT_THE_ARCHIVE,
@@ -472,9 +636,13 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // never complete." The subject now has to be something on OUR page. At most
     // two words may sit between it and the verb, so a subject mentioned earlier
     // in a longer sentence cannot be borrowed by a later clause.
+    // ⚠️ CERT-547 SWEEP, UNNAMED BY THE CERT: "The chart shows the record was
+    // never complete." `record` is in `OUR_SUBJECT`, so binding the subject was
+    // not enough — the subject also has to be OURS, and the demonstrative is
+    // what says so. `this comparison` fires; `the record` does not.
     id: "was-never-complete",
     pattern: rx(
-      String.raw`\b${OUR_SUBJECT}s?(?: [a-z]+){0,2} (?:was|were|has|have|had) never (?:complete|completed|available|quoted|published|reported|answered)\b`
+      String.raw`\b(?:this|that|these|those|our) ${OUR_SUBJECT}s?(?: [a-z]+){0,2} (?:was|were|has|have|had) never (?:complete|completed|available|quoted|published|reported|answered)\b`
     ),
     why: "settles a question about the past that no field on the card records (CERT-537)",
   },
@@ -491,9 +659,22 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // scope after CERT-546, rather than repairing only the two it listed.
     //
     // The object now has to be a reading or a thing we quote a reading ON.
+    // 🔴 CERT-547 NAMED ONE FALSE POSITIVE HERE; THE SWEEP FOUND FIVE, one per
+    // pairing of a general verb with a `MARKET_OBJECT`: "…reported the game was
+    // delayed", "…reported the match was postponed", "…posted the line for that
+    // contest", "…offered the outcome anyone wanted", "…published the event
+    // schedule". `reported`, `posted`, `offered` and `published` are things
+    // people do in the world; only `quote`, `price`, `list` and `trade` are
+    // things a VENUE does to a market, and this rule is about a venue. The verb
+    // list is now those four, and the object must still be on this page.
+    //
+    // ⚠️ NOT WRAPPED IN `anchored`, DELIBERATELY. This rule's OBJECT is the page
+    // subject ("nobody ever quoted this match"), so an `anchored` wrapper would
+    // demand a SECOND one and the rule would stop firing on its own specimen.
+    // The demonstrative goes inline instead — same discriminator, one mention.
     id: "nobody-ever",
     pattern: rx(
-      String.raw`\b(?:nobody|no one|no-one) ever (?:quoted|priced|offered|published|reported|posted|listed|traded) (?:this |that |the |a |an |any )?(?:${READING}|${MARKET_OBJECT})s?\b`
+      String.raw`\b(?:nobody|no one|no-one) ever (?:quoted|priced|listed|traded) (?:this|that|these|those) (?:${READING}|${MARKET_OBJECT})s?\b`
     ),
     why: "we cannot tell a market nobody quoted from one we were not reading (CERT-537)",
   },
@@ -501,9 +682,11 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
     // Was a bare `/\bat no point\b/`, which rejected "At no point did either
     // player face a break point." A reading noun must appear in the same
     // clause, on either side of the quantifier.
+    // ⚠️ ANCHORED for the same reason as `no-reading-ever`: "At no point was the
+    // market in doubt." fired, and that is ordinary economics prose.
     id: "at-no-point",
-    pattern: rx(
-      String.raw`\bat no point\b[^.!?]{0,60}\b${READING}s?\b|\b${READING}s?\b[^.!?]{0,60}\bat no point\b`
+    pattern: anchored(
+      String.raw`(?:\bat no point\b[^.!?]{0,60}\b${READING}s?\b|\b${READING}s?\b[^.!?]{0,60}\bat no point\b)`
     ),
     why: NOT_THE_ARCHIVE,
   },
