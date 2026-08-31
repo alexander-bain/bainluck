@@ -796,6 +796,12 @@ async def _poll_polymarket_markets():
     finally:
         await service.close()
 
+    # ONE sweep for the whole poll, deliberately placed AFTER the `finally` so a
+    # top-level error (already recorded above) still gets its links written —
+    # per-batch, a raising poll kept whatever the completed batches had swept, and
+    # this must not be weaker than that. `stats` is reported either way.
+    stats["sub_markets_linked"] = await link_polymarket_sub_markets()
+
     stats["total_api_events"] = len(seen_ids)
     logger.info(
         "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
@@ -804,6 +810,77 @@ async def _poll_polymarket_markets():
         len(stats["errors"]), stats["by_category"],
     )
     return stats
+
+
+#: The parent→sub-market ``event_id`` sweep, as ONE statement per poll.
+#:
+#: Kept at module scope, and public, so a guard can execute it without driving a
+#: whole poll — the class of bug this queue exists to avoid is a fix that sits
+#: behind a helper no test ever runs (LAT-P159/CERT-523).
+LINK_SUB_MARKETS_SQL = """
+    UPDATE futures_markets sub
+    SET event_id = parent.event_id
+    FROM futures_markets parent
+    WHERE sub.group_type = 'polymarket_sub_market'
+      AND sub.event_id IS NULL
+      AND sub.group_id IS NOT NULL
+      AND parent.source = 'polymarket'
+      AND parent.group_type = 'polymarket_event'
+      AND parent.group_id = sub.group_id
+      AND parent.event_id IS NOT NULL
+"""
+
+
+async def link_polymarket_sub_markets() -> int:
+    """Propagate ``event_id`` from parent Polymarket markets to their sub-markets.
+
+    The matching task links parent game markets (e.g. "Magic vs. Pistons") to
+    events; sub-markets (player props, spreads) inherit that link via ``group_id``.
+
+    WHY THIS IS ONE CALL PER POLL AND NOT ONE PER BATCH
+    ---------------------------------------------------
+    It used to run at the end of ``_process_event_batch``, so it fired once per 50
+    events. Measured on production 2026-08-31 from ``pg_stat_statements`` (age
+    77 d 9:57, so 1,858 hourly polls):
+
+    * **83,631 calls** — 45.0 per poll, exactly ``BATCH_SIZE``-shaped
+    * **189,625,725 ms total** (52.7 hours), mean **2,267 ms**, max **125,417 ms**
+    * **3,005,544,566 shared blocks read** — ``20.04 %`` of ALL disk reads in the
+      database, the single largest consumer, from ``0.001 %`` of its calls
+    * **15,686 rows written in total** — 0.19 per call, 8.4 per poll
+
+    Its predicate is entirely global: it names no batch state, so each of the 45
+    calls re-scanned the same corpus. The cost is dominated by rows it can never
+    write — 242,891 unlinked sub-markets carrying a ``group_id`` whose parent has
+    no ``event_id``, rescanned 45 times an hour, 1,080 times a day.
+
+    EQUIVALENCE. Running it once after the last batch leaves the same rows set:
+
+    1. The predicate reads only committed table state, never the batch.
+    2. ``seen_ids`` dedups events across the whole poll, so a given sub-market is
+       upserted at most ONCE per poll — no later batch can re-null an ``event_id``
+       an earlier sweep wrote. (The upsert does write ``event_id``, including
+       NULL, which is why this needed checking rather than assuming.)
+    3. So the final sweep observes every write the poll made, and the union of
+       what the intermediate sweeps could have written is a subset of it.
+
+    THE ONE BEHAVIOURAL DIFFERENCE, STATED. If the worker is SIGKILLed mid-poll
+    (no Python unwind), this sweep does not run at all, where per-batch would have
+    committed the completed batches' links. That is why the call site sits after
+    the top-level ``finally`` — every failure that unwinds still sweeps. It is
+    also the condition this change makes rarer: the poll's p95 duration is
+    459,001 ms against a 540 s soft limit (85 %), and the ~102 s/poll this
+    statement costs is 22 % of that runtime. The sweep is idempotent, so a genuinely
+    killed poll loses nothing the next one will not pick up.
+
+    Returns the number of sub-markets linked.
+    """
+    from sqlalchemy import text as _text
+
+    async with get_task_session() as session:
+        result = await session.execute(_text(LINK_SUB_MARKETS_SQL))
+        await session.commit()
+        return result.rowcount or 0
 
 
 async def _process_event_batch(
@@ -1578,26 +1655,9 @@ async def _process_event_batch(
                 stats["errors"].append(f"{event.id}: {str(e)}")
                 continue
 
-        # Propagate event_id from parent markets to their sub-markets.
-        # The matching task links parent game markets (e.g., "Magic vs. Pistons")
-        # to events, but sub-markets (player props, spreads) inherit the link
-        # from their parent via group_id.
-        from sqlalchemy import text as _text
-        prop_result = await session.execute(_text("""
-            UPDATE futures_markets sub
-            SET event_id = parent.event_id
-            FROM futures_markets parent
-            WHERE sub.group_type = 'polymarket_sub_market'
-              AND sub.event_id IS NULL
-              AND sub.group_id IS NOT NULL
-              AND parent.source = 'polymarket'
-              AND parent.group_type = 'polymarket_event'
-              AND parent.group_id = sub.group_id
-              AND parent.event_id IS NOT NULL
-        """))
-        if prop_result.rowcount > 0:
-            stats["sub_markets_linked"] = prop_result.rowcount
-
+        # The parent→sub-market event_id sweep used to run HERE, once per batch.
+        # It is now `link_polymarket_sub_markets`, called ONCE per poll — see that
+        # function's docstring for the measurement and the equivalence argument.
         await session.commit()
 
 
