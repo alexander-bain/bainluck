@@ -2947,10 +2947,49 @@ async def _resolve_typeahead_outcome_arm(
     if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS:
         return None
 
-    try:
-        await db.execute(text(f"SET LOCAL statement_timeout = {int(bound_ms)}"))
-    except Exception as exc:  # noqa: BLE001 — never fail the search on the guard
-        logger.warning("typeahead outcome-arm timeout not applied: %s", exc)
+    # 🔴 CERT-567 REPAIR (LAT-P166b/#2386). `statement_timeout` is PER STATEMENT, so
+    # once this function issues TWO of them the single `SET LOCAL` above stopped
+    # being a bound on the ARM and became a bound on each half independently — the
+    # arm could take `2 * bound_ms` and still look bounded. Measured by the cert:
+    # a 50 ms budget with two 30 ms statements returned SUCCESSFULLY after 60 ms.
+    #
+    # A bound that a caller can exceed by construction is worse than no bound,
+    # because the deadline arithmetic upstream of us keeps trusting it.
+    #
+    # So the arm carries a WALL DEADLINE and re-arms the timeout before each
+    # statement with whatever is actually left. `_arm_remaining_ms` is the only
+    # thing that may compute that: the moment a caller hardcodes `bound_ms` for
+    # the second statement the defect returns silently.
+    arm_deadline_at = time.monotonic() + bound_ms / 1000.0
+
+    def _arm_remaining_ms() -> int:
+        # CEIL, not truncate. The first arming happens microseconds after
+        # `arm_deadline_at` is computed, so truncation would declare 1999 ms for a
+        # 2,000 ms budget and quietly break LAT-P143's "the bound IS the arm
+        # budget" contract — its guard catches exactly that. Rounding up can
+        # overshoot by at most 1 ms per statement, which is not a bound anyone
+        # can care about; silently shaving the declared budget is.
+        left_ms = (arm_deadline_at - time.monotonic()) * 1000
+        return -int(-left_ms // 1)
+
+    async def _arm_statement_timeout() -> bool:
+        """Bound the NEXT statement by what is left of the arm's own budget.
+
+        ``False`` means there is nothing left worth starting — an honest "we ran
+        out of time" rather than a statement issued in order to be cancelled,
+        which is the same distinction the whole-arm floor above draws.
+        """
+        left = _arm_remaining_ms()
+        if left <= 0:
+            return False
+        try:
+            await db.execute(text(f"SET LOCAL statement_timeout = {int(left)}"))
+        except Exception as exc:  # noqa: BLE001 — never fail the search on the guard
+            logger.warning("typeahead outcome-arm timeout not applied: %s", exc)
+        return True
+
+    if not await _arm_statement_timeout():
+        return None
 
     try:
         # LAT-P166/#2386: resolve the match set FIRST when we were given the
@@ -2988,6 +3027,15 @@ async def _resolve_typeahead_outcome_arm(
             candidate = FuturesMarket.id == any_(literal(market_ids, ARRAY(Integer)))
         else:
             candidate = arm
+
+        # 🔴 CERT-567 repair, and it sits HERE rather than inside the fast branch
+        # ON PURPOSE: the OVER-CAP fallback also runs a second statement after the
+        # probe, so guarding only the `= ANY` branch would leave the slower of the
+        # two paths unbounded — the exact shape of the original defect.
+        # When the probe did not run (`pattern is None`) almost none of the budget
+        # is spent and this is a harmless re-set of the same number.
+        if not await _arm_statement_timeout():
+            return None
 
         result = await db.execute(
             select(FuturesMarket.id)

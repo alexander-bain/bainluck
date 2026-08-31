@@ -54,6 +54,7 @@ that only reads returned rows — deleting the probe changes no result.
 from __future__ import annotations
 
 import re
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -384,4 +385,106 @@ class TestTheRouteActuallyPassesThePattern:
         assert "pattern=" in call.group(1), (
             "the route stopped passing `pattern`, so every typeahead request "
             "falls back to the 26,204-row sort while this suite stays green."
+        )
+
+
+# --- CERT-567 repair ---------------------------------------------------------
+
+
+class TestTheArmBudgetBoundsTheARMNotEachStatement:
+    """CERT-567, BLOCK. `statement_timeout` is PER STATEMENT.
+
+    The moment this resolver issued two statements, the single `SET LOCAL` at the
+    top stopped bounding the arm and started bounding each half independently: the
+    arm could take `2 * bound_ms` and still look bounded. The cert measured it —
+    a 50 ms budget with two 30 ms statements returned SUCCESSFULLY after 60 ms.
+
+    🔴 **A bound a caller can exceed by construction is worse than no bound**,
+    because the deadline arithmetic upstream keeps trusting it. These tests read
+    the `SET LOCAL` values the resolver actually issued, which is the only place
+    the defect is visible — every assertion about returned rows passed while it
+    was broken.
+    """
+
+    class BudgetSession(FakeSession):
+        """Records each `SET LOCAL` and can burn wall-clock inside a statement."""
+
+        def __init__(self, *a, spend_s: float = 0.0, **kw):
+            super().__init__(*a, **kw)
+            self.spend_s = spend_s
+
+        async def execute(self, stmt, *args, **kwargs):
+            import time as _t
+
+            out = await super().execute(stmt, *args, **kwargs)
+            if "SET LOCAL" not in str(stmt) and self.spend_s:
+                _t.sleep(self.spend_s)
+            return out
+
+    @pytest.mark.asyncio
+    async def test_the_second_statement_is_bounded_by_what_is_LEFT(self):
+        from app.routes.events import _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS
+
+        db = self.BudgetSession(probe_rows=[1, 2], market_rows=[1], spend_s=0.05)
+        await _resolve_typeahead_outcome_arm(
+            db, ARM, OPEN_NOW, None, pattern=PATTERN
+        )
+        assert len(db.set_local_ms) == 2, (
+            "the arm issues two statements but armed the timeout "
+            f"{len(db.set_local_ms)} time(s). One `SET LOCAL` for two statements "
+            "means each gets the FULL budget and the arm's own bound is fiction."
+        )
+        first, second = db.set_local_ms
+        assert second < first, (
+            f"second bound {second}ms is not less than the first {first}ms — the "
+            "budget spent by the probe was not deducted, which is CERT-567 exactly."
+        )
+        assert first + second <= 2 * _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS
+
+    @pytest.mark.asyncio
+    async def test_the_over_cap_fallback_is_bounded_too(self):
+        """The slower path must not be the unguarded one.
+
+        Guarding only the `= ANY` branch would leave the over-cap fallback — the
+        path that runs LAT-P143's expensive statement — with a fresh full budget
+        after the probe already spent some.
+        """
+        db = self.BudgetSession(
+            probe_rows=list(range(_TYPEAHEAD_OUTCOME_PROBE_CAP + 1)),
+            market_rows=[1],
+            spend_s=0.05,
+        )
+        await _resolve_typeahead_outcome_arm(
+            db, ARM, OPEN_NOW, None, pattern=PATTERN
+        )
+        assert len(db.set_local_ms) == 2, db.set_local_ms
+        assert db.set_local_ms[1] < db.set_local_ms[0], db.set_local_ms
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_budget_sheds_without_a_second_statement(self):
+        """"We ran out of time" beats a statement issued in order to be cancelled."""
+        db = self.BudgetSession(probe_rows=[1, 2], market_rows=[1], spend_s=0.0)
+        import app.routes.events as ev
+
+        # Budget so small that the probe alone consumes it.
+        with patch.object(ev, "_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS", 2000):
+            db.spend_s = 2.1
+            got = await _resolve_typeahead_outcome_arm(
+                db, ARM, OPEN_NOW, None, pattern=PATTERN
+            )
+        assert got is None, f"expected a shed, got {got!r}"
+        assert len(db.statements) == 1, (
+            "the arm started its second statement with no budget left; it should "
+            "have shed instead."
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_single_statement_path_still_arms_exactly_once(self):
+        """`pattern is None` runs one statement, so one arming is correct."""
+        db = self.BudgetSession(market_rows=[1])
+        await _resolve_typeahead_outcome_arm(db, ARM, OPEN_NOW, None)
+        assert len(db.statements) == 1, db.statements
+        assert len(db.set_local_ms) == 2, (
+            "the pre-statement arming is unconditional by design (see the comment "
+            "at the re-arm); both values should be ~the full budget."
         )
