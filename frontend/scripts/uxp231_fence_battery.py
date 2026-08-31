@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UX-P218 mutation battery — is the FENCE actually guarded?
+"""UX-P231 mutation battery — is the FENCE actually guarded?
 
 The ship is a scope, not a pattern, so the mutants are all ways of getting the
 scope wrong: putting the group back where the ruling took it from, quietly
@@ -12,7 +12,7 @@ the mutants after seeing the guard.
 Every edit is proven to apply, sources restore inside `finally:`, and the restore
 is verified byte-for-byte by sha256.
 
-Run from `frontend/`:  python3 scripts/uxp218_fence_battery.py
+Run from `frontend/`:  python3 scripts/uxp231_fence_battery.py
 """
 
 from __future__ import annotations
