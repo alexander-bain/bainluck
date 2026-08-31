@@ -58,6 +58,38 @@ The 285 rostered teams with no near fixture keep the route's own
 stale-while-revalidate, and the 9,258 rosterless teams were never slow (one
 pattern, not 41). Warming all 367 unconditionally would be four times the
 database work for the teams nobody is looking at this fortnight.
+
+🔴 LAT-P158 — A FIXTURE IS THE WRONG QUESTION TO ASK ABOUT A SEASON-LONG MARKET.
+The paragraph above is right that the reachable set must be declared, and wrong
+about what makes a team reachable. "Has a game in the next fortnight" is a GAME
+CLOCK signal, and this surface has no game clock: `routes/prop_families.py` says
+so itself — *"Prop families are season-long questions ('Next Team', MVP races,
+threshold ladders) whose probabilities move on the futures poll cadence, not on a
+game clock"*. Gating the warm set on a fixture therefore excludes exactly the
+teams whose prop markets are most alive: an OFFSEASON team with championship,
+MVP and Next Team futures trading has no fixture for two months and is precisely
+the page a person opens to see them.
+
+Measured on production `767db311`, 2026-08-31, five team pages, first touch:
+
+    oklahoma-city-thunder    13,262 ms   99 props   NO fixture -> never warmed
+    golden-state-warriors    11,896 ms   84 props   NO fixture -> never warmed
+    new-york-knicks           8,924 ms   76 props   NO fixture -> never warmed
+    los-angeles-dodgers-mlb     251 ms    ~ props   fixture    -> warm, mirror
+    detroit-tigers-mlb          272 ms    ~ props   fixture    -> warm, mirror
+
+A 35-50x difference decided by nothing but whether the sport is in season. And
+the exclusion is not a fringe: **the fifteen teams holding the most prop markets
+in the entire database are all NBA, 59-99 outcomes each, and on 2026-08-31 every
+one of them was outside the warm set.** Census the same day: 367 rostered, 100
+fixture-reachable, and **182 rostered teams hold props with no fixture in the
+window** — 96 of them holding ten or more.
+
+So a team is reachable if it has a near fixture OR it holds enough prop markets
+to make a page worth warming (`MIN_PROPS_TO_WARM`). This does NOT increase the
+database work a pass does: `PASS_BUDGET_SECONDS` bounds the pass, not the
+population, so a wider set changes WHICH teams a pass builds and how long a full
+cycle takes — not how hard any hour hits Postgres.
 """
 
 import logging
@@ -72,6 +104,21 @@ REACHABLE_HORIZON_DAYS = 14
 #: And how far BACK. A team whose game finished last night is still one tap from
 #: a result card, and its prop families are exactly what a person checks after.
 REACHABLE_LOOKBACK_DAYS = 1
+
+#: The SECOND way in, for teams a fixture window cannot see (LAT-P158).
+#:
+#: Ten, because a family needs **two distinct entities** to be emitted at all
+#: (`utils/prop_families.group_prop_families`: "Only families with >= 2 DISTINCT
+#: entities are emitted — a single market is not a family"). A team holding a
+#: handful of prop outcomes scattered across markets usually renders no family at
+#: all, so warming it warms an empty page and spends a slot a 99-prop team needs.
+#:
+#: It is also what keeps the union inside `MAX_TEAMS_PER_PASS`, which is the
+#: population bound the coverage contract is asserted against. Measured
+#: 2026-08-31: 100 fixture-reachable + 96 prop-reachable = 196 of a 200 ceiling.
+#: If that ever crosses, the pass truncates FAIRLY (rotate-then-cap, below) and
+#: says so, rather than silently never warming the tail.
+MIN_PROPS_TO_WARM = 10
 
 #: Hard ceiling on how many teams one pass will consider. Not a target — a
 #: backstop, so a roster backfill or a schedule import cannot turn one beat tick
@@ -224,8 +271,9 @@ async def _warm_prop_families() -> dict:
 
     from sqlalchemy import func, or_, select
 
-    from app.models import Event, Team
+    from app.models import Event, FuturesMarket, FuturesOutcome, Team
     from app.routes.prop_families import (
+        _INCLUDED_STATUSES,
         build_and_cache_prop_families,
         prop_families_cache_keys,
     )
@@ -242,21 +290,53 @@ async def _warm_prop_families() -> dict:
 
     try:
         async with get_task_session() as db:
-            q = (
+            _rostered = (
+                Team.roster_players.isnot(None),
+                func.jsonb_array_length(Team.roster_players) > 0,
+            )
+
+            # Way in #1: a fixture inside the window. The in-season page.
+            q_fixture = (
                 select(Team.id)
                 .join(
                     Event,
                     or_(Event.home_team_id == Team.id, Event.away_team_id == Team.id),
                 )
                 .where(
-                    Team.roster_players.isnot(None),
-                    func.jsonb_array_length(Team.roster_players) > 0,
+                    *_rostered,
                     Event.commence_time
                     >= now - timedelta(days=REACHABLE_LOOKBACK_DAYS),
                     Event.commence_time
                     <= now + timedelta(days=REACHABLE_HORIZON_DAYS),
                 )
                 .distinct()
+            )
+
+            # Way in #2 (LAT-P158): enough live prop markets to be worth warming,
+            # fixture or no fixture. Counted the way the route's FK branch counts
+            # — non-event markets in the statuses the route actually surfaces —
+            # so the warm set and the thing being warmed agree about what a prop
+            # is. Anything else and the warmer selects a population the builder
+            # does not serve.
+            q_props = (
+                select(FuturesOutcome.team_id)
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .join(Team, Team.id == FuturesOutcome.team_id)
+                .where(
+                    *_rostered,
+                    FuturesMarket.event_id.is_(None),
+                    FuturesMarket.status.in_(_INCLUDED_STATUSES),
+                )
+                .group_by(FuturesOutcome.team_id)
+                .having(func.count(FuturesOutcome.id) >= MIN_PROPS_TO_WARM)
+            )
+
+            # Ordered by id because the cursor rotation below is an id walk; the
+            # union is a SET, and which teams a truncated pass drops is decided by
+            # the rotation, not by the primary key (see the cap, below).
+            q = (
+                select(Team.id)
+                .where(or_(Team.id.in_(q_fixture), Team.id.in_(q_props)))
                 .order_by(Team.id)
             )
             team_ids = [int(t) for t in (await db.execute(q)).scalars().all()]
@@ -273,18 +353,26 @@ async def _warm_prop_families() -> dict:
             "warm_prop_families: %d teams selected, capped to %d (%d dropped)",
             selected, MAX_TEAMS_PER_PASS, truncated,
         )
-    team_ids = team_ids[:MAX_TEAMS_PER_PASS]
 
-    # Rotate: start after the id the last pass finished on, wrapping. Without
-    # this every pass warms the same budget-worth of low ids and the tail of the
-    # list is never reached at all (gotcha #34).
+    # 🔴 ROTATE FIRST, THEN CAP (LAT-P158). The cap used to be applied to the
+    # id-ordered list BEFORE the rotation, which made `MAX_TEAMS_PER_PASS` a
+    # permanent membership test rather than a per-pass slice: every team past
+    # position 200 by primary key would be dropped by EVERY pass and never warmed
+    # at all. It did not bind while the set was 100 teams; LAT-P158 widens the set
+    # towards that ceiling, and a widening that starves its own tail is not a
+    # widening (gotcha #34 — one counter shared across a loop starves whatever
+    # comes late; here it was the same 200 ids winning every hour).
+    #
+    # Rotating first makes the cap mean "how many this pass does", and the cursor
+    # guarantees the next pass resumes where this one stopped, so a set larger
+    # than the cap is covered ACROSS passes instead of never.
     cursor = _read_cursor(rc)
     start = 0
     for index, team_id in enumerate(team_ids):
         if team_id > cursor:
             start = index
             break
-    ordered = team_ids[start:] + team_ids[:start]
+    ordered = (team_ids[start:] + team_ids[:start])[:MAX_TEAMS_PER_PASS]
 
     rebuilt = 0
     locked_out = 0
