@@ -42,13 +42,24 @@
  * router. They are asserted against `renderableText` — the JSX CHILD text of the
  * file, with every attribute subtree, dead expression and comment excluded.
  *
- * 🔴 CERT-558 BLOCKED THE FIRST VERSION OF THIS FILE and it was right to. The
- * anchors were `read(file).toContain(sentence)`, a raw substring scan; an
- * exact-head mutation removed the visible `app/my-stuff` line, kept the string
- * alive in a `data-cert-copy` attribute, and every guard here stayed green.
- * `renderableText` is the repair, and its own non-vacuity block replays that
- * exact mutation plus `title`/`aria-label`/`alt`/`placeholder`, a dead
- * `{false && "…"}`, and a JSX comment — while proving sibling copy survives.
+ * 🔴 TWO CERTS BLOCKED THIS FILE'S ANCHORS, AND BOTH WERE RIGHT.
+ *
+ *   CERT-558  the anchor was `read(file).toContain(sentence)`, a raw substring
+ *             scan. A mutation removed the visible `app/my-stuff` line and kept
+ *             the string alive in a `data-cert-copy` ATTRIBUTE. Green.
+ *   CERT-562  the anchor became whole-file `renderableText`. A mutation MOVED the
+ *             sentence out of the authenticated no-content branch and into the
+ *             SIGNED-OUT branch. Right file, wrong screen. Green.
+ *
+ * So the anchor is now `emptyStateText(file, name)`: the JSX child text of the ONE
+ * element carrying `data-empty-state-name="<name>"`. That handle is not invented
+ * here — it is the browser-audit rail's existing hook on `EndOfFeedCard`,
+ * `app/daily` and `app/hub`; the other five sites now carry one too.
+ *
+ * Both attacks are replayed in the non-vacuity block below AND in
+ * `artifacts-ux-p221/battery_ux159_repair.py` against the REAL page files, along
+ * with `title`/`aria-label`/`alt`/`placeholder`, a dead `{false && "…"}`, a JSX
+ * comment, a sibling-branch move, and dropping a site's scope altogether.
  *
  * This is still a source anchor, not a render: it reads what the file WOULD
  * render, not what a browser did. That is this repo's established treatment for
@@ -167,6 +178,62 @@ function renderableText(source: string): string {
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * `renderableText`, but scoped to the ONE element tagged
+ * `data-empty-state-name="<name>"` — its opening tag and its subtree, nothing else.
+ *
+ * ═══ WHY SCOPING, ON TOP OF `renderableText` ═══
+ *
+ * CERT-562 blocked the previous round. `renderableText` closed the attribute and
+ * dead-expression attacks, but it still read the WHOLE FILE: a mutation deleted the
+ * `app/my-stuff` sentence from the authenticated no-content branch and moved it into
+ * the SIGNED-OUT branch, and the guard stayed green. Right file, wrong screen.
+ *
+ * `data-empty-state-name` is not invented for this — it is the browser-audit rail's
+ * existing handle on `EndOfFeedCard`, `app/daily` and `app/hub`. The other five sites
+ * now carry one too, so each anchor names the exact element whose emptiness it is
+ * about, and moving copy to a sibling branch fails.
+ *
+ * Throws rather than returning "" when the name is absent: a scope that silently
+ * matches nothing turns every presence assertion below into a free pass.
+ */
+function emptyStateText(source: string, name: string): string {
+  const sf = ts.createSourceFile(
+    "site.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  );
+
+  const tagged = (attrs: ts.JsxAttributes): boolean =>
+    attrs.properties.some(
+      (a) =>
+        ts.isJsxAttribute(a) &&
+        a.name.getText(sf) === "data-empty-state-name" &&
+        a.initializer !== undefined &&
+        ts.isStringLiteral(a.initializer) &&
+        a.initializer.text === name,
+    );
+
+  let found: ts.Node | undefined;
+  const search = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isJsxElement(node) && tagged(node.openingElement.attributes)) found = node;
+    else if (ts.isJsxSelfClosingElement(node) && tagged(node.attributes)) found = node;
+    else node.forEachChild(search);
+  };
+  sf.forEachChild(search);
+
+  if (!found) {
+    throw new Error(
+      `no element carries data-empty-state-name="${name}" — the scope matched nothing, ` +
+        `which would make every presence assertion for this site vacuous`,
+    );
+  }
+  return renderableText(found.getText(sf));
+}
+
 /* ─────────────────────────── the eight sites ─────────────────────────────── */
 
 /**
@@ -178,6 +245,13 @@ function renderableText(source: string): string {
 type Site = {
   site: string;
   file: string;
+  /**
+   * The `data-empty-state-name` on the element this row is about (CERT-562).
+   * REQUIRED for the six page sites. Omitted for the two COMPONENT sites, which are
+   * rendered outright further down — `OddsChart`'s pre-game arm is a fragment with no
+   * taggable element, and adding a wrapper div to satisfy a test would change layout.
+   */
+  emptyState?: string;
   states: string;
   retired: string;
 };
@@ -186,6 +260,7 @@ const SITES: Site[] = [
   {
     site: "app/categories · no items for this category",
     file: "app/categories/[slug]/page.tsx",
+    emptyState: "category-no-items",
     // Anchors read as `renderableText` yields them: `{categoryName.toLowerCase()}`
     // is data, not copy, so it elides. The reader sees "…open football questions."
     states: "This page lists open questions.",
@@ -194,30 +269,35 @@ const SITES: Site[] = [
   {
     site: "app/hub · no open markets for this competition",
     file: "app/hub/[competition]/page.tsx",
+    emptyState: "entity-competition-present",
     states: "This page collects every open market for this competition.",
     retired: "No open markets right now. Check back when the next card is announced.",
   },
   {
     site: "app/my-stuff · nothing on for your teams",
     file: "app/my-stuff/page.tsx",
+    emptyState: "my-stuff-no-teams",
     states: "This page follows the teams you have saved.",
     retired: "Check back when your teams are playing",
   },
   {
     site: "app/sports/[key] · no upcoming events",
     file: "app/sports/[key]/page.tsx",
+    emptyState: "league-no-upcoming-events",
     states: "This page lists scheduled games for this league.",
     retired: "Check back later for more games",
   },
   {
     site: "app/playoffs · no championship odds",
     file: "app/playoffs/[sport]/page.tsx",
+    emptyState: "playoffs-no-championship-odds",
     states: "This grid covers championship markets from sportsbooks and prediction markets.",
     retired: "Odds will appear when sportsbooks and prediction markets publish",
   },
   {
     site: "app/discover · ChallengeModal has no cards",
     file: "app/discover/page.tsx",
+    emptyState: "challenge-no-cards",
     states: "The daily challenge draws its questions from the live feed.",
     retired: "Check back after the feed refreshes.",
   },
@@ -314,6 +394,35 @@ describe("renderableText — non-vacuity, both directions", () => {
     expect(renderableText(nested)).toContain(SENTENCE);
   });
 
+  it("CERT-562's mutation: the sentence moved to a SIBLING branch does NOT count", () => {
+    // The exact shape that blocked round 2 — right file, wrong screen.
+    const moved = `const A = ({signedIn}) => signedIn
+      ? <div data-empty-state-name="s"><p>nothing here yet</p></div>
+      : <div><p>${SENTENCE}</p></div>;`;
+    expect(renderableText(moved)).toContain(SENTENCE); // whole-file scan: satisfied
+    expect(emptyStateText(moved, "s")).not.toContain(SENTENCE); // scoped: not.
+  });
+
+  it("the scoped extractor DOES see copy inside its own element", () => {
+    const inside = `const A = () => <div data-empty-state-name="s"><p>${SENTENCE}</p></div>;`;
+    expect(emptyStateText(inside, "s")).toContain(SENTENCE);
+  });
+
+  it("a scope that matches nothing THROWS rather than passing vacuously", () => {
+    const none = `const A = () => <div><p>${SENTENCE}</p></div>;`;
+    expect(() => emptyStateText(none, "s")).toThrow(/matched nothing/);
+  });
+
+  it("the scope does not leak into a sibling that shares the parent", () => {
+    const siblings = `const A = () => <section>
+      <div data-empty-state-name="s"><p>mine</p></div>
+      <div><p>${SENTENCE}</p></div>
+    </section>;`;
+    const text = emptyStateText(siblings, "s");
+    expect(text).toContain("mine");
+    expect(text).not.toContain(SENTENCE);
+  });
+
   it("does not swallow the file — sibling copy survives beside a skipped attribute", () => {
     // A stripper that eats too much makes every absence assertion above free.
     const mixed = `const A = () => <p title="hidden words">visible words</p>;`;
@@ -326,16 +435,39 @@ describe("renderableText — non-vacuity, both directions", () => {
 /* ═══════════════════════ every site, one at a time ═════════════════════════ */
 
 describe.each(SITES.map((s) => [s.site, s] as const))("UX-P220 · %s", (_site, site) => {
-  it("states what it is, in RENDERED position — an attribute does not count", () => {
-    // CERT-558: the previous form of this row was `read(file).toContain(states)`,
-    // which a mutation satisfied by moving the sentence into `data-cert-copy`.
-    expect(renderableText(read(site.file))).toContain(site.states);
+  it("states what it is, inside ITS OWN empty state — not merely in the file", () => {
+    // CERT-558: `read(file).toContain(states)` was satisfied by a `data-cert-copy`
+    // attribute.  CERT-562: whole-file `renderableText` was satisfied by moving the
+    // sentence into a sibling JSX branch.  The scope is now the element itself.
+    const text = site.emptyState
+      ? emptyStateText(read(site.file), site.emptyState)
+      : renderableText(read(site.file));
+    expect(text).toContain(site.states);
   });
 
   it("no longer promises what it will be — anywhere in the file", () => {
     // Absence stays on the RAW source deliberately: a retired promise left in an
     // attribute or a comment is still a promise someone will re-render later.
     expect(read(site.file)).not.toContain(site.retired);
+  });
+});
+
+describe("every PAGE site is scoped — the escape hatch is closed", () => {
+  // `emptyState` is optional only so the two rendered COMPONENT sites can opt out.
+  // Without this row, dropping a page's `emptyState` would silently downgrade it to
+  // the whole-file scan CERT-562 blocked — the cheapest way to make a failure go away.
+  const PAGE_SITES = SITES.filter((s) => s.file.startsWith("app/"));
+
+  it("all six page sites are present and carry a scope", () => {
+    expect(PAGE_SITES).toHaveLength(6);
+    expect(PAGE_SITES.filter((s) => !s.emptyState).map((s) => s.site)).toEqual([]);
+  });
+
+  it("only the two rendered component sites may opt out", () => {
+    expect(SITES.filter((s) => !s.emptyState).map((s) => s.file)).toEqual([
+      "components/discover/EndOfFeedCard.tsx",
+      "components/OddsChart.tsx",
+    ]);
   });
 });
 

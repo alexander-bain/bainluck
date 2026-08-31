@@ -501,7 +501,10 @@ function ChallengeModal({
               onNextQuestion={onNextQuestion}
             />
           ) : (
-            <div className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md">
+            <div
+              className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md"
+              data-empty-state-name="challenge-no-cards"
+            >
               <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
               {/* Ruling 142: say where the challenge gets its questions, not
                   when more will arrive. */}

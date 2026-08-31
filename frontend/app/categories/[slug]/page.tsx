@@ -142,7 +142,7 @@ export default function CategoryPage({
       {feedData && (
         <>
           {allItems.length === 0 ? (
-            <div className="text-center py-16">
+            <div className="text-center py-16" data-empty-state-name="category-no-items">
               <p className="text-body text-text-secondary mb-2">
                 No {categoryName.toLowerCase()} items right now
               </p>
