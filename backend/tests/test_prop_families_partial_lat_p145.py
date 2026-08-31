@@ -216,6 +216,28 @@ class _BranchDB:
             raise RuntimeError("connection gone")
 
 
+#: LAT-P164 split the two name branches by pattern class, so a team WITH a
+#: roster now runs five branches rather than three. Pinned as a NAMED, ORDERED
+#: list and not as a bare count, because a count cannot say WHICH branches exist
+#: and the split is the whole point: the cheap one-pattern team-name probes must
+#: stay separate from the 40-pattern roster probes. `assert x == 5` would still
+#: pass if the two were merged back into one branch and something else were
+#: added — this will not.
+_BRANCHES_ROSTERED = (
+    route._BRANCH_TEAM_ID,
+    route._BRANCH_OUTCOME_NAME,
+    route._BRANCH_MARKET_NAME,
+    route._BRANCH_OUTCOME_ROSTER,
+    route._BRANCH_MARKET_ROSTER,
+)
+_N_ROSTERED = len(_BRANCHES_ROSTERED)
+
+#: A plan that loses EVERY branch a rostered team has. Derived, so that adding a
+#: branch cannot quietly turn "every branch was lost" into "most were".
+def _all_timeout():
+    return [_timeout() for _ in range(_N_ROSTERED)]
+
+
 def _team(*, tid=547, name="New York Giants", slug="new-york-giants", roster=None):
     return SimpleNamespace(
         id=tid, name=name, slug=slug,
@@ -283,7 +305,7 @@ class TestOneBranchTimeoutDoesNotEraseTheRest:
         (_payload, _unusable), db = await _build(
             [FK_ROWS, _timeout(), MARKET_NAME_ROWS]
         )
-        assert db.branch_index == 3, "the market_name branch was skipped"
+        assert db.branch_index == _N_ROSTERED, "a branch after the cancellation was skipped"
 
     async def test_market_name_rows_reach_the_payload_after_a_cancellation(self):
         (payload, _unusable), _db = await _build(
@@ -317,7 +339,7 @@ class TestOneBranchTimeoutDoesNotEraseTheRest:
             [_timeout(), OUTCOME_NAME_ROWS, MARKET_NAME_ROWS]
         )
         assert unusable is False
-        assert db.branch_index == 3
+        assert db.branch_index == _N_ROSTERED
         assert payload["total_families"] >= 1
 
     async def test_a_failing_rollback_does_not_take_the_request_down(self):
@@ -329,12 +351,10 @@ class TestOneBranchTimeoutDoesNotEraseTheRest:
         assert isinstance(payload, dict)
 
     async def test_every_branch_lost_is_still_the_unusable_answer(self):
-        (payload, unusable), db = await _build(
-            [_timeout(), _timeout(), _timeout()]
-        )
+        (payload, unusable), db = await _build(_all_timeout())
         assert unusable is True
         assert payload["total_families"] == 0
-        assert db.rollbacks == 3
+        assert db.rollbacks == _N_ROSTERED
 
     async def test_a_healthy_build_is_untouched(self):
         (payload, unusable), db = await _build(
@@ -368,7 +388,7 @@ class TestBudgetUnchanged:
 
     async def test_every_branch_sets_its_own_timeout(self):
         _r, db = await _build([FK_ROWS, OUTCOME_NAME_ROWS, MARKET_NAME_ROWS])
-        assert len(db.timeouts_set) == 3, db.timeouts_set
+        assert len(db.timeouts_set) == _N_ROSTERED, db.timeouts_set
 
     async def test_the_timeout_statement_still_says_twelve_thousand(self):
         _r, db = await _build([FK_ROWS, OUTCOME_NAME_ROWS, MARKET_NAME_ROWS])
@@ -380,7 +400,7 @@ class TestBudgetUnchanged:
         followed by a fresh `SET LOCAL`, branch 3 runs UNBOUNDED — the fix would
         have replaced a 12 s ceiling with none at all."""
         _r, db = await _build([FK_ROWS, _timeout(), MARKET_NAME_ROWS])
-        assert len(db.timeouts_set) == 3, db.timeouts_set
+        assert len(db.timeouts_set) == _N_ROSTERED, db.timeouts_set
 
 
 # ---------------------------------------------------------------------------
@@ -470,12 +490,16 @@ class TestPartialIsCached:
     async def test_the_second_reader_is_served_from_cache_and_builds_nothing(self):
         """The whole ship in one assertion: reader two runs ZERO branches."""
         rc = _FakeRedis()
-        with patch.object(route, "get_client", return_value=rc):
+        # LAT-P164: a cold build that is not `full` now dispatches the same
+        # single-flight rebuild a mirror serve does. Patched to a no-op so this
+        # test measures BRANCHES RUN, not broker reachability.
+        with patch.object(route, "get_client", return_value=rc), \
+             patch("app.tasks.celery_app.send_task", MagicMock()):
             db1 = _BranchDB([FK_ROWS, _timeout(), MARKET_NAME_ROWS])
             await route.get_team_prop_families("new-york-giants", 400, db1)
             db2 = _BranchDB([FK_ROWS, _timeout(), MARKET_NAME_ROWS])
             body = await route.get_team_prop_families("new-york-giants", 400, db2)
-        assert db1.branch_index == 3
+        assert db1.branch_index == _N_ROSTERED
         assert db2.branch_index == 0, "reader two paid for a rebuild"
         assert body["total_families"] >= 1
 
@@ -1008,7 +1032,7 @@ class TestRealErrorsAreLoud:
             [FK_ROWS, ValueError("column does not exist"), MARKET_NAME_ROWS]
         )
         assert unusable is False
-        assert db.branch_index == 3
+        assert db.branch_index == _N_ROSTERED
 
     async def test_a_real_error_is_logged_at_exception_level(self, caplog):
         with caplog.at_level("ERROR"):
@@ -1116,8 +1140,9 @@ class TestRouteLadderUnchanged:
 
     async def test_a_total_loss_still_serves_two_hundred_with_no_envelope(self):
         rc = _FakeRedis()
-        with patch.object(route, "get_client", return_value=rc):
-            db = _BranchDB([_timeout(), _timeout(), _timeout()])
+        with patch.object(route, "get_client", return_value=rc), \
+             patch("app.tasks.celery_app.send_task", MagicMock()):
+            db = _BranchDB(_all_timeout())
             body = await route.get_team_prop_families("new-york-giants", 400, db)
         assert body["total_families"] == 0
         assert cache_mod.ENVELOPE_FIELD not in body
