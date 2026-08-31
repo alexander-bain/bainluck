@@ -346,8 +346,85 @@ export function __resetWikipediaLookupState(): void {
 }
 
 /**
+ * UX-P235 (board item 14) — WHY A WIKIPEDIA SUMMARY IMAGE IS SOMETIMES REFUSED.
+ *
+ * `getWikipediaImage` asks Wikipedia *"what does this NAME look like?"* when the
+ * caller means *"what does this BRAND look like?"*, and a bare market-outcome name
+ * is often a common noun. Measured live 2026-08-31 on the eight outcomes of market
+ * 109441, the market Alex reviewed:
+ *
+ *   Amazon      disambiguation, no image            -> initials  (honest)
+ *   Max         disambiguation, no image            -> initials  (honest)
+ *   Netflix     `Netflix_UI_for_Web.png`            -> a SCREENSHOT of the web UI
+ *   Disney      `The_Walt_Disney_company_logo.svg`  -> the real logo, 330x171
+ *   Hulu        `Hulu_logo_(2018).svg`              -> the real logo
+ *   Paramount+  `Paramount_Plus.svg`                -> the real logo
+ *   🔴 Peacock  `Peacock_Plumage.jpg`, title "Peafowl", description
+ *               "Group of large game birds"         -> A PHOTOGRAPH OF A BIRD
+ *   🔴 Apple    `Pink_lady_and_cross_section.jpg`, description
+ *               "Edible fruit"                      -> A PHOTOGRAPH OF A FRUIT
+ *
+ * 🔴 **THE BOARD ITEM SAYS PEACOCK AND APPLE "RESOLVE CORRECTLY". THEY DO NOT** —
+ * they resolve to a bird and a fruit, rendered as confident circular brand marks
+ * beside a streaming-service probability. Only 2 of the 8 (Hulu, Paramount+) were
+ * ever right. Alex's own rule for this item is *a wrong logo is worse than no
+ * logo*, and a bird is the most wrong of the eight.
+ *
+ * So this refuses the answers Wikipedia's OWN metadata marks as not-a-brand, using
+ * fields already in the response we fetch — no second request, no new round trip on
+ * a page that renders 25 of these. A refusal falls back to the initials chip, which
+ * `EntityImage` now paints as an obvious placeholder rather than a brand tile.
+ *
+ * NOT ATTEMPTED HERE, and named in the report instead: **Wikidata's P154 "logo
+ * image"**, which is the *right* question and which I measured working —
+ * `Netflix -> Netflix logo.svg`, `Disney -> The Walt Disney Company Logo.svg`,
+ * while `Peacock` and `Apple` correctly have none. It would fix the Netflix
+ * screenshot too. It needs a SECOND network hop per outcome, and cold-load latency
+ * is a named priority today, so it is a deliberate follow-up rather than a thing to
+ * slip in unmeasured.
+ */
+
+/**
+ * Wikipedia's own one-line `description` for pages whose subject is a natural kind
+ * — never the subject of a market outcome, and never a brand.
+ *
+ * Deliberately a SHORT, EXPLICIT list of things we can prove are wrong, not a
+ * general "is this a company?" classifier. We cannot prove a page IS a brand; we
+ * can prove a page is a bird. Matching is on Wikipedia's curated short description,
+ * not on free prose, so it is stable.
+ *
+ * ⚠️ A racehorse, a hurricane or a boat named after an animal is a legitimate
+ * outcome — but its page's description is "racehorse" / "tropical cyclone", not
+ * "species of bird", so it is unaffected. The test file pins that.
+ */
+const NOT_A_BRAND_DESCRIPTIONS: readonly RegExp[] = [
+  /\bspecies\b/i,
+  /\bgenus\b/i,
+  /\bfamily of\b/i,
+  /\bgroup of .*(bird|fish|mammal|insect|reptile|animal|plant)/i,
+  /\b(bird|fish|mammal|insect|reptile|amphibian)s?\b(?!.*\b(team|club|logo|company|brand)\b)/i,
+  /\b(fruit|vegetable|plant|tree|flower|herb)\b(?!.*\b(company|brand|logo|band|film)\b)/i,
+  /\bchemical element\b/i,
+  /\b(given|family|sur)\s?names?\b/i,
+  /\btopics referred to by the same term\b/i,
+];
+
+/** True when Wikipedia's own metadata says this page is not a brand or an entity. */
+export function wikipediaSummaryIsNotABrand(summary: {
+  type?: string | null;
+  description?: string | null;
+}): boolean {
+  // Wikipedia stating outright that the name is ambiguous. Its own word for it.
+  if (summary.type === "disambiguation") return true;
+  const d = (summary.description || "").trim();
+  if (!d) return false;
+  return NOT_A_BRAND_DESCRIPTIONS.some((re) => re.test(d));
+}
+
+/**
  * Fetch a thumbnail image URL from Wikipedia for an entity name.
- * Returns null if not found, if the lookup fails, or while the circuit is open.
+ * Returns null if not found, if the lookup fails, if Wikipedia's own metadata says
+ * the page is not a brand (see above), or while the circuit is open.
  */
 export async function getWikipediaImage(entityName: string): Promise<string | null> {
   const cacheKey = `wiki_${entityName.toLowerCase().replace(/\s+/g, "_")}`;
@@ -376,6 +453,12 @@ export async function getWikipediaImage(entityName: string): Promise<string | nu
         return null;
       }
       const data = await res.json();
+      // UX-P235: refuse a confidently-wrong picture before it becomes a brand
+      // mark. Cached as a refusal so the same bird is not fetched 25 times.
+      if (wikipediaSummaryIsNotABrand(data)) {
+        cacheSet(cacheKey, null);
+        return null;
+      }
       const url: string | null = data.thumbnail?.source || null;
       cacheSet(cacheKey, url);
       return url;
