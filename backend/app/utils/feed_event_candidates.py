@@ -379,6 +379,10 @@ def _collapsed_subquery(where_clauses, name: str):
             Event.id.label("id"),
             status_tier_expr().label("tier"),
             Event.commence_time.label("commence_time"),
+            # Carried so a caller can ORDER the collapsed pool without a second
+            # visit to ``events`` (#2057, LANE1-Q475).  It is a passenger: no
+            # partition, no survivor key and no filter reads it here.
+            Event.status.label("status"),
             Event.sport_id.label("sport_id"),
             Event.home_team_name.label("home_team_name"),
             Event.away_team_name.label("away_team_name"),
@@ -419,6 +423,7 @@ def _collapsed_subquery(where_clauses, name: str):
             scanned.c.id,
             scanned.c.tier,
             scanned.c.commence_time,
+            scanned.c.status,
             func.row_number()
             .over(
                 partition_by=[
@@ -438,8 +443,57 @@ def _collapsed_subquery(where_clauses, name: str):
     )
 
 
-def deduplicated_event_ids(where_clauses) -> Select:
+def deduplicated_events(where_clauses, name: str):
+    """The collapsed pool as a SUBQUERY — ``id``, ``tier``, ``commence_time``,
+    ``status``, ``dup_rn`` — for a caller that must ORDER and CAP it.
+
+    WHY A SECOND ENTRY POINT (#2057, LANE1-Q475), AND WHY IT IS NOT A LUXURY
+    -----------------------------------------------------------------------
+    :func:`deduplicated_event_ids` hands back a bare ``SELECT id``, which a
+    caller can only consume as ``Event.id.IN (…)``.  That shape was fine for My
+    Stuff, whose pool is already bounded to one user's teams, and it is the
+    wrong shape for a rail that shows the EIGHT most imminent games out of
+    hundreds.  Measured on production 2026-08-31 with ``EXPLAIN (ANALYZE,
+    BUFFERS)`` over the exact statement the results rail compiles, the semi-join
+    form cost ``tennis_atp`` **1,946 -> 7,199 blocks** and the eight leagues in
+    ``recent_results_query``'s table **10,572 -> 69,575** — because PostgreSQL
+    drove the plan FROM the subquery and paid an ``events_pkey`` lookup plus a
+    ``sports_pkey`` lookup for every one of 968 survivors, to return nine rows.
+
+    The collapse itself was never the expense: that same plan attributes **402
+    blocks** to the whole two-window scan.  What cost was hydrating every
+    survivor before the ``LIMIT``.  Exposing the subquery lets the caller order
+    and cap the collapsed pool FIRST and hydrate only the nine rows it will
+    render.
+
+    The ``dup_rn == 1`` filter is deliberately left to the caller.  Applying it
+    here would make this a different function with the same body as
+    :func:`deduplicated_event_ids`, and the point of exposing the subquery is
+    that the caller composes.
+    """
+    return _collapsed_subquery(where_clauses, f"{name}_collapsed")
+
+
+def deduplicated_event_ids(where_clauses, name: str = "my_stuff_candidates") -> Select:
     """A SELECT of event ids with duplicates collapsed and NO tier quotas.
+
+    ``name`` labels the emitted subquery and nothing else — it does not change a
+    row.  It exists because more than one surface calls this now, and a plan
+    read off production that says ``my_stuff_candidates_collapsed`` names the
+    wrong surface to the next person debugging it.  The default is the original
+    string, so My Stuff's alias is unchanged.
+
+    ⚠️ **My Stuff's emitted SQL is NOT byte-identical, and the difference is one
+    projected column.**  ``status`` was added to the scan for the league rails
+    (#2057, LANE1-Q475).  Diffed statement against statement, that column and
+    its restatement one level up are the ONLY changes: no partition key, no
+    survivor key, no filter, no row.  Measured on the real Discover-shaped pool
+    on production 2026-08-31, warm best of three: **1,568 root blocks and 357
+    rows on both trees, identical.**  Stated rather than asserted, because "a
+    projection is free" is a belief until someone runs it.
+
+    A caller that must ORDER or CAP the collapsed pool wants
+    :func:`deduplicated_events` instead — see the cost measured there.
 
     WHY THIS EXISTS SEPARATELY (#2213)
     ----------------------------------
@@ -473,7 +527,7 @@ def deduplicated_event_ids(where_clauses) -> Select:
     exist — 0 of 41 duplicate MLB pairs share any provider id (#2213).  That
     merge stays the registry's, behind the anchor channel.
     """
-    collapsed = _collapsed_subquery(where_clauses, "my_stuff_candidates_collapsed")
+    collapsed = deduplicated_events(where_clauses, name)
     return select(collapsed.c.id).where(collapsed.c.dup_rn == 1)
 
 
