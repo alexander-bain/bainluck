@@ -171,6 +171,30 @@ def test_the_same_two_players_at_a_different_tournament_are_refused_on_the_date(
     assert len(matches) == 1
 
 
+def test_an_unreadable_ticker_date_REFUSES_rather_than_skipping_the_check():
+    """CERT-529. A discriminator that cannot run has not passed.
+
+    The first version compared dates only when BOTH parsed, so a ticker whose
+    date could not be read skipped the check entirely and the market was pinned
+    anyway. That is absence-as-permission, and it is worst exactly here: this
+    check is the only thing standing between a US Open fixture and an
+    identically-named market from another tournament.
+    """
+    matches, rejected = _build(_rows(ticker="KXATPMATCH-BOGUSXX"))
+    assert matches == []
+    assert [r["reason"] for r in rejected] == ["DATE_UNREADABLE_SO_UNVERIFIABLE"]
+
+
+def test_a_fixture_with_no_scheduled_date_is_also_unverifiable():
+    """The other half of the same hole — the register side rather than the
+    market side. Same refusal, same reason."""
+    register = _register()
+    register["matchups"][0]["scheduled_date"] = None
+    matches, rejected = _build(_rows(), register=register)
+    assert matches == []
+    assert [r["reason"] for r in rejected] == ["DATE_UNREADABLE_SO_UNVERIFIABLE"]
+
+
 def test_two_markets_for_one_fixture_refuse_BOTH_rather_than_taking_the_first():
     """Taking the first would pin a plausible number from the wrong market."""
     rows = _rows(market_id=1) + _rows(ticker="KXATPMATCH-26AUG31BUBWOL", market_id=2)
@@ -225,6 +249,26 @@ def test_a_missing_block_is_filled_in_place():
     assert block["evidence"]["kind"] == "kalshi-match-market-census"
 
 
+def test_a_SETTLED_block_is_never_overwritten():
+    """CERT-529. The first version refused only `live`, so a `settled` block —
+    a real status carrying a `terminal_result` this pass does not hold — was
+    overwritten and its banked answer silently dropped. That is how a decided
+    fixture starts quoting again.
+    """
+    register = _fixture_with_block("settled")
+    block = register["matchups"][0]["sources"][0]
+    block["terminal_result"] = "won"
+    block["market_external_id"] = "THE-SETTLED-ONE"
+
+    result = pin_mod.apply_census(register, _census_for(register), repin=False)
+    assert result["stats"]["not_missing"] == 1
+    assert result["stats"]["pinned"] == 0
+    after = register["matchups"][0]["sources"][0]
+    assert after["status"] == "settled"
+    assert after["terminal_result"] == "won"
+    assert after["market_external_id"] == "THE-SETTLED-ONE"
+
+
 def test_a_block_that_is_already_live_is_left_alone():
     """Silently repointing a priced fixture at a different market is how a page
     starts showing a real number from the wrong match. Re-pinning is deliberate.
@@ -233,7 +277,7 @@ def test_a_block_that_is_already_live_is_left_alone():
     register["matchups"][0]["sources"][0]["market_external_id"] = "SOMETHING-ELSE"
     result = pin_mod.apply_census(register, _census_for(register), repin=False)
     assert result["stats"] == {
-        "pinned": 0, "already_live": 1, "repinned": 0,
+        "pinned": 0, "already_pinned": 1, "not_missing": 0, "repinned": 0,
         "no_such_fixture": 0, "no_kalshi_block": 0,
     }
     assert register["matchups"][0]["sources"][0]["market_external_id"] == "SOMETHING-ELSE"

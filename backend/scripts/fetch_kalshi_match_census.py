@@ -237,16 +237,30 @@ def build_census(
             reject("PAIR_NOT_A_REGISTERED_FIXTURE")
             continue
 
-        # THE DATE MUST AGREE TOO. Two players meeting at the US Open may also
-        # have met in Cincinnati a fortnight earlier, and that market is in this
-        # window. The discriminator is the TICKER's date, never
-        # `resolution_date` — see `ticker_date`.
+        # ═══ THE DATE MUST AGREE, AND "I COULD NOT READ IT" IS NOT AGREEMENT ═══
+        #
+        # Two players meeting at the US Open may also have met in Cincinnati a
+        # fortnight earlier, and that market is in this window. The
+        # discriminator is the TICKER's date, never `resolution_date` (see
+        # `ticker_date`).
+        #
+        # CERT-529: the first version ran the comparison only when BOTH dates
+        # parsed, so an unreadable ticker or a fixture with no scheduled date
+        # skipped the check entirely and the market was pinned. That is
+        # absence-as-permission — the same class as reading a missing scoreboard
+        # entry as "finished" — and it is worse here, because the whole job of
+        # this discriminator is to be the thing standing between a US Open
+        # fixture and an identically-named market from another tournament.
+        #
+        # A discriminator that cannot run has not passed. It refuses.
         scheduled = _moment(fixture.get("scheduled_date"))
         played = ticker_date(sides[0]["market_ext"])
-        if scheduled is not None and played is not None:
-            if abs((played - scheduled).total_seconds()) > date_slack_hours * 3600:
-                reject("DATE_DISAGREES_WITH_FIXTURE")
-                continue
+        if scheduled is None or played is None:
+            reject("DATE_UNREADABLE_SO_UNVERIFIABLE")
+            continue
+        if abs((played - scheduled).total_seconds()) > date_slack_hours * 3600:
+            reject("DATE_DISAGREES_WITH_FIXTURE")
+            continue
 
         if any(s.get("opening_probability") is None for s in sides):
             # The whole point is the OPENING quote — the only stored price

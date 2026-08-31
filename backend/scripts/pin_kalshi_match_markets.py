@@ -12,12 +12,15 @@ A ``missing`` block is a placeholder that says, in the register's own words,
 "no match market pinned at this source when the draw was ingested".  Filling it
 is the whole job.
 
-A block that is already ``live`` is NOT touched, even when the census found a
-market for it.  Two reasons, and the second is the one that matters: a live
-block was pinned by an earlier census against evidence this run cannot see, and
-silently repointing a priced fixture at a different market is how a page starts
-showing a real number from the wrong match.  Re-pinning is a deliberate act with
-``--repin``, and it prints every change it makes.
+**Anything that is not ``missing`` is left alone**, even when the census found a
+market for it.  Stated positively on purpose: an earlier version refused only
+``live`` and therefore overwrote **``settled``** — a real status carrying a
+``terminal_result`` this pass does not hold and would have silently dropped,
+which is how a decided fixture starts quoting again.  More generally, a block
+that already says something was written against evidence this run cannot see,
+and silently repointing a priced fixture at a different market is how a page
+starts showing a real number from the wrong match.  Re-pinning is a deliberate
+act with ``--repin``, and it prints every change it makes.
 
 The result is validated with the register's own validator before it is written.
 A register that fails its gate is never saved — a half-applied register is worse
@@ -47,7 +50,12 @@ def apply_census(
     by_key = {m.get("matchup_key"): m for m in register.get("matchups") or []}
     stats = {
         "pinned": 0,
-        "already_live": 0,
+        # Split apart by CERT-529: `already_pinned` is a block that legitimately
+        # already names a live market; `not_missing` is anything else the pass
+        # refuses to touch — `settled` above all, whose `terminal_result` this
+        # pass does not hold and would have dropped.
+        "already_pinned": 0,
+        "not_missing": 0,
         "repinned": 0,
         "no_such_fixture": 0,
         "no_kalshi_block": 0,
@@ -73,10 +81,22 @@ def apply_census(
         if block is None:
             stats["no_kalshi_block"] += 1
             continue
-        if block.get("status") == "live" and not repin:
-            stats["already_live"] += 1
+        # ═══ FILL ONLY WHAT IS `missing` (CERT-529) ═══
+        #
+        # The first version refused only `live` and therefore OVERWROTE anything
+        # else — including **`settled`**, which is a real status carrying a
+        # `terminal_result` this pass does not have and would silently drop. A
+        # settled block is a finished match's banked answer; repointing it at a
+        # live market is how a decided fixture starts quoting again.
+        #
+        # So the rule is stated positively: fill `missing`, leave everything
+        # else, and let `--repin` be the one deliberate way to move a block that
+        # already says something.
+        status = block.get("status")
+        if status != "missing" and not repin:
+            stats["already_pinned" if status == "live" else "not_missing"] += 1
             continue
-        was_live = block.get("status") == "live"
+        was_pinned = status != "missing"
 
         sides = match["sides"]
         first = fixture["players"][0]
@@ -109,7 +129,7 @@ def apply_census(
                 "missing because no match market existed at ceremony time"
             ),
         }
-        stats["repinned" if was_live else "pinned"] += 1
+        stats["repinned" if was_pinned else "pinned"] += 1
         changes.append(f"  {match['matchup_key']} -> {match['market_external_id']}")
 
     return {"stats": stats, "changes": changes}
