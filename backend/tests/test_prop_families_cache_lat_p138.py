@@ -190,12 +190,17 @@ class TestBranchPredicateShape:
         team = _team(roster=["Patrick Mahomes", "Travis Kelce", "Chris Jones"])
         _payload, db = await _build(team)
         branch_sql = [_sql(s) for s in _branch_stmts(db)]
-        assert len(branch_sql) == 3
+        # LAT-P164 split each name branch by pattern class, so a rostered team
+        # runs FOUR name branches behind the FK branch, not two.
+        assert len(branch_sql) == 5
         name_sql = branch_sql[1:]
         for sql in name_sql:
             assert "ILIKE ANY" in sql.upper(), sql
-        assert any("futures_outcomes.name ILIKE ANY" in s for s in name_sql)
-        assert any("futures_markets.name ILIKE ANY" in s for s in name_sql)
+        # BOTH columns, on BOTH pattern classes. Counting `ILIKE ANY` branches
+        # would pass if the split lost a column, which is the failure this guard
+        # exists for.
+        assert sum("futures_outcomes.name ILIKE ANY" in s for s in name_sql) == 2
+        assert sum("futures_markets.name ILIKE ANY" in s for s in name_sql) == 2
 
     async def test_no_branch_is_an_n_way_or_of_ilikes(self):
         """The defect this replaces, spelled as the thing that must not come back.
@@ -210,13 +215,32 @@ class TestBranchPredicateShape:
 
     async def test_every_pattern_is_carried_into_the_array(self):
         """Cheaper SQL that silently drops patterns would be a matching
-        regression wearing a latency fix's clothes."""
+        regression wearing a latency fix's clothes.
+
+        🔴 LAT-P164 IS EXACTLY THAT RISK, so this guard got STRONGER rather than
+        looser. The patterns no longer live in one array: the team's own name
+        drives the two cheap branches and the roster drives the two expensive
+        ones. So assert per CLASS and per COLUMN — every roster name must reach
+        BOTH roster branches and the team name must reach BOTH team-name
+        branches. A union-only check ("every pattern appears somewhere") would
+        pass if the split sent the roster to one column and dropped the other.
+        """
         roster = ["Patrick Mahomes", "Travis Kelce"]
         team = _team(roster=roster)
         _payload, db = await _build(team)
-        sql = _sql(_branch_stmts(db)[1])
-        for name in roster + ["Kansas City Chiefs"]:
-            assert name in sql, f"{name} missing from the branch array"
+        by_branch = [_sql(s) for s in _branch_stmts(db)]
+        assert len(by_branch) == 5
+        outcome_team, market_team, outcome_roster, market_roster = by_branch[1:]
+
+        for sql in (outcome_team, market_team):
+            assert "Kansas City Chiefs" in sql, sql
+            for name in roster:
+                # The cheap branches must carry ONLY the team name — a roster
+                # name leaking back in restores the 40-probe cost this ship removes.
+                assert name not in sql, f"{name} leaked into a team-name branch"
+        for sql in (outcome_roster, market_roster):
+            for name in roster:
+                assert name in sql, f"{name} missing from the roster branch array"
 
     async def test_fk_branch_is_still_first_and_index_shaped(self):
         team = _team(roster=["Patrick Mahomes"])

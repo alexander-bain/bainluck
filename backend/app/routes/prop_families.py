@@ -58,6 +58,7 @@ post-deploy first-touch read on this endpoint is the falsifier.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -107,13 +108,63 @@ _MAX_ROSTER_PATTERNS = 40
 #: expiry takes, so no team that completes today starts failing tomorrow.
 _BRANCH_TIMEOUT_MS = 12000
 
-#: The three criteria, named. LAT-P145 made the names load-bearing: a branch that
+#: What a READER may spend on a whole cold build, across all branches. `None`
+#: means "no reader is waiting" and restores the per-branch budget exactly.
+#:
+#: LAT-P164 (#2383) — WHY A TOTAL BUDGET AND NOT A SMALLER PER-BRANCH ONE.
+#: `_BRANCH_TIMEOUT_MS` bounds ONE statement, so four branches bound at 12 s
+#: each is a 48-second reader. What the ring actually recorded is the middle of
+#: that range: nine slow events on this endpoint in 24 h, **six of them clustered
+#: at 12,376-12,969 ms**, every one `cache=none`. That cluster is not a cost, it
+#: is the timeout — a reader waiting out an expiry and then being handed the page
+#: without the content they waited for.
+#:
+#: 2,500 ms is sized from the branches that stay on the reader's path, measured
+#: on production 2026-08-31 (`EXPLAIN ANALYZE`, Virginia Cavaliers' own patterns):
+#: the FK branch is 7 ms and a SINGLE-pattern trigram probe is 222 ms warm, so
+#: the budget is roughly 5x what the retained work costs and still 5x better than
+#: the 12.4 s median it replaces.
+_READER_BUDGET_MS = 2500
+
+#: A branch is SKIPPED rather than started when less than this remains. Starting
+#: a statement you have already computed cannot finish costs the reader the whole
+#: remaining wait and returns nothing — the budget guard would become the new
+#: failure mode it exists to prevent (`backfill_winners::_run_bounded`, gotcha
+#: #42 in another costume — the same sentence LAT-P145 quoted one level up).
+_MIN_BRANCH_MS = 250
+
+#: How long ONE branch may run. Unchanged in value and in meaning from the
+#: `SET LOCAL statement_timeout = '12000'` this route has carried since #1197 —
+#: LAT-P145 changed who survives the expiry, deliberately not how long the
+#: expiry takes, so no team that completes today starts failing tomorrow.
+_BRANCH_TIMEOUT_MS = 12000
+
+#: The criteria, named. LAT-P145 made the names load-bearing: a branch that
 #: times out is now REPORTED, by name, in the envelope's `quality_reasons`, so a
 #: reader of the payload can tell "this team has no player props" from "we could
 #: not read the player props in time".
+#:
+#: LAT-P164 SPLIT THE TWO NAME BRANCHES BY PATTERN CLASS, and the split is the
+#: ship. The team-name pattern and the roster patterns were one query per column,
+#: so they shared one fate and one cost — and they have neither in common:
+#:
+#:     Virginia Cavaliers, production, EXPLAIN ANALYZE 2026-08-31
+#:       outcome branch, 41 patterns   11,830 ms   <- trips the 12 s expiry
+#:       outcome branch,  1 pattern       222 ms   <- returns all 6 real rows
+#:
+#: Cost is linear in probe count (this module's header measured it, and LAT-P164
+#: re-measured the curve: 1/2/5/10/20/41 patterns -> 222/107/646/768/1,990/4,752
+#: ms warm), so 40 of the 41 probes are 97% of the bill. Splitting them buys two
+#: separate things: the roster probe can be left off the reader's path, and — the
+#: independent correctness win — a roster expiry no longer discards the
+#: team-name rows that were already fetched beside it. That is LAT-P145's own
+#: finding applied one level down: it stopped a branch erasing its SIBLINGS, and
+#: this stops the expensive HALF of a branch erasing the cheap half.
 _BRANCH_TEAM_ID = "team_id"
 _BRANCH_OUTCOME_NAME = "outcome_name"
 _BRANCH_MARKET_NAME = "market_name"
+_BRANCH_OUTCOME_ROSTER = "outcome_roster"
+_BRANCH_MARKET_ROSTER = "market_roster"
 
 
 def _escape_like(s: str) -> str:
@@ -228,8 +279,17 @@ async def resolve_team(db: AsyncSession, identifier: str) -> Team | None:
     return result.scalars().first()
 
 
-async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[dict, bool]:
+async def build_prop_families(
+    team: Team, db: AsyncSession, cap: int, budget_ms: int | None = None
+) -> tuple[dict, bool]:
     """Build one team's prop-family payload. Returns ``(payload, unusable)``.
+
+    ``budget_ms`` is the TOTAL wall-clock a caller may spend across all branches,
+    or ``None`` for "nobody is waiting" — the background rebuild, where the
+    per-branch bound is the only bound and the behaviour is unchanged. It
+    defaults to ``None`` so that a caller must ASK to be bounded: a producer that
+    silently inherited a reader's budget would quietly stop producing the
+    complete answer the reader is being deferred to.
 
     `unusable` is True only when EVERY branch failed, i.e. when the empty
     `families` list is entirely an ARTEFACT rather than an answer. The caller must
@@ -314,25 +374,41 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
             .limit(_cap)
         )
 
-    # Name patterns (team full name + roster players) drive the two trigram
-    # branches; the FK branch needs no pattern.
-    _name_pats: list[str] = []
+    # Name patterns drive the trigram branches; the FK branch needs no pattern.
+    # LAT-P164: the team's own name and its roster are kept APART, because they
+    # have different costs (1 probe vs up to 40) and different yields, and the
+    # branch order below spends the reader's budget on the cheap one first.
+    _team_pats: list[str] = []
     if team.name:
-        _name_pats.append(f"%{_escape_like(team.name.strip())}%")
-    for player in _roster_player_names(team):
-        _name_pats.append(f"%{_escape_like(player)}%")
-
-    branches: list[tuple[str, object]] = [
-        (_BRANCH_TEAM_ID, FuturesOutcome.team_id == team.id)  # FK branch (indexed)
+        _team_pats.append(f"%{_escape_like(team.name.strip())}%")
+    _roster_pats: list[str] = [
+        f"%{_escape_like(player)}%" for player in _roster_player_names(team)
     ]
-    if _name_pats:
+
+    def _ilike_any(col, pats: list[str]):
         # One ScalarArrayOp per column → a single GIN trigram index scan for that
         # column, NOT one bitmap index scan per pattern and NOT a join-wide seq
         # scan. `literal(..., ARRAY(Text))` binds the patterns as one text[]
         # parameter, exactly as the `or_()` form bound them one at a time.
-        _pats = literal(_name_pats, ARRAY(Text))
-        branches.append((_BRANCH_OUTCOME_NAME, FuturesOutcome.name.ilike(any_(_pats))))
-        branches.append((_BRANCH_MARKET_NAME, FuturesMarket.name.ilike(any_(_pats))))
+        return col.ilike(any_(literal(pats, ARRAY(Text))))
+
+    # ORDERED CHEAPEST-AND-SUREST FIRST, because a budget spends itself in order
+    # and whatever it cannot reach is what gets deferred. The FK branch is the
+    # team's own futures (7 ms, indexed); the team-name probes are one pattern
+    # each; the roster probes are the 40 that cost 97% of the build.
+    branches: list[tuple[str, object]] = [
+        (_BRANCH_TEAM_ID, FuturesOutcome.team_id == team.id)  # FK branch (indexed)
+    ]
+    if _team_pats:
+        branches.append((_BRANCH_OUTCOME_NAME, _ilike_any(FuturesOutcome.name, _team_pats)))
+        branches.append((_BRANCH_MARKET_NAME, _ilike_any(FuturesMarket.name, _team_pats)))
+    if _roster_pats:
+        branches.append(
+            (_BRANCH_OUTCOME_ROSTER, _ilike_any(FuturesOutcome.name, _roster_pats))
+        )
+        branches.append(
+            (_BRANCH_MARKET_ROSTER, _ilike_any(FuturesMarket.name, _roster_pats))
+        )
 
     # 🔴 SCALARS BEFORE THE FIRST BRANCH RUNS. A branch that times out rolls its
     # transaction back, and a rollback EXPIRES every ORM object in the session —
@@ -358,10 +434,27 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
     by_market: dict[int, dict] = {}
     _seen_oids: set[int] = set()
     lost: list[str] = []
+    deferred: list[str] = []
+
+    # LAT-P164: the reader's TOTAL budget, spent in branch order. `budget_ms is
+    # None` is the background path — nobody is waiting, so the per-branch bound
+    # is the only bound and behaviour is byte-for-byte what it was.
+    _t0 = time.monotonic()
 
     for _name, _cond in branches:
+        _timeout_ms = _BRANCH_TIMEOUT_MS
+        if budget_ms is not None:
+            _remaining = budget_ms - int((time.monotonic() - _t0) * 1000)
+            if _remaining < _MIN_BRANCH_MS:
+                # NOT started. A cancelled statement still costs its full wait,
+                # so a branch we already know cannot finish is skipped outright
+                # and reported — the reader gets the page now and the background
+                # rebuild scheduled behind them fills this in for everyone after.
+                deferred.append(_name)
+                continue
+            _timeout_ms = min(_remaining, _BRANCH_TIMEOUT_MS)
         try:
-            await db.execute(text(f"SET LOCAL statement_timeout = '{_BRANCH_TIMEOUT_MS}'"))
+            await db.execute(text(f"SET LOCAL statement_timeout = '{_timeout_ms}'"))
             _result = (await db.execute(_branch(_cond))).all()
         except Exception as exc:  # noqa: BLE001 — classified below, then contained
             # The transaction is aborted by the cancellation; roll it back so the
@@ -378,7 +471,7 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
                 logger.warning(
                     "prop-families: %s branch timed out for team %s after %d ms — "
                     "serving the branches that landed",
-                    _name, _team_id, _BRANCH_TIMEOUT_MS,
+                    _name, _team_id, _timeout_ms,
                 )
             else:
                 # Narrow containment (gotcha #45): a real query defect is not a
@@ -426,8 +519,11 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
             )
 
     # Every branch gone is the old whole-request degrade, and it keeps the old
-    # answer: an empty payload the caller must not store.
-    if len(lost) == len(branches):
+    # answer: an empty payload the caller must not store. A branch DEFERRED by
+    # the budget counts here for the same reason a branch lost to an expiry
+    # does: nothing ran, so an empty `families` is an artefact of the bound and
+    # not an answer about this team (gotcha #53).
+    if len(lost) + len(deferred) == len(branches):
         return _payload([]), True
 
     payload = _payload(group_prop_families(list(by_market.values())))
@@ -437,6 +533,13 @@ async def build_prop_families(team: Team, db: AsyncSession, cap: int) -> tuple[d
         # beside it. The severity is declared HERE, at the swallow point, because
         # this is the only place that knows which branch was lost.
         note_build_loss(payload, f"branch_timeout:{_name}", LOSS_PARTIAL)
+    for _name in deferred:
+        # A DIFFERENT REASON STRING, deliberately. `branch_timeout` means we
+        # tried and the database ran out of time; `branch_deferred` means we
+        # chose not to spend the reader's wait on it. Collapsing the two would
+        # hide a real regression — a branch that starts timing out — inside a
+        # reason that is expected and benign.
+        note_build_loss(payload, f"branch_deferred:{_name}", LOSS_PARTIAL)
     return payload, False
 
 
@@ -482,7 +585,7 @@ def _mirror_is_full(rc, keys: ConceptCacheKeys) -> bool:
 
 
 async def build_and_cache_prop_families(
-    team: Team, db: AsyncSession, cap: int, rc=None
+    team: Team, db: AsyncSession, cap: int, rc=None, budget_ms: int | None = None
 ) -> tuple[dict, bool]:
     """Build one team's families, stamp the envelope, write both slots.
 
@@ -518,7 +621,7 @@ async def build_and_cache_prop_families(
     ends the loop; the mirror guard is what stops the fix from costing a warmed
     team its content.
     """
-    payload, unusable = await build_prop_families(team, db, cap)
+    payload, unusable = await build_prop_families(team, db, cap, budget_ms=budget_ms)
     # Pop the private loss list FIRST and unconditionally — it must not reach
     # Redis or the wire on any path, including the ones that return early.
     quality, reasons = take_build_quality(payload)
@@ -613,6 +716,13 @@ async def get_team_prop_families(
     (e.g. `["branch_timeout:outcome_name"]`). That is the shape an NFL team page
     returns today while the season is more than a fortnight out — and it is
     cached, so it is paid for once rather than by every reader.
+
+    LAT-P164: a cold build is BUDGETED, so `quality_reasons` may also carry
+    `branch_deferred:<name>` — a branch this reader was not asked to wait for.
+    Any such build schedules the same single-flight rebuild a mirror serve does,
+    which runs unbudgeted and publishes the complete answer for everyone after.
+    Without that dispatch the deferral would not be a deferral: it would be a
+    silent, permanent narrowing of the page for one primary TTL at a time.
     """
     team = await resolve_team(db, identifier)
     if not team:
@@ -637,7 +747,25 @@ async def get_team_prop_families(
 
     # 3. Nothing usable cached — build inline. A cold miss must still SERVE, so
     #    this path stays synchronous and is never gated on the refresh task.
-    payload, degraded = await build_and_cache_prop_families(team, db, cap, rc)
+    #
+    #    LAT-P164: and it is BUDGETED, because this is the only path on which a
+    #    person is holding a blank section open while Postgres works. It is the
+    #    path the ring caught nine times in 24 h, six of them at 12.4-13.0 s.
+    payload, degraded = await build_and_cache_prop_families(
+        team, db, cap, rc, budget_ms=_READER_BUDGET_MS
+    )
+
+    # LAT-P164: a budgeted build that did not get everything hands the rest to
+    # the background. This is the SAME single-flight dispatch step 2 makes, for
+    # the same reason, and it is what makes a deferral a WAIT rather than a LOSS:
+    # the rebuild runs unbudgeted and publishes the complete answer for every
+    # reader after this one. It covers the `degraded` case too — a build that
+    # got nothing is the case that most needs somebody to try again — which is
+    # why it is computed from the envelope BEFORE that branch returns.
+    _env = payload.get(ENVELOPE_FIELD) if isinstance(payload, dict) else None
+    if not isinstance(_env, dict) or _env.get("quality") != QUALITY_FULL:
+        _schedule_refresh(rc, keys, team.id, cap)
+
     if degraded:
         # Re-read the mirror rather than trusting step 2: a concurrent refresh may
         # have landed one while we were building. A real snapshot beats a timeout's
