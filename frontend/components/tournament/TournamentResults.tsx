@@ -2,6 +2,7 @@
 
 import React from "react";
 
+import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   DRAW_LABELS,
@@ -64,16 +65,46 @@ import {
  * one as the other would be a fabricated answer to a different question under a
  * real player's name.
  *
- * ═══ ON PLAYER IMAGES (Alex's item 8) — DELIBERATELY ABSENT ═══
+ * ═══ ON PLAYER IMAGES (Alex's item 8) — PRESENT SINCE UX-P206 ═══
  *
- * "Enable ONLY if coverage is ~complete per draw — half-covered looks worse
- * than none." Censused 2026-08-26 against ESPN's ATP and WTA rankings, which
- * is where our contenders resolve: **22 of 36 men's contenders (61%) and 21 of
- * 44 women's (48%)** have a headshot. Ben Shelton, Jack Draper, Holger Rune,
- * Emma Raducanu, Emma Navarro and Jasmine Paolini are all missing. That is
- * exactly the half-covered case the gate was written to refuse, so there are
- * no images here and the report carries the numbers rather than the decision
- * being re-litigated in a later lane.
+ * Alex, 2026-08-30, on the live Tournament tab: *"player faces missing"*. He
+ * was right, and the paragraph that used to sit here was the reason.
+ *
+ * IT WAS NOT A REVERTED COMMIT. This section never rendered a face; it refused
+ * to, on a census, and the refusal was correct on the day it was written and
+ * wrong within twenty-four hours. The census was **ESPN's own tennis
+ * headshots** — 61% of the men's contenders and 48% of the women's — measured
+ * 2026-08-26 against the ruling-8 gate, *"enable ONLY if coverage is ~complete
+ * per draw; half-covered looks worse than none."* Half-covered it was, so the
+ * gate refused it.
+ *
+ * The next day UX-P142 shipped a DIFFERENT source. `PlayerAvatar` renders a
+ * register-pinned block whose subject is verified offline against the source's
+ * own description (`backend/scripts/census_player_images.py`), and ESPN's
+ * headshots are not in it — that component's own docstring records them
+ * failing the same gate for the same reason. The board, the match list and the
+ * playoff grid all moved onto the pinned block. This section kept refusing a
+ * source nobody was offering it any more, and so it became the one list on the
+ * tab with no faces on it — which is exactly what "half-covered looks worse
+ * than none" was written to prevent, arrived at from the other direction.
+ *
+ * THE GATE, RE-RUN AGAINST THE SOURCE THAT ACTUALLY FEEDS THE COMPONENT,
+ * over the 2026-08-30 production payload's 124 rows (248 player slots):
+ *
+ *   | draw            | slots | face      | flag     | any image  |
+ *   |-----------------|-------|-----------|----------|------------|
+ *   | men's singles   |  112  |  91  81%  |  21  19% |  112  100% |
+ *   | women's singles |  136  | 115  85%  |  21  15% |  136  100% |
+ *
+ * Zero initials, on either draw. That clears the gate more comfortably than
+ * the main-draw fixtures did (94% / 95% face) — because the gate is about
+ * whether the COLUMN is uniform, and the flag step is what makes it uniform.
+ *
+ * The gate is now COMPUTED and not remembered: `build_results` emits
+ * `player_slots` / `with_face` / `with_flag`, `resultsImageCoverage` reads
+ * them, and a guard asserts the ratio, so the day the register drops a tranche
+ * of pins it is a failing test rather than a lane re-arguing a census from
+ * memory.
  */
 
 /**
@@ -158,8 +189,21 @@ function ResultRow({ result }: { result: TournamentResult }) {
               data-prematch={player.prematch_probability ?? undefined}
               data-prematch-percent={percents[player.entity_key] ?? undefined}
             >
+              {/* RULING 8, ON THIS SECTION AT LAST (UX-P206). 20px and not the
+                  match row's 26: two players share one grid row here, so the
+                  circle is sized to the 13.5px line it sits on rather than to
+                  the 15px line on the other list. `self-center` for the reason
+                  `TournamentMatches` gives — the cell is a baseline flex, and a
+                  circle on a text baseline reads as a bullet. `dim` on the
+                  loser, matching the muted name beside it. */}
+              <PlayerAvatar
+                name={player.display_name}
+                image={player.image}
+                size={20}
+                dim={!player.is_winner}
+              />
               <span
-                className={`truncate text-[13.5px] ${
+                className={`ml-2 truncate text-[13.5px] ${
                   player.is_winner
                     ? "font-semibold text-text-primary"
                     : "font-normal text-text-muted"

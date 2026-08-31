@@ -1797,6 +1797,118 @@ def test_prices_is_optional_so_an_older_caller_cannot_crash_the_section():
     assert payload["with_prematch"] == 0
 
 
+# ---------------------------------------------------------------------------
+# UX-P206 — the finished-match rows carry the player's face
+# ---------------------------------------------------------------------------
+#
+# Alex, 2026-08-30: "player faces missing on the Tournament tab". The board and
+# the match list read `player_image`; this builder did not, so the one list
+# still populated on that tab had nothing to draw a person with.
+
+
+def _register_with_images(*, second_image=None):
+    """The results register, with a pinned face on one player.
+
+    The second player's block is the parameter, so one helper covers all three
+    avatar steps: a face, a flag-only block, and nothing at all.
+    """
+    register = _results_register()
+    # Keyed on entity, never on list position — the fixture's order is an
+    # implementation detail and pinning a face to the wrong player is the exact
+    # class of defect the register exists to make impossible.
+    by_key = {p["entity_key"]: p for p in register["players"]}
+    by_key["jacob-fearnley"]["image"] = {
+        "url": "https://upload.wikimedia.org/fearnley.jpg",
+        "flag_url": "https://a.espncdn.com/gbr.png",
+        "verified_subject": True,
+    }
+    if second_image is not None:
+        by_key["roberto-carballes-baena"]["image"] = second_image
+    return register
+
+
+def test_a_result_player_carries_the_register_pinned_image():
+    payload = build_results(_register_with_images(), results=_espn())
+    [row] = payload["matches"]
+    fearnley = next(p for p in row["players"] if p["entity_key"] == "jacob-fearnley")
+    assert fearnley["image"] == {
+        "url": "https://upload.wikimedia.org/fearnley.jpg",
+        "flag_url": "https://a.espncdn.com/gbr.png",
+    }
+
+
+def test_the_evidence_and_the_verification_flag_do_not_reach_the_client():
+    """`player_image` ships two URLs and nothing else — and it stays that way.
+
+    A client handed `verified_subject` is a client invited to re-decide whether
+    the picture is of the right person, and that decision is made offline
+    precisely so it is not made at render time.
+    """
+    register = _register_with_images()
+    pinned = next(p for p in register["players"] if p["entity_key"] == "jacob-fearnley")
+    pinned["image"]["evidence"] = {"description": "British tennis player"}
+    payload = build_results(register, results=_espn())
+    [row] = payload["matches"]
+    fearnley = next(p for p in row["players"] if p["entity_key"] == "jacob-fearnley")
+    assert set(fearnley["image"]) == {"url", "flag_url"}
+
+
+def test_a_player_the_register_pins_nothing_for_gets_none_not_a_crash():
+    payload = build_results(_results_register(), results=_espn())
+    [row] = payload["matches"]
+    assert all(p["image"] is None for p in row["players"])
+    # …and the row is still built. A missing face never costs a result.
+    assert row["score"] == "7-6, 6-3"
+
+
+def test_the_coverage_counters_split_face_from_flag_from_nothing():
+    """Ruling 8's gate is COMPUTED, so it can never go stale in a comment.
+
+    Counted in player SLOTS and not rows, because a row has two of them and it
+    is routinely one-sided: a seeded player is pinned and their qualifier
+    opponent is a flag.
+    """
+    # One face, one flag-only.
+    payload = build_results(
+        _register_with_images(second_image={"flag_url": "https://a.espncdn.com/esp.png"}),
+        results=_espn(),
+    )
+    assert payload["player_slots"] == 2
+    assert payload["with_face"] == 1
+    assert payload["with_flag"] == 1
+
+    # One face, one nothing — the initials tail is the remainder, and it is
+    # never reported as a flag.
+    payload = build_results(_register_with_images(), results=_espn())
+    assert payload["player_slots"] == 2
+    assert payload["with_face"] == 1
+    assert payload["with_flag"] == 0
+
+    # No results at all: the denominator is 0, not a division.
+    payload = build_results(_results_register(), results={})
+    assert payload["player_slots"] == 0
+    assert payload["with_face"] == 0
+    assert payload["with_flag"] == 0
+
+
+def test_a_flag_only_block_counts_as_covered_and_not_as_a_face():
+    """The two are different facts and the gate reads the union of them.
+
+    A flag beside a player's name is what every draw sheet in tennis prints; it
+    is what makes the column uniform. But it is not a portrait, and a report
+    that conflated the two would let the face rate collapse silently.
+    """
+    payload = build_results(
+        _register_with_images(second_image={"flag_url": "https://a.espncdn.com/esp.png"}),
+        results=_espn(),
+    )
+    [row] = payload["matches"]
+    baena = next(
+        p for p in row["players"] if p["entity_key"] == "roberto-carballes-baena"
+    )
+    assert baena["image"] == {"url": None, "flag_url": "https://a.espncdn.com/esp.png"}
+
+
 def test_the_route_hands_build_results_the_prices_it_already_loaded():
     """The wiring, which is the half a unit test cannot see.
 

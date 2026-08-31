@@ -30,6 +30,7 @@ import {
   resultSentence,
   resultsEmptyReason,
   resultsForDraw,
+  resultsImageCoverage,
   roundHeading,
   sortedResults,
   type TournamentResult,
@@ -851,5 +852,150 @@ describe("UX-P146 — the prior beside the result", () => {
     const two = [withPrior(0.62, 0.38), result({ matchup_key: "espn:2" })];
     expect(prematchCoverage(two)).toEqual({ withPrior: 1, total: 2 });
     expect(prematchCoverage([])).toEqual({ withPrior: 0, total: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX-P206 — the finished-match rows show the player's face
+// ---------------------------------------------------------------------------
+//
+// Alex, 2026-08-30, on the live Tournament tab: "player faces missing". The
+// board and the match list read the register's pinned block; this section
+// refused images on a census of a source it is not fed by, and so became the
+// one list on that tab drawn without people on it.
+//
+// Asserted at the RENDER and not on `avatarKind`, because a pure-layer test
+// stays green the day the component stops printing the avatar
+// (`reference_plant_must_hit_the_render`).
+
+const FACE = "https://upload.wikimedia.org/fearnley.jpg";
+const FLAG = "https://a.espncdn.com/gbr.png";
+
+function withFaces(): ResultsModel {
+  return results({
+    matches: [
+      result({
+        players: [
+          { entity_key: "jacob-fearnley", display_name: "Jacob Fearnley", seed: null,
+            is_winner: true, prematch_probability: null,
+            image: { url: FACE, flag_url: FLAG } },
+          { entity_key: "roberto-carballes-baena", display_name: "Roberto Carballes Baena",
+            seed: null, is_winner: false, prematch_probability: null,
+            image: { url: null, flag_url: "https://a.espncdn.com/esp.png" } },
+        ],
+      }),
+    ],
+    player_slots: 2,
+    with_face: 1,
+    with_flag: 1,
+  });
+}
+
+describe("UX-P206 — a finished match draws its players", () => {
+  it("renders an avatar for BOTH sides of the row", () => {
+    const html = renderToStaticMarkup(
+      <TournamentResults results={withFaces()} draw="mens-singles" />
+    );
+    // Two avatars, one per player — not one for the winner and a gap where the
+    // loser should be, which is what a `player.is_winner &&` would produce and
+    // which would read as an ingest gap rather than a layout choice.
+    expect(html.split('data-testid="player-avatar"').length - 1).toBe(2);
+    expect(html).toContain(FACE);
+  });
+
+  it("draws the FACE when one is pinned and the FLAG when one is not", () => {
+    const html = renderToStaticMarkup(
+      <TournamentResults results={withFaces()} draw="mens-singles" />
+    );
+    expect(html).toContain('data-kind="face"');
+    expect(html).toContain('data-kind="flag"');
+    expect(html).toContain("https://a.espncdn.com/esp.png");
+  });
+
+  it("attaches each avatar to the RIGHT player", () => {
+    const html = renderToStaticMarkup(
+      <TournamentResults results={withFaces()} draw="mens-singles" />
+    );
+    /* A face under the wrong name is the worst failure this page has: instant,
+     * confident, and something the reader cannot check.
+     *
+     * THIS ASSERTION WAS WRITTEN TWICE. The first version pinned the FACE
+     * avatar to Fearnley's name and passed a plant that fed EVERY avatar
+     * `players[0].display_name` — Fearnley is `players[0]`, so the one pairing
+     * it checked was the one the plant happened to leave correct. A guard that
+     * only inspects the row's first player cannot see a bug that mislabels the
+     * second. Both cells are walked now, each against its OWN entity.
+     */
+    const cells = html
+      .split('data-testid="result-player"')
+      .slice(1)
+      .map((chunk) => chunk.slice(0, chunk.indexOf('data-testid="result-player"') + 1 || undefined));
+    expect(cells).toHaveLength(2);
+    const expected: Record<string, string> = {
+      "jacob-fearnley": "Jacob Fearnley",
+      "roberto-carballes-baena": "Roberto Carballes Baena",
+    };
+    for (const cell of cells) {
+      const entity = /data-entity="([^"]+)"/.exec(cell)?.[1];
+      const avatarName = /data-entity-name="([^"]+)"/.exec(cell)?.[1];
+      expect(entity).toBeDefined();
+      expect(avatarName).toBe(expected[entity as string]);
+    }
+  });
+
+  it("falls through to initials rather than throwing on an old cached payload", () => {
+    // `image` is optional on the type precisely so a payload written before the
+    // field existed still renders. Undefined, not null — the shape a stale
+    // cache actually has.
+    const html = renderToStaticMarkup(
+      <TournamentResults results={results()} draw="mens-singles" />
+    );
+    expect(html).toContain('data-kind="initials"');
+    expect(html).toContain("JF");
+    // And the row is intact. A missing face never costs a result.
+    expect(html).toContain("7-6, 6-3");
+  });
+
+  it("keeps the three grid tracks — the avatar rides INSIDE the name cell", () => {
+    // UX-P147's columns are the reason this section is legible. An avatar added
+    // as a fourth grid child would silently re-flow every prior and every score
+    // one track to the right, on every row.
+    const html = renderToStaticMarkup(
+      <TournamentResults results={withFaces()} draw="mens-singles" />
+    );
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_max-content_max-content]");
+    const cell = html.indexOf('data-testid="result-player"');
+    const avatar = html.indexOf('data-testid="player-avatar"');
+    expect(cell).toBeLessThan(avatar);
+  });
+});
+
+describe("UX-P206 — ruling 8's coverage gate is computed, not remembered", () => {
+  it("reads the payload's own counters", () => {
+    expect(resultsImageCoverage(withFaces())).toEqual({
+      slots: 2,
+      withImage: 2,
+      withFace: 1,
+      fraction: 1,
+    });
+  });
+
+  it("counts a FLAG as covered — that is what makes the column uniform", () => {
+    const flagsOnly = results({ player_slots: 4, with_face: 0, with_flag: 4 });
+    expect(resultsImageCoverage(flagsOnly)).toMatchObject({
+      withImage: 4,
+      withFace: 0,
+      fraction: 1,
+    });
+  });
+
+  it("returns null for NOT MEASURED, which is not the same as zero", () => {
+    // Gotcha #53: an absent counter and a counter reading 0 are different
+    // facts, and a gate that conflates them fails open on an old cache.
+    expect(resultsImageCoverage(results())).toBeNull();
+    expect(resultsImageCoverage(null)).toBeNull();
+    expect(resultsImageCoverage(results({ player_slots: 0 }))).toBeNull();
+    const measuredZero = results({ player_slots: 4, with_face: 0, with_flag: 0 });
+    expect(resultsImageCoverage(measuredZero)).toMatchObject({ fraction: 0 });
   });
 });
