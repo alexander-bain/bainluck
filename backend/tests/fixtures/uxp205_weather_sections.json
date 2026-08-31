@@ -1,0 +1,452 @@
+{
+  "_what": "UX-P205 \u2014 GET /api/weather/{featured,events,wildcards} as production served them, captured before a line of the fix was written. All three are NON-empty today: this defect class is LATENT on these sections, not live. It is banked to prove the shape the components must survive, and to prove the healthy path still renders.",
+  "_captured_utc": "2026-08-31",
+  "_live_witness": "The identical collapse FIRED on /api/weather/rain, whose `daily` is [] in the same capture. RainForecast was fixed for it in UX-P170; these three were the remaining unfixed instances (park UX-P186-3).",
+  "served_featured": [
+    {
+      "q": "Exceptional drought (D4) by state \u2014 week of September 1, 2026",
+      "prob": 98,
+      "leader": "Colorado",
+      "src": "polymarket",
+      "tag": "Weather",
+      "closes": "Thu, Sep 3",
+      "market_id": 59646564
+    },
+    {
+      "q": "Highest temperature in Beijing on September 1?",
+      "prob": 40,
+      "leader": "30\u00b0C",
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Tue, Sep 1",
+      "market_id": 59803967
+    },
+    {
+      "q": "Highest temperature in Lucknow on September 1?",
+      "prob": 34,
+      "leader": "30\u00b0C",
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Tue, Sep 1",
+      "market_id": 59803982
+    },
+    {
+      "q": "Highest temperature in Madrid on September 1?",
+      "prob": 46,
+      "leader": "35\u00b0C",
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Tue, Sep 1",
+      "market_id": 59803973
+    },
+    {
+      "q": "Highest temperature in Austin on September 1?",
+      "prob": 43,
+      "leader": "98-99\u00b0F",
+      "src": "polymarket",
+      "tag": "Temperature",
+      "closes": "Tue, Sep 1",
+      "market_id": 59814244
+    }
+  ],
+  "served_events": {
+    "hurricane": [
+      {
+        "q": "When will the next Atlantic hurricane form?",
+        "prob": 96,
+        "leader": "Before Dec 1, 2026",
+        "src": "kalshi",
+        "closes": "Tue, Dec 8"
+      },
+      {
+        "q": "Hurricane Marie category?",
+        "prob": 95,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Will a hurricane make landfall in Virginia by November 30, 2026?",
+        "prob": 95,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Tue, Dec 8"
+      },
+      {
+        "q": "Hurricane Karina category?",
+        "prob": 94,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Will Tropical Storm Lowell strengthen to a hurricane?",
+        "prob": 88,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Wed, Sep 9"
+      },
+      {
+        "q": "Hurricane Lowell category?",
+        "prob": 88,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "What will be the name of the first hurricane in the Atlantic this year?",
+        "prob": 40,
+        "leader": "Edouard",
+        "src": "kalshi",
+        "closes": "Tue, Dec 8"
+      },
+      {
+        "q": "When will the next Category 5 hurricane form?",
+        "prob": 32,
+        "leader": "Before Dec 1, 2026",
+        "src": "kalshi",
+        "closes": "Tue, Dec 8"
+      },
+      {
+        "q": "Will a hurricane make landfall in the US in August?",
+        "prob": 28,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Tue, Sep 1"
+      },
+      {
+        "q": "Hurricane Nana category?",
+        "prob": 17,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Marco category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Leah category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Kyle category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Josephine category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Isaias category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Hanna category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Gonzalo category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Fay category?",
+        "prob": 13,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Norbert category?",
+        "prob": 12,
+        "leader": "Category 5 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Will a hurricane make landfall in North Carolina this year?",
+        "prob": 11,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Fri, Jan 1"
+      },
+      {
+        "q": "Hurricane Omar category?",
+        "prob": 10,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Paulette category?",
+        "prob": 10,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Will a hurricane make landfall in Hawaii in 2026?",
+        "prob": 9,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Fri, Jan 1"
+      },
+      {
+        "q": "Will Tropical Storm Dolly strengthen to a hurricane?",
+        "prob": 8,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Fri, Sep 4"
+      },
+      {
+        "q": "Hurricane Zeke category?",
+        "prob": 7,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Teddy category?",
+        "prob": 7,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Sally category?",
+        "prob": 7,
+        "leader": "Category 2 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Wilfred category?",
+        "prob": 6,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Vicky category?",
+        "prob": 6,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Rene category?",
+        "prob": 6,
+        "leader": "Category 3 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Dolly category?",
+        "prob": 6,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Edouard category?",
+        "prob": 1,
+        "leader": "Category 4 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Julio category?",
+        "prob": 1,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Iselle category?",
+        "prob": 1,
+        "leader": "Category 1 or above",
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Yolanda category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Xavier category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Winnie category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Vance category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Trudy category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Simon category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Rachel category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Polo category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Hurricane Odalys category?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Wed, Dec 2"
+      },
+      {
+        "q": "Tulsa Golden Hurricane vs Creighton Bluejays",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Thu, Sep 3"
+      },
+      {
+        "q": "Will Tropical Storm Karina strengthen to a hurricane?",
+        "prob": 0,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Sun, Sep 6"
+      }
+    ],
+    "earthquake": [
+      {
+        "q": "Will a 6.0+ earthquake occur in the United States by August 31?",
+        "prob": 76,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Thu, Sep 3"
+      },
+      {
+        "q": "8.0 magnitude earthquake in Japan before 2030?",
+        "prob": 38,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Tue, Jan 8"
+      },
+      {
+        "q": "Will there be an at least 8.0 magnitude earthquake in California before 2035?",
+        "prob": 31,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Mon, Jan 7"
+      },
+      {
+        "q": "Will there be an at least 8.0 magnitude earthquake in California before 2028?",
+        "prob": 10,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Sun, Jan 7"
+      }
+    ],
+    "tornadoes": [
+      {
+        "q": "Which cities face tornado risk on August 30?",
+        "prob": 97,
+        "leader": null,
+        "src": "polymarket",
+        "closes": "Mon, Aug 31"
+      },
+      {
+        "q": "Number of tornadoes in Nov 2026?",
+        "prob": 0,
+        "leader": null,
+        "src": "kalshi",
+        "closes": "Tue, Dec 1"
+      }
+    ]
+  },
+  "served_wildcards": [
+    {
+      "q": "Major volcano eruption in 2026?",
+      "prob": 68,
+      "leader": "At least 2",
+      "src": "kalshi",
+      "closes": "Tue, Jun 29",
+      "tag": "Wild card"
+    },
+    {
+      "q": "Will a supervolcano erupt before 2050?",
+      "prob": 27,
+      "leader": null,
+      "src": "kalshi",
+      "closes": "Sat, Jan 8",
+      "tag": "Weather"
+    },
+    {
+      "q": "Min Arctic sea ice extent this summer?",
+      "prob": 16,
+      "leader": "4.0-4.2m sq km",
+      "src": "polymarket",
+      "closes": "Thu, Oct 1",
+      "tag": "Wild card"
+    }
+  ],
+  "_population": {
+    "featured_rows": 5,
+    "events_hurricane": 45,
+    "events_earthquake": 4,
+    "events_tornadoes": 2,
+    "wildcards_rows": 3,
+    "rain_daily_rows": 0,
+    "rain_daily_is_empty": true
+  }
+}

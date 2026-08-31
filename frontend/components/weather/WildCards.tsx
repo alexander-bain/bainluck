@@ -43,12 +43,25 @@ function WildCardSkeleton() {
 
 export default function WildCards() {
   const { data: liveCards, error } = useSWR("weather-wildcards", fetchWildCards, { refreshInterval: 21600000 });
+  // Only `undefined` means still-loading. A 200 carrying an empty list means
+  // loaded-and-empty, and must show an honest card rather than five skeletons
+  // that pulse forever (gotcha #53). Same defect UX-P170 fixed in RainForecast.
+  const loaded = liveCards !== undefined;
   const cards = (liveCards as WildCard[])?.length ? (liveCards as WildCard[]) : null;
 
   if (error && !cards) {
     return (
       <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
         <p className="text-text-secondary text-sm">Failed to load wild cards</p>
+      </div>
+    );
+  }
+
+  if (loaded && !cards) {
+    return (
+      <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+        <p className="text-text-secondary text-sm">No live wild card markets right now</p>
+        <p className="text-text-muted text-xs mt-1.5">This is where the offbeat weather questions sit.</p>
       </div>
     );
   }

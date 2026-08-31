@@ -46,8 +46,11 @@ function HeroCardSkeleton() {
 export default function WeatherHero() {
   const [idx, setIdx] = useState(0);
   const { data: liveItems, error } = useSWR("weather-featured", fetchWeatherFeatured, { refreshInterval: 300000 });
+  // Only `undefined` means still-loading. A 200 carrying an empty list means
+  // loaded-and-empty, and must show an honest card rather than a skeleton that
+  // pulses forever (gotcha #53). Same defect UX-P170 fixed in RainForecast.
+  const loaded = liveItems !== undefined;
   const items = (liveItems as FeaturedMarket[])?.length ? (liveItems as FeaturedMarket[]) : null;
-  const loading = !items && !error;
 
   const advance = useCallback(() => {
     if (!items) return;
@@ -95,8 +98,10 @@ export default function WeatherHero() {
             Weather markets translated into plain probabilities. Rain, temperature, hurricanes, climate &mdash; updated live.
           </p>
 
-          {/* Dots */}
-          {!loading && (
+          {/* Dots. Gated on `items` itself, not on a loading flag: with a fetch
+              error the old `!loading` was TRUE while `items` was null, and
+              `items.map` threw a TypeError that took the whole hero down. */}
+          {items && (
             <div className="flex gap-2">
               {items.map((_, i) => (
                 <button
@@ -116,12 +121,17 @@ export default function WeatherHero() {
           )}
         </div>
 
-        {/* Right — featured card, error, or skeleton */}
+        {/* Right — featured card, error, empty, or skeleton */}
         {error && !items ? (
           <div className="flex items-center justify-center bg-surface-card rounded-[18px] border border-surface-border" style={{ minHeight: 260 }}>
             <p className="text-text-secondary text-sm">Failed to load featured markets</p>
           </div>
-        ) : loading || !current || !src ? (
+        ) : loaded && !items ? (
+          <div className="flex flex-col items-center justify-center text-center bg-surface-card rounded-[18px] border border-surface-border" style={{ minHeight: 260, padding: 28 }}>
+            <p className="text-text-secondary text-sm">No live weather markets right now</p>
+            <p className="text-text-muted text-xs mt-1.5">This is where the featured weather question sits.</p>
+          </div>
+        ) : !current || !src ? (
           <HeroCardSkeleton />
         ) : (
           <div
