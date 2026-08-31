@@ -76,6 +76,8 @@ def _market(
         status="open",
         source="kalshi",
         external_id="KXNBA-CHAMP",
+        # The shape field (#194) the detail payload serves — Q478.
+        market_type="field",
         mutually_exclusive=True,
         commence_time=None,
         resolution_date=now,
@@ -207,6 +209,9 @@ class TestFuturesMarketDetail:
             "status",
             "source",
             "external_id",
+            # Q478: the shape field (#194). It was classified and stored but
+            # never served, so no surface could dispatch its render kernel off it.
+            "market_type",
             "mutually_exclusive",
             "commence_time",
             "resolution_date",

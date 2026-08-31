@@ -562,6 +562,10 @@ def _fake_market(outcomes):
         status="open",
         source="odds_api",
         external_id="nfl_sb_2027",
+        # The shape field (#194) the detail payload serves. A stand-in for the
+        # model that omits a column the route reads is an incomplete double, not
+        # a route bug — Q478.
+        market_type="field",
         mutually_exclusive=True,
         commence_time=None,
         resolution_date=None,

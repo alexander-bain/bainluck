@@ -47,6 +47,12 @@ import {
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
+import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
+import {
+  buildOutcomeLadderRungs,
+  ladderNeedsWideLabels,
+  ladderOrderFor,
+} from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 
@@ -272,6 +278,70 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const groupMarkets = Array.isArray(groupData?.markets) ? groupData.markets : [];
   const thresholdGroups = groupData?.threshold_groups ?? {};
   const thresholdEntries = Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
+
+  // Q478 — dispatch on the SHAPE FIELD (`market_type`, #194), the one value every
+  // surface is supposed to key off (lib/marketShape.ts). Until now the detail page
+  // never read it: the ladder could only be reached through the backend's
+  // `threshold_groups`, whose threshold parser is numeric-only, so a date ladder
+  // ("Before April" … "Before 2027") rendered as a ranked leaderboard with rank
+  // badges and "BA"/"BJ" initial avatars. `resolveShape` prefers the stored field
+  // and keeps its structural fallback for the rows the #194 backfill hasn't reached.
+  const marketShape = market
+    ? resolveShape({
+        market_type: market.market_type,
+        outcomeNames: (market.outcomes ?? []).map((o) => o.name),
+        groupId: market.group_id,
+        groupSize: groupMarkets.length || undefined,
+      })
+    : null;
+  // `threshold_groups` still owns the CROSS-MARKET ladder (many markets, one
+  // question) — this covers the other half: one market whose own outcomes are the
+  // rungs. Only one of the two ever draws, so the page can't print the ladder twice.
+  //
+  // Q481 (CERT-605) — A SETTLED MARKET NEVER LADDERS. Two measured reasons, and the
+  // second is why "just add Won/Lost chrome to the rungs" is not the fix:
+  //
+  //  1. The ladder cannot show a RESULT. `QuantityRung` carries no winner state, so
+  //     a resolved market drew four percentage bars under a "Final Results" heading
+  //     while suppressing the one render that says `Won`/`Lost`/`Settled`. That is
+  //     the `settled means settled` ruling broken on 278,151 markets — 96.6% of all
+  //     `quantity` rows (resolved 278,151 vs open 9,678, production 2026-08-31).
+  //  2. The ladder cannot ORDER a settled market either. Its rung order comes from
+  //     ascending price, and settlement collapses price: of 1,500 settled quantity
+  //     markets carrying a true winner, 1,260 (84%) hold two or fewer distinct
+  //     probabilities and 60 hold exactly one. With every rung at 0% or 100% the
+  //     order falls through to the stable-sort tiebreak — serve order — which for
+  //     109349 is `2027, October, April, July`, i.e. the backwards timeline this
+  //     queue exists to fix, now wearing a ladder's clothes. `opening_probability`
+  //     is not a rescue: only 891 of those 1,500 (59.4%) have it on every row.
+  //
+  // So the graded table renders instead, exactly as it did before Q478. This costs
+  // the ship NOTHING it ever measured: `census_quantity_ladder_q478.py` counts
+  // `WHERE m.market_type = 'quantity' AND m.status = 'open'`, so the whole
+  // 2,882 -> 9,491 win is open markets and every one of them still ladders.
+  // Laddering settled markets was unmeasured scope, not a claim.
+  // Teaching the ladder to grade AND to order itself without prices is filed as a
+  // follow-up; it needs an ordering signal that survives settlement, which is a
+  // data question, not a rendering one.
+  const ownLadderRungs = useMemo(() => {
+    if (marketShape !== SHAPE_QUANTITY) return [];
+    if (thresholdEntries.length > 0) return [];
+    if (market?.status === "resolved") return [];
+    const outcomes = market?.outcomes ?? [];
+    if (outcomes.length < 2) return [];
+    return buildOutcomeLadderRungs(
+      outcomes.map((o) => ({ id: o.id, name: o.name, probability: o.probability })),
+      ladderOrderFor(market?.mutually_exclusive),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    marketShape,
+    thresholdEntries.length,
+    market?.outcomes,
+    market?.mutually_exclusive,
+    market?.status,
+  ]);
+  const hasOwnLadder = ownLadderRungs.length > 0;
   // Progression-ordered markets (e.g., playoff rounds)
   const progressionMarkets = groupMarkets
     .filter((m) => m.group_position !== null && m.group_position !== undefined)
@@ -784,6 +854,22 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         />
       ))}
 
+      {/* Q478 — the same ladder for a market whose OWN outcomes are the rungs.
+          Rungs already carry their final position in `value`, so QuantityGroup's
+          sort is a no-op over them rather than a second opinion. */}
+      {/* Q481 — the title is no longer a ternary on `isResolved`. `hasOwnLadder` is
+          false for every resolved market, so the "Final Results" arm was dead code
+          that read, to anyone scanning this file, as a settled path the ladder
+          handles. It never handled one — that is what CERT-605 blocked. A ladder
+          here always describes a live question. */}
+      {hasOwnLadder && (
+        <QuantityGroup
+          title="All Outcomes"
+          rungs={ownLadderRungs}
+          wideLabels={ladderNeedsWideLabels(ownLadderRungs)}
+        />
+      )}
+
       {/* Progression (e.g., playoff rounds ordered by stage) */}
       {hasGroupProgression && (
         <div className="bg-surface-card rounded-card shadow-card p-6">
@@ -841,7 +927,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           is the product; source divergence is an upstream data-quality bug, not a
           surface to expose. Users see ONE clean number. */}
 
-      {/* All Outcomes Table */}
+      {/* All Outcomes Table — suppressed when the quantity ladder above already
+          rendered these same outcomes. Two renders of one outcome set is how the
+          ladder reads as "extra" instead of as the answer, and the ranked table is
+          the wrong one: it prints rank badges and initial avatars over rungs. */}
+      {!hasOwnLadder && (
       <div className="bg-surface-card rounded-card shadow-card p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
@@ -932,6 +1022,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }
