@@ -54,13 +54,36 @@
  * second, independent layer and they are cheap; what they are no longer is the
  * only thing standing between a rewrite and a regression.
  *
- * ═══ ON THE MOCKS ═══
+ * ═══ ON THE MOCKS — AND WHAT CERT-569 FOUND IN THEM (round 5) ═══
  *
  * The mocks stop at the module boundary the page fetches through. The page's own
  * state machine runs for real — `app/my-stuff` still resolves its principal
  * through the unmocked `clientPrincipal`, and the record it is handed is bound
  * to that principal, because a test that mocked the binding away could not tell
  * an empty state from a cross-account leak.
+ *
+ * That boundary is honest, but the PAYLOADS crossing it were first written from
+ * whatever made the render stop crashing, not from the route that produces them.
+ * CERT-569 blocked the file for the gap that left:
+ *
+ *   CERT-569  the signed-in My Stuff payload omitted `personalization`, which
+ *             `GET /api/feed` emits on every authenticated response. `teamCount`
+ *             sat at `null` — a value no authenticated reader can hold — so the
+ *             empty state was reached by the ABSENCE of a field instead of by
+ *             the path a real reader walks. Mutating the State-B gate from
+ *             `teamCount === 0` to `teamCount !== null`, which diverts every
+ *             real authenticated response to onboarding, stayed green.
+ *
+ * A census of the other five found this defect in NONE of them: `sports/[key]`
+ * and `categories/[slug]` gate on genuinely empty arrays, `hub` on genuinely
+ * empty collections, `playoffs` on one real section holding zero participants
+ * (not a vacuous `.every()` over an empty list), and the `discover` challenge
+ * modal takes its items as a direct prop. Only My Stuff read a field.
+ *
+ * The repair is not a seventh hand-fitted shape. `authenticatedFeedPayload` is
+ * built from `backend/app/routes/feed.py`, both sides of the gate it feeds are
+ * now rendered, and a row below reads that serializer and fails if the fixture
+ * drifts from it.
  *
  *   TZ=UTC npx jest --testPathPatterns=emptyStatesRenderTheirOwnBranch
  */
@@ -82,6 +105,114 @@ const settled = (data: unknown) => ({
   isLoading: false,
   mutate: () => {},
 });
+
+/**
+ * The five keys `GET /api/feed` puts in `personalization` on EVERY
+ * authenticated response (`backend/app/routes/feed.py`, `if ctx.is_authenticated`).
+ * Pinned here and checked against the serializer itself further down.
+ */
+const PERSONALIZATION_KEYS = [
+  "team_count",
+  "sport_affinities_count",
+  "discover_category_affinities_count",
+  "pinned_events",
+  "pinned_futures",
+] as const;
+
+/**
+ * An authenticated, settled, EMPTY feed response — the real payload shape.
+ *
+ * CERT-569 blocked the first version of this file for omitting
+ * `personalization`. The omission was not cosmetic: My Stuff's State-B gate
+ * reads `feedData?.personalization?.team_count ?? null`, so a fixture without
+ * the block leaves `teamCount` at `null` — a value **no authenticated reader
+ * can ever hold**, because the backend emits the block unconditionally once
+ * `ctx.is_authenticated`. The empty state was therefore being reached by the
+ * ABSENCE of a field rather than by the path a real user walks, and an
+ * exact-head mutation of `teamCount === 0` to `teamCount !== null` — which
+ * diverts every real authenticated response to onboarding and makes this empty
+ * state unreachable in production — left the render green.
+ *
+ * `teamCount` is a PARAMETER because the two sides of that gate are two
+ * different screens, and both are pinned below: a reader with saved teams sees
+ * the empty state, a reader with none sees onboarding.
+ */
+function authenticatedFeedPayload(teamCount: number) {
+  return {
+    items: [],
+    total: 0,
+    limit: 20,
+    offset: 0,
+    has_more: false,
+    requires_auth: false,
+    personalized: true,
+    personalization: {
+      team_count: teamCount,
+      sport_affinities_count: 0,
+      discover_category_affinities_count: 0,
+      pinned_events: 0,
+      pinned_futures: 0,
+    },
+  };
+}
+
+/**
+ * Register My Stuff's module graph.
+ *
+ * One registrar for all three renders (saved teams, no teams, signed out) so
+ * the only thing that varies between them is the thing under test. Three
+ * hand-copied mock blocks would let a fixture drift silently, which is the
+ * class of defect this file exists to close.
+ */
+function registerMyStuffMocks(opts: { authenticated: boolean; teamCount?: number }) {
+  jest.doMock("@/hooks", () => ({
+    ...ANALYTICS_HOOKS,
+    usePinnedEvents: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
+    usePinnedFutures: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
+  }));
+  jest.doMock("next/navigation", () => ({
+    useRouter: () => ({ push: () => {}, replace: () => {}, prefetch: () => {} }),
+    useParams: () => ({}),
+  }));
+  jest.doMock("@/components/AuthProvider", () => ({
+    useAuthContext: () => ({
+      user: opts.authenticated ? { uid: "u1", email: "reader@example.com" } : null,
+      isAuthenticated: opts.authenticated,
+      isLoading: false,
+      signInWithGoogle: () => {},
+      signInWithApple: () => {},
+    }),
+  }));
+  jest.doMock("@/lib/firebase", () => ({ preloadFirebaseAuth: () => {} }));
+  jest.doMock("@/lib/api", () => ({
+    fetchFeed: () => {},
+    fetchMyTeamFutures: () => {},
+    fetchEventsByIds: () => {},
+    fetchFuturesByIds: () => {},
+  }));
+  jest.doMock("@/lib/myStuffTelemetry", () => ({
+    classifyMyStuffOutcome: () => (opts.authenticated ? "empty" : "signed-out"),
+    reportMyStuffTelemetry: () => {},
+  }));
+  // `clientPrincipal` is NOT mocked. The page resolves `user:u1` for itself and
+  // `dataForPrincipal` unwraps only a record bound to it, so the payload below
+  // has to carry the real principal to be seen at all.
+  jest.doMock("swr", () => ({
+    __esModule: true,
+    default: (key: unknown) => {
+      if (!opts.authenticated) return settled(undefined);
+      if (key === null || key === undefined) return settled(undefined);
+      const resource = Array.isArray(key) ? key[1] : key;
+      const payload =
+        resource === "feed"
+          ? authenticatedFeedPayload(opts.teamCount ?? 0)
+          : resource === "team-futures"
+            ? { items: [] }
+            : [];
+      return settled({ principal: "user:u1", data: payload });
+    },
+  }));
+}
 
 /**
  * Strip tags so the assertion reads what a PERSON reads.
@@ -171,55 +302,11 @@ const CASES: PageCase[] = [
     retired: "Check back when your teams are playing",
     render: () =>
       renderInIsolation(
-        () => {
-          jest.doMock("@/hooks", () => ({
-            ...ANALYTICS_HOOKS,
-            usePinnedEvents: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
-            usePinnedFutures: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
-          }));
-          jest.doMock("next/navigation", () => ({
-            useRouter: () => ({ push: () => {}, replace: () => {}, prefetch: () => {} }),
-            useParams: () => ({}),
-          }));
-          // Signed IN with a resolved uid: this is the branch the reader is on.
-          jest.doMock("@/components/AuthProvider", () => ({
-            useAuthContext: () => ({
-              user: { uid: "u1", email: "reader@example.com" },
-              isAuthenticated: true,
-              isLoading: false,
-              signInWithGoogle: () => {},
-              signInWithApple: () => {},
-            }),
-          }));
-          jest.doMock("@/lib/firebase", () => ({ preloadFirebaseAuth: () => {} }));
-          jest.doMock("@/lib/api", () => ({
-            fetchFeed: () => {},
-            fetchMyTeamFutures: () => {},
-            fetchEventsByIds: () => {},
-            fetchFuturesByIds: () => {},
-          }));
-          jest.doMock("@/lib/myStuffTelemetry", () => ({
-            classifyMyStuffOutcome: () => "empty",
-            reportMyStuffTelemetry: () => {},
-          }));
-          // `clientPrincipal` is NOT mocked. The page resolves `user:u1` for
-          // itself and `dataForPrincipal` unwraps only a record bound to it, so
-          // the payload below has to carry the real principal to be seen at all.
-          jest.doMock("swr", () => ({
-            __esModule: true,
-            default: (key: unknown) => {
-              if (key === null || key === undefined) return settled(undefined);
-              const resource = Array.isArray(key) ? key[1] : key;
-              const payload =
-                resource === "feed"
-                  ? { items: [], requires_auth: false }
-                  : resource === "team-futures"
-                    ? { items: [] }
-                    : [];
-              return settled({ principal: "user:u1", data: payload });
-            },
-          }));
-        },
+        // Signed IN, with saved teams. `team_count: 3` is the state this empty
+        // state actually exists for — a reader who follows teams and whose feed
+        // came back with nothing. `team_count: 0` is a DIFFERENT screen
+        // (onboarding), pinned separately below.
+        () => registerMyStuffMocks({ authenticated: true, teamCount: 3 }),
         () => React.createElement(require("@/app/my-stuff/page").default),
       ),
   },
@@ -407,41 +494,7 @@ describe("UX-P223 · the render cannot be satisfied from the wrong branch", () =
     // OUT: whatever the signed-out screen says, it is not this site's anchor, so
     // the copy has to live on the authenticated screen to be counted.
     const signedOut = renderInIsolation(
-      () => {
-        jest.doMock("@/hooks", () => ({
-          ...ANALYTICS_HOOKS,
-          usePinnedEvents: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
-          usePinnedFutures: () => ({ pinnedIds: [], isPinned: () => false, togglePin: () => {} }),
-        }));
-        jest.doMock("next/navigation", () => ({
-          useRouter: () => ({ push: () => {}, replace: () => {}, prefetch: () => {} }),
-          useParams: () => ({}),
-        }));
-        jest.doMock("@/components/AuthProvider", () => ({
-          useAuthContext: () => ({
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-            signInWithGoogle: () => {},
-            signInWithApple: () => {},
-          }),
-        }));
-        jest.doMock("@/lib/firebase", () => ({ preloadFirebaseAuth: () => {} }));
-        jest.doMock("@/lib/api", () => ({
-          fetchFeed: () => {},
-          fetchMyTeamFutures: () => {},
-          fetchEventsByIds: () => {},
-          fetchFuturesByIds: () => {},
-        }));
-        jest.doMock("@/lib/myStuffTelemetry", () => ({
-          classifyMyStuffOutcome: () => "signed-out",
-          reportMyStuffTelemetry: () => {},
-        }));
-        jest.doMock("swr", () => ({
-          __esModule: true,
-          default: () => settled(undefined),
-        }));
-      },
+      () => registerMyStuffMocks({ authenticated: false }),
       () => React.createElement(require("@/app/my-stuff/page").default),
     );
 
@@ -449,5 +502,45 @@ describe("UX-P223 · the render cannot be satisfied from the wrong branch", () =
     expect(visibleText(signedOut).length).toBeGreaterThan(0);
     // … but it is NOT where the authenticated empty state lives.
     expect(signedOut).not.toContain('data-empty-state-name="my-stuff-no-teams"');
+  });
+
+  it("a reader with NO saved teams gets onboarding, not the empty state", () => {
+    // The other side of My Stuff's State-B gate, and the row CERT-569's
+    // mutation needed. `teamCount === 0` -> `teamCount !== null` sends EVERY
+    // real authenticated reader to onboarding; the `team_count: 3` render above
+    // catches that, and this row catches the inverse — a gate weakened so that
+    // nobody is ever onboarded — so the predicate is pinned from both sides.
+    const noTeams = renderInIsolation(
+      () => registerMyStuffMocks({ authenticated: true, teamCount: 0 }),
+      () => React.createElement(require("@/app/my-stuff/page").default),
+    );
+
+    expect(visibleText(noTeams)).toContain("Follow some teams to get started");
+    expect(noTeams).not.toContain('data-empty-state-name="my-stuff-no-teams"');
+  });
+
+  it("the authenticated feed fixture carries what the serializer emits", () => {
+    // UX-P223 reverse-engineered these payloads from render crashes rather than
+    // from the route that produces them, and CERT-569 found the gap that left:
+    // a field the backend sends unconditionally was simply missing, so a real
+    // production state was never exercised. This reads the serializer and holds
+    // the fixture to it, so the next field added to `personalization` fails
+    // HERE — loudly, naming the drift — instead of quietly widening the gap.
+    /* eslint-disable @typescript-eslint/no-var-requires */
+    const feedRoute: string = require("node:fs").readFileSync(
+      require("node:path").join(__dirname, "../../../backend/app/routes/feed.py"),
+      "utf8",
+    );
+    /* eslint-enable @typescript-eslint/no-var-requires */
+
+    const block = feedRoute.match(/payload\["personalization"\] = \{([\s\S]*?)\}/);
+    expect(block).not.toBeNull();
+    const emitted = [...(block as RegExpMatchArray)[1].matchAll(/"([a-z_]+)":/g)]
+      .map((m) => m[1])
+      .sort();
+
+    expect(emitted.length).toBeGreaterThan(0);
+    expect([...PERSONALIZATION_KEYS].sort()).toEqual(emitted);
+    expect(Object.keys(authenticatedFeedPayload(3).personalization).sort()).toEqual(emitted);
   });
 });
