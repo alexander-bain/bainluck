@@ -36,13 +36,33 @@
 //     `node_modules` with the npm registry unreachable from the sandbox.
 //
 // The two directions above are also source questions by nature, not by
-// convenience: direction 2 reads a Playwright spec, which is not a component
-// and can never be rendered at all, and direction 1 asserts each hook is
-// declared EXACTLY ONCE — a deduplication property of the file. The seven
-// hooks span five mutually exclusive branches (loading / empty / page on
-// Daily; loading / error / page on the challenge), so no single render sees
-// more than one of them, and a render can never see a duplicate on a branch it
-// did not take.
+// convenience:
+//
+//   - direction 2 reads a Playwright spec. That is not a component; there is
+//     nothing to render, at any point, under any harness.
+//   - direction 1 asserts each hook is declared EXACTLY ONCE. That is a
+//     deduplication property of the FILE, and a render is the wrong instrument
+//     for it in principle: rendering shows you what the branch you took
+//     contains, and can never show you the ABSENCE of a second declaration on
+//     a branch you did not take.
+//
+// CERT-575 blocked an earlier draft of this header for adding a third reason
+// that was simply false — that "no single render sees more than one" hook. It
+// does. Read off the page structure (NOT off a render — see the loading gate
+// above, which is why these sets cannot currently be observed):
+//
+//     Daily      loading   -> {}
+//                empty     -> { daily-empty-state }
+//                playing   -> { daily-page, daily-guess-higher, daily-guess-lower }
+//                completed -> { daily-page, daily-share }
+//     Challenge  loading   -> {}
+//                error     -> { challenge-error }
+//                loaded    -> { challenge-page }
+//
+// `daily-page` is on the <main> wrapper and `QuestionCard` / `SummaryCard`
+// render inside it, so three hooks co-render in the playing state. What is
+// true, and all the argument needs, is that no render carries all seven, and
+// that the two directions above are not render questions to begin with.
 //
 // THE GAP THIS LEAVES, STATED: a hook that MIGRATES between branches — moved
 // from the empty state into the main return, say — keeps its count of one and
