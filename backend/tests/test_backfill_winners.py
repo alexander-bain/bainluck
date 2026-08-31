@@ -1490,16 +1490,39 @@ class TestScoreResolutionOverwritesGuess:
             )
 
     def test_period_spread_uses_team_matching(self):
-        """Period prop spread must match the specific team, not either team."""
-        import inspect
-        from app.tasks.backfill_winners import _resolve_kalshi_period_props
-        src = inspect.getsource(_resolve_kalshi_period_props)
+        """Period prop spread must match the specific team, not either team.
 
-        spread_section = src[src.index("Try spread pattern"):src.index("Try total pattern")]
-        assert "home_tokens" in spread_section, (
-            "Period spread must use team token matching"
+        #2352: this guard used to read `inspect.getsource(...)` and assert the
+        LITERAL STRINGS "home_tokens" and "away_tokens" appeared in the spread
+        section. That is a guard on a local variable's NAME, not on the property
+        in its own docstring — and it was watching the wrong thing twice over:
+
+        * it passed while the code it was guarding graded every AWAY leg of a
+          shared-city matchup off the HOME margin (the whole of #2352), because
+          the defective code also contained those two names; and
+        * it went red the moment the side-picker moved into
+          ``_exclusive_team_side`` and the locals were inlined — i.e. it failed
+          on a strict improvement.
+
+        Replaced with the behavioural property: the two sides must get DIFFERENT
+        verdicts from the same period score. The full shared-city matrix for this
+        path lives in ``test_spread_shared_city_2352.py``.
+        """
+        from app.tasks.backfill_winners import _spread_outcome_is_winner
+
+        # Celtics(H) won the quarter 30-20 — a 10-point margin for exactly one
+        # of the two teams. A grader that matches "either team" gives the same
+        # answer twice; a grader that matches the NAMED team does not.
+        home_leg = _spread_outcome_is_winner(
+            "Boston wins by over 5.5 points",
+            "Boston Celtics", "Los Angeles Lakers", 30, 20,
         )
-        assert "away_tokens" in spread_section
+        away_leg = _spread_outcome_is_winner(
+            "Los Angeles wins by over 5.5 points",
+            "Boston Celtics", "Los Angeles Lakers", 30, 20,
+        )
+        assert home_leg is True
+        assert away_leg is False, "the away leg was graded off the home margin"
 
     def test_moneyline_resolution_logic(self):
         """Moneyline: home team wins when home_score > away_score."""
@@ -1917,11 +1940,44 @@ class TestResolverNoReInversion:
         return inspect.getsource(_resolve_kalshi_spread_total_from_scores)
 
     def test_team_total_branch_skips_spread_names(self):
-        src = self._src()
-        tt = src.split("# Team total:")[1].split("# For spread/total parsing")[0]
-        # spread names ("X wins by over N") must be skipped so the spread branch
-        # (margin-based) handles them, not the team-total branch (raw-score-based).
-        assert "_SPREAD_RE.search(oc.name" in tt
+        """#947: spread names ("X wins by over N") must be refused by the
+        team-total path so the margin-based spread branch handles them, not the
+        raw-score-based one.
+
+        CERT-495 rewrote the team-total branch to grade each leg independently
+        and moved this refusal INTO ``_team_total_outcome_is_winner``. This
+        guard used to assert the string ``_SPREAD_RE.search(oc.name`` against
+        ``inspect.getsource`` of the resolver, so it tracked WHERE the check
+        lived rather than WHETHER it happened — and it went red on a refactor
+        that strengthened the very property it exists to protect. It now asserts
+        the behaviour, which is refactor-proof and strictly harder to fake: a
+        spread name must not be gradeable as a team total at all.
+        """
+        from app.tasks.backfill_winners import _team_total_outcome_is_winner
+
+        # Carolina won 4-1, so the raw score (4) clears a 1.5 line while the
+        # MARGIN (3) is what a spread market actually asks about. If the
+        # team-total grader answered here it would shadow the spread branch.
+        assert (
+            _team_total_outcome_is_winner(
+                "Carolina wins by over 1.5 goals", "Carolina", "Boston", 4, 1
+            )
+            is None
+        )
+        assert (
+            _team_total_outcome_is_winner(
+                "Carolina wins the 1H by over 1.5 goals", "Carolina", "Boston", 4, 1
+            )
+            is None
+        )
+        # …but a genuine team-total leg IS graded, so the refusal is specific
+        # rather than a blanket None (the vacuity companion).
+        assert (
+            _team_total_outcome_is_winner(
+                "Carolina over 1.5 goals", "Carolina", "Boston", 4, 1
+            )
+            is True
+        )
 
     def test_total_branch_grades_each_outcome_independently(self):
         src = self._src()

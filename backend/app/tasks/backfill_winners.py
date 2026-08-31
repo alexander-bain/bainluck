@@ -1205,7 +1205,44 @@ async def _resolve_golf_matchups_from_datagolf():
     return stats
 
 
-async def _resolve_kalshi_from_scores():
+_OUTCOME_PREFETCH_BLOCK = 2000
+
+
+async def _prefetch_outcomes(session, market_ids):
+    """Load ``(id, name)`` for a BLOCK of markets in ONE round trip.
+
+    LAT-P154: the two game-score resolvers used to issue
+    ``SELECT id, name FROM futures_outcomes WHERE market_id = :mid`` once per
+    candidate market. Measured on production 2026-08-30 that statement costs
+    1.114 ms; the shared candidate scan returns **91,776** markets, so the
+    spread/total resolver alone spent ~102 s per cycle inside that loop — a
+    quarter of the whole `score_resolution` phase (397.0 s of a 553.6 s
+    pipeline), which is why `backfill_winners` never reached its calibration
+    half. Fetching a block at a time turns 91,776 round trips into ~46.
+
+    Returns ``{market_id: [row, ...]}`` with each market's outcomes ordered by
+    id. The moneyline resolver already ordered by id; the spread/total resolver
+    left the order to the index scan, so this also makes that order
+    deterministic (it was already id-ordered in practice — the plan's index is
+    ``ix_futures_outcomes_market_id``, whose heap order tracks insertion).
+    """
+    by_market: dict = {}
+    ids = list(market_ids)
+    if not ids:
+        return by_market
+    result = await session.execute(
+        text("""
+            SELECT market_id, id, name FROM futures_outcomes
+            WHERE market_id = ANY(:ids) ORDER BY market_id, id
+        """),
+        {"ids": ids},
+    )
+    for row in result.all():
+        by_market.setdefault(row.market_id, []).append(row)
+    return by_market
+
+
+async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     """Resolve Kalshi game markets from actual Event scores.
 
     For Kalshi markets linked to Events (via event_id) where the Kalshi
@@ -1214,14 +1251,28 @@ async def _resolve_kalshi_from_scores():
     - Moneyline (2 outcomes per team): match outcome name to home/away
     - BTTS (ticker contains 'btts'): both scores > 0
     - Single-outcome moneyline ("Yes"): use ticker team abbreviation
+
+    ``scan_out`` (LAT-P154): an optional dict the caller supplies to receive
+    this run's candidate scan so `_resolve_kalshi_spread_total_from_scores`
+    can reuse it instead of re-running the identical 46 s statement. It is
+    populated with ``{"candidates": rows, "locked_market_ids": set}`` — see
+    that function's ``scan_in`` for why the locked set is the exact stand-in
+    for re-running the HAVING clause after this function's commits.
     """
     stats = {"moneyline": 0, "btts": 0, "skipped": 0, "errors": []}
+    # Markets this run has just given a non-overwritable winner. A market only
+    # leaves the shared candidate set when SOME outcome ends up
+    # `is_winner AND resolution_source NOT IN (overwritable)` — and every write
+    # below stamps 'game_score', which is not overwritable. So "wrote a True"
+    # is exactly the HAVING clause's exclusion, and nothing else is.
+    locked_market_ids: set = set()
 
     try:
         async with get_task_session() as session:
             result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.name AS market_name,
                            fm.external_id AS ticker,
+                           e.id AS event_id,
                            e.home_team_name, e.away_team_name,
                            e.home_score, e.away_score,
                            COUNT(fo.id) AS n_outcomes
@@ -1233,7 +1284,7 @@ async def _resolve_kalshi_from_scores():
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
                       AND fo.current_probability IS NOT NULL
-                    GROUP BY fm.id, fm.name, fm.external_id,
+                    GROUP BY fm.id, fm.name, fm.external_id, e.id,
                              e.home_team_name, e.away_team_name,
                              e.home_score, e.away_score
                     HAVING SUM(CASE WHEN fo.is_winner
@@ -1243,15 +1294,26 @@ async def _resolve_kalshi_from_scores():
                     LIMIT 100000
                 """))
             markets = result.all()
+            if scan_out is not None:
+                scan_out["candidates"] = markets
 
             # Commit incrementally so a long run drains the full backlog (was
             # starved by a 10K row cap vs ~41K selectable, #907) and partial
             # progress survives a timeout/error instead of rolling back the
             # whole batch (gotcha #6). Check is at the top of the loop so the
             # body's many `continue` paths can't skip it.
+            block_outcomes: dict = {}
             for i, row in enumerate(markets):
                 if i and i % 500 == 0:
                     await session.commit()
+                if i % _OUTCOME_PREFETCH_BLOCK == 0:
+                    # LAT-P154: one round trip per block instead of one per
+                    # market. Bounded memory: a block is 2,000 markets.
+                    block_outcomes = await _prefetch_outcomes(
+                        session,
+                        [m.market_id for m in
+                         markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
+                    )
                 ticker_lower = (row.ticker or "").lower()
 
                 # BTTS: both teams to score
@@ -1264,6 +1326,8 @@ async def _resolve_kalshi_from_scores():
                         """),
                         {"won": btts_yes, "mid": row.market_id},
                     )
+                    if btts_yes:
+                        locked_market_ids.add(row.market_id)
                     stats["btts"] += 1
                     continue
 
@@ -1316,14 +1380,11 @@ async def _resolve_kalshi_from_scores():
 
                 home_won = row.home_score > row.away_score
 
-                outcomes = await session.execute(
-                    text("""
-                        SELECT id, name FROM futures_outcomes
-                        WHERE market_id = :mid ORDER BY id
-                    """),
-                    {"mid": row.market_id},
-                )
-                outs = outcomes.all()
+                # LAT-P154: was one round trip per market
+                # (`SELECT id, name FROM futures_outcomes WHERE market_id = :mid
+                # ORDER BY id`); the block prefetch above returns exactly that,
+                # id-ordered, for 2,000 markets at a time.
+                outs = block_outcomes.get(row.market_id, [])
                 if len(outs) != 2:
                     stats["skipped"] += 1
                     continue
@@ -1361,6 +1422,8 @@ async def _resolve_kalshi_from_scores():
                         {"won": won, "oid": out.id, "src": "game_score"},
                     )
                     resolved_any = True
+                    if won:
+                        locked_market_ids.add(row.market_id)
 
                 if resolved_any:
                     stats["moneyline"] += 1
@@ -1372,6 +1435,9 @@ async def _resolve_kalshi_from_scores():
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Kalshi score resolution error: %s", e)
+
+    if scan_out is not None:
+        scan_out["locked_market_ids"] = locked_market_ids
 
     total = stats["moneyline"] + stats["btts"]
     logger.info(
@@ -1388,8 +1454,52 @@ _SPREAD_RE = re.compile(
     r"(.+?) wins(?: the 1H)? by over (\d+\.?\d*)\s+(?:points|runs|goals)",
     re.IGNORECASE,
 )
+
+#: CERT-506: the SINGLE authority on "this Kalshi spread ticker is a PERIOD
+#: market, not a full game". It exists because #2352's first attempt hand-wrote
+#: the character class `[0-9](H|Q|HALF)SPREAD` in the SQL and a matching notion
+#: in Python, and the pair silently omitted **F5** — Kalshi's MLB first-five-
+#: innings family. That omission was not a typo, it was a duplicated definition:
+#: this module ALREADY knows `kxmlbf5*` is period work (`_resolve_kalshi_period_
+#: props` sets `period_key = "f5"` on exactly that prefix), and the widened rail
+#: below did not consult it. So there is now one literal, and both the SQL
+#: predicate and the Python guard are derived from it.
+#:
+#: `[0-9](H|Q|HALF)` covers 1H/2H/1Q-4Q/1HALF; `F5` covers `KXMLBF5SPREAD`. No
+#: full-game family in production matches either — in particular
+#: `KXLIGUE1SPREAD` has a digit immediately before SPREAD and is correctly KEPT,
+#: which is why the digit is anchored to an H/Q/HALF that follows it.
+_PERIOD_TICKER_PATTERN = r"([0-9](H|Q|HALF)|F5)SPREAD"
+_PERIOD_TICKER_RE = re.compile(_PERIOD_TICKER_PATTERN, re.IGNORECASE)
+
+#: #2352: does this spread outcome NAME describe a PERIOD rather than the full
+#: game? Kalshi writes "Detroit wins the 1H by over 9.5 points",
+#: "GB Packers wins 2H by over 9.5 points", "Spurs wins 2Q by over 3.5 points",
+#: and — the shape CERT-506 caught — "Arizona -1.5 first 5 innings".
+#: Only the `the 1H` form is matched by ``_SPREAD_RE`` today, and that is
+#: deliberate: the MAIN resolver detects `1h` in the ticker and grades it against
+#: a reconstructed halftime score.
+#:
+#: This is the SECOND filter, and it is deliberately independent of the ticker
+#: one. A ticker pattern silently admits the next Kalshi period family the day it
+#: appears; a name test does not. Verified against all 13 distinct period name
+#: shapes in production plus the F5 wording.
+_PERIOD_SPREAD_NAME_RE = re.compile(
+    r"\bwins\s+(?:the\s+)?[1-4]\s*(?:H|Q|HALF)\b"
+    r"|\bfirst\s+(?:5|five)\s+innings\b"
+    r"|\bF5\b",
+    re.IGNORECASE,
+)
 _TOTAL_RE = re.compile(
     r"^(?P<dir>Over|Under)\s+(\d+\.?\d*)\s+(?:1H\s+)?(?:2H\s+)?(?:team\s+)?(?:total\s+)?(?:points|runs|goals|maps|rounds|kills)(?:\s+scored)?$",
+    re.IGNORECASE,
+)
+# CERT-495: the TEAM-total leg — "{Team} over N runs scored". Distinct from
+# `_TOTAL_RE` (which is game total, home + away, and carries no team) and from
+# `_SPREAD_RE` (margin, not raw score). The direction group mirrors `_TOTAL_RE`
+# so the three graders read the same way.
+_TEAM_TOTAL_RE = re.compile(
+    r"(.+?)\s+(?P<dir>over|under)\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
     re.IGNORECASE,
 )
 
@@ -1471,6 +1581,17 @@ def _spread_outcome_is_winner(
 
     Returns True/False, or None when the name isn't a spread outcome or the
     named team can't be matched to either side (caller should skip).
+
+    #2352: side selection goes through ``_exclusive_team_side``, the same helper
+    the team-total grader uses. This function used to pick with a bare token
+    intersection, home first — so wherever the two clubs share a city, the city
+    tokens alone satisfied the home branch and **every away leg was graded off
+    the home margin**. ``New York M wins by over 1.5`` in Yankees(H) 6 – Mets(A) 2
+    took the Yankees' +4. The class is catalogued in this repo as
+    ``SHARED_CITY_DIFFERENT_CLUB`` (``tests/test_names_match_authority_2046.py``);
+    it is not an edge case. Refusing an ambiguous leg is the designed outcome —
+    ``is_winner`` here is Tier-1 ``game_score`` and gotcha #21 says an ungraded
+    row beats a confidently wrong one.
     """
     sm = _SPREAD_RE.search(outcome_name or "")
     if not sm:
@@ -1487,12 +1608,12 @@ def _spread_outcome_is_winner(
     home_tokens = set(normalize_team_name(home_team_name or "").split())
     away_tokens = set(normalize_team_name(away_team_name or "").split())
     team_tokens = set(normalize_team_name(team_name).split())
-    if team_tokens & home_tokens:
-        margin = home_score - away_score
-    elif team_tokens & away_tokens:
-        margin = away_score - home_score
-    else:
+    side = _exclusive_team_side(team_tokens, home_tokens, away_tokens)
+    if side is None:
         return None
+    margin = (
+        home_score - away_score if side == "home" else away_score - home_score
+    )
     return margin > line
 
 
@@ -1514,6 +1635,169 @@ def _total_outcome_is_winner(outcome_name, home_score, away_score):
     line = float(tm.group(2))
     total = home_score + away_score
     return total > line if direction == "over" else total < line
+
+
+#: CERT-499: the ONE provider nickname that production actually contains and that
+#: no normalizer resolves. `normalize_team_name("A's")` is `"a's"` BY DESIGN — its
+#: docstring says so, and it is shared with playoffs/march-madness/admin, so it is
+#: not this resolver's to change. The event side spells the club `Athletics`.
+#:
+#: Deliberately NOT a general rule. Stripping the possessive to `a` and
+#: prefix-matching would resolve `A's` against `Athletics` — and equally against
+#: `Astros`, which is the opponent on 21 of the 56 production legs. There is no
+#: rule that maps `A's` to one rather than the other; there is only the fact. So
+#: this table is facts, sourced from the measured population (Athletics legs face
+#: Houston 21, Philadelphia 14, Chicago White Sox 7, NY Mets 7, NY Yankees 7), and
+#: anything not listed is REFUSED rather than guessed.
+_PROVIDER_CLUB_ALIASES = {"a's": "athletics"}
+
+#: Returned when a leg IS a team total but its club cannot be resolved. Distinct
+#: from None ("not a team-total leg, not my business") because the caller must
+#: treat the two differently — see the branch in
+#: `_resolve_kalshi_spread_total_from_scores`.
+_TEAM_TOTAL_UNRESOLVED = object()
+
+
+def _exclusive_team_side(team_tokens, home_tokens, away_tokens):
+    """Which side does ``team_tokens`` name — ``"home"``, ``"away"``, or None?
+
+    CERT-498: a bare token intersection with home-first precedence silently
+    hands every AWAY leg the HOME score whenever the two clubs share a city.
+    ``New York M over 4.5`` in Yankees(H) 2 – Mets(A) 6 intersects
+    ``{new, york}`` with the home tokens first, so it graded the Mets' ladder
+    off the Yankees' score. The repository catalogues this class explicitly —
+    ``SHARED_CITY_DIFFERENT_CLUB`` in ``tests/test_names_match_authority_2046.py``
+    lists Mets/Yankees, Angels/Dodgers, Chargers/Rams, Clippers/Lakers,
+    Islanders/Rangers — so it is a named identity class, not an edge case.
+
+    The rule is EXCLUSIVITY. Tokens the two clubs share carry no information, so
+    they are removed from both sides and from the claim; what is left is the
+    discriminator. A side wins only if the discriminator matches it and NOT the
+    other one. Anything else returns None and the caller skips the leg — an
+    ungraded Tier-1 ``is_winner`` row is always safer than a confidently wrong
+    one (gotcha #21).
+
+    The prefix pass exists because Kalshi abbreviates the club, not the city:
+    the production-derived fixture
+    ``tests/fixtures/related_futures_15200831_identity_20260819.json`` carries
+    ``Los Angeles D`` and ``Los Angeles A`` as literal outcome text. After the
+    shared ``{los, angeles}`` is removed the discriminator is a single letter,
+    which no exact token match can resolve, but ``"dodgers".startswith("d")``
+    can — and only one side can win it. The pass is reached ONLY when the exact
+    pass matched neither side, i.e. only where the old code already returned
+    None, so it can add recall and cannot change an existing verdict.
+
+    ``Chicago WS`` against White Sox / Cubs deliberately returns None: no
+    remaining token starts with ``ws``. Refusing is the designed outcome.
+    """
+    team_tokens = {_PROVIDER_CLUB_ALIASES.get(t, t) for t in team_tokens}
+    shared = home_tokens & away_tokens
+    home_only = home_tokens - shared
+    away_only = away_tokens - shared
+    disc = team_tokens - shared
+    if not disc:
+        # The claim names nothing but the shared city ("New York over 4.5").
+        return None
+
+    def _pick(hit_home, hit_away):
+        if hit_home == hit_away:
+            return None
+        return "home" if hit_home else "away"
+
+    side = _pick(bool(disc & home_only), bool(disc & away_only))
+    if side is not None:
+        return side
+    if disc & home_only or disc & away_only:
+        # Named a token from BOTH clubs — genuinely ambiguous, do not guess.
+        return None
+
+    def _prefixes(side_tokens):
+        return any(t and s.startswith(t) for t in disc for s in side_tokens)
+
+    return _pick(_prefixes(home_only), _prefixes(away_only))
+
+
+def _team_total_outcome_is_winner(
+    outcome_name, home_team_name, away_team_name, home_score, away_score
+):
+    """CERT-495: grade ONE "{Team} over N runs scored" TEAM-total outcome alone.
+
+    This is the third instance of one bug class in this module, and the first two
+    are already fixed twelve hundred lines below: #939 (spreads) and #947 (totals)
+    both used to grade the FIRST matching outcome and then flip every sibling to
+    ``not won``, so a whole market landed all-True or all-False by insertion order.
+    The team-total branch kept doing exactly that until now. The committed capture
+    proves the shape is real and common: ``KXMLBTEAMTOTAL-26JUN052015CINSTL``
+    (`docs/mockups/data/reds.json`) carries **fourteen** outcomes —
+
+        St. Louis over 1.5 … 7.5 runs scored   (7 legs)
+        Cincinnati over 1.5 … 7.5 runs scored  (7 legs)
+
+    — every one of them an "over" leg. The old code derived a single boolean from
+    whichever leg it happened to see first and wrote that boolean to all fourteen,
+    so with St. Louis 5 – Cincinnati 3 it graded "Cincinnati over 7.5" a WINNER.
+    LAT-P154's ``ORDER BY market_id, id`` on the shared prefetch did not create
+    the defect, but it changed which leg comes first, which changes which way a
+    market is corrupted — and it made the broken loop faster, which widens the
+    reach. Order must not be able to matter at all, so it no longer can: each leg
+    is graded on ITS OWN named team and ITS OWN line.
+
+    A leg we cannot parse is returned as ``None`` and the caller SKIPS it. It is
+    deliberately not assigned the complement of some other leg's verdict — that
+    inference is the bug, not a fallback. ``is_winner`` is a Tier-1 column
+    (gotcha #21); leaving a row alone is always safer than writing a value
+    derived from a different question.
+
+    Spread names are refused here rather than by the caller (#947: the greedy
+    "(.+?) over N" also matches "Carolina wins by over 1.5 goals", which would
+    grade a SPREAD by the team's raw score and shadow the correct spread branch).
+
+    "Under" grades as ``score < line``, byte-for-byte the semantic
+    :func:`_total_outcome_is_winner` uses for its own under leg — the three
+    graders must not disagree about what "under" means. No live
+    ``KXMLBTEAMTOTAL`` line in the capture is a whole number, so the push case
+    this exposes is theoretical; when it does occur, both legs reading False is
+    the truthful answer and matches the sibling.
+
+    Returns True/False, or None when the name isn't a team-total leg, the named
+    team matches neither side, or a score is missing (caller skips).
+    """
+    if home_score is None or away_score is None:
+        return None
+    if _SPREAD_RE.search(outcome_name or ""):
+        return None
+    tm = _TEAM_TOTAL_RE.match(outcome_name or "")
+    if not tm:
+        return None
+    # Same normalization as `_spread_outcome_is_winner` — strips diacritics
+    # ("Montréal" -> "montreal") and periods ("St. Louis" -> "st louis"). The
+    # branch this replaces used a raw `.lower().split()`, which is the accented
+    # -name miss #939 already paid for once.
+    from app.utils.name_normalization import normalize_team_name
+
+    side = _exclusive_team_side(
+        set(normalize_team_name(tm.group(1).strip()).split()),
+        set(normalize_team_name(home_team_name or "").split()),
+        set(normalize_team_name(away_team_name or "").split()),
+    )
+    if side == "home":
+        team_score = home_score
+    elif side == "away":
+        team_score = away_score
+    # CERT-499: this leg IS a team total — the regex matched — and we could not
+    # tell whose it is. Say so loudly instead of returning the same None that
+    # means "not a team-total leg": a `game_score` winner is NOT in
+    # OVERWRITABLE_WINNER_SOURCES_SQL, so grading the siblings and skipping this
+    # one drops the market out of every future candidate scan and strands this
+    # ladder permanently. All 56 production `A's` legs went this way.
+    else:
+        return _TEAM_TOTAL_UNRESOLVED
+    line = float(tm.group(3))
+    return (
+        team_score > line
+        if tm.group("dir").lower() == "over"
+        else team_score < line
+    )
 
 
 # #140: Polymarket decomposes game totals into markets named "{A} vs. {B}: O/U N"
@@ -1557,6 +1841,20 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
     Writes is_winner + resolution_source='poly_total_score' via Core UPDATE,
     per-batch commits (#13) so partial progress survives a timeout (gotcha #6).
     Idempotent: once a side is set True the market's BOOL_OR excludes it next run.
+
+    LAT-P154 — the name filter is now IN THE STATEMENT, and it is a correctness
+    fix as much as a cost one. Measured on production 2026-08-30: the query
+    returned its full ``LIMIT 20000`` and **all 20,000 rows failed
+    ``_poly_total_line``**. Unparseable markets can never be graded, so they can
+    never leave the ungraded set — they came back every 6-hour cycle, saturated
+    the limit, and starved every genuinely gradable market behind them while
+    costing 56 s of the 397 s `score_resolution` phase. The SQL predicate
+    ``m.name ~* ':[[:space:]]*o/u'`` is strictly LOOSER than the Python regex
+    (which is ``:\\s*o/u\\s*(\\d+\\.?\\d*)\\s*$`` — anything it matches contains
+    the colon-o/u anchor), so it can only drop rows the loop below already
+    skipped. The Python check stays as the authority; ``no_parse`` should now
+    read ~0. It is served by the existing ``ix_futures_name_trgm`` GIN index —
+    no DDL.
     """
     stats = {"graded": 0, "push_skip": 0, "no_parse": 0, "errors": []}
     try:
@@ -1570,6 +1868,7 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
                     JOIN futures_outcomes u ON u.market_id = m.id
                     WHERE m.source = 'polymarket'
                       AND m.status = 'resolved'
+                      AND m.name ~* ':[[:space:]]*o/u'
                       AND e.status IN ('completed', 'closed')
                       AND e.home_score IS NOT NULL
                       AND e.away_score IS NOT NULL
@@ -1633,7 +1932,7 @@ async def _resolve_polymarket_total_from_scores(limit: int = 20000):
     return stats
 
 
-async def _resolve_kalshi_spread_total_from_scores():
+async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
     """Resolve Kalshi spread and total markets from actual game scores.
 
     Handles both full-game and 1H markets:
@@ -1642,6 +1941,20 @@ async def _resolve_kalshi_spread_total_from_scores():
     - 1H spreads: "{team} wins the 1H by over N points" → reconstruct
       halftime score from scoring_plays
     - 1H totals: "Over N 1H points scored" → same
+
+    ``scan_in`` (LAT-P154): the candidate scan `_resolve_kalshi_from_scores`
+    already ran, as ``{"candidates": rows, "locked_market_ids": set}``. The
+    statement below is byte-identical in FROM/WHERE/HAVING to that one and cost
+    a measured 46 s on production — running it twice per cycle was 46 s of the
+    397 s `score_resolution` phase for nothing.
+
+    Reusing it is EXACT, not approximate. The only way a market can drop out of
+    the set between the two runs is by acquiring an outcome that is
+    ``is_winner AND resolution_source NOT IN (overwritable)``; the sibling
+    resolver's only writes stamp 'game_score', which is not overwritable, so
+    the markets it set a True on are precisely the ones the re-run would have
+    dropped — and it hands them over as ``locked_market_ids``. When ``scan_in``
+    is absent (standalone/tests) the statement runs as before.
     """
     stats = {
         "spread": 0,
@@ -1650,12 +1963,24 @@ async def _resolve_kalshi_spread_total_from_scores():
         "h1_total": 0,
         "no_plays": 0,
         "no_parse": 0,
+        # CERT-499: a refusal that is not counted is a refusal nobody finds. These
+        # two make "the grader declined to attribute this leg" a number in the
+        # phase summary instead of silence.
+        "team_total_unresolved_legs": 0,
+        "team_total_deferred_markets": 0,
+        # #2352: the same counter for the SPREAD grader, which gained the same
+        # exclusivity rule and therefore the same ability to decline a leg.
+        "spread_unresolved_team": 0,
         "errors": [],
     }
 
+    reused = (scan_in or {}).get("candidates")
+    locked = (scan_in or {}).get("locked_market_ids") or frozenset()
+
     try:
         async with get_task_session() as session:
-            result = await session.execute(text("""
+            if reused is None:
+                result = await session.execute(text("""
                     SELECT fm.id AS market_id, fm.external_id AS ticker,
                            fm.name AS market_name,
                            e.id AS event_id,
@@ -1678,87 +2003,99 @@ async def _resolve_kalshi_spread_total_from_scores():
                                THEN 1 ELSE 0 END) = 0
                     LIMIT 100000
                 """))
-            markets = result.all()
+                markets = result.all()
+            else:
+                markets = [m for m in reused if m.market_id not in locked]
 
             # Commit incrementally so a long run drains the full backlog (was
             # starved by a 10K row cap vs ~41K selectable, #907) and partial
             # progress survives a timeout/error instead of rolling back the
             # whole batch (gotcha #6). Check is at the top of the loop so the
             # body's many `continue` paths can't skip it.
+            block_outcomes: dict = {}
             for i, row in enumerate(markets):
                 if i and i % 500 == 0:
                     await session.commit()
+                if i % _OUTCOME_PREFETCH_BLOCK == 0:
+                    # LAT-P154: one round trip per block instead of one per
+                    # market — this loop's per-market fetch was a measured
+                    # 102 s of the phase at 91,776 candidates.
+                    block_outcomes = await _prefetch_outcomes(
+                        session,
+                        [m.market_id for m in
+                         markets[i:i + _OUTCOME_PREFETCH_BLOCK]],
+                    )
                 ticker_lower = (row.ticker or "").lower()
                 is_1h = "1h" in ticker_lower or "1half" in ticker_lower
 
-                # Get all outcomes for this market
-                out = await session.execute(
-                    text(
-                        "SELECT id, name FROM futures_outcomes WHERE market_id = :mid"
-                    ),
-                    {"mid": row.market_id},
-                )
-                outcomes_list = out.all()
+                # Get all outcomes for this market (block-prefetched above)
+                outcomes_list = block_outcomes.get(row.market_id, [])
                 if not outcomes_list:
                     stats["no_parse"] += 1
                     continue
 
-                # Team total: "{Team} over N points scored" in any outcome name
-                resolved_team_total = False
+                # Team total: "{Team} over N runs scored" — every leg graded on
+                # ITS OWN team and ITS OWN line.
+                #
+                # CERT-495: this used to pick the FIRST matching leg, derive one
+                # boolean from that leg's team/line, and write it to every
+                # sibling — the same "flip the siblings" defect #939 fixed for
+                # spreads and #947 for totals, left standing in the third branch.
+                # A real `KXMLBTEAMTOTAL` carries 14 all-"over" legs across two
+                # teams and seven lines, so one leg decided fourteen `is_winner`
+                # rows and half of them were wrong by construction. Which half
+                # depended on iteration order, which is why LAT-P154's
+                # `ORDER BY market_id, id` on the shared prefetch surfaced it.
+                #
+                # Order-independent by construction now: each write is a pure
+                # function of one outcome, so any permutation of `outcomes_list`
+                # produces the identical write set. Legs that do not parse are
+                # SKIPPED, never assigned another leg's complement — see
+                # `_team_total_outcome_is_winner`.
+                #
+                # `stats["total"]` stays a per-MARKET count, exactly as before,
+                # so the phase summary keeps its old meaning; only correctness
+                # moves in this change.
+                #
+                # CERT-499: the write is ALL-OR-NOTHING across the market, and
+                # that is the whole point rather than tidiness. `game_score` is
+                # not in OVERWRITABLE_WINNER_SOURCES_SQL, and the candidate scan
+                # drops any market that already carries a non-overwritable
+                # winner — so grading thirteen legs and skipping one does not
+                # leave the fourteenth for later, it strands it FOREVER. All 56
+                # production `A's` legs were being lost exactly that way. If any
+                # leg is a team total we cannot attribute, the market is
+                # deferred intact and counted, so it stays a candidate and shows
+                # up in the phase summary instead of vanishing silently.
+                tt_writes: list[tuple[int, bool]] = []
+                tt_unresolved = 0
                 for oc in outcomes_list:
-                    # #947: this greedy regex also matches SPREAD outcomes
-                    # ("Carolina wins by over 1.5 goals" → team="Carolina wins by"),
-                    # grading a spread by the team's RAW score instead of the MARGIN
-                    # and shadowing the correct per-outcome spread branch below
-                    # (the spread inverter the #944 re-grade band-aided). Skip any
-                    # spread-pattern name so it falls through to the spread branch.
-                    if _SPREAD_RE.search(oc.name or ""):
-                        continue
-                    _tt_re = re.match(
-                        r"(.+?)\s+over\s+(\d+\.?\d*)\s+(?:points|runs|goals)",
-                        oc.name or "",
-                        re.IGNORECASE,
+                    won = _team_total_outcome_is_winner(
+                        oc.name,
+                        row.home_team_name,
+                        row.away_team_name,
+                        row.home_score,
+                        row.away_score,
                     )
-                    if _tt_re:
-                        team_name = _tt_re.group(1).strip()
-                        line = float(_tt_re.group(2))
-                        home_tokens = (
-                            set(row.home_team_name.lower().split())
-                            if row.home_team_name
-                            else set()
+                    if won is _TEAM_TOTAL_UNRESOLVED:
+                        tt_unresolved += 1
+                    elif won is not None:
+                        tt_writes.append((oc.id, won))
+                if tt_unresolved:
+                    # Deferred, NOT resolved: write nothing, keep the market in
+                    # the candidate set, and make the refusal countable.
+                    stats["team_total_unresolved_legs"] += tt_unresolved
+                    stats["team_total_deferred_markets"] += 1
+                    continue
+                if tt_writes:
+                    for _oid, _won in tt_writes:
+                        await session.execute(
+                            text(
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                            ),
+                            {"won": _won, "oid": _oid},
                         )
-                        away_tokens = (
-                            set(row.away_team_name.lower().split())
-                            if row.away_team_name
-                            else set()
-                        )
-                        team_tokens = set(team_name.lower().split())
-
-                        team_score = None
-                        if team_tokens & home_tokens:
-                            team_score = row.home_score
-                        elif team_tokens & away_tokens:
-                            team_score = row.away_score
-
-                        if team_score is not None:
-                            over = team_score > line
-                            for oc2 in outcomes_list:
-                                is_over_outcome = bool(
-                                    re.match(
-                                        r".+\s+over\s+", oc2.name or "", re.IGNORECASE
-                                    )
-                                )
-                                won = over if is_over_outcome else not over
-                                await session.execute(
-                                    text(
-                                        "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
-                                    ),
-                                    {"won": won, "oid": oc2.id},
-                                )
-                            stats["total"] += 1
-                            resolved_team_total = True
-                            break
-                if resolved_team_total:
+                    stats["total"] += 1
                     continue
 
                 # For spread/total parsing, try each outcome until one matches
@@ -1799,6 +2136,15 @@ async def _resolve_kalshi_spread_total_from_scores():
                             a_for_spread,
                         )
                         if won is None:
+                            # #2352 / CERT-499: the regex already matched, so this
+                            # IS a spread leg and we declined to grade it — almost
+                            # always because `_exclusive_team_side` could not tell
+                            # the two clubs apart. Count it. A silently-skipped leg
+                            # is not deferred for later: `game_score` is not in
+                            # OVERWRITABLE_WINNER_SOURCES_SQL and the candidate scan
+                            # drops any market already holding one, so once a
+                            # SIBLING leg is graded this one is stranded for good.
+                            stats["spread_unresolved_team"] += 1
                             continue
                         await session.execute(
                             text(
@@ -2037,29 +2383,86 @@ async def _regrade_kalshi_nhl_spread_inversions():
     markets whose event_id was corrected by the #944 relink against the now-right
     game.) resolution_source stays ``game_score`` — re-resolve from authoritative
     scores in place, never a bare ``is_winner`` reset (gotcha #21, #899 cohort scope).
+
+    #2352: the ticker scope is now EVERY full-game Kalshi spread family, not just
+    NHL/NBA/MLB. This rail is the only thing that can repair a wrong ``game_score``
+    spread row — that source is not in ``OVERWRITABLE_WINNER_SOURCES_SQL``, so the
+    main resolver's candidate scan will never pull the market again. Measured
+    2026-08-30 over all 17,064 production rows: the shared-city collision left 39
+    rows wrong, and the old ``^KX(NHL|NBA|MLB)SPREAD`` scope could only reach 21 of
+    them. The other 18 (17 ``KXNCAAMBSPREAD``, 1 ``KXMLSSPREAD``) were unreachable —
+    and NCAAMB is both the largest family (6,972 rows) and the one the
+    ``SHARED_CITY_DIFFERENT_CLUB`` catalogue names twice (Boston College / Boston
+    University). Measured cost of the widening: 2,576 ms -> 2,678 ms.
+
+    CERT-506: the widening's period exclusion is derived from
+    ``_PERIOD_TICKER_PATTERN`` rather than hand-written here. The first version
+    hand-wrote it and omitted **F5** — Kalshi's MLB first-five-innings family,
+    which this very module classifies as period work eleven hundred lines below.
+    No `KXMLBF5SPREAD` row is in the `game_score` cohort today (measured: 0 of
+    20,632), so nothing was mis-graded, but they were being admitted to the query
+    and kept out only by two ACCIDENTS — their outcome names read
+    "Arizona -1.5 first 5 innings" and so miss ``_SPREAD_RE``, and none of them
+    carries a `game_score` winner. Neither is a filter anyone chose, and both
+    would fail open the day Kalshi changes its outcome wording. Three filters
+    now, all deliberate: the SQL ticker predicate, the same pattern re-applied in
+    Python so the two cannot drift, and the independent NAME test.
     """
-    stats = {"checked": 0, "flipped": 0, "errors": []}
+    stats = {
+        "checked": 0,
+        "flipped": 0,
+        "skipped_period": 0,
+        "unresolved": 0,
+        "errors": [],
+    }
     try:
         async with get_task_session() as session:
             rows = await session.execute(text("""
                 SELECT fo.id AS oid, fo.name AS oc_name, fo.is_winner AS cur,
+                       fm.external_id AS ticker,
                        e.home_team_name AS home, e.away_team_name AS away,
                        e.home_score AS hs, e.away_score AS as_
                 FROM futures_outcomes fo
                 JOIN futures_markets fm ON fm.id = fo.market_id
                 JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
-                  AND fm.external_id ~ '^KX(NHL|NBA|MLB)SPREAD'
+                  AND fm.external_id ~ 'SPREAD'
+                  AND fm.external_id !~ '""" + _PERIOD_TICKER_PATTERN + """'
                   AND fo.resolution_source = 'game_score'
                   AND e.home_score IS NOT NULL
                   AND e.away_score IS NOT NULL
             """))
             for r in rows.all():
                 stats["checked"] += 1
+                # CERT-506: re-apply the SAME pattern in Python. The SQL
+                # predicate and this guard are built from one literal, so they
+                # cannot drift, and a row that reaches here with a period ticker
+                # means the database's regex flavour disagreed with Python's —
+                # which is a thing to find out about, not to grade through.
+                if _PERIOD_TICKER_RE.search(r.ticker or ""):
+                    stats["skipped_period"] += 1
+                    continue
+                # #2352: this rail holds only the FULL-TIME score, and `_SPREAD_RE`
+                # deliberately also matches Kalshi's halftime shape ("Detroit wins
+                # the 1H by over 9.5 points") because the MAIN resolver grades
+                # those against a reconstructed halftime score. The ticker
+                # predicate above already excludes `KXNBA1HSPREAD` /
+                # `KXNCAAMB1HSPREAD` (3,098 production rows); this NAME test is the
+                # second, independent filter, and unlike the ticker pattern it
+                # cannot be fooled by a Kalshi family we have not seen yet.
+                if _PERIOD_SPREAD_NAME_RE.search(r.oc_name or ""):
+                    stats["skipped_period"] += 1
+                    continue
                 won = _spread_outcome_is_winner(
                     r.oc_name, r.home, r.away, r.hs, r.as_
                 )
                 if won is None:
+                    # #2352 / CERT-499's lesson: a leg we decline to grade must be
+                    # COUNTED, not silently dropped. `game_score` is not
+                    # overwritable, so a row this rail refuses keeps whatever it
+                    # already holds, forever — the refusal IS the final state and
+                    # it must be visible in the task verdict.
+                    stats["unresolved"] += 1
                     continue
                 # write-on-change: skip rows already on the correct side
                 if r.cur is not None and bool(r.cur) == won:
@@ -2999,6 +3402,21 @@ async def _resolve_kalshi_player_props_from_boxscore():
             # event's box score ONCE in bounded batches so peak memory is
             # O(batch of events), not O(all outcomes x JSONB) — letting #937 broaden
             # the re-grade beyond kxnhlpts without re-introducing the OOM.
+            #
+            # LAT-P154: `e.box_score_data IS NOT NULL` as an inline predicate
+            # made the planner drive the whole thing off a SEQ SCAN of
+            # futures_markets (917K rows / 1.6 GB) to apply the ticker LIKE —
+            # 44.7 s measured on production, 11% of the `score_resolution`
+            # phase. Reading the box-score event ids FIRST (7,692 of them,
+            # 0.32 s) and passing them as `= ANY` turns that into a nested loop
+            # on ix_futures_markets_event_id: 2.71 s, same rows. The two reads
+            # are not one snapshot, so a box score written in the ~0.3 s
+            # between them waits for the next cycle; the resolver runs every
+            # 6 h and is idempotent, so that is a lag, not a loss.
+            bs_ids_result = await session.execute(
+                text("SELECT id FROM events WHERE box_score_data IS NOT NULL")
+            )
+            bs_event_ids = [r[0] for r in bs_ids_result.all()]
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
@@ -3008,7 +3426,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
-                      AND e.box_score_data IS NOT NULL
+                      AND fm.event_id = ANY(:bs_event_ids)
                       AND (fo.resolution_source IS NULL
                            OR fo.resolution_source IN
                                """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
@@ -3035,7 +3453,10 @@ async def _resolve_kalshi_player_props_from_boxscore():
                     ORDER BY e.id
                     LIMIT 50000
                 """),
-                {"prefixes": [p + "%" for p in all_prop_prefixes]},
+                {
+                    "prefixes": [p + "%" for p in all_prop_prefixes],
+                    "bs_event_ids": bs_event_ids,
+                },
             )
             from collections import defaultdict as _defaultdict
             rows = result.all()  # small now — no box_score JSONB
@@ -3197,6 +3618,15 @@ async def _resolve_kalshi_total_bases_from_boxscore():
 
     try:
         async with get_task_session() as session:
+            # LAT-P154: same rewrite as the player-prop resolver above, and for
+            # the same reason — the inline `e.box_score_data IS NOT NULL` made
+            # the planner seq-scan futures_markets to apply the ticker prefix,
+            # 17.9 s on production TO RETURN ZERO ROWS. Reading the box-score
+            # event ids first and passing them as `= ANY` costs 0.3 s + 5.8 s.
+            bs_ids_result = await session.execute(
+                text("SELECT id FROM events WHERE box_score_data IS NOT NULL")
+            )
+            bs_event_ids = [r[0] for r in bs_ids_result.all()]
             result = await session.execute(
                 text("""
                     SELECT fo.id AS outcome_id, fo.name AS outcome_name,
@@ -3205,12 +3635,13 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                     JOIN futures_markets fm ON fm.id = fo.market_id
                     JOIN events e ON e.id = fm.event_id
                     WHERE fm.status = 'resolved'
-                      AND e.box_score_data IS NOT NULL
+                      AND fm.event_id = ANY(:bs_event_ids)
                       AND fo.is_winner IS NULL
                       AND LOWER(fm.external_id) LIKE 'kxmlbtb%'
                     ORDER BY fm.id
                     LIMIT 50000
                 """),
+                {"bs_event_ids": bs_event_ids},
             )
             rows = result.all()
 
@@ -3422,24 +3853,33 @@ async def _resolve_kalshi_period_props():
                 if sm:
                     team_name = sm.group(1).strip()
                     line = float(sm.group(2))
-                    home_tokens = (
-                        set(row.home_team_name.lower().split())
-                        if row.home_team_name
-                        else set()
+                    # #2352: this was the THIRD copy of the home-first token
+                    # intersection — the one the issue did not name. It picked a
+                    # side with a bare `team_tokens & home_tokens`, so every away
+                    # leg of a shared-city matchup took the home margin, and it
+                    # matched on raw `.lower().split()` rather than
+                    # `normalize_team_name`, so it also carried the #939 accent bug
+                    # ("Montréal" never token-matched the ASCII outcome name).
+                    # Production damage is zero — no `scoring_plays` row has ever
+                    # been written for a spread outcome (measured 2026-08-30: the
+                    # source does not appear in the cohort at all) — so this is
+                    # prevention, not repair. Converting it keeps one side-picker
+                    # in this module instead of two.
+                    from app.utils.name_normalization import normalize_team_name
+
+                    side = _exclusive_team_side(
+                        set(normalize_team_name(team_name).split()),
+                        set(normalize_team_name(row.home_team_name or "").split()),
+                        set(normalize_team_name(row.away_team_name or "").split()),
                     )
-                    away_tokens = (
-                        set(row.away_team_name.lower().split())
-                        if row.away_team_name
-                        else set()
-                    )
-                    team_tokens = set(team_name.lower().split())
-                    if team_tokens & home_tokens:
-                        margin = period_home - period_away
-                    elif team_tokens & away_tokens:
-                        margin = period_away - period_home
-                    else:
+                    if side is None:
                         stats["no_parse"] += 1
                         continue
+                    margin = (
+                        period_home - period_away
+                        if side == "home"
+                        else period_away - period_home
+                    )
                     won = margin > line
                     await session.execute(
                         text(
@@ -5729,9 +6169,14 @@ async def _resolve_winners_only(limit: int = 2000):
     except Exception as e:
         stats["kalshi_link_error"] = str(e)[:200]
 
-    # Score-based resolution
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # Score-based resolution. LAT-P154: the two resolvers share ONE candidate
+    # scan — the statement is identical in both and cost 46 s per run.
+    _game_scan: dict = {}
+    score_stats = await _resolve_kalshi_from_scores(scan_out=_game_scan)
+    spread_total_stats = await _resolve_kalshi_spread_total_from_scores(
+        scan_in=_game_scan
+    )
+    _game_scan.clear()  # ~92K rows; don't carry them through the rest (#899)
     # #140: grade the ungraded Polymarket full-game Over/Under cohort from the
     # linked event's final score (deterministic, no Gamma API — #137 residual
     # resolution-completeness gap, not model bias).
@@ -5748,6 +6193,13 @@ async def _resolve_winners_only(limit: int = 2000):
     stats["nhl_spread_regrade"] = {
         "checked": nhl_spread_regrade_stats.get("checked", 0),
         "flipped": nhl_spread_regrade_stats.get("flipped", 0),
+        # #2352: a counter the verdict does not surface is the same problem one
+        # layer up from a refusal nobody counts. `unresolved` rows keep whatever
+        # they hold forever (`game_score` is not overwritable), and
+        # `skipped_period` is the halftime filter — if it ever climbs, the ticker
+        # predicate has stopped excluding a Kalshi period family.
+        "unresolved": nhl_spread_regrade_stats.get("unresolved", 0),
+        "skipped_period": nhl_spread_regrade_stats.get("skipped_period", 0),
     }
     # #945: re-grade Kalshi TOTAL game_score (same HAVING-skip staleness as the
     # spread cohort; never re-pulled). Idempotent + write-on-change.
@@ -6110,6 +6562,9 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                 k: v for k, v in _phase_times.items()
                 if isinstance(v, (int, float)) and v < 100000
             },
+            # LAT-P154: which of score_resolution's six resolvers spent the
+            # phase's seconds — the question the flat 397.0 s could not answer.
+            "score_resolution_sub_s": dict(_score_sub),
         }
 
     # ========================================================================
@@ -6123,14 +6578,53 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
     # is the task's primary purpose, so it MUST run before any maintenance
     # work and is no longer at the mercy of upstream-phase timing.
     # ========================================================================
+    # LAT-P154: `score_resolution` is SIX resolvers behind one timer, and the
+    # phase map could only ever say "397.0 s" — which of the six owned it took
+    # a separate read-only production probe to answer. These sub-timers make
+    # the next regression self-locating. They are recorded separately from
+    # `_phase_times` on purpose: adding them there would double-count against
+    # `score_resolution` and break the `sum(phase_times) ~= pipeline_elapsed_s`
+    # falsifiability the Queue-357 comment below depends on.
+    _score_sub: dict = {}
+
+    async def _timed_sub(name, coro):
+        _sub_t0 = _t.monotonic()
+        try:
+            return await coro
+        finally:
+            _score_sub[name] = round(_t.monotonic() - _sub_t0, 1)
+            logger.info(
+                "score_resolution sub %s: %.1fs (cum %.1fs)",
+                name, _score_sub[name], _t.monotonic() - _pipeline_start,
+            )
+
     _start_phase("score_resolution")
-    score_stats = await _resolve_kalshi_from_scores()
-    spread_total_stats = await _resolve_kalshi_spread_total_from_scores()
+    # The two game-score resolvers run the SAME candidate statement; share one
+    # execution of it (LAT-P154 — 46 s a cycle, measured on production).
+    _game_scan: dict = {}
+    score_stats = await _timed_sub(
+        "game_scores", _resolve_kalshi_from_scores(scan_out=_game_scan)
+    )
+    spread_total_stats = await _timed_sub(
+        "spread_total",
+        _resolve_kalshi_spread_total_from_scores(scan_in=_game_scan),
+    )
+    # ~92K candidate rows; drop them before the ~14-minute maintenance tail
+    # rather than carrying them into the 512MB worker's peak (#899).
+    _game_scan.clear()
     # #140: grade ungraded Polymarket full-game Over/Under from linked scores.
-    poly_total_stats = await _resolve_polymarket_total_from_scores()
-    player_prop_stats = await _resolve_kalshi_player_props_from_boxscore()
-    total_bases_stats = await _resolve_kalshi_total_bases_from_boxscore()
-    period_prop_stats = await _resolve_kalshi_period_props()
+    poly_total_stats = await _timed_sub(
+        "poly_total", _resolve_polymarket_total_from_scores()
+    )
+    player_prop_stats = await _timed_sub(
+        "player_props", _resolve_kalshi_player_props_from_boxscore()
+    )
+    total_bases_stats = await _timed_sub(
+        "total_bases", _resolve_kalshi_total_bases_from_boxscore()
+    )
+    period_prop_stats = await _timed_sub(
+        "period_props", _resolve_kalshi_period_props()
+    )
     _end_phase("score_resolution")
 
     # Authoritative API settlement — run BEFORE probability passes so API
@@ -6881,6 +7375,8 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
             **{k: v for k, v in _phase_times.items() if isinstance(v, (int, float))},
             "total": round(_t.monotonic() - _pipeline_start, 1),
         },
+        # LAT-P154: the six-way split inside score_resolution.
+        "score_resolution_sub_s": dict(_score_sub),
     }
 
 
