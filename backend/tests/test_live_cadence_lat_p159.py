@@ -59,7 +59,10 @@ from app.tasks.config import (
     SPORT_POLLING_DEFAULT_TIER,
     SPORT_POLLING_TIERS,
 )
-from app.tasks.redis_state import QUOTA_GUARD_CONSERVATION_INTERVAL
+from app.tasks.redis_state import (
+    QUOTA_GUARD_CONSERVATION_INTERVAL,
+    QUOTA_GUARD_PRIORITY_SPORTS,
+)
 
 
 #: The pass duration distribution measured on production 2026-08-31 over the 50
@@ -544,13 +547,17 @@ class _FakeSession:
 
 
 class _FakeRedis:
-    def __init__(self, last_poll_ts):
+    def __init__(self, last_poll_ts, sport_404=()):
         self.last_poll_ts = last_poll_ts
+        self.sport_404 = set(sport_404)
 
     def get(self, key):
         if key.startswith("bainluck:last_poll:"):
             return str(self.last_poll_ts).encode()
-        return None                          # no 404 cache, no unchanged_count
+        if key.startswith("bainluck:sport_404:"):
+            sport = key.split("bainluck:sport_404:", 1)[1]
+            return b"1" if sport in self.sport_404 else None
+        return None                          # no unchanged_count
 
     def hget(self, *_a, **_k):
         return None
@@ -566,11 +573,22 @@ class _FakeRedis:
 
 
 async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
-                    last_poll_age_s=100.0, score_sports=()):
-    """Execute the real `_poll_all_odds` and hand back its Odds API ledger."""
+                    last_poll_age_s=100.0, score_sports=(), sports=None,
+                    sport_404=()):
+    """Execute the real `_poll_all_odds` and hand back its Odds API ledger.
+
+    `sports` drives a MULTI-sport pass (the sport-data query returns one live
+    row per key, in order) — without it a mid-pass transition is untestable,
+    because a one-sport pass cannot distinguish "stopped at sport 2" from
+    "never started". `per_sport` may be a single (ok, reason) tuple applied to
+    every sport, or a dict keyed by sport key so the quota state can CHANGE
+    between sports the way real quota does.
+    """
     now_ts = time.time()
+    sport_keys = list(sports) if sports else [sport_key]
     session = _FakeSession(
-        [(sport_key, datetime.now(timezone.utc) - timedelta(minutes=5), True)],
+        [(k, datetime.now(timezone.utc) - timedelta(minutes=5), True)
+         for k in sport_keys],
         list(score_sports),
     )
 
@@ -581,8 +599,15 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
     service.last_requests_remaining = None   # a MagicMock here is `is not None`
     service.last_requests_used = None        # and would hit the real recorder
 
+    guard_calls = []
+
     def _guard(_task_type, sport_key=None):
-        return outer if sport_key is None else per_sport
+        if sport_key is None:
+            return outer
+        guard_calls.append(sport_key)
+        if isinstance(per_sport, dict):
+            return per_sport[sport_key]
+        return per_sport
 
     class _CM:
         async def __aenter__(self):
@@ -594,7 +619,7 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
     with patch("app.tasks.odds_polling.check_quota_guard", side_effect=_guard), \
             patch("app.tasks.odds_polling.OddsAPIService", return_value=service), \
             patch("app.tasks.odds_polling.get_redis_client",
-                  return_value=_FakeRedis(now_ts - last_poll_age_s)), \
+                  return_value=_FakeRedis(now_ts - last_poll_age_s, sport_404)), \
             patch("app.tasks.odds_polling.get_task_session", return_value=_CM()), \
             patch("app.tasks.odds_polling.detect_and_close_stale_events",
                   AsyncMock(return_value=0)), \
@@ -602,6 +627,7 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
             patch("app.tasks.excitement_index.update_live_ei", AsyncMock(return_value=0)):
         result = await odds_polling._poll_all_odds()
 
+    service.guard_calls = guard_calls
     return result, service
 
 
@@ -692,6 +718,191 @@ class TestARereadCannotErodeAKnownFullStop:
         )
         assert under.get_odds.await_count == 0, "polled inside the conservation floor"
         assert over.get_odds.await_count == 1, "never polls at all — floor is not a floor"
+
+
+#: The two quota modes a pass can START in that are NOT full-stop. Both were
+#: outside CERT-528's repair, and in both of them the per-sport re-read never
+#: ran, so `absolute_stop_hit` could not be set at all.
+NON_FULL_STOP_STARTS = [
+    (True, "live_only_501"),   # the cert's own case: one unit above the stop
+    (True, "ok_600000"),       # and the ordinary one, which is most passes
+]
+
+
+class TestTheHarnessCanSeeAMidPassTransition:
+    """🔴 A ZERO OR A ONE IS ONLY EVIDENCE IF THE INSTRUMENT CAN SEE A TWO.
+
+    Every claim below this point is `await_count == 0` or `== 1` on a pass whose
+    quota state CHANGES between sports. A one-sport harness cannot tell "halted
+    at the second sport" from "never ran a second sport", and a harness whose
+    404 branch is unreachable cannot tell "skipped before the re-read" from
+    "there was no re-read". These three controls buy the meaning of those
+    numbers, and they are written first on purpose.
+    """
+
+    async def test_two_unconstrained_sports_really_do_poll_twice(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            sports=("basketball_nba", "baseball_mlb"),
+        )
+        assert service.get_odds.await_count == 2, (
+            "the harness cannot see a second sport at all, so every '== 1' "
+            "below would be satisfied by a pass that never had two"
+        )
+
+    async def test_the_per_sport_guard_is_consulted_once_per_sport(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            sports=("basketball_nba", "baseball_mlb"),
+        )
+        assert service.guard_calls == ["basketball_nba", "baseball_mlb"], (
+            f"the re-read did not run for every sport: {service.guard_calls}"
+        )
+
+    async def test_a_404_cached_sport_still_lets_the_scores_fetch_fire(self):
+        # The 404 branch has to be REACHED for the ordering guard below to mean
+        # anything: odds must be zero because of the cache, and scores must be
+        # one because nothing has stopped them.
+        #
+        # The scored sport is deliberately a DIFFERENT one: the scores loop has
+        # its own 404 skip, so scoring the same cached sport would read zero
+        # whatever the odds loop did — a control that cannot fail.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            sport_404=("basketball_nba",), score_sports=("baseball_mlb",),
+        )
+        assert service.get_odds.await_count == 0, "the 404 cache branch is not reached"
+        assert service.get_scores.await_count == 1, (
+            "scores never fire in this shape, so the ordering guard below would "
+            "read zero for a reason that has nothing to do with the re-read"
+        )
+
+
+class TestAnAbsoluteStopIsSeenFromEveryStartingState:
+    """🔴 CERT-535, and it is the first of this queue's seven blocks where the
+    value was computed correctly and the GUARD AROUND THE GUARD was wrong.
+
+    The per-sport re-read and all `absolute_stop_hit` handling sat inside
+    `if quota_full_stop:`. So the flag could only ever be set on a pass that was
+    ALREADY in full stop — and a pass that begins at `live_only_501`, one unit
+    above the 500-unit absolute stop, spends its first sport, crosses the line,
+    and then polls every remaining sport and every score with the breaker open.
+    `absolute_stop` documents itself as "no exceptions, no priority sports,
+    nothing".
+
+    Enumerate the ENTRY STATES, not just the code paths.
+    """
+
+    @pytest.mark.parametrize("outer", NON_FULL_STOP_STARTS)
+    async def test_a_pass_that_did_not_start_in_full_stop_still_halts(self, outer):
+        result, service = await _run_poll(
+            outer=outer, per_sport=(False, "absolute_stop_400"),
+            last_poll_age_s=86_400.0,      # a day: no interval can be what gates it
+        )
+        assert service.get_odds.await_count == 0, (
+            f"a pass starting at {outer[1]!r} crossed the absolute stop mid-pass "
+            f"and called the Odds API anyway"
+        )
+        assert result["sports_skipped"] == 1, result
+
+    @pytest.mark.parametrize("outer", NON_FULL_STOP_STARTS)
+    async def test_a_pass_that_did_not_start_in_full_stop_halts_scores_too(self, outer):
+        _result, service = await _run_poll(
+            outer=outer, per_sport=(False, "absolute_stop_400"),
+            score_sports=("basketball_nba",),
+        )
+        assert service.get_scores.await_count == 0, (
+            f"a pass starting at {outer[1]!r} kept spending on get_scores after "
+            f"the breaker reached its absolute stop"
+        )
+
+    async def test_the_crossing_stops_the_pass_at_the_sport_it_happens_on(self):
+        # The realistic shape: quota is fine for the first sport, that sport's
+        # own calls take it over the line, and the second sport reads the stop.
+        # One poll, not two — and the control above proves two is visible.
+        result, service = await _run_poll(
+            outer=(True, "live_only_501"),
+            per_sport={
+                "basketball_nba": (True, "live_only_501"),
+                "baseball_mlb": (False, "absolute_stop_400"),
+            },
+            sports=("basketball_nba", "baseball_mlb"),
+            score_sports=("basketball_nba",),
+        )
+        assert service.get_odds.await_count == 1, (
+            f"the pass did not stop at the crossing: {result}"
+        )
+        assert service.get_scores.await_count == 0, (
+            "the odds loop broke but the independent scores block spent anyway"
+        )
+
+    async def test_the_re_read_is_above_the_404_skip_and_not_below_it(self):
+        # 🔴 The reachability half of the same lesson. If every sport in the
+        # pass is 404-cached, a re-read written below that `continue` never
+        # runs, `absolute_stop_hit` stays False, and the scores block spends
+        # under an open breaker — the CERT-535 defect rebuilt one branch lower.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(False, "absolute_stop_400"),
+            sport_404=("basketball_nba",), score_sports=("baseball_mlb",),
+        )
+        assert service.get_scores.await_count == 0, (
+            "a 404-cached sport skipped before the quota re-read, so the "
+            "absolute stop was never seen and scores spent anyway"
+        )
+
+
+class TestAMidPassTighteningIsNeverWidenedBack:
+    """The same monotonic rule CERT-528 established for the conservation floor,
+    now applied to the quota MODE — because the mode is what decides who the
+    floor is applied to. A re-read may only ADD constraint."""
+
+    async def test_crossing_into_the_full_stop_band_applies_its_floor(self):
+        # An ORDINARY pass. Quota crosses into the full-stop band and this
+        # priority live sport reads back `conservation_*`. 100 s is past the
+        # live cadence and short of the 600 s conservation floor, so it polls
+        # if and only if the mode failed to tighten.
+        assert "basketball_nba" in QUOTA_GUARD_PRIORITY_SPORTS, (
+            "this sport must survive the priority filter, or the zero below is "
+            "bought by the filter and says nothing about the floor"
+        )
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "conservation_9000"),
+            last_poll_age_s=100.0,
+        )
+        assert service.get_odds.await_count == 0, (
+            "a pass that began unconstrained crossed into the full-stop band "
+            "and kept the flat live cadence instead of the conservation floor"
+        )
+
+    async def test_crossing_into_the_full_stop_band_denies_a_non_priority_sport(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(False, "full_stop_9000"),
+            sport_key="americanfootball_ncaaf", last_poll_age_s=86_400.0,
+        )
+        assert service.get_odds.await_count == 0, (
+            "a deny was only honoured inside an outer FULL_STOP"
+        )
+
+    async def test_a_later_ok_reading_cannot_reopen_what_an_earlier_one_closed(self):
+        # Quota reads `conservation_*` on sport one and then — refill, or a
+        # racing writer — `ok_*` on sport two. Sport two is a priority live
+        # sport at 100 s: under the latch it stays on the 600 s floor.
+        assert QUOTA_GUARD_PRIORITY_SPORTS.issuperset(
+            {"basketball_nba", "baseball_mlb"}
+        ), "both sports must survive the priority filter for this to test the floor"
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"),
+            per_sport={
+                "basketball_nba": (True, "conservation_9000"),
+                "baseball_mlb": (True, "ok_600000"),
+            },
+            sports=("basketball_nba", "baseball_mlb"),
+            last_poll_age_s=100.0,
+        )
+        assert service.get_odds.await_count == 0, (
+            "a later ok reading widened the pass back out — a re-read may only "
+            "ADD constraint, never remove it"
+        )
 
 
 class TestTheShipSurvivesTheRepair:

@@ -935,6 +935,58 @@ async def _poll_all_odds():
                 soonest_game = row[1]
                 is_live = row[2]
 
+                # 🔴 CERT-535: THE RE-READ RUNS IN EVERY QUOTA MODE, AND IT RUNS
+                # FIRST. It used to live inside `if quota_full_stop:`, so the
+                # value was computed correctly and the *guard around the guard*
+                # was wrong: a pass that began at `live_only_501` — or at plain
+                # `ok_*` — never re-read at all, so `absolute_stop_hit` could
+                # not be SET on that path. Quota can begin a pass just above the
+                # 500-unit absolute stop, spend the rest on its first sport,
+                # cross the line, and keep polling every remaining sport and
+                # every score because only passes ALREADY classified FULL_STOP
+                # bothered to look again. The faster live cadence this queue
+                # shipped makes that crossing more likely, not less.
+                #
+                # It is also ABOVE the 404 skip on purpose: if every sport in
+                # the pass is 404-cached, a re-read placed below the `continue`
+                # is unreachable and the scores block spends under the breaker.
+                # Ask it of the branch, not only of the value — can this even be
+                # reached from the states the task actually starts in?
+                sport_ok, sport_reason = check_quota_guard(
+                    "poll_odds", sport_key=sport_key
+                )
+                if "absolute_stop" in sport_reason:
+                    # No exceptions — abandon the whole pass, not just this sport.
+                    logger.critical(
+                        "poll_all_odds ABSOLUTE STOP mid-pass (%s) — halting all polling",
+                        sport_reason,
+                    )
+                    sports_skipped += 1
+                    absolute_stop_hit = True
+                    break
+                if not sport_ok:
+                    # A deny is a deny in every mode. Under FULL_STOP the
+                    # priority filter below would also catch this; above it,
+                    # nothing else would.
+                    sports_skipped += 1
+                    continue
+
+                # Monotonic latch — within one pass a re-read may only ADD
+                # constraint, never remove it (CERT-528's rule, now applied to
+                # the MODE and not only to the conservation floor). A failed
+                # re-read, or one taken after quota refilled, can never widen
+                # what an earlier read already narrowed.
+                #
+                # `conservation_*` is returned only when remaining is at or
+                # below QUOTA_GUARD_FULL_STOP (redis_state.check_quota_guard),
+                # so it is a full-stop-band reading like `full_stop_*` — the
+                # priority sport is simply the one allowed through it.
+                if "conservation" in sport_reason or "full_stop" in sport_reason:
+                    quota_full_stop = True
+                    quota_conservation = True
+                if "live_only" in sport_reason:
+                    quota_live_only = True
+
                 # Skip sports that returned 404 (cached for 24h)
                 if r:
                     try:
@@ -964,46 +1016,24 @@ async def _poll_all_odds():
                 sport_tier = SPORT_POLLING_TIERS.get(sport_key, SPORT_POLLING_DEFAULT_TIER)
                 poll_interval = tier_adjusted_interval(poll_interval, tier, sport_key)
 
-                # Quota guard: in full-stop mode, only priority sports allowed
+                # Quota guard: in full-stop mode, only priority sports allowed.
+                #
+                # 🔴 CERT-528: the per-sport re-read that used to live HERE was
+                # `_, guard_reason` plus `quota_conservation = "conservation" in
+                # guard_reason`. Both halves were fail-open, and the casualty
+                # was the outer FULL_STOP result — the thing the task already
+                # knew: the allow/deny boolean was DISCARDED, and a transient
+                # Redis failure returning (True, "redis_error") ERASED the
+                # conservation floor and dropped a known-constrained live sport
+                # to the flat live cadence. The re-read, its deny handling and
+                # its monotonic latch are all above now (CERT-535) so that a
+                # pass which does NOT start in FULL_STOP still performs them.
+                # What is left here is the part that is genuinely conditional on
+                # the mode: who gets through it.
                 if quota_full_stop:
                     if sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
                         sports_skipped += 1
                         continue
-                    # Re-check per-sport to get the conservation reason.
-                    #
-                    # 🔴 CERT-528: this re-read used to be `_, guard_reason` plus
-                    # `quota_conservation = "conservation" in guard_reason`. Both
-                    # halves were fail-open, and the casualty was the outer
-                    # FULL_STOP result — the thing we already knew:
-                    #   * the allow/deny boolean was DISCARDED, so quota crossing
-                    #     `absolute_stop` mid-pass ("no exceptions, no priority
-                    #     sports, nothing") polled anyway;
-                    #   * a transient Redis failure returns (True, "redis_error"),
-                    #     which contains no "conservation", so the assignment
-                    #     ERASED the floor set at line 859 and dropped a
-                    #     known-constrained live sport to the flat live cadence.
-                    # Both spend the constrained API at exactly the moment the
-                    # circuit breaker says not to. The rule this encodes: within
-                    # one pass a re-read may only ADD constraint, never remove it.
-                    sport_ok, sport_reason = check_quota_guard(
-                        "poll_odds", sport_key=sport_key
-                    )
-                    if "absolute_stop" in sport_reason:
-                        # No exceptions — abandon the whole pass, not just this sport.
-                        logger.critical(
-                            "poll_all_odds ABSOLUTE STOP mid-pass (%s) — halting all polling",
-                            sport_reason,
-                        )
-                        sports_skipped += 1
-                        absolute_stop_hit = True
-                        break
-                    if not sport_ok:
-                        sports_skipped += 1
-                        continue
-                    # Monotonic: a failed re-read (or one taken after quota
-                    # refilled) can never clear the conservation floor the outer
-                    # full-stop read established.
-                    quota_conservation = quota_conservation or "conservation" in sport_reason
                     # In full-stop conservation, only poll live games
                     if tier != "live":
                         sports_skipped += 1
