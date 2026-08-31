@@ -1410,8 +1410,16 @@ def market_is_esports_multi_bundle(
 
 # Rung 1 — a resolved market that graded NOBODY a winner.
 #
-# ``is_winner`` is NOT NULL with a False default, so an ungraded outcome is
-# stored identically to a genuine loser. The market-level discriminator is
+# ``is_winner`` is NULLABLE with a False default (production:
+# ``is_nullable = YES``), and in practice every ORM writer stores unsettled as
+# FALSE — so an ungraded outcome is normally indistinguishable from a genuine
+# loser. (This comment read "is NOT NULL" until CAL-P156. It was wrong, and it
+# was the exact inverse of the fact rung 1b and the 12-CAL ``graded`` column
+# rest on 1,100 lines below; a reader reasoning from it would conclude
+# ``ungraded_lone_claims`` is identically zero and rung 1b is dead code.
+# Nothing behaved wrongly — ``win_count`` counts ``is_winner = true``, which
+# does not count NULL — but the premise is not the one the code runs on.)
+# The market-level discriminator is
 # winner cardinality: a resolved multi-outcome question whose every member is
 # False either (a) never had its winner captured — the omitted-draw class, where
 # a drawn match makes both named sides lose (#1011), (b) is an orphan half of a
@@ -1423,6 +1431,11 @@ def market_is_esports_multi_bundle(
 # generalizes the both-false leg to every shape and size (r339 census: cricket
 # 240 markets / 237 eligible outcomes, soccer 4,282 / 6,920, tennis 1,141 /
 # 2,397, hockey 307 / 1,475 — all-loser markets in every category).
+#
+# The ``>= 2`` floor is deliberate and rung 1b (below) is its complement, not a
+# widening of it: at ONE outcome "nobody won" is the ordinary result of a claim
+# that resolved No, so winner cardinality stops discriminating and only an
+# affirmative grade can.
 NO_WINNER_RULE_TEXT = (
     "Excludes every resolved market with >=2 outcomes that graded NOBODY a "
     "winner. is_winner has a False default, so an ungraded or never-captured "
@@ -1433,6 +1446,33 @@ NO_WINNER_RULE_TEXT = (
     "both-false rule from 2-outcome mutually-exclusive markets to every shape. "
     "Read-side only; never re-grades, never mutates resolutions."
 )
+
+
+# Rung 1b — a lone claim nothing ever graded.
+#
+# The single-outcome hole rung 1 leaves open on purpose. See the
+# ``ungraded_lone_claim_markets`` CTE for why winner cardinality cannot decide
+# this shape and only an affirmative grade can.
+UNGRADED_LONE_CLAIM_RULE_TEXT = (
+    "Excludes every single-outcome market whose only outcome was never graded "
+    "(is_winner IS NULL). is_winner is nullable with a False default, so an "
+    "ungraded lone claim is stored exactly like a claim that resolved No — but "
+    "one is UNKNOWN truth and the other is a real loss, and only an affirmative "
+    "grade tells them apart. Rung 1 cannot reach this shape: at one outcome "
+    "'nobody won' is the ordinary result of a No, so it requires >=2 outcomes. "
+    "Read-side only; never re-grades, never mutates resolutions."
+)
+
+
+def market_is_ungraded_lone_claim(n_outcomes: int, n_graded: int) -> bool:
+    """True if a market is a lone claim nothing ever graded (rung 1b).
+
+    Canonical, unit-tested mirror of the ``ungraded_lone_claim_markets`` CTE.
+    ``n_graded`` counts outcomes with a NON-NULL ``is_winner`` — an affirmative
+    grade — never ``n_outcomes - n_winners``, which cannot distinguish a graded
+    loss from a row nothing ever touched. Read-side only (gotcha #21).
+    """
+    return n_outcomes == 1 and n_graded == 0
 
 
 def market_has_no_winner_authority(n_outcomes: int, n_winners: int) -> bool:
@@ -2353,6 +2393,12 @@ def _calibration_population_ctes(
                     mi.market_type,
                     COUNT(*) AS n_outcomes,
                     COUNT(*) FILTER (WHERE fo.is_winner = true) AS win_count,
+                    -- Queue 299 rung 1b (CERT-514): AFFIRMATIVE grades, which is
+                    -- NOT ``n_outcomes - win_count``. ``is_winner`` is nullable
+                    -- with a False default, so "not a winner" spans a graded loss
+                    -- and a row nothing ever graded; only an IS NOT NULL count
+                    -- tells them apart (12-CAL, gotcha #21).
+                    COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded_count,
                     -- Queue 299 rung 2: captured draw/no-result authority.
                     COUNT(*) FILTER (
                         WHERE lower(btrim(fo.name)) IN {_sql_str_tuple(DRAW_AUTHORITY_OUTCOME_NAMES)}
@@ -2379,6 +2425,31 @@ def _calibration_population_ctes(
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
                 WHERE mrs.n_outcomes >= 2 AND mrs.win_count = 0
+            ),
+            -- Queue 299 rung 1b (CERT-514, #1978): a LONE CLAIM nothing ever
+            -- graded. THE RUNG THAT WAS MISSING, and its absence is what forced
+            -- D13's arm to refuse at variant grain.
+            --
+            -- Rung 1 requires ``n_outcomes >= 2`` deliberately — "a lone Yes/No
+            -- claim that legitimately resolved No is not an authority failure" —
+            -- and rung 3 takes only ``market_type = 'field'``. So a single-outcome
+            -- market whose only outcome was NEVER GRADED fell through every rung
+            -- and published as a confident loss, because ``is_winner`` is nullable
+            -- with a False default (gotcha #21). The discriminator rung 1 uses at
+            -- >=2 outcomes (winner cardinality) cannot work here: at one outcome
+            -- "no winner" is the ordinary shape of a claim that resolved No. Only
+            -- an AFFIRMATIVE grade separates them, which is ``graded_count = 0``.
+            --
+            -- CERT-514 blocked the variant-grained form: admission is per variant,
+            -- so refusing a whole variant to keep ONE ungraded lone claim out also
+            -- withheld the independently graded claims beside it — the exact
+            -- coupling Alex's option A was chosen to remove
+            -- (``alex-inbox/calibration-919``). With unknown truth removed at the
+            -- market that actually holds it, the arm no longer has to.
+            ungraded_lone_claim_markets AS (
+                SELECT mrs.market_id
+                FROM market_result_shape mrs
+                WHERE mrs.n_outcomes = 1 AND mrs.graded_count = 0
             ),
             -- Queue 299 rung 2: draw-capable duels with no draw member. The
             -- category answers only "can this contest be drawn?" (sport rules,
@@ -2671,36 +2742,36 @@ def _calibration_population_ctes(
                         -- options with the population cost declared UNMEASURED
                         -- and chose A knowingly.
                         --
-                        -- ``ungraded_lone_claims = 0`` IS A FAIL-CLOSED RESIDUE
-                        -- AND IT IS NARROWER THAN WHAT IT REPLACES. Admission is
-                        -- variant-grained — ``ranked_outcomes`` joins ONE
-                        -- ``clean_vms`` row per variant — so admitting a variant
-                        -- admits every member's outcomes, and the downstream
-                        -- rungs must be able to remove the ones that are not
-                        -- scoreable. For members with ``n_outcomes >= 2`` they
-                        -- can: this arm only ever fires with ``has_winner = 0``,
-                        -- so every such member has ``win_count = 0`` and
-                        -- ``no_winner_markets`` drops it, exactly as rung 1
-                        -- intends. For a single-outcome member nothing ever
-                        -- graded there is NO rung — rung 1 requires
-                        -- ``n_outcomes >= 2`` on purpose — and it would publish
-                        -- as a confident loss, because ``is_winner`` is nullable
-                        -- with a False default (gotcha #21). So the arm refuses
-                        -- the variant instead. The graded claim beside it is
-                        -- held back, which is the same coupling this ruling
-                        -- removes, on a strictly smaller population and in the
-                        -- safe direction: refusing a scoreable row costs
-                        -- coverage, publishing unknown truth as a loss corrupts
-                        -- the curve. Closing it properly needs a per-market rung
-                        -- and its own queue; it is not smuggled in here.
+                        -- 🔴 THERE IS NO ``ungraded_lone_claims = 0`` CONJUNCT
+                        -- HERE ANY MORE, AND REMOVING IT IS THE POINT (CERT-514).
+                        -- CAL-P155 shipped one as a fail-closed residue and the
+                        -- cert blocked it: admission is variant-grained —
+                        -- ``ranked_outcomes`` joins ONE ``clean_vms`` row per
+                        -- variant — so refusing the variant to keep ONE ungraded
+                        -- lone claim out ALSO withheld every independently graded
+                        -- claim beside it. That is the sibling coupling option A
+                        -- exists to remove; a narrower version of the same defect
+                        -- is still the defect.
+                        --
+                        -- The refusal itself was never wrong, only its GRAIN.
+                        -- Unknown truth is now removed at the market that holds
+                        -- it, by rung 1b (``ungraded_lone_claim_markets``), so
+                        -- this arm does not have to reach for a whole variant to
+                        -- do it. Admitting a variant still admits every member's
+                        -- outcomes, and every member is still individually
+                        -- answerable to a rung: ``n_outcomes >= 2`` members to
+                        -- rung 1 (this arm only ever fires with ``has_winner =
+                        -- 0``, so each has ``win_count = 0``), and single-outcome
+                        -- ungraded members to rung 1b. Nothing published here is
+                        -- unknown truth, and nothing scoreable is held back for a
+                        -- sibling's sake.
                         --
                         -- Pinned both directions by ``tests/integration/
                         -- test_calibration_vm_variant_join_pg.py`` (the
-                        -- asymmetric fixture, which seeds exactly the two-lone-
-                        -- claim variant this admits) and by
-                        -- ``tests/test_calibration_lost_losses_12cal.py``.
-                        OR (graded_lone_claims >= 1
-                            AND ungraded_lone_claims = 0)
+                        -- asymmetric fixture, whose MIXED variant seeds exactly
+                        -- the graded-beside-ungraded case this must now split)
+                        -- and by ``tests/test_calibration_lost_losses_12cal.py``.
+                        OR graded_lone_claims >= 1
                   )
             ),
             ranked_outcomes AS MATERIALIZED (
@@ -2749,6 +2820,10 @@ def _calibration_population_ctes(
                     -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
                     -- not a set of losses (is_winner's default is False).
                     (nwm.market_id IS NOT NULL) AS is_no_winner_market,
+                    -- Queue 299 rung 1b: a one-outcome market nothing ever graded
+                    -- — UNKNOWN truth, indistinguishable from a resolved-No by
+                    -- shape alone (is_winner is nullable with a False default).
+                    (ulc.market_id IS NOT NULL) AS is_ungraded_lone_claim,
                     -- Queue 299 rung 2: draw-capable duel with no draw member.
                     (dam.market_id IS NOT NULL) AS is_draw_authority_missing,
                     -- Queue 299 rung 3: a 'field' that captured <=1 member.
@@ -2859,6 +2934,8 @@ def _calibration_population_ctes(
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
                 LEFT JOIN no_winner_markets nwm ON nwm.market_id = fo.market_id
+                LEFT JOIN ungraded_lone_claim_markets ulc
+                    ON ulc.market_id = fo.market_id
                 LEFT JOIN draw_authority_markets dam ON dam.market_id = fo.market_id
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
                 LEFT JOIN nonexclusive_bundle_markets nbm ON nbm.market_id = fo.market_id
@@ -2907,6 +2984,7 @@ def _calibration_population_ctes(
                           -- one of them is PARTIAL and must be dropped whole
                           -- rather than normalized over its survivors.
                           AND NOT ro.is_no_winner_market
+                          AND NOT ro.is_ungraded_lone_claim
                           AND NOT ro.is_draw_authority_missing
                           AND NOT ro.is_orphan_partition
                     ) AS survivor_n,
@@ -2919,6 +2997,7 @@ def _calibration_population_ctes(
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
                           AND NOT ro.is_no_winner_market
+                          AND NOT ro.is_ungraded_lone_claim
                           AND NOT ro.is_draw_authority_missing
                           AND NOT ro.is_orphan_partition
                     ) AS survivor_win_n
@@ -3030,11 +3109,13 @@ def _calibration_population_ctes(
                     AND NOT ro.is_kalshi_prop_threshold
                     AND NOT ro.is_weather_wide_spread
                     -- Queue 299 rungs 1-3 (#1012): result authority before
-                    -- shape. A market that graded nobody, a draw-capable duel
-                    -- with no draw member, and a 'field' with <=1 captured
-                    -- member are all UNKNOWN truth — excluded, never published
-                    -- as confident losses and never re-graded (gotcha #21).
+                    -- shape. A market that graded nobody, a LONE CLAIM nothing
+                    -- ever graded (rung 1b), a draw-capable duel with no draw
+                    -- member, and a 'field' with <=1 captured member are all
+                    -- UNKNOWN truth — excluded, never published as confident
+                    -- losses and never re-graded (gotcha #21).
                     AND NOT ro.is_no_winner_market
+                    AND NOT ro.is_ungraded_lone_claim
                     AND NOT ro.is_draw_authority_missing
                     AND NOT ro.is_orphan_partition
                     AND NOT ro.is_field_incomplete
@@ -3183,6 +3264,7 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "malformed_or_unknown_truth",
         "COALESCE(n.is_no_winner_market, false) "
+        "OR COALESCE(n.is_ungraded_lone_claim, false) "
         "OR COALESCE(n.is_malformed_binary, false) "
         "OR COALESCE(n.is_draw_authority_missing, false) "
         "OR COALESCE(n.is_orphan_partition, false)",
@@ -3453,6 +3535,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     -- exclusion block, so each rung's size is transparent.
                     COUNT(*) FILTER (WHERE is_no_winner_market) AS no_winner_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_no_winner_market) AS no_winner_markets,
+                    COUNT(*) FILTER (WHERE is_ungraded_lone_claim) AS ungraded_lone_claim_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_ungraded_lone_claim) AS ungraded_lone_claim_markets,
                     COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
                     COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
@@ -3537,6 +3621,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
                 MAX(ls.no_winner_excluded) AS no_winner_excluded,
                 MAX(ls.no_winner_markets) AS no_winner_markets,
+                MAX(ls.ungraded_lone_claim_excluded) AS ungraded_lone_claim_excluded,
+                MAX(ls.ungraded_lone_claim_markets) AS ungraded_lone_claim_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
                 MAX(ls.draw_authority_markets) AS draw_authority_markets,
                 MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
@@ -4306,6 +4392,8 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # Queue 299 (#1012): result-authority + shape rung counts.
         no_winner_excluded = _int0("no_winner_excluded")
         no_winner_markets_count = _int0("no_winner_markets")
+        ungraded_lone_claim_excluded = _int0("ungraded_lone_claim_excluded")
+        ungraded_lone_claim_markets_count = _int0("ungraded_lone_claim_markets")
         draw_authority_excluded = _int0("draw_authority_excluded")
         draw_authority_markets_count = _int0("draw_authority_markets")
         orphan_partition_excluded = _int0("orphan_partition_excluded")
@@ -5278,6 +5366,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": NO_WINNER_RULE_TEXT,
             "excluded": no_winner_excluded,
             "excluded_markets": no_winner_markets_count,
+        },
+        # Queue 299 rung 1b (CERT-514, #1978): the single-outcome hole rung 1
+        # leaves open. Carries its own count so the population change is visible
+        # rather than folded into rung 1's.
+        "ungraded_lone_claim_filter": {
+            "applies_to": "all (single-outcome markets only)",
+            "rule": UNGRADED_LONE_CLAIM_RULE_TEXT,
+            "excluded": ungraded_lone_claim_excluded,
+            "excluded_markets": ungraded_lone_claim_markets_count,
         },
         # Queue 299 rung 2 (#1012): draw authority on draw-capable questions.
         "draw_authority_filter": {

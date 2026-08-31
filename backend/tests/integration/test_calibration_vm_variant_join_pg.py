@@ -129,35 +129,45 @@ ALL_IDS = sorted(ALL_LEGS)
 #     (`market_count = 1 AND total_outcomes = 1 AND graded >= 1`) D13's arm
 #     refused it too, because those counts were per VARIANT.
 #   * the WINNER variant — two one-outcome markets that won, so it IS admitted.
-#   * the UNKNOWN variant (CAL-P155) — one graded loss beside one lone claim
+#   * the MIXED variant (CAL-P155) — one graded loss beside one lone claim
 #     nothing ever graded.
 #
 # 🔴 CAL-P155 — ALEX RULED OPTION A AND THIS SECTION IS INVERTED, NOT DELETED.
-# `alex-inbox/calibration-919`, 2026-08-30: the arm counts PER MARKET
-# (`graded_lone_claims >= 1 AND ungraded_lone_claims = 0`), so each of those two
-# graded lone claims is admitted on its own account. The LOSS variant now
-# publishes. Every assertion below moved with the ruling and each one names it,
-# because what is not acceptable is either behaviour being true by accident.
+# `alex-inbox/calibration-919`, 2026-08-30: the arm counts PER MARKET, so each of
+# those two graded lone claims is admitted on its own account. The LOSS variant
+# now publishes. Every assertion below moved with the ruling and each one names
+# it, because what is not acceptable is either behaviour being true by accident.
 #
-# The UNKNOWN variant is new here and it is the one arm that could not be proved
-# anywhere else: admission is variant-grained, so admitting a variant admits all
-# its members' outcomes, and a single-outcome market nothing ever graded has NO
-# downstream rung to catch it — rung 1 requires `n_outcomes >= 2` on purpose. So
-# the arm refuses that variant whole, fail-closed, and this fixture is the only
-# thing that executes that decision against a real Postgres.
+# 🔴 CAL-P156 / CERT-514 — AND THE MIXED VARIANT'S EXPECTATION IS INVERTED IN
+# TURN. CAL-P155 refused it whole, on `ungraded_lone_claims = 0`, and the cert
+# blocked that: refusing the variant to keep ONE ungraded row out also withheld
+# the graded loss beside it, so a scoreable claim's fate still hung on a SIBLING
+# market — the coupling option A exists to remove. The variant is now ADMITTED
+# and the refusal moved down a grain to rung 1b
+# (`ungraded_lone_claim_markets`), which removes the ungraded member per market.
+# This fixture is the only thing that executes that SPLIT against a real
+# Postgres, and it takes two tests to pin it honestly: one for the published
+# rows and one for the flag, because "the row is absent" is equally true of the
+# residue that was removed.
 #
 # Single-outcome markets on purpose: `no_winner_markets` (Queue 299 rung 1)
 # needs `n_outcomes >= 2`, and `malformed_binaries` needs exactly 2. Neither
-# fires here, so what these rows do or do not do is attributable to the join
-# and to `clean_vms`, and to nothing else.
+# fires here — rung 1b is the ONLY rung that touches these rows, so what they do
+# or do not do is attributable to it, to the join and to `clean_vms`, and to
+# nothing else.
 ASYM_EVENT_ID = 771500011
 ASYM_SPORT_ID = 77151
 ASYM_LOSS_LEGS = {771511: 0.15, 771512: 0.35}
 ASYM_WIN_LEGS = {771513: 0.55, 771514: 0.75}
-#: CAL-P155: the fail-closed variant. One AFFIRMATIVE graded loss (771515) and
-#: one lone claim whose `is_winner` was never written (771516, seeded NULL — not
-#: the False default, which is the ambiguity gotcha #21 is about).
+#: The MIXED variant (CAL-P155; CERT-514 inverted what it proves). One
+#: AFFIRMATIVE graded loss beside one lone claim whose `is_winner` was never
+#: written — seeded NULL, not the False default, which is the ambiguity
+#: gotcha #21 is about. Rung 1b must SPLIT this pair.
 ASYM_UNKNOWN_LEGS = {771515: 0.45, 771516: 0.65}
+#: The scoreable half of the mixed variant: option A says it publishes on its
+#: own account, whatever its ungraded neighbour's state.
+ASYM_MIXED_GRADED_LEG = 771515
+#: The unknown-truth half: admitted with its variant, then removed by rung 1b.
 ASYM_UNGRADED_LEG = 771516
 ASYM_LEG_CATEGORY = {
     **{mid: "cricket" for mid in ASYM_LOSS_LEGS},
@@ -168,14 +178,18 @@ ASYM_LEG_CATEGORY = {
 ASYM_LEG_WINNER = {
     **{mid: False for mid in ASYM_LOSS_LEGS},
     **{mid: True for mid in ASYM_WIN_LEGS},
-    771515: False,
+    ASYM_MIXED_GRADED_LEG: False,
     ASYM_UNGRADED_LEG: None,
 }
 ASYM_LEGS = {**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS, **ASYM_UNKNOWN_LEGS}
 ASYM_IDS = sorted(ASYM_LEGS)
-#: What the RULED producer publishes from this fixture: both admitted variants
-#: whole, and nothing from the unknown-truth one.
-ASYM_PUBLISHED = sorted({**ASYM_LOSS_LEGS, **ASYM_WIN_LEGS})
+#: What the RULED producer publishes from this fixture (CERT-514): both admitted
+#: variants whole, PLUS the graded member of the mixed variant — and NOT its
+#: ungraded neighbour, which rung 1b removes at market grain. The whole point of
+#: option A is that this list SPLITS a variant instead of taking or leaving it.
+ASYM_PUBLISHED = sorted(
+    {*ASYM_LOSS_LEGS, *ASYM_WIN_LEGS, ASYM_MIXED_GRADED_LEG}
+)
 
 # Four DISTINCT prices on purpose. `mode_prices` deletes a price shared by more
 # than GREATEST(eligible/2, 2) legs; with every price unique no mode can form,
@@ -660,12 +674,21 @@ async def test_the_asymmetric_premise_every_scoreable_variant_is_admitted():
       ``market_count = 2``; the ruled per-market arm admits it, because
       ``graded_lone_claims = 2`` and nothing in it is ungraded.
     * ``tennis`` — one graded loss and one lone claim nothing ever graded.
-      REFUSED, fail-closed: ``ungraded_lone_claims = 1``.
+      ADMITTED (CERT-514), and then SPLIT: rung 1b removes the ungraded member
+      at market grain while the graded one publishes.
 
-    The third variant is why the second is not a tautology. If the arm were
-    simply ``graded_lone_claims >= 1`` the two would be indistinguishable here,
-    and a never-graded row would publish as a confident loss off ``is_winner``'s
-    False default.
+    🔴 THE THIRD VARIANT IS THE CERT-514 CASE AND ITS EXPECTATION IS INVERTED.
+    CAL-P155 refused it whole — ``ungraded_lone_claims = 1`` — and the cert
+    blocked that: the graded loss beside the ungraded row is independently
+    scoreable, and option A says it publishes on its own account. Refusing the
+    variant made its fate depend on a SIBLING market, which is the coupling the
+    ruling removes.
+
+    So the variant is admitted and the refusal moves DOWN a grain. That is only
+    safe because rung 1b exists; ``test_the_mixed_variant_publishes_only_its_
+    graded_member`` below is the assertion that the split actually happens,
+    and without it this change would be a straight relaxation that publishes
+    unknown truth as a confident loss off ``is_winner``'s False default.
     """
     from sqlalchemy import text
 
@@ -713,8 +736,9 @@ async def test_the_asymmetric_premise_every_scoreable_variant_is_admitted():
             f"other leg's is_winner must be NULL, not False (got {unknown!r})"
         )
         assert (unknown.graded_lone_claims, unknown.ungraded_lone_claims) == (1, 1), (
-            "the fail-closed case needs BOTH: a scoreable claim that would be "
-            "admitted on its own, and an ungraded one that refuses the variant. "
+            "the CERT-514 case needs BOTH: a scoreable claim that publishes on "
+            "its own account, and an ungraded one beside it that must NOT — and "
+            "must be removed per market rather than by refusing the variant. "
             f"got={unknown!r}"
         )
 
@@ -732,14 +756,17 @@ async def test_the_asymmetric_premise_every_scoreable_variant_is_admitted():
                 )
             ).all()
         ]
-        assert admitted == ["baseball", "cricket"], (
-            "RULED (alex-inbox/calibration-919, option A — Alex 2026-08-30): "
-            "`clean_vms` admits the winner variant AND the two-graded-losses "
-            "variant, and refuses the one holding unknown truth. If `cricket` "
-            "is missing, D13's arm went back to per-VARIANT and that is a "
-            "ruling reversal. If `tennis` is present, the fail-closed conjunct "
-            "is gone and a never-graded row is about to publish as a loss "
-            f"(gotcha #21). got={admitted!r}"
+        assert admitted == ["baseball", "cricket", "tennis"], (
+            "RULED (alex-inbox/calibration-919 option A; CERT-514): `clean_vms` "
+            "admits ALL THREE — the winner variant, the two-graded-losses "
+            "variant, and the MIXED one. If `cricket` is missing, D13's arm went "
+            "back to per-VARIANT and that is a ruling reversal. If `tennis` is "
+            "missing, the fail-closed residue is back and a graded lone claim is "
+            "again being refused for an ungraded SIBLING's sake — CERT-514 [P1]. "
+            "Admission is NOT publication here: `tennis`'s ungraded leg is "
+            "removed one grain down by rung 1b, which "
+            "test_the_mixed_variant_publishes_only_its_graded_member proves. "
+            f"got={admitted!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
@@ -815,26 +842,130 @@ async def test_the_graded_losses_publish_under_their_own_category_not_a_siblings
         # THE RULING. Same four ids as the accident produced — and a different,
         # correct bucketing.
         assert sorted(oid for oid, _ in after) == ASYM_PUBLISHED, (
-            "RULED (alex-inbox/calibration-919, option A — Alex 2026-08-30): the "
-            "two graded lone claims publish on their own account and the winner "
-            "variant is untouched. If the loss rows are missing, D13's arm went "
-            "back to per-VARIANT. If a winner row is missing, D5 is losing rows "
-            "nobody ruled on. If a `tennis` leg is here, the fail-closed "
-            f"conjunct is gone. got={after!r}"
+            "RULED (alex-inbox/calibration-919 option A; CERT-514): the two "
+            "graded lone claims publish on their own account, the winner variant "
+            "is untouched, and the mixed variant contributes its GRADED member "
+            "only. If the loss rows are missing, D13's arm went back to "
+            "per-VARIANT. If a winner row is missing, D5 is losing rows nobody "
+            f"ruled on. If {ASYM_MIXED_GRADED_LEG} is missing, the fail-closed "
+            f"residue is back. If {ASYM_UNGRADED_LEG} is HERE, rung 1b is not "
+            f"catching unknown truth. got={after!r}"
         )
         assert {oid: cat for oid, cat in after} == {
             **{oid: "cricket" for oid in ASYM_LOSS_LEGS},
             **{oid: "baseball" for oid in ASYM_WIN_LEGS},
+            ASYM_MIXED_GRADED_LEG: "tennis",
         }, (
             "🔴 EVERY ROW MUST PUBLISH UNDER ITS OWN VARIANT'S CATEGORY. The "
             "loss legs under `baseball` would mean D5 was reverted and these "
-            "rows are riding the sibling again — the same four ids, the wrong "
+            "rows are riding the sibling again — the same ids, the wrong "
             f"mechanism, and the accident back in the curve. got={after!r}"
         )
-        assert not [oid for oid, _ in after if oid in ASYM_UNKNOWN_LEGS], (
-            "the unknown-truth variant published. `is_winner` is nullable with "
-            "a False default, so its never-graded leg is now a confident loss "
-            f"in the calibration curve (gotcha #21). got={after!r}"
+        assert ASYM_UNGRADED_LEG not in {oid for oid, _ in after}, (
+            "the never-graded leg published. `is_winner` is nullable with a "
+            "False default, so it is now a confident loss in the calibration "
+            "curve (gotcha #21). Its variant is admitted on purpose since "
+            "CERT-514 — rung 1b is what must remove THIS row, and it did not. "
+            f"got={after!r}"
+        )
+
+    await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
+
+
+async def test_the_mixed_variant_publishes_only_its_graded_member():
+    """🔴 CERT-514's [P1], as the behaviour it demanded — the SPLIT.
+
+    This is the assertion the block was withheld for, and it is deliberately
+    scoped to ONE variant so it cannot be satisfied by the other two.
+
+    CAL-P155 admitted or refused a variant WHOLE. Its arm carried
+    ``ungraded_lone_claims = 0``, so a variant holding one graded lone claim
+    beside one ungraded lone claim was refused entirely — and the graded claim,
+    which option A says publishes on its own account, was withheld because of a
+    SIBLING market's grade state. The cert called that the same coupling the
+    ruling removes, on a smaller population, and blocked it.
+
+    The repair is a change of GRAIN, not a relaxation, and this test is the only
+    place both halves are executed together against real rows:
+
+      * the variant is ADMITTED — the graded loss reaches the curve; and
+      * the ungraded member is REMOVED anyway, by rung 1b, at market grain.
+
+    Take either half away and this fails. Drop rung 1b and 771516 publishes as a
+    confident loss off ``is_winner``'s False default (gotcha #21); restore the
+    residue conjunct and 771515 disappears with it.
+
+    ``_match_production_is_winner_nullability`` is why this can be seeded at all:
+    the ORM declares ``is_winner`` non-Optional, so a metadata-built database
+    makes it NOT NULL and "nobody graded this" is not expressible in it.
+    """
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    async def body(session):
+        published = await _rows(
+            session, _calibration_population_ctes(), sorted(ASYM_UNKNOWN_LEGS)
+        )
+
+        assert published == [(ASYM_MIXED_GRADED_LEG, "tennis")], (
+            "the mixed variant must contribute EXACTLY its graded member. "
+            f"Missing {ASYM_MIXED_GRADED_LEG} means a graded lone claim is "
+            "still being refused for an ungraded sibling's sake — CERT-514 "
+            f"[P1], unrepaired. Present {ASYM_UNGRADED_LEG} means the arm was "
+            "relaxed without rung 1b behind it and unknown truth is now a "
+            f"confident loss in the curve. got={published!r}"
+        )
+
+    await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)
+
+
+async def test_rung_1b_is_what_removes_the_ungraded_member_not_the_arm():
+    """ATTRIBUTION. The row is gone — prove WHICH mechanism took it.
+
+    ``test_the_mixed_variant_publishes_only_its_graded_member`` asserts the
+    outcome; a passing outcome is consistent with the residue conjunct never
+    having been removed at all, because refusing the variant ALSO keeps 771516
+    out. So that test alone cannot tell the repair from the thing it replaced.
+
+    This one reads the flag directly. ``is_ungraded_lone_claim`` must be TRUE for
+    the never-graded leg and FALSE for every other seeded row — including its own
+    variant's graded sibling, which is the pair rung 1b has to separate.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    async def body(session):
+        flags = {
+            r.outcome_id: r.is_ungraded_lone_claim
+            for r in (
+                await session.execute(
+                    text(
+                        "WITH "
+                        + _calibration_population_ctes()
+                        + " SELECT outcome_id, is_ungraded_lone_claim "
+                        "FROM ranked_outcomes WHERE outcome_id = ANY(:ids)"
+                    ),
+                    {"ids": ASYM_IDS},
+                )
+            ).all()
+        }
+
+        assert flags.get(ASYM_UNGRADED_LEG) is True, (
+            "rung 1b did not flag the never-graded lone claim, so whatever kept "
+            "it out of the curve was NOT the per-market rung — most likely the "
+            f"variant-wide residue is still in the arm. got={flags!r}"
+        )
+        assert flags.get(ASYM_MIXED_GRADED_LEG) is False, (
+            "rung 1b flagged the GRADED member of the mixed variant. It keys on "
+            "`graded_count = 0`; if this is True it is keying on winner "
+            f"cardinality and every honest lone-claim loss is about to be "
+            f"dropped from the curve. got={flags!r}"
+        )
+        assert not any(
+            flags.get(oid) for oid in (*ASYM_LOSS_LEGS, *ASYM_WIN_LEGS)
+        ), (
+            "rung 1b reached beyond the mixed variant. Those four legs are all "
+            f"affirmatively graded, so none is unknown truth. got={flags!r}"
         )
 
     await _with_seeded_db(body, seed=_seed_asym, cleanup=_cleanup_asym)

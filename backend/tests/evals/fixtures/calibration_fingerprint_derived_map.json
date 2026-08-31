@@ -11,7 +11,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 54,
+  "input_count": 55,
   "inputs": [
     {
       "covered_by_value": false,
@@ -491,6 +491,17 @@
     {
       "covered_by_value": false,
       "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "UNGRADED_LONE_CLAIM_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:UNGRADED_LONE_CLAIM_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "VM_ROSTER_IS_GROUPED_PARAM",
       "origin": "app.tasks.precompute_calibration:VM_ROSTER_IS_GROUPED_PARAM",
@@ -631,8 +642,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "27865e4dc06a434697ee84ad3ae0f963e87b11c011552aa6177c4ffb4a15682f",
-  "uncovered_behavior_or_evidence": 28,
-  "uncovered_count": 50,
+  "source_sha256": "e0e75320aec990eadd1c4906db6d87c62de6530b66afa11250273bf6b239b221",
+  "uncovered_behavior_or_evidence": 29,
+  "uncovered_count": 51,
   "uncovered_sql_shaping": 22
 }

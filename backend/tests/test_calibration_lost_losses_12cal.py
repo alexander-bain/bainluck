@@ -27,23 +27,40 @@ instrument that measures it cannot drift.
 CAL-P155 — THE ARM WENT PER-MARKET, AND THE SUITE'S JOB DID NOT CHANGE
 ----------------------------------------------------------------------
 Alex ruled option A (``alex-inbox/calibration-919``, 2026-08-30), reversing
-CAL-P151's option B: the arm now reads ``graded_lone_claims >= 1 AND
-ungraded_lone_claims = 0`` over PER-MARKET counts, so two independently-graded
+CAL-P151's option B: the arm reads PER-MARKET counts, so two independently-graded
 lone claims sharing one virtual variant are each admitted instead of both being
 refused for having been counted together.
 
 Every hazard listed above still applies unchanged — the ruling widens the gate
 again, and widening a population gate is still exactly the operation that can
-admit a row whose truth we do not have. Two additions:
+admit a row whose truth we do not have. One addition:
 
-* ``ungraded_lone_claims = 0`` is the fail-closed conjunct that replaces the
-  retired ``graded >= 1``, and it is pinned as hard as its predecessor was.
-  Nothing downstream can catch a single-outcome market nothing ever graded:
-  rung 1 requires ``n_outcomes >= 2`` on purpose.
 * The change must be a pure WIDENING. Every variant the retired per-variant arm
   admitted must still be admitted, or option A is not "more correct by D13's own
   argument", it is a different rule that also drops rows
   (:func:`test_option_a_only_widens_it_never_takes_a_variant_away`).
+
+CAL-P156 / CERT-514 — THE UNKNOWN-TRUTH REFUSAL CHANGED GRAIN
+--------------------------------------------------------------
+CAL-P155 paired the per-market arm with ``ungraded_lone_claims = 0``, a
+fail-closed conjunct meant to stop a never-graded lone claim publishing as a
+confident loss. The cert blocked it, and was right to: admission is
+variant-grained, so that conjunct could only refuse the WHOLE variant — and a
+graded lone claim's publication therefore still depended on a SIBLING market's
+grade state, which is the coupling option A was chosen to remove.
+
+The refusal itself was never in question, only where it happens. It now lives in
+the producer's **rung 1b** (``ungraded_lone_claim_markets``), which removes an
+ungraded lone claim at MARKET grain, so the arm no longer has to. That makes the
+two facts below a PAIR, and this suite asserts them as one:
+
+* the arm carries no variant-wide conjunct beside ``graded_lone_claims >= 1``
+  (:func:`assert_repaired_population` clause 4b), and
+* rung 1b exists, keys on ``graded_count = 0``, and is applied (clause 4c).
+
+Either alone is a bug. Clause 4b without 4c is a straight relaxation that
+publishes unknown truth as losses; 4c without 4b keeps the coupling the cert
+blocked. Nothing in this file should ever assert one without the other.
 """
 
 from __future__ import annotations
@@ -146,22 +163,69 @@ def assert_repaired_population(sql: str) -> None:
     assert mlc.RESTORED_ARM_SQL in gate
     assert mlc.CLEAN_VMS_GATE_FRAGMENT in gate
 
-    # 4. BOTH conjuncts. CAL-P155 / D13 option A (Alex 2026-08-30) replaced the
-    #    three per-VARIANT conjuncts with two PER-MARKET ones; dropping either is
-    #    a different, wider and wrong rule, and each failure mode is named.
+    # 4. ONE conjunct, and that is the CERT-514 repair. D13 option A (Alex
+    #    2026-08-30) says each independently graded lone claim publishes on its
+    #    own; anything the arm ANDs onto `graded_lone_claims >= 1` is a fact
+    #    about the variant, so it can only re-couple a graded claim to its
+    #    siblings — which is the coupling option A exists to remove.
     assert "graded_lone_claims >= 1" in gate, (
         "would admit a variant with no scoreable lone claim in it at all"
     )
-    assert "ungraded_lone_claims = 0" in gate, (
-        "would publish never-graded lone claims as losses — no downstream rung "
-        "catches a single-outcome market (rung 1 requires n_outcomes >= 2)"
-    )
-    # 4b. And the retired per-VARIANT conjuncts are GONE from the arm. Pinned as
-    #     absence for the same reason clause 2 is: a partial revert that leaves
-    #     the old counts in an OR beside the new ones re-creates neither rule.
+    # 4b. The retired conjuncts are GONE from the arm — the per-VARIANT counts
+    #     (option B) and the fail-closed residue CERT-514 blocked. Pinned as
+    #     absence for the same reason clause 2 is, and over the EXECUTABLE chain
+    #     because the arm's comment block necessarily quotes both.
     assert "market_count = 1" not in gate, (
         "the per-VARIANT count is back in the arm — that is option B, and Alex "
         "ruled option A (alex-inbox/calibration-919)"
+    )
+    assert "ungraded_lone_claims = 0" not in gate, (
+        "the fail-closed residue is back: a graded lone claim is again waiting "
+        "on a SIBLING market's grade state, which is what CERT-514 blocked. "
+        "Unknown truth leaves at market grain now, via rung 1b — not by "
+        "refusing the whole variant."
+    )
+
+    # 4c. …and it leaves at market grain instead. Rung 1b is the ONLY thing
+    #     standing between an ungraded lone claim and the curve now that the arm
+    #     admits its variant, so clause 4b without this one would be a straight
+    #     relaxation. Both halves of the exchange, asserted together.
+    ulc = _cte_body(sql, "ungraded_lone_claim_markets")
+    assert "n_outcomes = 1" in ulc and "graded_count = 0" in ulc, (
+        "rung 1b must key on a one-outcome market with ZERO affirmative grades. "
+        "Winner cardinality cannot decide this shape — at one outcome 'nobody "
+        "won' is the ordinary result of a claim that resolved No."
+    )
+    # 🔴 SCOPED TO `deduped`, AND MUTATION IS WHY. This began as
+    # `"NOT ro.is_ungraded_lone_claim" in sql` and CAL-P156's battery killed it:
+    # the flag is applied in THREE places (twice in field_completeness' survivor
+    # counts, once in the publish filter), so deleting the ONE that gates the
+    # published curve left the assertion green on its siblings. A containment
+    # check over the whole chain cannot see which call site it matched.
+    # `deduped` is the CTE the curve is read from, so that is where it is pinned.
+    assert "NOT ro.is_ungraded_lone_claim" in _cte_body(sql, "deduped"), (
+        "rung 1b is not applied in `deduped` — the ungraded lone claims the arm "
+        "now admits would publish as confident losses (gotcha #21). Note it may "
+        "still appear in field_completeness; that does not gate the curve."
+    )
+    # And in the field-completeness counts, where a partial field must be
+    # dropped whole rather than normalized over survivors. Separate assertion,
+    # separate failure message — one site is not evidence about the other.
+    assert (
+        _cte_body(sql, "field_completeness").count("NOT ro.is_ungraded_lone_claim")
+        == 2
+    ), (
+        "rung 1b must be excluded from BOTH survivor counts, or a field that "
+        "loses a member to it normalizes over the survivors instead of being "
+        "dropped as PARTIAL"
+    )
+    assert (
+        "COUNT(*) FILTER (WHERE fo.is_winner IS NOT NULL) AS graded_count"
+        in _cte_body(sql, "market_result_shape")
+    ), (
+        "graded_count must be the is_winner-IS-NOT-NULL count. Derived as "
+        "n_outcomes - win_count it would be identically >= 1 for every "
+        "single-outcome market and rung 1b would never fire."
     )
 
     # 5. The two counts are PER MARKET and mean what the arm needs.
@@ -197,6 +261,14 @@ def assert_repaired_population(sql: str) -> None:
     assert "n_outcomes >= 2" in nwm and "win_count = 0" in nwm
     assert "NOT ro.is_no_winner_market" in sql
     assert "NOT ro.is_orphan_partition" in sql
+    # Rung 1 keeps its >=2 floor. Rung 1b is a SIBLING that covers the shape
+    # rung 1 declines on purpose; if rung 1 ever widened to n_outcomes >= 1 it
+    # would start excluding every lone claim that legitimately resolved No,
+    # which is the opposite of what this whole repair is for.
+    assert "n_outcomes >= 1" not in nwm, (
+        "rung 1 has widened to cover single-outcome markets — that removes "
+        "every honestly-resolved No, not just the ungraded ones"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,25 +292,45 @@ def test_the_repair_is_in_the_headline_chain_and_every_horizon():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    "glc,ulc,restorable,why",
+    "glc,restorable,why",
     [
-        (1, 0, True, "the solitary lone claim: one market, one graded outcome"),
-        (2, 0, True, "🔴 OPTION A. Two independently-graded lone claims sharing "
-                     "one variant. The retired per-VARIANT arm saw "
-                     "market_count = 2 and refused BOTH; each is individually "
-                     "'a complete, scoreable prediction' by this arm's own "
-                     "argument (Alex 2026-08-30)"),
-        (7, 0, True, "the count of scoreable claims is not a reason to refuse"),
-        (0, 0, False, "no lone claim at all"),
-        (0, 1, False, "never graded — not a loss, UNKNOWN (gotcha #21)"),
-        (1, 1, False, "FAIL-CLOSED: one ungraded member refuses the variant. "
-                      "Refusing a scoreable row costs coverage; publishing "
-                      "unknown truth as a loss corrupts the curve"),
-        (5, 2, False, "and it is `= 0`, not a ratio"),
+        (1, True, "the solitary lone claim: one market, one graded outcome"),
+        (2, True, "🔴 OPTION A. Two independently-graded lone claims sharing "
+                  "one variant. The retired per-VARIANT arm saw "
+                  "market_count = 2 and refused BOTH; each is individually "
+                  "'a complete, scoreable prediction' by this arm's own "
+                  "argument (Alex 2026-08-30)"),
+        (7, True, "the count of scoreable claims is not a reason to refuse"),
+        (0, False, "no graded lone claim at all — nothing here is scoreable"),
     ],
 )
-def test_the_restored_arm_boundary(glc, ulc, restorable, why):
-    assert mlc.lone_claim_is_restorable(glc, ulc) is restorable, why
+def test_the_restored_arm_boundary(glc, restorable, why):
+    assert mlc.lone_claim_is_restorable(glc) is restorable, why
+
+
+@pytest.mark.parametrize("ulc", [0, 1, 2, 9])
+def test_an_ungraded_SIBLING_no_longer_refuses_a_graded_claim(ulc):
+    """🔴 THE CERT-514 REPAIR, AS THE PROPERTY IT RESTORES.
+
+    This is the assertion whose OPPOSITE was pinned one commit ago. CAL-P155
+    shipped ``ungraded_lone_claims = 0`` as a deliberate fail-closed residue and
+    wrote ``(1, 1) -> False`` into this very sweep; the cert blocked it, because
+    a graded lone claim's publication still depended on a SIBLING market's grade
+    state and that is the exact coupling Alex's option A removes. A narrower
+    version of the defect is still the defect.
+
+    The refusal was never wrong, only its GRAIN — admission is variant-wide, so
+    a conjunct here could only ever refuse every graded claim in the variant
+    along with the one ungraded row it was aimed at. Unknown truth now leaves at
+    market grain, in the producer's rung 1b, which
+    ``assert_repaired_population`` clause 4c pins in the same breath as the
+    absence of this conjunct. Neither half is safe alone: without 4c this is a
+    straight relaxation that publishes unknown truth as confident losses.
+    """
+    assert mlc.lone_claim_is_restorable(1) is True, (
+        f"a graded lone claim was refused because {ulc} ungraded lone claim(s) "
+        f"shared its variant — CERT-514's [P1], re-created"
+    )
 
 
 def test_the_restored_arm_is_exactly_the_censuss_defect_arm():
@@ -249,10 +341,9 @@ def test_the_restored_arm_is_exactly_the_censuss_defect_arm():
     lands, and the CAL-P122 fold stops predicting the curve.
     """
     for glc in range(0, 5):
-        for ulc in range(0, 5):
-            arm = mlc.classify_vm(glc, ulc)
-            restorable = mlc.lone_claim_is_restorable(glc, ulc)
-            assert (arm == mlc.ARM_LONE) is restorable, (glc, ulc, arm)
+        arm = mlc.classify_vm(glc)
+        restorable = mlc.lone_claim_is_restorable(glc)
+        assert (arm == mlc.ARM_LONE) is restorable, (glc, arm)
 
 
 def test_option_a_only_widens_it_never_takes_a_variant_away():
@@ -270,11 +361,11 @@ def test_option_a_only_widens_it_never_takes_a_variant_away():
     a swap, and the declared movement below ("increase") would be a false
     statement about a change that also removes published rows.
     """
-    assert mlc.lone_claim_is_restorable(1, 0) is True
+    assert mlc.lone_claim_is_restorable(1) is True
 
     # The other direction is the ruling itself, and it is asserted as a
     # DIFFERENCE so the two arms cannot quietly become the same rule again.
-    assert mlc.lone_claim_is_restorable(2, 0) is True, (
+    assert mlc.lone_claim_is_restorable(2) is True, (
         "two graded lone claims in one variant is precisely the population the "
         "retired arm refused; if this is False the ruling was not applied"
     )
@@ -288,7 +379,7 @@ def test_the_arm_reads_a_variant_as_a_bag_of_markets_not_as_one_unit():
     must not: adding more graded lone claims can never turn admission off.
     """
     for extra in range(0, 6):
-        assert mlc.lone_claim_is_restorable(1 + extra, 0) is True, (
+        assert mlc.lone_claim_is_restorable(1 + extra) is True, (
             f"admission flipped off after {extra} graded siblings were added — "
             f"that is the per-variant coupling Alex ruled out"
         )

@@ -130,10 +130,30 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         classified as such, and **neither moves the count below** — which is the
         separation this docstring promises, restored after CERT-502 found the
         first attempt breaking it.
+
+        🔴 CAL-P156 / CERT-514 ADDED AN EIGHTH AND THE TRIPWIRE FIRED: 54 -> 55,
+        uncovered 50 -> 51. It is ``UNGRADED_LONE_CLAIM_RULE_TEXT``, the payload
+        rule text for Queue 299 rung 1b (the new per-market exclusion for a
+        one-outcome market nothing ever graded). Declared here rather than
+        absorbed, because a pin that is edited quietly is not a tripwire.
+
+        Why it is the routine case and not a new hole: it is the SEVENTEENTH
+        ``*_RULE_TEXT`` constant, and the derived map classifies it identically
+        to the other sixteen — ``covered_by_value: false``,
+        ``sql_interpolated: false``, ``impact: behavior_or_evidence``,
+        ``used_in: ["compute_calibration_payload"]``. It is prose that ships in
+        the payload to explain a filter; it never reaches the emitted SQL, so it
+        cannot change the published population. **``uncovered_sql_shaping``
+        stands still at 22**, which is the separation that actually matters and
+        is asserted on its own below. ``covered_by_value`` stands still at 4.
+
+        The rung's SQL is guarded where SQL is guarded — ``_main_futures_sql``
+        is a hashed root, so the CTE and its predicates are covered by source
+        hashing, not by this list.
         """
-        assert artifact["input_count"] == 54
+        assert artifact["input_count"] == 55
         assert len(artifact["covered_by_value"]) == 4
-        assert artifact["uncovered_count"] == 50
+        assert artifact["uncovered_count"] == 51
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -254,7 +274,15 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         43 -> 45 at CERT-497/CERT-502 (``_BOOKMAKER_ROW_REQUIRED_KEYS`` and
         ``BOOKMAKER_CURVE_SOURCE``). Same direction, same reason: both are
         defined in the build module, so the FIVE is untouched and this
-        arithmetic is the only thing that moves."""
+        arithmetic is the only thing that moves.
+
+        45 -> 46 at CAL-P156 / CERT-514 (``UNGRADED_LONE_CLAIM_RULE_TEXT``, the
+        payload rule text for rung 1b). Same direction, same reason again — it
+        is defined in ``app.tasks.precompute_calibration``, so **the cross-module
+        FIVE is unchanged**, which is the clause that carries the meaning here.
+        Worth stating plainly given the warning above: this is not a sixth hole,
+        it is the in-module remainder, and the list below is the assertion to
+        read."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -268,7 +296,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 45 == artifact["uncovered_count"]
+        assert len(cross) + 46 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

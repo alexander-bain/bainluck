@@ -332,6 +332,11 @@ class TestCalibrationPublicEndpoint:
             # Queue 299 (#1012): result authority before shape, then evidence-
             # based exclusivity. Each rung ships its own rule + live count.
             "no_winner_filter",  # rung 1: the market graded nobody
+            # rung 1b (CERT-514): a ONE-outcome market nothing ever graded.
+            # Its own key, not folded into rung 1's, because the two rungs
+            # exclude for different reasons and a reader who cannot see the
+            # split cannot tell a coverage change from a truth change.
+            "ungraded_lone_claim_filter",
             "draw_authority_filter",  # rung 2: draw-capable duel, no draw member
             "orphan_partition_filter",  # rung 3: a 'field' with <=1 member
             "exclusivity_evidence",  # rung 4: what now proves a partition

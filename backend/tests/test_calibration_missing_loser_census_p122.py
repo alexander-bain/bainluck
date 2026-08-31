@@ -96,15 +96,21 @@ def test_clean_vms_no_longer_drops_a_claim_for_losing():
         "the restored arm must require an AFFIRMATIVE grade; without it a row "
         "nothing ever graded publishes as a confident loss"
     )
-    # CAL-P155 / D13 option A: the affirmative-grade conjunct is now PER MARKET,
-    # and its fail-closed partner has to be here too. Without
-    # `ungraded_lone_claims = 0` a variant admitted by this arm can carry a
-    # single-outcome member nothing ever graded, and NO downstream rung removes
-    # it — rung 1 requires `n_outcomes >= 2` on purpose — so it would publish as
-    # a confident loss off `is_winner`'s False default (gotcha #21).
-    assert "ungraded_lone_claims = 0" in body, (
-        "the per-market arm dropped its fail-closed conjunct; an ungraded lone "
-        "claim in an admitted variant has no rung to catch it"
+    # CERT-514: the affirmative-grade conjunct is PER MARKET and it now stands
+    # ALONE. CAL-P155's `ungraded_lone_claims = 0` partner was blocked — being
+    # variant-grained, it could only refuse the whole variant, so it went on
+    # holding graded claims back for an ungraded sibling's sake. That does not
+    # licence publishing unknown truth: the exclusion moved to rung 1b, per
+    # market, and the two assertions below are a PAIR — the absence is only safe
+    # because the rung exists (gotcha #21).
+    assert "ungraded_lone_claims = 0" not in body, (
+        "the fail-closed residue is back in the arm; a graded lone claim is "
+        "again waiting on a sibling market's grade state (CERT-514 [P1])"
+    )
+    assert "ungraded_lone_claim_markets AS (" in sql, (
+        "the arm stopped refusing ungraded lone claims and rung 1b is not "
+        "there to catch them — that is a straight relaxation, and every "
+        "ungraded lone claim would publish as a confident loss"
     )
 
 
@@ -114,9 +120,46 @@ def test_rung_one_still_exempts_the_one_outcome_market():
 
     assert market_has_no_winner_authority(2, 0) is True
     assert market_has_no_winner_authority(9, 0) is True
-    # The lone claim. Rung 1 says "not an authority failure" — and never gets
-    # asked, because clean_vms deleted the row three CTEs earlier.
+    # The lone claim. Rung 1 says "not an authority failure" — and since
+    # CERT-514 it is rung 1b that answers for this shape instead.
     assert market_has_no_winner_authority(1, 0) is False
+
+
+def test_rung_1b_takes_exactly_the_shape_rung_1_declines():
+    """The two rungs must PARTITION the unknown-truth space, not overlap it.
+
+    Rung 1b is rung 1's complement. Asserted against rung 1 in the same test so
+    a future widening of either cannot open a gap or a double-count between
+    them: at ``n_outcomes >= 2`` rung 1 answers and rung 1b must stay silent; at
+    exactly one outcome rung 1 abstains and rung 1b answers.
+    """
+    from app.tasks.precompute_calibration import (
+        market_has_no_winner_authority,
+        market_is_ungraded_lone_claim,
+    )
+
+    # The lone claim nothing ever graded — rung 1b's whole population.
+    assert market_is_ungraded_lone_claim(1, 0) is True
+
+    # 🔴 THE CASE THE WHOLE REPAIR TURNS ON. A one-outcome market that WAS
+    # graded is a complete, scoreable prediction whether it won or lost, and
+    # rung 1b must not touch it. If this ever returns True the rung is keying on
+    # winner cardinality instead of on an affirmative grade, and every honest
+    # lone claim that resolved No leaves the curve.
+    assert market_is_ungraded_lone_claim(1, 1) is False
+
+    # Multi-outcome markets belong to rung 1, at any grade count.
+    for n_outcomes in (2, 3, 9):
+        for n_graded in (0, 1, n_outcomes):
+            assert market_is_ungraded_lone_claim(n_outcomes, n_graded) is False, (
+                f"rung 1b reached a {n_outcomes}-outcome market; that is rung "
+                f"1's population and admitting both double-counts the exclusion"
+            )
+
+    # And the complement holds in the other direction: the one shape rung 1b
+    # owns is exactly the one rung 1 declines.
+    assert market_has_no_winner_authority(1, 0) is False
+    assert market_is_ungraded_lone_claim(1, 0) is True
 
 
 def test_orphan_partition_still_requires_a_declared_field():
@@ -136,35 +179,53 @@ def test_orphan_partition_still_requires_a_declared_field():
 # 2. THE ARM SPLIT.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("glc,ulc,why", [
-    (1, 0, "the solitary lone claim — the class this instrument was built on"),
-    (2, 0, "TWO lone claims in one variant: option A's whole point. Under the "
-           "retired per-VARIANT arm this was market_count=2 and fell in the "
-           "OTHER arm, beside genuine unknown truth"),
-    (9, 0, "wider still, and still every member is a scoreable graded claim"),
+@pytest.mark.parametrize("glc,why", [
+    (1, "the solitary lone claim — the class this instrument was built on"),
+    (2, "TWO lone claims in one variant: option A's whole point. Under the "
+        "retired per-VARIANT arm this was market_count=2 and fell in the "
+        "OTHER arm, beside genuine unknown truth"),
+    (9, "wider still, and still every member is a scoreable graded claim"),
 ])
 def test_a_graded_lone_claim_is_the_defect_arm_however_many_share_its_variant(
-    glc, ulc, why
+    glc, why
 ):
-    assert mlc.classify_vm(glc, ulc) == mlc.ARM_LONE, why
+    assert mlc.classify_vm(glc) == mlc.ARM_LONE, why
 
 
-@pytest.mark.parametrize("glc,ulc,why", [
-    (0, 0, "no lone claim at all — a multi-outcome vm that graded nobody"),
-    (0, 1, "one lone claim and nothing ever graded it: rung 1's UNKNOWN truth"),
-    (0, 4, "several, all ungraded"),
-    (1, 1, "FAIL-CLOSED: a graded claim beside an ungraded one refuses the "
-           "whole variant rather than publishing unknown truth as a loss"),
-    (3, 1, "one ungraded member is enough to refuse — the conjunct is = 0"),
+@pytest.mark.parametrize("glc,why", [
+    (0, "no graded lone claim at all — a multi-outcome vm that graded nobody, "
+        "or lone claims nothing ever graded. Either way rung 1 / rung 1b owns "
+        "it and this instrument must never report it as the defect"),
 ])
-def test_everything_else_is_the_other_arm(glc, ulc, why):
-    assert mlc.classify_vm(glc, ulc) == mlc.ARM_OTHER, why
+def test_everything_else_is_the_other_arm(glc, why):
+    assert mlc.classify_vm(glc) == mlc.ARM_OTHER, why
+
+
+@pytest.mark.parametrize("ulc", [1, 4])
+def test_an_ungraded_sibling_no_longer_moves_a_graded_claim_out_of_the_arm(ulc):
+    """🔴 CERT-514. These cases were pinned to ARM_OTHER one commit ago.
+
+    ``(1, 1)`` and ``(3, 1)`` used to read "FAIL-CLOSED: a graded claim beside
+    an ungraded one refuses the whole variant". The cert blocked exactly that:
+    the graded claim's fate hung on a SIBLING market, which is the coupling
+    option A removes. The census follows the producer, so the class it calls
+    ``B_lone_claim`` had to move with the arm — otherwise its two halves would
+    be measuring two different populations, which is the failure this file's
+    own ``test_the_kept_statement_reads_the_published_population`` guards.
+
+    The ungraded siblings are still excluded — by rung 1b, per market, one CTE
+    later. They are simply no longer a reason to refuse the variant.
+    """
+    for glc in (1, 3):
+        assert mlc.classify_vm(glc) == mlc.ARM_LONE, (
+            f"{glc} graded lone claim(s) fell out of the defect arm because "
+            f"{ulc} ungraded sibling(s) shared the variant"
+        )
 
 
 def test_the_two_arms_are_the_only_arms():
     """A third label would silently vanish from the printed census."""
-    seen = {mlc.classify_vm(g, u)
-            for g in range(0, 5) for u in range(0, 5)}
+    seen = {mlc.classify_vm(g) for g in range(0, 5)}
     assert seen == {mlc.ARM_LONE, mlc.ARM_OTHER}
 
 
@@ -201,10 +262,14 @@ def test_the_dropped_statement_reads_vm_stats_not_clean_vms():
 def test_the_kept_statement_reads_the_published_population():
     sql = mlc.kept_lone_sql("kalshi", "entertainment", 0, 10)
     assert "FROM deduped d" in sql
-    assert "vs.graded_lone_claims >= 1 AND vs.ungraded_lone_claims = 0" in sql, (
+    assert "vs.graded_lone_claims >= 1" in sql, (
         "the kept half must select the SAME class the producer admits; if it "
         "still reads the retired per-variant counts the two halves of this "
         "census are two different populations"
+    )
+    assert "vs.ungraded_lone_claims = 0" not in sql, (
+        "the kept half still carries the conjunct CERT-514 removed from the "
+        "producer, so it is measuring a narrower class than the one that ships"
     )
 
 
