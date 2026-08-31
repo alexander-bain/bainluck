@@ -512,20 +512,48 @@ const DET = "(?:a |an |any |the |this |that |its |our |their |one |a single |eve
  * ordinary complete prose does not have it — "We never had a quote from the
  * coach." ends on its object, while "…a probability for " ends on the hole
  * where the object was. So a trailing preposition counts as the anchor.
+ *
+ * 🔴 CERT-549: THE TRAILING WHITESPACE IS THE WHOLE DISCRIMINATOR, AND IT WAS
+ * OPTIONAL. Written `\s*$`, this arm also accepted a COMPLETE sentence that
+ * merely happens to end on a preposition — "We never had a number to play for"
+ * — which is ordinary sports prose and would have failed a build. The hole the
+ * interpolation left is not the preposition, it is the SPACE AFTER IT: the
+ * literal really is `"…a probability for "`, because the space precedes the
+ * `${`. Requiring `\s+$` accepts the fragment and rejects the sentence, which
+ * is exactly the distinction this arm was always claiming to make.
+ *
+ * ⚠️ Copy written `…for${x}` with no space would not be caught here. That is a
+ * deliberate limit, not an oversight: no sentence in this codebase is written
+ * that way, and widening it back is how the false positive returns.
  */
-const INTERPOLATED_SUBJECT = String.raw`\b(?:for|on|in|about|from|of)\s*$`;
+const INTERPOLATED_SUBJECT = String.raw`\b(?:for|on|in|about|from|of)\s+$`;
 
 /**
- * Require the claim and the page subject in the SAME clause, in either order.
+ * Require the claim and the page subject in the SAME clause, in any position.
  *
  * "This question never had a probability" puts the subject first; "We never
  * received a probability for this question" puts it last. Both are the claim.
+ *
+ * 🔴 CERT-549: AND THE SUBJECT CAN SIT *INSIDE* THE CORE, WHICH THE POSITIONAL
+ * FORM COULD NOT EXPRESS. "At no point did this leg carry a probability."
+ * escaped every rule: `at-no-point`'s core spans from "At no point" to
+ * "probability", so the page subject it needs is in the middle — consumed by
+ * the core itself, leaving nothing before or after to anchor on. UX-P216 found
+ * this hole, documented it in-tree as a known limit, and staged anyway; the
+ * cert found it. **A documented hole is still a hole.**
+ *
+ * The second arm is therefore a clause-scoped LOOKAHEAD rather than a suffix.
+ * From the match start it requires a page subject somewhere ahead in the same
+ * clause — which covers the subject sitting inside the core AND the old
+ * subject-after-core case, so it strictly subsumes the arm it replaces. The
+ * `[^.!?]` bound is what keeps "same clause" honest: a subject in the NEXT
+ * sentence cannot be borrowed.
  */
 const anchored = (core: string) =>
   rx(
-    `(?:\\b${PAGE_SUBJECT}\\b[^.!?]{0,60}?${core}` +
-      `|${core}[^.!?]{0,60}?\\b${PAGE_SUBJECT}\\b` +
-      `|${core}[^.!?]{0,20}?${INTERPOLATED_SUBJECT})`
+    `(?:\\b${PAGE_SUBJECT}\\b[^.!?]{0,60}?(?:${core})` +
+      `|(?=[^.!?]{0,80}?\\b${PAGE_SUBJECT}\\b)(?:${core})` +
+      `|(?:${core})[^.!?]{0,20}?${INTERPOLATED_SUBJECT})`
   );
 
 /** Why-text shared by the patterns that quantify over an archive we do not hold. */
@@ -534,8 +562,34 @@ const NOT_THE_ARCHIVE =
 
 export const HISTORY_CLAIM_BANS: CopyBan[] = [
   {
+    // ⚠️ CERT-549: THE LAST UNANCHORED VERB RULE, AND THE THIRD ROUND RUNNING IN
+    // WHICH THE UNANCHORED ONE WAS THE DEFECT. It matched "The ball never
+    // reached us in the upper deck." — a thing arriving at a person is ordinary
+    // prose; a READING arriving at US is the claim.
+    //
+    // 🔴 AND THE ANCHOR WAS THE WRONG TOOL — TWICE OVER.
+    //
+    // Sweeping (not the cert, which named one specimen) found three more:
+    // "The ball never reached us before this game ended.", "The crowd never
+    // came to us during this contest." and "He never got to us in that game."
+    // all satisfy the page anchor HONESTLY — they really are about something on
+    // this page — so anchoring did not save them.
+    //
+    // And anchoring actively BROKE the real claim: production copy is "No
+    // number ever reached us for ${playerName}.", whose subject is a PERSON,
+    // not a `MARKET_OBJECT`. `PAGE_SUBJECT` cannot see it, so the group's
+    // oldest specimen stopped firing. That failure is the lesson in miniature:
+    // **the anchor says WHERE a claim lives; it cannot say WHAT arrived.**
+    //
+    // This is the only rule in the group with no reading noun anywhere in it —
+    // that absence, not the anchor, was the defect. The SUBJECT must be a
+    // reading, and then the frame is tight enough to need nothing else: a ball,
+    // a crowd and a person are all rejected on the subject alone, and the real
+    // claim keeps firing whatever its object turns out to be.
     id: "ever-reached-us",
-    pattern: /\b(ever|never) (reached|arrived at|came to|got to) us\b/i,
+    pattern: rx(
+      String.raw`\b${READING}s?\b[^.!?]{0,20}?\b(?:ever|never) (?:reached|arrived at|came to|got to) us\b`
+    ),
     why: NOT_THE_ARCHIVE,
   },
   {

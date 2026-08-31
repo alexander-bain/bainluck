@@ -357,13 +357,24 @@ describe("the rules reject the copy Alex read on production", () => {
       // form; `at-no-point`'s existing specimen above already is one, because
       // "…arrive for this leg" leaves the subject OUTSIDE the matched core.
       //
-      // ⚠️ A CORE THAT SPANS THE PAGE SUBJECT CONSUMES ITS OWN ANCHOR. "At no
-      // point did this leg carry a probability." does NOT fire: the rule's own
-      // `[^.!?]{0,60}` gap swallows "this leg", so `anchored` then looks for a
-      // second one and finds nothing. Same trap as `nobody-ever`, which is why
-      // that rule spells its demonstrative inline instead of wrapping. Worth
-      // knowing before adding a specimen and concluding the rule is broken.
       ["No probability ever arrived for this market.", /no-reading-ever/],
+
+      // ═══ CERT-549 — a core that SPANS the page subject ate its own anchor ═══
+      //
+      // 🔴 THIS EXACT SENTENCE WAS DOCUMENTED IN-TREE AS A KNOWN LIMIT AND THE
+      // BRANCH WAS STAGED ANYWAY. The comment that used to sit here explained
+      // why "At no point did this leg carry a probability." could not fire —
+      // `at-no-point`'s own `[^.!?]{0,60}` gap swallows "this leg", so
+      // `anchored` looked for a SECOND page subject and found none — and then
+      // told the next reader not to be surprised. **A documented hole is still
+      // a hole**, and the cert found it in one probe.
+      //
+      // `anchored`'s second arm is now a clause-scoped LOOKAHEAD instead of a
+      // suffix, so the subject may sit anywhere ahead in the clause, including
+      // inside the core. It strictly subsumes the arm it replaced.
+      ["At no point did this leg carry a probability.", /at-no-point/],
+      // The same shape on the other rule whose core can span its subject.
+      ["At no point did this market carry a price.", /at-no-point/],
       // ⚠️ MAKES THE REST OF `PAGE_SUBJECT` LOAD-BEARING. Mutant I (narrowing it
       // to `this` alone) SURVIVED the first battery because every claim above
       // says "this". A writer who says "that market" is making the same
@@ -595,6 +606,27 @@ describe("the rules reject the copy Alex read on production", () => {
       // untested. This sentence pairs a general verb WITH a demonstrative, so
       // only the verb list can save it.
       "Nobody ever reported that outcome to the league.",
+      // ── CERT-549's two false positives, verbatim ──
+      //
+      // 🔴 BOTH WERE SELF-DISCLOSED BY THE PREVIOUS ROUND AND SHIPPED ANYWAY.
+      // The report called the dangling-preposition arm "the most attackable
+      // line in the change" and left it; the cert attacked exactly it.
+      // **A SELF-DISCLOSURE IS NOT A MITIGATION.**
+      "The ball never reached us in the upper deck.",
+      // A complete sentence that merely ENDS on a preposition. The interpolated
+      // -subject arm accepted it because it spelled the trailing space `\s*`
+      // instead of `\s+`; the space is the hole the `${…}` left, so it is the
+      // one part of that shape that is not optional.
+      "We never had a number to play for",
+      // ── the three `ever-reached-us` false positives the SWEEP found and the
+      //    cert did not name. Each satisfies the page anchor honestly — they
+      //    really are about something on this page — so anchoring alone did not
+      //    save them. The rule needed a READING as its SUBJECT: the anchor says
+      //    where a claim lives, never what arrived. Fourth consecutive round in
+      //    which sweeping beat the cert's list. ──
+      "The ball never reached us before this game ended.",
+      "The crowd never came to us during this contest.",
+      "He never got to us in that game.",
     ];
 
     it.each(ORDINARY_SPORTS_PROSE)(
