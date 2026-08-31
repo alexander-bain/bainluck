@@ -394,11 +394,83 @@ describe("the rules reject the copy Alex read on production", () => {
       "The chart shows the comeback was never complete.",
       "Nobody ever led by more than two breaks.",
       "At no point was the match in doubt.",
+
+      // ═══ CERT-546 — the two the CERT-539 repair still got wrong ═══
+      //
+      // `we-never-had` was left untouched by that repair because the cert had
+      // not named it, and `not-once-received` was written new WITHOUT an object
+      // — the UX-P215b report named it as the most likely thing wrong and then
+      // shipped it anyway. Both are now bound to `READING` like their siblings.
+      "We never had a chance after halftime.",
+      "The quarterback has not once received a snap under center.",
+
+      // ═══ Found by sweeping EVERY pattern after CERT-546, not just its two ═══
+      //
+      // `nobody-ever` was bound to a verb list, which is only half a scope: the
+      // verbs collide with ordinary prose the moment the object is not ours.
+      // No cert named these; the sweep did.
+      "Nobody ever reported the score.",
+      "Nobody ever offered him a contract.",
+      "Nobody ever posted a better time.",
+      "Nobody ever traded places with him.",
+      "We never got a look at the second serve.",
+      "We have never seen a comeback like it.",
     ];
 
     it.each(TRUE_PAST_TENSE)("supported past-tense copy survives: %j", (sentence) => {
       expect(findBannedCopy(sentence, HISTORY_CLAIM_BANS)).toEqual([]);
     });
+
+    /**
+     * ═══ THE CLASS GUARD CERT-546 ASKED FOR WITHOUT SAYING SO ═══
+     *
+     * 🔴 A CERT'S FINDING LIST IS A SAMPLE, NOT A CENSUS. CERT-539 named three
+     * over-broad patterns; the repair narrowed those three and left a fourth
+     * (`we-never-had`) untouched because nobody had pointed at it, and wrote a
+     * fifth (`not-once-received`) with no object at all. CERT-546 then found
+     * both. Fixing named instances one cert at a time is how a group takes four
+     * rounds to converge.
+     *
+     * This is the census. Every sentence below uses one of this group's own
+     * grammatical shapes — "never had a ___", "not once received a ___",
+     * "nobody ever <verb> ___", "there has never been a ___", "at no point ___"
+     * — with an object that is NOT a reading, NOT a market and NOT a thing on
+     * our page. Every one is ordinary supported prose. None may fire.
+     *
+     * ⚠️ A NEW PATTERN IN THIS GROUP MUST BE RUN AGAINST THIS LIST, and the
+     * cheapest way to make sure it is, is that this test already runs against
+     * ALL of `HISTORY_CLAIM_BANS` rather than naming any of them. An unbound
+     * rule cannot be added without turning this red.
+     */
+    const ORDINARY_SPORTS_PROSE = [
+      "We never had a chance after halftime.",
+      "The quarterback has not once received a snap under center.",
+      "Nobody ever reported the score.",
+      "Nobody ever offered him a contract.",
+      "Nobody ever posted a better time.",
+      "Nobody ever traded places with him.",
+      "Nobody ever scored more than 30 points in this game.",
+      "At no point did either player face a break point.",
+      "At no point was the match in doubt.",
+      "The comeback was never complete.",
+      "The chart shows the comeback was never complete.",
+      "There has never been a crowd like this one.",
+      "There was never any doubt.",
+      "This team never had a winning season.",
+      "A champion has never been crowned here.",
+      "He did not miss a first serve at any time.",
+      "We never got a look at the second serve.",
+      "We have never seen a comeback like it.",
+      "You can dismiss this at any time.",
+    ];
+
+    it.each(ORDINARY_SPORTS_PROSE)(
+      "no history rule fires on prose with nothing of ours in it: %j",
+      (sentence) => {
+        const hits = findBannedCopy(sentence, HISTORY_CLAIM_BANS);
+        expect(hits.map((h) => `${h.ban.id} on ${JSON.stringify(sentence)}`)).toEqual([]);
+      }
+    );
 
     it("every history rule is reachable — none is dead weight", () => {
       // The `ALL_COPY_BANS` sweep above proves the ids are well-formed. This
