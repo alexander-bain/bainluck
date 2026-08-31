@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 export default function GlobalError({
@@ -10,8 +9,16 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // LAT-P171: import the SDK on the error path, not the happy path. A STATIC
+  // `import * as Sentry` here pinned the 102 kB browser SDK into the chunk graph
+  // that every route loads before it can hydrate — to serve a component that
+  // only ever renders after an unrecoverable error. Loading it here costs one
+  // async chunk in the case that is already broken, and nothing in the case
+  // Alex is waiting on. Guarded on the DSN for the same reason as
+  // `sentry.client.config.ts`: with none set, webpack drops the branch.
   useEffect(() => {
-    Sentry.captureException(error);
+    if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return;
+    void import("@sentry/nextjs").then((Sentry) => Sentry.captureException(error));
   }, [error]);
 
   return (
