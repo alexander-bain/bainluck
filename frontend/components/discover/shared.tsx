@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Check, Heart, Share2 } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
+import { PinButton } from "@/components/PinButton";
 import type { ActionBarProps } from "./types";
 import {
   CONFIDENCE_TIER_BARS,
@@ -224,7 +225,7 @@ export function SignalBars({
 
 // ── Action Bar ──
 
-export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare }: ActionBarProps) {
+export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, contentType, itemId, onShare, pin }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
 
   const trackShare = (method: string) => {
@@ -267,6 +268,25 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
         {liked ? "Liked" : "Like"}
       </button>
       <div className="flex-1" />
+      {/* UX-P234 (board item 16): Discover was the one surface with no pin at all,
+          while search, my-stuff and preferences all had one on the very same market.
+          It sits in the action bar — beside Like and Share, where a reader already
+          looks for what they can DO with a card — so every card variant that renders
+          an ActionBar inherits it from one place rather than growing a fourth copy
+          of the button. `stopPropagation` because these cards are wrapped in
+          `useSwipe` and, in some variants, a <Link>: without it a pin click also
+          navigates away and the pin looks like it did nothing. */}
+      {pin && (
+        <PinButton
+          pinned={pin.pinned}
+          onToggle={pin.onToggle}
+          atMax={pin.atMax}
+          noun={pin.noun}
+          variant="labelled"
+          stopPropagation
+          className="text-text-muted hover:text-text-secondary"
+        />
+      )}
       <button
         onClick={handleShare}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm"

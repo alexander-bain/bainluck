@@ -13,7 +13,7 @@ import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
-import type { CardActionCallbacks } from "./types";
+import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 
@@ -74,9 +74,26 @@ interface FuturesCardProps extends CardActionCallbacks {
    * the card stays presentational and just renders what it is handed.
    */
   showProbabilityHint?: boolean;
+  /**
+   * UX-P234 (board item 16) — Alex: *"on the web Discover feed there is no
+   * indication a card can be pinned at all."* It could not be: this card had no
+   * pin of any kind, while the SAME market was pinnable from search, my-stuff and
+   * preferences.
+   *
+   * 🔴 A PROP, NOT A HOOK, AND THE FIRST DRAFT GOT THIS WRONG. Calling
+   * `usePinnedFutures()` in here reaches `useAuthContext`, which THROWS outside an
+   * `AuthProvider` — it took down TEN existing suites that render this card in
+   * isolation. It also contradicts the convention `DiscoverCard` states in its own
+   * docblock: *"Cards stay presentational … never behind a storage read in here."*
+   * The page owns the store and hands the binding down, exactly as
+   * `components/FuturesCard.tsx` has always done with `isPinned` / `onPinToggle`.
+   *
+   * Optional: a caller that passes nothing renders no pin and is byte-identical.
+   */
+  pin?: ActionBarProps["pin"];
 }
 
-export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, showProbabilityHint, onDetailClick, onShare, onContextExpand, onContextCollapse }: FuturesCardProps) {
+export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, showProbabilityHint, onDetailClick, onShare, onContextExpand, onContextCollapse, pin }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
   const [showHeatmapContext, setShowHeatmapContext] = useState(false);
   // A/B variant: exposure-level assignment — hash(session + market) so each
@@ -188,7 +205,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
         </div>
       </article>
     );
@@ -285,6 +302,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           </div>
 
           <ActionBar
+            pin={pin}
             liked={liked}
             setLiked={setLiked}
             shareUrl={shareUrl}
@@ -434,7 +452,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
         </div>
       </article>
     );
@@ -512,7 +530,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           </div>
         )}
 
-        <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} />
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
       </div>
     </article>
   );
