@@ -90,6 +90,97 @@ export function movementExplanation(leader: MovementLeader | null): string | nul
   return null;
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+ * UX-P233 — EVERY NUMBER ON THIS PAGE STATES ITS BASELINE (board item 11).
+ *
+ * Alex, on /futures/109441: **"Very confusing."** Three numbers about Amazon, all
+ * on one screen, none of them saying which window it covers:
+ *
+ *     hero pill        ↓ 71.5 pts        (no window stated at all)
+ *     chart caption    "Amazon up 13.5 pts from opening."
+ *     table row        Open: 14%   -71.5%   27%
+ *
+ * Unlabelled they do not merely under-inform, they look like a contradiction: a
+ * hero saying "down 71.5" beside a caption saying "up 13.5" about the same outcome.
+ *
+ * 🔴 AND THE OBVIOUS LABEL IS THE ONE WE MAY NOT WRITE. The field is
+ * `probability_change_24h`, so "in the last 24h" is the tempting caption — and the
+ * payload disproves it. CAL-P159 (board item 12) proved all four writers store
+ * `new − previous`, a PER-WRITE delta, which then FREEZES when a row stops being
+ * written; -0.715 is Amazon's Aug-18 → Aug-28 step. Measured live 2026-08-31 18:51Z,
+ * every outcome on that market carries `last_updated: 2026-08-28T20:50Z` — 2.9 days
+ * old. Writing "24h" beside a number the same payload dates to three days ago is a
+ * claim about the past the payload refutes (gotcha #53), and this board has blocked
+ * on that class six times. So the label names what the field IS — the last recorded
+ * move — and dates it from `last_updated`.
+ *
+ * These are pure and unit-tested; the arithmetic fix for the field itself is board
+ * item 12's, in the calibration lane. Nothing here changes any number's VALUE.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** A price is "current" for a day; past that the page owes the reader an as-of. */
+const AS_OF_AFTER_DAYS = 1;
+
+/**
+ * How stale a price is, in days, or `null` when we cannot tell. Never 0 for a
+ * missing stamp — that would read as "fresh", which is absence dressed as a fact.
+ * A stamp in the future clamps to 0 rather than going negative.
+ */
+export function priceAgeDays(
+  lastUpdated: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
+  if (!lastUpdated) return null;
+  const then = new Date(lastUpdated);
+  if (Number.isNaN(then.getTime())) return null;
+  return Math.max(0, (now.getTime() - then.getTime()) / 86_400_000);
+}
+
+/**
+ * "Aug 28" — always the UTC day. A label built from the machine's local zone is a
+ * claim whose answer depends on where it renders, and a guard for it is a test
+ * whose answer depends on where it runs (the trap CERT-534 named one lane over).
+ */
+function utcDayLabel(when: Date): string {
+  return when.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * The window label for a movement figure: **"last move · Aug 28"**, or plain
+ * "last move" when the payload carries no stamp to date it with.
+ *
+ * The noun does NOT change with the clock. A per-write delta on a row written ten
+ * minutes ago is still a per-write delta, so a fresh row does not earn the word
+ * "today" and no row ever earns "24h" — see the block comment above.
+ */
+export function movementWindowLabel(
+  lastUpdated: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (priceAgeDays(lastUpdated, now) == null) return "last move";
+  return `last move · ${utcDayLabel(new Date(lastUpdated as string))}`;
+}
+
+/**
+ * "as of Aug 28" for a price the payload dates to more than a day ago, else `null`.
+ *
+ * Null in BOTH unprovable directions: a genuinely fresh price needs no as-of (the
+ * label would be noise, not honesty), and a price with no stamp gets no claim about
+ * its freshness OR its staleness, because we cannot support either.
+ */
+export function asOfLabel(
+  lastUpdated: string | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  const age = priceAgeDays(lastUpdated, now);
+  if (age == null || age <= AS_OF_AFTER_DAYS) return null;
+  return `as of ${utcDayLabel(new Date(lastUpdated as string))}`;
+}
+
 export type FuturesSortField = "probability" | "change" | "name";
 export type FuturesSortDirection = "asc" | "desc";
 
