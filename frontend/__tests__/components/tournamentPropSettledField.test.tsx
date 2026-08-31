@@ -307,3 +307,192 @@ describe("UX-P211 — a settled FIELD card stops presenting an open market", () 
     }
   });
 });
+
+/**
+ * A CLOSED CARD DOES NOT INVENT A HISTORY IT DOES NOT HAVE — UX-P212, CERT-537.
+ *
+ * CERT-537 graded UX-P211's repair and closed CERT-516's live-row leak, then
+ * blocked it on what replaced those rows:
+ *
+ *   > the repair removes the live-market treatment but replaces it with two
+ *   > unsupported historical claims. A closed comparison can now say it has last
+ *   > readings when it has none, or say a number never reached us when its own
+ *   > observation timestamp proves one did.
+ *
+ * Both are gotcha #53 in the same component — an ABSENCE read as a fact about
+ * the past — and neither is a wording quibble, because the payload carries the
+ * evidence that contradicts them:
+ *
+ *   • `· last readings` was gated on `rows.length > 0`. A comparison
+ *     deliberately RETAINS its null-probability subjects (that is the whole of
+ *     CERT-430's fix), so "there are rows" and "there are readings" are
+ *     different questions and the label asked the wrong one. An entirely
+ *     unpriced settled comparison printed `Settled · last readings` above two
+ *     rows that each said `No number`.
+ *
+ *   • `No number ever reached us for X` is a claim about all of history, and
+ *     `PropOutcome.observed_at` is the newest `captured_at` **where
+ *     `probability IS NOT NULL`** (`backend/app/utils/latest_observation.py`) —
+ *     so a populated timestamp on a null-probability row is positive proof that
+ *     a number DID reach us. `tournaments.py` loads `current_probability` and
+ *     that timestamp from two different statements, so the shape is ordinary
+ *     wire data, not a contrived fixture. UX-P211's own partial fixture
+ *     produced it.
+ *
+ * ═══ WHY THE OPEN SENTENCE MOVED TOO, WHICH THE CERT DID NOT ASK FOR ═══
+ *
+ * `No number has reached us for X yet` is the identical claim in the identical
+ * shape — present perfect over all of history, disproven by the same field. The
+ * cert only rendered the settled branch, but fixing the branch it happened to
+ * render and leaving its twin is precisely the failure UX-P208→P211 each paid
+ * for one element at a time, and UX-P211's own `anyQuiet` fix is the precedent:
+ * when the cert names a mechanism, the mechanism is the finding.
+ *
+ * So both tenses now speak about what we HAVE, which is what the card can
+ * actually see. The tense distinction UX-P211 introduced survives — an open
+ * comparison may still be completed, a closed one may not — because that part
+ * was right.
+ *
+ * ⚠️ THE RICHER FIX WAS AVAILABLE AND IS DELIBERATELY NOT TAKEN. `observed_at`
+ * would let the card distinguish "never had a number" from "had one, lost it"
+ * and say so. It is rejected here because `who` is a NAME LIST: one sentence
+ * covering Alcaraz-never and Sinner-lapsed cannot carry two histories without
+ * splitting, and a four-way copy matrix is a larger claim surface than the
+ * defect. Present availability is true in every wire shape. If a grader wants
+ * the historical split it is an additive change to one function.
+ */
+describe("UX-P212 — a settled card claims only what the payload supports", () => {
+  /** Every declared subject unpriced: rows exist, readings do not. */
+  const allUnpriced = (over: Partial<PropMarket> = {}) =>
+    womensTitle({
+      ...SETTLED,
+      legs: 2,
+      outcomes: [
+        outcome({ entity_key: "sabalenka", display_name: "Aryna Sabalenka", probability: null }),
+        outcome({ entity_key: "swiatek", display_name: "Iga Swiatek", probability: null }),
+      ],
+      ...over,
+    });
+
+  /** One priced, one not — and the unpriced row carries a real timestamp. */
+  const partlyPriced = () =>
+    womensTitle({
+      ...SETTLED,
+      legs: 2,
+      outcomes: [
+        outcome({ entity_key: "sabalenka", display_name: "Aryna Sabalenka", probability: 0.7 }),
+        outcome({ entity_key: "swiatek", display_name: "Iga Swiatek", probability: null }),
+      ],
+    });
+
+  it("REPRODUCES the cert: an all-unpriced settled comparison has rows but no readings", () => {
+    // Pinning what the finding is a finding ABOUT, before banning it: two rows
+    // render, both say they have no number, and neither carries one.
+    const card = cardMarkup(render(<TournamentProps markets={[allUnpriced()]} draw={DRAW} />), "womens-title");
+    expect(card).toContain('data-testid="prop-settled-field"');
+    expect((card.match(/data-testid="prop-settled-field-row"/g) ?? []).length).toBe(2);
+    expect((card.match(/data-testid="prop-settled-field-missing"/g) ?? []).length).toBe(2);
+    expect(card).not.toMatch(/\d+%/);
+  });
+
+  it("does not say last readings when not one row has a reading", () => {
+    const card = cardMarkup(render(<TournamentProps markets={[allUnpriced()]} draw={DRAW} />), "womens-title");
+    // The card is still labelled closed — this bans the CLAIM, not the state.
+    expect(card).toContain('data-testid="prop-settled"');
+    expect(card).not.toContain('data-testid="prop-settled-lasts"');
+    expect(card).not.toContain("last reading");
+  });
+
+  it("CONTROL: a settled field card WITH readings still says so, in the plural", () => {
+    // The over-correction that kills the label outright. Two numbers, so two
+    // readings, so the plural the answer card's singular is a sibling of.
+    const card = cardMarkup(render(<TournamentProps markets={[womensTitle(SETTLED)]} draw={DRAW} />), "womens-title");
+    expect(card).toContain('data-testid="prop-settled-lasts"');
+    expect(card).toContain("last readings");
+    expect(card).toContain("70%");
+    expect(card).toContain("30%");
+  });
+
+  it("CONTROL: exactly one surviving reading is a reading, not readings", () => {
+    // `rows.length > 0` and `somePriced` agree here and only the COUNT tells
+    // them apart from a label that always pluralises — which is the same class
+    // of overstatement one order of magnitude down.
+    const card = cardMarkup(render(<TournamentProps markets={[partlyPriced()]} draw={DRAW} />), "womens-title");
+    expect(card).toContain('data-testid="prop-settled-lasts"');
+    expect(card).toContain("last reading");
+    expect(card).not.toContain("last readings");
+    expect(card).toContain("70%");
+  });
+
+  it("does not claim a number NEVER reached us when the payload timestamps one", () => {
+    // Swiatek: `probability: null`, `observed_at` populated by the shared
+    // fixture — the exact wire shape `load_latest_observed_at` produces, and
+    // proof that a number did reach us.
+    const html = render(<TournamentProps markets={[partlyPriced()]} draw={DRAW} />);
+    const note = elementMarkup(html, "prop-incomplete");
+    expect(note).not.toMatch(/\bever\b/i);
+    expect(note).not.toMatch(/\bnever\b/i);
+    expect(note).not.toMatch(/reached us/i);
+  });
+
+  it("does not make the same lifetime claim on an OPEN comparison", () => {
+    // The sibling the cert did not render. Identical shape, identical evidence
+    // against it: present perfect over all of history on a row whose timestamp
+    // says otherwise.
+    const open = womensTitle({
+      legs: 2,
+      outcomes: [
+        outcome({ entity_key: "sabalenka", display_name: "Aryna Sabalenka", probability: 0.7 }),
+        outcome({ entity_key: "swiatek", display_name: "Iga Swiatek", probability: null }),
+      ],
+    });
+    const html = render(<TournamentProps markets={[open]} draw={DRAW} />);
+    const note = elementMarkup(html, "prop-incomplete");
+    expect(note).not.toMatch(/\bever\b/i);
+    expect(note).not.toMatch(/\bnever\b/i);
+    expect(note).not.toMatch(/reached us/i);
+  });
+
+  it("CONTROL: the hole is still reported, still named, and still tensed", () => {
+    // The over-correction that deletes the sentence rather than repairing it.
+    // CERT-430 exists because this card must ADMIT the missing subject; a fix
+    // that buys truthfulness by going quiet fails the finding it answers.
+    const settledNote = elementMarkup(
+      render(<TournamentProps markets={[partlyPriced()]} draw={DRAW} />),
+      "prop-incomplete"
+    );
+    expect(settledNote).toContain("Iga Swiatek");
+    // Wording-neutral ON PURPOSE, so this control is green on the BROKEN bytes
+    // too (UX-P211's rule). It asks whether the sentence still admits the hole,
+    // not whether it admits it in the words this queue chose.
+    expect(settledNote).toMatch(/\bcomplete\b/);
+    // UX-P211's tense rule, unchanged: a closed question is not still waiting.
+    expect(settledNote).not.toMatch(/\byet\b/);
+
+    const open = womensTitle({
+      legs: 2,
+      outcomes: [
+        outcome({ entity_key: "sabalenka", display_name: "Aryna Sabalenka", probability: 0.7 }),
+        outcome({ entity_key: "swiatek", display_name: "Iga Swiatek", probability: null }),
+      ],
+    });
+    const openNote = elementMarkup(
+      render(<TournamentProps markets={[open]} draw={DRAW} />),
+      "prop-incomplete"
+    );
+    expect(openNote).toContain("Iga Swiatek");
+    expect(openNote).toMatch(/\bcomplete\b/);
+    // …and an OPEN one still may be completed, so it keeps the future tense.
+    expect(openNote).toMatch(/\byet\b/);
+  });
+
+  it("CONTROL: an all-unpriced comparison still renders every subject it declared", () => {
+    // The over-correction that reads "nothing to show" and drops the card. Alex,
+    // item 4: honest indication, never hidden.
+    const card = cardMarkup(render(<TournamentProps markets={[allUnpriced()]} draw={DRAW} />), "womens-title");
+    expect(card).toContain("Aryna Sabalenka");
+    expect(card).toContain("Iga Swiatek");
+    expect(card).toContain('data-testid="prop-incomplete"');
+    expect(card).toContain('data-settled="true"');
+  });
+});

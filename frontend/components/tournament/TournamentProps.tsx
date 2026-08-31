@@ -219,6 +219,31 @@ function nameList(names: string[]): string {
  * the subject is still named; only the tense moves, because the hole is the
  * reader's business either way and dropping the sentence on a settled card
  * would trade one false impression for another.
+ *
+ * 🔴 BUT NEITHER TENSE MAY CLAIM ANYTHING ABOUT ALL OF HISTORY (UX-P212,
+ * CERT-537). UX-P211 wrote the settled branch as "No number EVER reached us …
+ * so this comparison was NEVER complete", and the cert disproved it from the
+ * payload: `PropOutcome.observed_at` is the newest `captured_at` **where
+ * `probability IS NOT NULL`** (`backend/app/utils/latest_observation.py`), and
+ * `tournaments.py` loads it from a different statement than
+ * `current_probability`. So `probability: null` beside a populated
+ * `observed_at` is ordinary wire data AND positive proof that a number did
+ * reach us — the sentence contradicted a timestamp printed by the same route.
+ *
+ * The open branch said "No number HAS reached us … YET", which is the identical
+ * present-perfect claim disproven by the identical field; the cert rendered
+ * only the settled one, but a fix that repairs the branch a cert happened to
+ * look at and leaves its twin is the one-element-out failure UX-P208→P211 each
+ * paid for. Both now speak about what we HAVE, which is the only thing the card
+ * can see. The tense distinction survives — an open comparison may still be
+ * completed, a closed one may not — because that part was right.
+ *
+ * ⚠️ THE HISTORICAL SPLIT IS AVAILABLE AND DELIBERATELY NOT TAKEN. `observed_at`
+ * would let this distinguish "never had a number" from "had one, lost it". It
+ * is refused because `who` is a NAME LIST: one sentence covering a
+ * never-quoted subject and a lapsed one cannot carry two histories without
+ * splitting into two, and a four-way copy matrix is a larger claim surface than
+ * the defect it answers. Present availability is true in every wire shape.
  */
 function incompleteComparisonNote(
   incomplete: {
@@ -238,8 +263,8 @@ function incompleteComparisonNote(
         : `${unnamed} of the names in it`
       : `${nameList(named)}${unnamed > 0 ? ` and ${unnamed} more` : ""}`;
   return settled
-    ? `No number ever reached us for ${who}, so this comparison was never complete.`
-    : `No number has reached us for ${who} yet, so this comparison is not complete.`;
+    ? `We have no number for ${who}, so this comparison is not complete and the question has closed.`
+    : `We have no number for ${who} yet, so this comparison is not complete.`;
 }
 
 function PropCard({
@@ -258,6 +283,13 @@ function PropCard({
   // which is how a card could print rows that had no vote on its own liveness.
   // A comparison's rows come back from here complete, unquoted ones included.
   const rows = answer === null ? printedOutcomes(market) : [];
+  // HOW MANY OF THOSE ROWS ACTUALLY CARRY A NUMBER (UX-P212, CERT-537).
+  // NOT `rows.length`. A comparison deliberately RETAINS its unpriced subjects —
+  // that is the whole of CERT-430's fix — so "there are rows" and "there are
+  // readings" are different questions, and the settled label below was asking
+  // the wrong one: an entirely unpriced settled comparison announced
+  // "· last readings" above two rows that each said `No number`.
+  const readings = rows.filter((outcome) => outcome.probability !== null).length;
   // A DECLARED SUBJECT WE HAVE NO NUMBER FOR (CERT-430, finding 1). Non-null
   // means this card is a comparison with a hole in it: it renders, with every
   // subject, muted, and it says which one is missing.
@@ -377,12 +409,22 @@ function PropCard({
               {formatPropProbability(answer.probability)}
             </span>
           )}
-          {/* A FIELD CARD KEEPS SEVERAL READINGS, so the label is plural and the
-              numbers are in the list below rather than on this line. Same
-              sentence, same slot, same promise as the answer card's — the two
-              shapes must not read as two different features. */}
-          {rows.length > 0 && (
-            <span data-testid="prop-settled-lasts">{" · last readings"}</span>
+          {/* A FIELD CARD KEEPS SEVERAL READINGS, so the numbers are in the list
+              below rather than on this line. Same sentence, same slot, same
+              promise as the answer card's — the two shapes must not read as two
+              different features.
+
+              ⚠️ AND IT IS COUNTED, NOT ASSUMED (UX-P212, CERT-537). This was
+              `rows.length > 0`, which is a test for SUBJECTS; a comparison keeps
+              the ones it has no number for, so the card claimed readings it did
+              not have. The count also decides the plural: one surviving number
+              is a reading, and always pluralising is the same overstatement one
+              order of magnitude down. Zero prints nothing at all — the answer
+              card's `probability !== null` gate, generalised to a list. */}
+          {readings > 0 && (
+            <span data-testid="prop-settled-lasts">
+              {readings === 1 ? " · last reading" : " · last readings"}
+            </span>
           )}
           {settled.answer === null && (
             <span data-testid="prop-settled-unknown">
