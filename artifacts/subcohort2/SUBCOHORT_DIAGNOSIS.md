@@ -14,6 +14,96 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-31 (CAL-P158) — NO CELL TAKEN, AND THAT IS THE FINDING: **THE PUBLISHER HAS BEEN DOWN FOR 12 HOURS, SO NO CELL FIX CAN SHOW A PUBLISHED DELTA.**
+
+*This entry exists to answer the charter's own question — the file went five days without an
+update; which reading is true? **Reading 1: no fix has landed against a ranked cell since
+2026-08-25.** `git log` on this file: last commit `ee25e1cd` (2026-08-25, CAL-P095). The lane's
+work from CAL-P150 through CAL-P157 is real and merged, but every commit of it is **publisher
+machinery** — publish gate, staged-futures cursor, phase budgets, `is_winner` nullability,
+instrument rings — not a ranked-cell mechanism. Nothing was fixed-and-not-written-back. The
+burn-down genuinely stopped, and this section says why it had to.*
+
+### THE BLOCKER: the hourly producer has not published since 04:37Z, and cannot get near its own deadline
+
+Measured against production 2026-08-31 16:29–16:40Z (09:29–09:40 PT).
+
+| fact | value | source |
+|---|---|---|
+| last successful publish | `2026-08-31T04:37:36Z` | `/api/calibration` `generated_at` |
+| served payload age | **42,700 s (11.9 h)** | `cache.age_s` |
+| cache status / reason | `stale` / **`main_key_absent`** | `cache` |
+| fresh-key TTL | 7,200 s (`_MAIN_CACHE_TTL`) | `precompute_calibration.py:37` |
+| fresh key observed gone | `06:38Z` — exactly TTL after the 04:37Z publish | `artifacts/cal-p148/serve-phase-log.jsonl` (`"redis": null`) |
+| producer | `beats_missed: 11`, **`stalled: true`** | `/api/calibration` `producer` |
+| hourly failure | "futures generation incomplete — units banked, nothing published" | Sentry `7677340087`, **15 events in 24 h**, last 15:36Z |
+
+**The producer is not crashing — it is losing a race it cannot win.** The staged-futures build
+banks units durably and resumes, exactly as designed; it simply cannot finish a generation
+inside the window its output is allowed to live in:
+
+| quantity | measured | ledger key |
+|---|---:|---|
+| units planned per generation | **128** | `staged:units_planned` |
+| units banked so far | **55** | `staged:units_done` |
+| units **completed this beat** | **5** | `staged:units_completed_this_beat` |
+| units attempted this beat | 7 (2 cancelled) | `staged:units_this_beat` |
+| per-unit mean, completions | 92,265 ms | `staged:unit_ms_mean_completed` |
+| per-unit mean, **attempts** | **185,161 ms** | `staged:unit_ms_mean` |
+| futures phase budget / beat | 1,188,617 ms | `plan.phases[futures].budget_ms` |
+| futures phase **measured floor** | **1,351,045 ms** | `plan.phases[futures].floor_ms` |
+| **the build's own estimate** | **`beats_to_publish: 6`** | `staged:beats_to_publish` |
+
+Three numbers decide it:
+
+1. **`floor_ms` (1,351,045) EXCEEDS `budget_ms` (1,188,617).** The futures phase is allocated
+   less time than its own measured floor — `budget_basis: measured_elastic_cut`. It is cut
+   because the task's soft limit is 1,500 s and futures' floor alone (1,351 s) plus diagnostics
+   (124 s) plus sports (5 s) already reaches 1,480 s. There is no headroom left to give it.
+2. **A generation is ~6 beats away on the build's own optimistic estimate, ~15 on observed
+   throughput** (73 units remaining ÷ 5 completed/beat). Beats are hourly.
+3. **The fresh key lives 2 hours.** So even a perfect publish keeps the page fresh for 2 h out
+   of every ~6–15 h. **The page is structurally stale most of the time, and no calibration cell
+   fix can be shown to move the published curve until this is true no longer.**
+
+### The cancellation policy's own cost model no longer holds
+
+`STAGED_UNIT_MAX_CANCELLATIONS = 2` is documented as costing "at most eight units of an ~18-unit
+beat — under half". Observed this beat: **2 cancellations burned 835 s (417,647 ms + 417,175 ms)
+of a 1,340 s beat — 62%** — and the beat completed 7 units, not 18. The constant is not wrong;
+the measurement it was sized against has moved. It is **not** a livelock: the two cancelled units
+differed from the five that completed, so cancellation is load-dependent slowness, not two poison
+slots. Convergence is real. It is just slower than the deadline.
+
+### Root cause is not in calibration code
+
+`unit_ms` has gone **80,658 ms → 185,161 ms (2.3×)** between the prior measurement and this beat
+(`staged:prior_unit_ms` vs `staged:unit_ms_mean`). Production Postgres is **still
+`standard-0`** (`heroku addons -a bainluck`, verified 16:35Z) — 4 GB RAM against a ~66 GB
+database. The plan upgrade Alex was handed on 2026-08-30 (`YOUR-TURN.md` §1, Step A) **has not
+been run**: `heroku data:maintenances:info DATABASE` reports `addon_plan: standard-0` and
+`reason: routine_maintenance`, not the changeover.
+
+**Consequence for this file's charter.** "Work big to small until we don't have a problem"
+presumes the board can be re-measured after a fix. It cannot right now. The top unclosed cell is
+still rank 1 `baseball/quantity`; it is untouched this session **deliberately**, because shipping
+a mechanism fix into a pipeline that has not published in 12 hours produces exactly the
+activity-without-progress the finish-line ruling forbids. **The next cell gets taken when the
+producer publishes again.**
+
+### The cells-at-bar number, corrected
+
+The needle is **31/49**, not the 29 carried in `YOUR-TURN.md` §5 nor the 30 attributed to the
+page. Both rails agree and cross-check clean (`calibration_threshold_table.py --payload`, exit 0;
+its `agreement()` fails the run if the scorecard disagrees). The 30-vs-29 split was a one-day
+disagreement fixed by CAL-P115 and pinned by
+`test_calibration_threshold_table_p112.py::test_no_class_is_looser_than_the_reader_bar`. It moved
+**29 → 31 overnight** (banked scorecards `20260830T223624` → `20260831T021905`). Headline MCE
+**1.86 pp** closing-line, CI [0.84, 1.95] — but on a payload frozen at 04:37Z, so it is 31/49 *as
+of yesterday evening*, and cannot advance while the publisher is down.
+
+---
+
 ## STATUS 2026-08-25 (CAL-P095) — RANK 2 WORKED. ITS SPIKE IS NOT ITS MECHANISM, AND THE WRITER WAS HIDING HALF OF EVERY PAIR.
 
 *Rank 1 `baseball/quantity` has a named mechanism and a staged apply, both untouchable this
