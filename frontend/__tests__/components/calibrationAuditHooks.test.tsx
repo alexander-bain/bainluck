@@ -651,6 +651,59 @@ describe("the tripwire guards every hook the pack actually selects", () => {
     expect(PACK_HOOKS.length).toBeGreaterThanOrEqual(10);
   });
 
+  /**
+   * The extraction reads WHOLE literals, so its precondition is that the pack
+   * writes them whole. CERT-582 blocked round 1 for leaving that as an
+   * assumption: `"calibration-" + "computed-hook"` is a selector Playwright
+   * honours and `/calibration-[a-z0-9-]+/` cannot see, so a new pack dependency
+   * could stay unguarded with CI green. The precondition is an assertion now.
+   *
+   * Comments are stripped first (UX-P213-2 / UX-P224-3). The spec's header
+   * discusses `data-testid` in prose, and counting those would red this on day
+   * one — the extraction above deliberately keeps reading the raw text, where
+   * over-covering a hook named only in a comment is the safe direction.
+   */
+  const SPEC_CODE = SPEC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  const SELECTOR_TESTIDS = [...SPEC_CODE.matchAll(/data-testid="([^"]*)"/g)].map(
+    (m) => m[1]
+  );
+
+  test("every testid the pack selects is whole — never assembled from parts", () => {
+    // Two shapes are legal, and both were measured against the current spec:
+    // a whole literal, or the `${hook}` interpolation the stat-card and
+    // activity loops use, which is fed from literal arrays in the same file
+    // (`STAT_HOOKS`, `ACTIVITY_MOVED`, `ACTIVITY_UNCHANGED`) that the raw-text
+    // extraction above already reads. Anything else — a concatenation, a
+    // computed prefix, an interpolation of anything but `hook` — is a selector
+    // this file cannot follow, and it fails here rather than silently.
+    expect(SELECTOR_TESTIDS.length).toBeGreaterThan(0);
+    const illegal = SELECTOR_TESTIDS.filter(
+      (id) => !/^[a-z0-9-]+$/.test(id) && id !== "${hook}" && id !== "${hook}-value"
+    );
+    expect(illegal).toEqual([]);
+  });
+
+  test("every literal selector in the pack is one the extraction actually captured", () => {
+    // The shape check alone is not enough: `data-testid="calibration-" + x`
+    // leaves the whole-literal `calibration-`, which passes the shape test and
+    // is invisible to `/calibration-[a-z0-9-]+/`. Requiring the two readings to
+    // agree is what closes that seam — a literal the extraction did not capture
+    // means the two are looking at different things, which is the bug.
+    const missed = SELECTOR_TESTIDS.filter((id) => /^[a-z0-9-]+$/.test(id))
+      .map((id) => id.replace(/-value$/, ""))
+      .filter((id) => id.startsWith("calibration"))
+      .filter((id) => !PACK_HOOKS.includes(id));
+    expect(missed).toEqual([]);
+  });
+
+  test("the pack reaches its hooks only through `data-testid=`", () => {
+    // The other way round the extraction: Playwright's `getByTestId` takes a
+    // bare name with no `data-testid` in the text at all. Unused today; if it
+    // is ever used, this reds and the extraction has to learn it.
+    expect(occurrences(SPEC_CODE, "getByTestId")).toBe(0);
+  });
+
   // STATED GAP, measured (battery M8, a scored survivor). This check is
   // ONE-DIRECTIONAL: pack ⊆ guarded. A hook REMOVED from the pack is not
   // caught here, and that is deliberate — a hook may legitimately be guarded
