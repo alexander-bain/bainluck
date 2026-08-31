@@ -429,45 +429,128 @@ class TestTheAnchorCannotExpireAgain:
         A literal has no `Call` node reaching the clock, and no amount of choosing
         a friendly-looking date gives it one.
         """
-        import ast
         import pathlib
 
-        src = pathlib.Path(__file__).read_text()
-        tree = ast.parse(src)
-        assign = next(
-            (
-                n
-                for n in tree.body
-                if isinstance(n, ast.Assign)
-                and any(
-                    isinstance(t, ast.Name) and t.id == "NOW" for t in n.targets
-                )
-            ),
-            None,
-        )
-        assert assign is not None, "module-level `NOW` assignment not found"
+        _assert_now_is_clock_derived(pathlib.Path(__file__).read_text())
 
-        rhs = ast.dump(assign.value)
-        assert "attr='now'" in rhs or "attr='today'" in rhs or "id='time'" in rhs, (
-            "`NOW` is not derived from the clock — its right-hand side never calls "
-            f"`datetime.now`/`time`. It reads as:\n    {ast.unparse(assign.value)}\n"
-            "A hardcoded timestamp passes every check on its VALUE (it is 'recent' "
-            "on the day you write it) and then silently crosses "
-            "SENTINEL_MAX_AGE_S later, taking shard 4 red with no code change. "
-            "See this method's docstring."
+    def test_the_anchor_guard_can_actually_FAIL(self):
+        """The control, and this file has now earned one twice over.
+
+        Two certs in a row found the ANCHOR fine and the GUARD hollow — first a
+        value comparison that any fresh literal satisfied (CERT-568), then a
+        first-binding AST scan that a shadowing literal walked straight past
+        (CERT-571). Each time the suite was green and each time the bomb was
+        still armed. A guard nobody has watched fail is a guard nobody knows the
+        shape of, so the three known attacks are pinned here as source strings
+        and each one must raise.
+
+        In memory, never on disk: `scripts/evals/_mutation_guard.py` says an
+        in-process harness that mutates a STRING is strictly the better design
+        because it cannot leave residue in a real file, and there is no reason
+        this one needs a file.
+        """
+        import pytest as _pytest
+
+        real = "NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)"
+        literal = "NOW = datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)"
+
+        attacks = {
+            # CERT-568: swap the clock call for a timestamp that is fresh TODAY.
+            "fresh literal replaces the clock call": literal,
+            # CERT-571: leave the clock call in place and override it below.
+            "a later assignment shadows it": f"{real}\n{literal}",
+            # The same move in annotated clothing, which an `ast.Assign`-only
+            # scan does not see at all.
+            "an annotated later assignment shadows it": (
+                f"{real}\nNOW: datetime = "
+                "datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)"
+            ),
+        }
+        for name, src in attacks.items():
+            with _pytest.raises(AssertionError):
+                _assert_now_is_clock_derived(src)
+
+        # And the control's control: the real anchor must still pass, or every
+        # `raises` above could be passing for an unrelated reason.
+        _assert_now_is_clock_derived(real)
+
+
+def _assert_now_is_clock_derived(src: str) -> None:
+    """The anchor guard, over SOURCE TEXT rather than over this file.
+
+    A parameter and not a `__file__` read, so `test_the_anchor_guard_can_
+    actually_FAIL` can run the very same assertions against the attacks that
+    beat the previous two versions of it. A guard whose failure path is never
+    executed is a guard whose failure path is not known to work.
+    """
+    import ast
+
+    tree = ast.parse(src)
+
+    # 🔴 EVERY BINDING, NOT THE FIRST (CERT-571). This used to take
+    # `next(...)` — the FIRST module-level assignment to `NOW` — and Python
+    # uses the LAST one executed. So the guard could be satisfied by a dynamic
+    # assignment that a literal one below it immediately overrides, and the
+    # cert did exactly that: it left the clock call in place, added
+    # `NOW = datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)` after it,
+    # and the whole file stayed green at 19/19 with the same bomb re-armed on
+    # a one-hour fuse.
+    #
+    # This is the third time this fixture's anchor has been attacked and the
+    # second time the GUARD was the hole rather than the anchor. The
+    # generalisation worth keeping: an oracle that reads source must bind to
+    # the value that actually RUNS. Certifying the first of several candidates
+    # certifies a statement the interpreter may never use — the same shape as
+    # a containment check satisfied by a sibling call site.
+    #
+    # `AnnAssign` is included because `NOW: datetime = <literal>` binds just as
+    # effectively and would otherwise walk straight past an `ast.Assign` scan.
+    assigns = [
+        n
+        for n in tree.body
+        if (
+            isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "NOW" for t in n.targets)
         )
-        # And it must not be a constructed constant wearing a call's clothes,
-        # e.g. `datetime(2026, 9, 1, ...)` — which IS a Call node.
-        for node in ast.walk(assign.value):
-            if isinstance(node, ast.Call):
-                fn = node.func
-                is_bare_datetime_ctor = (
-                    isinstance(fn, ast.Name) and fn.id == "datetime"
-                ) or (
-                    isinstance(fn, ast.Attribute)
-                    and fn.attr == "datetime"
-                )
-                assert not is_bare_datetime_ctor, (
-                    "`NOW` constructs a datetime literal. "
-                    f"It reads as:\n    {ast.unparse(assign.value)}"
-                )
+        or (
+            isinstance(n, ast.AnnAssign)
+            and isinstance(n.target, ast.Name)
+            and n.target.id == "NOW"
+            and n.value is not None
+        )
+    ]
+    assert assigns, "module-level `NOW` assignment not found"
+    assert len(assigns) == 1, (
+        f"`NOW` is bound {len(assigns)} times at module level, on lines "
+        f"{[n.lineno for n in assigns]}. The LAST one wins at runtime, so a "
+        "guard that inspects any single binding can be satisfied by a dead "
+        "one while a literal below it becomes the real fixture anchor. Keep "
+        "exactly one binding.\n"
+        + "\n".join(f"    line {n.lineno}: {ast.unparse(n)}" for n in assigns)
+    )
+    assign = assigns[0]
+
+    rhs = ast.dump(assign.value)
+    assert "attr='now'" in rhs or "attr='today'" in rhs or "id='time'" in rhs, (
+        "`NOW` is not derived from the clock — its right-hand side never calls "
+        f"`datetime.now`/`time`. It reads as:\n    {ast.unparse(assign.value)}\n"
+        "A hardcoded timestamp passes every check on its VALUE (it is 'recent' "
+        "on the day you write it) and then silently crosses "
+        "SENTINEL_MAX_AGE_S later, taking shard 4 red with no code change. "
+        "See this method's docstring."
+    )
+    # And it must not be a constructed constant wearing a call's clothes,
+    # e.g. `datetime(2026, 9, 1, ...)` — which IS a Call node.
+    for node in ast.walk(assign.value):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            is_bare_datetime_ctor = (
+                isinstance(fn, ast.Name) and fn.id == "datetime"
+            ) or (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "datetime"
+            )
+            assert not is_bare_datetime_ctor, (
+                "`NOW` constructs a datetime literal. "
+                f"It reads as:\n    {ast.unparse(assign.value)}"
+            )
