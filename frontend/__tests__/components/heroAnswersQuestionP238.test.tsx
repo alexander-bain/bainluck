@@ -321,4 +321,25 @@ describe("a negation is a restatement of its sibling, not a name starting with N
     ];
     expect(heroOutcome(outs)).toBe(outs[0]);
   });
+
+  it("leaves a 3-way alone even when its first two rows ARE a negation pair", () => {
+    // 🔴 THIS SPECIMEN EXISTS BECAUSE A MUTANT SURVIVED (UX-P237-4). Loosening
+    // the arity guard from `!== 2` to `< 2` killed nothing, because the case
+    // above is carried by the PAIR test — "No change" does not restate "25 bps
+    // cut", so the arity guard never had to hold and was unobservable.
+    //
+    // Here index 1 genuinely restates index 0, so the arity guard is the only
+    // thing standing between this market and a re-headline. A truncated top-3
+    // of a decomposed field is not a complement pair: re-pointing the headline
+    // at a middle row would headline an also-ran, which is the #1526 failure in
+    // a new costume.
+    const outs = [
+      { name: "No: Team A wins", probability: 0.5 },
+      { name: "Team A wins", probability: 0.3 },
+      { name: "Draw", probability: 0.2 },
+    ];
+    // The pair test alone WOULD fire here — that is the point of the specimen.
+    expect(negates(outs[0], outs[1])).toBe(true);
+    expect(heroOutcome(outs)).toBe(outs[0]);
+  });
 });
