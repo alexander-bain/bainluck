@@ -81,9 +81,32 @@
  * modal takes its items as a direct prop. Only My Stuff read a field.
  *
  * The repair is not a seventh hand-fitted shape. `authenticatedFeedPayload` is
- * built from `backend/app/routes/feed.py`, both sides of the gate it feeds are
- * now rendered, and a row below reads that serializer and fails if the fixture
- * drifts from it.
+ * built from `backend/app/routes/feed.py` and both sides of the gate it feeds
+ * are now rendered.
+ *
+ * ═══ WHAT THIS FILE DOES NOT GUARD, AND WHY IT STOPPED CLAIMING TO (round 6) ═══
+ *
+ * Round 5 added a row asserting that this fixture "carries what the serializer
+ * emits", implemented as a regex over `feed.py` for the `payload["personalization"]
+ * = {...}` literal. CERT-573 blocked it: the regex sees one dict literal, so
+ * appending `payload["personalization"]["new_metric"] = 0` after it left the
+ * fixture stale with every row green. The claim was false.
+ *
+ * It was WITHDRAWN rather than patched. A stricter regex loses to the next write
+ * form — an alias, a `setdefault`, an `update`, a loop — and each patch is one
+ * more round of the same argument. A check of this class is only worth having if
+ * it is FAIL-CLOSED: it must red on any use of the emitted object it does not
+ * recognise, which needs a Python AST over the authenticated block, not a text
+ * scan run from Jest. That instrument plus a shared machine-readable contract is
+ * its own slice; it is not cargo for a copy ship that has bounced five times.
+ *
+ * So, precisely:
+ *   GUARDED    the fixture's `team_count` — dropping it, or weakening the gate in
+ *              either direction, fails the two rendered controls below.
+ *   NOT GUARDED a field ADDED to `personalization` in `feed.py` later. The fixture
+ *              would go stale and nothing here would say so. This is the residual
+ *              risk CERT-569 found, narrowed to additions only, and it is stated
+ *              here rather than covered by a check that cannot see them.
  *
  *   TZ=UTC npx jest --testPathPatterns=emptyStatesRenderTheirOwnBranch
  */
@@ -107,19 +130,6 @@ const settled = (data: unknown) => ({
 });
 
 /**
- * The five keys `GET /api/feed` puts in `personalization` on EVERY
- * authenticated response (`backend/app/routes/feed.py`, `if ctx.is_authenticated`).
- * Pinned here and checked against the serializer itself further down.
- */
-const PERSONALIZATION_KEYS = [
-  "team_count",
-  "sport_affinities_count",
-  "discover_category_affinities_count",
-  "pinned_events",
-  "pinned_futures",
-] as const;
-
-/**
  * An authenticated, settled, EMPTY feed response — the real payload shape.
  *
  * CERT-569 blocked the first version of this file for omitting
@@ -136,6 +146,11 @@ const PERSONALIZATION_KEYS = [
  * `teamCount` is a PARAMETER because the two sides of that gate are two
  * different screens, and both are pinned below: a reader with saved teams sees
  * the empty state, a reader with none sees onboarding.
+ *
+ * The five `personalization` keys are transcribed from the `if ctx.is_authenticated`
+ * block of `backend/app/routes/feed.py`. That transcription is checked by a human
+ * reading both files, NOT by a test — see the header's "what this file does not
+ * guard": a key added to the serializer later will not fail here.
  */
 function authenticatedFeedPayload(teamCount: number) {
   return {
@@ -517,30 +532,5 @@ describe("UX-P223 · the render cannot be satisfied from the wrong branch", () =
 
     expect(visibleText(noTeams)).toContain("Follow some teams to get started");
     expect(noTeams).not.toContain('data-empty-state-name="my-stuff-no-teams"');
-  });
-
-  it("the authenticated feed fixture carries what the serializer emits", () => {
-    // UX-P223 reverse-engineered these payloads from render crashes rather than
-    // from the route that produces them, and CERT-569 found the gap that left:
-    // a field the backend sends unconditionally was simply missing, so a real
-    // production state was never exercised. This reads the serializer and holds
-    // the fixture to it, so the next field added to `personalization` fails
-    // HERE — loudly, naming the drift — instead of quietly widening the gap.
-    /* eslint-disable @typescript-eslint/no-var-requires */
-    const feedRoute: string = require("node:fs").readFileSync(
-      require("node:path").join(__dirname, "../../../backend/app/routes/feed.py"),
-      "utf8",
-    );
-    /* eslint-enable @typescript-eslint/no-var-requires */
-
-    const block = feedRoute.match(/payload\["personalization"\] = \{([\s\S]*?)\}/);
-    expect(block).not.toBeNull();
-    const emitted = [...(block as RegExpMatchArray)[1].matchAll(/"([a-z_]+)":/g)]
-      .map((m) => m[1])
-      .sort();
-
-    expect(emitted.length).toBeGreaterThan(0);
-    expect([...PERSONALIZATION_KEYS].sort()).toEqual(emitted);
-    expect(Object.keys(authenticatedFeedPayload(3).personalization).sort()).toEqual(emitted);
   });
 });
