@@ -39,8 +39,20 @@
  * assertion reads what a person reads.
  *
  * The six page sites are large client components behind SWR, auth and the
- * router. They are asserted at the SOURCE, which is this repo's established
- * treatment for exactly that shape — see the header of
+ * router. They are asserted against `renderableText` — the JSX CHILD text of the
+ * file, with every attribute subtree, dead expression and comment excluded.
+ *
+ * 🔴 CERT-558 BLOCKED THE FIRST VERSION OF THIS FILE and it was right to. The
+ * anchors were `read(file).toContain(sentence)`, a raw substring scan; an
+ * exact-head mutation removed the visible `app/my-stuff` line, kept the string
+ * alive in a `data-cert-copy` attribute, and every guard here stayed green.
+ * `renderableText` is the repair, and its own non-vacuity block replays that
+ * exact mutation plus `title`/`aria-label`/`alt`/`placeholder`, a dead
+ * `{false && "…"}`, and a JSX comment — while proving sibling copy survives.
+ *
+ * This is still a source anchor, not a render: it reads what the file WOULD
+ * render, not what a browser did. That is this repo's established treatment for
+ * exactly this shape — see the header of
  * `__tests__/components/dailyChallengeAuditHooks.test.ts`: *"both pages are
  * large client components behind fetch/localStorage, and rendering them would
  * prove less and break more."* TWO of the six are ALSO rendered EMPTY, in the
@@ -75,11 +87,85 @@ import path from "node:path";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as ts from "typescript";
 
 import { findBannedCopy, FUTURE_PROMISE_BANS } from "@/lib/copyBans";
 
 const FRONTEND = path.join(__dirname, "..", "..");
 const read = (rel: string): string => fs.readFileSync(path.join(FRONTEND, rel), "utf8");
+
+/**
+ * The text a `.tsx` file actually RENDERS: JSX text children plus the values of
+ * string/template literals that sit in child position, in source order.
+ *
+ * ═══ WHY THIS IS NOT `read(file).includes(sentence)` ═══
+ *
+ * CERT-558 blocked the first version of this file. Its presence anchors were raw
+ * substring scans over the source, and an exact-head mutation removed the visible
+ * `app/my-stuff` sentence, kept it alive in a `data-cert-copy` ATTRIBUTE, rebuilt,
+ * and every guard here plus the built-bundle scan stayed green. A substring of a
+ * source file is not a thing a reader can see.
+ *
+ * So this walks the TS/JSX AST and collects only what reaches the screen:
+ *
+ *   - attribute subtrees are skipped ENTIRELY — the exact mutation that blocked
+ *     CERT-558, and any of its variants (`title=`, `aria-label=`, `alt=`);
+ *   - a child expression contributes NOTHING unless it is a literal, so
+ *     `{false && "…"}` and `{/* … *\/}` cannot satisfy a presence anchor either;
+ *   - `{league.label}` therefore elides, which is why the two interpolated
+ *     anchors below read as the reader reads them with the dynamic word removed.
+ *
+ * It is deliberately NOT a renderer. The six page sites are large client
+ * components behind SWR, auth and the router (see this file's header); this is a
+ * strictly stronger source anchor, not a substitute for rendering them.
+ */
+function renderableText(source: string): string {
+  const sf = ts.createSourceFile(
+    "site.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
+  );
+  const parts: string[] = [];
+
+  const literalValue = (node: ts.Node): string | null => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    if (ts.isTemplateExpression(node)) {
+      // Only the literal chunks render as fixed copy; the `${…}` holes are data.
+      return [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(" ");
+    }
+    return null;
+  };
+
+  const walk = (node: ts.Node): void => {
+    if (ts.isJsxAttribute(node) || ts.isJsxAttributes(node)) return;
+    if (ts.isJsxText(node)) {
+      parts.push(node.text);
+      return;
+    }
+    if (ts.isJsxExpression(node)) {
+      const expr = node.expression;
+      if (expr) {
+        const direct = literalValue(expr);
+        if (direct !== null) parts.push(direct);
+        else if (ts.isConditionalExpression(expr)) {
+          for (const branch of [expr.whenTrue, expr.whenFalse]) {
+            const v = literalValue(branch);
+            if (v !== null) parts.push(v);
+          }
+        }
+        // Anything else contributes no COPY; recurse only for nested JSX.
+        expr.forEachChild(walk);
+      }
+      return;
+    }
+    node.forEachChild(walk);
+  };
+
+  sf.forEachChild(walk);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
 
 /* ─────────────────────────── the eight sites ─────────────────────────────── */
 
@@ -100,7 +186,9 @@ const SITES: Site[] = [
   {
     site: "app/categories · no items for this category",
     file: "app/categories/[slug]/page.tsx",
-    states: "This page lists open {categoryName.toLowerCase()} questions.",
+    // Anchors read as `renderableText` yields them: `{categoryName.toLowerCase()}`
+    // is data, not copy, so it elides. The reader sees "…open football questions."
+    states: "This page lists open questions.",
     retired: "Check back soon or browse other categories",
   },
   {
@@ -124,7 +212,7 @@ const SITES: Site[] = [
   {
     site: "app/playoffs · no championship odds",
     file: "app/playoffs/[sport]/page.tsx",
-    states: "This grid covers {league.label} championship markets from",
+    states: "This grid covers championship markets from sportsbooks and prediction markets.",
     retired: "Odds will appear when sportsbooks and prediction markets publish",
   },
   {
@@ -136,7 +224,9 @@ const SITES: Site[] = [
   {
     site: "components/discover/EndOfFeedCard · end of the Discover feed",
     file: "components/discover/EndOfFeedCard.tsx",
-    states: "that is every market in your feed right now.",
+    // Case-stable across both arms: the count=0 arm now opens with a capital
+    // (CERT-558's P3), so the shared anchor starts after the sentence opener.
+    states: "every market in your feed right now.",
     retired: "new markets open throughout the day, so check back soon.",
   },
   {
@@ -174,14 +264,77 @@ describe("UX-P220 · the retired copy is copy the rules actually reject", () => 
   });
 });
 
+/* ════════════ the extractor, proven against CERT-558's own mutation ════════ */
+
+describe("renderableText — non-vacuity, both directions", () => {
+  const SENTENCE = "This page follows the teams you have saved.";
+
+  it("captures a sentence that is a JSX text child", () => {
+    expect(renderableText(`const A = () => <p>${SENTENCE}</p>;`)).toContain(SENTENCE);
+  });
+
+  it("CERT-558's mutation: a sentence kept only in an attribute does NOT count", () => {
+    // This is the exact shape that blocked the first version of this file — the
+    // visible line removed, the string preserved in `data-cert-copy`.
+    const mutated = `const A = () => <p data-cert-copy="${SENTENCE}"></p>;`;
+    expect(mutated).toContain(SENTENCE); // the raw scan is still satisfied …
+    expect(renderableText(mutated)).not.toContain(SENTENCE); // … this one is not.
+  });
+
+  it("the same, for the attributes a mutation would reach for next", () => {
+    for (const attr of ["title", "aria-label", "alt", "placeholder"]) {
+      const mutated = `const A = () => <p ${attr}="${SENTENCE}">x</p>;`;
+      expect(renderableText(mutated)).not.toContain(SENTENCE);
+    }
+  });
+
+  it("a sentence in a dead expression does NOT count", () => {
+    const dead = `const A = () => <p>{false && "${SENTENCE}"}</p>;`;
+    expect(renderableText(dead)).not.toContain(SENTENCE);
+  });
+
+  it("a sentence in a JSX comment does NOT count", () => {
+    const commented = `const A = () => <p>{/* ${SENTENCE} */}</p>;`;
+    expect(renderableText(commented)).not.toContain(SENTENCE);
+  });
+
+  it("a literal child DOES count — it is copy that renders", () => {
+    expect(renderableText(`const A = () => <p>{"${SENTENCE}"}</p>;`)).toContain(SENTENCE);
+  });
+
+  it("both arms of a conditional child count", () => {
+    const both = `const A = ({n}) => <p>{n > 0 ? "left copy" : "right copy"}</p>;`;
+    const text = renderableText(both);
+    expect(text).toContain("left copy");
+    expect(text).toContain("right copy");
+  });
+
+  it("JSX nested inside an expression is still reached", () => {
+    const nested = `const A = ({xs}) => <ul>{xs.map((x) => <li key={x}>${SENTENCE}</li>)}</ul>;`;
+    expect(renderableText(nested)).toContain(SENTENCE);
+  });
+
+  it("does not swallow the file — sibling copy survives beside a skipped attribute", () => {
+    // A stripper that eats too much makes every absence assertion above free.
+    const mixed = `const A = () => <p title="hidden words">visible words</p>;`;
+    const text = renderableText(mixed);
+    expect(text).toContain("visible words");
+    expect(text).not.toContain("hidden words");
+  });
+});
+
 /* ═══════════════════════ every site, one at a time ═════════════════════════ */
 
 describe.each(SITES.map((s) => [s.site, s] as const))("UX-P220 · %s", (_site, site) => {
-  it("states what it is — deleting the line is a regression, not a fix", () => {
-    expect(read(site.file)).toContain(site.states);
+  it("states what it is, in RENDERED position — an attribute does not count", () => {
+    // CERT-558: the previous form of this row was `read(file).toContain(states)`,
+    // which a mutation satisfied by moving the sentence into `data-cert-copy`.
+    expect(renderableText(read(site.file))).toContain(site.states);
   });
 
-  it("no longer promises what it will be", () => {
+  it("no longer promises what it will be — anywhere in the file", () => {
+    // Absence stays on the RAW source deliberately: a retired promise left in an
+    // attribute or a comment is still a promise someone will re-render later.
     expect(read(site.file)).not.toContain(site.retired);
   });
 });
@@ -213,15 +366,28 @@ const EndOfFeedCard = require("@/components/discover/EndOfFeedCard").default;
 describe("UX-P220 · EndOfFeedCard, rendered", () => {
   const site = SITES.find((s) => s.file.endsWith("EndOfFeedCard.tsx")) as Site;
 
-  // Both counts: the sub-line is shared between the "end of feed" and the
-  // "no markets at all" arms, and only one of them prints the count prefix.
-  it.each([137, 0])("count=%i — the reader is told what the feed holds", (count) => {
-    const text = visibleText(
+  const rendered = (count: number): string =>
+    visibleText(
       renderToStaticMarkup(React.createElement(EndOfFeedCard, { count, onRefresh: () => {} })),
     );
+
+  // Both counts: the "end of feed" and "no markets at all" arms are separate
+  // sentences, and only one of them carries the count prefix.
+  it.each([137, 0])("count=%i — the reader is told what the feed holds", (count) => {
+    const text = rendered(count);
     expect(text).toContain("You're all caught up");
     expect(text).toContain(site.states);
     expect(findBannedCopy(text, FUTURE_PROMISE_BANS).map((h) => h.matched)).toEqual([]);
+  });
+
+  it("count>0 keeps the count prefix", () => {
+    expect(rendered(137)).toContain("137 markets explored — that is every market");
+  });
+
+  it("count=0 opens the sentence with a capital (CERT-558 P3)", () => {
+    const text = rendered(0);
+    expect(text).toContain("That is every market in your feed right now.");
+    expect(text).not.toContain("up that is every market");
   });
 
   it("the refresh affordance the promise stood in for is still there", () => {
