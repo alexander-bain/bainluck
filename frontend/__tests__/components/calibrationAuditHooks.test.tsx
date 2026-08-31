@@ -939,11 +939,44 @@ function readPack(file: string, src: string): PackRead {
 
     if (ts.isCallExpression(n)) {
       const callee = n.expression;
-      const name = ts.isPropertyAccessExpression(callee)
-        ? callee.name.text
-        : ts.isIdentifier(callee)
-          ? callee.text
-          : "";
+      /**
+       * Which API this call invokes — or an admission that this file cannot
+       * tell.
+       *
+       * UX-P229: ported from the Discover sibling the moment CERT-590 blocked
+       * it there, because this file carried the identical hole. Reading the
+       * callee as syntax — property access, or bare identifier, otherwise no
+       * name — means `page["locator"](sel)` yields `""`, the call is never
+       * recognised as a selector call, and a computed hook behind it is not
+       * missed but never looked for. The attribute name was split by CERT-584,
+       * the hook name by CERT-582, the method name by CERT-590: same defect,
+       * three arms. Resolve the name rather than matching the shape, and be
+       * loud when it does not resolve.
+       *
+       * An inline function expression is exempt — `tournament-inventory.spec.ts`
+       * really calls an arrow inline — and its body is walked normally, so a
+       * selector inside it is still read.
+       */
+      const calleeName = (c: ts.Expression): string | null => {
+        if (ts.isPropertyAccessExpression(c)) return c.name.text;
+        if (ts.isIdentifier(c)) return c.text;
+        if (ts.isParenthesizedExpression(c)) return calleeName(c.expression);
+        if (ts.isElementAccessExpression(c)) {
+          const v = asStrings(resolve(c.argumentExpression, env));
+          return v && v.length === 1 ? v[0] : null;
+        }
+        if (ts.isArrowFunction(c) || ts.isFunctionExpression(c)) return "";
+        // A conditional, an awaited value, another call's result: any of these
+        // can evaluate to a selector method and none can be read here.
+        return null;
+      };
+      const resolvedName = calleeName(callee);
+      if (resolvedName === null) {
+        unresolved.push(
+          `<unreadable callee>(${callee.getText().replace(/\s+/g, " ").slice(0, 80)})`
+        );
+      }
+      const name = resolvedName ?? "";
       if (name) calledNames.add(name);
 
       const idx = SELECTOR_ARG[name];
@@ -1092,6 +1125,29 @@ read(pickHook());`,
 read("calibration-stat-ece");
 HOOKS.forEach(read);`,
     loud: true,
+  },
+  {
+    name: "CERT-590 (sibling): a selector reached through `page[\"locator\"](…)`",
+    // Ported the hour CERT-590 blocked the Discover branch for it, rather than
+    // waiting for a cert to find the same hole here. The selector is COMPUTED
+    // so the over-covering literal scan cannot see it either.
+    src: `const HOOK = "calibration-element" + "-access";
+page["locator"](\`[data-testid="\${HOOK}"]\`);`,
+    loud: false,
+    hooks: ["calibration-element-access"],
+  },
+  {
+    name: "a subscripted method name this file cannot compute fails loudly",
+    src: `const SELECTOR = '[data-testid="calibration-unknown-api"]';
+page[pickApi()](SELECTOR);`,
+    loud: true,
+  },
+  {
+    name: "an inline IIFE is not an unreadable API — and its body is still read",
+    src: `const SELECTOR = '[data-testid="calibration-inside-iife"]';
+(() => { page.locator(SELECTOR); })();`,
+    loud: false,
+    hooks: ["calibration-inside-iife"],
   },
   {
     name: "a parameter reassigned inside the function body",
