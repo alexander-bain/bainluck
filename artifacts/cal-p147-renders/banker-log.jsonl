@@ -10,3 +10,4 @@
 {"at": "2026-08-31T03:56:03.277068+00:00", "event": "banked", "census": "2026-08-31T03:36:14.701419+00:00", "detail": "artifacts/cal-p147-renders/scorecard-20260831T033614-701419.txt"}
 {"at": "2026-08-31T04:56:38.075277+00:00", "event": "banked", "census": "2026-08-31T04:37:36.703361+00:00", "detail": "artifacts/cal-p147-renders/scorecard-20260831T043736-703361.txt"}
 {"at": "2026-08-31T14:56:04.143380+00:00", "event": "fetch_failed", "detail": "<urlopen error Tunnel connection failed: 503 Service Unavailable>"}
+{"at": "2026-08-31T18:01:34.874710+00:00", "event": "fetch_failed", "detail": "HTTP Error 503: Service Unavailable"}
