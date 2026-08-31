@@ -238,6 +238,34 @@ READ_SIDE_CONSUMERS = {
         "nominees to display 'last updated'. Insensitive to the change either way, "
         "but it is a comparison site and is recorded so the set is complete."
     ),
+    # ── THE SCAN WAS WIDENED TO app/tasks, AND THAT FOUND A HOLE ─────────────
+    #
+    # lane1 Q482 (item 12) added a stamp gate and the census could not see it,
+    # because the scan covered only `app/routes` and `app/utils`. Widening it
+    # surfaced a SECOND consumer that had been outside the audit since before
+    # #2024 was filed. Both mutate data on the strength of the stamp, which
+    # makes them the most consequential readings in this dict — a route that
+    # mis-gates renders wrongly for one request; these two WRITE.
+    #
+    # The list was widened rather than the new entry waived: a census that stops
+    # at a directory boundary is satisfied by a sibling call site one package
+    # over, which is the failure mode this file exists to prevent.
+    "app/tasks/__init__.py": (
+        "POLLER ALIVE — `update_max_movement`'s expiry sweep. A row whose stamp "
+        "predates the movement window has its `probability_change_24h` set to "
+        "NULL, because a delta nothing has written cannot describe the last 24 "
+        "hours. Under option 1 a merely-STABLE price would stop advancing its "
+        "stamp and lose an honest ~0 delta — harmless in value, but it would "
+        "also spare genuinely dead rows whose last write happened to change "
+        "something, which inverts the sweep."
+    ),
+    "app/tasks/futures.py": (
+        "POLLER ALIVE — the odds poller zeroes an outcome the API has stopped "
+        "returning, but only once nothing has written it for 24h, so a "
+        "transient omission cannot zero a live price. Under option 1 a stable "
+        "price that the API keeps returning would age into this branch and be "
+        "zeroed. PRE-EXISTING and unaudited until Q482 widened the scan."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")
@@ -248,8 +276,16 @@ def test_read_side_consumers_are_exactly_the_audited_set() -> None:
 
     A new entry here widens the blast radius of #2024's option 1. It is not a
     list to keep current; it is a list whose growth is the finding.
+
+    ⚠️ `app/tasks` is in scope since Q482. It was not before, and the omission
+    was invisible: the dict claimed to hold "the exact set of call sites" while
+    two data-mutating consumers sat one package outside the scan.
     """
-    found = {f for f in _src_files("app/routes", "app/utils") if _GATE.search(_read(f))}
+    found = {
+        f
+        for f in _src_files("app/routes", "app/utils", "app/tasks")
+        if _GATE.search(_read(f))
+    }
     assert found == set(READ_SIDE_CONSUMERS), {
         "unaudited_new_consumer": sorted(found - set(READ_SIDE_CONSUMERS)),
         "consumer_that_disappeared": sorted(set(READ_SIDE_CONSUMERS) - found),
