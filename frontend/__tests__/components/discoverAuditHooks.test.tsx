@@ -89,6 +89,13 @@ const SPEC_DIR = path.join(__dirname, "..", "..", "e2e", "specs");
  * them, so UX-P213-2's census hazard does not arise. And concatenation is now
  * *supported* rather than banned, so the guard costs the pack no expressiveness.
  */
+/**
+ * Which API a call invokes, and how far the real arguments are pushed right.
+ * `argOffset` is 1 for `f.call(thisArg, …)` and 0 everywhere else. `null` means
+ * this file cannot tell what is being called, and that is always LOUD.
+ */
+type CalleeRead = { name: string; argOffset: number } | null;
+
 type Resolution = {
   file: string;
   selectors: string[];
@@ -338,12 +345,44 @@ function resolveSpec(file: string, src: string): Resolution {
    *   - an inline function expression -> not a named API. Its body is walked
    *     like any other code, so a selector inside it is read normally.
    */
-  function calleeName(callee: ts.Expression): string | null {
-    if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
-    if (ts.isIdentifier(callee)) return callee.text;
+  function calleeName(callee: ts.Expression): CalleeRead {
     if (ts.isParenthesizedExpression(callee)) return calleeName(callee.expression);
-    if (ts.isElementAccessExpression(callee)) return literalOf(callee.argumentExpression);
-    if (ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) return "";
+    if (ts.isIdentifier(callee)) return { name: callee.text, argOffset: 0 };
+    if (ts.isElementAccessExpression(callee)) {
+      const v = literalOf(callee.argumentExpression);
+      return v === null ? null : { name: v, argOffset: 0 };
+    }
+    if (ts.isPropertyAccessExpression(callee)) {
+      const prop = callee.name.text;
+      if (prop === "call" || prop === "apply" || prop === "bind") {
+        // Round 5, after CERT-593. `page.locator.call(page, sel)` runs a REAL
+        // `locator`, and reading the final property name records `call` — so
+        // the selector argument was never resolved and its computed hook was
+        // omitted in silence. The fifth arm of the same defect.
+        //
+        // Normalising beats refusing, because refusing every `.bind` would red
+        // `consent.spec.ts`, which legitimately writes
+        // `window.localStorage.setItem.bind(...)`. So the TARGET is read first,
+        // and only a target that really is a selector API is treated specially.
+        const inner = calleeName(callee.expression);
+        if (inner === null) return null;
+        if (!(inner.name in SELECTOR_ARG)) {
+          // `setItem.bind` and friends: not a selector call, nothing to check.
+          return { name: "", argOffset: 0 };
+        }
+        // `f.call(thisArg, …)` pushes every real argument one slot right.
+        if (prop === "call") return { name: inner.name, argOffset: inner.argOffset + 1 };
+        // `.apply` hides the arguments inside an array and `.bind` defers the
+        // call to a site this function is not looking at. Both are LOUD: the
+        // pack has no reason to write either, and guessing is what lost four
+        // rounds.
+        return null;
+      }
+      return { name: prop, argOffset: 0 };
+    }
+    if (ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) {
+      return { name: "", argOffset: 0 };
+    }
     // A conditional, an awaited value, the result of another call: any of these
     // can evaluate to a selector method, and none of them can be read here.
     return null;
@@ -358,9 +397,10 @@ function resolveSpec(file: string, src: string): Resolution {
           `<unreadable callee>(${callee.getText().replace(/\s+/g, " ").slice(0, 80)})`
         );
       }
-      const name = resolvedName ?? "";
+      const name = resolvedName?.name ?? "";
+      const argOffset = resolvedName?.argOffset ?? 0;
       if (name) calledNames.add(name);
-      const idx = SELECTOR_ARG[name];
+      const idx = SELECTOR_ARG[name] === undefined ? undefined : SELECTOR_ARG[name] + argOffset;
       if (idx !== undefined && n.arguments.length > idx) {
         const arg = n.arguments[idx];
         const value = literalOf(arg);
@@ -521,6 +561,39 @@ page["locator"](SELECTOR);`,
 page["loc" + "ator"](SELECTOR);`,
     loud: false,
     hooks: ["discover-subscript-split"],
+  },
+  {
+    name: "CERT-593: a selector reached through `page.locator.call(page, …)`",
+    // The fifth arm. Reading the final property name records `call`, so the
+    // selector argument was never resolved and its computed hook was omitted in
+    // silence — while the browser ran a real `locator`.
+    src: `const SELECTOR = "[data-" + 'testid="discover-call-indirect"]';
+page.locator.call(page, SELECTOR);`,
+    loud: false,
+    hooks: ["discover-call-indirect"],
+  },
+  {
+    name: "`.apply` hides its arguments in an array and fails loudly",
+    src: `const SELECTOR = '[data-testid="discover-apply-indirect"]';
+page.locator.apply(page, [SELECTOR]);`,
+    loud: true,
+  },
+  {
+    name: "a bound selector method fails loudly at the bind",
+    // `.bind` defers the call to a site this function is not looking at, so the
+    // honest moment to refuse is where the binding is made.
+    src: `const loc = page.locator.bind(page);
+loc('[data-testid="discover-bound"]');`,
+    loud: true,
+  },
+  {
+    name: "`.bind` on a method that is NOT a selector API is left alone",
+    // `consent.spec.ts` really writes this. Refusing every `.bind` would red a
+    // spec doing nothing wrong, which is why the TARGET is read first.
+    src: `const real = window.localStorage.setItem.bind(window.localStorage);
+page.locator('[data-testid="discover-card"]');`,
+    loud: false,
+    hooks: ["discover-card"],
   },
   {
     name: "a subscripted method name this file cannot compute fails loudly",
