@@ -385,11 +385,16 @@ def _build_music(themed: dict) -> dict:
                 side_markets.append(row)
 
     spotify_race.sort(key=lambda r: -r["prob"])
-    # Normalize Spotify race probabilities to sum to ~100% (independent binary markets)
+    # Normalize Spotify race probabilities to sum to ~100% (independent binary markets).
+    # `row["prob"]` is a PERCENT (`_market_row` multiplies by 100), so both the threshold
+    # and the divisor are on the 0-100 scale — same rule as politics
+    # `_normalize_outcome_probs` and economics `_brackets_from_outcomes`.  This used to
+    # carry the feed's 0-1 form (`> 1.05`, no `* 100`), which fired on every non-empty
+    # race and published a fraction: a market reading 86.0 went out as 0.8.
     spotify_sum = sum(r["prob"] for r in spotify_race if r["prob"] > 0)
-    if spotify_sum > 1.05 and spotify_race:
+    if spotify_sum > 105 and spotify_race:
         for r in spotify_race:
-            r["prob"] = round(r["prob"] / spotify_sum, 4)
+            r["prob"] = round(r["prob"] / spotify_sum * 100, 1)
     billboard_watch.sort(key=lambda r: -r["prob"])
 
     billboard_groups, billboard_ungrouped = _group_threshold_markets(billboard_watch)
