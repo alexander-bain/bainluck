@@ -59,9 +59,26 @@ function codeOnly(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
-/** Text a reader actually sees — tags stripped, so attributes cannot satisfy it. */
+/**
+ * Text a reader actually sees — tags stripped, so attributes cannot satisfy it.
+ *
+ * 🔴 A CHARACTER SCAN, NOT `replace(/<[^>]*>/g, "")`. CodeQL flagged the regex form
+ * as **high severity** `js/incomplete-multi-character-sanitization` on the branch
+ * below this one, and it is right about the shape: a single-pass tag strip is the
+ * classic incomplete sanitizer, because one pass over `<<a>script>` leaves a tag
+ * behind. Nothing untrusted flows through here — it reads our own SSR output inside
+ * a test — but a new high alert is a real CI gate, and "it is only a test" is not a
+ * reason to ship the pattern people copy. A scan cannot be defeated by nesting.
+ */
 function visibleText(html: string): string {
-  return html.replace(/<[^>]*>/g, "").trim();
+  let out = "";
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out.trim();
 }
 
 function attrs(html: string): Record<string, string> {
@@ -97,7 +114,7 @@ describe("UX-P234: the shared pin affordance is an affordance, not a word", () =
 
   test("the icon variant carries NO visible text, so it needs its label", () => {
     const html = renderToStaticMarkup(<PinButton pinned={false} onToggle={() => {}} variant="icon" />);
-    expect(html.replace(/<[^>]*>/g, "").trim()).toBe("");
+    expect(visibleText(html)).toBe("");
     expect(attrs(html)["aria-label"]).toBe("Pin market");
   });
 
