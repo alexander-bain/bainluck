@@ -317,22 +317,90 @@ class TestCoverageArithmeticStillHolds:
             f"{cache_mod.STALE_TTL}s mirror"
         )
 
-    def test_the_threshold_keeps_the_measured_union_inside_the_cap(self):
-        """Measured 2026-08-31: 100 fixture-reachable + 96 prop-reachable at
-        `MIN_PROPS_TO_WARM = 10`. The threshold is what keeps the union under the
-        population bound the contract above is asserted against — if it is
-        lowered, that arithmetic has to be re-derived, not assumed.
+    def test_the_threshold_is_exactly_what_a_family_needs(self):
+        """🔴 CERT-513's finding, as the guard that should have been here first.
+
+        The first version of this file asserted `MIN_PROPS_TO_WARM >= 10` — it
+        encoded the constant the author picked instead of the CONTRACT the
+        constant is supposed to satisfy, so it would have rejected the correct
+        setting (and did). The reasoning behind 10, "a team below ten renders an
+        empty page", was never tested; production replay found UConn emitting a
+        family from 8 outcomes and Purdue emitting two from 5.
+
+        So derive it by RUNNING the grouper, not by agreeing with it by hand: the
+        threshold must be low enough that a team holding exactly that many prop
+        outcomes can render a family, and no lower than the point where one
+        cannot. That pins it to `group_prop_families`'s own `>= 2 distinct
+        entities` rule without duplicating the rule.
         """
-        measured_fixture_reachable = 100
-        measured_prop_reachable_at_10 = 96
-        assert warm.MIN_PROPS_TO_WARM >= 10, (
-            "lowering the threshold widens the union past the measured 196; "
-            "re-measure the census before changing it"
+        from app.utils.prop_families import group_prop_families
+
+        def _market_with(n_outcomes):
+            return [{
+                "market_id": 10, "name": "NBA MVP", "source": "kalshi",
+                "group_id": None, "status": "open", "resolution_date": None,
+                "market_metadata": None,
+                "outcomes": [
+                    {"outcome_id": i, "name": f"Player Number{i:02d}",
+                     "probability": 0.5, "is_winner": False}
+                    for i in range(n_outcomes)
+                ],
+            }]
+
+        at_threshold = group_prop_families(_market_with(warm.MIN_PROPS_TO_WARM))
+        assert len(at_threshold) >= 1, (
+            f"a team with exactly MIN_PROPS_TO_WARM={warm.MIN_PROPS_TO_WARM} prop "
+            "outcomes renders NO family, so the threshold is admitting teams that "
+            "cannot show anything"
         )
-        assert (
-            measured_fixture_reachable + measured_prop_reachable_at_10
-            <= warm.MAX_TEAMS_PER_PASS
+
+        below = group_prop_families(_market_with(warm.MIN_PROPS_TO_WARM - 1))
+        assert len(below) == 0, (
+            f"a team with {warm.MIN_PROPS_TO_WARM - 1} outcomes already renders a "
+            "family, so the threshold is EXCLUDING pages that work — this is "
+            "exactly what CERT-513 blocked"
         )
+
+    def test_the_measured_union_is_covered_before_the_mirror_lapses(self):
+        """The contract the threshold actually has to satisfy.
+
+        Not "the union fits in one pass" — the pass rotates before it caps, so a
+        population larger than one slice is covered ACROSS passes. What must hold
+        is that a FULL CYCLE closes before the 24 h mirror does.
+
+        Measured 2026-08-31 at `MIN_PROPS_TO_WARM = 2`: the union is
+        `MEASURED_UNION_TEAMS` = 229 (216 at 5, 196 at 10).
+        """
+        from app.tasks import celery_app
+
+        entry = celery_app.conf.beat_schedule["warm-prop-families"]
+        period_seconds = 3600 // len(entry["schedule"].minute)
+        teams_per_pass = warm.PASS_BUDGET_SECONDS // warm.SLOWEST_MEASURED_BUILD_SECONDS
+
+        passes = math.ceil(warm.MEASURED_UNION_TEAMS / teams_per_pass)
+        assert passes * period_seconds <= cache_mod.STALE_TTL, (
+            f"{warm.MEASURED_UNION_TEAMS} teams need {passes} passes x "
+            f"{period_seconds}s = {passes * period_seconds}s, past the "
+            f"{cache_mod.STALE_TTL}s mirror — teams would go cold between warms"
+        )
+
+    def test_the_coverage_ceiling_is_named_so_a_wider_set_cannot_creep_past_it(self):
+        """The population may grow (football season adds fixture-reachable teams).
+        Name the point at which the budget stops being enough, so crossing it is a
+        red test rather than a silently lapsing mirror."""
+        from app.tasks import celery_app
+
+        entry = celery_app.conf.beat_schedule["warm-prop-families"]
+        period_seconds = 3600 // len(entry["schedule"].minute)
+        teams_per_pass = warm.PASS_BUDGET_SECONDS // warm.SLOWEST_MEASURED_BUILD_SECONDS
+        ceiling = (cache_mod.STALE_TTL // period_seconds) * teams_per_pass
+
+        assert warm.MEASURED_UNION_TEAMS <= ceiling, (
+            f"the measured union ({warm.MEASURED_UNION_TEAMS}) is already past the "
+            f"coverage ceiling ({ceiling}); PASS_BUDGET_SECONDS must be re-derived"
+        )
+        # And the headroom is real, not marginal-by-luck.
+        assert ceiling >= 240
 
     def test_the_pass_budget_bounds_the_work_not_the_population(self):
         """Why widening the set is not a load increase: a pass stops at

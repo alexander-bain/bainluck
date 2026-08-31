@@ -86,10 +86,20 @@ fixture-reachable, and **182 rostered teams hold props with no fixture in the
 window** — 96 of them holding ten or more.
 
 So a team is reachable if it has a near fixture OR it holds enough prop markets
-to make a page worth warming (`MIN_PROPS_TO_WARM`). This does NOT increase the
-database work a pass does: `PASS_BUDGET_SECONDS` bounds the pass, not the
-population, so a wider set changes WHICH teams a pass builds and how long a full
-cycle takes — not how hard any hour hits Postgres.
+to render anything at all (`MIN_PROPS_TO_WARM`, which is 2 — the number of
+distinct entities a family costs, derived from the grouper rather than chosen).
+This does NOT increase the database work a pass does: `PASS_BUDGET_SECONDS`
+bounds the pass, not the population, so a wider set changes WHICH teams a pass
+builds and how long a full cycle takes — not how hard any hour hits Postgres.
+
+⚠️ **THE FIRST VERSION OF THIS SET THE THRESHOLD AT 10 AND CERT-513 BLOCKED IT.**
+The argument was "a team below ten renders an empty page". It sounded right, it
+was never tested against production, and it was false: replay found **UConn
+emitting one family from 8 outcomes and Purdue emitting two from 5**. A threshold
+invented to keep a population count under `MAX_TEAMS_PER_PASS` was excluding
+exactly the pages this queue exists to fix, just smaller ones. The count did not
+need keeping down either — the binding ceiling is COVERAGE (240 teams), not the
+per-pass cap, because the pass rotates before it caps.
 """
 
 import logging
@@ -107,18 +117,41 @@ REACHABLE_LOOKBACK_DAYS = 1
 
 #: The SECOND way in, for teams a fixture window cannot see (LAT-P158).
 #:
-#: Ten, because a family needs **two distinct entities** to be emitted at all
-#: (`utils/prop_families.group_prop_families`: "Only families with >= 2 DISTINCT
-#: entities are emitted — a single market is not a family"). A team holding a
-#: handful of prop outcomes scattered across markets usually renders no family at
-#: all, so warming it warms an empty page and spends a slot a 99-prop team needs.
+#: 🔴 TWO, BECAUSE TWO IS WHAT A FAMILY COSTS — and this number is DERIVED, not
+#: chosen. `group_prop_families` emits a family iff it has **>= 2 distinct
+#: entities** (`utils/prop_families.py`: "Only families with >= 2 DISTINCT
+#: entities are emitted — a single market is not a family"). Two outcomes in one
+#: market IS a family, so two prop outcomes is exactly the point at which a team
+#: can render something. `test_the_threshold_is_exactly_what_a_family_needs`
+#: proves the agreement by RUNNING the grouper at `MIN_PROPS_TO_WARM` and at
+#: `MIN_PROPS_TO_WARM - 1`, rather than asserting a literal that merely agrees
+#: with it by hand (CERT-506's lesson, in the module next door).
 #:
-#: It is also what keeps the union inside `MAX_TEAMS_PER_PASS`, which is the
-#: population bound the coverage contract is asserted against. Measured
-#: 2026-08-31: 100 fixture-reachable + 96 prop-reachable = 196 of a 200 ceiling.
-#: If that ever crosses, the pass truncates FAIRLY (rotate-then-cap, below) and
-#: says so, rather than silently never warming the tail.
-MIN_PROPS_TO_WARM = 10
+#: ⚠️ THIS WAS 10 AND 10 WAS WRONG. CERT-513 blocked it: the reasoning was "a team
+#: below ten renders an empty page", which sounded right and is false. Production
+#: replay found UConn emitting one family from 8 outcomes and Purdue emitting TWO
+#: from 5 — real pages, excluded by a threshold invented to keep a population
+#: count tidy. The tidiness was not needed either: see the ceiling below.
+MIN_PROPS_TO_WARM = 2
+
+#: What the union actually measures, and the ceiling that matters.
+#:
+#: Measured 2026-08-31: 100 fixture-reachable, and the union at
+#: `MIN_PROPS_TO_WARM = 2` is **229** teams (at 5 it is 216; at 10 it is 196).
+#:
+#: 🔴 THE BINDING CEILING IS COVERAGE, NOT `MAX_TEAMS_PER_PASS`. Since the pass
+#: rotates before it caps (below), a population larger than one pass's slice is
+#: covered ACROSS passes, so the real constraint is that a full cycle finishes
+#: before the 24 h mirror lapses:
+#:
+#:     ceil(population / (PASS_BUDGET_SECONDS // SLOWEST_MEASURED_BUILD_SECONDS))
+#:         * 3600  <=  STALE_TTL
+#:
+#: = ceil(229 / 10) = 23 passes = 82,800 s against 86,400 s — inside, with an hour
+#: to spare. The arithmetic tops out at **240** teams, not at `MAX_TEAMS_PER_PASS`.
+#: Past 240 the mirror lapses before the cycle closes and the budget has to be
+#: re-derived; the guard asserts that bound rather than any of these literals.
+MEASURED_UNION_TEAMS = 229
 
 #: Hard ceiling on how many teams one pass will consider. Not a target — a
 #: backstop, so a roster backfill or a schedule import cannot turn one beat tick
