@@ -14,6 +14,7 @@ import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils"
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
+import { shapeForbidsKernel, storedShape, SHAPE_QUANTITY, SHAPE_FIELD } from "@/lib/marketShape";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 
@@ -142,9 +143,68 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
   // stops being printed as money. `SignalBars` remains the confidence signal.
 
-  if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= 2) {
-    const shownCells = heatmapRows.slice(0, 8);
-    const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
+  // Typed locally: `data.discover_card` is still untyped debt (see the frontend
+  // tsc baseline), so without this annotation these rows arrive as `any` and
+  // leaderFirstSlice's generic widens them to its own constraint.
+  const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
+
+  // UX-P237 — the card obeys the shape field.
+  //
+  // `suggested_format` is a text-regex guess; `market_type` is the classifier's
+  // stored answer. Where they disagree the stored field wins (`shapeForbidsKernel`,
+  // lib/marketShape.ts, which documents why only these two pairs are vetoed).
+  const forbidsLadder = shapeForbidsKernel(data.market_type, "ladder-strip");
+  const forbidsLeaderboard = shapeForbidsKernel(data.market_type, "top-3");
+  const isQuantity = storedShape(data.market_type) === SHAPE_QUANTITY;
+  const isField = storedShape(data.market_type) === SHAPE_FIELD;
+
+  // The rungs the Quantity kernel draws, in preference order:
+  //
+  //  1. `threshold_points` — the archetype's PARSED numeric ladder. Each rung
+  //     carries a real `value`, so the ladder can be ordered by it. This is the
+  //     path 11 of the 13 live quantity cards already take, and it is unchanged.
+  //  2. `distribution_outcomes` — used only when the stored shape says
+  //     `quantity` and the parser found NO thresholds. That combination is how
+  //     a date ladder arrives ("Before Sep 1, 2026" is not a numeric threshold),
+  //     and it is the case the leaderboard was mis-drawing.
+  //
+  // Source 2 renders with `sort={false}`: these rows carry no numeric `value`,
+  // so there is nothing to order them BY. They arrive probability-descending,
+  // which is a real reading order for a cumulative ladder and makes no ordinal
+  // claim for a disjoint one — unlike the leaderboard, which numbered them
+  // "Rank N by probability". Disjoint bins ("40-50mm", "<30mm") parse as
+  // thresholds and so never reach here; they keep their value-ordered ladder.
+  const ladderFromDistribution = isQuantity && heatmapRows.length < 2;
+  const ladderCells = ladderFromDistribution
+    ? distributionRows.slice(0, 8).map((row, index) => ({
+        key: `${row.label}-${index}`,
+        label: row.label,
+        probability: row.probability,
+        value: undefined as number | undefined,
+      }))
+    : heatmapRows.slice(0, 8).map((row) => ({
+        key: row.key,
+        label: row.label,
+        probability: row.probability,
+        value: row.sortValue as number | undefined,
+      }));
+
+  const drawsLadder =
+    !forbidsLadder &&
+    ladderCells.length >= 2 &&
+    (ladderFromDistribution || data.discover_card?.suggested_format === "threshold_heatmap");
+
+  if (drawsLadder) {
+    const shownCells = ladderCells;
+    // "Above 50% through X" names the last rung of an ASCENDING numeric ladder
+    // still at or above even money. It is only meaningful when the rungs are
+    // ordered by a parsed threshold `value`. The distribution-fed rungs have no
+    // such value (that is why they arrive here at all), so the phrase would be
+    // pointing at whatever the probability sort happened to put last. Suppress
+    // it there rather than print a sentence the ordering cannot support.
+    const above50 = ladderFromDistribution
+      ? []
+      : shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
     const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
 
     return (
@@ -182,7 +242,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               key: row.key,
               label: row.label,
               probability: row.probability,
-              value: row.sortValue,
+              value: row.value,
             }))}
           />
 
@@ -211,11 +271,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  // Typed locally: `data.discover_card` is still untyped debt (see the frontend
-  // tsc baseline), so without this annotation these rows arrive as `any` and
-  // leaderFirstSlice's generic widens them to its own constraint.
-  const distributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
-  if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= 4) {
+  // The leaderboard draws on the format hint as before, and ALSO when the stored
+  // shape says `field` — otherwise vetoing a field's ladder above would drop the
+  // card to the generic single-number hero and lose every entrant, which is a
+  // worse read than the wrong ladder it replaced. A veto has to leave the card
+  // somewhere better, not just somewhere else.
+  if (
+    (data.discover_card?.suggested_format === "outcome_distribution" || isField) &&
+    distributionRows.length >= 4 &&
+    !forbidsLeaderboard
+  ) {
     // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
     // leader-first drops the leader — the Fed September card showed four
     // also-rans totalling 47% while the 56% "No change" row never rendered.
