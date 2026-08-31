@@ -785,7 +785,7 @@ describe("reading copy back out of minified JavaScript", () => {
    * not by anything after it — which is the property that makes this group
    * work on a minified bundle at all.
    *
-   * ⚠️ **WIDENED BY UX-P218, NOT DELETED — AND THE TITLE NOW SAYS THE TRUE
+   * ⚠️ **WIDENED BY UX-P231, NOT DELETED — AND THE TITLE NOW SAYS THE TRUE
    * THING.** This test asserted that the DEFAULT bundle scan catches a history
    * claim, and Alex's D25-scope ruling condemns exactly that: the group applies
    * only to copy emitted by the no-reading components, and a minified chunk
@@ -844,7 +844,7 @@ describe("reading copy back out of minified JavaScript", () => {
    * literals, the layer-1 pins and this one fail together, which is the
    * signal that the claim — not the sentence — is what the rule is holding.
    *
-   * ⚠️ **WIDENED BY UX-P218 FOR THE SAME REASON AS ITS SIBLING ABOVE.** The
+   * ⚠️ **WIDENED BY UX-P231 FOR THE SAME REASON AS ITS SIBLING ABOVE.** The
    * alternate-wording claim and the clean-conditional claim are untouched; the
    * list is now named explicitly, and the fence gets its own assertion.
    */
