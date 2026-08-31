@@ -144,7 +144,7 @@ export default function RainForecast() {
             ) : loaded && !rain ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">No live rain markets right now</p>
-                <p className="text-text-muted text-xs mt-1.5">Daily &ldquo;will it rain?&rdquo; questions appear here when they reopen.</p>
+                <p className="text-text-muted text-xs mt-1.5">This card tracks daily &ldquo;will it rain?&rdquo; questions.</p>
               </div>
             ) : !rain ? (
               <RainDaySkeleton />
@@ -242,7 +242,7 @@ export default function RainForecast() {
             ) : loaded && !monthly ? (
               <div className="py-12 text-center">
                 <p className="text-text-secondary text-sm">No live rainfall markets right now</p>
-                <p className="text-text-muted text-xs mt-1.5">Monthly city markets appear here when they reopen.</p>
+                <p className="text-text-muted text-xs mt-1.5">This card tracks monthly city rainfall markets.</p>
               </div>
             ) : !monthly ? (
               <MonthlySkeleton />

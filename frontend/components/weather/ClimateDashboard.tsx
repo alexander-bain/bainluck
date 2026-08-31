@@ -185,7 +185,7 @@ export default function ClimateDashboard() {
     return (
       <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
         <p className="text-text-secondary text-sm">No live climate markets right now</p>
-        <p className="text-text-muted text-xs mt-1.5">Long-horizon climate markets appear here when they reopen.</p>
+        <p className="text-text-muted text-xs mt-1.5">This card tracks long-horizon climate markets.</p>
       </div>
     );
   }

@@ -98,7 +98,7 @@ export default function TemperatureMap() {
           />
           <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
             <p className="text-text-secondary text-sm">No live temperature markets right now</p>
-            <p className="text-text-muted text-xs mt-1.5">Daily city markets appear here when they reopen.</p>
+            <p className="text-text-muted text-xs mt-1.5">This card tracks daily city temperature markets.</p>
           </div>
         </div>
       </section>

@@ -588,13 +588,28 @@ const EXEMPT: Record<string, string[]> = {
  * What remains in the map is rulings 138 and 142 only. Ruling 141 is closed on
  * the branch — and, per ruling 142, not closed at all until the production
  * layer below has been run against a post-deploy fetch.
+ *
+ * ═══ `app/weather`'s RULING-142 DEBT IS PAID — UX-P219, 2026-08-31 ═══
+ *
+ * The surface owed exactly one rule, `appear-here`, and it was owed by four
+ * empty states saying the same thing in four voices: "… appear here when they
+ * reopen" on the daily rain card, the monthly rainfall card, the climate
+ * dashboard and the temperature map. Each now says what the card is FOR —
+ * "This card tracks daily city temperature markets." — which is true whether
+ * or not anything ever reopens, and was the whole of ruling 142's point.
+ *
+ * The key is DELETED rather than emptied, the same as `app/about` above, so the
+ * surface is gated hard from here: any future `appear-here` on `/weather` is an
+ * unlisted (surface, rule) pair and fails. The four sites also carry a per-card
+ * render guard, because this map's absence assertion cannot see a sub-line that
+ * is deleted instead of rewritten —
+ * `__tests__/capture/weatherEmptyStatesStateWhatTheyAre.test.tsx`.
  */
 const OWED: Record<string, string[]> = {
   // The methodology page still says "price" throughout, for the reason in
   // ruling 138. Its venue names are EXEMPT, not owed.
   "app/calibration": ["price-family", "blend"],
   "app/privacy": ["price-family"],
-  "app/weather": ["appear-here"],
   "app/politics": ["price-family"],
   "app/categories": ["check-back"],
   // "the price at the pump", "Gas price", "Inflation & Consumer Prices" —
