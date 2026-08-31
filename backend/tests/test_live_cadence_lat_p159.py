@@ -45,6 +45,7 @@ guard that asserts either number in isolation cannot see it. Nothing here reads
 source text.
 """
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -547,9 +548,10 @@ class _FakeSession:
 
 
 class _FakeRedis:
-    def __init__(self, last_poll_ts, sport_404=()):
+    def __init__(self, last_poll_ts, sport_404=(), quota_hash=None):
         self.last_poll_ts = last_poll_ts
         self.sport_404 = set(sport_404)
+        self.quota_hash = quota_hash
 
     def get(self, key):
         if key.startswith("bainluck:last_poll:"):
@@ -561,6 +563,10 @@ class _FakeRedis:
 
     def hget(self, *_a, **_k):
         return None
+
+    def hgetall(self, *_a, **_k):
+        # Only consulted when a test runs the REAL `check_quota_guard`.
+        return dict(self.quota_hash) if self.quota_hash else {}
 
     def set(self, *_a, **_k):
         return True
@@ -601,7 +607,10 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
 
     guard_calls = []
 
-    def _guard(_task_type, sport_key=None):
+    def _guard(_task_type, sport_key=None, quiet=False):
+        # `quiet` is accepted and ignored on purpose: it must not be able to
+        # change a verdict, and `TestAPerSportReReadDoesNotFloodTheBreakersOwnLog`
+        # asserts that against the REAL guard rather than this stub.
         if sport_key is None:
             return outer
         guard_calls.append(sport_key)
@@ -902,6 +911,133 @@ class TestAMidPassTighteningIsNeverWidenedBack:
         assert service.get_odds.await_count == 0, (
             "a later ok reading widened the pass back out — a re-read may only "
             "ADD constraint, never remove it"
+        )
+
+
+class TestAPerSportReReadDoesNotFloodTheBreakersOwnLog:
+    """The cost of making the re-read unconditional, and the guard on paying it.
+
+    `check_quota_guard` announces FULL_STOP at CRITICAL. Before CERT-535 that
+    line fired at most once per pass plus once per priority sport; now the
+    re-read runs for EVERY sport in EVERY mode, so a dozen sports at a 30 s beat
+    is ~50,000 CRITICAL lines a day restating a state the pass announced once —
+    a Sentry flood during the exact emergency an operator has to read.
+
+    So the per-sport read passes `quiet=True`. The claim that has to hold is
+    that `quiet` changes the LOG and nothing else: if it ever changed a return
+    value it would be a fail-open breaker wearing a logging flag.
+    """
+
+    QUOTA_LOGGER = "app.tasks.redis_state"
+
+    #: The whole reason ladder, as (remaining, sport_key). Every band, both
+    #: sides of the priority split.
+    LADDER = [
+        (400, "basketball_nba"),        # absolute stop — no exceptions
+        (400, "soccer_epl"),
+        (9_000, "basketball_nba"),      # full-stop band, priority => conservation
+        (9_000, "soccer_epl"),          # full-stop band, non-priority => deny
+        (30_000, "basketball_nba"),     # live-only band
+        (600_000, "basketball_nba"),    # ordinary
+    ]
+
+    @staticmethod
+    def _guard(remaining, sport_key, quiet):
+        from app.tasks import redis_state
+
+        with patch.object(redis_state, "get_redis_client",
+                          return_value=_FakeRedis(0, quota_hash={b"remaining":
+                                                                str(remaining).encode()})):
+            return redis_state.check_quota_guard(
+                "poll_odds", sport_key=sport_key, quiet=quiet,
+            )
+
+    @pytest.mark.parametrize("remaining,sport_key", LADDER)
+    def test_quiet_changes_the_log_and_never_the_verdict(self, remaining, sport_key):
+        loud = self._guard(remaining, sport_key, quiet=False)
+        quiet = self._guard(remaining, sport_key, quiet=True)
+        assert loud == quiet, (
+            f"`quiet` altered the breaker's verdict at {remaining} remaining "
+            f"for {sport_key}: {loud} loud vs {quiet} quiet. A logging flag "
+            f"that moves a boolean is a fail-open breaker in disguise."
+        )
+
+    def test_the_loud_path_really_does_emit_so_the_silence_below_means_something(
+        self, caplog,
+    ):
+        with caplog.at_level(logging.CRITICAL, logger=self.QUOTA_LOGGER):
+            self._guard(9_000, "soccer_epl", quiet=False)
+        assert [r for r in caplog.records if r.levelno >= logging.CRITICAL], (
+            "the instrument cannot see a CRITICAL at all, so every empty "
+            "caplog below is vacuous"
+        )
+
+    @pytest.mark.parametrize("remaining,sport_key", LADDER)
+    def test_a_quiet_read_says_nothing(self, remaining, sport_key, caplog):
+        with caplog.at_level(logging.INFO, logger=self.QUOTA_LOGGER):
+            self._guard(remaining, sport_key, quiet=True)
+        assert not [r for r in caplog.records if r.name == self.QUOTA_LOGGER], (
+            f"a quiet read logged anyway at {remaining} remaining: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    async def test_a_full_stop_pass_announces_the_breaker_once_not_once_per_sport(
+        self, caplog,
+    ):
+        """The behavioural guard — it goes red if `quiet=True` is ever dropped
+        from the call site, which no unit test of `check_quota_guard` can see."""
+        from app.tasks import redis_state
+
+        sports = ["soccer_epl", "soccer_uefa_champs_league", "icehockey_nhl"]
+        assert not QUOTA_GUARD_PRIORITY_SPORTS.intersection(sports), (
+            "these must all be NON-priority, or the guard's CRITICAL branch is "
+            "never the one taken and the count proves nothing"
+        )
+
+        now_ts = time.time()
+        quota = _FakeRedis(now_ts - 100.0, quota_hash={b"remaining": b"9000"})
+        session = _FakeSession(
+            [(k, datetime.now(timezone.utc) - timedelta(minutes=5), True)
+             for k in sports],
+            [],
+        )
+        service = MagicMock()
+        service.get_odds = AsyncMock(return_value=[])
+        service.get_scores = AsyncMock(return_value=[])
+        service.close = AsyncMock()
+        service.last_requests_remaining = None
+        service.last_requests_used = None
+
+        class _CM:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_a):
+                return False
+
+        with caplog.at_level(logging.CRITICAL, logger=self.QUOTA_LOGGER), \
+                patch.object(redis_state, "get_redis_client", return_value=quota), \
+                patch("app.tasks.odds_polling.OddsAPIService", return_value=service), \
+                patch("app.tasks.odds_polling.get_redis_client", return_value=quota), \
+                patch("app.tasks.odds_polling.get_task_session", return_value=_CM()), \
+                patch("app.tasks.odds_polling.detect_and_close_stale_events",
+                      AsyncMock(return_value=0)), \
+                patch("app.tasks.odds_polling.update_poll_state", MagicMock()), \
+                patch("app.tasks.excitement_index.update_live_ei",
+                      AsyncMock(return_value=0)):
+            await odds_polling._poll_all_odds()
+
+        breaker_criticals = [
+            r for r in caplog.records
+            if r.name == self.QUOTA_LOGGER and r.levelno >= logging.CRITICAL
+        ]
+        assert len(breaker_criticals) == 1, (
+            f"the breaker announced itself {len(breaker_criticals)} times for a "
+            f"{len(sports)}-sport pass — the per-sport re-read is not quiet, and "
+            f"at a 30 s beat that is tens of thousands of CRITICAL lines a day"
+        )
+        assert service.get_odds.await_count == 0, (
+            "a non-priority sport polled during FULL_STOP"
         )
 
 

@@ -952,8 +952,16 @@ async def _poll_all_odds():
                 # is unreachable and the scores block spends under the breaker.
                 # Ask it of the branch, not only of the value — can this even be
                 # reached from the states the task actually starts in?
+                #
+                # `quiet=True` because this is now a per-sport read in every
+                # mode, and the guard's own FULL_STOP line is CRITICAL: a dozen
+                # sports at a 30 s beat would be ~50,000 CRITICAL lines a day
+                # restating a state the pass already announced once at line
+                # 847. This task announces what it DOES — the outer state once
+                # per pass, and its own CRITICAL on the mid-pass absolute stop
+                # immediately below. The return value is unaffected.
                 sport_ok, sport_reason = check_quota_guard(
-                    "poll_odds", sport_key=sport_key
+                    "poll_odds", sport_key=sport_key, quiet=True,
                 )
                 if "absolute_stop" in sport_reason:
                     # No exceptions — abandon the whole pass, not just this sport.
