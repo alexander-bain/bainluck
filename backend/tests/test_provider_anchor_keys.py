@@ -248,11 +248,11 @@ def test_the_series_refusal_is_the_rule_not_a_parser_accident(ticker):
     It is not: the refusal comes from a positive game-level classification.
     """
     from app.utils.prediction_market_matching import kalshi_game_id
-    from app.utils.sport_keys import get_sport_key_from_ticker, is_kalshi_game_ticker
+    from app.utils.sport_keys import get_sport_key_from_ticker, is_kalshi_game_level_ticker
 
     assert kalshi_game_id(ticker), "premise: a date token is still extractable"
     assert get_sport_key_from_ticker(ticker), "premise: a sport key still resolves"
-    assert is_kalshi_game_ticker(ticker) is False, (
+    assert is_kalshi_game_level_ticker(ticker) is False, (
         "premise: the canonical game-ticker predicate already refuses this — "
         "the anchor helper's bug was never asking it"
     )
@@ -267,8 +267,9 @@ def test_no_futures_prefix_can_produce_a_game_anchor():
 
     This also covers a case the cert counted but did not name: 8 futures
     prefixes are LONGER than a game prefix they happen to start with
-    (`kxmlbhrderby` extends the game prefix `kxmlbhr`), so a bare
-    `is_kalshi_game_ticker()` gate would still have promoted them.
+    (`kxmlbhrderby` extends the game prefix `kxmlbhr`), so the bare
+    `startswith` predicate this repo used to carry would still have promoted
+    them. Q440 (#2231) deleted that predicate; this control outlives it.
     """
     from app.utils.sport_keys import KALSHI_FUTURES_TICKER_TO_SPORT_KEY
 

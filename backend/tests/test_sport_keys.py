@@ -20,7 +20,7 @@ from app.utils.sport_keys import (
     normalize_to_win_prob_key,
     get_sport_prefix_for_category,
     get_sport_key_from_ticker,
-    is_kalshi_game_ticker,
+    is_kalshi_game_level_ticker,
     get_sport_keys_for_category,
     get_llm_category_for_prefix,
 )
@@ -221,44 +221,44 @@ class TestGetSportKeyFromTicker:
         self, ticker, expected_sport_key
     ):
         assert get_sport_key_from_ticker(ticker) == expected_sport_key
-        assert is_kalshi_game_ticker(ticker) is True
+        assert is_kalshi_game_level_ticker(ticker) is True
 
 
-class TestIsKalshiGameTicker:
+class TestIsKalshiGameLevelTicker:
     def test_nba_game(self):
-        assert is_kalshi_game_ticker("KXNBAGAME-26FEB19BOSGSW") is True
+        assert is_kalshi_game_level_ticker("KXNBAGAME-26FEB19BOSGSW") is True
 
     def test_ufc_fight(self):
-        assert is_kalshi_game_ticker("KXUFCFIGHT-26FEB20") is True
+        assert is_kalshi_game_level_ticker("KXUFCFIGHT-26FEB20") is True
 
     def test_non_game(self):
-        assert is_kalshi_game_ticker("KXCPI-2026-05") is False
+        assert is_kalshi_game_level_ticker("KXCPI-2026-05") is False
 
     def test_empty_string(self):
-        assert is_kalshi_game_ticker("") is False
+        assert is_kalshi_game_level_ticker("") is False
 
     def test_none(self):
-        assert is_kalshi_game_ticker(None) is False
+        assert is_kalshi_game_level_ticker(None) is False
 
     def test_case_insensitive(self):
-        assert is_kalshi_game_ticker("kxmlbgame-26MAR15NYYBOS") is True
+        assert is_kalshi_game_level_ticker("kxmlbgame-26MAR15NYYBOS") is True
 
     def test_nfl_spread_is_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNFLSPREAD-26SEP07KCBUF") is True
+        assert is_kalshi_game_level_ticker("KXNFLSPREAD-26SEP07KCBUF") is True
 
     def test_nhl_goal_is_game_ticker(self):
-        assert is_kalshi_game_ticker("KXNHLGOAL-26MAR30BOSMON") is True
+        assert is_kalshi_game_level_ticker("KXNHLGOAL-26MAR30BOSMON") is True
 
     def test_mlb_f5_is_game_ticker(self):
-        assert is_kalshi_game_ticker("KXMLBF5-26APR01NYYBOS") is True
+        assert is_kalshi_game_level_ticker("KXMLBF5-26APR01NYYBOS") is True
 
     def test_futures_not_game_ticker(self):
         """Futures tickers should NOT be classified as game tickers."""
-        assert is_kalshi_game_ticker("KXNFLMVP-26") is False
-        assert is_kalshi_game_ticker("KXNHLHART-26") is False
-        assert is_kalshi_game_ticker("KXMLBWS-26") is False
-        assert is_kalshi_game_ticker("KXWNBA-26") is False
-        assert is_kalshi_game_ticker("KXNFLAFCCHAMP-26") is False
+        assert is_kalshi_game_level_ticker("KXNFLMVP-26") is False
+        assert is_kalshi_game_level_ticker("KXNHLHART-26") is False
+        assert is_kalshi_game_level_ticker("KXMLBWS-26") is False
+        assert is_kalshi_game_level_ticker("KXWNBA-26") is False
+        assert is_kalshi_game_level_ticker("KXNFLAFCCHAMP-26") is False
 
 
 class TestFuturesTickerResolution:
@@ -416,7 +416,7 @@ class TestBackwardCompatReExports:
         assert _SPORT_KEY_ALIASES is ODDS_API_TO_WIN_PROB_KEY
 
     def test_is_kalshi_game_ticker_from_prediction_market(self):
-        from app.utils.prediction_market_matching import is_kalshi_game_ticker as fn
+        from app.utils.prediction_market_matching import is_kalshi_game_level_ticker as fn
         assert fn("KXNBAGAME-123") is True
 
     def test_get_sport_prefix_from_ticker_from_prediction_market(self):
@@ -460,7 +460,7 @@ class TestGameFuturesMapSeparation:
         for prefix in series_prefixes:
             assert prefix not in KALSHI_GAME_TICKER_PREFIXES, \
                 f"{prefix} must be in futures map only, not game-level"
-            assert is_kalshi_game_ticker(f"{prefix.upper()}-26FOOBAR") is False
+            assert is_kalshi_game_level_ticker(f"{prefix.upper()}-26FOOBAR") is False
 
     def test_series_tickers_resolve_via_futures_map(self):
         assert get_sport_key_from_ticker("KXNBASERIES-26MAY10BOSPHI") == "basketball_nba"
@@ -574,7 +574,7 @@ class TestFootballDumpingGroundFamilies:
             "KXT20MATCH-26", "KXNZNBLGAME-26", "KXKLEAGUEGAME-26", "KXAFLGAME-26",
             "KXWOCURLGAME-26",
         ]:
-            assert is_kalshi_game_ticker(ticker) is False, ticker
+            assert is_kalshi_game_level_ticker(ticker) is False, ticker
 
     def test_genuine_football_tickers_still_football(self):
         # Guard the opposite direction: the sweep must not strip real football.
@@ -643,8 +643,8 @@ class TestQueue207WcChessMappings:
 
     def test_wc_match_ticker_is_a_game_ticker(self):
         # As a game ticker it becomes matchable to WC events (#205/L2-130).
-        from app.utils.sport_keys import is_kalshi_game_ticker
-        assert is_kalshi_game_ticker("KXWCGAME-26JUN15ALGAUT")
+        from app.utils.sport_keys import is_kalshi_game_level_ticker
+        assert is_kalshi_game_level_ticker("KXWCGAME-26JUN15ALGAUT")
 
     def test_chess_tickers_route_to_chess_never_soccer(self):
         # The queue's exact target: an Esports-World-Cup chess ticker must NOT

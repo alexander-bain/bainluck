@@ -171,11 +171,22 @@ class TestTennisTickerSymmetry:
     )
     def test_the_measured_unlinked_prefixes_are_now_game_tickers(self, ticker):
         """Each of these had 0 linked rows on 2026-08-29 while its ATP twin was
-        at 100%. `is_kalshi_game_ticker` is the gate that decides whether Phase 1
-        even scans them."""
-        from app.utils.sport_keys import is_kalshi_game_ticker
+        at 100%. The game-level predicate is the gate that decides whether Phase 1
+        even scans them.
 
-        assert is_kalshi_game_ticker(ticker) is True
+        MIGRATED (Q462): this asserted against `is_kalshi_game_ticker`, the bare
+        `startswith` predicate Q440 (#2231) deleted — a season market extending a
+        game prefix read as a game under it. The replacement is
+        `is_kalshi_game_level_ticker` (longest-prefix-wins), and this is a
+        migration rather than a weakening: all five tickers are game-level under
+        BOTH predicates, because `kxwta*`/`kxatp*` game prefixes are strictly
+        longer than the `kxwta`/`kxatp` futures prefixes they extend. Q435's ship
+        — every WTA prop reaching its own match — is unchanged by the
+        consolidation, which is the thing this test now proves.
+        """
+        from app.utils.sport_keys import is_kalshi_game_level_ticker
+
+        assert is_kalshi_game_level_ticker(ticker) is True
 
     def test_tour_prefixes_resolve_to_their_own_tour(self):
         from app.utils.sport_keys import get_sport_key_from_ticker

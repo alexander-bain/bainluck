@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Map Kalshi game ticker prefixes to sport labels.
 # Used to detect game-level events and construct better market names.
-from app.utils.sport_keys import (
+from app.utils.sport_keys import (  # noqa: E402
     KALSHI_TICKER_TO_DISPLAY_LABEL as _KALSHI_GAME_TICKERS,
-)  # noqa: E402
+    kalshi_futures_prefix_len as _kalshi_futures_prefix_len,
+)
 from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
@@ -38,14 +39,30 @@ def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
 
     Returns the sport label (e.g., "NBA") if it's a game ticker, or None.
     Kalshi game tickers look like "KXNBAGAME-26FEB19BOSGSW".
+
+    Longest prefix wins (Q440, #2231). This was the third predicate answering
+    "is this a game", over a third key set, with the same bare-`startswith` bug
+    the other two had: the eight futures prefixes that strictly EXTEND a display
+    label's prefix were labelled games, and a truthy return here sends the event
+    through ``_build_game_market_name``, which renames a season question as a
+    matchup. It does NOT delegate to ``is_kalshi_game_level_ticker`` — that
+    predicate is built on ``KALSHI_GAME_TICKER_PREFIXES``, and four leagues here
+    (AHL, DEL, KHL, Dimayor) are deliberately absent from it because this repo
+    does not ingest their events. Delegating would silently strip their names.
+    The shared part is the RULE, not the key set.
     """
     if not event_ticker:
         return None
     ticker_lower = event_ticker.lower()
+    best_len, best_label = 0, None
     for prefix, sport in _KALSHI_GAME_TICKERS.items():
-        if ticker_lower.startswith(prefix):
-            return sport
-    return None
+        if ticker_lower.startswith(prefix) and len(prefix) > best_len:
+            best_len, best_label = len(prefix), sport
+    if not best_len:
+        return None
+    if best_len <= _kalshi_futures_prefix_len(event_ticker):
+        return None
+    return best_label
 
 
 def _build_game_market_name(

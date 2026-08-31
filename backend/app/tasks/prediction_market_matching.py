@@ -18,9 +18,9 @@ from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
+from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 from app.utils.prediction_market_matching import (
     is_game_level_market,
-    is_kalshi_game_ticker,
     _KALSHI_GAME_TICKER_PREFIXES,
     get_sport_prefix_from_ticker,
     _TICKER_TO_SPORT_PREFIX,
@@ -1489,6 +1489,44 @@ async def _phase15_revalidate(
             if not is_game_level_market(
                 market.name, market.category, external_id=market.external_id,
             ):
+                # Q440 (#2231): this pass used to walk straight past a linked
+                # market that is not game-level, so a season market that got
+                # linked by the old bare-`startswith` gate was never re-examined
+                # and stayed on the game's page forever.
+                #
+                # The re-examination is scoped to the ONE class the deleted
+                # predicate created — a ticker whose game prefix is shadowed by a
+                # LONGER futures prefix. Not to "not game-level", which is 14,046
+                # correctly name-linked rows on production against 3 of these
+                # (see is_kalshi_shadowed_futures_ticker). Widening this arm to
+                # the broad predicate is the reassuring-direction failure: the
+                # counters would look healthy while the links vanished.
+                #
+                # No WinProbSnapshot delete. A season market never wrote the
+                # game's win-prob curve, so there is nothing of its own to clean
+                # up, and deleting by (event, source) would take a sibling game
+                # market's real history with it. The blend key is pruned only if
+                # no other market of this source is left on the event.
+                if market.source == "kalshi" and is_kalshi_shadowed_futures_ticker(
+                    market.external_id
+                ):
+                    logger.info(
+                        "Unlinking %s '%s' (%s) from event %d — futures ticker "
+                        "shadowed a game prefix (#2231)",
+                        market.source, market.name, market.external_id,
+                        linked_event.id,
+                    )
+                    _shadowed_event_id = linked_event.id
+                    market.event_id = None
+                    await session.flush()
+                    if await _prune_orphaned_blend_source(
+                        session, _shadowed_event_id, market.source,
+                        exclude_market_id=market.id,
+                    ):
+                        stats.setdefault("phantom_blend_sources_pruned", 0)
+                        stats["phantom_blend_sources_pruned"] += 1
+                    stats["funnel"].setdefault("shadowed_futures_unlinked", 0)
+                    stats["funnel"]["shadowed_futures_unlinked"] += 1
                 continue
 
             matchup = extract_matchup_with_ticker_fallback(
