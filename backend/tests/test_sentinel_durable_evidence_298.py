@@ -510,10 +510,50 @@ class TestTheAnchorCannotExpireAgain:
             ),
             # The partial-derivation case: it moves with the clock but not by
             # the clock's own step, so it is not a fixed distance behind `now`
-            # and can still drift across the bound.
+            # and can still drift across the bound. Grammatically LEGAL — this is
+            # the one the grammar cannot see and only the runtime check kills.
             "only the date follows the clock, the time is pinned": (
                 "NOW = datetime.now(timezone.utc).replace("
                 "year=2026, month=8, day=31)"
+            ),
+            # 🔴 CERT-583's move: recognise the calendar the oracle samples in.
+            # The previous repair's two fake instants were both in 2031, so this
+            # tracked perfectly across them and bound a constant in the real run.
+            "a conditional gated on the sampled calendar": (
+                "NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)) "
+                "if datetime.now(timezone.utc).year == 2031 "
+                "else datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)"
+            ),
+            # And the same idea through the other selection constructs the
+            # grammar now refuses by shape, so that closing one cannot reopen
+            # the others.
+            "a comparison selects between clock and constant": (
+                "NOW = [datetime(2026, 8, 31, tzinfo=timezone.utc), "
+                "datetime.now(timezone.utc)][datetime.now(timezone.utc).year == 2031]"
+            ),
+            "a dict lookup selects between clock and constant": (
+                "NOW = {True: datetime.now(timezone.utc), "
+                "False: datetime(2026, 8, 31, tzinfo=timezone.utc)}"
+                "[datetime.now(timezone.utc).year > 2030]"
+            ),
+            "an unapproved call launders the constant": (
+                "NOW = min(datetime.now(timezone.utc), "
+                "datetime(2026, 8, 31, tzinfo=timezone.utc))"
+            ),
+            # 🔴 THE ONE THAT PROVES THE GRAMMAR IS WIRED IN, AND THE ONLY ENTRY
+            # HERE THAT IS NOT ITSELF A BOMB. It tracks the clock perfectly, so
+            # the runtime check passes it; the grammar refuses it because it
+            # SELECTS, and selection is the mechanism every real attack above
+            # used. Without this entry, deleting the `_assert_anchor_grammar`
+            # call left this whole control GREEN — the grammar had a test of its
+            # own (`test_the_GRAMMAR_half_can_actually_FAIL`) which called it
+            # directly and so could not see that the call site was gone. That is
+            # a containment check satisfied by a sibling call site, and it is why
+            # a policy refusal has to be pinned at the point the policy is
+            # APPLIED, not only where it is defined.
+            "a benign-looking selection, refused on principle": (
+                "NOW = [(datetime.now(timezone.utc) - timedelta(minutes=1))"
+                ".replace(microsecond=0)][0]"
             ),
         }
         for name, src in attacks.items():
@@ -547,6 +587,54 @@ class TestTheAnchorCannotExpireAgain:
             "NOW = (datetime.utcnow() - timedelta(minutes=2)).replace("
             "microsecond=0, tzinfo=timezone.utc)"
         )
+
+    def test_the_GRAMMAR_half_can_actually_FAIL(self):
+        """The grammar check gets its own control, because the combined one cannot.
+
+        🔴 THIS EXISTS BECAUSE THE OBVIOUS CONTROL WAS VACUOUS. Deleting
+        `_assert_anchor_grammar` from `_assert_now_is_clock_derived` left
+        `test_the_anchor_guard_can_actually_FAIL` **green**: every attack in that
+        list is also caught by the runtime tracking check, so the grammar's
+        failure path was never executed by anything. A guard whose failure path
+        nobody runs is a guard nobody knows the shape of — this file has learned
+        that four times — and a redundant check that is quietly broken is worse
+        than no check, because it is counted as one.
+
+        So the grammar is exercised DIRECTLY here. Each construct must be refused
+        on its own account, whatever the runtime check would have done with it.
+        """
+        import ast
+
+        import pytest as _pytest
+
+        def _rhs(src):
+            return ast.parse(src).body[0].value
+
+        refused = {
+            "conditional": "x = a if c else b",
+            "boolean short-circuit": "x = datetime.now(timezone.utc) or b",
+            "subscript": "x = [datetime.now(timezone.utc)][0]",
+            "comparison": "x = datetime.now(timezone.utc).year == 2031",
+            "comprehension": "x = [datetime.now(timezone.utc) for _ in (1,)][0]",
+            "lambda": "x = (lambda: datetime.now(timezone.utc))()",
+            "unapproved call": "x = min(datetime.now(timezone.utc), b)",
+            "bare datetime constructor": "x = datetime(2026, 8, 31, tzinfo=timezone.utc)",
+            "no clock read at all": "x = timedelta(minutes=1)",
+        }
+        for name, src in refused.items():
+            with _pytest.raises(AssertionError):
+                _assert_anchor_grammar(_rhs(src))
+
+        # And the shapes a real anchor needs must survive the grammar, or it
+        # would be rejecting the thing it is supposed to permit.
+        for src in (
+            "x = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)",
+            "x = datetime.now(timezone.utc)",
+            "x = datetime.fromtimestamp(time.time(), tz=timezone.utc)",
+            "x = (datetime.utcnow() - timedelta(minutes=2)).replace(tzinfo=timezone.utc)",
+            "x = datetime.now(timezone.utc) + timedelta(seconds=-30)",
+        ):
+            _assert_anchor_grammar(_rhs(src))
 
 
 def _assert_now_is_clock_derived(src: str) -> None:
@@ -677,7 +765,105 @@ def _assert_now_is_clock_derived(src: str) -> None:
     # The single-binding and plain-assignment checks ABOVE are still load-bearing
     # and are why this can be trusted: they are what guarantee that the one
     # expression evaluated here is the one that really binds `NOW` at import.
+    #
+    # 🔴 CERT-583 — AND A FINITE SET OF CLOCK SAMPLES IS NOT A PROOF ABOUT ALL CLOCKS.
+    #
+    # The runtime check below evaluates the anchor at two disclosed instants. The
+    # cert gated the anchor on the calendar those instants happen to sit in:
+    #
+    #     NOW = <clock expr> if datetime.now(timezone.utc).year == 2031 \
+    #           else datetime(2026, 8, 31, 12, 53, 0, tzinfo=timezone.utc)
+    #
+    # Both fake instants were in 2031, so the value tracked perfectly across them
+    # — and in the real run the hardcoded branch binds. A conditional can simply
+    # RECOGNISE the sampled calendar. **Behaviour at N points is behaviour at N
+    # points**; no number of samples turns it into a statement about every clock,
+    # because the anchor gets to see the clock it is being tested with.
+    #
+    # FIFTH cert on this anchor. Every previous repair — including the last one —
+    # answered by widening what it could DETECT, and each was walked around by a
+    # construct it had not thought of. So this one stops enumerating attacks and
+    # inverts the polarity: an ALLOWLIST GRAMMAR. The right-hand side may be a
+    # clock call, a fixed offset, and a truncation, and nothing else. A
+    # conditional, a boolean short-circuit, a subscript, a comparison, a
+    # comprehension or an unapproved call is refused **by shape**, whether or not
+    # anyone has thought of the trick it enables.
+    #
+    # The two checks are complementary and BOTH are required:
+    #   * the grammar bounds the SPACE of expressions to ones whose behaviour two
+    #     samples genuinely characterise — it is what makes the runtime check a
+    #     proof rather than a spot check;
+    #   * the runtime check catches a grammatically legal anchor that is still
+    #     wrong (`datetime.now(tz).replace(year=2026)` parses fine and does not
+    #     track), which no grammar can see.
+    _assert_anchor_grammar(assign.value)
     _assert_value_tracks_the_clock(assign)
+
+
+#: The ONLY calls an anchor's right-hand side may make. An allowlist, because the
+#: denylist approach lost four times running: `attr='now'` (CERT-568), the first
+#: binding (CERT-571), `tree.body` (CERT-577), presence-as-provenance (CERT-581)
+#: and finally two fixed clock samples (CERT-583). Adding a name here is a
+#: deliberate act with this comment attached; forgetting to add one fails loudly
+#: and safely.
+_ANCHOR_CLOCK_CALLS = frozenset({"now", "utcnow", "today", "fromtimestamp", "time", "time_ns"})
+_ANCHOR_SHAPING_CALLS = frozenset({"replace", "astimezone", "timedelta"})
+
+
+def _assert_anchor_grammar(node) -> None:
+    """Refuse any anchor expression outside `clock() ± timedelta(...)` + truncation.
+
+    Walks the right-hand side and permits only the node types that shape a clock
+    reading. Anything that can select BETWEEN values — `IfExp`, `BoolOp`,
+    `Compare`, `Subscript`, a comprehension, a lambda — is rejected outright,
+    because selection is how every disclosed attack smuggled a constant past a
+    check that had already seen a real clock call.
+    """
+    import ast
+
+    allowed_nodes = (
+        ast.Expression, ast.Call, ast.Attribute, ast.Name, ast.Constant,
+        ast.BinOp, ast.Sub, ast.Add, ast.UnaryOp, ast.USub, ast.keyword, ast.Load,
+    )
+    for child in ast.walk(node):
+        if not isinstance(child, allowed_nodes):
+            raise AssertionError(
+                f"the anchor uses `{type(child).__name__}`, which is not part of the "
+                "permitted grammar. It reads as:\n"
+                f"    {ast.unparse(node)}\n"
+                "An anchor may only be a clock call, a fixed +/- timedelta, and a "
+                "truncation such as `.replace(microsecond=0)`. Anything that can "
+                "CHOOSE between two values — a conditional, an `or`/`and`, an index, "
+                "a comparison — is refused by shape, because that is how a hardcoded "
+                "instant hides behind a real clock call (CERT-581, CERT-583). If you "
+                "need something genuinely new here, widen this grammar deliberately "
+                "and add the attack to `test_the_anchor_guard_can_actually_FAIL`."
+            )
+        if isinstance(child, ast.Call):
+            fn = child.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name not in _ANCHOR_CLOCK_CALLS | _ANCHOR_SHAPING_CALLS:
+                raise AssertionError(
+                    f"the anchor calls `{name}`, which is not an approved clock or "
+                    "shaping call. It reads as:\n"
+                    f"    {ast.unparse(node)}\n"
+                    f"Permitted: {sorted(_ANCHOR_CLOCK_CALLS | _ANCHOR_SHAPING_CALLS)}. "
+                    "`datetime(...)` is deliberately absent — constructing an instant "
+                    "is the thing this guard exists to forbid."
+                )
+    # And at least one of them must actually BE a clock read, or the grammar is
+    # satisfied by an expression that never consults the clock at all.
+    calls = [
+        (c.func.attr if isinstance(c.func, ast.Attribute) else getattr(c.func, "id", None))
+        for c in ast.walk(node)
+        if isinstance(c, ast.Call)
+    ]
+    if not (set(calls) & _ANCHOR_CLOCK_CALLS):
+        raise AssertionError(
+            "the anchor never reads the clock. It reads as:\n"
+            f"    {ast.unparse(node)}\n"
+            f"One of {sorted(_ANCHOR_CLOCK_CALLS)} must appear."
+        )
 
 
 def _assert_value_tracks_the_clock(assign) -> None:
@@ -699,8 +885,23 @@ def _assert_value_tracks_the_clock(assign) -> None:
     # truncations a sane anchor performs (`.replace(microsecond=0)`,
     # `.replace(second=0)`) are no-ops and the tracking test is an exact
     # equality rather than a tolerance nobody can reason about.
-    first = datetime(2031, 3, 4, 9, 0, 0, tzinfo=timezone.utc)
-    shift = timedelta(days=23, hours=5, minutes=7)
+    #
+    # 🔴 CERT-583: THE FIRST INSTANT IS THE REAL NOW, AND THE SECOND IS IN A
+    # DIFFERENT YEAR. The previous version used two fixed instants that both sat
+    # in March 2031, and the cert gated the anchor on `datetime.now().year == 2031`
+    # — perfect tracking across both samples, hardcoded value in the real run.
+    #
+    # Anchoring the first sample to the ACTUAL current time removes the fixed
+    # calendar there is to recognise, and straddling a year boundary means a
+    # year-gated conditional can no longer satisfy both evaluations: it either
+    # returns its constant at both points (caught by `before != after`) or
+    # switches between them (caught by the exact-`shift` equality). This does not
+    # replace `_assert_anchor_grammar` — the grammar is what makes two samples
+    # sufficient — it removes the cheapest way to game the samples themselves.
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    first = now
+    shift = timedelta(days=400, hours=5, minutes=7)
+    assert (first + shift).year != first.year, "the two samples must straddle a year"
 
     def _evaluate(instant):
         class _FrozenDatetime(datetime):
