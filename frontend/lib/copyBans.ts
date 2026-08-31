@@ -25,6 +25,13 @@
  *   3. `scripts/fetch-shipped-copy.mjs` — the fetcher that fills that
  *      directory. It carries no rules of its own, deliberately: a scanner that
  *      re-declares the list is a scanner that drifts from it.
+ *   4. `noReadingCopyClaims.test.tsx` — the FOURTH consumer, and the only one
+ *      that applies `HISTORY_CLAIM_BANS`. It reads the empty-state / no-reading
+ *      producers by name, because that group's scope is WHERE the string lives
+ *      and only a render knows that. See the fence below.
+ *
+ * ⚠️ **THE FOUR DO NOT ALL APPLY THE SAME LIST ANY MORE, AND THAT IS THE POINT.**
+ * Consumers 1-3 carry `ALL_COPY_BANS`; consumer 4 carries `NO_READING_COPY_BANS`.
  *
  * ═══ WHAT IS BANNED, AND ON WHOSE AUTHORITY ═══
  *
@@ -35,13 +42,13 @@
  * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
  * | `PRICE_FORMAT_BANS` | the standing no-price-format ruling, #2442 | the reader gets a probability, never a betting line |
- * | `HISTORY_CLAIM_BANS` | CERT-537 (UX-P212), no ruling yet | our voice may not settle a question about ALL OF HISTORY |
+ * | `HISTORY_CLAIM_BANS` | CERT-537 (UX-P212) + **Alex D25-scope, 2026-08-28** | our voice may not settle a question about ALL OF HISTORY — **in the no-reading components only** |
  *
- * ⚠️ THE LAST ROW'S AUTHORITY IS A CERT FINDING, NOT AN ALEX RULING, AND THAT
- * IS STATED RATHER THAN PAPERED OVER. Every other group here cites a ruling.
- * This one encodes a graded BLOCK plus the doctrine line UX-P212 paid for; it
- * is narrower than a ruling would be (see the group's own header for the line
- * it deliberately does not cross) and it wants one.
+ * ⚠️ **THE LAST ROW IS THE ONLY GROUP THAT IS NOT CODEBASE-WIDE, AND THAT IS
+ * ALEX'S RULING, NOT AN IMPLEMENTATION CONVENIENCE.** It wanted a ruling for
+ * five rounds; on 2026-08-31 it got one, and the ruling was about SCOPE rather
+ * than about the words. See `ALL_COPY_BANS` / `NO_READING_COPY_BANS` below —
+ * the fence is the two lists, and the reasoning is written there.
  *
  * ═══ WHAT IS NOT BANNED ═══
  *
@@ -830,13 +837,61 @@ export const HISTORY_CLAIM_BANS: CopyBan[] = [
   },
 ];
 
-/** Every rule, in the order a report should read them. */
+/**
+ * ═══ THE FENCE — ALEX, D25-scope, 2026-08-31 ═══
+ *
+ * > **The ban applies only to copy emitted by the empty-state / no-reading
+ * > components. It does not apply to prose anywhere else in the codebase.**
+ *
+ * `HISTORY_CLAIM_BANS` IS DELIBERATELY NOT IN `ALL_COPY_BANS`, AND THIS IS THE
+ * SHIP. Six certs — 539, 546, 547, 549, 551 and the round before them — blocked
+ * this group, and **every one of the six was a false positive on ordinary sports
+ * prose**, not a miss on empty-state copy. `Market data never reached us during
+ * the outage.` is a true sentence in a normal paragraph. `We never had a chance
+ * after halftime.` is a true sentence about a football game. The rule had no
+ * business reading either.
+ *
+ * Six rounds answered by making the pattern cleverer, and each one traded one
+ * direction of error for the other, because **the failure class was never "the
+ * regex isn't expressive enough". It was that the regex was pointed at the whole
+ * codebase.** Alex kept the rule's ambition and moved the fence instead.
+ *
+ * Two consequences, and they bind future rounds:
+ *
+ *   1. **Inside the fence the pattern may be as expressive as it likes.**
+ *      Expressiveness was never the defect, so nothing here is narrowed.
+ *   2. **A false positive on a string OUTSIDE the no-reading components is a
+ *      SCOPE bug, and the repair is the fence, never the pattern.** If a future
+ *      cert names such a sentence, the answer is that this list does not read it.
+ *
+ * ⚠️ **AND THE BUNDLE SCANNER CANNOT ENFORCE THIS GROUP AT ALL** — said out loud
+ * rather than left to be discovered. A minified chunk hands you a bare string
+ * with no component, no element and no call site, so "where does this string
+ * live" is *unanswerable there by construction*. A scanner that guessed would be
+ * precisely the false-positive engine the ruling just fenced off. So the group is
+ * enforced at RENDER time, over the named producers in
+ * `__tests__/components/noReadingCopyClaims.test.tsx`, and the bundle layer
+ * carries `ALL_COPY_BANS` — which is a real reduction in coverage for this one
+ * group, and the honest trade for coverage that was never sound.
+ */
 export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
   ...TRADING_VOCAB_BANS,
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
   ...PRICE_FORMAT_BANS,
+];
+
+/**
+ * The list that applies INSIDE the fence: everything above, plus the history
+ * claims. Only the no-reading / empty-state producers are read with this.
+ *
+ * Derived from `ALL_COPY_BANS` rather than re-spelled, so a group added to the
+ * codebase-wide list is covered here without touching this line — the drift that
+ * `event_concept_population.py` exists to prevent, one file over.
+ */
+export const NO_READING_COPY_BANS: CopyBan[] = [
+  ...ALL_COPY_BANS,
   ...HISTORY_CLAIM_BANS,
 ];
 
