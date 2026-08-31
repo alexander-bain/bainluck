@@ -677,26 +677,34 @@ def test_each_run_owns_its_backup_and_its_manifest(tmp_path):
     original_dir = mg.MANIFEST_DIR
     mg.MANIFEST_DIR = monkey_dir
     try:
+        # 🔴 SEQUENTIALLY, NOT CONCURRENTLY. Since CERT-588 the guard holds an
+        # exclusive lock on the target set for its whole context, so starting a
+        # second guard on the same target while the first is live is precisely
+        # what is now forbidden — doing it here would block until the timeout.
+        # The property under test is that two RUNS get different paths, which is
+        # about naming and does not need them to overlap.
         first = mg._Guard((target,), tmp_path / "b", "same_label").start()
-        # A second RUN is a second `_RUN`; simulate it the way a second process
-        # gets one, rather than trusting that this process can produce two.
+        first_backup, first_run = first.backups[target], first._run
+        first.restore_all()
+        first.finish()
+
         saved = mg._RUN
         mg._RUN = f"{saved}-second"
         try:
             second = mg._Guard((target,), tmp_path / "b", "same_label").start()
-            assert first.backups[target] != second.backups[target], (
-                "two runs of one label share a backup path — the second run's "
-                "`copy2` overwrites the first run's pristine bytes (CERT-579)"
-            )
-            assert mg._manifest_path("same_label", first._run) != mg._manifest_path(
-                "same_label", second._run
-            ), "two runs of one label share a manifest path (CERT-579)"
+            second_backup, second_run = second.backups[target], second._run
             second.restore_all()
             second.finish()
         finally:
             mg._RUN = saved
-        first.restore_all()
-        first.finish()
+
+        assert first_backup != second_backup, (
+            "two runs of one label share a backup path — the second run's "
+            "`copy2` overwrites the first run's pristine bytes (CERT-579)"
+        )
+        assert mg._manifest_path("same_label", first_run) != mg._manifest_path(
+            "same_label", second_run
+        ), "two runs of one label share a manifest path (CERT-579)"
     finally:
         mg.MANIFEST_DIR = original_dir
 
@@ -719,3 +727,170 @@ def test_a_failed_restore_is_raised_not_swallowed(tmp_path):
             target.write_text("mutated\n")
             # The backup vanishes — a stand-in for the concurrent overwrite.
             guard.backups[target].unlink()
+
+
+# ---------------------------------------------------------------------------
+# CERT-588: oracle ISOLATION, not just a pristine tree afterwards
+# ---------------------------------------------------------------------------
+#
+# CERT-579's repair gave every run its own backup, so the file always ends up
+# pristine. CERT-588 showed that is the wrong property to assert. `start()`
+# SKIPPED a live manifest rather than waiting on it, so the second run could
+# copy the first run's already-mutated target into its own backup and then
+# mutate the same file: A wrote `A`, B wrote `B`, **A's oracle read `B`**, both
+# exited 0, and the final file was pristine. A run scored ANOTHER run's mutant
+# as its own and banked a KILLED or SURVIVED that describes neither.
+#
+# No assertion about final bytes can see that, which is why the probe below
+# checks what each process OBSERVES while it holds the file — the thing an
+# oracle actually depends on.
+
+
+def test_each_run_observes_only_its_own_mutant(tmp_path):
+    """The isolation property: each process must read back what IT wrote.
+
+    🔴 SYNCHRONIZED WITH HANDSHAKE FILES, NOT WITH SLEEPS, and that is the whole
+    difference between a test that reproduces CERT-588 and one that does not. A
+    first version of this used `sleep(1.0)` to stagger the two runs and it PASSED
+    against the pre-lock guard — B happened to finish and restore A's mutant back
+    before A got round to reading, so A saw its own bytes by luck. The defect is a
+    WINDOW, so the probe has to hold the window open on purpose:
+
+        A: mutate -> announce `a_ready` -> wait for `b_wrote` -> READ
+        B: wait for `a_ready` -> mutate -> announce `b_wrote` -> READ
+
+    Pre-lock, B mutates while A is parked, so A's read returns B's bytes. With the
+    lock, B is still waiting to start, `b_wrote` never appears, A's bounded wait
+    lapses and A reads its own — then releases, and B runs cleanly afterwards.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    backend = Path(__file__).resolve().parents[1]
+    target = tmp_path / "victim.py"
+    target.write_text("ORIGINAL\n")
+    a_ready, b_wrote = tmp_path / "a_ready", tmp_path / "b_wrote"
+
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        textwrap.dedent(
+            f'''
+            import sys, time, pathlib
+            sys.path.insert(0, {str(backend)!r})
+            from scripts.evals._mutation_guard import guarded_targets
+            target = pathlib.Path({str(target)!r})
+            a_ready = pathlib.Path({str(a_ready)!r})
+            b_wrote = pathlib.Path({str(b_wrote)!r})
+            tag = sys.argv[1]
+
+            def wait_for(path, limit):
+                end = time.monotonic() + limit
+                while time.monotonic() < end:
+                    if path.exists():
+                        return True
+                    time.sleep(0.05)
+                return False
+
+            if tag == "B":
+                wait_for(a_ready, 15)
+            with guarded_targets((target,), {str(tmp_path / "backups")!r}, "cert588_probe"):
+                target.write_text("MUTATED BY " + tag + "\\n")
+                if tag == "A":
+                    a_ready.write_text("x")
+                    wait_for(b_wrote, 6)
+                else:
+                    b_wrote.write_text("x")
+                    time.sleep(0.3)
+                observed = target.read_text().strip()
+            print("OBSERVED:" + observed)
+            '''
+        )
+    )
+
+    def _spawn(tag):
+        return subprocess.Popen(
+            [sys.executable, str(worker), tag],
+            cwd=str(backend), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+
+    a, b = _spawn("A"), _spawn("B")
+    out_a, out_b = a.communicate()[0], b.communicate()[0]
+
+    def _observed(out, tag):
+        line = [ln for ln in out.splitlines() if ln.startswith("OBSERVED:")]
+        assert line, f"run {tag} never reported what it observed:\n{out}"
+        return line[0].split(":", 1)[1]
+
+    seen_a, seen_b = _observed(out_a, "A"), _observed(out_b, "B")
+    assert seen_a == "MUTATED BY A", (
+        f"run A's oracle observed {seen_a!r} — another run mutated the target while A "
+        "was reading it, so A's verdict describes somebody else's mutant (CERT-588)"
+    )
+    assert seen_b == "MUTATED BY B", (
+        f"run B's oracle observed {seen_b!r} — the same defect from the other side"
+    )
+    assert target.read_text() == "ORIGINAL\n", "the target must still end up pristine"
+
+
+def test_the_target_lock_is_scoped_to_the_targets_not_the_label(tmp_path):
+    """Serialization is the cost of sharing a FILE; nothing else should pay it."""
+    import importlib
+
+    mg = importlib.import_module("scripts.evals._mutation_guard")
+
+    one, two = tmp_path / "one.py", tmp_path / "two.py"
+    one.write_text("a = 1\n")
+    two.write_text("b = 2\n")
+
+    original_dir = mg.MANIFEST_DIR
+    mg.MANIFEST_DIR = tmp_path / "manifests"
+    mg.MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        g_one = mg._Guard((one,), tmp_path / "b1", "same_label")
+        g_two = mg._Guard((two,), tmp_path / "b2", "same_label")
+        assert g_one._lock_path() != g_two._lock_path(), (
+            "two guards over DIFFERENT targets share a lock — unrelated harnesses "
+            "would serialize for no reason"
+        )
+        g_same = mg._Guard((one,), tmp_path / "b3", "a_totally_different_label")
+        assert g_one._lock_path() == g_same._lock_path(), (
+            "two guards over the SAME target take different locks — the label must "
+            "not be part of the key or the mutual exclusion does not hold"
+        )
+    finally:
+        mg.MANIFEST_DIR = original_dir
+
+
+def test_the_lock_fails_closed_rather_than_hanging(tmp_path, monkeypatch):
+    """A wedged holder must produce a loud refusal, not a silent hang.
+
+    The bounded wait is what makes serialization safe to adopt: ordinary overlap
+    queues, and a run that never releases turns into a message naming the lock
+    file instead of a CI job that sits there until the runner kills it.
+    """
+    import importlib
+
+    mg = importlib.import_module("scripts.evals._mutation_guard")
+
+    target = tmp_path / "victim.py"
+    target.write_text("x = 1\n")
+    original_dir = mg.MANIFEST_DIR
+    mg.MANIFEST_DIR = tmp_path / "manifests"
+    mg.MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("MUTATION_GUARD_LOCK_TIMEOUT_S", "1")
+    try:
+        holder = mg._Guard((target,), tmp_path / "b", "holder").start()
+        try:
+            with pytest.raises(RuntimeError, match="could not take the target lock"):
+                mg._Guard((target,), tmp_path / "b2", "second").start()
+        finally:
+            holder.restore_all()
+            holder.finish()
+        # And once the holder is gone the lock is free again — a released lock
+        # that stays held would be the same hang wearing a different hat.
+        second = mg._Guard((target,), tmp_path / "b3", "second").start()
+        second.restore_all()
+        second.finish()
+    finally:
+        mg.MANIFEST_DIR = original_dir

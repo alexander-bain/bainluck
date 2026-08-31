@@ -55,12 +55,14 @@ that must mutate a real file because their oracle is a pytest run.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import signal
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -324,6 +326,7 @@ class _Guard:
         self.backups: dict[Path, Path] = {}
         self.original: dict[Path, str] = {}
         self._prev_handlers: dict[int, object] = {}
+        self._lock_fh = None
 
     # -- signals -------------------------------------------------------
     def _install(self) -> None:
@@ -339,12 +342,94 @@ class _Guard:
             with contextlib.suppress(ValueError, OSError, TypeError):
                 signal.signal(sig, handler)
 
+    # -- the target lock -----------------------------------------------
+    def _lock_path(self) -> Path:
+        """One lock per resolved TARGET SET, so unrelated harnesses never queue."""
+        key = hashlib.sha1(
+            "\n".join(sorted(str(t.resolve()) for t in self.targets)).encode()
+        ).hexdigest()[:16]
+        return MANIFEST_DIR / f"targets-{key}.lock"
+
+    def _acquire(self) -> None:
+        """🔴 CERT-588: SERIALIZE THE WHOLE GUARDED CONTEXT, NOT JUST THE BYTES.
+
+        CERT-579's repair gave every run its own backup, which fixed the
+        *dirty-tree* symptom: the file always ends up pristine. The cert showed
+        the ship is broader, and it is right. `start()` calls `recover()`, and a
+        LIVE manifest is only skipped — so the second run happily copies the
+        first run's ALREADY-MUTATED target into its own private backup and then
+        mutates the same file. Its synchronized probe: A wrote `A`, B wrote `B`,
+        **A's oracle read `B`**, both exited 0, the final file pristine, no
+        manifest left behind.
+
+        Nothing about the final bytes can detect that. A run scored ANOTHER run's
+        mutant as its own and banked a KILLED or SURVIVED that describes neither.
+        That is the same one-sided, silent corruption CERT-563 opened, arriving
+        through a different door — and it is why "the tree is clean afterwards"
+        was never the property worth asserting. **The property is that a run's
+        oracle observes only that run's mutation**, and the only way to have it
+        on a shared file is to be the only writer for the whole context.
+
+        So the guard now holds an exclusive OS lock, keyed on the resolved target
+        set, from before the first backup until after the restore. Keyed on the
+        TARGETS rather than the label so two different harnesses that touch
+        disjoint files still run in parallel — serialization is the cost of
+        sharing a file, and nothing should pay it that is not sharing one.
+
+        Bounded wait, then FAIL CLOSED. A battery legitimately holds this for
+        many minutes, so a short timeout would turn ordinary overlap into a
+        spurious failure; an unbounded one would turn a wedged holder into a
+        silent hang, which is the failure mode this module exists to refuse.
+        """
+        timeout_s = float(os.getenv("MUTATION_GUARD_LOCK_TIMEOUT_S", "600"))
+        self._lock_fh = open(self._lock_path(), "w")  # noqa: SIM115 — held for the context
+        deadline = time.monotonic() + timeout_s
+        announced = False
+        while True:
+            try:
+                fcntl.flock(self._lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._lock_fh.write(f"{os.getpid()} {self.label}\n")
+                self._lock_fh.flush()
+                return
+            except BlockingIOError:
+                if not announced:
+                    print(
+                        f"  guard: waiting for another run to release {self._lock_path().name} "
+                        f"— these targets are already being mutated (up to {timeout_s:.0f}s)"
+                    )
+                    announced = True
+                if time.monotonic() >= deadline:
+                    self._lock_fh.close()
+                    self._lock_fh = None
+                    raise RuntimeError(
+                        f"mutation guard '{self.label}' could not take the target lock "
+                        f"{self._lock_path()} within {timeout_s:.0f}s. Another run is "
+                        "mutating the same files. Refusing to start rather than scoring "
+                        "this run's oracle against somebody else's mutant (CERT-588). "
+                        "If no such run exists, a previous one died holding the lock — "
+                        "`python3 -m scripts.evals._mutation_guard --check` will say so."
+                    )
+                time.sleep(0.25)
+
+    def _release(self) -> None:
+        if getattr(self, "_lock_fh", None) is None:
+            return
+        with contextlib.suppress(Exception):
+            fcntl.flock(self._lock_fh, fcntl.LOCK_UN)
+        with contextlib.suppress(Exception):
+            self._lock_fh.close()
+        self._lock_fh = None
+
     # -- lifecycle -----------------------------------------------------
     def start(self) -> "_Guard":
+        MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+        # BEFORE `recover()` and before any backup is taken: `recover()` writes to
+        # the very files another run may be mid-oracle on, so it is inside the
+        # mutual exclusion, not outside it.
+        self._acquire()
         recover()
         if not isinstance(self._backup_spec, dict) and not self.backup_dir.suffix:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
-        MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
 
         entries = {}
         for target in self.targets:
@@ -404,6 +489,7 @@ class _Guard:
 
     def finish(self) -> None:
         self._uninstall()
+        self._release()
 
 
 @contextlib.contextmanager
