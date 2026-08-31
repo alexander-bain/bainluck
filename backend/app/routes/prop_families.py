@@ -133,11 +133,13 @@ _READER_BUDGET_MS = 2500
 #: #42 in another costume — the same sentence LAT-P145 quoted one level up).
 _MIN_BRANCH_MS = 250
 
-#: How long ONE branch may run. Unchanged in value and in meaning from the
-#: `SET LOCAL statement_timeout = '12000'` this route has carried since #1197 —
-#: LAT-P145 changed who survives the expiry, deliberately not how long the
-#: expiry takes, so no team that completes today starts failing tomorrow.
-_BRANCH_TIMEOUT_MS = 12000
+#: The two loss vocabularies this module writes into `quality_reasons`, as
+#: PREFIXES, because the difference between them is now load-bearing twice over
+#: (CERT-557). `branch_timeout:` means the database was asked and ran out of
+#: time; `branch_deferred:` means a budgeted reader chose not to ask. Only the
+#: second is an IOU somebody still owes — see `_deferral_reasons`.
+_REASON_TIMEOUT = "branch_timeout:"
+_REASON_DEFERRED = "branch_deferred:"
 
 #: The criteria, named. LAT-P145 made the names load-bearing: a branch that
 #: times out is now REPORTED, by name, in the envelope's `quality_reasons`, so a
@@ -211,6 +213,52 @@ PROP_FAMILIES_CACHE_PREFIX = "bainluck:prop_families:"
 #: rebuild is scheduled behind them.
 PROP_FAMILIES_PRIMARY_TTL = 900
 
+#: How often ONE key may spend a background build trying to settle its deferrals.
+#:
+#: 🔴 THE SINGLE-FLIGHT LOCK IS NOT A RATE BOUND, AND CERT-557 IS WHY THIS EXISTS.
+#: `REFRESH_LOCK_TTL` is 120 s and it answers "how many builders at once", not
+#: "how often". A live primary that carries a deferral is served for a whole
+#: `PROP_FAMILIES_PRIMARY_TTL`, so a completion dispatch gated only by the lock
+#: would fire up to `900 // 120` = 7 times per team per window — seven
+#: unbudgeted builds, 2.6-16.8 s each, on a database `pg:diagnose` rates RED on
+#: hit rate. One attempt per window is the retry the deferral needs and the most
+#: the database should be asked for: the reader is already being served in
+#: milliseconds from the primary either way, so a second attempt inside the same
+#: window buys the page nothing it is not already getting.
+COMPLETION_ATTEMPT_TTL = PROP_FAMILIES_PRIMARY_TTL
+
+
+def _completion_attempt_key(keys: ConceptCacheKeys) -> str:
+    """The marker naming "this key has already spent a completion attempt".
+
+    Derived from the primary key rather than added to `ConceptCacheKeys`: the
+    four-key layout is shared with the competition hub (#1651) and this is one
+    tier's own bookkeeping, not a policy every adopter of the layout inherits.
+    """
+    return f"{keys.primary}:completing"
+
+
+def _claim_completion_attempt(rc, keys: ConceptCacheKeys) -> bool:
+    """Take this window's one completion attempt, or report that it is spent.
+
+    `SET NX EX` — the same primitive as the refresh lock, a different question.
+    Fails CLOSED (returns False) when Redis cannot be reached: an unreachable
+    Redis is not a licence to dispatch an unbounded number of unbudgeted builds,
+    and the reader is being served from the primary regardless. The marker is
+    never released; it is a rate bound, not a lock, and releasing it would
+    restore exactly the seven-attempts-per-window shape it exists to prevent.
+    """
+    if rc is None:  # no client, so no bound can be taken — decline (see above)
+        return False
+    try:
+        return bool(
+            rc.set(
+                _completion_attempt_key(keys), "1", nx=True, ex=COMPLETION_ATTEMPT_TTL
+            )
+        )
+    except Exception:
+        return False
+
 
 def prop_families_cache_keys(team_id: int, cap: int) -> ConceptCacheKeys:
     """The four Redis keys one team's prop-family answer owns.
@@ -234,6 +282,55 @@ def _resolve_cap(limit: int) -> int:
     """The per-branch LIMIT, bounded. One implementation, because it is half of
     the cache key and the route and the warmer must agree on it exactly."""
     return max(1, min(limit, 2000))
+
+
+def envelope_quality(payload: Any) -> tuple[str | None, list[str]]:
+    """The stamped quality and its reasons, from a payload that may be anything.
+
+    ONE reader of the envelope, exported, because CERT-557 found the route and
+    the background task disagreeing about what a build had achieved: the route
+    inspected `quality` and the task inspected only the `degraded` boolean, so a
+    build that kept the cheap rows and lost the roster was `partial` to one and
+    a completed rebuild to the other. Two callers reading one field two ways is
+    how a false green is built; there is now one function and both call it.
+
+    Returns `(None, [])` for anything without a readable envelope — the shape a
+    total loss returns, deliberately unstamped, and the shape a caller must not
+    mistake for `full`.
+    """
+    if not isinstance(payload, dict):
+        return None, []
+    envelope = payload.get(ENVELOPE_FIELD)
+    if not isinstance(envelope, dict):
+        return None, []
+    quality = envelope.get("quality")
+    reasons = envelope.get("quality_reasons")
+    return (
+        quality if isinstance(quality, str) else None,
+        [r for r in reasons if isinstance(r, str)] if isinstance(reasons, list) else [],
+    )
+
+
+def _deferral_reasons(reasons: list[str]) -> list[str]:
+    """The subset of `reasons` that are IOUs — branches nobody asked for yet.
+
+    🔴 THE DISTINCTION IS THE BOUND, AND THAT IS WHY IT IS A FUNCTION (CERT-557).
+    A partial we OWE and a partial the database CANNOT SERVE want opposite
+    treatment from the completion path:
+
+    * `branch_deferred:` — a budgeted reader skipped this branch to hand the page
+      over in 2.5 s. Nothing has established the content is unreachable; we
+      simply did not ask. Somebody must ask, unbudgeted, or the courtesy becomes
+      a silent narrowing of the page.
+    * `branch_timeout:` — the branch was started with the full 12 s ceiling and
+      expired. Re-dispatching that immediately buys nothing and costs another
+      twelve seconds on a database `pg:diagnose` already rates RED; it is the hot
+      loop, not the fix. It is reported (see the refresh task's terminal) and
+      left for the residual structural work named on #2383.
+
+    Collapsing the two would either strand the deferral or hammer the timeout.
+    """
+    return [r for r in reasons if r.startswith(_REASON_DEFERRED)]
 
 
 def _schedule_refresh(rc, keys: ConceptCacheKeys, team_id: int, cap: int) -> None:
@@ -532,14 +629,14 @@ async def build_prop_families(
         # futures, via the FK branch — survived; what is missing is real content
         # beside it. The severity is declared HERE, at the swallow point, because
         # this is the only place that knows which branch was lost.
-        note_build_loss(payload, f"branch_timeout:{_name}", LOSS_PARTIAL)
+        note_build_loss(payload, f"{_REASON_TIMEOUT}{_name}", LOSS_PARTIAL)
     for _name in deferred:
         # A DIFFERENT REASON STRING, deliberately. `branch_timeout` means we
         # tried and the database ran out of time; `branch_deferred` means we
         # chose not to spend the reader's wait on it. Collapsing the two would
         # hide a real regression — a branch that starts timing out — inside a
         # reason that is expected and benign.
-        note_build_loss(payload, f"branch_deferred:{_name}", LOSS_PARTIAL)
+        note_build_loss(payload, f"{_REASON_DEFERRED}{_name}", LOSS_PARTIAL)
     return payload, False
 
 
@@ -657,6 +754,30 @@ async def build_and_cache_prop_families(
         )
         return stamped, True
 
+    # 🔴 A DEFERRAL IS AN IOU AND AN IOU DOES NOT GET THE 24-HOUR SLOT (CERT-557).
+    # The table above was written when the only way to be `partial` was to lose a
+    # branch to the database, and for that case it is still right: a timeout
+    # partial is the best answer anyone can get, so it is worth the mirror when
+    # nothing better is stored. A DEFERRED partial is a different object. Nothing
+    # has established that its missing branch is unreachable — a budgeted reader
+    # declined to wait for it, to hand the page over in 2.5 s. Freezing that
+    # choice into a slot that outlives it by 24 hours converts a courtesy owed to
+    # ONE reader into a day of narrowed pages for everyone, and it is precisely
+    # the "deferral becomes a permanent narrowing" failure this queue's own
+    # docstring promises the background dispatch prevents. So it takes the
+    # 15-minute primary — the page stays fast — and leaves the long-lived slot to
+    # the unbudgeted completion that is scheduled behind it.
+    #
+    # A build carrying BOTH a deferral and a timeout is treated as a timeout
+    # partial: it contains a fact about the database, not only about our budget.
+    if _deferral_reasons(reasons) and not any(
+        r.startswith(_REASON_TIMEOUT) for r in reasons
+    ):
+        write_payload(
+            rc, keys, stamped, primary_ttl=PROP_FAMILIES_PRIMARY_TTL, mirror=False
+        )
+        return stamped, False
+
     # The primary write is what ends the rebuild loop, so it is unconditional and
     # goes first. The mirror is the CONTESTED slot: it is settled separately, by a
     # compare-and-set against the very bytes the read above judged, so that a
@@ -733,8 +854,29 @@ async def get_team_prop_families(
     rc = get_client()
 
     # 1. A live hit inside the primary TTL.
+    #
+    #    🔴 AND A LIVE HIT IS NOT AUTOMATICALLY A COMPLETE ANSWER (CERT-557). This
+    #    return used to be unconditional, which is what turned a deferral into a
+    #    loss: the cold build wrote a partial to the primary and dispatched the
+    #    completion, the completion could itself fall short, and every reader for
+    #    the next fifteen minutes hit THIS line and went home — the one path that
+    #    inspects quality is the one path a warm reader never reaches. The content
+    #    was missing, nothing was scheduled, and nothing said so.
+    #
+    #    So a live hit that carries an IOU takes this window's one completion
+    #    attempt (`_claim_completion_attempt`) before it returns. It is two Redis
+    #    round-trips on a path already doing one, it is bounded to a single
+    #    unbudgeted build per key per TTL, and it never changes what this reader
+    #    is served or when — the payload is returned either way.
     primary = read_slot(rc, keys.primary)
     if primary is not None:
+        _quality, _reasons = envelope_quality(primary)
+        if (
+            _quality != QUALITY_FULL
+            and _deferral_reasons(_reasons)
+            and _claim_completion_attempt(rc, keys)
+        ):
+            _schedule_refresh(rc, keys, team.id, cap)
         return with_availability(primary, AVAILABILITY_LIVE)
 
     # 2. A miss serves the 24h mirror and schedules ONE rebuild behind it. This
@@ -762,8 +904,16 @@ async def get_team_prop_families(
     # reader after this one. It covers the `degraded` case too — a build that
     # got nothing is the case that most needs somebody to try again — which is
     # why it is computed from the envelope BEFORE that branch returns.
-    _env = payload.get(ENVELOPE_FIELD) if isinstance(payload, dict) else None
-    if not isinstance(_env, dict) or _env.get("quality") != QUALITY_FULL:
+    #
+    # CERT-557: this reads the envelope through `envelope_quality`, the same
+    # function the refresh task now uses, so the dispatcher and the destination
+    # cannot form different opinions about what the build achieved. It is NOT
+    # gated on `_claim_completion_attempt`: a cold build is already the rare path
+    # (nothing cached at all), it is the moment the deferral is INCURRED rather
+    # than merely observed, and gating it would let the marker left by a previous
+    # window suppress the only dispatch this build gets.
+    _quality, _ = envelope_quality(payload)
+    if _quality != QUALITY_FULL:
         _schedule_refresh(rc, keys, team.id, cap)
 
     if degraded:

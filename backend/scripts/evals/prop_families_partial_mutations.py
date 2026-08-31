@@ -81,6 +81,22 @@ CACHE = ROOT / "app" / "utils" / "event_concept_cache.py"
 SUITE = ROOT / "tests" / "test_prop_families_partial_lat_p145.py"
 CONTRACT = ROOT / "tests" / "test_prop_families_cache_lat_p138.py"
 
+#: 🔴 A NEEDLE THAT APPLIES IS NOT A NEEDLE THAT CATCHES, AND M14 PROVED IT
+#: (CERT-557). LAT-P164 re-pointed M14 at its OWN new line — the cold reader's
+#: `budget_ms=_READER_BUDGET_MS` — and the mutant applied cleanly, so the residue
+#: scanner was satisfied and nothing local complained. It also SURVIVED every
+#: run, because the assertion that kills it
+#: (`test_the_route_passes_the_reader_budget_and_not_something_else`) lives in
+#: LAT-P164's own file and this harness never ran that file. A mutant pointed at
+#: new code by a queue that did not enrol the queue's own suite is a guard that
+#: catches nothing, reported as a pass.
+#:
+#: So the runner takes every suite that owns a line this harness mutates. The
+#: rule, for whoever extends it next: **if you re-point a needle at a line your
+#: queue added, add your queue's suite here in the same edit.**
+BUDGET_SUITE = ROOT / "tests" / "test_prop_families_reader_budget_lat_p164.py"
+COMPLETION_SUITE = ROOT / "tests" / "test_prop_families_completion_cert557.py"
+
 #: (id, description, old, new, target). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
 #: reported as such, never counted as a kill. The target is carried PER ENTRY
@@ -127,8 +143,12 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M5",
         "record the loss as COSMETIC — a partial then publishes `quality: full`",
-        """        note_build_loss(payload, f"branch_timeout:{_name}", LOSS_PARTIAL)""",
-        """        note_build_loss(payload, f"branch_timeout:{_name}", "cosmetic")""",
+        # CERT-557 re-target: the reason string moved behind `_REASON_TIMEOUT`,
+        # which is the whole point of that constant (one spelling, so the
+        # deferral/timeout bound cannot be broken by a typo). The needle follows
+        # the code; the MUTATION is unchanged in meaning and still kills.
+        """        note_build_loss(payload, f"{_REASON_TIMEOUT}{_name}", LOSS_PARTIAL)""",
+        """        note_build_loss(payload, f"{_REASON_TIMEOUT}{_name}", "cosmetic")""",
         ROUTE,
     ),
     (
@@ -141,8 +161,9 @@ MUTANTS: list[tuple[str, str, str, str, pathlib.Path]] = [
     (
         "M7",
         "the branch name drops out of the reason — 'something timed out, unknown what'",
-        """        note_build_loss(payload, f"branch_timeout:{_name}", LOSS_PARTIAL)""",
-        """        note_build_loss(payload, "branch_timeout", LOSS_PARTIAL)""",
+        # CERT-557 re-target, same move as M5.
+        """        note_build_loss(payload, f"{_REASON_TIMEOUT}{_name}", LOSS_PARTIAL)""",
+        """        note_build_loss(payload, _REASON_TIMEOUT, LOSS_PARTIAL)""",
         ROUTE,
     ),
     (
@@ -361,6 +382,8 @@ def _run_suite() -> int:
             "pytest",
             str(SUITE),
             str(CONTRACT),
+            str(BUDGET_SUITE),
+            str(COMPLETION_SUITE),
             "-q",
             "--no-header",
             "-x",

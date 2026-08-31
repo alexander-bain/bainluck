@@ -318,10 +318,18 @@ async def resolve_team""",
         # Anchored on the pair, not on the import alone: BOTH task functions
         # open a task session, so the single line matches twice and a harness
         # failure is not a kill.
+        #
+        # CERT-557 re-target: `_refresh_prop_families` now also imports
+        # `QUALITY_FULL`, so the second line of the pair became a parenthesised
+        # import and the old needle drifted. The pair is still `_refresh_`'s and
+        # still unique (`_warm_prop_families` does not import `QUALITY_FULL`),
+        # which is what the anchor exists for.
         """    from app.tasks.base import get_task_session
-    from app.utils.event_concept_cache import get_client, release_refresh_lock""",
+    from app.utils.event_concept_cache import (
+        QUALITY_FULL,""",
         """    from app.services.database import async_session_maker as get_task_session
-    from app.utils.event_concept_cache import get_client, release_refresh_lock""",
+    from app.utils.event_concept_cache import (
+        QUALITY_FULL,""",
     ),
     (
         "M21",

@@ -782,10 +782,16 @@ class TestRefreshVerdicts:
         rc = _FakeRedis()
         keys = route.prop_families_cache_keys(560, 400)
         rc.set(keys.refresh_lock, "tok", nx=True, ex=120)
+        # CERT-557: the double returns a STAMPED payload, because the terminal is
+        # now read off the envelope rather than off `degraded` alone. The old
+        # double returned a bare `{"families": []}` — an unstamped shape this
+        # builder never actually produces on its non-degraded paths — and a
+        # double that cannot express the difference between full and partial
+        # cannot witness the bug the split closes.
         with patch("app.utils.event_concept_cache.get_client", return_value=rc), \
              patch("app.tasks.base.get_task_session", _session_with_team(_team())), \
              patch("app.routes.prop_families.build_and_cache_prop_families",
-                   side_effect=_async_return(({"families": []}, False))):
+                   side_effect=_async_return((_stamped_as("full"), False))):
             out = await warm._refresh_prop_families(560, 400, "tok")
         assert out["terminal"] == "complete" and out["rebuilt"] == 1
         assert rc.store.get(keys.refresh_lock) is None
@@ -892,6 +898,20 @@ def _async_return(value):
     async def _inner(*args, **kwargs):
         return value
     return _inner
+
+
+def _stamped_as(quality, reasons=()):
+    """A payload shaped like one `build_and_cache_prop_families` really returns.
+
+    CERT-557 made the envelope load-bearing for the refresh task's terminal, so
+    a double that omits it is no longer describing the function it stands in for.
+    """
+    from app.utils.event_concept_cache import ENVELOPE_FIELD
+
+    return {
+        "families": [],
+        ENVELOPE_FIELD: {"quality": quality, "quality_reasons": list(reasons)},
+    }
 
 
 class _AsyncCM:
