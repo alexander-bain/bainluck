@@ -104,6 +104,21 @@ MAX_PAIR_DEVIATION = 0.12
 #: was meant to be dropped, with no single place to look.
 MATCH_STALE_AFTER_HOURS = 6.0
 
+#: How much of a *ceremony stamp* is actually a claim (CERT-532).
+#:
+#: A draw-ceremony fixture's ``scheduled_date`` is what ESPN publishes before an
+#: order of play exists — midnight in the venue's own time, ``04:00Z`` for the
+#: US Open — so it names a DAY and not a start.  Measuring six elapsed hours
+#: against it retires the whole main draw at 6am local, and that is the empty
+#: card doctrine 3 is about.  A pinned fixture the scoreboard never mentioned is
+#: therefore carried until the day its stamp names has itself elapsed, and the
+#: ordinary window runs from there.
+#:
+#: 24 hours rather than a timezone lookup on purpose: the placeholder IS local
+#: midnight expressed in UTC, so one day later is the next local midnight
+#: whatever the venue, and this module keeps knowing nothing about venues.
+CEREMONY_STAMP_NAMES_A_DAY_HOURS = 24.0
+
 #: A move smaller than this is noise, not a story. Same dead band as the board's
 #: trend direction, so "moved" means one thing across the whole page.
 MOVE_DEAD_BAND = 0.003
@@ -338,7 +353,40 @@ def build_match_row(
         # Dropping on it is exactly how opening day emptied itself. The
         # qualifying draw has no id and is unaffected, so this exemption costs
         # nothing on a healthy read and saves the card on a flaky one.
-        if not (comp_id and not order_of_play_complete):
+        #
+        # ═══ CERT-532: THE FLAG WAS NEVER THE RIGHT THING TO ASK ═══
+        #
+        # That exemption is only as good as `order_of_play_complete`, and the
+        # cert's finding is that the flag can be wrong while every clause
+        # computing it is satisfied — a named shell with no competitions, and
+        # in general "a nonempty but truncated map has the same uncovered shape
+        # for any omitted pinned id". Tightening the flag closes the routes we
+        # have thought of. It cannot close the class, because the class is a
+        # consumer reading ABSENCE from the map as a fact about the match.
+        #
+        # So the second condition does not consult the flag at all. It says
+        # what is actually true about the value being measured: a ceremony
+        # stamp names a day, so the clock may not retire a pinned fixture until
+        # that day has elapsed. On the fixture's own day no false-complete map
+        # of any shape can empty the card, which is the property this queue
+        # needs and the flag could never guarantee.
+        #
+        # It has a far end, deliberately: at `24h + the window` the fixture
+        # does retire, or a pinned match ESPN never once mentioned would hold a
+        # place on "what is on" forever. And an explicit `decided` outranks all
+        # of this the same minute, above — the exemption is about SILENCE.
+        #
+        # The cost is named: a pinned fixture that really did finish, on a day
+        # ESPN's scoreboard never covered, lingers up to a day longer than it
+        # used to. That is the ambiguous case, and it is the direction to be
+        # wrong in — a match shown an extra day is a smaller lie than a draw
+        # that vanishes on the morning it is played.
+        retire = True
+        if comp_id:
+            retire = order_of_play_complete and started < (
+                cutoff - timedelta(hours=CEREMONY_STAMP_NAMES_A_DAY_HOURS)
+            )
+        if retire:
             return None, "ALREADY_PLAYED"
 
     block = next(

@@ -680,11 +680,29 @@ async def fetch_tournament_results(
     # clock drops it on the `04:00Z` placeholder — recreating the empty card
     # this whole queue exists to prevent. So completeness now requires that we
     # actually saw the tournament and understood every competition on it.
+    #
+    # ═══ CERT-532: A NAMED SHELL IS NOT A SCOREBOARD ═══
+    #
+    # `events` counts the tournament being NAMED, and naming it is not saying
+    # anything about it. A payload carrying a matching event and a recognised
+    # draw slug whose `competitions` list is empty satisfies every clause
+    # above — two 200s, a matched event, no unreadable states — and speaks for
+    # not one match. Same gotcha #53, one level further in than CERT-526
+    # reached: that clause caught a payload that never mentions the tournament,
+    # this one catches a payload that mentions it and then falls silent.
+    #
+    # Counted on COMPETITIONS SEEN rather than on the size of the published
+    # map. The two agree today, because every state we have a word for is
+    # published and an unknown one already fails the clause above — but the
+    # question being asked is "did the scoreboard show us a match", and a
+    # future counted-but-unpublished state must not make a whole read look
+    # silent.
     stats = result.get("stats") or {}
     result["order_of_play_complete"] = (
         not errors
         and len(payloads) == len(TOURS)
         and bool(stats.get("events"))
+        and bool(stats.get("competitions"))
         and not stats.get("unknown_state")
     )
     return result
