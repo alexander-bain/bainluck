@@ -440,13 +440,19 @@ def test_the_graded_sweep_does_not_gate_on_a_timestamp(run_task) -> None:
 
 
 def test_the_graded_sweep_does_not_use_is_winner(run_task) -> None:
-    """`is_winner` is nullable with a server DEFAULT false — it is non-null on
-    every row in the table and carries no grading information whatsoever.
+    """`is_winner` carries no grading information across the swept population.
 
-    Positive control, run against production on 2026-08-31 alongside the census:
-    `count(*) FILTER (WHERE is_winner IS NULL)` over the delta-carrying rows
-    returned **0**. A sweep keyed on `is_winner IS NOT NULL` would therefore
-    match the ENTIRE table and wipe every live delta on the site.
+    It IS nullable (CERT-521 widened it so a test database could express "nobody
+    graded this"), but almost nothing writes the NULL. Measured on production
+    2026-08-31: only **2,480 of 3,903,907** rows hold one, and **0 of the
+    2,187,236 rows carrying a delta** do — so over the rows this statement
+    selects from, `is_winner IS NOT NULL` is true of every single one. A sweep
+    keyed on it would match them all and wipe every live delta on the site.
+
+    ⚠️ State it as "0 across the delta population", not "never NULL". The first
+    draft of this said `is_winner` "is non-null on every row in the table" and
+    `test_no_app_comment_still_says_is_winner_cannot_be_null` failed the build
+    over it — correctly, because the site-wide claim is false.
     """
     sql, _ = _phase_a2(run_task()[1])
 

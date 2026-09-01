@@ -2565,10 +2565,17 @@ def update_max_movement(self):
             #     cluster of FINISHED US Open matches at ranks 49-60.
             #
             #     `resolution_source IS NOT NULL` is the predicate, NOT
-            #     `is_winner`: `is_winner` is nullable with a server DEFAULT
-            #     false, so it is non-null on every row in the table and carries
-            #     no grading information at all. Positive control, same query:
-            #     `count(*) FILTER (WHERE is_winner IS NULL)` = 0.
+            #     `is_winner`. `is_winner` IS nullable — CERT-521 widened it so a
+            #     test database could express "nobody graded this" — but almost
+            #     nothing writes the NULL: measured 2026-08-31, only **2,480 of
+            #     3,903,907** rows hold one, and **0 of the 2,187,236 rows
+            #     carrying a delta** do. So across the population this statement
+            #     selects from, `is_winner IS NOT NULL` is true of every row and
+            #     carries no grading information: it would match all of them and
+            #     clear the movement column site-wide. Say "0 across the delta
+            #     population", never "never NULL" —
+            #     `test_no_app_comment_still_says_is_winner_cannot_be_null`
+            #     rejects the second sentence, and is right to.
             #
             #     Clearing is safe against regrades and self-healing: if an
             #     outcome is ever re-opened, the next poll writes a fresh delta.
