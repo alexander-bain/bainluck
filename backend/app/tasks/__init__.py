@@ -2421,19 +2421,104 @@ def compute_snapshot_distribution(self):
     return run_async(compute_snapshot_distribution_impl())
 
 
+#: The window `probability_change_24h` and `max_movement_24h` are NAMED for, and
+#: which `/api/futures/movers` publishes to callers as `timeframe_hours`. It is a
+#: constant rather than a literal because three statements below have to agree
+#: with each other AND with that payload field; when they drifted apart nobody
+#: could see it, which is the defect in `_expire_stale_deltas`' docstring.
+MOVEMENT_WINDOW_HOURS = 24
+
+#: Rows retired per run of `update_max_movement`, biggest mover first.
+#:
+#: BOUNDED ON PURPOSE, and the bound is not cosmetic. When this shipped there
+#: were **1,604,840** expired deltas standing (measured on production
+#: 2026-08-31), and one unbounded `UPDATE` over them would have blown this
+#: task's own 120 s `soft_time_limit`, held the row locks against four live
+#: pollers, and left 1.6 M dead tuples behind in a single transaction. At this
+#: size the task converges over roughly three hours of its ten-minute cadence
+#: while every individual run stays small.
+#:
+#: ORDERED BY MAGNITUDE, which is the half that matters to a reader: the 102,625
+#: expired rows claiming a swing of ten points or more are exactly the ones that
+#: reach `/api/futures/movers`, so the FIRST run clears the whole visible lie and
+#: the long tail of small deltas drains behind it. Oldest-first or unordered
+#: leaves the strip wrong for hours (gotcha #41 — ask what the ordering starts
+#: on).
+STALE_DELTA_BATCH = 100_000
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
-    """Update max_movement_24h on futures_markets, then publish the movers strip.
+    """Retire expired movement deltas, recompute max_movement_24h, publish movers.
 
     LAT-P115: this task WRITES the column `/api/futures/movers` ranks by, so it
     is also the honest place to publish that answer. The warm runs AFTER the
     commit and inside its own guard — the column update is this task's job and a
     cache write must never be able to fail it or roll it back.
+
+    ── WHY THERE ARE THREE STATEMENTS AND NOT ONE (item 12 / CAL-P159) ─────────
+
+    `probability_change_24h` is not a 24-hour change. All four writers
+    (`tasks/kalshi.py`, `tasks/polymarket.py` x2, `tasks/futures.py`) store
+    `new - previous` at write time — a PER-WRITE delta — and nothing ever
+    recomputed it over a window. So it FREEZES: a row that stops being written
+    keeps serving its last delta forever, and the column's name keeps promising
+    that the number describes the last day.
+
+    Measured on production 2026-08-31, which is what sized the batch above:
+    2,186,901 outcomes carried a non-null delta and **1,604,840 of them (73%)
+    had not been touched in 24 hours**; 26,076 of the 31,568 open markets
+    carrying a `max_movement_24h` had no fresh outcome at all. On the strip
+    itself — `GET /api/futures/movers?limit=20`, which labels itself
+    `timeframe_hours: 24` — **17 of the 20 served rows were older than 24 hours
+    and the oldest was six weeks old.** Alex read one of them on market 109441 as
+    a genuine -71.5 point day.
+
+    The fix is upstream of every reader, and that is deliberate. LAT-P108 already
+    measured the obvious read-side freshness filter and REFUSED it (see the long
+    comment over `_MOVERS_POOLED` in `routes/futures.py`): `/api/futures/movers`
+    ranks a candidate pool by `max_movement_24h`, which is only a provable
+    SUPERSET of the answer while it equals `MAX(ABS(change))` over ALL of a
+    market's outcomes. Filtering the answer by freshness while ranking the pool
+    unfiltered breaks that bound — at limit 20 the two arms disagree on VALUES.
+    Clearing the column here keeps the identity exactly true, so the bound and
+    every one of the ~130 other readers stay correct for free. Do not re-derive
+    the read-side fix; `tests/test_futures_stamp_semantics.py` also rejects one.
+
+    Statement C exists because statement B structurally cannot lower a market.
+    B drives off `GROUP BY market_id` over non-null deltas, so a market whose
+    last delta just expired vanishes from the aggregate and RETAINS its old
+    `max_movement_24h` forever. That is the 26,076, and clearing A without C
+    would have left them ranked exactly as they are today.
     """
     async def _impl():
         from app.tasks.base import get_task_session
         from sqlalchemy import text
         async with get_task_session() as session:
+            # A. Retire deltas whose row has not been written inside the window.
+            #    `last_updated` is the right stamp and `price_changed_at` is the
+            #    wrong one: this asks "has any writer touched this row", not "did
+            #    the price move". A price parked at 3% for a week is being polled
+            #    and its ~0 delta is honest; the rows here are ones NOTHING has
+            #    written, whose delta therefore predates the window by
+            #    construction. (#2024 records that reading as POLLER ALIVE.)
+            expired = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id
+                        FROM futures_outcomes
+                        WHERE probability_change_24h IS NOT NULL
+                          AND last_updated < now() - (:window_hours * interval '1 hour')
+                        ORDER BY abs(probability_change_24h) DESC
+                        LIMIT :batch
+                    )
+                """),
+                {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_DELTA_BATCH},
+            )
+
+            # B. Recompute the per-market maximum over what survived A.
             result = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET max_movement_24h = sub.max_mv
@@ -2447,8 +2532,32 @@ def update_max_movement(self):
                   AND fm.status IN ('open', 'active')
                   AND (fm.max_movement_24h IS DISTINCT FROM sub.max_mv)
             """))
+
+            # C. A market with no surviving delta has no maximum. NULL is the
+            #    honest value — "we do not know", which is what every reader
+            #    already handles — and it keeps
+            #    `max_movement_24h == MAX(ABS(change))` exactly true, which is
+            #    the identity /movers' pool bound rests on.
+            cleared = await session.execute(text("""
+                UPDATE futures_markets fm
+                SET max_movement_24h = NULL
+                WHERE fm.status IN ('open', 'active')
+                  AND fm.max_movement_24h IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND fo.probability_change_24h IS NOT NULL
+                  )
+            """))
+
+            # One commit for all three: a reader must never see A's cleared
+            # outcomes against B and C's un-recomputed markets, because between
+            # those two states the superset bound is false.
             await session.commit()
             updated = result.rowcount
+            expired_rows = expired.rowcount
+            cleared_markets = cleared.rowcount
 
             # Reported, not swallowed: a warm that never ran must be visible in
             # the task result rather than inferred from a latency graph
@@ -2461,7 +2570,19 @@ def update_max_movement(self):
                 logger.warning("update_max_movement: warm failed: %s", exc, exc_info=True)
                 warm = {"terminal": "failed", "completed": 0, "reason": "error"}
 
-            return {"updated": updated, "movers_warm": warm}
+            # `expired` and `backlog_drained` are reported so the drain is
+            # observable while it runs: a run that retires exactly
+            # STALE_DELTA_BATCH rows means more are waiting, and the day the
+            # count sits below the batch the backlog is gone. Without them the
+            # only signal would be the strip quietly getting better.
+            return {
+                "updated": updated,
+                "expired": expired_rows,
+                "cleared_markets": cleared_markets,
+                "backlog_drained": expired_rows < STALE_DELTA_BATCH,
+                "window_hours": MOVEMENT_WINDOW_HOURS,
+                "movers_warm": warm,
+            }
     return run_async(_impl())
 
 
