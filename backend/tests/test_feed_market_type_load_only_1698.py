@@ -62,26 +62,84 @@ def test_an_unloaded_column_raises_on_access_rather_than_returning_none():
 
 
 def _load_only_blocks() -> list[str]:
-    """The two `load_only(...)` argument lists in the feed serializer queries."""
+    """The `load_only(...)` argument lists in the feed serializer queries."""
     from app.routes import feed
 
     src = inspect.getsource(feed)
     return re.findall(r"load_only\(\s*\n(.*?)\n\s*\)", src, flags=re.S)
 
 
-def test_both_feed_load_only_lists_select_market_type():
-    """THE REGRESSION GATE. The real fix — the serializer must never lazy-load.
+def _the_shared_market_block() -> str:
+    """The ONE `FuturesMarket` projection — and the assertion that it IS one.
 
-    Asserted against BOTH query sites, because the pool was built by two of them
-    and fixing one would have left the defect live on the other path.
+    🔴 UPDATED BY CERT-622/CERT-631, AND THE UPDATE IS NOT A RELAXATION.
+
+    This file used to assert `len(blocks) >= 2` because the pool was built by two
+    query sites and "fixing one would have left the defect live on the other
+    path". CERT-622 then caught the sequel: Q480 added a read of
+    `FuturesOutcome.external_id` and **neither** copy grew the column. Two
+    byte-identical 52-line lists is not a safeguard, it is the hazard.
+
+    So `_futures_feed_load_options()` is now the single projection, and the
+    protection this file provides is split in two rather than reduced:
+
+      * the column assertions below run against that one list, and
+      * `test_both_scorers_take_their_projection_from_the_shared_factory`
+        proves both query sites still use it.
+
+    Together those are strictly stronger than the old pair: previously a third
+    query site could be added with its own list and this file would not have
+    noticed. Now `len(blocks) == 1` fails the moment anyone inlines one.
     """
     blocks = [b for b in _load_only_blocks() if "FuturesMarket.id" in b]
-    assert len(blocks) >= 2, f"expected >=2 FuturesMarket load_only lists, got {len(blocks)}"
-    for i, block in enumerate(blocks):
-        assert "FuturesMarket.market_type" in block, (
-            f"load_only list #{i} omits FuturesMarket.market_type — the serializer "
-            f"reads it, so omitting it lazy-loads and empties the futures pool (#1698)"
+    assert len(blocks) == 1, (
+        f"expected exactly ONE FuturesMarket load_only list — the shared "
+        f"`_futures_feed_load_options()` — but found {len(blocks)}. If a query site "
+        f"has inlined its own copy again, that is the CERT-622 defect returning: the "
+        f"copies drift and a newly-read column lands on one and not the other."
+    )
+    return blocks[0]
+
+
+def test_both_scorers_take_their_projection_from_the_shared_factory():
+    """The half that replaces "assert it twice": prove both sites use the one list.
+
+    Anchored on each scorer's OWN body. A module-wide substring check would be
+    satisfied by either scorer alone, which is precisely the "fixed one path,
+    missed the other" failure this file was written about.
+    """
+    import ast
+
+    from app.routes import feed
+
+    tree = ast.parse(inspect.getsource(feed))
+    for name in ("_score_futures", "_score_sports_mode_futures"):
+        fn = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
+            ),
+            None,
         )
+        assert fn is not None, f"{name} not found — this guard cannot report on a function it cannot locate"
+        calls = {
+            n.func.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "_futures_feed_load_options" in calls, (
+            f"{name} no longer calls `_futures_feed_load_options()` — if it inlined its "
+            f"own projection, the two feed paths can drift apart again (CERT-622)"
+        )
+
+
+def test_the_feed_load_only_list_selects_market_type():
+    """THE REGRESSION GATE. The real fix — the serializer must never lazy-load."""
+    assert "FuturesMarket.market_type" in _the_shared_market_block(), (
+        "the shared load_only list omits FuturesMarket.market_type — the serializer "
+        "reads it, so omitting it lazy-loads and empties the futures pool (#1698)"
+    )
 
 
 def test_the_serializer_never_reads_market_type_bare():
@@ -108,12 +166,17 @@ def test_the_serializer_never_reads_market_type_bare():
 def test_every_column_the_serializer_reads_is_selected(column):
     """The generalisation — #1698 was one instance of a whole class.
 
-    Any column the serializer touches must appear in the load_only lists. These
+    Any column the serializer touches must appear in the load_only list. These
     four are the ones the card build reads on the hot path; `market_type` is the
     one that was missing.
+
+    ⚠️ Note what this parametrize list is and is not: a HAND-MAINTAINED sample of
+    four columns. CERT-622 was a fifth read (`FuturesOutcome.external_id`) that
+    nobody added here, which is why
+    `tests/test_feed_outcome_projection_cert622.py` DERIVES the read set from the
+    route bodies by AST instead of listing it. This test is the cheap sentinel;
+    that one is the real contract.
     """
-    blocks = [b for b in _load_only_blocks() if "FuturesMarket.id" in b]
-    for i, block in enumerate(blocks):
-        assert f"FuturesMarket.{column}" in block, (
-            f"load_only list #{i} omits {column}, which the serializer reads"
-        )
+    assert f"FuturesMarket.{column}" in _the_shared_market_block(), (
+        f"the shared load_only list omits {column}, which the serializer reads"
+    )

@@ -1294,19 +1294,34 @@ class TestFabricatedMidpointWiring:
 
     def test_book_columns_are_in_every_outcome_load_only_list(self):
         # L2-172 / gotcha: a column read inside GET /api/feed but absent from
-        # load_only lazy-loads per outcome and crashes the async route. There are TWO
-        # such lists (discover path and sports-mode path); both must carry the book.
+        # load_only lazy-loads per outcome and crashes the async route.
+        #
+        # 🔴 THIS ASSERTION USED TO SAY `== 2`, and its own comment said "if this
+        # changed, the assertions below need to follow". It changed, so they do.
+        # There was one outcome load_only list per feed path — two byte-identical
+        # copies — and CERT-622 caught the cost: Q480 added a read of
+        # `FuturesOutcome.external_id` and NEITHER copy grew the column, so the
+        # deferred read raised MissingGreenlet and emptied the futures pool. The two
+        # copies are now one shared `_futures_feed_load_options()`, so the count is
+        # ONE, and `== 1` still fails the moment anyone inlines a copy again.
+        #
+        # That both paths still USE the shared list is proved separately, per
+        # scorer, in tests/test_feed_market_type_load_only_1698.py. The columns
+        # actually READ are derived by AST in
+        # tests/test_feed_outcome_projection_cert622.py — this stays a cheap
+        # sentinel on the book columns specifically.
         import inspect
 
         from app.routes import feed as feed_module
 
         src = inspect.getsource(feed_module)
-        assert src.count("FuturesOutcome.current_probability") == 2, (
-            "expected exactly two outcome load_only lists — if this changed, the "
-            "assertions below need to follow"
+        assert src.count("FuturesOutcome.current_probability") == 1, (
+            "expected exactly ONE outcome load_only list — the shared "
+            "`_futures_feed_load_options()`. More than one means a query site has "
+            "inlined its own copy again, which is the CERT-622 defect returning."
         )
-        assert src.count("FuturesOutcome.current_yes_bid") == 2
-        assert src.count("FuturesOutcome.current_yes_ask") == 2
+        assert src.count("FuturesOutcome.current_yes_bid") == 1
+        assert src.count("FuturesOutcome.current_yes_ask") == 1
 
 
 class TestFeedQualityDebug:

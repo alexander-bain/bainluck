@@ -250,7 +250,8 @@ class TestTheOtherRoutesInThisFileAreUntouched:
         market = _market(42, name="Next President", llm_sport_category="politics")
         market.outcomes = [
             SimpleNamespace(
-                id=1, name="Alpha", current_probability=0.6, probability_change_24h=0.01
+                id=1, name="Alpha", current_probability=0.6, probability_change_24h=0.01,
+                external_id=None,
             )
         ]
         mock_db.execute.side_effect = [_page_result([market], 1)]

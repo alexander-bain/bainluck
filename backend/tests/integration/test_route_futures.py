@@ -47,6 +47,9 @@ def _outcome(
         id=outcome_id,
         name=name,
         current_probability=probability,
+        # Q480: the display path reads `external_id` to drop a `_yes`/`_no`
+        # leg duplicating a bare rung. None = not a leg (pass-through).
+        external_id=None,
         current_american_odds=american_odds,
         rank=rank,
         probability_change_24h=movement,
