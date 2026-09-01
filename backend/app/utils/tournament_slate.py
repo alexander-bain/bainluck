@@ -198,7 +198,13 @@ def _name_tokens(name: Any) -> frozenset[str]:
     return frozenset(token for token in cleaned.split() if token)
 
 
-def _token_covered(token: str, others: frozenset[str]) -> bool:
+#: Shortest token that may serve as the shared anchor between two names. Two
+#: characters is enough to exclude the initials that make the prefix rule a
+#: wildcard, and short enough to keep every real surname in the draw.
+SUBSTANTIAL_TOKEN_CHARS = 3
+
+
+def _token_covered(token: str, others: frozenset[str] | set[str]) -> bool:
     """Is ``token`` the same name-part as something in ``others``?
 
     Prefix either way, so an initial matches the name it abbreviates:
@@ -232,8 +238,35 @@ def _names_agree(a: Any, b: Any) -> bool:
     tokens_a, tokens_b = _name_tokens(a), _name_tokens(b)
     if not tokens_a or not tokens_b:
         return True
-    return all(t in tokens_b or _token_covered(t, tokens_b) for t in tokens_a) or all(
-        t in tokens_a or _token_covered(t, tokens_a) for t in tokens_b
+
+    covered = all(_token_covered(t, tokens_b) for t in tokens_a) or all(
+        _token_covered(t, tokens_a) for t in tokens_b
+    )
+    if not covered:
+        return False
+
+    # AND ONE SUBSTANTIAL TOKEN IN COMMON — the surname anchor.
+    #
+    # Coverage alone is not enough, because a ONE-LETTER TOKEN IS A WILDCARD
+    # under the prefix rule: it covers every token beginning with that letter.
+    # Swept over all 378 registered players, that made exactly one pair of
+    # genuinely different people agree — `Christopher O'Connell` and
+    # `Oleksandra Oliynykova`, where the `o` of `O'Connell` covers both
+    # `Oleksandra` and `Oliynykova`.  (The sweep's only other two hits are one
+    # person listed twice under both word orders, `Shang Juncheng` and `Wang
+    # Xiyu` — the case the tolerance exists for.)
+    #
+    # A false AGREEMENT only fails us silent, so it was the safe direction to be
+    # wrong in, but it is still a hole.  Requiring one shared token of real
+    # length closes it and costs none of the benign cases: every one of them
+    # shares a full surname.
+    return any(
+        len(token) >= SUBSTANTIAL_TOKEN_CHARS
+        and any(
+            len(other) >= SUBSTANTIAL_TOKEN_CHARS and _token_covered(token, {other})
+            for other in tokens_b
+        )
+        for token in tokens_a
     )
 
 

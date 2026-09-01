@@ -43,14 +43,22 @@ authority, which this one deliberately does not invent.
 
 THE COMPARISON IS DELIBERATELY TOLERANT, because the cost of a false positive
 is deleting a real match from the card — a worse defect than the one being
-fixed.  Two names agree when one's tokens are all covered by the other's, with
-a prefix counting as cover, so ``Bu Yunchaokete``/``Yunchaokete Bu`` (word
-order), ``Juan Manuel Cerundolo``/``Juan Cerundolo`` (dropped middle name) and
-``J.J. Wolf``/``JJ Wolf`` (initialism) all agree.  It stays strict where it
-must: ``Francisco Cerundolo`` and ``Juan Manuel Cerundolo`` are both in this
-draw and do not agree.  Replayed over all 124 live matchups and ESPN's real
-625-competition scoreboard, this rule refuses exactly the four above — three on
-today's card, one already decided — and keeps the other 120.
+fixed.  Two names agree when one's tokens are all covered by the other's (a
+prefix counts as cover) **and** they share one token of at least three
+characters.  So ``Bu Yunchaokete``/``Yunchaokete Bu`` (word order), ``Juan
+Manuel Cerundolo``/``Juan Cerundolo`` (dropped middle name) and ``J.J.
+Wolf``/``JJ Wolf`` (initialism) all agree, while ``Francisco Cerundolo`` and
+``Juan Manuel Cerundolo`` — both in this draw — do not.
+
+The three-character anchor is not decoration: without it a one-letter token is
+a WILDCARD under the prefix rule, and sweeping all 378 registered players found
+it made ``Christopher O'Connell`` and ``Oleksandra Oliynykova`` agree.  That
+sweep is itself a test here, because a looser rule has to survive every pair of
+real players in a real draw and not just the ones a test author imagined.
+
+Replayed over all 124 live matchups and ESPN's real 625-competition scoreboard,
+this rule refuses exactly the four above — three on today's card, one already
+decided — and keeps the other 120.
 """
 
 from __future__ import annotations
@@ -61,7 +69,7 @@ import pytest
 
 from app.services.espn_tennis import parse_results
 from app.utils.tournament_register import SCHEMA_VERSION
-from app.utils.tournament_slate import build_slate, pairing_agrees
+from app.utils.tournament_slate import _names_agree, build_slate, pairing_agrees
 
 NOW = datetime(2026, 9, 1, 22, 0, tzinfo=timezone.utc)
 SOON = (NOW + timedelta(hours=2)).isoformat()
@@ -229,6 +237,56 @@ def test_control_no_scoreboard_entry_at_all_changes_nothing():
 )
 def test_control_innocuous_name_variants_agree(ours, theirs):
     assert pairing_agrees([ours, "Same Player"], [theirs, "Same Player"]) is True
+
+
+def test_an_initial_does_not_act_as_a_wildcard():
+    """MEASURED, not hypothetical, and found by sweeping my own rule.
+
+    Prefix matching lets a one-letter token cover every token beginning with
+    that letter, so ``Christopher O'Connell``'s ``o`` covered BOTH
+    ``Oleksandra`` and ``Oliynykova``. Across all 378 registered players that
+    was the single pair of genuinely different people the rule called the same.
+    A false agreement only fails silent — it is the safe direction — but the
+    surname anchor closes it at no cost to the benign cases.
+    """
+    assert _names_agree("Christopher O'Connell", "Oleksandra Oliynykova") is False
+
+
+def test_two_players_sharing_a_surname_are_not_one_player():
+    """Both Cerundolos are in this draw and both are in the mismatch table."""
+    assert _names_agree("Francisco Cerundolo", "Juan Manuel Cerundolo") is False
+
+
+def test_the_rule_does_not_collapse_the_field():
+    """The sweep itself, pinned. Anything that makes the comparison looser has
+    to survive every pair of real players in a real draw, not just the handful
+    a test author thought of."""
+    import itertools
+
+    from app.utils.tournament_register import load_register
+
+    register = load_register("us-open", "2026")
+    if register is None:  # pragma: no cover — the register is committed
+        pytest.skip("us-open register unavailable")
+    names = sorted(
+        {
+            p["display_name"]
+            for p in register.get("players") or []
+            if p.get("display_name")
+        }
+    )
+    assert len(names) > 300, "the committed register should carry the full field"
+    collisions = {
+        frozenset((a, b))
+        for a, b in itertools.combinations(names, 2)
+        if _names_agree(a, b)
+    }
+    # The only permitted hits are ONE PERSON listed twice under both word
+    # orders — which is exactly what the word-order tolerance is for.
+    assert collisions == {
+        frozenset(("Juncheng Shang", "Shang Juncheng")),
+        frozenset(("Wang Xiyu", "Xiyu Wang")),
+    }, sorted(tuple(sorted(c)) for c in collisions)
 
 
 def test_control_the_pair_is_matched_without_regard_to_side_order():
