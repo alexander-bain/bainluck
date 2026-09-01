@@ -321,6 +321,13 @@ _REPAIRS = {
     # Read `scan_exhausted`, NOT `remaining_events`, to know when you are done —
     # the latter counts the suspect category, which legitimately contains the
     # Setka control and so has a positive floor.
+    # CERT-667: three terminals mean PAUSED, not finished, and all three hand back
+    # a cursor that RETRIES the row rather than stepping over it —
+    # `paused_unresolved` (the venue did not answer), `paused_write_timeout` (it
+    # answered but the UPDATE did not land inside its budget, almost always a row
+    # lock held by the ordinary poller) and `paused_target_timeout` (the page
+    # SELECT itself did not finish; nothing was examined). Re-invoke with
+    # `next_cursor` on any of them. None of the three is a verdict on any event.
     # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
     # state, not a standing job.
     "polymarket-sport-category": (
