@@ -26,6 +26,21 @@ are different answers, and only one of them is safe to be silent about.
 AND IT RAISES ON WHAT IT CANNOT PARSE. A scanner that swallows a ``SyntaxError`` quietly
 shrinks its own population and then reports a clean sweep of the files it managed to
 read. Unparsable files are collected and failed on explicitly.
+
+WHAT ``LOCAL`` MEANS, AND THE FALSE POSITIVE THAT TAUGHT IT (CAL-P172). The first version
+knew three roots a bare import could resolve against — ``tests/`` and the two ``scripts/``
+trees — and missed a fourth: ``backend/`` ITSELF. ``pytest.ini`` lives there, so it is
+pytest's rootdir and goes on ``sys.path``, which makes ``backend/*.py`` importable by bare
+name. The gap was invisible while this branch stood alone and surfaced the moment it was
+rebased onto a master that had gained ``tests/test_ws_fast_lane_wiring.py`` and
+``tests/test_ws_recycle_cancellation_q460.py``, both of which ``import run_kalshi_ws`` —
+``backend/run_kalshi_ws.py``, a runner script. The guard called it an undeclared
+third-party package and would have turned master's CI red on merge.
+
+The lesson is the guard's own: **"resolves to NO INSTALLED DISTRIBUTION" is a statement
+about the environment, not about the repo.** Before reporting a name, every place it could
+legitimately come from has to be enumerated — and the enumeration has to be tight, which
+is why the new root is scanned non-recursively (see ``BACKEND_TOPLEVEL_ROOT``).
 """
 
 from __future__ import annotations
@@ -49,6 +64,19 @@ REQUIREMENTS = BACKEND_ROOT / "requirements.txt"
 #: standalone operational scripts, e.g. ``daily_health_check.py``). Scanning only the
 #: first reported a sibling import as an undeclared third-party package.
 SIBLING_IMPORT_ROOTS = (TESTS_ROOT, BACKEND_ROOT / "scripts", REPO_ROOT / "scripts")
+
+#: ``backend/`` itself is pytest's rootdir (``pytest.ini`` lives there), so pytest puts it
+#: on ``sys.path`` and its TOP-LEVEL ``.py`` files are importable by bare name —
+#: ``import run_kalshi_ws`` in ``tests/test_ws_fast_lane_wiring.py`` resolves to
+#: ``backend/run_kalshi_ws.py``, a runner script, not a package.
+#:
+#: Scanned NON-recursively, and that is the whole point. ``BACKEND_ROOT`` is not in
+#: ``SIBLING_IMPORT_ROOTS`` because those are walked with ``rglob``: adding it there would
+#: absorb every module stem under ``backend/`` — all of ``app/``, every test file — into
+#: the local-name set, and the guard would then wave through any third-party package that
+#: happened to share a name with some module in the tree. Only the files that are actually
+#: importable by bare name belong here, and that is exactly ``backend/*.py``.
+BACKEND_TOPLEVEL_ROOT = BACKEND_ROOT
 
 #: Modules that are legitimately imported without their own manifest line, each with the
 #: reason it is not a defect. Keep this SHORT and keep the reasons honest — an allowlist
@@ -96,6 +124,28 @@ def _local_module_names(*roots: Path) -> set[str]:
             if (path.parent / "__init__.py").exists():
                 names.add(path.parent.name)
     return names
+
+
+def _toplevel_module_names(root: Path) -> set[str]:
+    """Bare-importable module names contributed by ``root`` itself, NOT its subtree.
+
+    Deliberately ``glob``, never ``rglob`` — see ``BACKEND_TOPLEVEL_ROOT``. A recursive
+    walk here would make the guard's local-name set swallow the whole backend tree.
+    """
+    if not root.exists():
+        return set()
+    return {
+        path.stem
+        for path in root.glob("*.py")
+        if "__pycache__" not in path.parts
+    }
+
+
+def local_import_names() -> set[str]:
+    """Every name a test can import without it being a third-party dependency."""
+    return _local_module_names(*SIBLING_IMPORT_ROOTS) | _toplevel_module_names(
+        BACKEND_TOPLEVEL_ROOT
+    )
 
 
 def _top_level_imports(tree: ast.AST) -> set[str]:
@@ -162,7 +212,7 @@ def scan_undeclared_imports(
 
 
 def test_every_third_party_module_the_tests_import_is_declared_in_requirements():
-    local_names = _local_module_names(*SIBLING_IMPORT_ROOTS)
+    local_names = local_import_names()
     violations, unparsable, scanned = scan_undeclared_imports(
         TESTS_ROOT, REQUIREMENTS, local_names, ALLOWED_UNDECLARED
     )
@@ -187,7 +237,7 @@ def test_every_third_party_module_the_tests_import_is_declared_in_requirements()
 
 def test_the_scan_actually_covered_the_suite():
     """Non-vacuity: a scan that silently walked an empty tree would pass the guard."""
-    local_names = _local_module_names(*SIBLING_IMPORT_ROOTS)
+    local_names = local_import_names()
     _, _, scanned = scan_undeclared_imports(
         TESTS_ROOT, REQUIREMENTS, local_names, ALLOWED_UNDECLARED
     )
@@ -290,6 +340,66 @@ def test_scanner_does_not_flag_local_sibling_modules(tmp_path):
     assert (
         not violations
     ), f"A local sibling was misreported as third-party: {violations}"
+
+
+def test_a_backend_toplevel_runner_module_is_not_read_as_third_party():
+    """CAL-P172's regression, pinned against the REAL tree rather than a fixture.
+
+    ``backend/run_kalshi_ws.py`` is a runner script that two committed WS tests import by
+    bare name. It has no distribution and never will. If the local-name set stops
+    covering ``backend/*.py``, this goes red here instead of on master's CI.
+    """
+    runner = BACKEND_ROOT / "run_kalshi_ws.py"
+    assert runner.exists(), (
+        "backend/run_kalshi_ws.py is gone. If it moved, this pin should name wherever the "
+        "top-level runner modules live now — do not just delete it, or the false-positive "
+        "class it guards comes back silently."
+    )
+    assert "run_kalshi_ws" in local_import_names(), (
+        "A repo-local top-level module is not in the local-name set, so the sweep will "
+        "report it as an undeclared third-party package."
+    )
+
+
+def test_the_toplevel_scan_is_not_recursive(tmp_path):
+    """The tightness half of CAL-P172 — an rglob here would gut the whole guard.
+
+    If ``backend/`` were walked recursively, every module stem under ``app/`` and
+    ``tests/`` would enter the local-name set, and any third-party package sharing one of
+    those names would be waved through. This is the control that keeps the fix narrow.
+    """
+    (tmp_path / "toplevel_runner.py").write_text("VALUE = 1\n")
+    nested = tmp_path / "nested_pkg"
+    nested.mkdir()
+    (nested / "buried_module.py").write_text("VALUE = 2\n")
+
+    names = _toplevel_module_names(tmp_path)
+
+    assert "toplevel_runner" in names
+    assert "buried_module" not in names, (
+        "The top-level scan recursed. That widens the local-name set to the entire "
+        "backend tree and silently disarms the undeclared-import sweep."
+    )
+
+
+def test_widening_the_local_names_did_not_disarm_the_sweep(tmp_path):
+    """Non-vacuity for CAL-P172: the guard must still go RED on a real violation.
+
+    Anchored on the REAL local-name set, not an empty one, so it proves the widened set
+    still reports an undeclared package rather than proving a fixture does.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_thing.py").write_text("import some_undeclared_pkg\n")
+    (tmp_path / "requirements.txt").write_text("pytest>=7.4.4\n")
+
+    violations, _, _ = scan_undeclared_imports(
+        tests_dir, tmp_path / "requirements.txt", local_names=local_import_names()
+    )
+
+    assert any(key.startswith("some_undeclared_pkg") for key in violations), (
+        f"The widened local-name set swallowed a genuine violation: {violations}"
+    )
 
 
 def test_relative_imports_are_never_reported(tmp_path):
