@@ -1,0 +1,39 @@
+ring: 168 beats  2026-08-22T16:45:38 .. 2026-08-29T15:52:08
+
+1. frozen_over_drift, as recorded by build_disclosure
+   True  (availability floored to STALE): 152
+   False (fresh permitted)              : 1
+   absent (disclosure unmeasured)       : 15
+   => fresh permitted on 1/153 measured beats (0.7%)
+
+2. served bank: (served_units, served_drifted) distribution
+   (128, 128): 102 beats
+   (0, 0): 15 beats
+   (128, 0): 12 beats
+   (128, 127): 7 beats
+   (128, 125): 6 beats
+   (128, 126): 5 beats
+   (128, 121): 2 beats
+   (128, 109): 2 beats
+
+3. beats with served_units=128 AND served_drifted=0 (i.e. drift itself was clean)
+   2026-08-23T03:37:27  frozen=True  blocked_by: served_drift_uncheckable=7
+   2026-08-23T21:32:07  frozen=True  blocked_by: served_drift_uncheckable=6
+   2026-08-24T11:38:58  frozen=True  blocked_by: served_drift_uncheckable=9
+   2026-08-24T12:40:58  frozen=False blocked_by: -
+   2026-08-25T06:35:50  frozen=True  blocked_by: served_drift_uncheckable=7
+   2026-08-26T09:27:40  frozen=True  blocked_by: served_drift_uncheckable=5
+   2026-08-27T02:33:48  frozen=True  blocked_by: served_drift_uncheckable=6
+   2026-08-27T20:28:57  frozen=True  blocked_by: served_drift_uncheckable=5
+   2026-08-27T21:15:06  frozen=True  blocked_by: served_drift_uncheckable=5
+   2026-08-27T22:15:06  frozen=True  blocked_by: served_drift_uncheckable=5
+   2026-08-27T23:16:32  frozen=True  blocked_by: served_drift_uncheckable=5
+   2026-08-28T20:37:42  frozen=True  blocked_by: served_drift_uncheckable=4
+
+4. units_drift_uncheckable == units_completed_this_beat ?
+   holds on 158 beats, fails on 10 (94%)
+
+5. building-bank drift per beat (units_drifted / units_drift_checkable)
+   n=146  min=0%  p25=21%  median=70%  p75=85%  max=99%
+   => a slot's membership changes within ONE beat, most beats. That is a
+      RATE. It is not 'how stale the bank is since it was banked'.

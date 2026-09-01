@@ -1,0 +1,34 @@
+CLAIM 1 — retain_planned_units re-stamps every kept unit every beat
+  [OK ] retain_planned_units unconditionally re-stamps unit_digests to the CURRENT plan
+         the re-stamp is not guarded by any 'only if absent' condition
+  [OK ] the re-stamp exists and is NOT conditional (no 'only stamp if missing' guard)
+         it is the unconditional tail `return replace(...)`, so the stored baseline is always LAST BEAT's plan
+
+CLAIM 2 — served_digests is ADD-ONLY, never re-stamped
+  [OK ] top_up_served_digests only fills names ABSENT from served_digests
+  [OK ] top_up_served_digests documents that it only ever ADDS
+  [OK ] served_digests has 4 write sites: decode, promote, add-only top-up, drop
+         served_digests=served_digests, | served_digests=inherited, | return replace(cursor, served_digests={**cursor.served_digests, **missing}) | served_digests={},
+  [OK ] NONE of them re-stamps an existing digest to the current plan
+         so served_drift's baseline survives from promotion onward = CUMULATIVE
+
+CLAIM 3 — the docstrings claim identical semantics
+  [OK ] roster_drift's docstring says the baseline is 'when the unit ran'
+  [OK ] served_drift calls roster_drift its 'twin' with the 'Same refusal'
+  [OK ] ...yet CLAIM 1 + CLAIM 2 make their baselines different intervals
+         roster_drift = per-beat delta; served_drift = cumulative since promotion
+
+CLAIM 4 — the serving branch drops the 'advanced' escape term
+  [OK ] non-serving branch: frozen_over_drift includes the 'advanced' term
+  [OK ] serving branch: frozen_over_drift is drift-only, no escape
+  [OK ] the module docstring justifies having NO threshold via that escape
+         that justification does not hold in the branch that now runs
+
+CLAIM 5 — the coverage pair is sampled across a mutation
+  [OK ] served_drift is measured BEFORE top_up_served_digests inside retain
+         offset 2706 < 3724
+  [OK ] served_drift_uncheckable is computed from the payload's served_digests
+         i.e. the POST-top-up cursor — the other half of the pair
+
+====================================================================
+ALL CLAIMS REPRODUCED
