@@ -2446,6 +2446,29 @@ MOVEMENT_WINDOW_HOURS = 24
 #: on).
 STALE_DELTA_BATCH = 100_000
 
+#: Rows retired per run by statement A2, the GRADED sweep, biggest mover first.
+#:
+#: A separate constant from `STALE_DELTA_BATCH` because it drains a separate,
+#: larger backlog against a different plan, and the two have to be tunable
+#: without moving each other. Measured on production 2026-08-31: A2's selection
+#: at this limit runs in **2.13 s** (parallel seq scan + external merge sort,
+#: 20.9 MB spilled) against A's 3.7 s, so a run doing both stays far inside this
+#: task's 120 s `soft_time_limit`.
+#:
+#: The backlog it drains is **1,870,447** graded outcomes still carrying a delta
+#: (85.5% of all 2,186,901 non-null deltas), of which **134,277** claim a swing
+#: of ten points or more. Magnitude-ordered for the same reason A is: the visible
+#: rows go first and the tail follows (gotcha #41).
+#:
+#: WHAT ONE RUN ACTUALLY CLEARS, measured rather than claimed: the 100,000th
+#: graded row by magnitude sits at **0.2300**, so the first run retires every
+#: graded delta of >= 23 points — which covers the whole strip-visible set
+#: named above, the worst of it at 0.45 — and the >= 10-point tail needs a
+#: SECOND run, i.e. ~20 minutes on this task's 10-minute beat. The full
+#: 1.87 M drains in ~19 runs, a little over three hours. Say two runs; do not
+#: round it to one.
+GRADED_DELTA_BATCH = 100_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -2518,7 +2541,59 @@ def update_max_movement(self):
                 {"window_hours": MOVEMENT_WINDOW_HOURS, "batch": STALE_DELTA_BATCH},
             )
 
-            # B. Recompute the per-market maximum over what survived A.
+            # A2. Retire deltas on GRADED outcomes, whatever their stamp says.
+            #
+            #     A alone cannot reach these, and the reason is the whole defect
+            #     (CERT-627). A gates on `last_updated`, which — exactly as A's
+            #     own comment says — means "has any writer touched this row".
+            #     Grading writers touch it constantly WITHOUT polling a price:
+            #     `backfill_winners` stamps `last_updated = NOW()` at ~25 sites
+            #     every 6 hours, `clob_resolve` at one, and each of those writes
+            #     leaves `probability_change_24h` frozen at whatever it was when
+            #     the market was last live. So the deadest rows in the table are
+            #     precisely the ones A can never expire, and their immunity is
+            #     RE-ARMED every 6 hours. Time cannot fix a row that is being
+            #     touched; only a predicate on deadness can.
+            #
+            #     Measured on production 2026-08-31, which is why this statement
+            #     exists rather than a widening of A: of the 2,186,901 non-null
+            #     deltas, **1,870,447 (85.5%) sit on graded outcomes** and
+            #     134,277 of those claim a swing of >= 10 points. Simulating the
+            #     post-A state, 26 of the 120 strip-eligible open markets were
+            #     fully-settled ones, the first at **rank 30** ("CA-34 House
+            #     winner?"), followed by a settled IndyCar champion market and a
+            #     cluster of FINISHED US Open matches at ranks 49-60.
+            #
+            #     `resolution_source IS NOT NULL` is the predicate, NOT
+            #     `is_winner`: `is_winner` is nullable with a server DEFAULT
+            #     false, so it is non-null on every row in the table and carries
+            #     no grading information at all. Positive control, same query:
+            #     `count(*) FILTER (WHERE is_winner IS NULL)` = 0.
+            #
+            #     Clearing is safe against regrades and self-healing: if an
+            #     outcome is ever re-opened, the next poll writes a fresh delta.
+            #     Every reader of this column already treats NULL as "no
+            #     movement" (~10 call sites incl. `daily_digest`,
+            #     `push_notifications`, `precompute_interestingness`), so a
+            #     settled market also stops generating big-move pushes and
+            #     digest rows — the same bug on two quieter surfaces.
+            graded = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT id
+                        FROM futures_outcomes
+                        WHERE probability_change_24h IS NOT NULL
+                          AND resolution_source IS NOT NULL
+                        ORDER BY abs(probability_change_24h) DESC
+                        LIMIT :batch
+                    )
+                """),
+                {"batch": GRADED_DELTA_BATCH},
+            )
+
+            # B. Recompute the per-market maximum over what survived A and A2.
             result = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET max_movement_24h = sub.max_mv
@@ -2557,6 +2632,7 @@ def update_max_movement(self):
             await session.commit()
             updated = result.rowcount
             expired_rows = expired.rowcount
+            graded_rows = graded.rowcount
             cleared_markets = cleared.rowcount
 
             # Reported, not swallowed: a warm that never ran must be visible in
@@ -2578,8 +2654,17 @@ def update_max_movement(self):
             return {
                 "updated": updated,
                 "expired": expired_rows,
+                "graded_retired": graded_rows,
                 "cleared_markets": cleared_markets,
-                "backlog_drained": expired_rows < STALE_DELTA_BATCH,
+                # Both backlogs have to be empty before the strip is honest, so
+                # `backlog_drained` reports the AND. Reporting only A's would go
+                # true while 1.87 M graded deltas were still standing — a green
+                # light for the exact state this statement exists to end.
+                "backlog_drained": (
+                    expired_rows < STALE_DELTA_BATCH
+                    and graded_rows < GRADED_DELTA_BATCH
+                ),
+                "graded_backlog_drained": graded_rows < GRADED_DELTA_BATCH,
                 "window_hours": MOVEMENT_WINDOW_HOURS,
                 "movers_warm": warm,
             }

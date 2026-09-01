@@ -44,7 +44,12 @@ import re
 
 import pytest
 
-from app.tasks import MOVEMENT_WINDOW_HOURS, STALE_DELTA_BATCH, update_max_movement
+from app.tasks import (
+    GRADED_DELTA_BATCH,
+    MOVEMENT_WINDOW_HOURS,
+    STALE_DELTA_BATCH,
+    update_max_movement,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +138,21 @@ def _phase_a(session: _RecordingSession) -> tuple[str, dict]:
 
 def _markets_statements(session: _RecordingSession) -> list[str]:
     return [s for s in _statements(session) if "UPDATE futures_markets" in s]
+
+
+def _phase_a2(session: _RecordingSession) -> tuple[str, dict]:
+    """The GRADED sweep: the second statement to touch futures_outcomes."""
+    hits = [(sql, params) for sql, params in session.calls
+            if "UPDATE futures_outcomes" in sql]
+    if len(hits) < 2:
+        raise AssertionError(
+            "only one statement updates futures_outcomes, so the GRADED sweep is "
+            "GONE. Without it a settled outcome keeps its frozen delta forever: "
+            "backfill_winners re-stamps `last_updated` on ~25 sites every 6 hours, "
+            "which makes the age sweep structurally unable to reach it. "
+            "Statements seen: " + repr(_statements(session))
+        )
+    return hits[1]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +353,7 @@ def test_all_three_statements_share_one_transaction(run_task) -> None:
 
 def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
     """A run that fills its batch means more are waiting; say so."""
-    result, _ = run_task([STALE_DELTA_BATCH, 7, 3])
+    result, _ = run_task([STALE_DELTA_BATCH, 11, 7, 3])
 
     assert result["expired"] == STALE_DELTA_BATCH
     assert result["backlog_drained"] is False, (
@@ -344,9 +364,10 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
 
 def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     """And the day it comes up short, the sweep has caught up."""
-    result, _ = run_task([12, 4, 2])
+    result, _ = run_task([12, 6, 4, 2])
 
     assert result["expired"] == 12
+    assert result["graded_retired"] == 6
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
         f"a short run did not report the backlog drained: {result}"
@@ -355,8 +376,180 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed."""
-    result, _ = run_task([5, 9, 1])
+    result, _ = run_task([5, 3, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
     assert result["window_hours"] == MOVEMENT_WINDOW_HOURS
+
+
+# ---------------------------------------------------------------------------
+# CERT-627 — a GRADED outcome is dead, and time cannot reach it
+#
+# The age sweep above gates on `last_updated`, which its own comment defines as
+# "has any writer touched this row". Grading writers touch it without polling a
+# price: `backfill_winners` stamps `last_updated = NOW()` at ~25 sites on a
+# 6-hourly beat, `clob_resolve` at one more. Every one of those leaves
+# `probability_change_24h` frozen at its last live value — so the deadest rows
+# in the table are exactly the ones the age sweep can never expire, and their
+# immunity is renewed twice a day.
+#
+# Measured on production 2026-08-31: of 2,186,901 non-null deltas, **1,870,447
+# (85.5%) sit on graded outcomes**, 134,277 of them claiming >= 10 points.
+# Simulating the post-age-sweep strip, 26 of the 120 strip-eligible open markets
+# were fully settled, the first at rank 30 ("CA-34 House winner?"), then a
+# settled IndyCar champion market and a run of FINISHED US Open matches at 49-60.
+# ---------------------------------------------------------------------------
+
+
+def test_a_graded_outcome_is_retired_by_its_own_statement(run_task) -> None:
+    """There is a second outcome sweep and it selects on resolution_source."""
+    sql, _ = _phase_a2(run_task()[1])
+
+    assert "probability_change_24h = NULL" in sql, (
+        f"the graded sweep does not clear the delta: {sql}"
+    )
+    assert "resolution_source IS NOT NULL" in sql, (
+        "the graded sweep does not select graded rows, so it is not the "
+        f"statement CERT-627 asked for: {sql}"
+    )
+
+
+def test_the_graded_sweep_does_not_gate_on_a_timestamp(run_task) -> None:
+    """The point of A2 is that AGE CANNOT REACH THESE ROWS.
+
+    A `last_updated` (or `price_changed_at`) predicate here would re-create the
+    exact hole it exists to close: a grading writer refreshes the stamp, the row
+    reads as fresh, and the frozen delta survives another day — every 6 hours,
+    forever. This is the assertion that fails if someone "harmonises" the two
+    sweeps into one.
+    """
+    sql, params = _phase_a2(run_task()[1])
+
+    assert "last_updated" not in sql, (
+        "the graded sweep gates on `last_updated` — but backfill_winners "
+        "refreshes exactly that stamp every 6 hours on the rows this statement "
+        f"targets, so gating on it makes the sweep a no-op: {sql}"
+    )
+    assert "price_changed_at" not in sql, (
+        f"the graded sweep gates on a timestamp; deadness is not an age: {sql}"
+    )
+    assert "window_hours" not in params, (
+        f"the graded sweep took a window; a settled market never un-settles: {params}"
+    )
+
+
+def test_the_graded_sweep_does_not_use_is_winner(run_task) -> None:
+    """`is_winner` is nullable with a server DEFAULT false — it is non-null on
+    every row in the table and carries no grading information whatsoever.
+
+    Positive control, run against production on 2026-08-31 alongside the census:
+    `count(*) FILTER (WHERE is_winner IS NULL)` over the delta-carrying rows
+    returned **0**. A sweep keyed on `is_winner IS NOT NULL` would therefore
+    match the ENTIRE table and wipe every live delta on the site.
+    """
+    sql, _ = _phase_a2(run_task()[1])
+
+    assert "is_winner" not in sql, (
+        "the graded sweep keys on `is_winner`, which is DEFAULT false and so is "
+        "never NULL — this predicate matches every row in futures_outcomes and "
+        f"would clear the movement column site-wide: {sql}"
+    )
+
+
+def test_the_graded_sweep_is_bounded_by_its_own_constant(
+    run_task, monkeypatch
+) -> None:
+    """Bounded, and by GRADED_DELTA_BATCH — not by the age sweep's constant.
+
+    Two backlogs of different sizes drain against different plans; tuning one
+    must not silently move the other.
+
+    ⚠️ The constant is MOVED before asserting, and that is the whole test.
+    `GRADED_DELTA_BATCH` and `STALE_DELTA_BATCH` are both 100_000 today, so
+    `params["batch"] == GRADED_DELTA_BATCH` passes identically when the
+    statement is wired to the WRONG constant — a mutation battery caught that
+    assertion surviving. Comparing against a value both arms share proves
+    nothing; only a value that distinguishes them does.
+    """
+    import app.tasks as tasks_mod
+
+    sentinel = STALE_DELTA_BATCH + 4242
+    assert sentinel != STALE_DELTA_BATCH
+    monkeypatch.setattr(tasks_mod, "GRADED_DELTA_BATCH", sentinel)
+
+    sql, params = _phase_a2(run_task()[1])
+
+    assert "LIMIT :batch" in sql, f"the graded sweep is unbounded: {sql}"
+    assert params.get("batch") == sentinel, (
+        "the graded sweep did not follow GRADED_DELTA_BATCH when it moved — it "
+        f"is wired to some other constant (got {params.get('batch')!r}, want "
+        f"{sentinel!r}; STALE_DELTA_BATCH is {STALE_DELTA_BATCH!r})"
+    )
+
+
+def test_the_graded_sweep_retires_the_biggest_liars_first(run_task) -> None:
+    """Magnitude-ordered, so the first run clears what a reader can SEE.
+
+    134,277 of the graded deltas claim >= 10 points; those are the only ones
+    that reach `/api/futures/movers`. Unordered or id-ordered, the strip stays
+    wrong for hours while the tail drains (gotcha #41).
+    """
+    sql, _ = _phase_a2(run_task()[1])
+
+    assert re.search(r"ORDER BY abs\(probability_change_24h\) DESC", sql), (
+        f"the graded sweep is not magnitude-ordered: {sql}"
+    )
+
+
+def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
+    """B recomputes over what survived; C clears what has nothing left.
+
+    If A2 landed after them the recompute would read rows A2 was about to
+    retire, and the market maximum would be a full run stale.
+    """
+    events = _statements(run_task()[1])
+    outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
+    market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
+
+    assert len(outcome_idx) == 2, (
+        f"expected both outcome sweeps, saw {len(outcome_idx)}: {events}"
+    )
+    assert max(outcome_idx) < min(market_idx), (
+        "a market statement ran before an outcome sweep, so it recomputed over "
+        f"rows that were about to be retired: {events}"
+    )
+
+
+def test_all_four_statements_share_one_transaction(run_task) -> None:
+    """A2 joins the existing transaction; it does not open a second one."""
+    events = run_task()[1].events
+
+    assert events.count("COMMIT") == 1, (
+        f"the graded sweep added a commit; got {events.count('COMMIT')}: {events}"
+    )
+    assert events[-1] == "COMMIT", f"a statement ran after the commit: {events}"
+
+
+def test_a_full_graded_batch_reports_the_backlog_as_undrained(run_task) -> None:
+    """`backlog_drained` is the AND of both sweeps.
+
+    Reporting only the age sweep's would go true while 1.87 M graded deltas were
+    still standing — a green light for the exact state A2 exists to end.
+    """
+    result, _ = run_task([3, GRADED_DELTA_BATCH, 7, 1])
+
+    assert result["graded_retired"] == GRADED_DELTA_BATCH
+    assert result["graded_backlog_drained"] is False
+    assert result["backlog_drained"] is False, (
+        "the age sweep came up short so the run reported the whole backlog "
+        f"drained, while the graded sweep filled its batch: {result}"
+    )
+
+
+def test_both_backlogs_empty_reports_drained(run_task) -> None:
+    """And the day both come up short, the column is honest."""
+    result, _ = run_task([2, 3, 4, 5])
+
+    assert result["backlog_drained"] is True, f"{result}"
+    assert result["graded_backlog_drained"] is True, f"{result}"

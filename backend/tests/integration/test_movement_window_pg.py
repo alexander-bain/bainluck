@@ -68,7 +68,11 @@ def _engine():
 async def _reset_and_seed(rows):
     """Rebuild the schema and seed `rows`, returning ids by label.
 
-    Each row is (label, market_status, hours_since_write, delta, seed_max).
+    Each row is (label, market_status, hours_since_write, delta, seed_max) and
+    may carry a sixth element, `resolution_source`, defaulting to None — the
+    marker a grading writer leaves and the predicate the GRADED sweep selects on
+    (CERT-627). Five-tuples keep their original meaning exactly.
+
     A market is created per label so each case is independent.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -85,7 +89,9 @@ async def _reset_and_seed(rows):
     maker = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(timezone.utc)
     async with maker() as session:
-        for label, status, hours, delta, seed_max in rows:
+        for row in rows:
+            label, status, hours, delta, seed_max = row[:5]
+            resolution_source = row[5] if len(row) > 5 else None
             market = FuturesMarket(
                 source="kalshi",
                 external_id=f"KXWINDOW-{label}",
@@ -107,6 +113,7 @@ async def _reset_and_seed(rows):
                 current_probability=0.5,
                 probability_change_24h=delta,
                 last_updated=now - timedelta(hours=hours),
+                resolution_source=resolution_source,
             )
             session.add(outcome)
             await session.flush()
@@ -117,7 +124,7 @@ async def _reset_and_seed(rows):
     return ids
 
 
-def _run_task(batch: int | None = None):
+def _run_task(batch: int | None = None, graded_batch: int | None = None):
     """Drive the REAL `update_max_movement` against this database."""
     import app.tasks.base as base_mod
     import app.tasks.futures_movers_warm as warm_mod
@@ -143,16 +150,20 @@ def _run_task(batch: int | None = None):
     import app.tasks as tasks_mod
 
     real_batch = tasks_mod.STALE_DELTA_BATCH
+    real_graded_batch = tasks_mod.GRADED_DELTA_BATCH
     base_mod.get_task_session = lambda: _Ctx()
     warm_mod.warm_futures_movers = _no_warm
     if batch is not None:
         tasks_mod.STALE_DELTA_BATCH = batch
+    if graded_batch is not None:
+        tasks_mod.GRADED_DELTA_BATCH = graded_batch
     try:
         return update_max_movement.run()
     finally:
         base_mod.get_task_session = real_session
         warm_mod.warm_futures_movers = real_warm
         tasks_mod.STALE_DELTA_BATCH = real_batch
+        tasks_mod.GRADED_DELTA_BATCH = real_graded_batch
 
 
 async def _read(ids):
@@ -437,4 +448,175 @@ def test_a_run_with_nothing_to_do_reports_a_drained_backlog() -> None:
     assert result["backlog_drained"] is True, result
     assert after["live"] == (pytest.approx(0.22), pytest.approx(0.22)), (
         f"an idle run moved a healthy row: {after}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CERT-627 — the graded sweep, on real rows
+#
+# The age sweep discriminates by stamp. Grading writers refresh that stamp
+# without polling a price (`backfill_winners` at ~25 sites every 6 hours,
+# `clob_resolve` at one), so a settled outcome is BOTH dead and permanently
+# "fresh". These cases are the ones a recording double cannot answer: they need
+# `now() - interval` evaluated against a row a grading writer just stamped.
+# ---------------------------------------------------------------------------
+
+
+def test_a_graded_outcome_is_retired_even_with_a_brand_new_stamp() -> None:
+    """The central CERT-627 claim, on rows.
+
+    `graded` was written one minute ago — the age sweep cannot touch it and
+    never will, because backfill_winners re-stamps it every 6 hours. `live` is
+    equally fresh and ungraded, and must survive: this statement discriminates
+    on deadness, not on recency.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("graded", "open", 0, 0.44, 0.44, "api_settlement"),
+                ("live", "open", 0, 0.31, 0.31, None),
+            ]
+        )
+    )
+    _run_task()
+    out = asyncio.run(_read(ids))
+
+    assert out["graded"] == (None, None), (
+        "a SETTLED outcome stamped one minute ago kept its frozen delta and its "
+        "market kept ranking on /api/futures/movers. This is CERT-627: the age "
+        f"sweep cannot reach a row a grading writer keeps touching. got={out['graded']}"
+    )
+    assert out["live"] == (0.31, 0.31), (
+        "the graded sweep took a LIVE outcome with it — deadness is "
+        f"resolution_source, not recency. got={out['live']}"
+    )
+
+
+def test_a_graded_leg_stops_dominating_a_market_that_still_trades() -> None:
+    """The mixed market: one settled leg, one live leg, one market maximum.
+
+    This is the shape that puts finished US Open matches on the strip. The
+    market's published maximum must come from the leg that still moves.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    ids = asyncio.run(
+        _reset_and_seed([("mixed", "open", 0, 0.88, 0.88, "api_settlement")])
+    )
+    market_id, _ = ids["mixed"]
+
+    async def _add_live_leg():
+        from app.models.models import FuturesOutcome
+
+        engine = _engine()
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as session:
+            session.add(
+                FuturesOutcome(
+                    market_id=market_id,
+                    external_id="OUT-mixed-live",
+                    name="still trading",
+                    is_winner=False,
+                    current_probability=0.5,
+                    probability_change_24h=0.12,
+                    last_updated=datetime.now(timezone.utc),
+                    resolution_source=None,
+                )
+            )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_add_live_leg())
+    _run_task()
+
+    async def _max():
+        engine = _engine()
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as session:
+            v = (
+                await session.execute(
+                    text("SELECT max_movement_24h FROM futures_markets WHERE id = :i"),
+                    {"i": market_id},
+                )
+            ).scalar()
+        await engine.dispose()
+        return None if v is None else float(v)
+
+    assert abs(asyncio.run(_max()) - 0.12) < 1e-9, (
+        "the settled leg's 88-point ghost still sets the market's published "
+        "24-hour movement while a live leg moved 12. That is the settled US "
+        "Open match on the movers strip."
+    )
+
+
+def test_the_superset_identity_survives_the_graded_sweep() -> None:
+    """A2 must leave `max_movement_24h == MAX(ABS(change))` exactly true.
+
+    LAT-P108 refused the read-side freshness filter precisely because it breaks
+    this identity, which `/api/futures/movers`' pool bound rests on. A statement
+    that clears outcomes without letting B and C recompute would break it the
+    same way.
+    """
+    asyncio.run(
+        _reset_and_seed(
+            [
+                ("all-graded", "open", 0, 0.70, 0.70, "game_score"),
+                ("part-graded", "open", 0, 0.60, 0.60, "api_settlement"),
+                ("live", "open", 1, 0.20, 0.20, None),
+                ("stale", "open", 96, 0.90, 0.90, None),
+            ]
+        )
+    )
+    _run_task()
+
+    violations = asyncio.run(_identity_holds())
+    assert violations == [], (
+        "the graded sweep broke the superset identity /api/futures/movers "
+        "depends on: " + "; ".join(violations)
+    )
+
+
+def test_a_market_whose_only_leg_was_graded_goes_null() -> None:
+    """Statement C's reason, for the graded population.
+
+    B drives off `GROUP BY market_id` over non-null deltas, so a market whose
+    last delta A2 just retired VANISHES from the aggregate and would otherwise
+    keep its old maximum forever.
+    """
+    ids = asyncio.run(
+        _reset_and_seed([("settled-only", "open", 0, 0.55, 0.55, "api_settlement")])
+    )
+    _run_task()
+    out = asyncio.run(_read(ids))
+
+    assert out["settled-only"] == (None, None), (
+        "a market whose every leg is settled kept its stale maximum — B cannot "
+        f"lower a market it no longer sees. got={out['settled-only']}"
+    )
+
+
+def test_the_graded_sweep_is_bounded_and_takes_the_biggest_first() -> None:
+    """Bounded per run, magnitude-ordered, so the visible strip converges first."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("big", "open", 0, 0.80, 0.80, "api_settlement"),
+                ("small", "open", 0, 0.05, 0.05, "api_settlement"),
+            ]
+        )
+    )
+    result = _run_task(graded_batch=1)
+    out = asyncio.run(_read(ids))
+
+    assert result["graded_retired"] == 1, (
+        f"the graded sweep ignored its batch bound: {result}"
+    )
+    assert out["big"] == (None, None), (
+        "a bounded run retired the SMALL graded delta and left the 80-point one "
+        f"on the strip — the ordering is wrong. got={out}"
+    )
+    assert out["small"][0] == 0.05, f"expected the tail to wait its turn: {out}"
+    assert result["graded_backlog_drained"] is False, (
+        f"a full graded batch reported the backlog drained: {result}"
     )
