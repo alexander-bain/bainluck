@@ -760,11 +760,19 @@ export function computeSharedChartDomain(
   // can't collide across a day boundary and render out of order (L2-163 Item 2c;
   // the "T9 left of T1" collision). Scheduled/pregame is left uncapped — there
   // the multi-hour odds-drift IS the story.
+  //
+  // The cap is anchored on commence_time, which is exactly the field that is
+  // untrustworthy when a start was never reported. Applying it blind can move
+  // the window PAST every point the event has and leave "All" as empty as
+  // "Since Start" was. Only cap when something survives the cap.
   const isInGame = isCompleted || eventStatus === "live";
   let allModeStart = allStart;
   if (isInGame && gameStart && !isNaN(gameStart.getTime())) {
     const twoHoursBefore = new Date(gameStart.getTime() - 2 * 60 * 60 * 1000);
-    if (allModeStart < twoHoursBefore) {
+    if (
+      allModeStart < twoHoursBefore &&
+      timestamps.some((t) => t >= twoHoursBefore.getTime())
+    ) {
       allModeStart = twoHoursBefore;
     }
   }
@@ -821,6 +829,90 @@ export function computeSharedChartDomain(
   }
 
   return { start: start.toISOString(), end: end.toISOString(), ticks };
+}
+
+// ---------------------------------------------------------------------------
+// Shared chart time range
+// ---------------------------------------------------------------------------
+
+/**
+ * The largest number of post-`commenceTime` points held by any ONE chart
+ * series (sportsbook history, score history, ESPN history, or a single
+ * win-prob source).
+ *
+ * Per-series, not pooled: the charts draw one `<Line>` per series and a line
+ * needs two points of its OWN. Pooling would let four series with one point
+ * each read as four points and re-select a range that draws nothing.
+ *
+ * Why the page needs this at all. Both charts already compute a
+ * `hasPostStartData` and refuse "Since Start" when it would be empty —
+ * OddsChart even disables the toggle. But the event page passes
+ * `externalTimeRange`, and `timeRange = externalTimeRange ?? internalTimeRange`
+ * means the parent's value wins outright, so each child's own fallback is dead
+ * code on this page. Pinned to "live" by the parent, an event whose
+ * `commence_time` is a stand-in rather than a reported first serve renders BOTH
+ * charts as an empty grid.
+ *
+ * The exhibit — US Open Jodar v Kokkinakis (15293847), measured live on
+ * production 2026-09-01 22:18Z: `commence_time` 16:00:00Z, an exact top of the
+ * hour written by the Odds API's session-start default, while the last
+ * sportsbook quote is 15:44Z — sixteen minutes BEFORE the "start". Zero
+ * post-start odds points, one post-start score point, one post-start Kalshi
+ * point. Win Probability rendered a bare grid with a single dot at the right
+ * edge; Score Differential rendered nothing at all; and "Since Start" showed as
+ * the selected pill on a button OddsChart had itself disabled.
+ *
+ * Note the counting rule is what makes that exhibit come out right. A
+ * has-any test passes on it — one score point IS post-start — and the chart is
+ * still blank, because one point with `dot={false}` draws no segment.
+ */
+export function maxPostStartSeriesPoints(
+  historyData: EventHistoryResponse | null | undefined,
+  commenceTime: string | undefined,
+): number {
+  if (!historyData || !commenceTime) return 0;
+  const cutoff = new Date(commenceTime).getTime();
+  if (isNaN(cutoff)) return 0;
+
+  const countAtOrAfter = (
+    points: { timestamp?: string }[] | null | undefined,
+  ): number => {
+    let n = 0;
+    for (const p of points ?? []) {
+      if (!p?.timestamp) continue;
+      const t = new Date(p.timestamp).getTime();
+      if (!isNaN(t) && t >= cutoff) n += 1;
+    }
+    return n;
+  };
+
+  let most = 0;
+  most = Math.max(most, countAtOrAfter(historyData.history));
+  most = Math.max(most, countAtOrAfter(historyData.score_history));
+  most = Math.max(most, countAtOrAfter(historyData.espn_history));
+  for (const pts of Object.values(historyData.win_prob_history ?? {})) {
+    most = Math.max(most, countAtOrAfter(pts));
+  }
+  return most;
+}
+
+/** Two points make a line; one point with `dot={false}` makes an empty grid. */
+export const MIN_POINTS_TO_DRAW_A_LINE = 2;
+
+/**
+ * The shared "All" / "Since Start" range the page should hold before the
+ * reader has picked one. "Since Start" only when some series can actually
+ * draw inside it — otherwise "All", which is what each chart would have
+ * chosen on its own.
+ */
+export function defaultChartTimeRange(
+  historyData: EventHistoryResponse | null | undefined,
+  commenceTime: string | undefined,
+): "all" | "live" {
+  return maxPostStartSeriesPoints(historyData, commenceTime) >=
+    MIN_POINTS_TO_DRAW_A_LINE
+    ? "live"
+    : "all";
 }
 
 // ---------------------------------------------------------------------------
