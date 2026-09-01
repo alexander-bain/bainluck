@@ -759,6 +759,15 @@ class FuturesMarket(Base):
     image_url: Mapped[Optional[str]] = mapped_column(
         String(500)
     )  # Unsplash/Pexels photo URL
+    # True pixel size of the raster image_url returns. NOT derivable from the
+    # URL: Pexels renders through imgix, so "?h=350" is 350 tall and whatever
+    # width the aspect gives (measured live: 450-586px). Written beside
+    # image_url and cleared whenever image_url changes — a dimension pair that
+    # outlives its photo describes the wrong image. NULL = not measured yet;
+    # consumers must fall back to their pre-existing conservative behaviour.
+    # Derivation + safety direction: app/utils/image_dimensions.py.
+    image_width: Mapped[Optional[int]] = mapped_column(Integer)
+    image_height: Mapped[Optional[int]] = mapped_column(Integer)
     hook_description: Mapped[Optional[str]] = mapped_column(
         String(500)
     )  # LLM-generated context blurb

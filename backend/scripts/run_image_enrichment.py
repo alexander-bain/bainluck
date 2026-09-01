@@ -7,6 +7,7 @@ logging.basicConfig(level=logging.INFO)
 from sqlalchemy import select, update, or_
 from app.tasks.base import get_task_session
 from app.tasks.enrich_markets import _fetch_pexels_image, _extract_image_keywords
+from app.utils.image_dimensions import delivered_dimensions
 
 async def enrich_all():
     from app.models.models import FuturesMarket, FuturesOutcome
@@ -38,12 +39,19 @@ async def enrich_all():
             if not market.image_url:
                 query = _extract_image_keywords(market.name, market.llm_sport_category)
                 if query.strip():
-                    url = await _fetch_pexels_image(query)
-                    if url:
+                    picked = await _fetch_pexels_image(query)
+                    if picked:
+                        url, source_w, source_h = picked
+                        delivered = delivered_dimensions(url, source_w, source_h)
+                        width, height = delivered if delivered else (None, None)
                         await session.execute(
                             update(FuturesMarket)
                             .where(FuturesMarket.id == market.id)
-                            .values(image_url=url)
+                            .values(
+                                image_url=url,
+                                image_width=width,
+                                image_height=height,
+                            )
                         )
                         stats["images"] += 1
 
