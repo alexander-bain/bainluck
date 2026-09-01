@@ -12,7 +12,8 @@ import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
+import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
+import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
@@ -537,6 +538,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         <Link href={detailHref} onClick={onDetailClick} className="block group">
           <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
         </Link>
+
+        {/* UX-P248 / Alex D-D — why this card is in front of THIS reader. Below
+            the question, not over the hero photo: the hero already carries the
+            category pill, the probability and the movement delta. */}
+        <ForYouChip cue={forYouCue(item)} />
 
         {contextSnippet && (
           <ExpandableContextText

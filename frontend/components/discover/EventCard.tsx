@@ -7,7 +7,8 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext } from "./utils";
-import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars } from "./shared";
+import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
+import { forYouCue } from "@/lib/discover/forYouCue";
 import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -132,6 +133,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         <Link href={`/events/${data.id}`} onClick={onDetailClick} className="block group">
           <h3 className="font-bold text-lg leading-tight mb-1 group-hover:text-accent-brand transition-colors">{data.away_team} {isDone ? "" : "@"} {data.home_team}</h3>
         </Link>
+
+        {/* UX-P248 / Alex D-D — why this card is in front of THIS reader. Sits
+            under the matchup rather than over the crest strip: the strip already
+            carries the category pill, the LIVE chip and both scores. */}
+        <ForYouChip cue={forYouCue(item)} />
 
         {/* Live/pregame win-probability strip — a settled game drops it for the
             winner treatment below (L2-112 Item 2: FINAL cards don't carry live chips). */}

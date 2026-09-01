@@ -6,6 +6,7 @@ import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import { PinButton } from "@/components/PinButton";
 import type { ActionBarProps } from "./types";
+import type { ForYouCue } from "@/lib/discover/forYouCue";
 import {
   CONFIDENCE_TIER_BARS,
   CONFIDENCE_TIER_LABEL,
@@ -150,6 +151,45 @@ export function TrendBadge() {
     <div className="absolute top-3 right-12 z-10 flex items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">
       🔥 Trending
     </div>
+  );
+}
+
+// ── "For you" cue (UX-P248 / Alex D-D, 2026-09-01) ──
+
+/**
+ * Says why a card is in front of THIS reader.
+ *
+ * The decision is `lib/discover/forYouCue.ts` and it is deliberately not
+ * inline: a cue driven by the payload's `personalized` flag would label
+ * DOWNRANKED cards, because that flag counts penalties as personalization.
+ *
+ * ⚠️ NOT AN ABSOLUTE BADGE. `TrendBadge` and `DismissBtn` already own the
+ * card's top-right corner and the category pill owns top-left; a fourth
+ * floating chip is how a hero photo becomes unreadable. This is an inline chip
+ * for the card's meta row, so it takes layout space and can wrap.
+ *
+ * Deliberately quiet — muted text on a hairline, not an accent fill. It is a
+ * provenance note, not a status: `LIVE` and `FINAL` earn colour, "one of your
+ * teams" does not (design-system.md, semantic accents).
+ */
+export function ForYouChip({ cue, tone = "light" }: { cue: ForYouCue | null; tone?: "light" | "onImage" }) {
+  if (!cue) return null;
+  const skin =
+    tone === "onImage"
+      ? "text-white/90 bg-black/30 border-white/20 backdrop-blur-sm"
+      : "text-text-muted bg-surface-deep border-surface-border";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.04em] px-1.5 py-0.5 rounded border ${skin}`}
+      data-testid="for-you-cue"
+      data-for-you-reason={cue.reasonId}
+      // The visible text is the class; the title says what the badge IS, so a
+      // reader who wonders why the feed is showing them this gets the answer
+      // without a settings page.
+      title={`In your feed because: ${cue.label.toLowerCase()}`}
+    >
+      {cue.label}
+    </span>
   );
 }
 
