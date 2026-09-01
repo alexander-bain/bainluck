@@ -2565,10 +2565,16 @@ def update_max_movement(self):
             #     cluster of FINISHED US Open matches at ranks 49-60.
             #
             #     `resolution_source IS NOT NULL` is the predicate, NOT
-            #     `is_winner`: `is_winner` is nullable with a server DEFAULT
-            #     false, so it is non-null on every row in the table and carries
-            #     no grading information at all. Positive control, same query:
-            #     `count(*) FILTER (WHERE is_winner IS NULL)` = 0.
+            #     `is_winner`. `is_winner` IS nullable — the model and
+            #     production agree on that (see
+            #     `tests/test_model_nullability_matches_production.py`) — but it
+            #     carries a server DEFAULT false, so an ungraded row almost
+            #     always STORES False rather than NULL, and the column therefore
+            #     carries next to no grading information. Measured on production
+            #     2026-08-31: `count(*) FILTER (WHERE is_winner IS NULL)` =
+            #     2,536 out of 3,893,126 rows, so testing for NULL would find
+            #     0.07% of the ungraded population. That is why deadness is read
+            #     off `resolution_source` and never off `is_winner`.
             #
             #     Clearing is safe against regrades and self-healing: if an
             #     outcome is ever re-opened, the next poll writes a fresh delta.
