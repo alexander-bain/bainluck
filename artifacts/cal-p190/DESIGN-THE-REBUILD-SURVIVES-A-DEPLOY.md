@@ -345,3 +345,33 @@ freeze-window instrument, not a permanent guard.
    other than a deliberate ruling.
 4. 🔴 **The next purely-additive calibration ship after layer 3 will NOT reset `units_banked`.** That
    is the whole claim in one observable, and it is the one to grade.
+
+---
+
+## 7. THE BEAT LOG THIS SESSION BANKED (directive 920 ITEM 3)
+
+| beat (UTC) | banked | attempts / completed / cancelled | worst completion | fence | binding term | publish gate |
+|---|--:|---|--:|--:|---|---|
+| `15:33:41` | 35 → **40** | 7 / 5 / 2 | 101,686 | **376,746** | beat-local (`101,686 × 4`) | **not evaluated** — `served_units 0`, cancelled before the gate |
+| `16:32:11` | 40 → **45** | 7 / 5 / 2 | 68,314 | **353,754** | **seed** (`255,836 × 1.5`) | **not evaluated** — same |
+
+🟢 **Both confirm CAL-P189's fence model; the second confirms it in a regime P189 never observed.**
+At `15:33` the model predicted 376,744 and the ledger read **376,746 — a 2 ms miss**, with the two
+cancellations at **+76** and **+105** over the fence. At `16:32` the beat's worst completion (68,314)
+fell **below the 95,938 crossover**, the beat-local term dropped under the seed, and the fence
+**returned to the 353,754 seed floor** — the first observation of it moving *down into* the floor
+rather than up off it.
+
+🔴 **Cumulative: nine cancellations, four fence levels spanning 66,420 ms, every death within 531 ms
+of its own bound.** P189's conclusion is now confirmed rather than repeated: these units consume the
+entire fence at every width tried, so **widening the unit bound cannot bank them.**
+
+🆕 **The ring-entry-to-`unit_ms_worst` offset was 120 ms and 133 ms. P189's measured band was
+56–130; it widens to 56–133.** Still the commit + cursor write, still structural, still bounded.
+
+**Neither beat evaluated the publish gate** (`served_units 0` both times) — the beat cancels before
+the gate, which is the `served_at_absent` mechanism CAL-P186/P188 already closed. **Nothing new, and
+nothing to re-derive.**
+
+**ETA `09-02T08:30–09:30Z`, confirmed an eighth time**: 45/128 at `16:32Z`, +5/beat dead steady
+across eight readings, 122–127 completion band ⇒ ~16 beats.
