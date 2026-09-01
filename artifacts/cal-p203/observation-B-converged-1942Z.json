@@ -1,0 +1,22 @@
+{
+  "_what": "The CONVERGED state. Captured live 2026-09-01 19:42:12Z, from artifacts/cal-p203/live-two-rows-1941Z.json.",
+  "_why": "The ledger finally wrote at 19:38:34Z and published EXACTLY the generation and the bank that the staged cursor had been showing since 19:24:13Z -- 14m21s earlier. This is the arm that stops the instrument from crying wolf: once the ledger catches up, the instrument must say CONVERGED.",
+  "observed_at": "2026-09-01T19:42:12.052539+00:00",
+  "phase_ledger": {
+    "identity": "calibration:main:phase_ledger",
+    "updated_at": "2026-09-01T19:38:34.407059+00:00",
+    "generation": 1788290163654,
+    "owner": "b9f90add-ac6d-4932-ad68-a0bd34f57653:69",
+    "terminal": "cancelled",
+    "units_banked": 60
+  },
+  "staged_futures": {
+    "identity": "calibration:main:staged_futures",
+    "updated_at": "2026-09-01T19:24:13.320581+00:00",
+    "generation": 1788290163654,
+    "owner": "b9f90add-ac6d-4932-ad68-a0bd34f57653:69",
+    "terminal": "partial",
+    "lease_expires_at": 1788292513.2484334,
+    "committed_units_len": 60
+  }
+}

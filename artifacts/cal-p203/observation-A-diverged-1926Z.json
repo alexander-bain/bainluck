@@ -1,0 +1,27 @@
+{
+  "_what": "The DIVERGED state. Captured live 2026-09-01 19:26:27Z-19:34:12Z (11 samples).",
+  "_why": "This is the state in which CAL-P202 (19:20Z) read the phase ledger, found it unmoved since 18:24:55Z, and recorded that this lane could not tell whether Alex's 18:51Z relaunch had happened. It could: the staged cursor already named a NEWER generation at a HIGHER bank.",
+  "observed_at": "2026-09-01T19:26:27+00:00",
+  "phase_ledger": {
+    "identity": "calibration:main:phase_ledger",
+    "updated_at": "2026-09-01T18:24:55.805978+00:00",
+    "generation": 1788286500318,
+    "owner": "e1c6c0b6-e4a4-4d49-b782-7962e117aa8b:11",
+    "terminal": "cancelled",
+    "units_banked": 55
+  },
+  "staged_futures": {
+    "identity": "calibration:main:staged_futures",
+    "updated_at": "2026-09-01T19:24:13.320581+00:00",
+    "generation": 1788290163654,
+    "owner": "b9f90add-ac6d-4932-ad68-a0bd34f57653:69",
+    "terminal": "partial",
+    "lease_expires_at": 1788292513.2484334,
+    "committed_units_len": 60
+  },
+  "_samples_committed_units_flat_at_60": [
+    "19:28:11", "19:29:51", "19:30:30", "19:31:26", "19:32:21",
+    "19:33:16", "19:34:12", "19:36:07", "19:37:08", "19:38:08",
+    "19:39:08", "19:40:09"
+  ]
+}
