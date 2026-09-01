@@ -1297,6 +1297,7 @@ async def _transition_event_statuses_impl() -> dict:
     """
     from app.tasks.base import get_task_session
     from app.tasks.config import SPORT_MAX_DURATIONS
+    from app.utils.event_completion import commence_time_is_a_reported_start
 
     stats = {"scheduled_to_live": 0, "live_to_closed": 0}
 
@@ -1316,7 +1317,25 @@ async def _transition_event_statuses_impl() -> dict:
         )
         started_events = started_result.scalars().all()
 
+        # q076: A STAND-IN IS NOT A START, SO IT DOES NOT START THE CLOCK.
+        #
+        # This promotion is the first domino. Everything downstream measures
+        # `hours_since_start` from `commence_time` — this function's own
+        # live→closed arm below, and `odds_polling.detect_and_close_stale_events`
+        # — so a row promoted off a time nobody reported is settled off one too,
+        # at the sport's maximum duration, with no score.
+        #
+        # `commence_time_is_a_reported_start` reads the writer's own provenance
+        # stamp, never the hour or the clustering (q066b: a Saturday 3pm card
+        # genuinely is ten simultaneous kickoffs). Measured cost of declining:
+        # zero real results — all 705 rows this provenance has ever had closed
+        # are unscored. See the predicate for the full census.
+        stats["held_derived_start"] = 0
+
         for event in started_events:
+            if not commence_time_is_a_reported_start(event.commence_time_source):
+                stats["held_derived_start"] += 1
+                continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
 
@@ -1473,15 +1492,22 @@ async def _transition_event_statuses_impl() -> dict:
                 event.away_score = None
                 stats["unsettled_future_commence"] += 1
 
+        # `held_derived_start` is in the trigger and in the message: a guard that
+        # declines silently reads as "there was nothing to do", and this one
+        # holds ~40 rows a night on its own. Same reason `detect_and_close_stale_
+        # events` logs its three held_* counters beside its closed count.
         if (stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0
                 or stats["repaired_bogus_completed"] > 0
-                or stats["unsettled_future_commence"] > 0):
+                or stats["unsettled_future_commence"] > 0
+                or stats["held_derived_start"] > 0):
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→closed, "
-                "%d repaired, %d un-settled-future-commence (pm_resolved=%d)",
+                "%d repaired, %d un-settled-future-commence, "
+                "%d held (derived start) (pm_resolved=%d)",
                 stats["scheduled_to_live"], stats["live_to_closed"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
+                stats["held_derived_start"],
                 stats.get("pm_resolved", 0),
             )
 
