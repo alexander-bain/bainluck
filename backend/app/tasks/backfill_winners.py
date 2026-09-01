@@ -4827,18 +4827,46 @@ async def _backfill_from_current_probability():
                         last_updated = NOW()
                     FROM contaminated c
                     WHERE fo.market_id = c.market_id
-                      AND COALESCE(fo.resolution_source, '') IN
-                          """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
-                    RETURNING fo.market_id
+                      AND (
+                          -- ARM A — THE LEG ITSELF, UNCONDITIONALLY, whatever
+                          -- wrote it. Repairs CERT-640: gating this on
+                          -- OVERWRITABLE left 6 measured rows crowned
+                          -- (`clob_authoritative` 2, `api_settlement` 1,
+                          -- NULL 3 — none of them overwritable), so the exact
+                          -- user-visible "No" winners survived the fix meant to
+                          -- remove them.
+                          --
+                          -- The principle the first cut got wrong: OVERWRITABLE
+                          -- protects *legitimate grades*, and a duplicate
+                          -- condition leg's grade is NEVER legitimate. It is the
+                          -- negation of a sibling candidate, not a candidate —
+                          -- no source's authority can make it one. An
+                          -- authoritative writer that crowned it was itself
+                          -- misled by the unscoped `external_id` write this
+                          -- queue fixes upstream.
+                          """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
+
+                          -- ARM B — its SIBLINGS, only where the grade is
+                          -- price-derived or a guess. A real authoritative grade
+                          -- (leaderboard / game_score / datagolf / a genuine
+                          -- settlement on a real candidate) survives untouched.
+                          OR COALESCE(fo.resolution_source, '') IN
+                             """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
+                      )
+                    RETURNING fo.market_id, """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
                 """))
             _repaired = repair.all()
             stats["dup_leg_ungraded"] = len(_repaired)
             stats["dup_leg_markets"] = len({r[0] for r in _repaired})
+            # Split so a run that clears only siblings cannot report the same as
+            # one that actually un-crowned the legs — the legs ARE the ship.
+            stats["dup_leg_crowns_cleared"] = sum(1 for r in _repaired if r[1])
             if _repaired:
                 logger.info(
-                    "Q487 Pass 0: un-graded %d rows across %d duplicate-leg "
-                    "contaminated markets; Pass 1 re-grades them now",
-                    stats["dup_leg_ungraded"], stats["dup_leg_markets"],
+                    "Q487 Pass 0: un-graded %d rows (%d of them duplicate legs) "
+                    "across %d contaminated markets; Pass 1 re-grades now",
+                    stats["dup_leg_ungraded"], stats["dup_leg_crowns_cleared"],
+                    stats["dup_leg_markets"],
                 )
             await session.commit()
 

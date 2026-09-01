@@ -347,6 +347,15 @@ def test_the_predicate_requires_both_halves():
 # ship-level finding: the forward filters alone change nothing a user sees.
 
 
+def _repair_sql() -> str:
+    """Just the Pass 0 statement, so assertions cannot be met by Pass 1's text."""
+    src = _prob_backfill_source()
+    start = src.find("WITH contaminated AS")
+    end = src.find("WITH cleanly_resolved AS")
+    assert start != -1 and end != -1 and start < end, "Pass 0 not found"
+    return src[start:end]
+
+
 def _prob_backfill_source() -> str:
     import inspect
 
@@ -391,20 +400,74 @@ def test_the_repair_ungrades_and_never_flips_to_false():
 
 
 def test_the_repair_selects_legs_and_spares_authoritative_grades():
-    """Positive form to FIND them; overwritable-only so real grades survive."""
-    src = _prob_backfill_source()
-    start = src.find("WITH contaminated AS")
-    end = src.find("WITH cleanly_resolved AS")
-    repair = src[start:end]
+    """Positive form to FIND them; overwritable-only for SIBLINGS."""
+    repair = _repair_sql()
     assert "IS_DUPLICATE_CONDITION_LEG_SQL" in repair, (
         "the repair must select duplicate legs with the POSITIVE form; the "
         "NOT(...) keep-form would un-grade every market except the broken ones"
     )
     assert "OVERWRITABLE_WINNER_SOURCES_SQL" in repair, (
-        "clearing rows outside the overwritable set would destroy authoritative "
-        "leaderboard / game_score / datagolf grades on the same market"
+        "clearing SIBLING rows outside the overwritable set would destroy "
+        "authoritative leaderboard / game_score / datagolf grades"
     )
     assert "fm.source = 'polymarket'" in repair
+
+
+def test_the_leg_is_cleared_whatever_source_crowned_it():
+    """🔴 CERT-640's finding, encoded so it cannot come back.
+
+    Gating the leg's own clear on OVERWRITABLE left SIX measured rows crowned —
+    `clob_authoritative` 2, `api_settlement` 1, NULL 3, none of them in the
+    overwritable set — so the exact user-visible "No" winners survived the fix
+    written to remove them.
+
+    OVERWRITABLE protects *legitimate grades*. A duplicate condition leg's grade
+    is never legitimate: it is the negation of a sibling candidate, not a
+    candidate, and no source's authority makes it one. So the leg arm must be
+    UNGATED, and the sibling arm must remain gated. Two arms, OR'd — asserted
+    structurally, because a single ANDed predicate is exactly the bug.
+    """
+    repair = _repair_sql()
+    where = repair[repair.find("WHERE fo.market_id = c.market_id"):]
+    leg_at = where.find("IS_DUPLICATE_CONDITION_LEG_SQL")
+    overwritable_at = where.find("OVERWRITABLE_WINNER_SOURCES_SQL")
+    assert leg_at != -1, "the leg arm is gone — CERT-640 regression"
+    assert overwritable_at != -1, "the sibling arm is gone"
+    assert leg_at < overwritable_at, (
+        "the leg arm must come first and stand alone; if the source gate "
+        "precedes it the leg is being filtered by source again"
+    )
+    between = where[leg_at:overwritable_at]
+    assert " OR " in between or between.strip().endswith("OR"), (
+        "the two arms must be OR'd, not AND'd. AND is CERT-640's exact defect: "
+        "it re-gates the leg on the source that crowned it, and the 6 "
+        "authoritative/NULL-source crowns survive."
+    )
+    assert "AND COALESCE(fo.resolution_source" not in between, (
+        "the leg arm must not be conjoined with a source filter"
+    )
+
+
+def test_the_run_reports_legs_cleared_separately_from_siblings():
+    """A run that clears only siblings must not read like one that un-crowned.
+
+    The legs ARE the ship; folding both counts into one number is how a
+    zero-yield repair reads as a success (gotcha #53).
+    """
+    src = _prob_backfill_source()
+    # 🔴 NOT a containment check on the name — the logger line mentions it too,
+    # and a mutation that deleted the ASSIGNMENT passed a bare `in src`. Assert
+    # the assignment, and that it is derived from the per-row leg flag rather
+    # than aliased to the undifferentiated total.
+    assert re.search(
+        r'stats\["dup_leg_crowns_cleared"\]\s*=\s*sum\(', src
+    ), "the split count must be ASSIGNED, not merely mentioned in a log line"
+    assert re.search(
+        r'stats\["dup_leg_crowns_cleared"\]\s*=\s*sum\([^)]*r\[1\]', src
+    ), (
+        "it must be derived from the RETURNING leg flag; aliasing it to "
+        "len(_repaired) makes a sibling-only run read as an un-crowning"
+    )
 
 
 def test_the_two_sql_forms_cannot_drift():
