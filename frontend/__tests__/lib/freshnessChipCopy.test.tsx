@@ -143,23 +143,43 @@ describe("UX-P251 — the pure function is what the component PRINTS", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "");
 
-    const returnIdx = src.indexOf("return (");
-    if (returnIdx === -1) {
-      throw new Error("FreshnessChip no longer has a `return (` JSX block — re-anchor this guard.");
+    // ⚠️ ANCHOR ON THE *JSX* RETURN, NOT THE FIRST ONE. `indexOf("return (")`
+    // lands on `return () => clearInterval(id)` inside the effect, which drags
+    // the whole component body into the "markup" and makes this clause fail on
+    // clean code. Matched on the tag that follows it, so the anchor cannot
+    // drift onto another `return (` later either.
+    const jsxMatch = src.match(/return \(\s*\n(\s*<[\s\S]*?)\n\s*\);/);
+    if (!jsxMatch) {
+      throw new Error("FreshnessChip no longer returns a JSX block — re-anchor this guard.");
     }
-    const jsx = src.slice(returnIdx);
+    const jsx = jsxMatch[1];
 
     // The component destructures the function's result and prints the `text`
-    // binding. If somebody inlines a string back into the JSX, `text` stops
-    // being the only child expression and this reddens.
+    // binding.
     expect(src).toContain("const { text, stopped } = freshnessLabel(age);");
     expect(jsx).toContain("{text}");
 
-    // And no copy is assembled in the JSX itself. A template literal or a
-    // ternary printing words would put a sentence back somewhere no test holds
-    // it whole, which is the defect this whole file exists for.
-    const jsxTextNodes = jsx.match(/>[^<>{}\n]*[A-Za-z]{2,}[^<>{}\n]*</g) ?? [];
-    expect(jsxTextNodes).toEqual([]);
+    // ⚠️ THE FIRST VERSION OF THIS CLAUSE WAS A ONE-LINE REGEX AND A MUTANT
+    // WALKED THROUGH IT. `/>[^<>{}\n]*[A-Za-z]{2,}[^<>{}\n]*</` cannot match a
+    // text node that has an expression next to it, so planting `Data {text}`
+    // in the JSX scored SURVIVE. Kept in the record rather than quietly
+    // replaced: it is the same failure this file is about — a check that reads
+    // an assembled artifact and misses the seam.
+    //
+    // The rule instead: strip every `{...}` expression (innermost-out, because
+    // `className={`…${x}…`}` nests), then strip every tag. Anything with a
+    // letter still standing is copy written directly into the markup.
+    let stripped = jsx;
+    for (let i = 0; ; i += 1) {
+      const next = stripped.replace(/\{[^{}]*\}/g, "");
+      if (next === stripped) break;
+      if (i > 50) {
+        throw new Error("Brace stripping did not reach a fixed point — re-anchor this guard.");
+      }
+      stripped = next;
+    }
+    const outsideMarkup = stripped.replace(/<[^>]*>/g, "").replace(/[^A-Za-z]/g, "");
+    expect(`copy written into the JSX: ${outsideMarkup}`).toBe("copy written into the JSX: ");
   });
 
   it("mounts and renders the placeholder, and renders NOTHING without a timestamp", () => {
