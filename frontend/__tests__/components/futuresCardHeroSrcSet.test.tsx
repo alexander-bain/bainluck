@@ -113,10 +113,17 @@ describe("DETECTORS — the ladder reaches the rendered hero", () => {
   });
 
   it("the ladder's widest rung is the very url in `src`", () => {
+    // 650w, not 940w: after CERT-701 the top descriptor is the width FLOOR
+    // (min of the stated `w` and `h x ASPECT_FLOOR`), not the `w` the url asks
+    // for — `fit=clip` honours whichever bound binds first and this url was
+    // measured rendering at 867 and 899 px, never 940. What has NOT changed is
+    // the part that carries the ruling: the rung is the original string
+    // verbatim, so the heaviest thing a browser can fetch is what it fetches
+    // today. See `lib/discover/heroSrcSet.ts`.
     const tag = heroTag(render(HERO_URL));
     const srcSet = /srcSet="([^"]*)"/.exec(tag)?.[1] ?? "";
     expect(srcSet).not.toBe("");
-    expect(srcSet.endsWith(`${esc(HERO_URL)} 940w`)).toBe(true);
+    expect(srcSet.endsWith(`${esc(HERO_URL)} 650w`)).toBe(true);
   });
 
   it("offers a rung small enough for the 300 CSS px desktop slot", () => {

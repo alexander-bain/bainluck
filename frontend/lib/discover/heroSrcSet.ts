@@ -27,14 +27,57 @@
 // worst a browser can do is pick the rung it already downloads today. No device
 // gets heavier — structurally, not empirically.
 //
-// ⚠️ WHY THE `w` DESCRIPTORS CAN BE NOMINAL. Pexels serves two url shapes:
-// `?…&h=650&w=940` (width known) and `?…&h=350` (width NOT in the url — it is
-// whatever the photo's aspect makes it; measured 450–586 px across a live
-// feed). For the second shape the descriptor is a nominal 1.5×h, Pexels'
-// dominant 3:2. A nominal that overstates the true width can only make the
-// browser pick a SMALLER rung than it strictly needs — softer or equal, never
-// heavier — because every rung is a shrink of the same original. That is why
-// this file does not need to know the true pixel width to stay safe.
+// 🔴 CERT-701 BLOCKED THE FIRST VERSION OF THIS FILE, AND IT WAS RIGHT.
+// The text that stood here argued that a descriptor which OVERSTATES the true
+// width is safe, because it "can only make the browser pick a SMALLER rung than
+// it strictly needs — softer or equal, never heavier". That priced one half of
+// the ruling and dropped the other. Softer is not free: it is the desktop hero
+// getting visibly worse than the one we ship today.
+//
+// The arithmetic, reproduced from the block. Pexels serves two url shapes,
+// `?…&h=650&w=940` and `?…&h=350`, and for the second the width is NOT in the
+// url — it is whatever the photo's aspect makes it. LAT-P191 measured that
+// family at 450–586 px across a live feed and then anchored the ladder on the
+// MIDDLE of its own range (1.5 × h = 525, Pexels' dominant 3:2). On the 450 px
+// specimen every descriptor then overstated by 16.7 %, so the rung advertised
+// as `300w` is really 257 px — and a 300 CSS-px four-column desktop slot at
+// DPR 1 picks it and renders an UPSCALED 257 px where today it downloads a
+// sharp 450 px. Strictly worse, on the exact slot the ship was built to serve.
+//
+// P189a was already on the books — *verify the requirement by the EXTREMUM of
+// its range* — and this file's own comment quoted the range while the constant
+// beside it used the midpoint.
+//
+// THE REPAIR: ANCHOR ON A LOWER BOUND, NEVER A TYPICAL VALUE.
+// `ASPECT_FLOOR` is the narrowest aspect a hero is assumed to have, so
+// `h × ASPECT_FLOOR` is the smallest width the url can render, and taking the
+// MIN of that with any stated `w` gives a width no render can fall below. Every
+// descriptor is then derived from that floor, so descriptors UNDER-state. A
+// browser resolving `sizes` picks the first rung whose descriptor meets its
+// need; if the descriptor under-states, the pixels it actually receives are
+// greater than or equal to what it asked for. Upscaling becomes unreachable —
+// not unlikely, unreachable — for any photo at or above the floor.
+//
+// Priced across the aspect range, 300 CSS-px slot at DPR 1, h=350 family:
+//   anchor 1.5   (shipped, blocked)  worst descriptor +36.4 % over true width;
+//                                    upscales at every aspect below 1.5
+//   anchor 1.286 (the measured MIN)  worst +17.2 %; still upscales at 1.10
+//   anchor 1.0   (this file)         worst −9.1 % — never overstates, never
+//                                    upscales, no rung heavier than the original
+// Note the middle row: even the measured minimum is not a bound, because a
+// measurement is only true of what it measured (P191b). 1.0 is chosen because
+// it is an ASSUMPTION WITH MARGIN — 29 % below the narrowest hero yet observed —
+// and because the failure mode of choosing it too low is that the ladder empties
+// and `buildHeroSrcSet` returns null, i.e. exactly today's behaviour, rather
+// than a wrong ladder. It is stated as an assumption, not proven as a law: a
+// PORTRAIT hero (aspect < 1) would overstate again by the ratio it falls short.
+//
+// ⚠️ THE HONEST PRICE. Anchoring low shortens every ladder — the h=350 family
+// drops from two shrink-rungs to one, and the desktop saving is smaller than the
+// number LAT-P191 banked, because part of that number was the upscale. What
+// removes the price rather than paying it is knowing each raster's TRUE pixel
+// dimensions, which the API does not store. That is the same backend change
+// option (a) needs (#1636), so both halves of the hero work now converge on it.
 
 /**
  * The Discover masonry is `columns-1 sm:columns-2 lg:columns-3 xl:columns-4
@@ -64,8 +107,16 @@ export const HERO_IMAGE_SIZES =
  */
 const CANDIDATE_WIDTHS = [300, 420, 540, 700, 940];
 
-/** Pexels' dominant aspect: a `h=350`-only url renders ~525 px wide. Nominal. */
-const NOMINAL_ASPECT = 1.5;
+/**
+ * The narrowest aspect (width ÷ height) a Discover hero is assumed to have.
+ *
+ * A FLOOR, not an average — see the CERT-701 note at the top of this file. It
+ * exists so `h × ASPECT_FLOOR` is a width no render of that url can fall below,
+ * which is what makes every descriptor an under-statement. Lowering it is
+ * always safe (shorter ladders, eventually none); raising it towards the
+ * observed 1.286–1.674 is what CERT-701 blocked.
+ */
+const ASPECT_FLOOR = 1.0;
 
 function readIntParam(params: URLSearchParams, key: string): number | null {
   const raw = params.get(key);
@@ -93,14 +144,23 @@ export function buildHeroSrcSet(url: string): string | null {
 
   const width = readIntParam(parsed.searchParams, "w");
   const height = readIntParam(parsed.searchParams, "h");
-  const nominalWidth = width ?? (height !== null ? Math.round(height * NOMINAL_ASPECT) : null);
-  if (nominalWidth === null) return null;
 
-  const smaller = CANDIDATE_WIDTHS.filter((candidate) => candidate < nominalWidth);
+  // The smallest width this url can possibly render. `w` caps the render; so
+  // does `h`, via the photo's aspect, and `fit=clip` honours WHICHEVER binds
+  // first — which is why a `w=940&h=650` url was measured rendering at 867 and
+  // 899 px (LAT-P191). Taking the MIN of the bounds that are present is the
+  // only combination that no render can fall below.
+  const bounds: number[] = [];
+  if (width !== null) bounds.push(width);
+  if (height !== null) bounds.push(Math.round(height * ASPECT_FLOOR));
+  if (bounds.length === 0) return null;
+  const floorWidth = Math.min(...bounds);
+
+  const smaller = CANDIDATE_WIDTHS.filter((candidate) => candidate < floorWidth);
   if (smaller.length === 0) return null;
 
   const rungs = smaller.map((candidate) => {
-    const scale = candidate / nominalWidth;
+    const scale = candidate / floorWidth;
     const scaled = new URL(parsed.toString());
     if (width !== null) scaled.searchParams.set("w", String(Math.max(1, Math.round(width * scale))));
     if (height !== null) scaled.searchParams.set("h", String(Math.max(1, Math.round(height * scale))));
@@ -108,7 +168,11 @@ export function buildHeroSrcSet(url: string): string | null {
   });
 
   // The top rung is the original string verbatim: same url, same cache entry,
-  // same bytes as today. This is the line that makes the guarantee above true.
-  rungs.push(`${url} ${nominalWidth}w`);
+  // same bytes as today — that is the "never heavier" half. Its descriptor is
+  // `floorWidth`, NOT the width it probably renders at, which is the "never
+  // softer" half: a browser that needs more than `floorWidth` has nothing above
+  // this rung to climb to, and picking it hands back at least `floorWidth` real
+  // pixels by the definition of the floor.
+  rungs.push(`${url} ${floorWidth}w`);
   return rungs.join(", ");
 }
