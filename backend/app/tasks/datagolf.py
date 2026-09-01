@@ -367,6 +367,12 @@ async def _poll_datagolf_markets() -> dict:
                         for stale in stale_result.scalars().all():
                             stale.current_probability = None
                             stale.last_updated = now
+                            # Same reason as tasks/futures.py' stale zeroing
+                            # (CERT-627): the line above refreshes the stamp the
+                            # movement window expires on, so the delta has to go
+                            # with the price or this row leaves looking fresh and
+                            # keeps ranking on /api/futures/movers.
+                            stale.probability_change_24h = None
                             stale_nulled += 1
                         if stale_nulled:
                             logger.info(
@@ -732,6 +738,12 @@ async def _poll_datagolf_live() -> dict:
                         for stale in stale_result.scalars().all():
                             stale.current_probability = None
                             stale.last_updated = now
+                            # Same reason as tasks/futures.py' stale zeroing
+                            # (CERT-627): the line above refreshes the stamp the
+                            # movement window expires on, so the delta has to go
+                            # with the price or this row leaves looking fresh and
+                            # keeps ranking on /api/futures/movers.
+                            stale.probability_change_24h = None
                             stale_nulled += 1
                         if stale_nulled:
                             logger.info(
