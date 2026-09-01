@@ -18,6 +18,7 @@ import httpx
 from sqlalchemy import select, update, func
 
 from app.tasks.base import get_task_session
+from app.utils.pexels_sizing import cap_pexels_url, is_oversized_pexels_url
 from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
     DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
@@ -482,21 +483,100 @@ async def _fetch_pexels_image(query: str) -> str | None:
             if not best:
                 best = photos[0]
 
-            return best["src"].get("large", best["src"]["medium"])
+            # `src.large` is 940x650 -- wider than the hero box renders even at
+            # DPR 2. Cap it on the way in so new rows never store bytes the
+            # card cannot show (see app/utils/pexels_sizing.py).
+            return cap_pexels_url(best["src"].get("large", best["src"]["medium"]))
     except Exception as e:
         logger.error("Pexels fetch error for '%s': %s", query, e)
         return None
+
+
+CAP_BATCH_SIZE = 500
+CAP_ROWS_PER_RUN = 5000
+
+
+async def cap_oversized_market_images(
+    limit: int = CAP_ROWS_PER_RUN, batch_size: int = CAP_BATCH_SIZE
+) -> dict:
+    """Shrink already-stored Pexels URLs that ask for more raster than we render.
+
+    Pure URL rewrite -- no Pexels call and no rate limit -- so this deliberately
+    runs even when `PEXELS_API_KEY` is unset. Rows written before this cap
+    existed still point at #565's 940x650 `src.large` preset; the hero box
+    renders 720x450 at DPR 2 (see app/utils/pexels_sizing.py).
+
+    Sized against the real population, not a feed sample: measured 2026-09-01,
+    `futures_markets` holds 926,892 rows, 117,264 with an image, and **98,984
+    on the oversized preset**. A 200-row batch would have taken 82 days to
+    drain at 6 runs/day, so the budget is per-run rows, drained in committed
+    batches. Nothing here calls an external API, so the cost is DB-bound.
+
+    The batches need no cursor: a capped row stops matching the filter, so the
+    next `LIMIT` window naturally advances. The SQL prefilter is the `w=940`
+    literal rather than "every Pexels row" so the pass self-terminates on a
+    single scan once drained, instead of re-reading the legacy `h=350` rows
+    that `cap_pexels_url` correctly leaves alone. That literal is the only
+    oversized preset this codebase stores; `is_oversized_pexels_url` stays the
+    authority and still guards the write path, so a future preset is caught
+    there and this filter can widen then.
+    """
+    from app.models.models import FuturesMarket
+
+    stats = {"examined": 0, "capped": 0, "batches": 0}
+
+    async with get_task_session() as session:
+        while stats["examined"] < limit:
+            window = min(batch_size, limit - stats["examined"])
+            result = await session.execute(
+                select(FuturesMarket.id, FuturesMarket.image_url)
+                .where(FuturesMarket.image_url.like("%w=940%"))
+                .order_by(FuturesMarket.id)
+                .limit(window)
+            )
+            rows = result.all()
+            if not rows:
+                break
+
+            capped_this_batch = 0
+            for market_id, image_url in rows:
+                stats["examined"] += 1
+                if not is_oversized_pexels_url(image_url):
+                    continue
+                await session.execute(
+                    update(FuturesMarket)
+                    .where(FuturesMarket.id == market_id)
+                    .values(image_url=cap_pexels_url(image_url))
+                )
+                capped_this_batch += 1
+
+            stats["capped"] += capped_this_batch
+            stats["batches"] += 1
+            await session.commit()
+
+            if capped_this_batch == 0:
+                # Every row in the window matched the SQL filter but none was
+                # judged oversized, so the window cannot advance -- bail rather
+                # than spin on the same rows for the rest of the budget.
+                break
+
+    logger.info("Pexels hero cap: %s", stats)
+    return stats
 
 
 async def enrich_market_images(limit: int = 50):
     """Fetch images from Pexels for markets missing image_url."""
     from app.models.models import FuturesMarket
 
+    # Runs before the key gate: capping needs no Pexels call, and an unset key
+    # must not strand oversized rows.
+    cap_stats = await cap_oversized_market_images()
+
     if not PEXELS_API_KEY:
         logger.info("PEXELS_API_KEY not set — skipping image enrichment")
-        return {"skipped": True}
+        return {"skipped": True, "cap": cap_stats}
 
-    stats = {"fetched": 0, "found": 0, "errors": 0}
+    stats = {"fetched": 0, "found": 0, "errors": 0, "cap": cap_stats}
 
     async with get_task_session() as session:
         result = await session.execute(
