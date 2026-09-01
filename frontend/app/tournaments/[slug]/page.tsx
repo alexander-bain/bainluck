@@ -482,9 +482,15 @@ export default function TournamentPage() {
             to know it. The `max-w-[74ch]` is the other half of the desktop
             work: at 1280px this line would otherwise run the full shell. */}
         <footer className="border-t border-surface-border px-4 py-5 text-[11.5px] leading-relaxed text-text-muted lg:px-6">
+          {/* #2451: this said "a fixed 0–100 scale" and that is no longer
+              true — the trend chart's ceiling now steps to fit the field while
+              its baseline stays pinned at zero. A footer that describes a scale
+              the chart no longer uses is the same class of defect as an
+              unlabelled axis, so it changed in the same commit. */}
           <span className="block max-w-[74ch]">
             Each probability combines what several prediction markets are saying. Trend
-            lines are daily readings on a fixed 0&ndash;100 scale, with no smoothing.
+            lines are daily readings with no smoothing, drawn from zero to a labelled
+            top that fits the field.
           </span>
         </footer>
       </div>
