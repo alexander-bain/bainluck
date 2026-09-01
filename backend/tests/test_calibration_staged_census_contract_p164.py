@@ -246,9 +246,16 @@ class TestAQueryShapedRowSurvivesBothBoundaries:
         broadcasts the census total onto every row precisely so that read is
         the population's number and not the first unit's.
         """
-        unit_a = _query_shaped_row(nxb_cell_esports=5, nxb_cell_0=11, nxb_cell_1=13)
+        # CAL-P168: `pp_cell_0` is rank 1's per-cell count. It is given DISTINCT
+        # values here rather than left on the fixture default, so the assertion
+        # below proves it is summed across units like every other census column
+        # — a chunk-local count that got broadcast instead would understate the
+        # temporary exclusion on the page by however many units it ignored.
+        unit_a = _query_shaped_row(
+            nxb_cell_esports=5, nxb_cell_0=11, nxb_cell_1=13, pp_cell_0=19
+        )
         unit_b = _query_shaped_row(
-            bucket_idx=4, nxb_cell_esports=2, nxb_cell_0=3, nxb_cell_1=17
+            bucket_idx=4, nxb_cell_esports=2, nxb_cell_0=3, nxb_cell_1=17, pp_cell_0=23
         )
         rows = merge_futures_rows(
             [[unit_a], [unit_b]], census_columns=_runtime_census_columns()
@@ -257,7 +264,12 @@ class TestAQueryShapedRowSurvivesBothBoundaries:
             label: int(getattr(rows[0], column))
             for label, column in nonexclusive_bundle_cell_labels()
         }
-        assert by_cell == {"esports": 7, "kalshi/crypto": 14, "kalshi/economics": 30}
+        assert by_cell == {
+            "esports": 7,
+            "kalshi/crypto": 14,
+            "kalshi/economics": 30,
+            "polymarket/baseball": 42,
+        }
         # Broadcast, not per-row: the consumer's rows[0] read is only honest if
         # every merged row carries the same total.
         assert {int(getattr(row, "nxb_cell_1")) for row in rows} == {30}

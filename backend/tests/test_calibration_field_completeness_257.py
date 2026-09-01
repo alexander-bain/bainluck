@@ -189,6 +189,10 @@ def _futures_row(**kw):
         mex_normalized_markets=6, field_incomplete_markets=3,
         field_incomplete_outcomes=21, esports_bundle_excluded=5,
         kalshi_prop_threshold_excluded=2, weather_wide_spread_excluded=1,
+        # CAL-P168 (#1978) rank 1. The payload reads these off row 0 by
+        # ATTRIBUTE, so a fixture that omits a column the statement emits fails
+        # loudly here rather than publishing a silent zero.
+        player_props_placeholder_excluded=3, player_props_placeholder_markets=2,
     )
     base.update(kw)
     return SimpleNamespace(**base)
