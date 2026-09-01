@@ -822,10 +822,18 @@ describe("event-page pack can prove both hero states", () => {
   // LAT-P119 (#2085) extracted the live/pregame hero's two percents into their
   // own component, so the hook no longer lives in `page.tsx`. It still ships to
   // the browser, which is what the pack needs and what this contract is really
-  // about — but a source read has to follow it. The settled hero is untouched
-  // and stays pinned in the page.
+  // about — but a source read has to follow it.
+  //
+  // UX-P240 (#2443, CERT-641) did the same to the SETTLED hero: it now renders
+  // through `SettledOutcomeHero` so the outcome is a real component rather than
+  // inline JSX. Same reasoning, same remedy — read the component, and keep the
+  // page pinned to rendering it. The comment that used to say "the settled hero
+  // is untouched and stays pinned in the page" is what went stale here, and the
+  // gate went red on a healthy page for exactly one cycle because of it.
   const heroPairRaw = () =>
     read("frontend", "components", "EventHeroProbabilityPair.tsx");
+  const settledHeroRaw = () =>
+    read("frontend", "components", "event", "SettledOutcomeHero.tsx");
 
   it("the page ships a stable hook for the LIVE/PREGAME hero", () => {
     // Pinned in BOTH directions, because the extraction created two ways to
@@ -850,14 +858,27 @@ describe("event-page pack can prove both hero states", () => {
   });
 
   it("the page ships a stable hook for the SETTLED hero", () => {
-    const page = pageRaw();
+    // Pinned in BOTH directions, for the same reason as the live/pregame hero
+    // above: the component could drop the hook, or the page could stop
+    // rendering the component. Either one silently re-reds the pack against a
+    // healthy page. Checking only the component would be the weaker gate the
+    // extraction tempts you into.
     assert.ok(
-      page.includes('data-testid="event-hero-settled"'),
+      settledHeroRaw().includes('data-testid="event-hero-settled"'),
       "a finished game must be provable, not just a scheduled one"
     );
     assert.ok(
-      page.includes("data-winner="),
+      settledHeroRaw().includes("data-winner="),
       "the winner must be readable as data, never scraped from prose"
+    );
+    // Matched as a whole JSX tag, not a substring: a bare `includes` here is
+    // satisfied by any component whose name merely STARTS with this one
+    // (`<SettledOutcomeHeroFoo`), so renaming the render away would leave the
+    // gate green. The delimiter is what makes this assertion mean the thing it
+    // says.
+    assert.ok(
+      /<SettledOutcomeHero[\s/>]/.test(pageRaw()),
+      "the page must still render the component that carries the settled hook"
     );
   });
 
