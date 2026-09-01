@@ -1,0 +1,1793 @@
+{
+ "items": [
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "New favorite: Bryson DeChambeau (74%) now leads Golfers to Compete in a LIV Golf Tournament in Q1 2027",
+   "headline": "New favorite: Bryson DeChambeau (74%)",
+   "context_summary": "New favorite: Bryson DeChambeau (74%)",
+   "data": {
+    "id": 19527847,
+    "name": "Golfers to Compete in a LIV Golf Tournament in Q1 2027",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 5,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-04-08T14:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 105261596,
+      "name": "Bryson DeChambeau",
+      "probability": 0.74,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 74
+     },
+     {
+      "id": 105261607,
+      "name": "Dustin Johnson",
+      "probability": 0.69,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 69
+     },
+     {
+      "id": 105261606,
+      "name": "Dean Burmester",
+      "probability": 0.65,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 65
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 15,
+    "canonical_market_key": "golf:LIV:championship:2027",
+    "group_id": "kalshi:KXLIVCOMPETE-27APR",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Bryson DeChambeau",
+       "probability": 0.74,
+       "movement": null
+      },
+      {
+       "label": "Dustin Johnson",
+       "probability": 0.69,
+       "movement": null
+      },
+      {
+       "label": "Dean Burmester",
+       "probability": 0.65,
+       "movement": null
+      },
+      {
+       "label": "Anthony Kim",
+       "probability": 0.64,
+       "movement": null
+      },
+      {
+       "label": "David Puig",
+       "probability": 0.63,
+       "movement": null
+      },
+      {
+       "label": "Abraham Ancer",
+       "probability": 0.57,
+       "movement": null
+      },
+      {
+       "label": "Joaquin Niemann",
+       "probability": 0.56,
+       "movement": null
+      },
+      {
+       "label": "Sergio Garcia",
+       "probability": 0.55,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 4,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/8454462/pexels-photo-8454462.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 27.77,
+    "interestingness_reasons": [
+     "decisive_but_not_settled"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "tournament",
+   "score": 50,
+   "reason": "DP World Tour: Ryan Gerard leads at 8.2%",
+   "headline": "This week",
+   "data": {
+    "key": "omega_european_masters",
+    "name": "Omega European Masters",
+    "slug": "omega-european-masters",
+    "tour": "dp_world",
+    "tour_label": "DP World Tour",
+    "is_major": false,
+    "venue": "Crans-sur-Sierre GC",
+    "location": "Crans-Montana, Switzerland",
+    "start_date": "2026-09-03T00:00:00+00:00",
+    "end_date": "2026-09-06T00:00:00+00:00",
+    "schedule_status": "upcoming",
+    "commence_time": "2026-08-31T15:11:13+00:00",
+    "resolution_date": "2026-09-06T00:00:00+00:00",
+    "golfers": [
+     {
+      "name": "Ryan Gerard",
+      "probability": 0.082,
+      "rank": 1,
+      "movement_24h": null
+     },
+     {
+      "name": "Matt Wallace",
+      "probability": 0.052,
+      "rank": 2,
+      "movement_24h": null
+     },
+     {
+      "name": "Nicolai Hojgaard",
+      "probability": 0.04,
+      "rank": 3,
+      "movement_24h": null
+     },
+     {
+      "name": "Marco Penge",
+      "probability": 0.04,
+      "rank": 4,
+      "movement_24h": null
+     },
+     {
+      "name": "Rasmus Hojgaard",
+      "probability": 0.037,
+      "rank": 5,
+      "movement_24h": null
+     },
+     {
+      "name": "Eugenio Chacarra",
+      "probability": 0.033,
+      "rank": 6,
+      "movement_24h": null
+     },
+     {
+      "name": "Patrick Reed",
+      "probability": 0.032,
+      "rank": 7,
+      "movement_24h": null
+     },
+     {
+      "name": "Keita Nakajima",
+      "probability": 0.029,
+      "rank": 8,
+      "movement_24h": null
+     },
+     {
+      "name": "Harry Hall",
+      "probability": 0.029,
+      "rank": 9,
+      "movement_24h": null
+     },
+     {
+      "name": "Angel Ayora",
+      "probability": 0.024,
+      "rank": 10,
+      "movement_24h": null
+     }
+    ],
+    "market_ids": [
+     59925969,
+     59925967,
+     59863414,
+     59863411,
+     59925964,
+     59925965,
+     59925966,
+     59863413,
+     59925968,
+     59925970,
+     59863412,
+     59863415,
+     59759220
+    ],
+    "source_count": 3,
+    "is_marquee": false,
+    "marquee_whathit": false
+   }
+  },
+  {
+   "type": "futures",
+   "score": 44,
+   "reason": "Ross Steelman (74%) leads Simmons Bank Open for the Snedeker Foundation - Make the Cut",
+   "headline": "Ross Steelman leads at 74%",
+   "context_summary": "Ross Steelman leads at 74%",
+   "data": {
+    "id": 59485759,
+    "name": "Simmons Bank Open for the Snedeker Foundation - Make the Cut",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "datagolf",
+    "source_count": 1,
+    "sources": [
+     "datagolf"
+    ],
+    "market_tier": 5,
+    "market_type": "participation",
+    "status": "open",
+    "resolution_date": "2026-09-13T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 221386465,
+      "name": "Ross Steelman",
+      "probability": 0.740517,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 74
+     },
+     {
+      "id": 221386468,
+      "name": "Ben Kohles",
+      "probability": 0.72655,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 73
+     },
+     {
+      "id": 221386466,
+      "name": "Tommy Morrison",
+      "probability": 0.717483,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 72
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 156,
+    "canonical_market_key": null,
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Ross Steelman",
+       "probability": 0.740517,
+       "movement": null
+      },
+      {
+       "label": "Ben Kohles",
+       "probability": 0.72655,
+       "movement": null
+      },
+      {
+       "label": "Tommy Morrison",
+       "probability": 0.717483,
+       "movement": null
+      },
+      {
+       "label": "Zac Blair",
+       "probability": 0.71675,
+       "movement": null
+      },
+      {
+       "label": "Blades Brown",
+       "probability": 0.7161,
+       "movement": null
+      },
+      {
+       "label": "Davis Shore",
+       "probability": 0.680433,
+       "movement": null
+      },
+      {
+       "label": "Caleb VanArragon",
+       "probability": 0.670683,
+       "movement": null
+      },
+      {
+       "label": "Cole Sherwood",
+       "probability": 0.663833,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 148,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 35.98,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "resolving_soon"
+    ],
+    "market_tags": [
+     "category:prop",
+     "market_status:open",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 44,
+   "reason": "Tie moved down 44.5 points from opening in 2027 Ryder Cup Winner",
+   "headline": "Tie down 44.5 points from opening",
+   "context_summary": "Tie down 44.5 points from opening; Will Team Europe win the Ryder Cup? leads at 54%",
+   "data": {
+    "id": 3970169,
+    "name": "2027 Ryder Cup Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-10-03T23:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 23598258,
+      "name": "Will Team Europe win the Ryder Cup?",
+      "probability": 0.535,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 54
+     },
+     {
+      "id": 23598259,
+      "name": "Will Team USA win the Ryder Cup?",
+      "probability": 0.45,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 45
+     },
+     {
+      "id": 23598257,
+      "name": "Tie",
+      "probability": 0.055,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 6
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 3,
+    "canonical_market_key": "golf::championship:2027",
+    "group_id": "kalshi:KXPGARYDER-RC27",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "binary_probability",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Will Team Europe win the Ryder Cup?",
+       "probability": 0.535,
+       "movement": null
+      },
+      {
+       "label": "Will Team USA win the Ryder Cup?",
+       "probability": 0.45,
+       "movement": null
+      },
+      {
+       "label": "Tie",
+       "probability": 0.055,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": []
+    },
+    "image_url": "https://images.pexels.com/photos/8454586/pexels-photo-8454586.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 31.83,
+    "interestingness_reasons": [
+     "multi_source"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 39,
+   "reason": "Scottie Scheffler (11%) leads The Open Winner across 2 sources",
+   "headline": "Tracked by 2 sources",
+   "context_summary": "Scottie Scheffler leads at 11% across 2 sources",
+   "data": {
+    "id": 6,
+    "name": "The Open Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "odds_api",
+    "source_count": 2,
+    "sources": [
+     "odds_api",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": null,
+    "top_outcomes": [
+     {
+      "id": 402,
+      "name": "Scottie Scheffler",
+      "probability": 0.109,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 11
+     },
+     {
+      "id": 403,
+      "name": "Rory McIlroy",
+      "probability": 0.0722,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 7
+     },
+     {
+      "id": 404,
+      "name": "Jon Rahm",
+      "probability": 0.0379,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 4
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 205,
+    "canonical_market_key": "golf::championship:",
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Scottie Scheffler",
+       "probability": 0.109,
+       "movement": 0.0
+      },
+      {
+       "label": "Rory McIlroy",
+       "probability": 0.0722,
+       "movement": 0.0
+      },
+      {
+       "label": "Jon Rahm",
+       "probability": 0.0379,
+       "movement": null
+      },
+      {
+       "label": "Tommy Fleetwood",
+       "probability": 0.0355,
+       "movement": null
+      },
+      {
+       "label": "Xander Schauffele",
+       "probability": 0.0307,
+       "movement": null
+      },
+      {
+       "label": "Matthew Fitzpatrick",
+       "probability": 0.0298,
+       "movement": null
+      },
+      {
+       "label": "Cameron Young",
+       "probability": 0.0287,
+       "movement": null
+      },
+      {
+       "label": "Ludvig Aberg",
+       "probability": 0.0287,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 197,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/14685268/pexels-photo-14685268.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 45.86,
+    "interestingness_reasons": [
+     "multi_source",
+     "fresh"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:odds_api",
+     "sport:golf",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 32,
+   "reason": "Scottie Scheffler (6%) leads Will Scottie Scheffler win the grand slam before 2028?",
+   "headline": "Scottie Scheffler leads at 6%",
+   "context_summary": "Scottie Scheffler leads at 6%",
+   "data": {
+    "id": 176,
+    "name": "Will Scottie Scheffler win the grand slam before 2028?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 5,
+    "market_type": "unshaped",
+    "status": "open",
+    "resolution_date": "2028-01-01T15:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 930,
+      "name": "Scottie Scheffler",
+      "probability": 0.06,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 6
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 1,
+    "canonical_market_key": "golf::championship:2028",
+    "group_id": "kalshi:KXSCOTTIESLAM-28",
+    "group_type": "kalshi_single",
+    "discover_card": {
+     "suggested_format": "binary_probability",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Yes",
+       "probability": 0.06,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": []
+    },
+    "image_url": "https://images.pexels.com/photos/20021301/pexels-photo-20021301.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 16.8,
+    "interestingness_reasons": [],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf"
+    ],
+    "story_key": "story:grand_slam_tennis"
+   }
+  },
+  {
+   "type": "tournament",
+   "score": 30,
+   "reason": "PGA Tour: Scottie Scheffler leads at 5.9%",
+   "headline": null,
+   "data": {
+    "key": "golfers_to_win_a_pga_tour_major_in_2027",
+    "name": "Golfers To Win A Pga Tour Major In 2027",
+    "slug": "golfers-to-win-a-pga-tour-major-in-2027",
+    "tour": "pga",
+    "tour_label": "PGA Tour",
+    "is_major": false,
+    "venue": null,
+    "location": null,
+    "start_date": null,
+    "end_date": null,
+    "schedule_status": null,
+    "commence_time": "2028-01-14T15:00:00+00:00",
+    "resolution_date": "2028-01-14T15:00:00+00:00",
+    "golfers": [
+     {
+      "name": "Scottie Scheffler",
+      "probability": 0.059,
+      "rank": 1,
+      "movement_24h": null
+     },
+     {
+      "name": "Rory McIlroy",
+      "probability": 0.044,
+      "rank": 2,
+      "movement_24h": null
+     },
+     {
+      "name": "Jon Rahm",
+      "probability": 0.029,
+      "rank": 3,
+      "movement_24h": null
+     },
+     {
+      "name": "Ludvig Aberg",
+      "probability": 0.024,
+      "rank": 4,
+      "movement_24h": null
+     },
+     {
+      "name": "Xander Schauffele",
+      "probability": 0.024,
+      "rank": 5,
+      "movement_24h": null
+     },
+     {
+      "name": "Bryson DeChambeau",
+      "probability": 0.023,
+      "rank": 6,
+      "movement_24h": null
+     },
+     {
+      "name": "Cameron Young",
+      "probability": 0.023,
+      "rank": 7,
+      "movement_24h": null
+     },
+     {
+      "name": "Jackson Koivun",
+      "probability": 0.021,
+      "rank": 8,
+      "movement_24h": null
+     },
+     {
+      "name": "Matt Fitzpatrick",
+      "probability": 0.019,
+      "rank": 9,
+      "movement_24h": null
+     },
+     {
+      "name": "Collin Morikawa",
+      "probability": 0.017,
+      "rank": 10,
+      "movement_24h": null
+     }
+    ],
+    "market_ids": [
+     56775495
+    ],
+    "source_count": 1,
+    "is_marquee": false,
+    "marquee_whathit": false
+   }
+  },
+  {
+   "type": "tournament",
+   "score": 30,
+   "reason": "PGA Tour: Scottie Scheffler leads at 18.2%",
+   "headline": null,
+   "data": {
+    "key": "biltmore_championship_asheville",
+    "name": "Biltmore Championship Asheville",
+    "slug": "biltmore-championship-asheville",
+    "tour": "pga",
+    "tour_label": "PGA Tour",
+    "is_major": false,
+    "venue": "The Cliffs at Walnut Cove",
+    "location": "Arden, NC",
+    "start_date": "2026-09-17T00:00:00+00:00",
+    "end_date": "2026-09-20T00:00:00+00:00",
+    "schedule_status": "upcoming",
+    "commence_time": "2026-09-17T00:00:00+00:00",
+    "resolution_date": "2026-09-20T00:00:00+00:00",
+    "golfers": [
+     {
+      "name": "Scottie Scheffler",
+      "probability": 0.182,
+      "rank": 1,
+      "movement_24h": null
+     },
+     {
+      "name": "Rory McIlroy",
+      "probability": 0.087,
+      "rank": 2,
+      "movement_24h": null
+     },
+     {
+      "name": "Xander Schauffele",
+      "probability": 0.084,
+      "rank": 3,
+      "movement_24h": null
+     },
+     {
+      "name": "Ludvig Aberg",
+      "probability": 0.047,
+      "rank": 4,
+      "movement_24h": null
+     },
+     {
+      "name": "Patrick Cantlay",
+      "probability": 0.044,
+      "rank": 5,
+      "movement_24h": null
+     },
+     {
+      "name": "Collin Morikawa",
+      "probability": 0.04,
+      "rank": 6,
+      "movement_24h": null
+     },
+     {
+      "name": "Cameron Young",
+      "probability": 0.04,
+      "rank": 7,
+      "movement_24h": null
+     },
+     {
+      "name": "Sam Burns",
+      "probability": 0.038,
+      "rank": 8,
+      "movement_24h": null
+     },
+     {
+      "name": "Tommy Fleetwood",
+      "probability": 0.038,
+      "rank": 9,
+      "movement_24h": null
+     },
+     {
+      "name": "Wyndham Clark",
+      "probability": 0.036,
+      "rank": 10,
+      "movement_24h": null
+     }
+    ],
+    "market_ids": [
+     59863408,
+     59863406,
+     59863407,
+     59863410,
+     59863409
+    ],
+    "source_count": 1,
+    "is_marquee": false,
+    "marquee_whathit": false
+   }
+  },
+  {
+   "type": "tournament",
+   "score": 30,
+   "reason": "PGA Tour: Miles Russell leads at 3.2%",
+   "headline": null,
+   "data": {
+    "key": "golfers_to_win_a_pga_tour_major_before_2030",
+    "name": "Golfers To Win A Pga Tour Major Before 2030",
+    "slug": "golfers-to-win-a-pga-tour-major-before-2030",
+    "tour": "pga",
+    "tour_label": "PGA Tour",
+    "is_major": false,
+    "venue": null,
+    "location": null,
+    "start_date": null,
+    "end_date": null,
+    "schedule_status": null,
+    "commence_time": "2026-07-19T18:17:17+00:00",
+    "resolution_date": "2030-07-07T14:00:00+00:00",
+    "golfers": [
+     {
+      "name": "Miles Russell",
+      "probability": 0.032,
+      "rank": 1,
+      "movement_24h": null
+     },
+     {
+      "name": "Jackson Koivun",
+      "probability": 0.032,
+      "rank": 2,
+      "movement_24h": null
+     },
+     {
+      "name": "Blades Brown",
+      "probability": 0.02,
+      "rank": 3,
+      "movement_24h": null
+     },
+     {
+      "name": "Bud Cauley",
+      "probability": 0.02,
+      "rank": 4,
+      "movement_24h": null
+     },
+     {
+      "name": "Andrew Novak",
+      "probability": 0.02,
+      "rank": 5,
+      "movement_24h": null
+     },
+     {
+      "name": "Aldrich Potgieter",
+      "probability": 0.02,
+      "rank": 6,
+      "movement_24h": null
+     },
+     {
+      "name": "Alex Smalley",
+      "probability": 0.02,
+      "rank": 7,
+      "movement_24h": null
+     },
+     {
+      "name": "Daniel Berger",
+      "probability": 0.016,
+      "rank": 8,
+      "movement_24h": null
+     },
+     {
+      "name": "Akshay Bhatia",
+      "probability": 0.016,
+      "rank": 9,
+      "movement_24h": null
+     },
+     {
+      "name": "Michael Brennan",
+      "probability": 0.016,
+      "rank": 10,
+      "movement_24h": null
+     }
+    ],
+    "market_ids": [
+     52755548
+    ],
+    "source_count": 1,
+    "is_marquee": false,
+    "marquee_whathit": false
+   }
+  },
+  {
+   "type": "futures",
+   "score": 29,
+   "reason": "Tiger Woods to compete in any PGA event shifted down 16.0 points from opening in Tiger Woods to compete in any PGA event in 2026",
+   "headline": "Tiger Woods to compete in any PGA event down 16.0 points from opening",
+   "context_summary": "Tracked by 3 sources",
+   "data": {
+    "id": 363875,
+    "name": "Tiger Woods to compete in any PGA event in 2026",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 3,
+    "sources": [
+     "datagolf",
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 5,
+    "market_type": "unshaped",
+    "status": "open",
+    "resolution_date": "2026-12-28T15:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 2842025,
+      "name": "Tiger Woods to compete in any PGA event",
+      "probability": 0.095,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 10
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 1,
+    "canonical_market_key": "golf:PGA:championship:2026",
+    "group_id": "kalshi:KXPGATIGER-26",
+    "group_type": "kalshi_single",
+    "discover_card": {
+     "suggested_format": "binary_probability",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Yes",
+       "probability": 0.095,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": []
+    },
+    "image_url": "https://images.pexels.com/photos/9207403/pexels-photo-9207403.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 28.96,
+    "interestingness_reasons": [
+     "multi_source"
+    ],
+    "market_tags": [
+     "category:championship",
+     "league:pga",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 26,
+   "reason": "Scottie Scheffler (72%) leads Biltmore Championship Asheville - Top 10 Finish",
+   "headline": "Scottie Scheffler leads at 72%",
+   "context_summary": "Scottie Scheffler leads at 72%",
+   "data": {
+    "id": 59863408,
+    "name": "Biltmore Championship Asheville - Top 10 Finish",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "datagolf",
+    "source_count": 1,
+    "sources": [
+     "datagolf"
+    ],
+    "market_tier": null,
+    "market_type": "participation",
+    "status": "open",
+    "resolution_date": "2026-09-20T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 223116798,
+      "name": "Scottie Scheffler",
+      "probability": 0.723685,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 72
+     },
+     {
+      "id": 223116799,
+      "name": "Rory McIlroy",
+      "probability": 0.545379,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 55
+     },
+     {
+      "id": 223116800,
+      "name": "Xander Schauffele",
+      "probability": 0.538576,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 54
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": null,
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Scottie Scheffler",
+       "probability": 0.723685,
+       "movement": null
+      },
+      {
+       "label": "Rory McIlroy",
+       "probability": 0.545379,
+       "movement": null
+      },
+      {
+       "label": "Xander Schauffele",
+       "probability": 0.538576,
+       "movement": null
+      },
+      {
+       "label": "Patrick Cantlay",
+       "probability": 0.433146,
+       "movement": null
+      },
+      {
+       "label": "Ludvig Aberg",
+       "probability": 0.424558,
+       "movement": null
+      },
+      {
+       "label": "Tommy Fleetwood",
+       "probability": 0.419948,
+       "movement": null
+      },
+      {
+       "label": "Collin Morikawa",
+       "probability": 0.401373,
+       "movement": null
+      },
+      {
+       "label": "Sam Burns",
+       "probability": 0.400465,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 36.19,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "resolving_soon"
+    ],
+    "market_tags": [
+     "market_status:open",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 26,
+   "reason": "Ross Steelman (26%) leads Simmons Bank Open for the Snedeker Foundation - Top 10 Finish",
+   "headline": "Ross Steelman leads at 26%",
+   "context_summary": "Ross Steelman leads at 26%",
+   "data": {
+    "id": 59485757,
+    "name": "Simmons Bank Open for the Snedeker Foundation - Top 10 Finish",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "datagolf",
+    "source_count": 1,
+    "sources": [
+     "datagolf"
+    ],
+    "market_tier": 5,
+    "market_type": "participation",
+    "status": "open",
+    "resolution_date": "2026-09-13T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 221386153,
+      "name": "Ross Steelman",
+      "probability": 0.257079,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 26
+     },
+     {
+      "id": 221386154,
+      "name": "Tommy Morrison",
+      "probability": 0.224527,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 22
+     },
+     {
+      "id": 221386155,
+      "name": "Blades Brown",
+      "probability": 0.214313,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 21
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 156,
+    "canonical_market_key": null,
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Ross Steelman",
+       "probability": 0.257079,
+       "movement": null
+      },
+      {
+       "label": "Tommy Morrison",
+       "probability": 0.224527,
+       "movement": null
+      },
+      {
+       "label": "Blades Brown",
+       "probability": 0.214313,
+       "movement": null
+      },
+      {
+       "label": "Ben Kohles",
+       "probability": 0.204389,
+       "movement": null
+      },
+      {
+       "label": "Zac Blair",
+       "probability": 0.186057,
+       "movement": null
+      },
+      {
+       "label": "Cole Sherwood",
+       "probability": 0.169098,
+       "movement": null
+      },
+      {
+       "label": "Davis Shore",
+       "probability": 0.164726,
+       "movement": null
+      },
+      {
+       "label": "Caleb VanArragon",
+       "probability": 0.163767,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 148,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 36.08,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "resolving_soon"
+    ],
+    "market_tags": [
+     "category:prop",
+     "market_status:open",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 26,
+   "reason": "Scottie Scheffler (18%) leads Biltmore Championship Asheville - Winner",
+   "headline": "Scottie Scheffler leads at 18%",
+   "context_summary": "Scottie Scheffler leads at 18%",
+   "data": {
+    "id": 59863406,
+    "name": "Biltmore Championship Asheville - Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "datagolf",
+    "source_count": 1,
+    "sources": [
+     "datagolf"
+    ],
+    "market_tier": null,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-09-20T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 223116738,
+      "name": "Scottie Scheffler",
+      "probability": 0.182267,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 18
+     },
+     {
+      "id": 223116739,
+      "name": "Rory McIlroy",
+      "probability": 0.087033,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 9
+     },
+     {
+      "id": 223116740,
+      "name": "Xander Schauffele",
+      "probability": 0.08425,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 8
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": null,
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Scottie Scheffler",
+       "probability": 0.182267,
+       "movement": null
+      },
+      {
+       "label": "Rory McIlroy",
+       "probability": 0.087033,
+       "movement": null
+      },
+      {
+       "label": "Xander Schauffele",
+       "probability": 0.08425,
+       "movement": null
+      },
+      {
+       "label": "Ludvig Aberg",
+       "probability": 0.047267,
+       "movement": null
+      },
+      {
+       "label": "Patrick Cantlay",
+       "probability": 0.043783,
+       "movement": null
+      },
+      {
+       "label": "Cameron Young",
+       "probability": 0.040233,
+       "movement": null
+      },
+      {
+       "label": "Collin Morikawa",
+       "probability": 0.039833,
+       "movement": null
+      },
+      {
+       "label": "Sam Burns",
+       "probability": 0.0379,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 33.24,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "resolving_soon"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 24,
+   "reason": "Scottie Scheffler (55%) leads Golfers to win a PGA Tour Major in 2027 ",
+   "headline": "Scottie Scheffler leads at 55%",
+   "context_summary": "Scottie Scheffler leads at 55%",
+   "data": {
+    "id": 56775495,
+    "name": "Golfers to win a PGA Tour Major in 2027 ",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 5,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2028-01-14T15:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 214439069,
+      "name": "Scottie Scheffler",
+      "probability": 0.545,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 55
+     },
+     {
+      "id": 214439070,
+      "name": "Rory McIlroy",
+      "probability": 0.405,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 41
+     },
+     {
+      "id": 214439071,
+      "name": "Jon Rahm",
+      "probability": 0.265,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 27
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 112,
+    "canonical_market_key": "golf:PGA:championship:2027",
+    "group_id": "kalshi:KXGOLFMAJOR-27",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Scottie Scheffler",
+       "probability": 0.545,
+       "movement": null
+      },
+      {
+       "label": "Rory McIlroy",
+       "probability": 0.405,
+       "movement": null
+      },
+      {
+       "label": "Jon Rahm",
+       "probability": 0.265,
+       "movement": null
+      },
+      {
+       "label": "Ludvig Aberg",
+       "probability": 0.225,
+       "movement": null
+      },
+      {
+       "label": "Xander Schauffele",
+       "probability": 0.225,
+       "movement": null
+      },
+      {
+       "label": "Bryson DeChambeau",
+       "probability": 0.215,
+       "movement": null
+      },
+      {
+       "label": "Cameron Young",
+       "probability": 0.215,
+       "movement": null
+      },
+      {
+       "label": "Jackson Koivun",
+       "probability": 0.195,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 104,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/37825475/pexels-photo-37825475.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 23.85,
+    "interestingness_reasons": [],
+    "market_tags": [
+     "category:championship",
+     "league:pga",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 21,
+   "reason": "Miyu Yamashita (75%) leads FM Championship End of Round 2 Leader across 3 sources",
+   "headline": "Tracked by 3 sources",
+   "context_summary": "Miyu Yamashita leads at 75% across 3 sources",
+   "data": {
+    "id": 59700136,
+    "name": "FM Championship End of Round 2 Leader",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 3,
+    "sources": [
+     "datagolf",
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-09-13T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 222338781,
+      "name": "Miyu Yamashita",
+      "probability": 0.75,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 75
+     },
+     {
+      "id": 222338782,
+      "name": "Laetitia Beck",
+      "probability": 0.12,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 12
+     },
+     {
+      "id": 222338783,
+      "name": "Linn Grant",
+      "probability": 0.12,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 12
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 144,
+    "canonical_market_key": "golf::championship:2026",
+    "group_id": "kalshi:KXLPGAR2LEAD-FMC26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Miyu Yamashita",
+       "probability": 0.75,
+       "movement": null
+      },
+      {
+       "label": "Laetitia Beck",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Linn Grant",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Nelly Korda",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Maude-Aimee Leblanc",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Katie Lu",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Megan Khang",
+       "probability": 0.09,
+       "movement": null
+      },
+      {
+       "label": "Ayaka Furue",
+       "probability": 0.08,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 136,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/9519538/pexels-photo-9519538.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.7059,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 56.31,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "multi_source",
+     "resolving_soon"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 18,
+   "reason": "Scottie Scheffler (88%) leads Tour Championship: Round 3 Top 10 Finishers across 3 sources",
+   "headline": "Tracked by 3 sources",
+   "context_summary": "Scottie Scheffler leads at 88% across 3 sources",
+   "data": {
+    "id": 59712503,
+    "name": "Tour Championship: Round 3 Top 10 Finishers",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "golf",
+    "source": "kalshi",
+    "source_count": 3,
+    "sources": [
+     "datagolf",
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-09-27T00:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 222382415,
+      "name": "Scottie Scheffler",
+      "probability": 0.875,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 88
+     },
+     {
+      "id": 222382416,
+      "name": "Chris Gotterup",
+      "probability": 0.81,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 81
+     },
+     {
+      "id": 222382417,
+      "name": "Cameron Young",
+      "probability": 0.75,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 75
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 26,
+    "canonical_market_key": "golf::championship:2026",
+    "group_id": "kalshi:KXPGAR3TOP10-TOC26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Scottie Scheffler",
+       "probability": 0.875,
+       "movement": null
+      },
+      {
+       "label": "Chris Gotterup",
+       "probability": 0.81,
+       "movement": null
+      },
+      {
+       "label": "Cameron Young",
+       "probability": 0.75,
+       "movement": null
+      },
+      {
+       "label": "Ludvig Aberg",
+       "probability": 0.64,
+       "movement": null
+      },
+      {
+       "label": "Matt Fitzpatrick",
+       "probability": 0.63,
+       "movement": null
+      },
+      {
+       "label": "Adam Scott",
+       "probability": 0.565,
+       "movement": null
+      },
+      {
+       "label": "Justin Rose",
+       "probability": 0.525,
+       "movement": null
+      },
+      {
+       "label": "Sam Burns",
+       "probability": 0.48,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 18,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.7059,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 40.9,
+    "interestingness_reasons": [
+     "multi_source"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:golf",
+     "tier:1"
+    ]
+   }
+  }
+ ],
+ "total": 16,
+ "limit": 50,
+ "offset": 0,
+ "has_more": false,
+ "cache": {
+  "status": "miss",
+  "built_at": 1788305499.28745,
+  "ttl_seconds": 60,
+  "stale_ttl_seconds": 300,
+  "live": false
+ }
+}
