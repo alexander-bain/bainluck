@@ -146,7 +146,7 @@ def is_duplicate_condition_leg(external_id: str | None, sibling_external_ids) ->
 # The cheap suffix test is written FIRST so the planner can skip the correlated
 # lookup for the overwhelming majority of rows, which carry no suffix at all.
 # ``regexp_replace`` is only ever evaluated inside the EXISTS.
-DUPLICATE_CONDITION_LEG_SQL = """NOT (
+IS_DUPLICATE_CONDITION_LEG_SQL = """(
     (right(fo.external_id, 4) = '_yes' OR right(fo.external_id, 3) = '_no')
     AND EXISTS (
         SELECT 1 FROM futures_outcomes dup_twin
@@ -155,3 +155,7 @@ DUPLICATE_CONDITION_LEG_SQL = """NOT (
               = regexp_replace(fo.external_id, '_(yes|no)$', '')
     )
 )"""
+
+# The KEEP form — what the graders filter on. Derived from the positive form so
+# the two can never drift into disagreeing about what a duplicate leg is.
+DUPLICATE_CONDITION_LEG_SQL = f"NOT {IS_DUPLICATE_CONDITION_LEG_SQL}"

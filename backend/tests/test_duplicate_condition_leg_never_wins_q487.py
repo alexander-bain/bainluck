@@ -334,3 +334,84 @@ def test_the_predicate_requires_both_halves():
         "predicate must be a NOT(...) keep-filter; un-negated it would grade "
         "ONLY the contaminants"
     )
+
+
+# --------------------------------------------------------------------------
+# Pass 0 — the repair that lands the ship (CERT-639's BLOCK)
+# --------------------------------------------------------------------------
+#
+# CERT-639: "the 235 already-crowned duplicate rows across 217 markets are
+# excluded from the new UPDATE and their clean_resolution/api_settlement source
+# plus single-winner shape excludes them from normal Gamma retry. The exact
+# user-visible 'No' winners therefore remain after merge."  Correct, and a
+# ship-level finding: the forward filters alone change nothing a user sees.
+
+
+def _prob_backfill_source() -> str:
+    import inspect
+
+    from app.tasks.backfill_winners import _backfill_from_current_probability
+
+    return inspect.getsource(_backfill_from_current_probability)
+
+
+def test_the_repair_runs_before_pass_1_not_after():
+    """🔴 The ordering IS the gotcha-#21 compliance, so it is asserted, not assumed.
+
+    Un-grading without an immediate re-resolve source is exactly what #21
+    forbids. The re-resolve here is Pass 1 itself, in the same function and the
+    same run — which is only true if Pass 0 comes FIRST. Reversed, this ships a
+    bulk `is_winner` reset with no grader behind it.
+    """
+    src = _prob_backfill_source()
+    repair_at = src.find("WITH contaminated AS")
+    pass1_at = src.find("WITH cleanly_resolved AS")
+    assert repair_at != -1, "Pass 0 repair is gone — the 235 rows go unlanded"
+    assert pass1_at != -1, "Pass 1 is gone"
+    assert repair_at < pass1_at, (
+        "Pass 0 must run BEFORE Pass 1 — otherwise the markets are un-graded "
+        "with no re-resolve behind them in this run (gotcha #21)"
+    )
+
+
+def test_the_repair_ungrades_and_never_flips_to_false():
+    """It must set NULL, not false.
+
+    Flipping the contaminants to `false` would assert the real candidates lost —
+    the same invention in the other direction, and it would leave the market
+    looking authoritatively graded so it never re-enters the net.
+    """
+    src = _prob_backfill_source()
+    start = src.find("WITH contaminated AS")
+    end = src.find("WITH cleanly_resolved AS")
+    repair = src[start:end]
+    assert "is_winner = NULL" in repair
+    assert "resolution_source = NULL" in repair
+    assert "is_winner = false" not in repair
+
+
+def test_the_repair_selects_legs_and_spares_authoritative_grades():
+    """Positive form to FIND them; overwritable-only so real grades survive."""
+    src = _prob_backfill_source()
+    start = src.find("WITH contaminated AS")
+    end = src.find("WITH cleanly_resolved AS")
+    repair = src[start:end]
+    assert "IS_DUPLICATE_CONDITION_LEG_SQL" in repair, (
+        "the repair must select duplicate legs with the POSITIVE form; the "
+        "NOT(...) keep-form would un-grade every market except the broken ones"
+    )
+    assert "OVERWRITABLE_WINNER_SOURCES_SQL" in repair, (
+        "clearing rows outside the overwritable set would destroy authoritative "
+        "leaderboard / game_score / datagolf grades on the same market"
+    )
+    assert "fm.source = 'polymarket'" in repair
+
+
+def test_the_two_sql_forms_cannot_drift():
+    """The keep-form is DERIVED from the positive form, not written twice."""
+    from app.utils.winner_field_coherence import (
+        DUPLICATE_CONDITION_LEG_SQL as keep,
+        IS_DUPLICATE_CONDITION_LEG_SQL as find,
+    )
+
+    assert keep == f"NOT {find}"

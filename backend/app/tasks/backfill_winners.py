@@ -34,6 +34,7 @@ from app.utils.resolution_authority import (
 from app.utils.winner_field_coherence import (
     DUPLICATE_CONDITION_LEG_SQL,
     INCOHERENT_FIELD_HAVING_SQL,
+    IS_DUPLICATE_CONDITION_LEG_SQL,
 )
 
 logger = logging.getLogger(__name__)
@@ -4777,11 +4778,70 @@ async def _backfill_from_current_probability():
         "all_losers_set": 0,
         "single_winners": 0,
         "single_losers": 0,
+        # Q487 / CERT-639: rows un-crowned by Pass 0 so Pass 1 can re-grade them.
+        "dup_leg_ungraded": 0,
+        "dup_leg_markets": 0,
         "errors": [],
     }
 
     try:
         async with get_task_session() as session:
+            # ── Pass 0 (Q487, repairs CERT-639's BLOCK) ───────────────────────
+            # The forward filters below stop NEW duplicate-leg crownings. They do
+            # nothing for the 235 rows across 217 markets already crowned, and
+            # those do NOT self-heal: once every row on the market reads
+            # `clean_resolution`/`api_settlement`, `_backfill_polymarket_winners`'
+            # "stuck" query skips it (:4923 wants a source OUTSIDE that pair) and
+            # its >1-winner escape hatch does not fire either, because a
+            # contaminated field has exactly ONE winner. So a user keeps seeing
+            # "No" win a 25-city market forever. CERT-639 was right to block on it.
+            #
+            # Un-grade the contaminated markets so Pass 1, immediately below and
+            # in this same run, re-grades them from the now-filtered field. That
+            # in-process re-resolve is what satisfies gotcha #21 — never bulk-reset
+            # `is_winner` without an immediate re-resolve source. It is NOT staged
+            # as a separate reset.
+            #
+            # 🔴 It does NOT flip the contaminants to `false`. That would assert
+            # the real candidates lost, which is the same invention inverted. It
+            # returns the market to ungraded and lets the ordinary grader speak.
+            #
+            # Only OVERWRITABLE rows are cleared, so an authoritative grade
+            # (leaderboard / game_score / datagolf) on the same market survives.
+            #
+            # Idempotent and self-limiting: after Pass 1 re-grades, the leg rows
+            # stay NULL (Pass 1's UPDATE excludes them), so the next run finds
+            # nothing. No flapping.
+            repair = await session.execute(text("""
+                    WITH contaminated AS (
+                        SELECT DISTINCT fo.market_id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.source = 'polymarket'
+                          AND fo.is_winner IS TRUE
+                          AND """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = NULL,
+                        resolution_source = NULL,
+                        last_updated = NOW()
+                    FROM contaminated c
+                    WHERE fo.market_id = c.market_id
+                      AND COALESCE(fo.resolution_source, '') IN
+                          """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
+                    RETURNING fo.market_id
+                """))
+            _repaired = repair.all()
+            stats["dup_leg_ungraded"] = len(_repaired)
+            stats["dup_leg_markets"] = len({r[0] for r in _repaired})
+            if _repaired:
+                logger.info(
+                    "Q487 Pass 0: un-graded %d rows across %d duplicate-leg "
+                    "contaminated markets; Pass 1 re-grades them now",
+                    stats["dup_leg_ungraded"], stats["dup_leg_markets"],
+                )
+            await session.commit()
+
             # Pass 1: Clean resolution (all at 0 or 1)
             result = await session.execute(text("""
                     WITH cleanly_resolved AS (
