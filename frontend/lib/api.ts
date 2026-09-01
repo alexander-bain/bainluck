@@ -54,8 +54,12 @@ import {
 } from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
+import { bootDurationMs, claimBootFeed } from "./discover/feedBoot";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/** The API origin. Exported so `feedBoot.ts` builds its boot URL against the
+ *  same value this module fetches from, rather than a second copy of the
+ *  env-var-plus-fallback expression (LAT-P184). */
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const AUTH_TOKEN_TIMEOUT_MS = 2500;
 
 /**
@@ -1111,12 +1115,54 @@ export async function fetchFeed(
   const sessionId = suppressSessionId ? undefined : getDiscoverSessionId();
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
+  const endpoint = `/api/feed${query ? `?${query}` : ""}`;
+
   // L2-189: measure client time-to-response and emit bounded, non-PII latency
   // telemetry from the exposed feed headers. All best-effort — never affects
   // the value returned to the caller.
   const startedAt =
     typeof performance !== "undefined" ? performance.now() : Date.now();
-  return apiFetch<FeedResponse>(`/api/feed${query ? `?${query}` : ""}`, {
+
+  // LAT-P184 (D-C, staged loading). The document may already have this exact
+  // request in flight — issued at HTML parse time, before a single chunk of the
+  // entry graph had executed. Claim it rather than re-issuing it.
+  //
+  // The claim is gated on `suppressSessionId` and on an exact URL match, so it
+  // can only ever hand back the shared-anon warm response to the shared-anon
+  // request. Anything else — a mismatch, a non-2xx, a rejected fetch — falls
+  // through to the normal `apiFetch` path, which keeps its retries and its
+  // typed errors.
+  if (suppressSessionId && !headers) {
+    const booted = claimBootFeed(`${API_URL}${endpoint}`);
+    if (booted?.response) {
+      try {
+        const res = await booted.response;
+        if (res.ok) {
+          const parsed = (await res.json()) as FeedResponse;
+          try {
+            reportFeedTelemetry(res, {
+              endpoint: "/api/feed",
+              authenticated: false,
+              hasSessionId: false,
+              durationMs: bootDurationMs(
+                booted,
+                typeof performance !== "undefined"
+                  ? performance.now()
+                  : Date.now()
+              ),
+            });
+          } catch {
+            /* telemetry must never change what the caller receives */
+          }
+          return parsed;
+        }
+      } catch {
+        /* boot fetch failed — the normal request below is the fallback */
+      }
+    }
+  }
+
+  return apiFetch<FeedResponse>(endpoint, {
     headers,
     onResponse: (res, meta) => {
       const now =

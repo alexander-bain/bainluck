@@ -12,6 +12,14 @@
  *  the remainder streams in on scroll, instead of pulling the whole feed up front. */
 export const FEED_PAGE_LIMIT = 20;
 
+/** The event/futures mix every Discover feed request asks for.
+ *
+ *  LAT-P184 lifted this out of `app/discover/page.tsx`, where the same literal
+ *  appeared at each call site. The boot fetch in `feedBoot.ts` has to build a
+ *  URL that is byte-identical to the one `fetchFeed` puts on the wire, and two
+ *  copies of a magic number in two files is exactly how that stops being true. */
+export const FEED_EVENT_PCT = 0.15;
+
 export interface FeedRequestPlan {
   limit: number;
   offset: number;
