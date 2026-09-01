@@ -361,7 +361,12 @@ export default function MarketMap({
           }}
         >
           {/* L2-131 Item 4: name what the bars mean — the pregame chance of
-              covering each margin (or going over each total). */}
+              reaching each margin (or clearing each total).
+
+              #2442: this said "covering", which is the betting verb — a side
+              covers THE SPREAD. The bars mean the same thing either way, and
+              "winning by" states it in the sport's own terms rather than the
+              slip's. */}
           <div
             style={{
               fontSize: 10,
@@ -373,7 +378,7 @@ export default function MarketMap({
             }}
           >
             {status === "done" ? "Pregame chance of " : "Chance of "}
-            {variant === "total" ? "going over" : "covering"}
+            {variant === "total" ? "going over" : "winning by"}
           </div>
           {ladder.map((row, i) => {
             const barColor = `rgba(${accentRgb},0.65)`;

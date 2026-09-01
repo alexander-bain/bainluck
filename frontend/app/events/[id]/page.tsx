@@ -37,6 +37,7 @@ import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
 import { espnTeamLogoByName } from "@/lib/images";
+import { sourceLabel } from "@/lib/sourceColors";
 import {
   useAnalytics,
   usePageTracking,
@@ -963,7 +964,10 @@ export default function EventPage({ params }: EventPageProps) {
                 {historyData?.bookmaker_history && Object.keys(historyData.bookmaker_history).length > 0 && (
                   <div className="flex items-center gap-1.5">
                     <div className="w-4 h-[2px] rounded bg-text-muted/40" />
-                    <span className="text-[10px] text-text-muted">Sportsbooks</span>
+                    {/* #2442: through the source registry, so this chip and
+                        the chart legend beside it cannot spell one supplier
+                        two ways. */}
+                    <span className="text-[10px] text-text-muted">{sourceLabel("betting")}</span>
                   </div>
                 )}
                 {historyData?.win_prob_sources && Object.keys(historyData.win_prob_sources).some(k => k.toLowerCase().includes('kalshi')) && (

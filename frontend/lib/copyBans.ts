@@ -34,6 +34,7 @@
  * | `TRADING_VOCAB_BANS` | ruling 138, Alex 2026-08-27 | the word is PROBABILITY, never *price* |
  * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
+ * | `PRICE_FORMAT_BANS` | the standing no-price-format ruling, #2442 | the reader gets a probability, never a betting line |
  *
  * ═══ WHAT IS NOT BANNED ═══
  *
@@ -251,12 +252,96 @@ export const FUTURE_PROMISE_BANS: CopyBan[] = [
   { id: "will-populate", pattern: /\bwill (appear|show|list|open|arrive|populate|update|fill|carry)\b/i, why: "describes what the section WILL do, not what it does" },
 ];
 
+/**
+ * THE STANDING NO-PRICE-FORMAT RULING, FINALLY WITH A GATE (#2442).
+ *
+ * ═══ WHY THIS GROUP EXISTS ═══
+ *
+ * Alex, reading `/events/15293846` during the tournament on 2026-08-31, counted
+ * **six gambling formats on one screen**: `Betting Odds (market)`,
+ * `Individual sportsbooks`, `Sportsbooks`, `+4.5`, `spread`, `total`. His note:
+ * *a ratified rule being broken on the flagship page.*
+ *
+ * It had been ratified and never encoded. The other four groups in this file
+ * each got a gate the day they were ruled; this one lived as a habit, and a
+ * habit is what a page drifts away from between reviews. The whole argument of
+ * this file — that a sweep proves something about a working tree and a GATE
+ * proves something about a reader — applies to it exactly as written.
+ *
+ * ═══ WHAT IS BANNED, AND WHAT IS DELIBERATELY NOT ═══
+ *
+ * Narrow on purpose. This file's own recorded failure mode is a broad rule that
+ * fires on the product's real content and gets switched off within a week, so
+ * every pattern here is a phrase only a betting slip produces.
+ *
+ * **Not banned, and each omission is a decision:**
+ *
+ *   • **The bare word `odds`.** Alex's own instruction on #2442 — *"the word
+ *     odds alone is fine — do not over-rotate"*. `The Odds API` is a supplier's
+ *     name and `Betting Odds` is caught by the source-name normaliser at the
+ *     render, not by a text rule that would also fail our own vendor.
+ *   • **The bare word `total`.** It is an ordinary English noun that the pace
+ *     card, the calibration tables and every scoring surface use correctly. The
+ *     betting sense is caught by the `spread`-family pattern's neighbours
+ *     instead, and by the render guard on the sections themselves.
+ *   • **American odds (`-150 / +130`).** DELIBERATELY ABSENT, and this is the
+ *     trap: `/about` carries `Not "-150 / +130" — just probabilities` directly
+ *     under its 60/40 display, and that line is the product's founding
+ *     argument. Alex was asked in 2026-07-31 and ruled it stays. The rule bans
+ *     a betting format used as a **selling point**; it does not ban naming the
+ *     format we refuse to show. A pattern here could not tell those apart, and
+ *     a compliance-minded sweep would delete the counter-example and silently
+ *     destroy the page's argument.
+ *
+ * ═══ WHAT THIS GROUP CANNOT SEE, AND WHAT COVERS IT ═══
+ *
+ * `handicap-notation` scores **zero** hits on the built bundle and is still the
+ * single string Alex quoted first. That is not a dead rule — `BER +4.5` is
+ * ASSEMBLED AT RUNTIME from a team abbreviation and a threshold, so no literal
+ * of it exists to scan. A bundle gate is structurally blind to every label
+ * built from data, which is why the render guard
+ * (`__tests__/components/eventPriceFormats.test.tsx`) is the primary instrument
+ * for this group and the bundle scan is the backstop. Keeping the pattern here
+ * means a future hard-coded example is caught by both.
+ */
+export const PRICE_FORMAT_BANS: CopyBan[] = [
+  {
+    id: "betting-spread-noun",
+    // The betting NOUN, identified by the word in front of it. A bare
+    // `/\bspread\b/` would fire on the verb ("spread across four rounds") and
+    // on `buildDensityFromSpreads`-shaped prose, which is how a rule like this
+    // earns its deletion.
+    pattern:
+      /\b(point|pregame|pre-game|projected|game|the|full[- ]game|closing|opening|against the)\s+spreads?\b/i,
+    why: 'the point spread is a betting line — the reader gets a margin in the sport\'s own units (#2442)',
+  },
+  {
+    id: "handicap-notation",
+    // `BER +4.5`, `WAW -1.5`. An uppercase competitor abbreviation followed by
+    // a signed number is a handicap and nothing else; a real sentence does not
+    // produce that shape.
+    pattern: /\b[A-Z]{2,4}\s[+−-]\d+(\.\d+)?\b/,
+    why: 'a signed handicap beside a competitor is a betting line, not a margin (#2442)',
+  },
+  {
+    id: "over-under",
+    pattern: /\bover\s*[/-]\s*under\b|\bo\/u\b/i,
+    why: '"over/under" is the betting name for a total (#2442)',
+  },
+  {
+    id: "moneyline",
+    pattern: /\bmoney\s?line\b/i,
+    why: 'the moneyline is the price we convert AWAY from — the reader gets the probability (#2442)',
+  },
+];
+
 /** Every rule, in the order a report should read them. */
 export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
   ...TRADING_VOCAB_BANS,
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
+  ...PRICE_FORMAT_BANS,
 ];
 
 export interface CopyBanHit {

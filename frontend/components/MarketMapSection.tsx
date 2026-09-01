@@ -110,10 +110,27 @@ function deriveLiveHalfScores(
   };
 }
 
+/**
+ * `BER by 4.5+` — a MARGIN, not a handicap (#2442).
+ *
+ * This printed `BER +4.5`: a competitor abbreviation followed by a signed
+ * number, which is a betting line and nothing else. Alex quoted it first among
+ * the six gambling formats he counted on one screen.
+ *
+ * The number does not change and neither does what it means. `by N+` states the
+ * thing the reader actually wants — how far ahead — in the sport's own units,
+ * and it is the wording `MARGIN_LADDER_LABEL` below now shares, so the headline
+ * and the ladder cannot drift into two grammars.
+ */
 function formatMarginLabel(margin: number, teamAbbr: string, threshold: number): string {
   if (margin === 0) return "Tied";
   const val = threshold % 1 === 0 ? Math.abs(threshold) : Math.abs(threshold).toFixed(1);
-  return `${teamAbbr} +${val}`;
+  return marginLadderLabel(teamAbbr, val);
+}
+
+/** One grammar for "this competitor, this far ahead", used by every ladder. */
+function marginLadderLabel(teamAbbr: string, threshold: number | string): string {
+  return `${teamAbbr} by ${threshold}+`;
 }
 
 function deriveAbbr(team: string, provided?: string): string {
@@ -214,9 +231,17 @@ export default function MarketMapSection({
     const projTeamAbbr = projValue != null ? (projValue > 0 ? hAbbr : projValue < 0 ? aAbbr : "TIE") : null;
     const projLogo = projValue != null ? (projValue > 0 ? homeLogo : awayLogo) : undefined;
 
+    // #2442: the SECOND margin formatter on this page, and the one the sweep
+    // for `formatMarginLabel` missed — the render guard caught it printing
+    // `LAL +4.5` on the projection mark after the ladder had already been
+    // fixed. Both now route through `marginLadderLabel`, so there is one
+    // grammar and a third copy cannot quietly disagree with the other two.
     function formatMargin(val: number, team: string): string {
       if (val === 0) return "Tied";
-      return `${team} +${Math.abs(val) % 1 === 0 ? Math.abs(val) : Math.abs(val).toFixed(1)}`;
+      return marginLadderLabel(
+        team,
+        Math.abs(val) % 1 === 0 ? Math.abs(val) : Math.abs(val).toFixed(1)
+      );
     }
 
     if (status === "pre") {
@@ -290,14 +315,14 @@ export default function MarketMapSection({
 
     for (const s of awaySorted.reverse()) {
       ladder.push({
-        label: `${aAbbr} +${s.threshold}`,
+        label: marginLadderLabel(aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "left",
       });
     }
     for (const s of homeSorted) {
       ladder.push({
-        label: `${hAbbr} +${s.threshold}`,
+        label: marginLadderLabel(hAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "right",
       });
@@ -310,7 +335,10 @@ export default function MarketMapSection({
         ? "Margin: expected vs final"
         : `Full game ${vocab.marginTitle.toLowerCase()}`,
       subtitle: status === "done"
-        ? "Where it landed vs the pregame spread"
+        // #2442: "the pregame spread" is a betting line. What the sentence
+        // means is the distribution the market had before play, which is
+        // what the reader is looking at on the rail beside it.
+        ? "Where it landed vs what was expected"
         : `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
       headline,
       rangeMin,
@@ -475,7 +503,7 @@ export default function MarketMapSection({
         ? "Total: expected vs final"
         : `Full game ${vocab.totalTitle.toLowerCase()}`,
       subtitle: status === "done"
-        ? "Where it landed vs the pregame total"
+        ? "Where it landed vs what was expected"
         : `Final ${vocab.unit} distribution`,
       headline: headlineValue,
       rangeMin,
@@ -557,7 +585,7 @@ export default function MarketMapSection({
         return marginA - marginB;
       });
       const ladder: MarketMapLadderRow[] = allSorted.map((s) => ({
-        label: `${s.isHome ? hAbbr : aAbbr} +${s.threshold}`,
+        label: marginLadderLabel(s.isHome ? hAbbr : aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: (s.isHome ? "right" : "left") as "left" | "right",
       }));

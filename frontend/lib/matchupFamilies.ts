@@ -44,12 +44,12 @@ export const MATCHUP_FAMILIES: { key: string; label: string; test: RegExp }[] = 
   { key: "set_total", label: "Set totals", test: /\btotal sets\b|\bsets?\s*o\/?u\b/i },
   {
     key: "game_total",
-    label: "Game totals",
+    label: "Combined score",
     test: /\btotal games\b|\bgames?\s*o\/?u\s*\d|\bmatch\s*o\/?u\s*\d|\bgames?\s*over\/under\b/i,
   },
   {
     key: "game_spread",
-    label: "Game spreads",
+    label: "Winning margin",
     test: /\bgame\s*(spread|handicap)\b|[-+]\d+(\.\d+)?\s*games\b/i,
   },
   {

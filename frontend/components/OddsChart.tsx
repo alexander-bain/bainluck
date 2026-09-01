@@ -17,7 +17,7 @@ import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, toMinuteKey, fillMinuteGaps } from "@/lib/chartTimeline";
 // #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
 import { homeProbToChartAxis, chartAxisToHomeProb } from "@/lib/eventKeyStats";
-import { sourceHex } from "@/lib/sourceColors";
+import { sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -35,7 +35,10 @@ import type { PeriodBoundary } from "@/lib/periodMarkers";
 // deliberate dark, high-contrast "betting" slate (L2-131) is now the canonical
 // odds_api hex there. Only the display name / dash / type stay local.
 const FALLBACK_SOURCE_CONFIG: Record<string, { display_name: string; color: string; dash_pattern: string | null; type: "model" | "market" }> = {
-  betting: { display_name: "Betting Odds", color: sourceHex("betting"), dash_pattern: null, type: "market" },
+  // #2442: the NAME now comes from the source registry (`sourceLabel`), the
+  // same place the colour comes from, so this map no longer carries a second
+  // spelling of it. `sourceLabel("betting")` is "Sportsbooks".
+  betting: { display_name: sourceLabel("betting"), color: sourceHex("betting"), dash_pattern: null, type: "market" },
   espn: { display_name: "ESPN", color: sourceHex("espn"), dash_pattern: "6 3", type: "model" },
   stat_model: { display_name: "Bain Luck Model", color: sourceHex("stat_model"), dash_pattern: "4 4", type: "model" },
   kalshi: { display_name: "Kalshi", color: sourceHex("kalshi"), dash_pattern: "8 4", type: "market" },
@@ -402,7 +405,10 @@ export default function OddsChart({
         sources.push({
           key,
           dataKey: `wp_${key}_delta`,
-          displayName: meta?.display_name ?? fallback?.display_name ?? key,
+          // #2442: registry first. The payload serves `"Betting Odds"` for
+          // the sportsbook source, and a runtime string is invisible to the
+          // shipped-copy scan — so the name is resolved here, not trusted.
+          displayName: sourceLabel(key, meta?.display_name ?? fallback?.display_name ?? key),
           color: meta?.color ?? fallback?.color ?? "#6b7280",
           dashPattern: meta?.dash_pattern ?? fallback?.dash_pattern ?? "4 4",
           type: meta?.type ?? fallback?.type ?? "model",
@@ -1126,11 +1132,16 @@ export default function OddsChart({
               )}
               {sourceEntries.map((source) => (
                 <div key={source.key}>
+                  {/* #2442: the `(market)` / `(model)` suffix is our OWN
+                      taxonomy, printed at the reader. It is the same class
+                      L2-157 stripped from the hero — "internal ranking taxonomy
+                      pills are NOT user information" — and on a tennis page it
+                      rendered as `Betting Odds (market)`, one of the six
+                      gambling formats Alex counted on one screen. The source
+                      NAME is the useful half and it stays; `source.type` is
+                      still carried on the object and still drives styling. */}
                   <p className="text-xs text-text-muted mb-0.5">
                     {source.displayName}
-                    <span className="text-text-muted ml-1">
-                      ({source.type})
-                    </span>
                   </p>
                   <p
                     className={`text-xs font-medium ${
@@ -1486,7 +1497,7 @@ export default function OddsChart({
               <Line
                 type="linear"
                 dataKey="homeDelta"
-                name="Betting Odds"
+                name={sourceLabel("betting")}
                 stroke={sourceHex("betting")}
                 strokeWidth={3}
                 dot={false}
@@ -1618,7 +1629,6 @@ export default function OddsChart({
               </svg>
               <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}>
                 {source.displayName}
-                <span className="text-text-muted ml-0.5">({source.type})</span>
               </span>
             </>
           );
@@ -1662,8 +1672,14 @@ export default function OddsChart({
                 strokeWidth="1"
               />
             </svg>
+            {/* #2442: ONE name per supplier. This legend said "Individual
+                sportsbooks" while the page footer said "Sportsbooks" and the
+                line itself said "Betting Odds" — three names for one source on
+                one screen. The registry decides the noun; "Each" carries the
+                only thing this legend adds, which is that these are the
+                separate lines rather than their average. */}
             <span className="text-xs text-text-muted">
-              Individual sportsbooks
+              Each {sourceLabel("betting").toLowerCase()}
             </span>
           </div>
         )}

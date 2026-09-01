@@ -47,7 +47,7 @@ describe("MatchupsRail — a large field is bounded into family groups", () => {
   it("renders a collapsed <details> header per family, with its count", () => {
     expect(html).toContain("Match winners (40)");
     expect(html).toContain("Completed matches (20)");
-    expect(html).toContain("Game totals (12)");
+    expect(html).toContain("Combined score (12)");  // #2442: was "Game totals"
     expect(html).toContain("Set winners (6)");
   });
 
@@ -102,6 +102,6 @@ describe("MatchupsRail — the settled tail groups too", () => {
   it("keeps the Completed disclosure and groups inside it", () => {
     expect(html).toContain("Completed (40)");
     expect(html).toContain("Match winners (30)");
-    expect(html).toContain("Game totals (10)");
+    expect(html).toContain("Combined score (10)");  // #2442: was "Game totals"
   });
 });

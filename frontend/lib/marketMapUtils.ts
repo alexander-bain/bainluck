@@ -251,5 +251,8 @@ export function sportVocab(sportKey: string | undefined): {
   if (key.includes("soccer") || key.includes("mls") || key.includes("epl")) {
     return { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal" };
   }
-  return { marginTitle: "Margin map", totalTitle: "Total map", unit: "points", unitSingular: "point" };
+  // #2442: "Total map" is the betting noun for an over/under. Every other
+  // branch here already names the sport's own unit ("Runs map", "Goals map")
+  // and the default was the only one that did not.
+  return { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point" };
 }

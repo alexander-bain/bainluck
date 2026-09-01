@@ -664,7 +664,7 @@ export default function ScoreDifferentialChart({
                 ...(hasProjectedScoreData
                   ? [
                       {
-                        value: "Projected Spread" as string,
+                        value: "Projected margin" as string,
                         type: "circle" as const,
                         color: "#10b981",
                       },
@@ -708,7 +708,7 @@ export default function ScoreDifferentialChart({
               <Line
                 type="linear"
                 dataKey="projectedDiff"
-                name="Projected Spread"
+                name="Projected margin"
                 stroke="#10b981"
                 strokeWidth={2.5}
                 dot={false}
