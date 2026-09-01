@@ -38,6 +38,7 @@ from app.utils.prediction_market_matching import (
     find_moneyline_outcome,
     feeds_win_prob_blend,
     is_combat_fight_ticker,
+    is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
@@ -1978,10 +1979,41 @@ async def _match_prediction_markets(limit: int = 500):
                     # the same function the link path uses — the ticker's clock is
                     # US Eastern, and reading it as UTC unlinked every MLB game
                     # market on every run.
+                    #
+                    # Q504-b: Kalshi tennis match segments are exempt for the same
+                    # reason combat fights are, and the measurement is on the
+                    # record. `KXATPMATCH-26AUG30FERMUS` carries the TOURNAMENT
+                    # SEGMENT's date; Fery played Musetti on 2026-09-01, 48h after
+                    # the `26AUG30` in its own ticker. Every one of its five prop
+                    # siblings carries that same stale date and none of them ever
+                    # reaches this check — props `continue` on the
+                    # `feeds_win_prob_blend` gate three lines up. So this arm fired
+                    # on exactly one market per tennis match: THE WINNER, the only
+                    # one that writes the blend.
+                    #
+                    # The result was a fight between two phases of this same task.
+                    # `_reconcile_kalshi_match_segments` (Q435) adopts the winner
+                    # onto the event its segment siblings already hold — an
+                    # id-anchored link, ruling 048 arm A — and then, seconds later
+                    # in the same run, this unlinked it again. Measured 2026-09-01
+                    # 22:47Z: adopted=2 against phase2_date_unlinked=27, and 15 open
+                    # ATP/WTA match-winner markets sitting unlinked beside linked
+                    # prop siblings. Downstream, those 15 events hold Kalshi PROPS
+                    # ONLY, so `compute_source_home_probability` returns None, the
+                    # WS consumer never subscribes the winner ticker (it selects on
+                    # `event_id IS NOT NULL`), and the hero's Kalshi number freezes
+                    # at whatever the last transient link happened to stamp.
+                    #
+                    # A date test cannot adjudicate this link: the segment token
+                    # already did, with the provider's own id. Declining here does
+                    # not loosen the LINK path — Phase 1 still refuses these on the
+                    # same predicate, and the only thing that may link them remains
+                    # the id-anchored reconciler.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
                     _prefix = _kalshi_prefix(market.external_id)
                     if (
                         not is_combat_fight_ticker(market.external_id)
+                        and not is_kalshi_match_segment_ticker(market.external_id)
                         and _ticker_date_conflicts_with_event(
                             ticker_date, market.event_commence_time, _prefix
                         )
