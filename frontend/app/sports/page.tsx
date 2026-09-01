@@ -17,7 +17,7 @@ import SportsEmptySlate from "@/components/SportsEmptySlate";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import FeedUnavailableNotice from "@/components/discover/FeedUnavailableNotice";
 import { getCategoryForLeague } from "@/lib/sportCategories";
-import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
+import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
@@ -318,9 +318,12 @@ export default function SportsPage() {
   // =========================================================================
 
   const feedStats = useMemo(() => {
-    const events = mergedItems.filter(i => i.type === "event").length;
-    const futures = mergedItems.filter(i => i.type === "futures").length;
-    const live = mergedItems.filter(i =>
+    // #2597 — the bundle-unfolded list, so the header counts what the section
+    // badges below it count and what the grid actually renders.
+    const cards = flattenFeedBundles(mergedItems);
+    const events = cards.filter(i => i.type === "event").length;
+    const futures = cards.filter(i => i.type === "futures").length;
+    const live = cards.filter(i =>
       i.type === "event" && (i.data as FeedEventData).status === "live"
     ).length;
     return { events, futures, live };
@@ -399,7 +402,7 @@ export default function SportsPage() {
               {section.title}
             </h2>
             <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-              {section.items.length}
+              {section.count}
             </span>
           </motion.div>
           <div

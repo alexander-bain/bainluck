@@ -6,6 +6,13 @@ export interface FeedSection {
   title: string;
   accent: string;
   items: FeedItem[];
+  /**
+   * How many CARDS this section renders — `items.length` unfolded, because a
+   * bundle is one item that renders as several (#2597). The badge beside a
+   * section title is a promise about what is below it, so it counts cards, not
+   * feed slots. On the 2026-09-01 tennis payload the two numbers are 19 and 22.
+   */
+  count: number;
 }
 
 /** A group of FeedItems sharing the same canonical_market_key (cross-source). */
@@ -78,6 +85,15 @@ export function flattenFeedBundles(
 }
 
 /**
+ * How many cards a list of feed items renders — the bundle-unfolded length.
+ * Exported because the page header counts the same thing the section badges do,
+ * and two hand-rolled counts of one population is how they drift apart.
+ */
+export function countCards(items: FeedItem[]): number {
+  return flattenFeedBundles(items).length;
+}
+
+/**
  * Group feed items into visual sections: Live Now, Just Happened, Upcoming, Top Markets.
  * Shared between homepage and category pages.
  */
@@ -129,38 +145,21 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
   }
 
   const sections: FeedSection[] = [];
-  if (liveNow.length > 0)
-    sections.push({
-      key: "live",
-      emoji: "\uD83D\uDD34",
-      title: "Live Now",
-      accent: "text-accent-live",
-      items: liveNow,
-    });
-  if (justHappened.length > 0)
-    sections.push({
-      key: "finished",
-      emoji: "\uD83C\uDFC1",
-      title: "Just Happened",
-      accent: "text-text-secondary",
-      items: justHappened,
-    });
-  if (upcoming.length > 0)
-    sections.push({
-      key: "upcoming",
-      emoji: "\uD83D\uDCC5",
-      title: "Upcoming",
-      accent: "text-text-secondary",
-      items: upcoming,
-    });
-  if (topMarkets.length > 0)
-    sections.push({
-      key: "markets",
-      emoji: "\uD83D\uDCCA",
-      title: "Top Markets",
-      accent: "text-accent-futures",
-      items: topMarkets,
-    });
+  const push = (
+    key: string,
+    emoji: string,
+    title: string,
+    accent: string,
+    items: FeedItem[],
+  ) => {
+    if (items.length === 0) return;
+    sections.push({ key, emoji, title, accent, items, count: countCards(items) });
+  };
+
+  push("live", "\uD83D\uDD34", "Live Now", "text-accent-live", liveNow);
+  push("finished", "\uD83C\uDFC1", "Just Happened", "text-text-secondary", justHappened);
+  push("upcoming", "\uD83D\uDCC5", "Upcoming", "text-text-secondary", upcoming);
+  push("markets", "\uD83D\uDCCA", "Top Markets", "text-accent-futures", topMarkets);
 
   return sections;
 }
