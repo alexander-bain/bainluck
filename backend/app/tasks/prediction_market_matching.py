@@ -18,6 +18,10 @@ from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
+from app.utils.event_completion import (
+    TICKER_DERIVED_COMMENCE_SOURCE,
+    commence_time_is_a_reported_start,
+)
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 from app.utils.prediction_market_matching import (
     is_game_level_market,
@@ -568,7 +572,37 @@ def auto_create_commence_time(market, fallback):
         return fallback, None
     if not auto_create_self_refutes(market, fallback):
         return fallback, None  # already coherent — change nothing
-    return ticker_time, "kalshi_ticker"
+    return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
+
+
+def auto_create_status(commence_time, commence_time_source, now) -> str:
+    """The status an auto-created row should be BORN in. Pure: no DB.
+
+    q076, and this is the OTHER DOOR into the frozen-final-score class.
+    ``espn_sync._transition_event_statuses_impl`` promoting ``scheduled -> live``
+    every 60s is the one everybody looks at; this line creates rows already live,
+    and for a ticker-derived time it does so almost every time.
+
+    :func:`auto_create_commence_time` returns the ticker's DATE, which has no
+    time-of-day and therefore resolves to **midnight UTC**. Every auto-create
+    that happens after midnight on the ticker's own day then satisfies
+    ``commence_time <= now``, so the row is born ``live`` for a match played that
+    AFTERNOON — and from there the staleness nets settle it at the sport's
+    maximum duration with no score, exactly as if it had been promoted.
+
+    Measured on production 2026-09-01: of every event ever stamped
+    ``kalshi_ticker``, 705 are ``closed`` and **all 705 are unscored**. Refusing
+    to birth this population live cannot cost a real result, because it has never
+    produced one.
+
+    The predicate is shared with the promotion gate rather than restated, so the
+    two doors cannot drift on what counts as a start. Anything else — including a
+    ``None`` source, which is most of the table — keeps the original rule
+    untouched.
+    """
+    if not commence_time_is_a_reported_start(commence_time_source):
+        return "scheduled"
+    return "live" if commence_time <= now else "scheduled"
 
 
 def auto_create_self_refutes(market, commence_time) -> bool:
@@ -1245,7 +1279,12 @@ MAX_KALSHI_SEGMENT_ROWS = 5000
 #: with names parsed out of a market title ("Wu" / "Walton"). Any other non-null
 #: provenance means the event came from a real schedule (`odds_api`, `espn`,
 #: `statpal`), which is what the draw register and the tournament page point at.
-_TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
+#:
+#: q076 moved the literal to `app.utils.event_completion`, where the two status
+#: clocks now read it as well. Re-exported under the old private name so this
+#: module's reconciliation rule and those clocks can never disagree about which
+#: provenance is derived — one string, three readers.
+_TICKER_DERIVED_COMMENCE_SOURCE = TICKER_DERIVED_COMMENCE_SOURCE
 
 
 def _choose_segment_event(event_ids, provenance: dict) -> tuple:
@@ -2736,7 +2775,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    status = "live" if commence_time <= now else "scheduled"
+    status = auto_create_status(commence_time, commence_source, now)
     external_id = f"pm_{market.source}_{market.external_id}"
 
     from app.services.event_registry import (
