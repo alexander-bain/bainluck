@@ -1,0 +1,96 @@
+========================================================================================
+CAL-P200 coverage — can the non-numeric sweep TYPE what it looked at?
+root: /Users/bain/bainluck-dev/calibration   modules: 20   truth-test sites: 1543
+========================================================================================
+   1005   65.1%   boolean-shaped
+    282   18.3%   UNTYPED
+    111    7.2%   benign X-or-same-falsy
+     73    4.7%   typed bool
+     40    2.6%   typed non-numeric (seq)
+     13    0.8%   typed non-numeric (str)
+     12    0.8%   typed non-numeric (map)
+      7    0.5%   typed num
+
+  falsy-capable population (excludes boolean-shaped): 427
+    inspected & typed non-numeric : 65 (15.2%)
+    typed numeric/bool (out of scope): 80
+    UNTYPED — the sweep is BLIND   : 282 (66.0%)
+
+### UNTYPED sites (the sweep's own blind spot), first 25
+
+  calibration.py:610
+      } if timing_row else {}
+  calibration.py:988
+      if stall["stalled"]:
+  calibration.py:1172
+      if res.is_ok:
+  calibration.py:1275
+      if not _redis_failed:
+  calibration.py:1856
+      if not census:
+  calibration.py:1924
+      if cached:
+  calibration.py:1042
+      if verdict.generated_at:
+  calibration.py:1047
+      if getattr(verdict, "is_previous_version", False):
+  calibration.py:1207
+      if main_verdict.is_previous_version:
+  calibration.py:1281
+      if lg.is_ok:
+  calibration.py:1574
+      wt_clause = "AND d.price_moved = true" if wt else ""
+  calibration.py:1797
+      if not raw:
+  calibration.py:321
+      "liquidity": float(r.liquidity) if r.liquidity else None,
+  calibration.py:322
+      "volume_updated_at": str(r.volume_updated_at) if r.volume_updated_at else None,
+  calibration.py:323
+      "commence_time": str(r.commence_time) if r.commence_time else None,
+  calibration.py:324
+      "created_at": str(r.created_at) if r.created_at else None,
+  calibration.py:325
+      "updated_at": str(r.updated_at) if r.updated_at else None,
+  calibration.py:347
+      "liquidity": float(r.liquidity) if r.liquidity else None,
+  calibration.py:445
+      "avg_volume": int(r.avg_volume) if r.avg_volume else 0,
+  calibration.py:446
+      "median_volume": int(r.median_volume) if r.median_volume else 0,
+  calibration.py:447
+      "avg_volume_24h": int(r.avg_volume_24h) if r.avg_volume_24h else 0}
+  calibration.py:606
+      "total": timing_row.total if timing_row else 0,
+  calibration.py:607
+      "snap_before_commence": timing_row.snap_before_commence if timing_row else 0,
+  calibration.py:608
+      "snap_after_commence": timing_row.snap_after_commence if timing_row else 0,
+  calibration.py:834
+      if not bank.ok or bank.envelope is None:
+
+### per-module UNTYPED share
+
+    75 / 370  untyped   precompute_calibration.py
+    48 / 106  untyped   calibration.py
+    27 / 117  untyped   calibration_sentinel.py
+    24 / 132  untyped   calibration_main_build.py
+    21 / 117  untyped   calibration_publish_gate.py
+    17 / 161  untyped   calibration_staged_futures.py
+    14 / 154  untyped   calibration_phase_ledger.py
+    10 / 44   untyped   calibration_coverage_bridge.py
+     9 / 33   untyped   calibration_graded_share.py
+     9 / 35   untyped   calibration_published_twin_worker.py
+     9 / 32   untyped   calibration_staged_disclosure.py
+     5 / 53   untyped   calibration_beat_gauge_sampler.py
+     5 / 62   untyped   calibration_price_provenance.py
+     3 / 45   untyped   calibration_published_twin.py
+     2 / 7    untyped   calibration_trade_evidence.py
+     1 / 10   untyped   calibration_closing_line.py
+     1 / 7    untyped   calibration_durable_baseline.py
+     1 / 10   untyped   calibration_ece.py
+     1 / 24   untyped   calibration_provability.py
+
+========================================================================================
+NEGATIVE-RESULT STRENGTH: PARTIAL — report the negative as covering a MINORITY
+========================================================================================

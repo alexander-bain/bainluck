@@ -1,0 +1,259 @@
+==========================================================================================
+CAL-P200 — NON-NUMERIC falsy sweep ('' / [] / {}) across every calibration module
+root: /Users/bain/bainluck-dev/calibration
+shape encoded: a str/list/dict-typed value whose EMPTY is meaningful, truth-tested
+==========================================================================================
+
+### CONTROL ARM A (POSITIVE) — known STRING hits must re-surface
+
+  PASS  calibration_phase_ledger.py:1360  record.detail = detail or None
+         -> L1360 [or/str] detail   record.detail = detail or None
+  PASS  calibration_phase_ledger.py:1128  if self.detail:
+         -> L1128 [if/str] self.detail   if self.detail:
+
+### CONTROL ARM B (NEGATIVE) — known NUMERIC hits must NOT surface
+
+  PASS  calibration_phase_ledger.py:1299  numeric .get(name, 0) or None
+  PASS  calibration_main_build.py:1613  numeric completed_mean if/else
+
+### backend/app/routes/calibration.py  —  4 site(s)
+
+  L1546  [or     /str ] source    empty -> ''
+           source = (source or "").strip()
+  L1719  [not    /seq ] examples
+           if not examples and note is None:
+  L1790  [if     /map ] PROVABILITY_CENSUS
+           if PROVABILITY_CENSUS:
+  L1886  [not    /seq ] buckets
+           if not buckets:
+
+### backend/app/tasks/calibration_beat_gauge_sampler.py  —  4 site(s)
+
+  L385   [ifexp  /seq ] rows    empty -> None
+           "oldest_generation": rows[0].get("generation") if rows else None,
+  L386   [ifexp  /seq ] rows    empty -> None
+           "newest_generation": rows[-1].get("generation") if rows else None,
+  L387   [ifexp  /seq ] rows    empty -> None
+           "newest_generated_at": rows[-1].get("generated_at") if rows else None,
+  L392   [ifexp  /seq ] rows    empty -> None
+           "bound_latest_pp": rows[-1].get("tolerance_pp") if rows else None,
+
+### backend/app/tasks/calibration_graded_share.py  —  1 site(s)
+
+  L275   [not    /map ] by_key
+           if not by_key:
+
+### backend/app/tasks/calibration_main_build.py  —  6 site(s)
+
+  L876   [if     /seq ] total > CHECKPOINT_MAX_BYTES and sized
+           while total > CHECKPOINT_MAX_BYTES and sized:
+  L1061  [or     /map ] unit_costs    empty -> {}
+           for name, cost in (unit_costs or {}).items():
+  L1713  [or     /map ] _unit_costs_from()    empty -> prior_unit_costs
+           unit_costs = _unit_costs_from(runner) or prior_unit_costs
+  L1714  [if     /map ] unit_costs
+           if unit_costs:
+  L1779  [or     /str ] join()    empty -> 'none'
+           ", ".join(plan.indeterminate_phases) or "none",
+  L1780  [or     /str ] join()    empty -> 'none'
+           ", ".join(plan.unchecked_phases) or "none",
+
+### backend/app/tasks/calibration_sentinel.py  —  4 site(s)
+
+  L138   [not    /str ] external_id
+           if not external_id:
+  L378   [or     /str ] category    empty -> ''
+           if provenance == "events" and (category or "").startswith("soccer"):
+  L1042  [if     /str ] explained_by
+           if explained_by:
+  L1132  [ifexp  /seq ] items    empty -> None
+           return items[0]["number"] if items else None
+
+### backend/app/tasks/precompute_calibration.py  —  48 site(s)
+
+  L2090  [or     /str ] outcome_relation    empty -> ''
+           return (outcome_relation or "") in EXCLUSIVITY_PROVED_RELATIONS
+  L2468  [not    /str ] name
+           if source != "kalshi" or not name:
+  L2537  [not    /seq ] bucket_list
+           if not bucket_list:
+  L5017  [and    /seq ] rows
+           if rows and rows[0].kalshi_included is not None
+  L5017  [ifexp  /seq ] rows and rows[0].kalshi_included is not None    empty -> 0
+           if rows and rows[0].kalshi_included is not None
+  L5022  [and    /seq ] rows
+           if rows and rows[0].kalshi_excluded is not None
+  L5022  [ifexp  /seq ] rows and rows[0].kalshi_excluded is not None    empty -> 0
+           if rows and rows[0].kalshi_excluded is not None
+  L5028  [and    /seq ] rows
+           if rows and rows[0].poly_placeholder_excluded is not None
+  L5028  [ifexp  /seq ] rows and rows[0].poly_placeholder_excluded is not None    empty -> 0
+           if rows and rows[0].poly_placeholder_excluded is not None
+  L5033  [and    /seq ] rows
+           if rows and rows[0].poly_included is not None
+  L5033  [ifexp  /seq ] rows and rows[0].poly_included is not None    empty -> 0
+           if rows and rows[0].poly_included is not None
+  L5039  [and    /seq ] rows
+           if rows and rows[0].poly_never_traded_total is not None
+  L5039  [ifexp  /seq ] rows and rows[0].poly_never_traded_total is not None    empty -> 0
+           if rows and rows[0].poly_never_traded_total is not None
+  L5044  [and    /seq ] rows
+           if rows and rows[0].poly_never_traded_in_curve is not None
+  L5044  [ifexp  /seq ] rows and rows[0].poly_never_traded_in_curve is not None    empty -> 0
+           if rows and rows[0].poly_never_traded_in_curve is not None
+  L5050  [and    /seq ] rows
+           if rows and rows[0].both_false_excluded is not None
+  L5050  [ifexp  /seq ] rows and rows[0].both_false_excluded is not None    empty -> 0
+           if rows and rows[0].both_false_excluded is not None
+  L5055  [and    /seq ] rows
+           if rows and rows[0].both_winner_excluded is not None
+  L5055  [ifexp  /seq ] rows and rows[0].both_winner_excluded is not None    empty -> 0
+           if rows and rows[0].both_winner_excluded is not None
+  L5061  [and    /seq ] rows
+           if rows and rows[0].golf_placeholder_excluded is not None
+  L5061  [ifexp  /seq ] rows and rows[0].golf_placeholder_excluded is not None    empty -> 0
+           if rows and rows[0].golf_placeholder_excluded is not None
+  L5067  [and    /seq ] rows
+           if rows and rows[0].mex_normalized_outcomes is not None
+  L5067  [ifexp  /seq ] rows and rows[0].mex_normalized_outcomes is not None    empty -> 0
+           if rows and rows[0].mex_normalized_outcomes is not None
+  L5078  [and    /seq ] rows
+           if rows and getattr(rows[0], attr, None) is not None
+  L5078  [ifexp  /seq ] rows and getattr(rows[0], attr, None) is not None    empty -> 0
+           if rows and getattr(rows[0], attr, None) is not None
+  L5115  [not    /seq ] rows
+           if not rows:
+  L5130  [and    /seq ] rows
+           if rows and rows[0].esports_bundle_excluded is not None
+  L5130  [ifexp  /seq ] rows and rows[0].esports_bundle_excluded is not None    empty -> 0
+           if rows and rows[0].esports_bundle_excluded is not None
+  L5136  [and    /seq ] rows
+           if rows and rows[0].player_props_placeholder_excluded is not None
+  L5136  [ifexp  /seq ] rows and rows[0].player_props_placeholder_excluded is not None    empty -> 0
+           if rows and rows[0].player_props_placeholder_excluded is not None
+  L5154  [and    /seq ] rows
+           if rows and rows[0].player_props_placeholder_temporary_excluded is not None
+  L5154  [ifexp  /seq ] rows and rows[0].player_props_placeholder_temporary_excluded is not None    empty -> 0
+           if rows and rows[0].player_props_placeholder_temporary_excluded is not None
+  L5159  [and    /seq ] rows
+           if rows and rows[0].player_props_placeholder_temporary_markets is not None
+  L5159  [ifexp  /seq ] rows and rows[0].player_props_placeholder_temporary_markets is not None    empty -> 0
+           if rows and rows[0].player_props_placeholder_temporary_markets is not None
+  L5169  [if     /seq ] rows
+           if rows:
+  L5176  [and    /seq ] rows
+           if rows and rows[0].kalshi_prop_threshold_excluded is not None
+  L5176  [ifexp  /seq ] rows and rows[0].kalshi_prop_threshold_excluded is not None    empty -> 0
+           if rows and rows[0].kalshi_prop_threshold_excluded is not None
+  L5182  [and    /seq ] rows
+           if rows and rows[0].weather_wide_spread_excluded is not None
+  L5182  [ifexp  /seq ] rows and rows[0].weather_wide_spread_excluded is not None    empty -> 0
+           if rows and rows[0].weather_wide_spread_excluded is not None
+  L5774  [not    /map ] cohort_agg
+           if not cohort_agg:
+  L6311  [or     /map ] truth_by_class    empty -> {}
+           truth_by_class = truth_by_class or {}
+  L7181  [not    /map ] horizons_result
+           if not horizons_result:
+  L7444  [not    /map ] diag
+           if not diag:
+  L7617  [not    /seq ] probs
+           if not probs:
+  L7627  [not    /map ] bucket_n
+           if not bucket_n:
+  L8272  [or     /seq ] rows    empty -> []
+           rows_this_run += len(rows or [])
+  L8277  [or     /seq ] rows    empty -> []
+           rows_committed=len(rows or []),
+  L8279  [or     /seq ] rows    empty -> []
+           checkpoint.accumulator, rows or []
+
+### backend/app/utils/calibration_coverage_bridge.py  —  5 site(s)
+
+  L301   [not    /map ] tier_counts
+           if not tier_counts:
+  L304   [or     /str ] unavailable_reason    empty -> 'reachability tier not computed by this build'
+           "reason": unavailable_reason or "reachability tier not computed by this build",
+  L339   [not    /seq ] violations
+           "status": STATUS_COMPLETE if not violations else STATUS_INCOMPLETE,
+  L472   [not    /seq ] violations
+           status = STATUS_COMPLETE if not violations else STATUS_INCOMPLETE
+  L531   [not    /seq ] violations
+           "ok": not violations,
+
+### backend/app/utils/calibration_phase_ledger.py  —  3 site(s)
+
+  L980   [or     /map ] unit_costs    empty -> {}
+           unit_costs = unit_costs or {}
+  L1128  [if     /str ] self.detail
+           if self.detail:
+  L1360  [or     /str ] detail    empty -> None
+           record.detail = detail or None
+
+### backend/app/utils/calibration_provability.py  —  1 site(s)
+
+  L106   [not    /str ] self.population
+           if not self.population or not isinstance(self.population, str):
+
+### backend/app/utils/calibration_publish_gate.py  —  4 site(s)
+
+  L255   [not    /seq ] buckets
+           if not isinstance(buckets, list) or not buckets:
+  L604   [or     /str ] join()    empty -> 'ok'
+           ",".join(self.codes) or "ok",
+  L613   [if     /seq ] self.observations
+           if self.observations:
+  L782   [or     /str ] join()    empty -> 'population'
+           + (", ".join(sorted(prev["sections_missing"])) or "population")
+
+### backend/app/utils/calibration_published_twin.py  —  2 site(s)
+
+  L535   [if     /seq ] outside or in_scope_above_floor > 0
+           elif outside or in_scope_above_floor > 0:
+  L535   [or     /seq ] outside    empty -> in_scope_above_floor > 0
+           elif outside or in_scope_above_floor > 0:
+
+### backend/app/utils/calibration_staged_futures.py  —  15 site(s)
+
+  L401   [if     /map ] fields
+           if fields:
+  L493   [or     /seq ] rows    empty -> ()
+           mappings = [_row_mapping(row) for row in (rows or ())]
+  L768   [if     /str ] self.stored_member_digest
+           if self.stored_member_digest:
+  L1078  [or     /seq ] chunk_results    empty -> ()
+           for chunk in chunk_results or ():
+  L1208  [or     /seq ] rows    empty -> ()
+           for row in rows or ():
+  L1269  [or     /seq ] accumulated    empty -> ()
+           for row in accumulated or ():
+  L1306  [or     /seq ] carried    empty -> ()
+           for row in list(carried or ())
+  L1714  [not    /seq ] served_units
+           if not served_units:
+  L1839  [not    /seq ] cursor.planned_units
+           if not cursor.planned_units:
+  L1843  [not    /seq ] cursor.committed_units
+           if not cursor.committed_units or not cursor.covers(cursor.planned_units):
+  L1846  [if     /map ] digests
+           if digests:
+  L1851  [or     /map ] {name: digests[name] for name in cursor.committed_units if name in digests}    empty -> inherited
+           inherited = {
+  L1890  [not    /seq ] cursor.served_units
+           if not cursor.served_units:
+  L1914  [not    /seq ] cursor.served_units
+           if not cursor.served_units or cursor.served_at:
+  L2099  [not    /str ] cursor.owner
+           return not cursor.owner or cursor.owner == owner
+
+==========================================================================================
+modules scanned: 20   total non-numeric truth-tested sites: 97
+     48  precompute_calibration.py
+     15  calibration_staged_futures.py
+      6  calibration_main_build.py
+      5  calibration_coverage_bridge.py
+      4  calibration_publish_gate.py
+      4  calibration_sentinel.py
+CONTROL A (positive, string): PASS
+CONTROL B (negative, numeric): PASS
+==========================================================================================
