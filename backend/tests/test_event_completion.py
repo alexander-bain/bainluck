@@ -123,9 +123,13 @@ class TestSnapshotEvidenceQuery:
 class TestBothProducersAreWired:
     """The decision logic above is pure and directly tested; these pin the glue.
 
-    Neither staleness net has an existing test harness (both run inside Celery
-    tasks over live ORM sessions), so wiring is asserted at source level — the
-    same way this repo pins other cross-module contracts.
+    Source-level assertions, kept as a cheap tripwire. They are NOT the wiring
+    proof: both nets now have behavioural harnesses further down this file
+    (``TestStalenessNetEndToEnd`` for espn_sync, ``TestOddsNetSportDuration``
+    for odds_polling), and queue 067 is why. A ``getsource`` assertion cannot
+    tell "the function calls this" from "the function's docstring mentions it",
+    and it certainly cannot tell whether the value the call returns is used to
+    decide anything.
     """
 
     def test_espn_sync_holds_a_game_that_may_still_be_running(self):
@@ -333,3 +337,282 @@ class TestStalenessNetEndToEnd:
         )
         assert (held.status, done.status) == ("live", "closed")
         assert (stats["held_still_running"], stats["live_to_closed"]) == (1, 1)
+
+
+# ---------------------------------------------------------------------------
+# QUEUE 067 — end-to-end harness for the ODDS staleness net.
+#
+# WHY THIS EXISTS, and it is CAL-P005's lesson landing a second time. That
+# harness was built for `espn_sync`'s net and the comment above it says the
+# quiet part out loud: "rules tested in isolation prove the rules, not the
+# caller." `odds_polling.detect_and_close_stale_events` was left on source-level
+# assertions, and the defect that survived is precisely the one a source-level
+# assertion cannot see.
+#
+# `get_max_duration_for_sport` has FOURTEEN tests in
+# `test_odds_polling_helpers.py`. Every one of them passed, every day, while the
+# closer it was written for never called it — so every sport was eligible to be
+# auto-closed at MIN_HOURS_BEFORE_STALENESS_CHECK, 90 minutes. Seven of the
+# nineteen priced impossible ties found on production had closed 88-91 minutes
+# after first pitch. A 90-minute-old MLB game is in the fifth inning.
+#
+# So these tests do not ask what the lookup returns. They put a baseball event
+# in front of the closer with stale odds and ask whether it survives.
+# ---------------------------------------------------------------------------
+
+
+class _OddsEv:
+    """Stand-in for an Event row as the odds net reads it.
+
+    The net writes through `Event.__table__.update()` rather than ORM attribute
+    assignment, so `_OddsNetSession` applies the captured values back onto this
+    object — the assertions read the row the way the database would.
+    """
+
+    def __init__(self, id, sport_key, commence_time, statpal_end_time=None):
+        self.id = id
+        self.status = "live"
+        self.commence_time = commence_time
+        self.completed_at = None
+        self.statpal_end_time = statpal_end_time
+        self.win_probability_sources = {}
+        self.home_team_name = "Home"
+        self.away_team_name = "Away"
+        self.sport = type("S", (), {"key": sport_key})()
+
+
+class _OddsNetSession:
+    """Fake session dispatching on statement shape.
+
+    `evidence` maps event id -> {"recent": int, "total": int, "last_snap": dt}.
+      recent    snapshots updated inside ODDS_STALE_MINUTES
+      total     snapshots this event has EVER had (0 == never priced)
+      last_snap most recent post-commence capture from any source, or None
+    """
+
+    def __init__(self, live, evidence):
+        self._live = live
+        self._evidence = evidence
+        self.updates = []  # (event_id, values dict) in write order
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+
+        if "MAX(x.captured_at)" in sql:
+            snap = self._evidence.get(params["event_ids"][0], {}).get("last_snap")
+            row = None if snap is None else type("Row", (), {"last_snap": snap})()
+            return type("R", (), {"first": lambda _s: row})()
+
+        if sql.startswith("UPDATE"):
+            compiled = stmt.compile()
+            values = {
+                k: v for k, v in compiled.params.items()
+                if k in ("status", "completed_at", "home_score", "away_score")
+            }
+            ev_id = compiled.params.get("id_1")
+            self.updates.append((ev_id, values))
+            for ev in self._live:
+                if ev.id == ev_id:
+                    for k, v in values.items():
+                        setattr(ev, k, v)
+            return None
+
+        if "count(" in sql.lower() and "odds_snapshots" in sql:
+            ev_id = stmt.compile().params.get("event_id_1")
+            ev_evidence = self._evidence.get(ev_id, {})
+            # The recent-window query is the one carrying the valid_until
+            # predicate; the "did we EVER have odds" query is event_id alone.
+            key = "recent" if "valid_until" in sql else "total"
+            n = ev_evidence.get(key, 0)
+            return type("R", (), {"scalar": lambda _s: n})()
+
+        # The live-event selection.
+        rows = self._live
+        return type("R", (), {
+            "scalars": lambda _s: type("S", (), {"all": lambda _x: rows})()
+        })()
+
+
+async def _run_odds_net(live, evidence, now=NOW):
+    from unittest.mock import patch
+
+    import app.tasks.odds_polling as mod
+
+    class _FrozenNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    session = _OddsNetSession(live, evidence)
+    with patch.object(mod, "datetime", _FrozenNow):
+        closed = await mod.detect_and_close_stale_events(session)
+    return session, closed
+
+
+def _stale(total=12, last_snap_hours_ago=3):
+    """Odds evidence for a game the books have stopped pricing.
+
+    `recent` is 0 (nothing inside ODDS_STALE_MINUTES) and the last capture is
+    hours old, so the still-running guard does not hold it. The ONLY thing left
+    that can decide this event's fate is elapsed time against its sport's
+    maximum — which is exactly what these tests are about.
+    """
+    return {"recent": 0, "total": total,
+            "last_snap": NOW - timedelta(hours=last_snap_hours_ago)}
+
+
+class TestOddsNetSportDuration:
+    """The gate the config declared and the closer ignored."""
+
+    @pytest.mark.asyncio
+    async def test_a_baseball_game_is_not_over_after_two_hours(self):
+        # THE BUG. Stale odds, two hours in — a real MLB game in the fifth or
+        # sixth inning. The old closer stamped this FINAL; event 14877917
+        # (BOS@NYY, 463 outcomes) was closed 0-0 ninety minutes in.
+        ev = _OddsEv(1, "baseball_mlb", NOW - timedelta(hours=2))
+        session, closed = await _run_odds_net([ev], {1: _stale()})
+        assert ev.status == "live"
+        assert ev.completed_at is None
+        assert (closed, session.updates) == (0, [])
+
+    @pytest.mark.asyncio
+    async def test_a_baseball_game_closes_after_five_and_a_half_hours(self):
+        # And the net must keep working. SPORT_MAX_DURATIONS["baseball"] is 5.0
+        # ("extra innings possible"); past that, silent books are evidence.
+        ev = _OddsEv(2, "baseball_mlb", NOW - timedelta(hours=5.5))
+        session, closed = await _run_odds_net([ev], {2: _stale()})
+        assert ev.status == "closed"
+        assert closed == 1
+        assert session.updates[0][1]["status"] == "closed"
+
+    @pytest.mark.asyncio
+    async def test_the_boundary_is_the_sports_own_maximum(self):
+        # Exactly 5.0h has not EXCEEDED the maximum; a minute past it has.
+        at = _OddsEv(3, "baseball_mlb", NOW - timedelta(hours=5))
+        past = _OddsEv(4, "baseball_mlb", NOW - timedelta(hours=5, minutes=1))
+        await _run_odds_net([at], {3: _stale()})
+        await _run_odds_net([past], {4: _stale()})
+        assert (at.status, past.status) == ("live", "closed")
+
+    @pytest.mark.asyncio
+    async def test_the_gate_is_per_sport_and_not_one_new_constant(self):
+        # Four hours in: past basketball's 3.5 and hockey's 3.5, inside
+        # baseball's 5.0 and tennis's 6.0. A single replacement constant —
+        # however much better than 1.5 — cannot produce this split, so this is
+        # the test that fails if someone "fixes" the bug with another literal.
+        nba = _OddsEv(5, "basketball_nba", NOW - timedelta(hours=4))
+        nhl = _OddsEv(6, "icehockey_nhl", NOW - timedelta(hours=4))
+        mlb = _OddsEv(7, "baseball_mlb", NOW - timedelta(hours=4))
+        atp = _OddsEv(8, "tennis_atp", NOW - timedelta(hours=4))
+        live = [nba, nhl, mlb, atp]
+        await _run_odds_net(live, {e.id: _stale() for e in live})
+        assert [e.status for e in live] == ["closed", "closed", "live", "live"]
+
+    @pytest.mark.asyncio
+    async def test_no_sport_is_closeable_at_ninety_minutes(self):
+        # The literal defect signature: seven of the nineteen priced impossible
+        # ties sat at 88-91 minutes. The shortest maximum in the table is 3.0h,
+        # so nothing in it can be closed on a wall clock this early.
+        from app.tasks.config import SPORT_MAX_DURATIONS
+
+        live = [
+            _OddsEv(100 + i, f"{prefix}_x", NOW - timedelta(minutes=90))
+            for i, prefix in enumerate(SPORT_MAX_DURATIONS)
+        ]
+        _, closed = await _run_odds_net(live, {e.id: _stale() for e in live})
+        assert closed == 0
+        assert {e.status for e in live} == {"live"}
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_sport_gets_the_default_maximum(self):
+        # 4.0h default: still live at 3h, closed at 5h. Not 1.5h either way.
+        early = _OddsEv(9, "kabaddi_pkl", NOW - timedelta(hours=3))
+        late = _OddsEv(10, "kabaddi_pkl", NOW - timedelta(hours=5))
+        await _run_odds_net([early], {9: _stale()})
+        await _run_odds_net([late], {10: _stale()})
+        assert (early.status, late.status) == ("live", "closed")
+
+
+class TestOddsNetEvidenceRules:
+    """What the net is allowed to treat as evidence a game has ended."""
+
+    @pytest.mark.asyncio
+    async def test_an_event_we_never_priced_is_never_closed_here(self):
+        # `no_odds_data`. Zero snapshots gives an ODDS net no odds signal at
+        # all, and it used to be the strongest close signal in the file —
+        # closing unconditionally, which is why every orphan closed on its first
+        # eligible pass. Gotcha #53: an empty read is not a fact.
+        ev = _OddsEv(11, "baseball_mlb", NOW - timedelta(hours=8))
+        session, closed = await _run_odds_net(
+            [ev], {11: {"recent": 0, "total": 0, "last_snap": None}}
+        )
+        assert ev.status == "live"
+        assert (closed, session.updates) == (0, [])
+
+    @pytest.mark.asyncio
+    async def test_the_sibling_net_still_owns_that_population(self):
+        # Declining above is only safe because something better-informed closes
+        # these. If this beat entry is ever removed or slowed, the events the
+        # odds net now declines stop being closed by anything.
+        from app.tasks import celery_app
+
+        entry = celery_app.conf.beat_schedule["transition-event-statuses"]
+        assert entry["task"] == "app.tasks.transition_event_statuses"
+        assert entry["schedule"] <= 300
+
+    @pytest.mark.asyncio
+    async def test_a_game_a_source_is_still_reporting_on_is_held(self):
+        # Past the maximum with silent books, but something captured this event
+        # two minutes ago. Books go quiet on a long game too; closing here is
+        # the CAL-P002 producer, freezing a mid-game score as the final.
+        ev = _OddsEv(12, "baseball_mlb", NOW - timedelta(hours=6))
+        session, closed = await _run_odds_net(
+            [ev], {12: {"recent": 0, "total": 40,
+                        "last_snap": NOW - timedelta(minutes=2)}}
+        )
+        assert ev.status == "live"
+        assert (closed, session.updates) == (0, [])
+
+    @pytest.mark.asyncio
+    async def test_the_close_stamps_the_game_end_not_the_processing_time(self):
+        # gotcha #22, on the path that now actually reaches a write.
+        ended = NOW - timedelta(hours=1, minutes=30)
+        ev = _OddsEv(13, "baseball_mlb", NOW - timedelta(hours=6))
+        await _run_odds_net(
+            [ev], {13: {"recent": 0, "total": 40, "last_snap": ended}}
+        )
+        assert ev.status == "closed"
+        assert ev.completed_at == ended
+        assert ev.completed_at != NOW
+
+    @pytest.mark.asyncio
+    async def test_fresh_odds_never_close_however_long_the_game_runs(self):
+        # The maximum duration is a necessary condition, never a sufficient one.
+        ev = _OddsEv(14, "baseball_mlb", NOW - timedelta(hours=9))
+        _, closed = await _run_odds_net(
+            [ev], {14: {"recent": 6, "total": 60,
+                        "last_snap": NOW - timedelta(minutes=1)}}
+        )
+        assert (ev.status, closed) == ("live", 0)
+
+    @pytest.mark.asyncio
+    async def test_a_statpal_end_time_still_closes_inside_the_maximum(self):
+        # A real end time from a real source is not a wall-clock guess, so the
+        # per-sport gate must not be allowed to suppress it. This arm keeps its
+        # MIN_HOURS_BEFORE_STALENESS_CHECK reach.
+        ended = NOW - timedelta(minutes=10)
+        ev = _OddsEv(15, "baseball_mlb", NOW - timedelta(hours=2),
+                     statpal_end_time=ended)
+        _, closed = await _run_odds_net([ev], {15: _stale()})
+        assert (ev.status, ev.completed_at, closed) == ("closed", ended, 1)
+
+    @pytest.mark.asyncio
+    async def test_a_held_event_never_suppresses_a_closeable_sibling(self):
+        # gotcha #42 — one item's fate must not decide another's.
+        held = _OddsEv(16, "baseball_mlb", NOW - timedelta(hours=2))
+        done = _OddsEv(17, "basketball_nba", NOW - timedelta(hours=6))
+        _, closed = await _run_odds_net(
+            [held, done], {16: _stale(), 17: _stale()}
+        )
+        assert (held.status, done.status) == ("live", "closed")
+        assert closed == 1
