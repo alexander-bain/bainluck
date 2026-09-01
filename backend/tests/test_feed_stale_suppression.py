@@ -122,7 +122,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.97, NOW
+            market, outcomes, "Yes", 0.97, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "locked_market" in trace["blockers"]
@@ -135,7 +138,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 1.0, NOW
+            market, outcomes, "Yes", 1.0, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "locked_market" in trace["blockers"]
@@ -148,7 +154,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.96, NOW
+            market, outcomes, "Yes", 0.96, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert "locked_market" not in trace["blockers"]
 
@@ -160,7 +169,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.03, NOW
+            market, outcomes, "Yes", 0.03, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         # Either near_zero_binary or locked_market (No at 97%) blocks it
@@ -178,7 +190,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.0, NOW
+            market, outcomes, "Yes", 0.0, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "all_outcomes_zero" in trace["blockers"]
@@ -192,7 +207,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=1))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "A", 0.96, NOW
+            market, outcomes, "A", 0.96, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "all_outcomes_settled" in trace["blockers"]
@@ -205,7 +223,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(days=3))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.65, NOW
+            market, outcomes, "Yes", 0.65, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "stale_no_movement" in trace["blockers"]
@@ -218,7 +239,10 @@ class TestSettledMarketDetection:
         ]
         market = _make_market(updated_at=NOW - timedelta(hours=6))
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.65, NOW
+            market, outcomes, "Yes", 0.65, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert trace["eligible"]
         assert trace["blockers"] == []
@@ -375,7 +399,10 @@ class TestSettledMarketEdgeCases:
             name="Will Trump win the 2028 election?",
         )
         trace = _market_runtime_filter_trace(
-            market, outcomes, "Yes", 0.0, NOW
+            market, outcomes, "Yes", 0.0, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
 
@@ -393,6 +420,9 @@ class TestSettledMarketEdgeCases:
         trace = _market_runtime_filter_trace(
             market, outcomes, "Scottie Scheffler", 0.25, NOW,
             sport_category="golf",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "stale_golf_tournament" in trace["blockers"]
@@ -418,6 +448,9 @@ class TestSettledMarketEdgeCases:
         trace = _market_runtime_filter_trace(
             market, outcomes, "No", 0.65, NOW,
             sport_category="basketball",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "soft_settled_binary" in trace["blockers"]
@@ -445,6 +478,9 @@ class TestPastResolutionDateFiltering:
         trace = _market_runtime_filter_trace(
             market, outcomes, "Yes", 0.65, NOW,
             sport_category="weather",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "past_resolution_date" in trace["blockers"]
@@ -462,6 +498,9 @@ class TestPastResolutionDateFiltering:
         )
         trace = _market_runtime_filter_trace(
             market, outcomes, "Yes", 0.50, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert not trace["eligible"]
         assert "past_resolution_date" in trace["blockers"]
@@ -479,6 +518,9 @@ class TestPastResolutionDateFiltering:
         )
         trace = _market_runtime_filter_trace(
             market, outcomes, "Yes", 0.65, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert "past_resolution_date" not in trace["blockers"]
 
@@ -495,6 +537,9 @@ class TestPastResolutionDateFiltering:
         )
         trace = _market_runtime_filter_trace(
             market, outcomes, "Yes", 0.65, NOW,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=market.updated_at,
         )
         assert "past_resolution_date" not in trace["blockers"]
 

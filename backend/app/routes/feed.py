@@ -3844,8 +3844,10 @@ def _effective_resolution_thresholds(sport_category: str | None) -> tuple[float,
 
 from app.utils.market_staleness import (
     expired_ladder_rungs as _expired_ladder_rungs,
+    freshness_clock as _freshness_clock,
     infer_market_real_world_end as _infer_market_real_world_end,
     is_title_implied_stale as _market_title_implied_stale_blocker,
+    newest_outcome_stamp as _newest_outcome_stamp,
 )
 
 
@@ -4096,6 +4098,7 @@ def _market_runtime_filter_trace(
     now: datetime,
     sport_category: str | None = None,
     *,
+    newest_outcome_at: datetime | None,
     stale_no_movement_days: float = 2,
     no_resolution_stale_days: float = 5,
     strict_no_movement_days: float | None = None,
@@ -4171,7 +4174,13 @@ def _market_runtime_filter_trace(
 
     days_stale = None
     movement_evidence_status = "missing" if not has_any_movement else "unknown"
-    updated_at = _utc(market.updated_at)
+    # UX-P251: NOT `market.updated_at`. That column is `onupdate=func.now()` on
+    # the PARENT row, so the poller rewrites it without a price moving, and all
+    # four staleness blockers below were reading it. `freshness_clock` takes the
+    # older of the parent stamp and the prices' own — a market is fresh only if
+    # both agree. See `market_staleness.freshness_clock` for the two production
+    # numbers that decided which direction this change moves in.
+    updated_at = _freshness_clock(market.updated_at, newest_outcome_at)
     if updated_at:
         days_stale = (now - updated_at).total_seconds() / 86400
         if has_any_movement:
@@ -4313,6 +4322,7 @@ def build_effective_settlement_followup_item(
         leader_prob,
         now,
         sport_category=market.llm_sport_category,
+        newest_outcome_at=_newest_outcome_stamp(market.outcomes),
     )
     if "sports_effectively_settled" not in runtime_filters["blockers"]:
         return None
@@ -4478,6 +4488,7 @@ def _score_market_trace(
         leader_prob,
         now,
         sport_category=market.llm_sport_category,
+        newest_outcome_at=_newest_outcome_stamp(market.outcomes),
     )
 
     highlight_result = compute_futures_highlight(
@@ -6397,6 +6408,11 @@ async def _score_sports_mode_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # UX-P251: the staleness clock is taken from the PRICES, not from
+            # the parent row's `onupdate` touch-stamp. Third occurrence of the
+            # same rule on this list — deferred here, it lazy-loads per outcome
+            # and crashes the async route.
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -6524,17 +6540,16 @@ async def _score_sports_mode_futures(
             and abs(o["probability_change_24h"]) > 0.001
             for o in outcomes_data
         )
-        if market.updated_at:
-            days_stale = (
-                now
-                - market.updated_at.replace(
-                    tzinfo=(
-                        timezone.utc
-                        if market.updated_at.tzinfo is None
-                        else market.updated_at.tzinfo
-                    )
-                )
-            ).total_seconds() / 86400
+        # UX-P251: the Sports tab kept its OWN copy of this clock, and it was
+        # the same wrong one — `market.updated_at` is a touch-stamp on the
+        # parent row, rewritten by the poller without a price moving. Both feed
+        # paths go through `freshness_clock` now, so a fix to one can no longer
+        # be a half-swept fix.
+        _sports_clock = _freshness_clock(
+            market.updated_at, _newest_outcome_stamp(market.outcomes)
+        )
+        if _sports_clock:
+            days_stale = (now - _sports_clock).total_seconds() / 86400
             if days_stale > 2 and not has_any_movement:
                 continue
 
@@ -7403,6 +7418,11 @@ async def _score_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # UX-P251: the staleness clock is taken from the PRICES, not from
+            # the parent row's `onupdate` touch-stamp. Third occurrence of the
+            # same rule on this list — deferred here, it lazy-loads per outcome
+            # and crashes the async route.
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -7818,6 +7838,7 @@ async def _score_futures(
                 leader_prob,
                 now,
                 sport_category=market.llm_sport_category,
+                newest_outcome_at=_newest_outcome_stamp(market.outcomes),
                 stale_no_movement_days=_gate_no_movement_days,
                 no_resolution_stale_days=_gate_no_resolution_days,
                 strict_no_movement_days=_strict_no_movement_days,

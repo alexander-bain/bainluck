@@ -5,6 +5,7 @@ the real-world event has passed (e.g., "Eurovision" after May 31).
 """
 
 import re
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 _MONTH_NAME_TO_NUMBER = {
@@ -400,6 +401,98 @@ def expired_ladder_rungs(
             continue
         expired.add(name)
     return expired
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Naive stamps are read as UTC — mixing the two raises at request time."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def newest_outcome_stamp(outcomes) -> datetime | None:
+    """When any of this market's prices was last seen, or ``None`` if never.
+
+    ═══ WHY THIS IS NOT ``market.updated_at`` (UX-P251) ═══
+
+    ``futures_markets.updated_at`` carries ``onupdate=func.now()``, so it is a
+    touch-stamp on the PARENT row: a volume refresh or a category re-label
+    rewrites it without a single price moving. Every staleness gate on the feed
+    read that column, which is why a market whose twelve prices all froze on
+    2026-07-04 reported ``days_stale ≈ 0`` on 2026-09-01 and scored 88 on
+    Discover.
+
+    ═══ ALL OUTCOMES, NOT THE TOP TEN ═══
+
+    Measured on production 2026-09-01: of the 29,658 markets that pass the
+    candidate SQL, **207 carry a tail outcome more than a day fresher than
+    anything in their top ten by probability**. The scoring loop works from a
+    top-ten slice, so a stamp taken from that slice would call those 207 dead.
+    This takes the whole set.
+
+    ``None`` means *no outcome carries a stamp*, which is different from *the
+    stamps are old*. ``freshness_clock`` treats it as "no evidence either way"
+    rather than as evidence of death — a writer that never sets the column must
+    not take its whole source dark.
+
+    ═══ TWO SHAPES, AND WHY AN UNREADABLE ONE RAISES ═══
+
+    The feed carries an outcome in two forms — the ORM row and the plain
+    ``outcomes_data`` dict the scoring loop builds from it — and both reach this
+    function. A bare ``getattr(o, "last_updated", None)`` reads the first and
+    silently returns ``None`` for the second, which is a gate that reports "no
+    evidence" and lets the market through. That is the same silent-fallback
+    failure this whole change is about, so an unreadable shape raises instead.
+    """
+    newest: datetime | None = None
+    for outcome in outcomes or ():
+        if isinstance(outcome, Mapping):
+            if "last_updated" not in outcome:
+                raise TypeError(
+                    "outcome mapping has no 'last_updated' key; a missing stamp "
+                    "must be an explicit None, never an absent key"
+                )
+            raw = outcome["last_updated"]
+        elif hasattr(outcome, "last_updated"):
+            raw = outcome.last_updated
+        else:
+            raise TypeError(
+                f"cannot read last_updated from {type(outcome).__name__}; "
+                "returning None here would silently disarm the staleness gate"
+            )
+        stamp = _as_utc(raw)
+        if stamp is not None and (newest is None or stamp > newest):
+            newest = stamp
+    return newest
+
+
+def freshness_clock(
+    market_updated_at: datetime | None,
+    newest_outcome_at: datetime | None,
+) -> datetime | None:
+    """The last moment this market gave evidence of being alive — the OLDER stamp.
+
+    A market counts as fresh only if BOTH clocks agree it is, so a poller
+    touching the parent row can no longer vouch for prices it did not move.
+
+    ═══ WHY THE OLDER ONE, AND NOT SIMPLY THE PRICES' ═══
+
+    The prices' clock is the more truthful of the two and the honest end state
+    is to read it alone. That is not what this returns, deliberately. Measured
+    on production 2026-09-01 over the 29,658 candidate markets:
+
+        645  parent fresh (≤2d), prices older than 2 days  -> this change BLOCKS
+        897  parent stale (>2d), prices fresher than 2 days -> currently blocked
+
+    Reading the prices alone would also ADMIT those 897 — a feed-composition
+    change no gate in UX-P251 validates. Taking the older stamp makes this
+    change one-directional: everything it moves, it moves out. The 897 are a
+    separate question with their own evidence to gather.
+    """
+    stamps = [s for s in (_as_utc(market_updated_at), _as_utc(newest_outcome_at)) if s]
+    return min(stamps) if stamps else None
 
 
 def is_probability_extreme(probability: float | None) -> bool:
