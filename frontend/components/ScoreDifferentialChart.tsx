@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
+import { sourceLabel } from "@/lib/sourceColors";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -765,7 +766,11 @@ export default function ScoreDifferentialChart({
 
       {bookmakers.length > 0 && (
         <p className="text-xs text-text-muted text-center shrink-0">
-          Gray lines show individual sportsbooks
+          {/* #2442, CERT-642's first finding: this was the THIRD spelling of
+              one supplier on the same screen and my sweep never reached it,
+              because the guard rendered `MarketMapSection` and `OddsChart` and
+              never this component. Through the registry like the other two. */}
+          Gray lines show each {sourceLabel("betting").toLowerCase()}
         </p>
       )}
     </div>

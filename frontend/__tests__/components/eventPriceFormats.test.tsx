@@ -51,6 +51,7 @@ import { sourceLabel } from "@/lib/sourceColors";
 import { sportVocab } from "@/lib/marketMapUtils";
 import MarketMapSection from "@/components/MarketMapSection";
 import OddsChart from "@/components/OddsChart";
+import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 
 /** Everything a reader can actually see. */
 function visibleText(html: string): string {
@@ -66,6 +67,47 @@ function bannedIn(text: string): string[] {
   return findBannedCopy(text, PRICE_FORMAT_BANS).map(
     (h) => `${h.ban.id}: ${JSON.stringify(h.matched)} in "${h.context}"`
   );
+}
+
+/**
+ * A real-shaped NBA game-markets payload, WITH TOTALS.
+ *
+ * CERT-642's diagnosis of the first version of this file: the fixture carried
+ * `totals: []`, so `MarketMapSection`'s whole Total column never rendered and
+ * the guard could not see the `Total maps` heading it was supposed to be
+ * sweeping. **An empty fixture is a blind spot that reads exactly like a clean
+ * sweep**, which is why it is a shared factory now rather than a literal one
+ * case happens to get right.
+ */
+function nbaMarkets() {
+  return {
+      event_id: 1,
+      home_team: "Los Angeles Lakers",
+      away_team: "Boston Celtics",
+      home_score: null,
+      away_score: null,
+      status: "scheduled",
+      // CERT-642: this array was EMPTY, so the whole Total column never
+      // rendered and the guard could not see the "Total maps" heading it was
+      // supposed to be sweeping. An empty fixture is a blind spot that looks
+      // like a pass.
+      totals: [
+        { threshold: 218.5, over_probability: 0.55, source: "kalshi", market_type: "game_total", market_name: "Lakers vs Celtics: Total", outcome_name: "Over 218.5", is_winner: null, resolution_source: null, movement: 0, period: null },
+        { threshold: 224.5, over_probability: 0.38, source: "kalshi", market_type: "game_total", market_name: "Lakers vs Celtics: Total", outcome_name: "Over 224.5", is_winner: null, resolution_source: null, movement: 0, period: null },
+      ],
+      player_props: [],
+      team_totals: [],
+      period_markets: [],
+      matchups: [],
+      other: [],
+      pace: null,
+      props_script: [],
+      spreads: [
+        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Los Angeles Lakers -4.5", threshold: 4.5, probability: 0.52, source: "kalshi", is_winner: null, resolution_source: null },
+        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Los Angeles Lakers -7.5", threshold: 7.5, probability: 0.34, source: "kalshi", is_winner: null, resolution_source: null },
+        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Boston Celtics -1.5", threshold: 1.5, probability: 0.41, source: "kalshi", is_winner: null, resolution_source: null },
+      ],
+    };
 }
 
 describe("#2442 — the rules themselves", () => {
@@ -172,27 +214,7 @@ describe("#2442 — the market maps speak in margins, not handicaps", () => {
     // the renderer prints the strings this test invented, which is the vacuous
     // shape this repo has been bitten by before. `MarketMapSection` is where
     // the label is BUILT, so it is what runs.
-    const gameMarkets = {
-      event_id: 1,
-      home_team: "Los Angeles Lakers",
-      away_team: "Boston Celtics",
-      home_score: null,
-      away_score: null,
-      status: "scheduled",
-      totals: [],
-      player_props: [],
-      team_totals: [],
-      period_markets: [],
-      matchups: [],
-      other: [],
-      pace: null,
-      props_script: [],
-      spreads: [
-        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Los Angeles Lakers -4.5", threshold: 4.5, probability: 0.52, source: "kalshi", is_winner: null, resolution_source: null },
-        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Los Angeles Lakers -7.5", threshold: 7.5, probability: 0.34, source: "kalshi", is_winner: null, resolution_source: null },
-        { market_name: "Lakers vs Celtics: Spread", outcome_name: "Boston Celtics -1.5", threshold: 1.5, probability: 0.41, source: "kalshi", is_winner: null, resolution_source: null },
-      ],
-    };
+    const gameMarkets = nbaMarkets();
 
     const html = renderToStaticMarkup(
       <MarketMapSection
@@ -228,6 +250,67 @@ describe("#2442 — the market maps speak in margins, not handicaps", () => {
     // is what found this — reverting the verb left every OTHER arm green.
     expect(text).not.toContain("covering");
     expect(text).toContain("winning by");
+  });
+
+  it("renders the TOTAL column too — the blind spot CERT-642 found", () => {
+    // The first version of this suite passed while `Total maps` shipped,
+    // because its fixture carried `totals: []` and the column never rendered.
+    // An empty fixture is a blind spot that reads exactly like a clean sweep.
+    const html = renderToStaticMarkup(
+      <MarketMapSection
+        gameMarkets={nbaMarkets() as never}
+        eventStatus="scheduled"
+        homeTeam="Los Angeles Lakers"
+        awayTeam="Boston Celtics"
+        homeAbbr="LAL"
+        awayAbbr="BOS"
+        homeWinProb={0.62}
+        awayWinProb={0.38}
+        homeSpread={-4.5}
+        overUnder={220}
+        sportKey="basketball_nba"
+      />
+    );
+    const text = visibleText(html);
+    // It rendered — otherwise the absence below is nothing at all.
+    expect(text).toContain("218.5");
+    expect(text).not.toContain("Total maps");
+    expect(bannedIn(text)).toEqual([]);
+  });
+
+  it("sweeps the score-differential chart, which the first sweep never rendered", () => {
+    // CERT-642's other finding lived here: `Gray lines show individual
+    // sportsbooks`, the third spelling of one supplier, in a component no arm
+    // of this suite had ever mounted. A sweep is only as wide as its renders.
+    const html = renderToStaticMarkup(
+      <ScoreDifferentialChart
+        history={[
+          { timestamp: "2026-08-30T15:00:00Z", home_probability: 0.7, away_probability: 0.3, projected_home_score: 112, projected_away_score: 104, bookmaker_count: 7 },
+          { timestamp: "2026-08-30T16:00:00Z", home_probability: 0.8, away_probability: 0.2, projected_home_score: 115, projected_away_score: 102, bookmaker_count: 7 },
+        ] as never}
+        homeTeam="Los Angeles Lakers"
+        awayTeam="Boston Celtics"
+        commenceTime="2026-08-30T15:00:00Z"
+        isLive={false}
+        eventStatus="closed"
+        bookmakerHistory={
+          {
+            betmgm: [
+              { timestamp: "2026-08-30T15:00:00Z", home_probability: 0.69, away_probability: 0.31, projected_home_score: 111, projected_away_score: 105 },
+              { timestamp: "2026-08-30T16:00:00Z", home_probability: 0.79, away_probability: 0.21, projected_home_score: 114, projected_away_score: 103 },
+            ],
+          } as never
+        }
+      />
+    );
+    const text = visibleText(html);
+    // The caption rendered — the `bookmakers.length > 0` branch is reached.
+    expect(text).toMatch(/Gray lines show/);
+    // ...and says it through the registry, like every other surface.
+    expect(text).toContain("sportsbooks");
+    expect(text).not.toContain("individual sportsbooks");
+    expect(text).not.toContain("Projected Spread");
+    expect(bannedIn(text)).toEqual([]);
   });
 
   it("gives the default sport a unit, not a betting noun", () => {

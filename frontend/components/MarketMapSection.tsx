@@ -818,7 +818,12 @@ export default function MarketMapSection({
       {hasMargin && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
           <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            Margin maps
+            {/* #2442, CERT-642's second finding. "Total maps" is the betting
+                noun for an over/under and it survived the first sweep because
+                the guard's fixture supplied no totals, so this column never
+                rendered. Both headings now come from the sport's declared
+                vocabulary, like the titles inside them. */}
+            {`${vocab.marginTitle.replace(/ map$/, "")} maps`}
           </div>
           {marginData && (
             <MarketMap variant="margin" {...marginData} status={status} />
@@ -833,7 +838,7 @@ export default function MarketMapSection({
       {hasTotal && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
           <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            Total maps
+            {`${vocab.totalTitle.replace(/ map$/, "")} maps`}
           </div>
           {totalData && (
             <MarketMap variant="total" {...totalData} status={status} />
