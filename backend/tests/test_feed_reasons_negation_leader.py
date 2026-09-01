@@ -434,3 +434,63 @@ class TestMidWordTruncation:
             )
             is False
         )
+
+
+class TestLiveNonWillMarkets:
+    """The three real production rows the CERT-624 class actually reaches.
+
+    Censused on production 2026-09-01 via `POST /api/admin/db-query` over
+    `futures_markets` with `status='open'`, grouped by the question's opening
+    word: **7,801 open under `Will`, four under any other auxiliary.** The class
+    is genuinely rare — and all three real ones lead on the No side, so all
+    three were serving the defect at the time of the repair.
+
+    Names and probabilities below are the production values, not invented ones.
+    """
+
+    LIVE = [
+        (34191685, "Is Earth flat?", 0.98),
+        (
+            58945765,
+            "Does Logan hold any WWE championship belt at any point in 2026?",
+            0.89,
+        ),
+        (
+            58948958,
+            "Does a card sell for more than Logan’s record "
+            "$16,492,000 by the end of 2026?",
+            0.93,
+        ),
+    ]
+
+    @pytest.mark.parametrize("market_id,market,probability", LIVE)
+    def test_live_no_side_leader_names_the_side(self, market_id, market, probability):
+        label = humanize_binary_outcome_name("No", market)
+        # Precondition: the producer really does manufacture the mangled label.
+        assert label not in ("No", "Yes"), market_id
+
+        summary = generate_futures_context_summary(
+            highlight_reasons=[],
+            market_name=market,
+            leader_name=label,
+            leader_probability=probability,
+            headline="",
+        )
+        assert summary == f"No leads at {round(probability * 100)}%"
+        assert label not in summary
+
+    def test_a_team_abbreviation_is_not_an_auxiliary(self):
+        """`WAS Commanders vs DAL Cowboys` — a real open row, id 59659430.
+
+        It is the fourth row the opener census returned, and it is a FALSE
+        POSITIVE of the auxiliary pattern: `WAS` is Washington, not the verb.
+        Widening the auxiliary list to include `was` is what put this row in
+        range, so it is guarded here rather than left to a cert to find.
+
+        Nothing rewrites it, because the predicate needs the LABEL to carry a
+        negation marker first and this market's outcomes are team names.
+        """
+        market = "WAS Commanders vs DAL Cowboys"
+        for outcome in ["Dallas", "Washington", "No", "Northern Ireland", "No change"]:
+            assert _negates_market_question(outcome, market) is False, outcome
+            assert _answering_side_label(outcome, market) == outcome, outcome
