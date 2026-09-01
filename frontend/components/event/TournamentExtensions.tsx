@@ -282,4 +282,70 @@ export default function TournamentExtensions({
  * tournament is registered. Over-asking is one cheap `null` answer; under-asking
  * is a section that silently stops appearing.
  */
-const TOURNAMENT_SPORT_KEY = /^tennis_(atp|wta)_/;
+export const TOURNAMENT_SPORT_KEY = /^tennis_(atp|wta)_/;
+
+/**
+ * ═══ THE WAY BACK UP (#2448, Alex's third item) ═══
+ *
+ * *"no link back to the tournament (only `Back to events`)"*.
+ *
+ * A tournament is a container for related events (Alex's own architecture note,
+ * quoted at the top of this file), and a container you can only descend into is
+ * a one-way door. The tournament page routes a match card to `/events/{id}`;
+ * the event page routed back to `/`, which is Discover — not the tournament,
+ * not even the sport.
+ *
+ * ### Why this lives here rather than in the page
+ *
+ * The link needs the tournament's slug and title, and this module is already
+ * the one thing on the event page that knows them. It shares the SWR key
+ * `["event-tournament", eventId]` with `TournamentExtensions` verbatim, so the
+ * two components are ONE request — SWR dedupes on the key, and a second key
+ * spelled differently would be a silent doubling of the round trip that the
+ * eligibility gate above exists to avoid.
+ *
+ * Renders NOTHING for the ~94-events-in-the-whole-site case where the event is
+ * not in a register, and nothing while the request is in flight. A back link
+ * that appears a beat late is better than a placeholder that reserves space for
+ * a link most events will never have.
+ */
+export function TournamentBackLink({
+  eventId,
+  sportKey,
+  onNavigate,
+}: {
+  eventId: number;
+  sportKey?: string | null;
+  /** Analytics hook, so this link is tracked exactly as its sibling is. */
+  onNavigate?: (href: string) => void;
+}) {
+  const eligible = !!sportKey && TOURNAMENT_SPORT_KEY.test(sportKey);
+  const { data } = useSWR<EventTournamentResponse>(
+    eligible ? ["event-tournament", eventId] : null,
+    () => fetchEventTournament(eventId),
+    { revalidateOnFocus: false, refreshInterval: 120000 },
+  );
+
+  const tournament = data?.tournament;
+  if (!tournament) return null;
+
+  return (
+    <Link
+      href={tournament.url}
+      onClick={() => onNavigate?.(tournament.url)}
+      className="inline-flex items-center text-caption text-text-secondary transition-colors hover:text-text-primary"
+      data-testid="tournament-back-link"
+      data-slug={tournament.slug}
+    >
+      <svg className="mr-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 19l-7-7 7-7"
+        />
+      </svg>
+      {tournament.title}
+    </Link>
+  );
+}

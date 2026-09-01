@@ -25,6 +25,12 @@ const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), 
 // 94 events on the whole site render it and none of them should pay for it in
 // the initial bundle.
 const TournamentExtensions = dynamic(() => import("@/components/event/TournamentExtensions"), { ssr: false });
+/* #2448: the way back UP the container. Same SWR key as the sections below, so
+   the two are one request. Renders nothing off-tournament. */
+const TournamentBackLink = dynamic(
+  () => import("@/components/event/TournamentExtensions").then((m) => m.TournamentBackLink),
+  { ssr: false }
+);
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -427,6 +433,19 @@ export default function EventPage({ params }: EventPageProps) {
     <div className="space-y-3">
       {/* Navigation */}
       <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+        {/* #2448: A TOURNAMENT IS A CONTAINER, AND A CONTAINER NEEDS A WAY OUT.
+            Alex: "no link back to the tournament (only Back to events)". The
+            tournament page routes a match card down here; this page routed back
+            to Discover — not the tournament, not even the sport. Rendered
+            BEFORE the generic link because the specific container is the one
+            the reader arrived through, and it renders nothing at all for the
+            events that are not in a register, which is nearly all of them. */}
+        <TournamentBackLink
+          eventId={eventId}
+          sportKey={event.sport}
+          onNavigate={(href) => trackNavigationClick('back', `/events/${eventId}`, href)}
+        />
         <Link
           href="/"
           onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
@@ -447,6 +466,7 @@ export default function EventPage({ params }: EventPageProps) {
           </svg>
           ← Back to events
         </Link>
+        </div>
 
         {/* Visual countdown timer */}
         {!isFinished && (
