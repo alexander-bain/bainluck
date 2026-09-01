@@ -1129,10 +1129,10 @@ async def _process_event_batch(
                         if prob is None or prob <= 0:
                             continue
 
-                        # Prefer groupItemTitle (e.g., "33°F or below") over question parsing
-                        outcome_name = market.group_item_title or _extract_outcome_name(
-                            market.question, event.title
-                        )
+                        # Prefer groupItemTitle (e.g., "33°F or below") over question
+                        # parsing; Q492 rescues the case where both collapse onto the
+                        # event's own title and so name no side.
+                        outcome_name = _leg_label(market, event.title)
 
                         outcome_data.append({
                             "external_id": market.condition_id,
@@ -1557,9 +1557,11 @@ async def _process_event_batch(
                             )
                         if prob is None or prob <= 0:
                             continue
-                        outcome_name = market.group_item_title or _extract_outcome_name(
-                            market.question, event.title
-                        )
+                        # Q492: this is the parent anchor of a game-level event, and
+                        # its moneyline leg is exactly the one Polymarket sends with
+                        # no groupItemTitle — the case that produced a price labelled
+                        # with the whole matchup.
+                        outcome_name = _leg_label(market, event.title)
                         outcome_data.append({
                             "external_id": market.condition_id,
                             "name": outcome_name,
@@ -2139,6 +2141,54 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
 
     # No reliable price — skip this market
     return None, None
+
+
+def _label_key(value: str | None) -> str:
+    """Whitespace- and case-insensitive comparison key for an outcome label."""
+    return " ".join((value or "").split()).casefold()
+
+
+def _leg_label(market, event_title: str) -> str:
+    """The display label for this market's index-0 (Yes-side) price.
+
+    Q492. Both writers below resolve ``outcome_prices[0]`` and then named it from
+    ``groupItemTitle``, falling back to question parsing. Neither names a *side*.
+    For a game-level matchup Polymarket sends the moneyline with
+    ``groupItemTitle: null`` and the question set to the event's own title, so
+    ``_extract_outcome_name``'s "short enough, use it directly" fallback labelled
+    the price with the whole matchup — a card reading
+    "US Open WTA: Iga Swiatek vs Nadia Podoroska 89.5%". 89.5% of *what*? The
+    number names no side, and the reader cannot recover one.
+
+    ``outcomes`` is the parallel array to ``outcome_prices``, so ``outcomes[0]``
+    is the only label that is definitionally the leg this price belongs to — the
+    same rule as Q489, where a CLOB tick had to land on the leg whose book it
+    was. It is used only to rescue a label that has collapsed onto the market's
+    own name; an informative ``groupItemTitle`` ("Set 1 Winner", "33°F or below")
+    is left exactly as it was.
+
+    A bare Yes/No token is not a rescue — it names no side either — so a leg that
+    can only be described by its parent's title keeps that title rather than
+    being relabelled "Yes".
+    """
+    derived = (market.group_item_title or "").strip() or _extract_outcome_name(
+        market.question, event_title
+    )
+    if _label_key(derived) != _label_key(event_title):
+        return derived
+
+    tokens = list(getattr(market, "outcomes", None) or [])
+    token = (tokens[0] or "").strip() if tokens else ""
+    if not token or _label_key(token) in _YES_NO_LABELS:
+        return derived
+    if _label_key(token) == _label_key(event_title):
+        return derived
+    return token
+
+
+# A leg labelled only "Yes"/"No" names no side, so it is never a rescue for a
+# label that has collapsed onto the market's own name (see :func:`_leg_label`).
+_YES_NO_LABELS = frozenset({"yes", "no"})
 
 
 def _extract_outcome_name(question: str, event_title: str) -> str:
