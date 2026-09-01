@@ -24,7 +24,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-espn-id | label-store-converge
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
-             | polymarket-leg-label-census | polymarket-leg-label }
+             | polymarket-leg-label-census | polymarket-leg-label
+             | fabricated-finals }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -43,7 +44,9 @@ transactional session and RETURNS its own before/after census in the response bo
      label-defect-routes in the commit that registered it. Re-synced again
      2026-09-01, Q495, adding the two polymarket-sport-category entries in the
      commit that registered them. Re-synced again 2026-09-01, Q499, adding the
-     two polymarket-leg-label entries in the commit that registered them.)
+     two polymarket-leg-label entries in the commit that registered them.
+     Re-synced again 2026-09-01, Q506, adding fabricated-finals in the commit
+     that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -475,6 +478,33 @@ _REPAIRS = {
     # state, not a standing job.
     "polymarket-leg-label": (
         "app.tasks.repair_polymarket_leg_label",
+        "repair",
+    ),
+    # Q506 (#2446, Alex ruling D26 = a): the REPAIR half of CERT-690. 705 events
+    # carry a `kalshi_ticker` stand-in start — midnight UTC of a date parsed out
+    # of a Kalshi ticker — were promoted and then closed by a wall-clock net that
+    # measured elapsed time from it, and every one of them is unscored. They show
+    # as finished games that were never played.
+    # Each row reaches ONE of four named verdicts, from the sport's schedule of
+    # record: `repaired_final` (the authority's score, state and real start),
+    # `unsettled` (the authority has the fixture and it is not final — clear the
+    # settlement, take the real start), `quarantined` (no authority record —
+    # `status='voided'`, the reversible soft-void, no score invented), or `held`.
+    # HELD IS A REAL STATE: an unreachable authority, an empty slate, and a
+    # tournament-shaped sport the scoreboard adapter cannot read (tennis, golf,
+    # MMA — `_parse_event` reads `competitions[0]`, which on a draw is one match
+    # out of 625) all hold rather than void. Voiding what we merely cannot read
+    # would delete real US Open matches off the site.
+    # Every write is a compare-and-set on the whole population predicate, so a
+    # row that acquires a score between the census and the write is counted
+    # `raced`, never clobbered (gotcha #21). `futures_markets` is not touched.
+    # Paging is a DATE cursor: `?since=` from `next_since`, because this repair
+    # removes rows from its own population and an offset would skip (CAL-P058).
+    # Bounded by MAX_AUTHORITY_CALLS as well as by dates — three scoreboard calls
+    # per adjudicable (sport, date), and `limit` bounding rows rather than calls
+    # is the CAL-P002B H12. Accepts ?limit=&sport=&since=.
+    "fabricated-finals": (
+        "scripts.repair_fabricated_finals",
         "repair",
     ),
 }
