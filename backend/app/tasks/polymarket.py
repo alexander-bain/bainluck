@@ -17,7 +17,11 @@ from app.utils.feed_market_quality import (
     FEED_PHANTOM_MIN_SPREAD,
     is_fabricated_midpoint,
 )
-from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
+from app.utils.winner_field_coherence import (
+    DUPLICATE_CONDITION_LEG_SQL,
+    count_near_certain,
+    field_is_incoherent,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
@@ -2339,15 +2343,31 @@ async def _sync_polymarket_resolved_status():
                             loser_cids.extend([cid, f"{cid}_yes"])
                             winner_cids.append(f"{cid}_no")
 
+                    # Q487: these WHERE clauses key on `external_id` alone, and
+                    # `futures_outcomes.external_id` is NOT unique — one condition
+                    # can sit on two markets under two conventions. Measured on
+                    # production: `0xeda9…e084_yes` and `…_no` each exist on BOTH
+                    # container_member 13798072 ("Will Zoë Kravitz be one of Taylor
+                    # Swift's bridesmaids?", where they are the real outcomes) AND
+                    # field market 12194657 ("Who will Taylor Swift's bridesmaids
+                    # be?", where they are duplicates of the bare `…e084` Zoë row).
+                    # One settlement writes all of them. On the field market that
+                    # crowns a bare "No" over ten named people — and unlike
+                    # `clean_resolution`, `api_settlement` IS calibration-truth
+                    # eligible, so the wrong grade reaches the published curve.
+                    # Scoped by the shared duplicate-leg rule, not by market id:
+                    # the container_member rows are the legitimate target and must
+                    # keep being written.
                     if winner_cids:
                         r_w = await session.execute(
                             text("""
-                                UPDATE futures_outcomes
+                                UPDATE futures_outcomes fo
                                 SET current_probability = 1.0,
                                     is_winner = true,
                                     resolution_source = 'api_settlement'
-                                WHERE external_id = ANY(:cids)
-                                  AND COALESCE(resolution_source, '') != 'api_settlement'
+                                WHERE fo.external_id = ANY(:cids)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                             {"cids": winner_cids},
                         )
@@ -2356,12 +2376,13 @@ async def _sync_polymarket_resolved_status():
                     if loser_cids:
                         r_l = await session.execute(
                             text("""
-                                UPDATE futures_outcomes
+                                UPDATE futures_outcomes fo
                                 SET current_probability = 0.0,
                                     is_winner = false,
                                     resolution_source = 'api_settlement'
-                                WHERE external_id = ANY(:cids)
-                                  AND COALESCE(resolution_source, '') != 'api_settlement'
+                                WHERE fo.external_id = ANY(:cids)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                             {"cids": loser_cids},
                         )

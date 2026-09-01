@@ -31,7 +31,10 @@ from app.utils.resolution_authority import (
     OVERWRITABLE_WINNER_SOURCES_SQL,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
-from app.utils.winner_field_coherence import INCOHERENT_FIELD_HAVING_SQL
+from app.utils.winner_field_coherence import (
+    DUPLICATE_CONDITION_LEG_SQL,
+    INCOHERENT_FIELD_HAVING_SQL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -4786,6 +4789,12 @@ async def _backfill_from_current_probability():
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
+                          -- Q487: a duplicate condition leg must not supply the
+                          -- terminality that makes this field look cleanly
+                          -- resolved. Measured specimen 59835854: without the
+                          -- contaminant every remaining row is <= 0.05, so there
+                          -- is nothing to crown — which is the honest answer.
+                          AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         GROUP BY fm.id, fm.mutually_exclusive
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
@@ -4816,6 +4825,10 @@ async def _backfill_from_current_probability():
                     FROM cleanly_resolved cr
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
+                      -- Q487: ...and must not RECEIVE the stamp. Both halves are
+                      -- needed: excluding it from the CTE only stops it
+                      -- justifying the grade, not being crowned by it.
+                      AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                     RETURNING fo.is_winner
                 """))
             rows = result.all()
@@ -5627,13 +5640,16 @@ async def _backfill_polymarket_winners_from_api(
 
                     r_w = await session.execute(
                         text("""
-                            UPDATE futures_outcomes
+                            UPDATE futures_outcomes fo
                             SET current_probability = :price,
                                 is_winner = :won,
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
-                            WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                            WHERE fo.external_id = :cid
+                              AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                              -- Q487: external_id is NOT unique; a duplicate
+                              -- condition leg must not be crowned here either.
+                              AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         """),
                         {"price": prices[0], "won": yes_won, "cid": cid},
                     )
@@ -5646,13 +5662,16 @@ async def _backfill_polymarket_winners_from_api(
                     no_cid = f"{cid}_no"
                     r_n = await session.execute(
                         text("""
-                            UPDATE futures_outcomes
+                            UPDATE futures_outcomes fo
                             SET current_probability = :price,
                                 is_winner = :won,
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
-                            WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                            WHERE fo.external_id = :cid
+                              AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                              -- Q487: external_id is NOT unique; a duplicate
+                              -- condition leg must not be crowned here either.
+                              AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         """),
                         {
                             "price": (
@@ -6316,8 +6335,10 @@ async def _resolve_winners_only(limit: int = 2000):
                         if yes_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                                 {"t": yes_t},
                             )
@@ -6325,8 +6346,10 @@ async def _resolve_winners_only(limit: int = 2000):
                         if no_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                                 {"t": no_t},
                             )
