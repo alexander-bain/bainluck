@@ -984,6 +984,11 @@ async def _poll_all_odds():
         scores_refused_stale_id = 0
         scores_refused_unverifiable = 0
         scores_unbound_id = 0
+        # #2368: score fetches the quota breaker refused. Same rule as the
+        # `scores_refused_*` counters above — a guard whose refusals are
+        # invisible is indistinguishable from a guard that is off, and this
+        # one's whole verification is "scores contribute zero under FULL_STOP".
+        scores_skipped_quota = 0
 
         # Get Redis client for per-sport poll tracking
         try:
@@ -1452,7 +1457,7 @@ async def _poll_all_odds():
                 # is: below the ESPN-covered or 404 `continue`, it is
                 # unreachable for exactly the passes that take them.
                 # `quiet=True` — the task announces what it does, immediately.
-                _score_ok, score_reason = check_quota_guard(
+                score_ok, score_reason = check_quota_guard(
                     "poll_odds", sport_key=sport_key, quiet=True,
                 )
                 if "absolute_stop" in score_reason:
@@ -1463,6 +1468,48 @@ async def _poll_all_odds():
                     )
                     absolute_stop_hit = True
                     break
+
+                # 🔴 THE OTHER TWO BANDS (#2368). This read was already the whole
+                # guard, and only `absolute_stop` was acted on — the allow/deny
+                # boolean was `_score_ok`, DISCARDED. So FULL_STOP, the state that
+                # skips every non-priority sport in the odds loop above, reached
+                # this loop and did nothing: scores kept fetching for every sport
+                # with a recent event, at the exact moment quota is scarcest. The
+                # breaker was half a breaker. It is the same casualty the comment
+                # at the odds loop's re-read describes (CERT-528) — "the code knew,
+                # and the thing that acts on it did not" — one loop further down.
+                #
+                # The tiering is NOT a new policy invented here. `check_quota_guard`
+                # already computes it for `poll_odds`: under FULL_STOP it returns
+                # (False, "full_stop_*") for a non-priority sport and
+                # (True, "conservation_*") for a priority one, and under LIVE_ONLY
+                # it allows. The decision was already made upstream and thrown away,
+                # so honouring the boolean IS the fix.
+                #
+                # Monotonic, exactly as the odds loop latches it above: within one
+                # pass a re-read may only ADD constraint, never remove it. Without
+                # the latch a transient (True, "no_redis") here would erase a
+                # FULL_STOP the odds loop had already established and spend on
+                # every sport — CERT-528's defect, reachable through this loop.
+                if "conservation" in score_reason or "full_stop" in score_reason:
+                    quota_full_stop = True
+
+                if not score_ok:
+                    scores_skipped_quota += 1
+                    continue
+
+                # The latched mode outlives a fail-open re-read.
+                #
+                # Scores are deliberately NOT also gated on a live tier the way the
+                # odds loop gates its priority sports (`tier != "live"`). A score
+                # fetch is what turns a `live` event into `completed`; withholding
+                # it from a priority sport strands the event mid-flight, which is a
+                # settled-means-settled regression that costs the user more than the
+                # quota it saves. LIVE_ONLY allows scores for the same reason — they
+                # are the cheap half and they are the completion signal.
+                if quota_full_stop and sport_key not in QUOTA_GUARD_PRIORITY_SPORTS:
+                    scores_skipped_quota += 1
+                    continue
 
                 if sport_key in espn_covered_sports:
                     continue
@@ -1800,6 +1847,7 @@ async def _poll_all_odds():
             "scores_refused_stale_id": scores_refused_stale_id,
             "scores_refused_unverifiable": scores_refused_unverifiable,
             "scores_unbound_id": scores_unbound_id,
+            "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
             "live_gei_updated": live_gei_updated,
