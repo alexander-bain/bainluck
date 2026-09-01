@@ -109,8 +109,55 @@ Paging is a KEYSET (``after_date`` + ``after_id``), never an offset: this
 repair removes rows from its own population, so an offset would skip exactly as
 many untouched rows as the last page fixed.
 
+**The query parameter is ``after_date``.** Not ``after_commence`` — the
+dispatcher does not declare that name, FastAPI drops an unknown query param
+SILENTLY, and the resulting call re-reads page one forever while looking busy.
+``tests/test_repair_polymarket_sport_category_q496.py`` fails the build if any
+prose in ``routes/admin_repairs.py`` names a param the dispatcher cannot pass.
+
+Q496 CORRECTIONS TO THE PAGER AND THE BUDGET
+============================================
+
+Three defects the CERT-664 follow-ups named, and one the fix for the third
+exposed. None changes what the rail decides; all three change whether an
+operator can finish a drain.
+
+1. **The request budget could not fit under the router wall.** A synchronous
+   ``POST /api/admin/repairs/...`` has 30s, after which Heroku returns H12 with
+   **no body** — so the operator loses ``next_cursor`` and the drain loses its
+   place. The old numbers were a 55s loop deadline, a 25s per-fetch timeout and
+   a 60-event cap whose *sleep alone* was 21s: the DOCUMENTED DEFAULT was the
+   case most likely to fail. Now derived from the wall and asserted by
+   ``budget_headroom_seconds()``, which a guard requires to stay positive. The
+   cap is sized on a MEASURED figure rather than a guess: the target query below
+   runs in **179ms** on production (``EXPLAIN ANALYZE``, first page, no cursor,
+   2026-09-01), so the database is not the cost and the budget belongs almost
+   entirely to the venue calls.
+
+2. **``terminal="complete"`` was unreachable.** It keyed on
+   ``remaining_events == 0``, but ``remaining_events`` counts the suspect
+   CATEGORY — which legitimately contains the Setka control. A fully drained
+   population therefore reported ``no_work``, i.e. "your cursor is wrong",
+   rather than "you are finished". Exhaustion is now proven by the pager
+   (``scan_exhausted``: a short page, fully consumed) and ``remaining_events``
+   is labelled as the floor it is.
+
+3. **The NULL-``commence_time`` region was unresumable.** ``NULLS LAST`` puts it
+   at the very end; a cursor there carries ``after_date: None``; the keyset
+   gate required a truthy ``after_date``, so it never activated and the next
+   call silently restarted at page one. The gate is now ``after_id is not
+   None``, with an explicit second form for the NULL region.
+
+4. **(Found while fixing 3.)** The keyset filtered the raw market rows while
+   the cursor names two AGGREGATES over them. An event whose markets straddle
+   the boundary would lose some rows, recompute a different
+   ``max(commence_time)``, and move in the ordering between pages — a keyset
+   that both repeats and skips. The aggregation now happens first and the
+   cursor filters its output, so the filtered quantity is the quantity the
+   cursor names.
+
 ATTENDED ONLY: never wire this to a beat. It is a drain with an end state, not
-a standing job — when ``remaining`` reaches zero the poller's own fixed
+a standing job — when ``scan_exhausted`` comes back true the poller's own fixed
 classifier keeps new rows correct.
 """
 
@@ -128,20 +175,74 @@ logger = logging.getLogger(__name__)
 
 GAMMA = "https://gamma-api.polymarket.com"
 
-#: Events touched per apply call. A module constant, deliberately: the operator
-#: re-invokes with the returned cursor, the operator does not raise the ceiling.
-APPLY_EVENT_CAP = 60
+#: The Heroku router's hard wall on a synchronous request. Not ours to change,
+#: and not a timeout we get to observe: past this the router returns **H12 and
+#: the operator gets no body at all** — no counts, and crucially no
+#: ``next_cursor``, so an attended drain loses its place rather than pausing.
+#: Every budget below is derived from this number so the derivation is auditable
+#: rather than three constants that happen to look reasonable.
+ROUTER_WALL_SECONDS = 30
 
-#: Wall-clock bound for one call. Bounds the longest single uninterrupted
-#: operation, not the loop boundary (the budget-guard lesson).
-DEADLINE_SECONDS = 55
+#: Per-venue-call timeout. Q496: this was 25s, which alone could carry a single
+#: request past the wall no matter what the loop deadline said.
+FETCH_TIMEOUT_SECONDS = 8
+
+#: The point past which no NEW event is started. Checked at the top of the loop,
+#: so the true worst case is this plus one whole fetch plus one pause — see
+#: ``budget_headroom_seconds()``, which is asserted by a guard rather than left
+#: as arithmetic in a comment.
+DEADLINE_SECONDS = 20
 
 #: Pause between venue calls. Polymarket's Gamma limiter is real.
 VENUE_PAUSE = 0.35
 
+#: Events touched per apply call. A module constant, deliberately: the operator
+#: re-invokes with the returned cursor, the operator does not raise the ceiling.
+#:
+#: Q496 lowered this from 60. At 60 the *sleep alone* was 60 x 0.35 = 21s before
+#: a single byte of HTTP or DB time, against a 30s router wall — so the
+#: DOCUMENTED DEFAULT was the case most likely to H12, and the operator would
+#: have read that as the rail being broken.
+#:
+#: 20 is sized on MEASURED numbers, not a guess. The target query was run
+#: against production on 2026-09-01 (`EXPLAIN ANALYZE`, first page, no cursor):
+#: **179ms** for 25 rows, so the DB is not the cost — the venue calls are. At
+#: ~0.75s per event (a Gamma fetch plus VENUE_PAUSE) a 20-event page lands near
+#: 15s, inside the 20s deadline with margin, so a full page normally COMPLETES
+#: and ``stopped_before`` stays the exception it is meant to be. It is also the
+#: value the operator instructions already carried, so the documented default
+#: and the documented invocation finally agree.
+APPLY_EVENT_CAP = 20
+
 #: The category this rail drains. Named once so the census and the repair
 #: cannot disagree about their own population.
 SUSPECT_CATEGORY = "table_tennis"
+
+#: Statement timeout for the census, which runs TWO queries under ONE router
+#: wall. Q496: this was ``'25s'``, so its own permitted worst case was 50s
+#: against a 30s wall — the census could H12 while still believing its
+#: ``measured: false`` path had it covered. It cannot: an H12 returns no body,
+#: so the honest "we could not look" answer never reaches the operator and the
+#: rail's whole gotcha-#54 argument evaporates at exactly the moment it matters.
+#: Both queries measured **94ms and 179ms** on production 2026-09-01, so 12s is
+#: ~60x the observed cost and still leaves 6s of the wall for everything else.
+CENSUS_STATEMENT_TIMEOUT_SECONDS = 12
+
+
+def budget_headroom_seconds() -> float:
+    """Seconds left under the router wall in the rail's WORST case.
+
+    The deadline is checked at the top of the loop, so after it passes the rail
+    may still start one fetch and one pause. The worst case is therefore
+    ``DEADLINE + FETCH_TIMEOUT + VENUE_PAUSE``, not ``DEADLINE``. Expressed as a
+    function so a guard can assert it stays positive, rather than as a comment
+    that goes stale the first time someone raises one of the three numbers.
+
+    Positive means an over-running call returns a partial answer WITH its
+    cursor. Negative means it returns H12 with no body, and an attended drain
+    silently loses its place.
+    """
+    return ROUTER_WALL_SECONDS - (DEADLINE_SECONDS + FETCH_TIMEOUT_SECONDS + VENUE_PAUSE)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +258,9 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
     """
     started = time.monotonic()
     try:
-        await session.execute(text("SET statement_timeout = '25s'"))
+        await session.execute(
+            text(f"SET statement_timeout = '{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'")
+        )
 
         rows = (
             await session.execute(
@@ -180,6 +283,31 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                 {"cat": SUSPECT_CATEGORY},
             )
         ).all()
+
+        # Q496: this second query used to sit OUTSIDE the try. It is the same
+        # scan under the same statement timeout, so it can fail the same way —
+        # and when it did, the exception escaped, the dispatcher turned it into
+        # a 500, and the `measured: false` contract the block above exists to
+        # honour was never reached. A census's whole job is to be honest about
+        # not knowing; a second query that can only fail LOUDLY defeats that.
+        #
+        # Events are counted per staleness bucket above, so they do NOT sum: one
+        # event's rows can straddle two buckets. Ask for the distinct figure.
+        total_events = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
+                    FROM futures_markets fm
+                    WHERE fm.source = 'polymarket'
+                      AND fm.status = 'open'
+                      AND fm.llm_sport_category = :cat
+                      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                    """
+                ),
+                {"cat": SUSPECT_CATEGORY},
+            )
+        ).scalar() or 0
     except Exception as exc:  # noqa: BLE001 — a census timeout is not a zero
         # Gotcha #54: a census that could not measure returns `measured: false`
         # with a reason, NEVER a zero. A zero here would read as "the population
@@ -196,23 +324,6 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
         for r in rows
     ]
     total_markets = sum(b["markets"] for b in by_staleness)
-    # Events are counted per staleness bucket above, so they do NOT sum: one
-    # event's rows can straddle two buckets. Ask for the distinct figure.
-    total_events = (
-        await session.execute(
-            text(
-                """
-                SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
-                FROM futures_markets fm
-                WHERE fm.source = 'polymarket'
-                  AND fm.status = 'open'
-                  AND fm.llm_sport_category = :cat
-                  AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
-                """
-            ),
-            {"cat": SUSPECT_CATEGORY},
-        )
-    ).scalar() or 0
 
     stale_4d_plus = sum(b["markets"] for b in by_staleness if b["days_since_touch"] >= 4)
 
@@ -250,7 +361,7 @@ async def _fetch_event(
     returned ``None`` for both would write a verdict on a rate limit (#36).
     """
     try:
-        r = await client.get(f"{GAMMA}/events/{event_id}", timeout=25)
+        r = await client.get(f"{GAMMA}/events/{event_id}", timeout=FETCH_TIMEOUT_SECONDS)
     except Exception:  # noqa: BLE001 — transport failure is INDETERMINATE
         return "indeterminate", None
     if r.status_code == 404:
@@ -328,36 +439,64 @@ async def repair(
     cap = min(int(limit or APPLY_EVENT_CAP), APPLY_EVENT_CAP)
 
     params: dict[str, Any] = {"cat": SUSPECT_CATEGORY, "cap": cap}
+
+    # The cursor is a page position, and `after_id` alone is enough to name one.
+    # Q496: the gate used to be `after_date AND after_id is not None`, so the
+    # NULL-commence_time region — which `NULLS LAST` puts at the very end — was
+    # unresumable: its cursor carries `after_date: None`, the keyset never
+    # activated, and the next call silently re-read page ONE forever.
     keyset = ""
-    if after_date and after_id is not None:
-        # Strict keyset on the exact ORDER BY, so a page boundary can neither
-        # repeat an event nor skip one when commence_time ties.
-        keyset = """
-              AND (fm.commence_time, fm.id) <
-                  (CAST(:after_date AS timestamptz), CAST(:after_id AS integer))
-        """
-        params["after_date"] = after_date
+    if after_id is not None:
         params["after_id"] = int(after_id)
+        if after_date:
+            # In the non-NULL region. Everything still to come is either a
+            # smaller (commence_time, anchor_id) tuple, or ANY row in the NULL
+            # region — because NULLS LAST sorts the whole of it after us.
+            keyset = """
+                  AND ( ev.commence_time IS NULL
+                        OR (ev.commence_time, ev.anchor_id) <
+                           (CAST(:after_date AS timestamptz), CAST(:after_id AS integer)) )
+            """
+            params["after_date"] = after_date
+        else:
+            # Already inside the NULL region: ordering there is by anchor_id
+            # alone, and no non-NULL row can follow.
+            keyset = """
+                  AND ev.commence_time IS NULL
+                  AND ev.anchor_id < CAST(:after_id AS integer)
+            """
 
     # One row per EVENT (the unit of a venue call), carrying the anchor row's
     # id/commence for the cursor. `min(id)` keeps the cursor deterministic.
+    #
+    # Q496: the keyset is applied AFTER the aggregation, never to the raw market
+    # rows. The cursor is a pair of AGGREGATES (`max(commence_time)`,
+    # `min(id)`), so filtering the inputs to those aggregates is filtering a
+    # different quantity than the one the cursor names: an event whose markets
+    # straddle the boundary would have some rows removed, recompute a DIFFERENT
+    # `max(commence_time)`, and so move in the ordering between pages — which is
+    # exactly how a keyset both repeats and skips events.
     targets = (
         await session.execute(
             text(
                 f"""
-                SELECT
-                  fm.market_metadata->>'polymarket_event_id' AS event_id,
-                  max(fm.commence_time)                      AS commence_time,
-                  min(fm.id)                                 AS anchor_id,
-                  count(*)                                   AS markets
-                FROM futures_markets fm
-                WHERE fm.source = 'polymarket'
-                  AND fm.status = 'open'
-                  AND fm.llm_sport_category = :cat
-                  AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                SELECT ev.event_id, ev.commence_time, ev.anchor_id, ev.markets
+                FROM (
+                  SELECT
+                    fm.market_metadata->>'polymarket_event_id' AS event_id,
+                    max(fm.commence_time)                      AS commence_time,
+                    min(fm.id)                                 AS anchor_id,
+                    count(*)                                   AS markets
+                  FROM futures_markets fm
+                  WHERE fm.source = 'polymarket'
+                    AND fm.status = 'open'
+                    AND fm.llm_sport_category = :cat
+                    AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                  GROUP BY 1
+                ) ev
+                WHERE TRUE
                   {keyset}
-                GROUP BY 1
-                ORDER BY max(fm.commence_time) DESC NULLS LAST, min(fm.id) DESC
+                ORDER BY ev.commence_time DESC NULLS LAST, ev.anchor_id DESC
                 LIMIT :cap
                 """
             ),
@@ -476,6 +615,21 @@ async def repair(
         )
     ).scalar() or 0
 
+    # Q496 — SCAN EXHAUSTION IS A DIFFERENT FACT FROM `remaining_events`, and
+    # conflating them made the drain's success state unreachable.
+    #
+    # `remaining_events` counts the SUSPECT CATEGORY, and Setka/TT-Cup events
+    # are legitimately in it — they are the control this rail deliberately does
+    # not move. So `remaining_events` has a positive floor it can never go
+    # below, `remaining == 0` is unreachable, and the old `terminal="complete"`
+    # arm was dead code: a fully drained population reported `no_work`, which
+    # reads as "the cursor is wrong", not "you are finished".
+    #
+    # Exhaustion is instead proven by the PAGER: the page came back short of the
+    # cap (so no row sorts after it) and the loop consumed all of it (so nothing
+    # was left unexamined by the deadline).
+    scan_exhausted = len(targets) < cap and stopped_before is None
+
     result: dict[str, Any] = {
         "repair": "polymarket-sport-category",
         "applied": bool(apply),
@@ -483,6 +637,17 @@ async def repair(
         "changed_to": to_category,
         "samples": samples,
         "remaining_events": int(remaining),
+        # NB: this string may not name the control league. `SUSPECT_CATEGORY` is
+        # the only sport literal permitted in executable code here, and the Q495
+        # anti-drift guard scans string literals too — correctly, since a rule
+        # table would arrive as literals long before it arrived as an `if`.
+        "remaining_events_note": (
+            "count of the SUSPECT CATEGORY, which legitimately includes the "
+            "control events the venue confirms really do belong to it. It has a "
+            "positive floor and reaching zero is NOT the end state — read "
+            "`scan_exhausted` for that."
+        ),
+        "scan_exhausted": scan_exhausted,
         "next_cursor": next_cursor,
         "stopped_before": stopped_before,
         "cap": cap,
@@ -492,24 +657,38 @@ async def repair(
             "durable, so the tail cannot rot while it waits; `remaining_events` "
             "is reported every call so it is never silent."
         ),
+        "budget": {
+            "router_wall_s": ROUTER_WALL_SECONDS,
+            "deadline_s": DEADLINE_SECONDS,
+            "fetch_timeout_s": FETCH_TIMEOUT_SECONDS,
+            "venue_pause_s": VENUE_PAUSE,
+            "worst_case_headroom_s": round(budget_headroom_seconds(), 2),
+        },
     }
 
     # "It returned" is not "it worked" (gotcha #53 / task_verdict). Each zero
     # state is a DIFFERENT real state and gets its own terminal rather than
     # sharing one silent success.
     if counts["events_examined"] == 0:
-        result["terminal"] = "complete" if remaining == 0 else "no_work"
+        result["terminal"] = "complete" if scan_exhausted else "no_work"
         result["reason"] = (
-            "the mis-filed population is drained"
-            if remaining == 0
+            "the pager reached the end of the population under this cursor — "
+            "every event still filed here has been examined and the venue "
+            "confirmed it, so `remaining_events` is a floor, not a backlog"
+            if scan_exhausted
             else "no events selected by this page — advance or clear the cursor"
         )
     elif counts["changed"] == 0:
-        result["terminal"] = "examined_no_change"
+        result["terminal"] = "examined_no_change_complete" if scan_exhausted else "examined_no_change"
         result["reason"] = (
             "every event examined was confirmed by the venue, refused as "
             "'other', or did not answer — see counts; this is a real state, "
             "not a silent success"
+            + (
+                " — and this was the LAST page, so the drain is finished"
+                if scan_exhausted
+                else ""
+            )
         )
     else:
         result["terminal"] = "changed" if apply else "dry_run"
