@@ -33,12 +33,12 @@ MUTANTS = [
      "    stamp = _as_utc(newest_outcome_at)\n    if stamp is None:\n        return True",
      "KILL", "'no stamp' read as death — takes an unstamped source dark wholesale", 1),
     ("E", STALE,
-     "        stamp = _as_utc(raw)\n        if stamp is not None and (newest is None or stamp > newest):\n            newest = stamp",
-     "        stamp = _as_utc(raw)\n        if stamp is not None and newest is None:\n            newest = stamp",
+     "        stamp = _outcome_movement_stamp(outcome)\n        if stamp is not None and (newest is None or stamp > newest):\n            newest = stamp",
+     "        stamp = _outcome_movement_stamp(outcome)\n        if stamp is not None and newest is None:\n            newest = stamp",
      "KILL", "first stamp wins, not newest — a fresh tail outcome stops counting", 1),
     ("F", STALE,
-     '        else:\n            raw = getattr(outcome, "last_updated", None)',
-     "        else:\n            raw = None",
+     "        raw = outcome.get(column) if is_mapping else getattr(outcome, column, None)",
+     "        raw = outcome.get(column) if is_mapping else None",
      "KILL", "the ORM row shape stops being read — every market reports 'no evidence'", 1),
     ("G", FEED,
      "    newest_outcome_at: datetime | None,\n    stale_no_movement_days: float = 2,",
@@ -66,6 +66,27 @@ MUTANTS = [
      "    updated_at = _utc(market.updated_at)\n    if updated_at:",
      "    updated_at = None\n    if updated_at:",
      "KILL", "the parent-row rules are disabled — this ship must be ADDITIVE, not a replacement", 1),
+    # ── CERT-688: the version-two revert, in its three shapes ────────────────
+    ("N", STALE,
+     '_MOVEMENT_STAMP_COLUMNS = ("price_changed_at", "last_updated")',
+     '_MOVEMENT_STAMP_COLUMNS = ("last_updated",)',
+     "KILL", "version two exactly: the poll touch-stamp is the only clock, so an "
+             "actively polled market frozen 59 days still reaches the feed", 1),
+    ("O", STALE,
+     '_MOVEMENT_STAMP_COLUMNS = ("price_changed_at", "last_updated")',
+     '_MOVEMENT_STAMP_COLUMNS = ("last_updated", "price_changed_at")',
+     "KILL", "order reversed — the touch-stamp always wins because it is never "
+             "NULL, so the movement column becomes unreachable dead code", 1),
+    ("P", STALE,
+     '_MOVEMENT_STAMP_COLUMNS = ("price_changed_at", "last_updated")',
+     '_MOVEMENT_STAMP_COLUMNS = ("price_changed_at",)',
+     "KILL", "the fallback is dropped — 97% of rows are NULL on the new column, "
+             "so the named specimen reports 'no evidence' and comes back", 1),
+    ("Q", FEED,
+     "            FuturesOutcome.price_changed_at,\n            FuturesOutcome.last_updated,",
+     "            FuturesOutcome.last_updated,",
+     "KILL", "load_only drops the movement column: lazy-loads per outcome on "
+             "exactly the freshly-repriced markets, crashes the async route", 2),
 ]
 
 

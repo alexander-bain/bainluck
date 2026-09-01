@@ -6411,8 +6411,15 @@ async def _score_sports_mode_futures(
             FuturesOutcome.current_yes_ask,
             # UX-P251: the staleness clock is taken from the PRICES, not from
             # the parent row's `onupdate` touch-stamp. Third occurrence of the
-            # same rule on this list — deferred here, it lazy-loads per outcome
-            # and crashes the async route.
+            # same rule on this list — deferred here, either column lazy-loads
+            # per outcome and crashes the async route.
+            #
+            # BOTH, and in this order (CERT-688). `price_changed_at` (#2024) is
+            # the column that answers "when did this price MOVE";
+            # `last_updated` is the unconditional poll touch-stamp and serves
+            # only as the upper bound for the 97% of rows where the newer
+            # column is still NULL. See `newest_outcome_stamp`.
+            FuturesOutcome.price_changed_at,
             FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
@@ -7427,8 +7434,15 @@ async def _score_futures(
             FuturesOutcome.current_yes_ask,
             # UX-P251: the staleness clock is taken from the PRICES, not from
             # the parent row's `onupdate` touch-stamp. Third occurrence of the
-            # same rule on this list — deferred here, it lazy-loads per outcome
-            # and crashes the async route.
+            # same rule on this list — deferred here, either column lazy-loads
+            # per outcome and crashes the async route.
+            #
+            # BOTH, and in this order (CERT-688). `price_changed_at` (#2024) is
+            # the column that answers "when did this price MOVE";
+            # `last_updated` is the unconditional poll touch-stamp and serves
+            # only as the upper bound for the 97% of rows where the newer
+            # column is still NULL. See `newest_outcome_stamp`.
+            FuturesOutcome.price_changed_at,
             FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),

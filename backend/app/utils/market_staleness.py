@@ -423,17 +423,80 @@ def _as_utc(value) -> datetime | None:
     return value
 
 
+#: The two columns this reads, newest-evidence first. Order is the whole
+#: semantic: ``price_changed_at`` answers the question being asked and
+#: ``last_updated`` is only ever a bound on it. See `newest_outcome_stamp`.
+_MOVEMENT_STAMP_COLUMNS = ("price_changed_at", "last_updated")
+
+
+def _outcome_movement_stamp(outcome) -> datetime | None:
+    """When THIS outcome's price last moved — or the tightest bound available.
+
+    ``price_changed_at`` when the row carries one; otherwise ``last_updated``.
+    Both shapes the feed carries are read (ORM row and the scoring loop's plain
+    dict), and an unreadable value on either column is skipped rather than
+    raised on — see `newest_outcome_stamp` for why a raise here is invisible.
+    """
+    is_mapping = isinstance(outcome, Mapping)
+    for column in _MOVEMENT_STAMP_COLUMNS:
+        raw = outcome.get(column) if is_mapping else getattr(outcome, column, None)
+        stamp = _as_utc(raw)
+        if stamp is not None:
+            return stamp
+    return None
+
+
 def newest_outcome_stamp(outcomes) -> datetime | None:
-    """When any of this market's prices was last seen, or ``None`` if never.
+    """When any of this market's prices last MOVED, or ``None`` if unknowable.
 
-    ═══ WHY THIS IS NOT ``market.updated_at`` (UX-P251) ═══
+    ═══ 🔴 WHY THIS IS NOT ``last_updated`` ALONE (CERT-688) ═══
 
-    ``futures_markets.updated_at`` carries ``onupdate=func.now()``, so it is a
-    touch-stamp on the PARENT row: a volume refresh or a category re-label
-    rewrites it without a single price moving. Every staleness gate on the feed
-    read that column, which is why a market whose twelve prices all froze on
-    2026-07-04 reported ``days_stale ≈ 0`` on 2026-09-01 and scored 88 on
-    Discover.
+    Version two of this ship read ``FuturesOutcome.last_updated`` and nothing
+    else. The cert refuted it in one probe: a market with ``price_changed_at``
+    59 days old and ``last_updated`` three minutes old came back ``eligible``
+    with no blockers. **An actively polled market whose probability froze two
+    months ago still reached the feed** — which is this ship's own failure
+    class, one column to the left.
+
+    The model says so in as many words: ``last_updated`` is a *TOUCH-STAMP.
+    Written unconditionally by every poll, so it answers "when did the poller
+    last SEE this row", NOT "when did this price move"*. ``price_changed_at``
+    (#2024) is the column that answers the question this gate asks, maintained
+    by `app/utils/price_change_stamp.py` on all five price-writing paths.
+
+    ═══ WHY ``last_updated`` IS STILL THE FALLBACK, NOT DELETED ═══
+
+    ``price_changed_at`` is NULLABLE and populated FORWARD — the model comment
+    is explicit that *"a consumer switching to it must decide what NULL means
+    for its own question rather than inheriting a fabricated value"*. Measured
+    on production 2026-09-01: the column holds 116,719 of 3,911,727 outcome
+    rows (3%) and its oldest value is **2026-08-20 — twelve days of history**.
+    Keying on it alone would disarm a fourteen-day gate completely, and the
+    named specimen proves it: all twelve outcomes of market ``12194657`` read
+    ``price_changed_at IS NULL``.
+
+    So NULL falls back to ``last_updated``, and the fallback is *sound* rather
+    than merely convenient: **a price cannot have moved after the poller last
+    wrote the row.** ``last_updated`` is therefore a genuine UPPER BOUND on the
+    movement time, and using an upper bound can only make a market look
+    FRESHER than it is. For a suppression gate that is the safe direction —
+    it can never over-block, which is exactly the CERT-685 failure this ship
+    already has a shelf of regression cases for.
+
+    Because ``price_changed_at`` is written on the same statement as the price,
+    it is always ``<= last_updated``, so this can only move a market's clock
+    BACKWARDS. Composition, measured across all 37,967 open markets:
+
+        blocked on last_updated alone   9,457
+        blocked on this coalesce        9,457
+        NEWLY blocked                       0
+        clock value actually changed    4,495
+
+    Four and a half thousand markets get a truer clock; none of them crosses
+    the fourteen-day line, because twelve days of column history cannot. The
+    arm is correct now and *becomes load-bearing* as coverage matures — which
+    is why `TestAnActivelyPolledFrozenMarket` fakes the clock rather than
+    waiting for it.
 
     ═══ ALL OUTCOMES, NOT THE TOP TEN ═══
 
@@ -443,10 +506,19 @@ def newest_outcome_stamp(outcomes) -> datetime | None:
     top-ten slice, so a stamp taken from that slice would call those 207 dead.
     This takes the whole set.
 
-    ``None`` means *no outcome carries a stamp*, which is different from *the
-    stamps are old*. ``freshness_clock`` treats it as "no evidence either way"
-    rather than as evidence of death — a writer that never sets the column must
-    not take its whole source dark.
+    ``None`` means *no outcome carries either stamp*, which is different from
+    *the stamps are old*. ``freshness_clock`` treats it as "no evidence either
+    way" rather than as evidence of death — a writer that never sets the
+    column must not take its whole source dark.
+
+    ═══ WHY THIS IS NOT ``market.updated_at`` EITHER (UX-P251) ═══
+
+    ``futures_markets.updated_at`` carries ``onupdate=func.now()``, so it is a
+    touch-stamp on the PARENT row: a volume refresh or a category re-label
+    rewrites it without a single price moving. Every staleness gate on the feed
+    read that column, which is why a market whose twelve prices all froze on
+    2026-07-04 reported ``days_stale ≈ 0`` on 2026-09-01 and scored 88 on
+    Discover.
 
     ═══ TWO SHAPES, AND WHY AN UNREADABLE ONE DOES *NOT* RAISE ═══
 
@@ -466,17 +538,14 @@ def newest_outcome_stamp(outcomes) -> datetime | None:
     about.
 
     The tripwire belongs somewhere that cannot be swallowed, so it is a test:
-    ``test_the_orm_model_still_carries_the_column`` asserts the real
-    ``FuturesOutcome`` has ``last_updated``. A schema change fails CI instead of
-    quietly emptying Discover.
+    ``test_the_orm_model_still_carries_the_columns`` asserts the real
+    ``FuturesOutcome`` has BOTH columns. A schema change fails CI instead of
+    quietly emptying Discover — or, for ``price_changed_at``, instead of
+    quietly demoting the gate back to the touch-stamp CERT-688 refuted.
     """
     newest: datetime | None = None
     for outcome in outcomes or ():
-        if isinstance(outcome, Mapping):
-            raw = outcome.get("last_updated")
-        else:
-            raw = getattr(outcome, "last_updated", None)
-        stamp = _as_utc(raw)
+        stamp = _outcome_movement_stamp(outcome)
         if stamp is not None and (newest is None or stamp > newest):
             newest = stamp
     return newest

@@ -78,6 +78,26 @@ a month.
 The top ten outcomes are NOT a safe proxy for "the prices", and that is measured
 too: 207 of the 29,658 carry a tail outcome more than a day fresher than
 anything in their top ten. So the stamp is taken over ALL outcomes.
+
+🔴 **VERSION TWO THEN ASKED THE WRONG CHILD COLUMN.** It read
+``FuturesOutcome.last_updated``, which the model defines in as many words as a
+*TOUCH-STAMP … written unconditionally by every poll*. CERT-688 refuted it with
+one exact-head probe — ``price_changed_at`` 59 days old, ``last_updated`` three
+minutes old, ``eligible=True``, no blockers — so **an actively polled market
+whose probability froze two months ago still reached the feed.** The same
+general clause, one level down: the column that gets written on every visit is
+not evidence about the value it sits next to.
+
+Version three prefers ``price_changed_at`` (#2024, the column maintained only
+when a price actually moves) and keeps ``last_updated`` as the fallback, because
+that column is NULLABLE, populated forward from 2026-08-20, and NULL on 97% of
+rows — including all twelve of the named specimen's. The fallback is sound and
+not merely convenient: a price cannot move after the poller last wrote the row,
+so ``last_updated`` is a true UPPER bound, and an upper bound can only make a
+market look fresher. Composition across all 37,967 open markets is unchanged —
+9,457 blocked either way, **0 newly blocked**, 4,495 clocks made truer.
+`TestAnActivelyPolledFrozenMarket` and `TestTheCoalesceChangesNoOneToday` below
+are those two halves.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -100,7 +120,15 @@ BRIDESMAIDS_PARENT_TOUCHED = NOW - timedelta(minutes=3)
 BRIDESMAIDS_PRICES_FROZE = NOW - timedelta(days=59)
 
 
-def _outcome(name, probability, last_updated, *, change=None, opening=None):
+def _outcome(
+    name, probability, last_updated, *, change=None, opening=None, price_changed_at=None
+):
+    """One outcome, in the scoring loop's dict shape.
+
+    `price_changed_at` defaults to None because that is the production shape:
+    the #2024 column is populated FORWARD from 2026-08-20 and 97% of outcome
+    rows — including all twelve of the named specimen's — are still NULL.
+    """
     return {
         "name": name,
         "probability": probability,
@@ -108,6 +136,7 @@ def _outcome(name, probability, last_updated, *, change=None, opening=None):
         "opening_probability": opening,
         "rank": None,
         "rank_change_24h": None,
+        "price_changed_at": price_changed_at,
         "last_updated": last_updated,
     }
 
@@ -328,13 +357,13 @@ class TestTheClockItself:
         # above becomes a silent suppression instead of a silent admission.
         assert prices_have_stopped(newest_outcome_stamp([object()]), NOW) is False
 
-    def test_the_orm_model_still_carries_the_column(self):
+    def test_the_orm_model_still_carries_the_columns(self):
         """The tripwire, in the one place a `try/except` cannot swallow it.
 
-        If `FuturesOutcome.last_updated` is ever renamed or dropped,
-        `newest_outcome_stamp` starts returning `None` for every market and the
-        whole gate quietly reverts to the parent-row clock. Nothing else in this
-        file would go red. This fails CI instead.
+        If either column is ever renamed or dropped, `newest_outcome_stamp`
+        degrades silently — to the parent-row clock if `last_updated` goes, or
+        back to the touch-stamp CERT-688 refuted if `price_changed_at` goes.
+        Nothing else in this file would go red. This fails CI instead.
         """
         from app.models.models import FuturesOutcome
 
@@ -342,6 +371,201 @@ class TestTheClockItself:
             "the staleness clock reads FuturesOutcome.last_updated; without it "
             "newest_outcome_stamp returns None for every market and the feed "
             "silently goes back to trusting the parent row's touch-stamp"
+        )
+        assert hasattr(FuturesOutcome, "price_changed_at"), (
+            "the staleness clock PREFERS FuturesOutcome.price_changed_at "
+            "(#2024); without it the gate falls all the way back to the poll "
+            "touch-stamp and an actively polled frozen market reaches the feed"
+        )
+
+
+class TestAnActivelyPolledFrozenMarket:
+    """🔴 CERT-688. THE THIRD VERSION OF THIS SHIP EXISTS BECAUSE OF THIS CLASS.
+
+    Version two read `FuturesOutcome.last_updated` and nothing else. The cert
+    refuted it with one exact-head probe: ``price_changed_at`` 59 days old,
+    ``last_updated`` three minutes old, ``eligible=True``, no blockers. **An
+    actively polled market whose probability froze two months ago still reached
+    the feed** — this ship's own failure class, one column to the left.
+
+    The model states the split in as many words: `last_updated` is a
+    *TOUCH-STAMP … written unconditionally by every poll*, and `price_changed_at`
+    is the #2024 column that answers when a price actually moved.
+
+    Why this class fakes its clock instead of naming a production row: measured
+    2026-09-01, `price_changed_at`'s oldest value is **2026-08-20**, so the
+    column carries twelve days of history and no live row can yet be fourteen
+    days frozen on it. The arm is correct now and becomes load-bearing as
+    coverage matures. `TestTheCoalesceChangesNoOneToday` pins that.
+    """
+
+    FROZE = NOW - timedelta(days=59)
+    POLLED = NOW - timedelta(minutes=3)
+
+    def _polled_but_frozen(self):
+        """The cert's probe, in the scoring loop's own shape: polled hard,
+        priced never. The Yes/No pair is deliberately non-extreme so no
+        price-shaped gate can take the credit for the block."""
+        return [
+            _outcome("Yes", 0.645, self.POLLED, opening=0.595, price_changed_at=self.FROZE),
+            _outcome("No", 0.355, self.POLLED, opening=0.405, price_changed_at=self.FROZE),
+        ]
+
+    def test_the_clock_reads_the_MOVEMENT_stamp_not_the_poll_stamp(self):
+        assert newest_outcome_stamp(self._polled_but_frozen()) == self.FROZE
+
+    def test_and_so_the_market_is_blocked(self):
+        assert prices_have_stopped(
+            newest_outcome_stamp(self._polled_but_frozen()), NOW
+        ) is True
+
+    def test_the_cert_s_probe_through_the_REAL_ORACLE(self):
+        """Not the helper — the gate, end to end, exactly as CERT-688 ran it."""
+        outcomes = self._polled_but_frozen()
+        market = _market(
+            updated_at=self.POLLED,
+            resolution_date=NOW + timedelta(days=302),
+            name="Who will Taylor Swift's bridesmaids be?",
+            category="entertainment",
+        )
+        trace = _market_runtime_filter_trace(
+            market,
+            outcomes,
+            "Yes",
+            0.645,
+            NOW,
+            sport_category="entertainment",
+            newest_outcome_at=newest_outcome_stamp(outcomes),
+        )
+        assert "prices_stopped" in trace["blockers"], (
+            "CERT-688: an actively polled market whose price froze 59 days ago "
+            "returned eligible=True with no blockers. That is the defect."
+        )
+        assert not trace["eligible"]
+
+    def test_the_poll_stamp_alone_would_have_let_it_through(self):
+        """The red-if-reverted arm. Without this, the test above is vacuous.
+
+        Read on `last_updated` only — version two's reading — the same rows
+        look three minutes old and every staleness blocker stands down.
+        """
+        assert prices_have_stopped(self.POLLED, NOW) is False
+
+    def test_a_polled_market_that_IS_still_moving_keeps_its_card(self):
+        """Gotcha #43 — the other direction, or this proves only half a rule."""
+        outcomes = [
+            SimpleNamespace(
+                name="Yes",
+                probability=0.62,
+                price_changed_at=NOW - timedelta(hours=2),
+                last_updated=self.POLLED,
+            )
+        ]
+        assert prices_have_stopped(newest_outcome_stamp(outcomes), NOW) is False
+
+
+class TestTheCoalesceChangesNoOneToday:
+    """`price_changed_at` is preferred; `last_updated` is the bound behind it.
+
+    The fallback is not convenience, it is soundness: **a price cannot have
+    moved after the poller last wrote the row**, so `last_updated` is a true
+    UPPER bound on the movement time. An upper bound can only make a market
+    look FRESHER, which for a suppression gate is the safe direction — it can
+    never over-block, which is the CERT-685 failure `TestTheSeasonFuturesShelf`
+    guards.
+
+    Measured across all 37,967 open markets on 2026-09-01:
+
+        blocked on last_updated alone   9,457
+        blocked on this coalesce        9,457
+        NEWLY blocked                       0
+        clock value actually changed    4,495
+    """
+
+    def test_a_null_movement_stamp_falls_back_to_the_poll_stamp(self):
+        # 97% of production rows are exactly this shape, the named specimen's
+        # twelve outcomes among them.
+        stamp = NOW - timedelta(days=59)
+        assert (
+            newest_outcome_stamp(
+                [SimpleNamespace(price_changed_at=None, last_updated=stamp)]
+            )
+            == stamp
+        )
+
+    def test_the_named_specimen_is_still_caught_through_the_fallback(self):
+        """The ship itself. Market 12194657 carries NO `price_changed_at`.
+
+        If the coalesce had dropped `last_updated`, the one card Alex read
+        would have walked straight back onto the feed.
+        """
+        market, outcomes = _bridesmaids()
+        for outcome in outcomes:
+            assert outcome.get("price_changed_at") is None
+        trace = _market_runtime_filter_trace(
+            market,
+            outcomes,
+            "No",
+            0.645,
+            NOW,
+            sport_category="entertainment",
+            newest_outcome_at=newest_outcome_stamp(outcomes),
+        )
+        assert "prices_stopped" in trace["blockers"]
+
+    def test_the_clock_can_only_move_BACKWARDS_never_forwards(self):
+        """`price_changed_at` is written on the same statement as the price, so
+        it is always <= `last_updated`. Preferring it can only age the clock —
+        which is why the coalesce cannot UNBLOCK anything the old reading
+        blocked, and why the 9,457 above is the same number twice.
+        """
+        polled = NOW - timedelta(minutes=5)
+        for days in (0, 1, 4, 12, 40, 130):
+            # Derived FROM the poll stamp, never independently of it — the
+            # production invariant is `price_changed_at <= last_updated`
+            # because the two are written by the same statement, and a fixture
+            # that violates it is testing a row that cannot exist.
+            moved = polled - timedelta(days=days)
+            outcome = SimpleNamespace(price_changed_at=moved, last_updated=polled)
+            assert newest_outcome_stamp([outcome]) <= polled
+
+    def test_an_unreadable_movement_stamp_falls_through_to_the_poll_stamp(self):
+        # Same swallowing `try/except` as every other shape case here: a bad
+        # `price_changed_at` must degrade to the older reading, not to `None`,
+        # or one malformed column silently disarms the gate for a whole source.
+        stamp = NOW - timedelta(days=59)
+        assert (
+            newest_outcome_stamp(
+                [SimpleNamespace(price_changed_at="2026-07-04", last_updated=stamp)]
+            )
+            == stamp
+        )
+        assert (
+            newest_outcome_stamp([{"price_changed_at": object(), "last_updated": stamp}])
+            == stamp
+        )
+
+    def test_it_reads_the_movement_stamp_in_BOTH_outcome_shapes(self):
+        stamp = NOW - timedelta(days=20)
+        fresh = NOW - timedelta(minutes=1)
+        assert (
+            newest_outcome_stamp(
+                [SimpleNamespace(price_changed_at=stamp, last_updated=fresh)]
+            )
+            == stamp
+        )
+        assert (
+            newest_outcome_stamp([{"price_changed_at": stamp, "last_updated": fresh}])
+            == stamp
+        )
+
+    def test_neither_column_present_is_still_None(self):
+        assert newest_outcome_stamp([object()]) is None
+        assert (
+            newest_outcome_stamp(
+                [SimpleNamespace(price_changed_at=None, last_updated=None)]
+            )
+            is None
         )
 
 
@@ -459,14 +683,19 @@ class TestBothFeedPathsUseTheSameClock:
         )
 
     @pytest.mark.parametrize("func", ["_score_futures", "_score_sports_mode_futures"])
-    def test_the_path_loads_last_updated_from_the_database(self, func):
-        # Gotcha: `load_only` without this column lazy-loads per outcome and
+    @pytest.mark.parametrize("column", ["price_changed_at", "last_updated"])
+    def test_the_path_loads_both_clock_columns_from_the_database(self, func, column):
+        # Gotcha: `load_only` without a column lazy-loads per outcome and
         # crashes the async route — the same trap `calibration_probability` and
         # `current_yes_bid` each carry a comment about a few lines above it.
+        #
+        # `price_changed_at` is the one that bites QUIETLY: it is NULL on 97% of
+        # rows, so a missing load_only entry would look fine on most markets and
+        # blow up only on the freshly-repriced ones.
         src = self._src(func)
-        assert "FuturesOutcome.last_updated" in src, (
-            f"{func} reads outcome.last_updated, so it must be in the "
-            "load_only list or the async route lazy-loads and crashes"
+        assert f"FuturesOutcome.{column}" in src, (
+            f"{func} reads outcome.{column}, so it must be in the load_only "
+            "list or the async route lazy-loads and crashes"
         )
 
     def test_the_oracle_REQUIRES_its_caller_to_state_the_price_clock(self):
