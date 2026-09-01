@@ -13,6 +13,8 @@ import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import { useLiveBlend } from "@/hooks/useLiveBlend";
+import { LiveNumber, LivePulse, LiveSparkline } from "@/components/live/LiveLook";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -28,6 +30,23 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const homeColor = data.home_team_data?.primary_color || "#374151";
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
   const isLive = data.status === "live";
+
+  /**
+   * UX-P249 / Alex LIVE UPDATES ruling (1) — PUSH for live events only.
+   *
+   * The gate is `isLive` and it is passed down rather than derived inside the
+   * hook: only the card knows whether its event is in play, and the difference
+   * between "push for live events" and "a socket per card in the feed" is
+   * exactly this argument. A non-live card opens no connection at all.
+   *
+   * ⚠️ ONE ASSUMPTION, NAMED RATHER THAN BURIED: `blend_update.probability` is
+   * read as the HOME win probability, matching `Event.win_probability_sources`
+   * and every other event payload in the product. The stream is the live lane's
+   * and is in flight as of 2026-09-01; if it settles on a different side, this
+   * is the line that changes and `parseBlendUpdate` is the only other one.
+   */
+  const live = useLiveBlend(data.id, isLive);
+  const liveHomeProb = live.shown ? live.shown.value / 100 : null;
   const isDone = data.status === "completed" || data.status === "closed";
   // UX-P042 (#1640) — withhold a probability manufactured from an untraded
   // Polymarket midpoint; `current_odds` presents it as a confident 0.5/0.5.
@@ -155,17 +174,39 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               <span className="flex items-center gap-1.5 text-text-muted text-[10px]">
                 Win Probability
                 <SignalBars tier={data.confidence_tier} />
+                {/* UX-P249 — the pulse takes the timestamp of the number ON
+                    SCREEN (`live.shown`), never the newest frame received. The
+                    throttle can hold a value back by up to five seconds, and an
+                    age fresher than the pixel beside it is the one dishonesty
+                    this feature must not introduce. */}
+                <LivePulse observedAt={live.shown?.observedAt ?? null} now={live.now} />
+                <LiveSparkline series={live.series} now={live.now} />
               </span>
-              <span
-                className={`font-bold ${authorityClass}`.trim()}
-                style={{ color: homeColor }}
-                data-testid="event-card-home-probability"
-                data-probability={homeProb}
-                data-rendered-percent={homePct ?? undefined}
-                data-authority-tier={data.confidence_tier ?? undefined}
-              >
-                {formatProbability(homeProb, { rendered: homePct })}
-              </span>
+              {liveHomeProb != null ? (
+                /* The SAME slot, the same test id and the same data contract —
+                   a live number replaces the served one in place, so the
+                   browser rail keeps comparing the number this card PAINTED
+                   against the hero it links to (the UX-P003 contract). Swapping
+                   the element instead would leave the rail reading a value that
+                   is no longer on screen. */
+                <LiveNumber
+                  value={live.shown!.value}
+                  direction={live.direction}
+                  className={`font-bold ${authorityClass}`.trim()}
+                  testId="event-card-home-probability"
+                />
+              ) : (
+                <span
+                  className={`font-bold ${authorityClass}`.trim()}
+                  style={{ color: homeColor }}
+                  data-testid="event-card-home-probability"
+                  data-probability={homeProb}
+                  data-rendered-percent={homePct ?? undefined}
+                  data-authority-tier={data.confidence_tier ?? undefined}
+                >
+                  {formatProbability(homeProb, { rendered: homePct })}
+                </span>
+              )}
             </div>
             <div className="h-2.5 rounded-full overflow-hidden flex">
               <div className="transition-all duration-500" style={{ width: `${awayProb * 100}%`, backgroundColor: awayColor }} />
