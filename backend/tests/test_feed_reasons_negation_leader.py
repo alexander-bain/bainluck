@@ -30,6 +30,7 @@ from app.utils.feed_reasons import (
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
+    humanize_binary_outcome_name,
 )
 
 # ── The two live specimens, verbatim ─────────────────────────────────────────
@@ -280,4 +281,156 @@ class TestReasonAndHeadline:
         )
         assert reason == (
             "Los Angeles Dodgers (31%) leads MLB World Series Winner across 2 sources"
+        )
+
+
+# ── CERT-624 round 2 ─────────────────────────────────────────────────────────
+
+
+class TestNonWillInterrogatives:
+    """CERT-624: the fix worked only for questions opening with "Will".
+
+    The cert's finding, verbatim: *"The new comparison strips `Does`/`Can`/other
+    interrogatives from only the question, while the fallback producer retains
+    them in `Not: Does...`; a checked-in real title still renders `Not: Does
+    Alcaraz reach the semifinals leads at 72%`."*
+
+    Cause: `humanize_binary_outcome_name`'s Strategy 2 strips a leading "Will "
+    and nothing else, so any other auxiliary survives into the label — while
+    `_negates_market_question` stripped it from the QUESTION only. Removing a
+    token from one side of an equality guarantees a mismatch, so the predicate
+    said False and the mangled label reached the reader.
+
+    Round 1 stayed green because every positive specimen in this file opens with
+    "Will". These cases exist so that can never be true again.
+
+    🔴 THE LABELS HERE ARE NOT HAND-WRITTEN. Each is produced by calling the real
+    `humanize_binary_outcome_name`, which is what manufactured the defect; a
+    hand-typed label could quietly stop matching what the producer emits and the
+    guard would go vacuous.
+    """
+
+    # The cert's own specimen, checked in at `scripts/populate_tournament_props.py:468`.
+    ALCARAZ_MARKET = "Does Alcaraz reach the semifinals?"
+
+    NON_WILL_MARKETS = [
+        ALCARAZ_MARKET,
+        "Can Djokovic win another major?",
+        "Is the Fed cutting rates in September?",
+        "Are the Jets making the playoffs?",
+        "Did the album go platinum?",
+        "Should the bill pass before October?",
+        "Has the treaty been ratified?",
+        "Would a recession start before July?",
+    ]
+
+    @pytest.mark.parametrize("market", NON_WILL_MARKETS)
+    def test_the_producers_own_no_label_never_reaches_the_reader(self, market):
+        # Exactly the path that served the defect: the producer makes the label,
+        # the generator renders it.
+        label = humanize_binary_outcome_name("No", market)
+        assert label != "No", "precondition: the producer must manufacture a label"
+
+        summary = generate_futures_context_summary(
+            highlight_reasons=[],
+            market_name=market,
+            leader_name=label,
+            leader_probability=0.72,
+            headline="",
+        )
+        assert summary == "No leads at 72%"
+        # Scoped per UX-P238-5: "No" alone is a substring of the defect.
+        assert label not in summary
+
+    def test_the_exact_cert_624_sentence_is_gone(self):
+        label = humanize_binary_outcome_name("No", self.ALCARAZ_MARKET)
+        assert label == "Not: Does Alcaraz reach the semifinals"
+
+        summary = generate_futures_context_summary(
+            highlight_reasons=[],
+            market_name=self.ALCARAZ_MARKET,
+            leader_name=label,
+            leader_probability=0.72,
+            headline="",
+        )
+        assert summary == "No leads at 72%"
+        assert "Not: Does Alcaraz reach the semifinals leads at 72%" != summary
+        assert "Does Alcaraz" not in summary
+
+    def test_the_interrogative_comes_off_both_sides_or_neither(self):
+        # The mechanism, asserted directly. Question keeps its auxiliary and the
+        # label does not, and vice versa — both must still align.
+        assert (
+            _negates_market_question(
+                "Not: Does Alcaraz reach the semifinals",
+                "Does Alcaraz reach the semifinals?",
+            )
+            is True
+        )
+        assert (
+            _negates_market_question(
+                "Not: Alcaraz reach the semifinals",
+                "Does Alcaraz reach the semifinals?",
+            )
+            is True
+        )
+        assert (
+            _negates_market_question(
+                "Not: Does Alcaraz reach the semifinals",
+                "Alcaraz reach the semifinals?",
+            )
+            is True
+        )
+
+    # Only an ASYMMETRIC pair can test the contents of the auxiliary list. When
+    # both sides carry the word, alignment succeeds whether or not it is listed
+    # — which is why the first version of this class left the list untested and
+    # a mutant reverting it to the round-1 set SURVIVED the battery. These are
+    # the words the round-1 set did not have.
+    @pytest.mark.parametrize(
+        "auxiliary",
+        ["Did", "Was", "Were", "Could", "Should", "Has", "Have", "Had"],
+    )
+    def test_an_auxiliary_present_on_only_one_side_still_aligns(self, auxiliary):
+        rest = "the album go platinum"
+        assert (
+            _negates_market_question(f"Not: {rest}", f"{auxiliary} {rest}?") is True
+        ), f"{auxiliary!r} must be strippable from the question side alone"
+
+
+class TestMidWordTruncation:
+    """The 40-char cut lands mid-WORD, so the final token is a fragment.
+
+    Surfaced while reproducing CERT-624: `"Is the Fed cutting rates in
+    September?"` becomes `'No: Is the Fed cutting rates in Septe...'`. Token
+    equality can never match `septe` against `september`, so even with the
+    interrogative fixed this case would still have leaked.
+    """
+
+    def test_a_fragment_final_token_still_counts_as_restating(self):
+        market = "Is the Fed cutting rates in September?"
+        label = humanize_binary_outcome_name("No", market)
+        assert label.endswith("..."), "precondition: this label must be truncated"
+        assert "Septe" in label and "September" not in label
+
+        assert _negates_market_question(label, market) is True
+
+    def test_a_fragment_that_opens_a_DIFFERENT_word_does_not_count(self):
+        # Tolerance is a prefix test, not a wildcard: the fragment must actually
+        # open the word it was cut from.
+        assert (
+            _negates_market_question(
+                "Not: the Fed cutting rates in Octo...",
+                "Is the Fed cutting rates in September?",
+            )
+            is False
+        )
+
+    def test_everything_before_the_fragment_must_still_match_exactly(self):
+        assert (
+            _negates_market_question(
+                "Not: the Fed RAISING rates in Septe...",
+                "Is the Fed cutting rates in September?",
+            )
+            is False
         )

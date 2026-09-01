@@ -214,12 +214,40 @@ _NEGATION_PREFIX_RE = re.compile(r"^\s*(?:no|not)\s*[:\-–—]?\s+", re.IGNOREC
 # Below this many characters a restatement is too short to be evidence of one.
 _MIN_RESTATEMENT_CHARS = 4
 
-# Stripped before comparing a restatement against the question it restates:
-# `humanize_binary_outcome_name` truncates at 40 chars, so the two sides of one
-# pair are cut at different points and the comparison must be prefix-tolerant.
+# Stripped before comparing a restatement against the question it restates.
+#
+# 🔴 CERT-624: THIS CAME OFF THE QUESTION ONLY, AND THAT WAS THE BUG.
+# `humanize_binary_outcome_name`'s Strategy 2 removes a leading "Will " and
+# nothing else, so a question opening with any OTHER auxiliary keeps it in the
+# manufactured label: `"Does Alcaraz reach the semifinals?"` becomes
+# `"Not: Does Alcaraz reach the semifinals"`. Stripping the word from one side
+# of an equality then GUARANTEES the two token lists cannot align, so the
+# predicate returned False and the label reached the reader whole —
+# `Not: Does Alcaraz reach the semifinals leads at 72%`. That title is checked
+# in at `scripts/populate_tournament_props.py:468`; every positive specimen in
+# the guard happened to open with "Will", which is why the suite stayed green.
+# The word must come off BOTH sides or NEITHER.
 _LEADING_INTERROGATIVE_RE = re.compile(
-    r"^(?:will|would|does|do|is|are|can)\b", re.IGNORECASE
+    r"^(?:will|would|does|do|did|is|are|was|were|can|could|should|has|have|had)\b",
+    re.IGNORECASE,
 )
+
+# `humanize_binary_outcome_name` marks a label it had to shorten by ending it
+# with this; see `_negates_market_question` for why that matters.
+_TRUNCATION_MARKER = "..."
+
+
+def _comparable_tokens(text: str | None) -> list[str]:
+    """Tokens of `text` with a leading interrogative auxiliary dropped.
+
+    Applied to the label and the question through the SAME function, so the two
+    sides cannot be normalised differently again.
+    """
+    stripped = (text or "").strip()
+    tokens = _normalized_copy_tokens(stripped)
+    if tokens and _LEADING_INTERROGATIVE_RE.match(stripped):
+        return tokens[1:]
+    return tokens
 
 
 def _negates_market_question(label: str | None, market_name: str | None) -> bool:
@@ -236,16 +264,27 @@ def _negates_market_question(label: str | None, market_name: str | None) -> bool
     if len(restatement) < _MIN_RESTATEMENT_CHARS:
         return False
 
-    restatement_tokens = _normalized_copy_tokens(restatement)
-    question_tokens = _normalized_copy_tokens(market_name)
-    if question_tokens and _LEADING_INTERROGATIVE_RE.match((market_name or "").strip()):
-        question_tokens = question_tokens[1:]
+    restatement_tokens = _comparable_tokens(restatement)
+    question_tokens = _comparable_tokens(market_name)
     if not restatement_tokens or not question_tokens:
         return False
 
-    # Prefix-tolerant in BOTH directions: either side may be the truncated one.
-    shorter, longer = sorted((restatement_tokens, question_tokens), key=len)
-    return longer[: len(shorter)] == shorter
+    # Only the LABEL is ever shortened; the question arrives whole. Compare over
+    # the overlap, so a label carrying fewer tokens than its question still
+    # counts as restating it.
+    overlap = min(len(restatement_tokens), len(question_tokens))
+
+    # The 40-character cut lands mid-WORD, not on a token boundary, so a label
+    # ending in the marker has an unreliable FINAL token — "September" arrives
+    # as "septe". Everything before it must still match exactly; only that last
+    # token is allowed to merely OPEN the word it was cut from.
+    if restatement.endswith(_TRUNCATION_MARKER):
+        head = overlap - 1
+        if restatement_tokens[:head] != question_tokens[:head]:
+            return False
+        return question_tokens[head].startswith(restatement_tokens[head])
+
+    return restatement_tokens[:overlap] == question_tokens[:overlap]
 
 
 def _answering_side_label(label: str | None, market_name: str | None) -> str | None:
