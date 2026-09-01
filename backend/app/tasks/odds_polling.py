@@ -110,6 +110,16 @@ def get_max_duration_for_sport(sport_key: str) -> float:
 
     Used for staleness detection - we only mark events as "closed"
     if they've been live longer than this duration AND odds are stale.
+
+    🔴 THIS DOCSTRING DESCRIBED A GUARD THAT NOTHING CALLED (queue 067).
+    ``detect_and_close_stale_events`` — the one function this exists for — gated
+    on ``MIN_HOURS_BEFORE_STALENESS_CHECK`` alone and never consulted this table,
+    so every sport was eligible to be auto-closed at **90 minutes**. Seven of the
+    nineteen priced impossible ties measured on production had closed 88-91
+    minutes after first pitch; a 90-minute-old MLB game is in the fifth inning.
+    The suite has fourteen tests of this function and every one of them passed
+    throughout, because they prove the lookup returns 5.0 for ``baseball_mlb``
+    and nothing proved anyone asked. A guard is not wired by being correct.
     """
     # Check for exact match first
     for sport_prefix, duration in SPORT_MAX_DURATIONS.items():
@@ -146,15 +156,49 @@ async def detect_and_close_stale_events(session) -> int:
 
     An event is marked as "closed" when:
     1. It's currently "live" status
-    2. It started at least MIN_HOURS_BEFORE_STALENESS_CHECK hours ago
-    3. Either:
-       a. It has no odds snapshots at all (bookmakers stopped offering odds), OR
-       b. The latest odds snapshot is older than ODDS_STALE_MINUTES
+    2. StatPal reported an end time (definitive), OR ALL of:
+       a. It has been live longer than its sport's own maximum duration
+          (``get_max_duration_for_sport`` — 5.0h for baseball, 3.5h for
+          basketball, 6.0h for tennis), AND
+       b. Bookmakers were pricing it and every one of them has now been quiet
+          for ODDS_STALE_MINUTES, AND
+       c. No source anywhere has captured a post-commence snapshot inside
+          ``STILL_ACTIVE_MINUTES`` (``game_may_still_be_running``)
 
     Returns the number of events marked as closed.
+
+    🔴 QUEUE 067 — THIS FUNCTION USED TO CLOSE ANY LIVE EVENT AT 90 MINUTES.
+    Conditions (a) and (c) are new; before them the only elapsed-time gate was
+    ``MIN_HOURS_BEFORE_STALENESS_CHECK`` = 1.5h, applied identically to a tennis
+    five-setter and a baseball game. Measured on production, seven of nineteen
+    priced impossible ties had been closed 88-91 minutes after first pitch, and
+    it fired on real rows as readily as on orphans: event 14877917 (BOS@NYY, 36
+    markets, 463 outcomes) was stamped FINAL 0-0 ninety minutes in.
+
+    The per-sport table and the still-running guard both already existed, were
+    both already tested, and neither was called from here. ``espn_sync``'s
+    ``_transition_event_statuses_impl`` — the sibling net closing the same
+    population every 60s — has consulted both since CAL-P002. This net is the
+    unfixed half of that repair, and the two now agree on when a game is over.
+
+    ``MIN_HOURS_BEFORE_STALENESS_CHECK`` survives as the query floor only. It
+    bounds which rows we fetch and it is what the StatPal arm rides on; it is
+    never the check that closes an event on elapsed time, because the shortest
+    per-sport maximum (3.0h) is twice it.
     """
+    from app.utils.event_completion import (
+        derive_completed_at,
+        game_may_still_be_running,
+    )
+
     now = datetime.now(timezone.utc)
     closed_count = 0
+    # Ruling: a bound that drops work silently reads as "there was none". Each
+    # arm that declines to close keeps its own number and they are logged
+    # together below, so "closed 0" and "held 40" can never look alike.
+    held_within_max_duration = 0
+    held_still_running = 0
+    held_no_price_evidence = 0
 
     # Find all live events that started more than MIN_HOURS ago
     min_start_time = now - timedelta(hours=MIN_HOURS_BEFORE_STALENESS_CHECK)
@@ -192,6 +236,19 @@ async def detect_and_close_stale_events(session) -> int:
                 )
                 continue
 
+            # --- THE PER-SPORT GATE (queue 067) ---
+            # Everything below this line reasons from a wall clock, and a wall
+            # clock only becomes evidence once the sport's own maximum duration
+            # has elapsed. Before that, elapsed time says nothing: extra
+            # innings, overtime and rain delays are ordinary, and a quiet
+            # bookmaker at 90 minutes is a quiet bookmaker, not a final whistle.
+            max_hours = get_max_duration_for_sport(
+                event.sport.key if event.sport else ""
+            )
+            if hours_since_start <= max_hours:
+                held_within_max_duration += 1
+                continue
+
             # Check if ANY bookmaker has provided odds recently
             # We need to find the most recently updated snapshot across all bookmakers
             # valid_until is updated when we see the same odds again; captured_at is when odds changed
@@ -227,14 +284,58 @@ async def detect_and_close_stale_events(session) -> int:
                 total_snapshots = any_snapshot.scalar()
 
                 if total_snapshots == 0:
-                    should_close = True
-                    close_reason = "no_odds_data"
-                else:
-                    # Had odds but all bookmakers stopped updating
-                    should_close = True
-                    close_reason = "all_bookmakers_stale"
+                    # 🔴 `no_odds_data` NO LONGER CLOSES ANYTHING (queue 067).
+                    #
+                    # This whole function's authority is odds: the books were
+                    # pricing a game and went quiet, and books go quiet when a
+                    # game ends. An event with zero snapshots ever hands it no
+                    # odds signal at all — and it used to treat that absence as
+                    # the STRONGEST close signal in the file, closing
+                    # unconditionally with no evidence required. Gotcha #53
+                    # names the error exactly: zero rows reads the same for
+                    # "never existed" and "nothing to report", and one of those
+                    # two is not a finished game.
+                    #
+                    # It is also the arm that made this bug loud. An orphaned
+                    # event has no external_id, so it never receives odds, so it
+                    # took this branch on its first pass past the gate, every
+                    # time, forever.
+                    #
+                    # Declining costs nothing, because a strictly better-informed
+                    # net already owns this population:
+                    # `espn_sync._transition_event_statuses_impl` runs every 60s
+                    # (beat `transition-event-statuses`), selects every live
+                    # event past the shortest sport maximum with no odds or
+                    # espn_id requirement, applies the same per-sport duration
+                    # and the same still-running guard, and derives completed_at
+                    # the same way. Nothing is stranded live; the ruling simply
+                    # moves to the net that has an instrument for it.
+                    held_no_price_evidence += 1
+                    continue
+
+                # Had odds but all bookmakers stopped updating. THIS is the
+                # signal this function was built to read, and the only one it
+                # is now allowed to close on.
+                should_close = True
+                close_reason = "all_bookmakers_stale"
 
             if should_close:
+                # One query answers both "is it still being played?" and "when
+                # did it end?" — the shared basis that keeps this net and
+                # espn_sync's from disagreeing about either.
+                last_snap = await _last_post_commence_snapshot(session, event.id)
+
+                if game_may_still_be_running(last_snap, now):
+                    # Some source captured this event within the last
+                    # STILL_ACTIVE_MINUTES. Quiet bookmakers plus a live feed is
+                    # a game running long, not a game over — and closing here is
+                    # the CAL-P002 producer: it freezes whatever mid-game score
+                    # the last poll wrote and grades the blend off it. Leave it
+                    # live; the next pass re-checks and a real source almost
+                    # always settles it first.
+                    held_still_running += 1
+                    continue
+
                 close_values = {"status": "closed"}
                 if not event.completed_at:
                     # gotcha #22: completed_at is a GAME-END time. now() is when
@@ -244,11 +345,8 @@ async def detect_and_close_stale_events(session) -> int:
                     # real post-commence snapshot, or leave it NULL: a visible
                     # gap the CAL-P002 repair can fill beats a plausible-looking
                     # wrong value that nothing will ever question.
-                    from app.utils.event_completion import derive_completed_at
-
                     close_values["completed_at"] = derive_completed_at(
-                        await _last_post_commence_snapshot(session, event.id),
-                        event.commence_time,
+                        last_snap, event.commence_time,
                     )
                 await session.execute(
                     Event.__table__.update()
@@ -257,11 +355,22 @@ async def detect_and_close_stale_events(session) -> int:
                 )
                 closed_count += 1
                 logger.info(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
-                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start")
+                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start "
+                      f"(sport max {max_hours:.1f}h)")
 
         except Exception as e:
             logger.warning(f"Error checking staleness for event {event.id}: {e}")
             continue
+
+    if live_events:
+        # A hold that is not counted is a hold nobody finds, and "closed 0"
+        # would otherwise be indistinguishable from "there was nothing to do".
+        logger.info(
+            "Staleness pass: %d live candidates, %d closed, held %d within sport "
+            "max duration / %d still running / %d never priced",
+            len(live_events), closed_count, held_within_max_duration,
+            held_still_running, held_no_price_evidence,
+        )
 
     return closed_count
 
