@@ -423,7 +423,18 @@ export default function TournamentPage() {
                     day's card and above the board: what just happened is worth
                     less than what is on now and more than the season-long title
                     race. Its data is ESPN's, which is stated on the section. */}
-                <TournamentResults results={data.results} draw={draw} />
+                {/* #2449: ONE name per round. The results feed speaks ESPN's
+                    ordinal ("Round 1"); every other surface on this page speaks
+                    the register's ladder ("Round of 128"). `rounds.length` is
+                    this tournament's own ladder length when the draw exists, so
+                    the ordinal resolves against the real draw rather than an
+                    assumed one; before the draw it is 0 and `roundHeading`
+                    falls back to the 7-round ladder the pills already assume. */}
+                <TournamentResults
+                  results={data.results}
+                  draw={draw}
+                  roundCount={rounds.length > 0 ? rounds.length : undefined}
+                />
 
                 {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
 

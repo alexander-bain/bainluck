@@ -277,10 +277,21 @@ function ResultRow({ result }: { result: TournamentResult }) {
 export default function TournamentResults({
   results,
   draw,
+  roundCount,
   initialExpanded = false,
 }: {
   results: ResultsModel | null | undefined;
   draw: string;
+  /**
+   * How many main-draw rounds this tournament plays (#2449).
+   *
+   * The anchor ESPN's ORDINAL round names resolve against: `Round 1` is the
+   * round of 128 in a 128-draw and the round of 32 in a 32-draw, and the
+   * results feed carries the ordinal without the ladder. Omitted means "the
+   * full 7-round ladder", which is what every other surface on this page —
+   * pills, grid, bracket — already assumes. See `roundHeading`.
+   */
+  roundCount?: number;
   /** Capture seam: render the full list rather than the collapsed five. */
   initialExpanded?: boolean;
 }) {
@@ -340,7 +351,7 @@ export default function TournamentResults({
                 className="col-span-3 border-t border-surface-border bg-surface-elevated px-3.5 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-text-muted first:border-t-0"
                 data-testid="result-round"
               >
-                {roundHeading(result)}
+                {roundHeading(result, roundCount)}
               </li>
               <ResultRow result={result} />
             </React.Fragment>

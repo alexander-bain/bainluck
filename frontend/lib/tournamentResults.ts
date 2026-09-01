@@ -35,6 +35,7 @@
  * section has something true to show before it has anything priced.
  */
 
+import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -193,28 +194,135 @@ export function resultSentence(result: TournamentResult): string {
 }
 
 /**
- * Round headings, coarse to fine.
+ * ═══ ONE TOURNAMENT, ONE NAME PER ROUND (#2449) ═══
  *
- * `source_round` is ESPN's ("Qualifying 1st Round"); `round` is the register's
- * ("qualifying"), which buckets all three qualifying rounds together because
- * the MARKETS do not distinguish them. The finer one is shown when it exists,
- * because a reader looking at results wants the round and only the register
- * needs the bucket.
+ * Alex, on `/tournaments/us-open`: *"the left column header reads `ROUND OF
+ * 128` while every row in the Finished list reads `ROUND 1`. Same round, two
+ * names, one screen."*
+ *
+ * He was reading two vocabularies at once, and the page had three:
+ *
+ *   - **the register's**, `R128` → `Round of 128` (`ROUND_LABELS`), which the
+ *     round pills, the match-list heading, the bracket and the playoff grid all
+ *     speak, because the register is this tournament's ladder;
+ *   - **ESPN's**, `Round 1`, which arrives on every results row as
+ *     `source_round` and — measured on the live payload 2026-09-01 — as
+ *     `round` too, since `build_results` sets both from `espn_round`;
+ *   - **this table's own**, which used to say `First round` for `R128` and was
+ *     a third name for the same thing that nothing on the page ever printed,
+ *     because `source_round` always won the branch above it.
+ *
+ * The register's is the one that survives. It is not a preference: the pills,
+ * the grid columns and the bracket are structural surfaces keyed on `RoundName`
+ * and they cannot speak ESPN's ordinal without inventing a mapping in four more
+ * places. So the results list translates INTO the register's vocabulary here,
+ * once, and everything downstream of `roundHeading` is consistent by
+ * construction.
+ *
+ * ### What is kept, and why it is not a second vocabulary
+ *
+ * `Qualifying 1st Round` / `2nd Round` / `Final` pass through verbatim. The
+ * register buckets all three as `qualifying` because the MARKETS do not
+ * distinguish them, so ESPN's is strictly finer information and the pill's
+ * `Qualifying` visibly CONTAINS it. That is a refinement a reader resolves
+ * without being told. `Round 1` beside `Round of 128` is not — the two names
+ * share no token and neither contains the other.
+ *
+ * ### The one assumption, stated
+ *
+ * ESPN's late rounds name themselves (`Round of 16`, `Quarterfinals`,
+ * `Semifinals`, `Final`) and need no anchor. Its early rounds are ORDINALS, and
+ * an ordinal only resolves against a known ladder length: `Round 1` is the
+ * round of 128 in a 128-draw and the round of 32 in a 32-draw.
+ *
+ * `roundCount` is therefore a parameter, anchored at the END of `ROUND_NAMES`
+ * exactly as `buildBracket` anchors the fold — the final is always the last
+ * round, so a shorter draw starts further in. When the caller does not know it,
+ * it defaults to the full 7-round ladder, which is not a new assumption: it is
+ * the same one `MATCH_ROUND_LABELS`, the pill strip and the grid already make
+ * on this page, and a Grand Slam singles draw is 128 by definition.
+ *
+ * Anything unrecognised passes through VERBATIM rather than being guessed into
+ * a round. A wrong round heading on a finished match is worse than ESPN's own
+ * words, and silence is not available — the row has to say something.
  */
-export function roundHeading(result: TournamentResult): string {
+
+/** ESPN's self-naming rounds. No ladder length needed to resolve these. */
+const ESPN_NAMED_ROUNDS: Record<string, RoundName> = {
+  "round of 128": "R128",
+  "round of 64": "R64",
+  "round of 32": "R32",
+  "round of 16": "R16",
+  quarterfinal: "QF",
+  quarterfinals: "QF",
+  "quarter-final": "QF",
+  "quarter-finals": "QF",
+  semifinal: "SF",
+  semifinals: "SF",
+  "semi-final": "SF",
+  "semi-finals": "SF",
+  final: "F",
+  championship: "F",
+};
+
+/**
+ * The register round an ESPN round name denotes, or `null` when we cannot say.
+ *
+ * Exported because the guard asserts the MAPPING as well as the rendered
+ * heading, and because a future surface that needs the same translation must
+ * get it from here rather than growing a second table.
+ */
+export function registerRoundFromSource(
+  sourceRound: string | null | undefined,
+  roundCount: number = ROUND_NAMES.length
+): RoundName | null {
+  const raw = (sourceRound ?? "").trim().toLowerCase();
+  if (raw === "") return null;
+  // Qualifying is NOT a `RoundName` and must never be folded onto one: a
+  // qualifying final is not the tournament's final.
+  if (raw.startsWith("qual")) return null;
+
+  const named = ESPN_NAMED_ROUNDS[raw];
+  if (named) return named;
+
+  const ordinal = /^round\s+(\d+)$/.exec(raw);
+  if (!ordinal) return null;
+  const n = Number(ordinal[1]);
+  const count = Math.min(Math.max(Math.trunc(roundCount), 1), ROUND_NAMES.length);
+  const index = ROUND_NAMES.length - count + n - 1;
+  if (n < 1 || index >= ROUND_NAMES.length) return null;
+  return ROUND_NAMES[index];
+}
+
+export function roundHeading(
+  result: TournamentResult,
+  roundCount: number = ROUND_NAMES.length
+): string {
+  // The register's own key, when the payload carries one. `build_results` sets
+  // `round` from ESPN today, so this branch is the forward-compatible one — it
+  // costs nothing and stops this function needing a second edit the day the
+  // backend starts emitting `R128` for the 65 of 82 Round-1 rows it still holds
+  // a register matchup for.
+  const direct = ROUND_LABELS[result.round as RoundName];
+  if (direct) return direct;
+
+  const translated = registerRoundFromSource(result.source_round, roundCount);
+  if (translated) return ROUND_LABELS[translated];
+
   if (result.source_round) return result.source_round;
   return ROUND_HEADINGS[result.round] ?? result.round;
 }
 
+/**
+ * The register's vocabulary, plus the one bucket that is not a `RoundName`.
+ *
+ * `R128`…`F` are `ROUND_LABELS` verbatim and are NOT restated here — this table
+ * having its own wording for them is how the page grew a third name for the
+ * first round. Spread, so the two can never drift again.
+ */
 export const ROUND_HEADINGS: Record<string, string> = {
   qualifying: "Qualifying",
-  R128: "First round",
-  R64: "Second round",
-  R32: "Third round",
-  R16: "Round of 16",
-  QF: "Quarter-finals",
-  SF: "Semi-finals",
-  F: "Final",
+  ...ROUND_LABELS,
 };
 
 /**
