@@ -175,6 +175,125 @@ def classify_entry(entry: dict, today: date, has_page: bool) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Calendar exhaustion — the reminder that used to live in a blocking test
+# ---------------------------------------------------------------------------
+#: File once the last known edition of a competition is this close to being the
+#: last one. Roughly a quarter: long enough that adding next year's dates is
+#: ordinary planning rather than an emergency.
+EXHAUSTION_LEAD_DAYS = 90
+
+
+def competitions_running_out(
+    entries: list[dict], today: date, lead_days: int = EXHAUSTION_LEAD_DAYS
+) -> list[dict]:
+    """Competitions whose LAST calendar entry is within ``lead_days`` of today.
+
+    🔴 WHY THIS IS HERE AND NOT IN A TEST (LAT-P181).
+
+    ``majors_calendar.yaml`` is a forward horizon file. When it runs out for a
+    competition, real pages quietly lose their "next edition" block — a genuine
+    user-visible regression, and genuinely worth a reminder.
+
+    It used to be reminded by a hardcoded date in
+    ``tests/test_competition_identity.py``, which asserted the Masters' next
+    edition started ``2027-04-08``. That assertion was measured to go red on
+    2027-04-12 — correct about the calendar, and a **scheduled outage**: a test
+    that reds because time passed, with no code change, takes ``deploy`` with it
+    and stops every unrelated ship. On 2026-08-31 that exact shape cost fifteen
+    hours with thirteen certified branches stacked behind it.
+
+    **Blocking a deploy on a date: never. A date-based REMINDER: legitimate.**
+    Same information, filed as an issue, blocking nothing. The rule and the
+    reasoning are in ``docs/rulings``; the mechanics are that this runs in the
+    nightly sentinel and files through the same deduped rail as every other
+    horizon finding.
+
+    Returns one finding per competition, soonest-exhausting first. A competition
+    with no dated entries at all is reported with ``days_left: None`` rather than
+    skipped — an entry this cannot read is not an entry that is fine.
+    """
+    last_by_comp: dict[str, dict] = {}
+    for entry in entries:
+        comp = entry.get("competition") or entry.get("slug")
+        if not comp:
+            continue
+        end = _parse_date(entry.get("end")) or _parse_date(entry.get("start"))
+        prev = last_by_comp.get(comp)
+        if prev is None or (
+            end is not None and (prev["end"] is None or end > prev["end"])
+        ):
+            last_by_comp[comp] = {"end": end, "entry": entry}
+
+    out: list[dict] = []
+    for comp, rec in last_by_comp.items():
+        end, entry = rec["end"], rec["entry"]
+        days_left = None if end is None else (end - today).days
+        if days_left is not None and days_left > lead_days:
+            continue
+        out.append(
+            {
+                "competition": comp,
+                "name": entry.get("name"),
+                "domain": entry.get("domain"),
+                "last_edition_slug": entry.get("slug"),
+                "last_edition_end": None if end is None else end.isoformat(),
+                "days_left": days_left,
+                "severity": "p2" if (days_left is not None and days_left >= 0) else "p1",
+                "detail": (
+                    f"`majors_calendar.yaml` has no edition of **{comp}** after "
+                    + (
+                        f"{end.isoformat()} ({days_left} day(s) away)"
+                        if end is not None
+                        else "any readable date"
+                    )
+                    + ". Once it passes, the competition's pages serve no "
+                    "`next_edition` block and readers see a page with no future. "
+                    "Add the next edition's dates."
+                ),
+            }
+        )
+    # Soonest first, and undated entries (days_left None) sort to the front —
+    # "cannot tell" is more urgent than "90 days", not less.
+    out.sort(key=lambda f: (f["days_left"] is not None, f["days_left"]))
+    return out
+
+
+def exhaustion_fingerprint(competition: str) -> str:
+    """One issue per competition, reused as each year's dates run out again."""
+    return hashlib.sha1(f"horizon-exhaustion:{competition}".encode("utf-8")).hexdigest()[:12]
+
+
+def build_exhaustion_issue_title(finding: dict) -> str:
+    return f"[Horizon] Calendar runs out for {finding['competition']}"[:256]
+
+
+def build_exhaustion_issue_body(finding: dict) -> str:
+    fp = exhaustion_fingerprint(finding["competition"])
+    return "\n".join(
+        [
+            "## Horizon Sentinel — calendar exhaustion",
+            "",
+            f"`horizon-sentinel-fingerprint:{fp}`  (dedupe key — do not remove)",
+            "",
+            f"**Competition:** {finding['competition']}  ",
+            f"**Last edition:** `{finding['last_edition_slug']}` ending "
+            f"{finding['last_edition_end']}  ",
+            f"**Days left:** {finding['days_left']}  ",
+            "",
+            finding["detail"],
+            "",
+            "### What to do",
+            "Add the next edition to `app/config/majors_calendar.yaml`.",
+            "",
+            "### Why this is an issue and not a test failure",
+            "It is a reminder, and a reminder that blocks `deploy` is a scheduled "
+            "outage with a stack trace. This one used to be a hardcoded date in "
+            "`tests/test_competition_identity.py` (LAT-P181).",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fingerprint + issue rendering
 # ---------------------------------------------------------------------------
 def horizon_fingerprint(slug: str) -> str:
@@ -298,6 +417,61 @@ def file_horizon_issue(finding: dict) -> dict:
     return {"slug": slug, "fingerprint": fp, "action": "filed", "issue": number, "severity": finding["severity"]}
 
 
+def file_exhaustion_issue(finding: dict) -> dict:
+    """File OR update one issue per competition whose calendar is running out.
+
+    Same deduped rail as :func:`file_horizon_issue` — a separate fingerprint
+    namespace so an exhaustion notice never collides with, or silently reuses,
+    the needs-page issue for one of that competition's editions.
+    """
+    from app.tasks.bug_report_github import (
+        GITHUB_TOKEN,
+        add_to_project_board,
+        comment_on_issue,
+        create_github_issue,
+    )
+
+    comp = finding["competition"]
+    fp = exhaustion_fingerprint(comp)
+    if not GITHUB_TOKEN:
+        return {"competition": comp, "fingerprint": fp, "action": "skipped_no_token"}
+
+    existing = _find_open_issue_by_fingerprint(fp)
+    if existing:
+        try:
+            comment_on_issue(
+                existing,
+                f"Horizon Sentinel re-observed: **{comp}** still has no edition after "
+                f"{finding['last_edition_end']} ({finding['days_left']} day(s) left) "
+                f"— fingerprint `{fp}`.",
+            )
+        except Exception as exc:
+            logger.warning("Horizon exhaustion comment failed on #%d: %s", existing, exc)
+        return {"competition": comp, "fingerprint": fp, "action": "commented", "issue": existing}
+
+    labels = ["alert-intake", "needs-agent", _AREA_LABEL, f"priority:{finding['severity']}"]
+    try:
+        number, node_id = create_github_issue(
+            build_exhaustion_issue_title(finding),
+            build_exhaustion_issue_body(finding),
+            labels,
+        )
+    except Exception as exc:
+        logger.error("Horizon exhaustion issue creation failed (%s): %s", fp, exc)
+        return {"competition": comp, "fingerprint": fp, "action": "error", "error": str(exc)[:200]}
+    try:
+        add_to_project_board(node_id)
+    except Exception:
+        logger.warning("Horizon exhaustion: add #%d to board failed (non-fatal)", number, exc_info=True)
+    return {
+        "competition": comp,
+        "fingerprint": fp,
+        "action": "filed",
+        "issue": number,
+        "severity": finding["severity"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Page-existence probe (live event-concept surface)
 # ---------------------------------------------------------------------------
@@ -373,10 +547,17 @@ async def _run_horizon_sentinel(
             elif has_page:
                 covered.append({"slug": entry.get("slug"), "name": entry.get("name"), "phase": phase})
 
+    # LAT-P181 — the calendar-exhaustion reminder, relocated out of a blocking
+    # test. Pure over the entries already loaded, so it costs no request and
+    # cannot be starved by the page-check deadline above.
+    exhausted = competitions_running_out(entries, today)
+
     filed: list[dict] = []
     if file_issues:
         for f in findings:
             filed.append(file_horizon_issue(f))
+        for f in exhausted:
+            filed.append(file_exhaustion_issue(f))
 
     stats: dict[str, Any] = {
         "mode": "live" if file_issues else "detect_only",
@@ -387,6 +568,8 @@ async def _run_horizon_sentinel(
         "findings": findings,
         "n_findings": len(findings),
         "p0": [f for f in findings if f["severity"] == "p0"],
+        "calendar_exhaustion": exhausted,
+        "n_calendar_exhaustion": len(exhausted),
         "covered": covered,
         "surface_tbd": surface_tbd,
         "filed": filed,

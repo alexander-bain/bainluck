@@ -225,8 +225,30 @@ from datetime import datetime, timedelta, timezone  # noqa: E402
 from app.routes.golf import get_golf  # noqa: E402
 
 
+#: LAT-P181 — the banked corpus was captured on 2026-08-30 and the route drops a
+#: market whose `resolution_date` is more than 7 days behind `datetime.now()`
+#: (`app/routes/golf.py`). The Husqvarna British Masters resolved 2026-08-31, so
+#: this file was measured to go red on **2026-09-08** — the corpus does not rot,
+#: the calendar walks away from it.
+#:
+#: Rewriting the dates would cost the thing the corpus is FOR: these are the real
+#: rows of a real week, and `_what` says so. So the corpus is re-based instead of
+#: edited. Every date is shifted by the same amount, mapping the capture instant
+#: onto now, which preserves every interval in the data exactly — Omega still
+#: starts 21 days after capture, Husqvarna still resolved the day after — while
+#: leaving no calendar date for the route's rolling window to overtake.
+_CORPUS_CAPTURED = datetime.fromisoformat(
+    BANKED["_source"].rsplit(", ", 1)[1] + "T00:00:00+00:00"
+)
+_CORPUS_SHIFT = (
+    datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    - _CORPUS_CAPTURED
+)
+
+
 def _dt(value):
-    return datetime.fromisoformat(value) if value else None
+    """A banked timestamp, re-based so the corpus is always 'this week'."""
+    return datetime.fromisoformat(value) + _CORPUS_SHIFT if value else None
 
 
 class _Outcome:
@@ -422,7 +444,19 @@ class TestTheDiscoverFeedSurvivesAnUnknownTour:
         assert None not in tours
 
 
-_FEED_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+#: LAT-P181 — this was the literal `datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)`
+#: and it was measured to go red on **2026-09-08**, seven days after it was found.
+#:
+#: The specimen below is an event that starts `_FEED_NOW + 1 day` and resolves
+#: `+ 4 days`, and the page only serves tournaments that have not finished. Pinned
+#: to a literal, that window is a calendar window: it opened on 2026-09-04, and on
+#: 2026-09-08 the Omega European Masters became a tournament that ended in the
+#: past, dropped out of the served page, and four tests that had nothing to do
+#: with dates started failing on code nobody had touched.
+#:
+#: Gotcha #44 — offset FIRST, then truncate. Derived from the clock, the window is
+#: always "tomorrow through four days out" and there is no date for it to reach.
+_FEED_NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 
 
 def _feed_tournament(key: str, tour: str | None, tour_label: str | None) -> dict:
