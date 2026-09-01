@@ -28,15 +28,143 @@ logger = logging.getLogger(__name__)
 
 
 # ── Win-prob blend eligibility ───────────────────────────────────────────────
-# A5 (#1024): which Kalshi tickers carry a two-sided WINNER line whose YES
+# #2460: which Kalshi tickers carry a two-sided WINNER line whose YES
 # probability belongs in an event's win_probability_sources blend.
 #
-# Team sports encode the game-winner as a ``…game`` ticker (kxnbagame, kxmlbgame,
-# …). Combat sports (UFC/boxing) encode the bout-winner as a dedicated FIGHT
-# ticker; every other ticker on the card (method / rounds / distance / occurrence,
-# and spreads/totals) is a PROP that is correctly linked for display but must NOT
-# contribute to the probability time-series. So the blend admits ``…game`` OR a
-# combat fight-winner prefix, and nothing else.
+# This is an EXPLICIT REGISTRY, deliberately not a spelling rule. The gate used
+# to ask whether the prefix ended in the letters ``game``, which is a spelling
+# test standing in for a semantic one, and it silently excluded whole sports:
+# team sports spell the winner line ``…game``, but tennis, cricket, rugby,
+# chess, squash, darts and table tennis all spell it ``…match`` (or
+# ``…doubles``), and combat sports use a bare bout prefix. Measured against the
+# 730 ticker prefixes that carry at least one linked market in production,
+# the suffix rule dropped 33 winner-line prefixes covering 29,320 linked
+# markets — 28,809 of them tennis, which is why every tennis match page drew
+# its Win Probability line with Kalshi structurally absent (#2444).
+#
+# Everything not listed here — spreads, totals, set/game winners, exact scores,
+# player props, per-map esports props, combat method/round/distance — is
+# correctly linked for display but must NOT contribute to the probability
+# time-series.
+#
+# TWO PHANTOMS ARE DELIBERATELY ABSENT. ``kxatpgame`` / ``kxwtagame`` are in
+# KALSHI_TICKER_TO_SPORT_KEY and the old suffix rule admitted them, but in
+# tennis a "game" is a scoring unit inside a set, not the match. Both have zero
+# rows in production, so their exclusion is a no-op today and a correctness fix
+# the day such a market appears. It is exactly this kind of phantom entry that
+# let ``tennis_atp`` look covered while its real winner line was dropped.
+KALSHI_WIN_PROB_WINNER_PREFIXES = frozenset({
+    # americanfootball_ncaaf
+    "kxncaafcsgame", "kxncaafd3game", "kxncaafgame",
+    # americanfootball_nfl
+    "kxnflgame",
+    # aussierules_afl
+    "kxaflgame",
+    # baseball_mlb
+    "kxmlbgame", "kxmlbstgame",
+    # baseball_ncaa
+    "kxncaabbgame",
+    # basketball_nba
+    "kxnbagame",
+    # basketball_ncaab
+    "kxncaabgame", "kxncaambgame",
+    # basketball_other
+    "kxarglnbgame", "kxcbagame", "kxjbleaguegame",
+    # basketball_wnba
+    "kxwnbagame",
+    # basketball_wncaab
+    "kxncaawbgame",
+    # boxing_boxing
+    "kxboxing",
+    # chess
+    "kxchessmatch",
+    # cricket
+    "kxcrickettestmatch",
+    # cricket_t20
+    "kxt20match", "kxwt20match",
+    # curling_olympics
+    "kxwocurlgame",
+    # esports
+    "kxcs2game", "kxlolgame", "kxvalorantgame",
+    # icehockey_ahl
+    "kxahlgame",
+    # icehockey_ncaa
+    "kxncaahockeygame",
+    # icehockey_nhl
+    "kxnhlgame",
+    # icehockey_other
+    "kxdelgame", "kxkhlgame",
+    # lacrosse_ncaa
+    "kxncaamlaxgame",
+    # mma_mixed_martial_arts
+    "kxufcfight",
+    # rugby_nrl
+    "kxrugbyeslmatch", "kxrugbyfra14match", "kxrugbymlrmatch", "kxrugbynrlmatch",
+    # soccer
+    "kxfifagame", "kxfifawgame", "kxsoccergame",
+    # soccer_epl
+    "kxsocgame",
+    # soccer_fifa_world_cup
+    "kxwcgame",
+    # soccer_other
+    "kxapfddhgame", "kxdimayorgame", "kxeculpgame", "kxvenfutvegame",
+    # soccer_usa_mls
+    "kxmlsgame",
+    # tennis_atp
+    "kxatpchallengerdoubles", "kxatpchallengermatch", "kxatpdoubles", "kxatpmatch",
+    # tennis_itf
+    "kxitfdoubles", "kxitfmatch",
+    # tennis_itf_w
+    "kxitfwdoubles", "kxitfwmatch",
+    # tennis_wta
+    "kxwtachallengermatch", "kxwtadoubles", "kxwtamatch",
+    # Live and linked in production, but carrying no KALSHI_TICKER_TO_SPORT_KEY
+    # entry, so they resolve to no sport key. Mirrored in
+    # WINNER_PREFIXES_WITH_NO_SPORT_KEY below and guarded there.
+    "kxcountychampmatch", "kxcplmatch", "kxdartsmatch", "kxhundredmatch",
+    "kxittfmenmatch", "kxlplmatch", "kxodimatch", "kxpplmatch",
+    "kxsquashmatch", "kxtestmatch", "kxwhundredmatch", "kxwodimatch",
+    "kxwrestlingmatch", "kxwtestmatch",
+})
+
+# Sports present in KALSHI_TICKER_TO_SPORT_KEY that legitimately have NO
+# two-sided winner line of their own. Guarded by
+# test_every_sport_declares_a_winner_line_or_is_listed_here (#2460): a sport may
+# drop out of the blend only by being named here, never by silence.
+SPORTS_WITH_NO_DECLARED_WINNER_LINE = frozenset({
+    # Classification-only prefixes (#1081): a single token exists purely to route
+    # llm_sport_category away from the football dumping ground. We ingest no
+    # events for these leagues, so no winner line can ever link.
+    "baseball_kbo",           # kxkbo
+    "baseball_npb",           # kxnpb
+    "cricket_ipl",            # kxipl — only prop tickers (six/four/teamtotal) link
+    # Olympic one-off prefixes: one classification token per sport, no separate
+    # match-winner ticker.
+    "basketball_olympics",    # kxsobasketball
+    "fieldhockey_olympics",   # kxsohockey
+    "icehockey_olympics",     # kxwohockey
+    "soccer_olympics",        # kxsosoccer
+})
+
+# Winner prefixes that are live and linked in production but carry no entry in
+# KALSHI_TICKER_TO_SPORT_KEY, so they resolve to no sport key. They are admitted
+# to the blend on the strength of the market name being a bare "X vs Y"
+# two-sided line; mapping them to sport keys is separate work and is NOT
+# required for the blend to be correct.
+WINNER_PREFIXES_WITH_NO_SPORT_KEY = frozenset({
+    "kxsquashmatch", "kxdartsmatch", "kxittfmenmatch", "kxwrestlingmatch",
+    "kxodimatch", "kxwodimatch", "kxtestmatch", "kxwtestmatch",
+    "kxcountychampmatch", "kxhundredmatch", "kxwhundredmatch",
+    "kxcplmatch", "kxlplmatch", "kxpplmatch",
+})
+
+
+# Combat-sport BOUT-WINNER prefixes. Kept as its own name because
+# ``is_combat_fight_ticker`` is used well beyond the blend (opponent-abbrev
+# parsing, date-window matching). Both members are live in production:
+# ``kxboxing`` carries 299 markets / 225 linked. NOTE the registry map spells
+# boxing ``kxboxingfight``, which has ZERO rows — the bare ``kxboxing`` here is
+# the real one, and deleting it to match the map would break boxing's blend.
 COMBAT_FIGHT_WINNER_PREFIXES = frozenset({"kxufcfight", "kxboxing"})
 
 
@@ -59,14 +187,13 @@ def feeds_win_prob_blend(external_id: Optional[str]) -> bool:
     """Whether a Kalshi ticker's YES probability should write into the event
     ``win_probability_sources`` blend.
 
-    Admits team-sport game winners (prefix ends in ``game``) and combat fight
-    winners (``kxufcfight`` / ``kxboxing``). Everything else — spreads, totals,
-    player props, method/round/distance combat props — is excluded. Replaces the
-    old ``prefix.endswith("game")`` heuristic, which silently dropped every
-    combat bout (their tickers don't end in ``game``) from the blend.
+    Keys on the explicit ``KALSHI_WIN_PROB_WINNER_PREFIXES`` registry, NOT on a
+    spelling rule. Replaces the old
+    ``prefix.endswith("game") or prefix in COMBAT_FIGHT_WINNER_PREFIXES``
+    heuristic, which silently excluded every sport whose winner line is spelled
+    ``…match`` — tennis above all (#2444, #2460).
     """
-    prefix = _ticker_prefix(external_id)
-    return prefix.endswith("game") or prefix in COMBAT_FIGHT_WINNER_PREFIXES
+    return _ticker_prefix(external_id) in KALSHI_WIN_PROB_WINNER_PREFIXES
 
 
 # ── Game-level market detection ──────────────────────────────────────────────
