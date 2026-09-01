@@ -24,7 +24,9 @@ Drama Series / Album of the Year / Best Musical) becomes the head-to-head hero
 Honest v1 limitations (design §6 said "fast-follow", so this is deliberately thin):
   * Award resolution dates on Kalshi are placeholders (Dec 31), so event status is
     approximate — a graded winner or a price-settled leader flips it to "settled",
-    otherwise "upcoming". This only toggles the settled path chart.
+    otherwise "upcoming". This only toggles the settled path chart. The placeholder
+    is NEVER published as the ceremony date (`ceremony_end_date`): status can live
+    with a deadline, a date on the page cannot.
   * MatchupsRail shows the top-2 nominees per category (no "+N more"); a 10-nominee
     Best Picture shows its two frontrunners. A richer awards section is a later,
     additive frontend change.
@@ -49,6 +51,11 @@ from app.utils.settledness import (
 # the is_winner grading-lag window (parity with tennis/f1 — display-only, never
 # authoritative, gotcha #21).
 _WON_PRICE_THRESHOLD = 0.97
+
+# Day-of-year on which a Kalshi award market resolves when the ceremony has no
+# published date: the exchange's end-of-year backstop, not a schedule (gotcha #14,
+# and the status arm below already says so in prose).
+_PLACEHOLDER_RESOLUTION_DAY = (12, 31)
 
 # A category winner market names an award category. Nomination + novelty markets
 # are excluded from this by the checks in `classify_market`.
@@ -165,6 +172,36 @@ def edition_year(external_id: str | None, resolution_date=None) -> int | None:
         except (AttributeError, TypeError):
             return None
     return None
+
+
+def ceremony_end_date(resolution_date) -> str | None:
+    """The ceremony date to publish for an awards concept, or None when the only
+    date we hold is the exchange's year-end backstop.
+
+    A market's resolution date is a deadline, not a schedule, and for awards it is
+    usually the former: measured on production 2026-09-01, the marquee markets for
+    the Oscars 2027, the Grammys 2027 and the Tonys 2026 all carry the SAME instant
+    (12-31T15:00:00Z), while the Emmys — a ceremony with a genuinely published date
+    — carry 09-14T14:00:00Z. Three unrelated ceremonies sharing one instant is a
+    default, not a date, so December 31 is never published as a ceremony date.
+
+    Publishing it is not a harmless approximation: the awards header renders this
+    field verbatim as the event's date, so the backstop reached readers as a flat
+    "Dec 31" on three of the four award pages. Returning None renders nothing,
+    which is what we actually know.
+
+    The status arm in `build_event` deliberately keeps reading the raw resolution
+    date — a backstop is still a real upper bound on when the race must be over,
+    so it remains usable for settled/upcoming even though it is unusable as a
+    displayed date."""
+    if resolution_date is None:
+        return None
+    try:
+        if (resolution_date.month, resolution_date.day) == _PLACEHOLDER_RESOLUTION_DAY:
+            return None
+        return resolution_date.isoformat()
+    except (AttributeError, TypeError):
+        return None
 
 
 def classify_market(external_id: str | None, name: str | None) -> str:
@@ -490,7 +527,7 @@ class AwardsEventAdapter:
                 ),
                 "status": event_status,
                 "start_date": None,
-                "end_date": (marquee_res.isoformat() if marquee_res is not None else None),
+                "end_date": ceremony_end_date(marquee_res),
                 "venue": None,
                 "location": None,
                 "is_major": True,  # award ceremonies are marquee cultural events
