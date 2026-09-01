@@ -236,3 +236,69 @@ and it measures the *pre-fix* arm.
 * **`YOUR-TURN.md` not edited.** Lanes may not.
 
 **Nothing was asked of Alex** (PROCESS-V2 clause 7).
+
+---
+
+## 7 — 🔴 END-OF-SESSION RE-CHECK: THE TRAIN LANDED AND IT TOOK OUR SHIP
+
+The mandatory close-out `ls` + re-verify caught a state change the start-of-session snapshot could
+not have. **This is the third consecutive session in which the end-of-session re-check paid.**
+
+| check | START (21:2xZ) | **END (21:42Z)** |
+|---|---|---|
+| `origin/master` | `b5c59f38` | 🔴 **`c139713996b7e957ac4eb239c82faf3b3f84ce10`** |
+| `293ed0e9` on master | NO | 🟢 **YES** |
+| fingerprint | `e2040f90…` | 🟢 **`e2040f90…` — UNCHANGED ACROSS THE MERGE** |
+| curve `generated_at` | `2026-08-31` | `2026-08-31` — **freeze RESUMES** |
+| inbox / notices | `977` only, mtime 14:15 | **unchanged** |
+
+🟢 **`CERT-697` WAS MERGED BY THE INTEGRATOR**, as the final commit of the sanctioned merge train:
+
+```
+c1397139 Merge program/calibration-205-… @ 293ed0e9 (CERT-697) into master
+```
+
+**27 commits, 10 merges** (CERT-690, 691, 684, 687, 689, 693, 694, 629, 631, **697**) — exactly the
+"ALL banked GREEN certed ships as ONE merge train → ONE Heroku release" of `STANDING-NOTICES`
+clause 2. **This lane merged nothing** (ruling 017); the integrator did, correctly. **Layer 1 of
+`DESIGN-THE-REBUILD-SURVIVES-A-DEPLOY.md` is on master.**
+
+🟢 **The calibration production diff `b5c59f38 → c1397139` is EXACTLY CERT-697's** — `+127/−5`
+across `calibration_main_build.py` (6), `precompute_calibration.py` (74),
+`calibration_staged_futures.py` (52). **Nothing else in the train touched calibration.**
+🟢 **And GRADE-THIS #2 now holds POST-MERGE:** the local predictor at `c1397139` still returns
+`e2040f90154fae876f0fb65f5abf74c3`. The wide digest did not move.
+
+### 🔴 PC-1 IS NOT YET CHECKABLE — THE DEPLOY IS IN FLIGHT
+
+**Heroku current release is `v3980` = `b5c59f38`.** CI run `33562343917` on `c1397139` was
+**`in_progress`** at 21:40Z; the serialized `deploy` job has not run. **Layer 1 is MERGED but NOT
+DEPLOYED.** PC-1 becomes checkable on the first beat after that release.
+
+**BASELINE, CAPTURED FOR THE NEXT SESSION — this is the whole point of PC-1:**
+
+| quantity | value at 21:42:31Z |
+|---|---|
+| cursor `committed_units` | **70** / 128 |
+| generation | `1788297300187` |
+| cursor `updated_at` | 21:21:26Z |
+| ledger `staged:units_banked` | 70 (converged) |
+| `staged:cursor_reason:*` | **`resumable`** only — the pre-cutover steady state |
+| Heroku release | **v3980 = `b5c59f38`** (pre-fix) |
+
+🔴 **THE NEXT SESSION'S FIRST JOB IS PC-1, AND IT IS TIME-SENSITIVE.** On the first beat after the
+release:
+* `staged:cursor_reason:legacy_fingerprint_accepted` **exactly once**, then `…:resumable` ⇒ the
+  layer-1 cutover worked.
+* `staged:cursor_reason:input_fingerprint_changed` ⇒ **the pre-registered falsifier fired** and the
+  bank was wiped by the deploy that shipped the fix for wiping the bank.
+* **NEGATIVE CONTROL: the cursor's `committed_units` must NOT drop to 0.** Baseline **70**.
+⚠️ Expect the release to cost the in-flight unit (~5 min) — `P199`'s measured result — and to kill
+the beat outright ~16% of the time. **A killed beat is not a falsified PC-1.**
+
+### 🟢 A WIP SLOT JUST OPENED
+
+`program/calibration-205-…` is now **merged**. Under PROCESS-V2 clause 2 the lane holds **ONE**
+unmerged branch — `program/calibration-190-…` @ `f1487242` (artifacts/tests, never a deploy unit).
+**A second slot is free for the first time in this run.** ⚠️ That is not a reason to build; ITEM 3
+step 6 and ruling 134 are unchanged, and **nothing on the burn-down board is both ruled and unbuilt.**
