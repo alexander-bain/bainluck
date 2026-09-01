@@ -926,6 +926,62 @@ _WORD_BINGO_RE = re.compile(
     re.I,
 )
 
+# ── D19 (Alex, 2026-08-30): word bingo gets its own shelf ────────────────────
+#
+# `_WORD_BINGO_RE` above is a REFUSAL guard and is deliberately loose — when the
+# question is "may I move this?", over-matching is the safe direction. Assigning
+# a shelf is the opposite question, so a positive claim needs more than a verb:
+# "Will the Fed say rates will fall?" contains `say` and is not word bingo.
+#
+# The shape that IS word bingo is a speaker, a verb, and an OCCASION — the market
+# resolves on what gets said at a specific broadcast appearance. Measured on
+# production 2026-08-30, all 21 open specimens on the two shelves this override
+# may correct carry that shape:
+#
+#     17  tech    "Will Dell say \"Agentic\" during earnings call?"
+#                 "What will Dell say during their next earnings call?"
+#      4  other   "What will Bernie say during March on Washington?"
+#                 "What will the reporters say during ABC World News Tonight?"
+#
+# The 17 are one earnings call, and they were the whole of Tech & Science's
+# word-bingo population — near-identical cards crowding a shelf that is supposed
+# to be about technology.
+_WORD_BINGO_OCCASION_RE = re.compile(
+    r"\b(?:during|keynote|podcast|earnings\s+call|press\s+(?:briefing|conference)|"
+    r"speech|address|interview|broadcast|livestream|debate|rally|"
+    r"state\s+of\s+the\s+union|wwdc|testimony|hearing)\b",
+    re.I,
+)
+
+#: A quoted token is the other unmistakable tell — `say "Agentic"` is a bet on a
+#: word, not on the word's subject.
+_WORD_BINGO_QUOTED_RE = re.compile(r"[\"“‘']\s*[\w][^\"”’']{0,40}\s*[\"”’']")
+
+
+def is_word_bingo_market(market_name: str) -> bool:
+    """True when a market resolves on WHAT SOMEONE SAYS, not on the subject said.
+
+    Requires a say/mention verb AND either an occasion (`during`, `keynote`,
+    `earnings call`, …) or a quoted token. The verb alone is not enough — that is
+    what `_WORD_BINGO_RE` is for, and it exists to REFUSE, not to claim.
+    """
+    if not market_name:
+        return False
+    if not _WORD_BINGO_RE.search(market_name):
+        return False
+    return bool(
+        _WORD_BINGO_OCCASION_RE.search(market_name)
+        or _WORD_BINGO_QUOTED_RE.search(market_name)
+    )
+
+
+#: The shelf a word-bingo market belongs on.
+#:
+#: The KEY is internal (it is the `llm_sport_category` value and the
+#: `sport:<key>` feed tag); the user-visible LABEL lives in the frontend's
+#: `SPORT_CATEGORIES`, so renaming what a reader sees does not migrate a row.
+WORD_BINGO_CATEGORY = "soundbite"
+
 #: Shelves this override is allowed to correct, and NO MORE.
 #:
 #: Kept to the two that the CAL-P132 measurement actually named. A wider set was
@@ -944,10 +1000,10 @@ _SUBJECT_OVERRIDE_SOURCES = frozenset({"tech", "other"})
 def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optional[str]:
     """The shelf this market's TITLE says it belongs on, or None to leave it alone.
 
-    Returns `"health"` or `"weather"` only, and only when the title says so
-    unambiguously and the market is currently on one of the shelves this override is
-    allowed to correct. Everything else returns None, so the function can only move a
-    market between two named destinations and never invents a third.
+    Returns `"health"`, `"weather"` or `"soundbite"` only, and only when the title
+    says so unambiguously and the market is currently on one of the shelves this
+    override is allowed to correct. Everything else returns None, so the function can
+    only move a market between three named destinations and never invents a fourth.
 
     Deliberately conservative in both directions:
 
@@ -957,7 +1013,9 @@ def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optio
     * It never fires on a sport category. A "Flu Game" basketball market stays
       basketball, because the caller only consults this after its sport-promotion
       arms have had their turn.
-    * It never fires on a word-bingo market, whose subject is the speaker.
+    * A word-bingo market, whose subject is the speaker rather than the word, is
+      never routed by SUBJECT — it goes to its own shelf when the title says so
+      confidently (D19), and is otherwise left alone.
     * Epidemiology beats weather when a title somehow contains both, because a
       disease outbreak during a hurricane is a health market. Stated rather than
       left to pattern order.
@@ -967,6 +1025,13 @@ def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optio
     if (current_category or "other") not in _SUBJECT_OVERRIDE_SOURCES:
         return None
     if _WORD_BINGO_RE.search(market_name):
+        # D19: a CONFIDENT word-bingo market gets its own shelf and leaves this
+        # one. A loose match that cannot clear `is_word_bingo_market` keeps the
+        # original behaviour — refuse, and leave the market where it is — so the
+        # guard that stopped "Will Trump say 'Flu' this week?" becoming a health
+        # market still stands for everything the positive rule will not claim.
+        if is_word_bingo_market(market_name):
+            return WORD_BINGO_CATEGORY
         return None
     if _EPIDEMIOLOGY_RE.search(market_name):
         return "health"

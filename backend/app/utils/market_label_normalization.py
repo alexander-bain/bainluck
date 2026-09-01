@@ -750,7 +750,7 @@ _TIER_5_PATTERNS = [
 
 _NON_SPORT_CATEGORIES = {
     "politics", "crypto", "economics", "entertainment", "tech",
-    "weather", "geopolitics", "culture",
+    "weather", "geopolitics", "culture", "soundbite",
 }
 
 

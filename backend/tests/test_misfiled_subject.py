@@ -25,7 +25,7 @@ of them is one of the two named kinds.
 
 import pytest
 
-from app.utils.futures_categorization import misfiled_subject
+from app.utils.futures_categorization import WORD_BINGO_CATEGORY, misfiled_subject
 
 
 # --------------------------------------------------------------------------
@@ -98,7 +98,33 @@ def test_word_bingo_is_about_the_speaker_not_the_word(name):
     A wider version of this rule moved both of the first two out of `politics` and
     onto the `health` shelf, because their titles contain "Flu" and "CDC". The
     subject of "Will Trump say X" is Trump.
+
+    **Destination changed by Alex ruling D19 (2026-08-30), the assertion's INTENT
+    did not.** These used to return None — "leave it alone, just don't call it
+    health". They now get their own shelf. What this test has always been about is
+    that the SUBJECT regexes must not claim them, and that is asserted directly
+    below rather than inferred from a None: `soundbite` is neither `health` nor
+    `weather`, so the measured failure this test records still cannot recur.
     """
+    for shelf in ("tech", "other"):
+        got = misfiled_subject(name, shelf)
+        assert got not in ("health", "weather"), (
+            f"the subject regexes claimed a word-bingo market: {name!r} -> {got!r}"
+        )
+        assert got == WORD_BINGO_CATEGORY
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # A say/mention verb with neither an occasion nor a quoted token is NOT a
+        # confident word-bingo claim, so the original refusal still applies in
+        # full. D19 must not have turned the loose guard into a loose claim.
+        "Will the Fed say rates will fall?",
+        "Will the report mention a recession?",
+    ],
+)
+def test_a_loose_verb_match_is_still_refused(name):
     assert misfiled_subject(name, "tech") is None
     assert misfiled_subject(name, "other") is None
 

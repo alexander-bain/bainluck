@@ -40,6 +40,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
   weather: "🌦️",
   geopolitics: "🌍",
   culture: "🎭",
+  soundbite: "🎙️",  // D19 — word-bingo shelf
   lacrosse: "🥍",
   chess: "♟️",
   poker: "🃏",

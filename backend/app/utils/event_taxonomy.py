@@ -26,6 +26,11 @@ ALLOWED_TAGS: dict[str, set[str]] = {
         "esports", "olympics",
         # Non-sports categories supported by futures
         "entertainment", "politics", "poker", "chess", "darts",
+        # D19 (Alex, 2026-08-30). Listed here so `compute_market_tags` actually
+        # emits `sport:soundbite` — this allowlist is the gate, and a category
+        # missing from it gets no tag at all, which makes its /categories page
+        # unreachable no matter what the tile says.
+        "soundbite",
     },
     "league": {
         "nba", "nfl", "mlb", "nhl",
