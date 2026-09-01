@@ -107,3 +107,34 @@ export function getSourceColor(source: string): SourceColor {
 export function sourceHex(source: string): string {
   return getSourceColor(source).hex;
 }
+
+/**
+ * THE NAME A READER SEES FOR A SOURCE — from the same registry as the colour
+ * (#2442).
+ *
+ * "Same source, same colour, everywhere" was this file's founding law, and the
+ * NAME was left out of it. The consequence was measured on the flagship event
+ * page on 2026-08-31: one screen called the same data `Betting Odds`,
+ * `Sportsbooks` and `Individual sportsbooks` — three names for one supplier,
+ * and the first of them frames our probability as a betting price, which is the
+ * standing no-price-format ruling being broken in the chart legend.
+ *
+ * The registry already held the right answer (`odds_api.label` is
+ * `"Sportsbooks"`, and `betting` aliases to it). Nothing needed inventing; the
+ * chart simply was not asking.
+ *
+ * ═══ WHY THIS OVERRIDES THE API'S OWN `display_name` ═══
+ *
+ * `win_probability_sources.betting.display_name` is served as `"Betting Odds"`
+ * by the backend, so a component that prefers the payload's name renders the
+ * banned phrase no matter how the frontend is swept — and no bundle scan can
+ * see it, because the string arrives at runtime. The registry is therefore the
+ * AUTHORITY for the name and the payload is the fallback, not the other way
+ * round. A source the registry does not know still falls through to whatever
+ * the payload calls it, so a new source is never nameless.
+ */
+export function sourceLabel(source: string, fallback?: string | null): string {
+  const key = canonicalSourceKey(source);
+  const known = SOURCE_COLORS[key];
+  return known ? known.label : (fallback || source);
+}

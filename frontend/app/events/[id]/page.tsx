@@ -42,7 +42,9 @@ import ErrorMessage from "@/components/ErrorMessage";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
+import { sportVocab } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
+import { sourceLabel } from "@/lib/sourceColors";
 import {
   useAnalytics,
   usePageTracking,
@@ -759,8 +761,15 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
 
-              {/* Projected final score — derived from spread + total, no gambling jargon */}
-              {historyData?.pm_spread_data?.projected_final &&
+              {/* Projected final score — derived from spread + total, no gambling jargon.
+
+                  #2441: gated on the sport DECLARING that a derived spread is
+                  a real quantity here. The projection is a points model; on a
+                  tennis match it is a fabricated scoreline in a unit the sport
+                  does not have. An undeclared sport gets the same silence, by
+                  design — see `UNSCORED_IN_POINTS`. */}
+              {sportVocab(event.sport || undefined).hasDerivedSpread &&
+                historyData?.pm_spread_data?.projected_final &&
                 event.status !== "completed" && event.status !== "closed" &&
                 historyData.pm_spread_data.projected_final.home_score > 0 &&
                 historyData.pm_spread_data.projected_final.away_score > 0 && (
@@ -961,7 +970,10 @@ export default function EventPage({ params }: EventPageProps) {
                 {historyData?.bookmaker_history && Object.keys(historyData.bookmaker_history).length > 0 && (
                   <div className="flex items-center gap-1.5">
                     <div className="w-4 h-[2px] rounded bg-text-muted/40" />
-                    <span className="text-[10px] text-text-muted">Sportsbooks</span>
+                    {/* #2442: through the source registry, so this chip and
+                        the chart legend beside it cannot spell one supplier
+                        two ways. */}
+                    <span className="text-[10px] text-text-muted">{sourceLabel("betting")}</span>
                   </div>
                 )}
                 {historyData?.win_prob_sources && Object.keys(historyData.win_prob_sources).some(k => k.toLowerCase().includes('kalshi')) && (
@@ -1204,7 +1216,15 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (
         <div className="bg-surface-card rounded-xl border border-surface-border px-4 py-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-text-primary">{event.sport?.startsWith('baseball') ? 'Total Runs' : event.sport?.startsWith('icehockey') || event.sport?.startsWith('soccer') ? 'Total Goals' : 'Total Points'} Pace</span>
+            {/* #2441: this carried its OWN three-name chain with "Total
+                Points" as the else — the same defect as `sportVocab`'s old
+                default, one component over. One registry decides the unit. */}
+            <span className="text-xs font-bold text-text-primary">
+              {(() => {
+                const u = sportVocab(event.sport || undefined).unit;
+                return u ? `${u.charAt(0).toUpperCase()}${u.slice(1)} pace` : "Scoring pace";
+              })()}
+            </span>
             <span className="text-base font-extrabold text-blue-500 tracking-tight">
               {gameMarkets.pace.projected_total}
             </span>

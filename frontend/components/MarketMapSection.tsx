@@ -11,6 +11,8 @@ import {
   buildDensityFromSpreads,
   buildDensityFromThresholds,
   sportVocab,
+  withUnit,
+  unitPhrase,
   posOnRail,
   collapseDuplicateRungs,
 } from "@/lib/marketMapUtils";
@@ -110,10 +112,27 @@ function deriveLiveHalfScores(
   };
 }
 
+/**
+ * `BER by 4.5+` — a MARGIN, not a handicap (#2442).
+ *
+ * This printed `BER +4.5`: a competitor abbreviation followed by a signed
+ * number, which is a betting line and nothing else. Alex quoted it first among
+ * the six gambling formats he counted on one screen.
+ *
+ * The number does not change and neither does what it means. `by N+` states the
+ * thing the reader actually wants — how far ahead — in the sport's own units,
+ * and it is the wording `MARGIN_LADDER_LABEL` below now shares, so the headline
+ * and the ladder cannot drift into two grammars.
+ */
 function formatMarginLabel(margin: number, teamAbbr: string, threshold: number): string {
   if (margin === 0) return "Tied";
   const val = threshold % 1 === 0 ? Math.abs(threshold) : Math.abs(threshold).toFixed(1);
-  return `${teamAbbr} +${val}`;
+  return marginLadderLabel(teamAbbr, val);
+}
+
+/** One grammar for "this competitor, this far ahead", used by every ladder. */
+function marginLadderLabel(teamAbbr: string, threshold: number | string): string {
+  return `${teamAbbr} by ${threshold}+`;
 }
 
 function deriveAbbr(team: string, provided?: string): string {
@@ -187,9 +206,10 @@ export default function MarketMapSection({
 
     if (parsed.length === 0) return null;
 
-    const sportKey_ = (sportKey || "").toLowerCase();
-    const isLowScoring = sportKey_.includes("baseball") || sportKey_.includes("hockey") || sportKey_.includes("soccer");
-    const maxMargin = isLowScoring ? 5 : 18;
+    // #2441: the rail's reach is DECLARED by the sport, not inferred from a
+    // three-name low-scoring list with basketball as the else. That else is
+    // what labelled a tennis rail `WAW by 18+ / BER by 18+`.
+    const maxMargin = vocab.marginRange;
     const rangeMin = -maxMargin;
     const rangeMax = maxMargin;
 
@@ -204,7 +224,13 @@ export default function MarketMapSection({
 
     const markers: MarketMapMarker[] = [];
 
-    let projValue = homeSpread != null ? -homeSpread : null;
+    // #2441: `homeSpread` is a POINTS figure derived from the moneyline by a
+    // model that assumes interchangeable points. On the Berrettini match it
+    // produced -4.3 and the page printed `BER +4.5` over a sport with no
+    // points. A sport that does not declare `hasDerivedSpread` keeps every
+    // market a venue actually quoted and loses only the number we made up —
+    // the fallback below still finds the closest-to-50% REAL rung.
+    let projValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
     if (projValue == null && parsed.length > 0) {
       const closest = parsed.reduce((best, s) =>
         Math.abs(s.probability - 0.5) < Math.abs(best.probability - 0.5) ? s : best
@@ -214,9 +240,17 @@ export default function MarketMapSection({
     const projTeamAbbr = projValue != null ? (projValue > 0 ? hAbbr : projValue < 0 ? aAbbr : "TIE") : null;
     const projLogo = projValue != null ? (projValue > 0 ? homeLogo : awayLogo) : undefined;
 
+    // #2442: the SECOND margin formatter on this page, and the one the sweep
+    // for `formatMarginLabel` missed — the render guard caught it printing
+    // `LAL +4.5` on the projection mark after the ladder had already been
+    // fixed. Both now route through `marginLadderLabel`, so there is one
+    // grammar and a third copy cannot quietly disagree with the other two.
     function formatMargin(val: number, team: string): string {
       if (val === 0) return "Tied";
-      return `${team} +${Math.abs(val) % 1 === 0 ? Math.abs(val) : Math.abs(val).toFixed(1)}`;
+      return marginLadderLabel(
+        team,
+        Math.abs(val) % 1 === 0 ? Math.abs(val) : Math.abs(val).toFixed(1)
+      );
     }
 
     if (status === "pre") {
@@ -290,14 +324,14 @@ export default function MarketMapSection({
 
     for (const s of awaySorted.reverse()) {
       ladder.push({
-        label: `${aAbbr} +${s.threshold}`,
+        label: marginLadderLabel(aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "left",
       });
     }
     for (const s of homeSorted) {
       ladder.push({
-        label: `${hAbbr} +${s.threshold}`,
+        label: marginLadderLabel(hAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: "right",
       });
@@ -308,9 +342,17 @@ export default function MarketMapSection({
       // margin vs the pregame mass — so it reads "expected vs final".
       title: status === "done"
         ? "Margin: expected vs final"
-        : `Full game ${vocab.marginTitle.toLowerCase()}`,
+        // #2441: the title is the DECLARED one, not "Full game " + it.
+        // Prefixing stuttered the moment a sport's unit was the word "game"
+        // ("Full game game margin map"), and every declared title already
+        // names the scope. The half maps below carry their own period label,
+        // so the contrast this prefix used to draw is still drawn.
+        : vocab.marginTitle,
       subtitle: status === "done"
-        ? "Where it landed vs the pregame spread"
+        // #2442: "the pregame spread" is a betting line. What the sentence
+        // means is the distribution the market had before play, which is
+        // what the reader is looking at on the rail beside it.
+        ? "Where it landed vs what was expected"
         : `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
       headline,
       rangeMin,
@@ -422,7 +464,7 @@ export default function MarketMapSection({
           value: scored,
           type: "actual",
           label: "Actual",
-          displayValue: `${scored} ${vocab.unit}`,
+          displayValue: withUnit(scored, vocab),
         });
       }
       markers.push({
@@ -456,7 +498,7 @@ export default function MarketMapSection({
           value: scored,
           type: "final",
           label: "Final",
-          displayValue: `${scored} ${vocab.unit}`,
+          displayValue: withUnit(scored, vocab),
         });
       }
     }
@@ -473,10 +515,13 @@ export default function MarketMapSection({
       // L2-131 Item 4: settled totals grade expected vs final, same as margins.
       title: status === "done"
         ? "Total: expected vs final"
-        : `Full game ${vocab.totalTitle.toLowerCase()}`,
+        : vocab.totalTitle,
       subtitle: status === "done"
-        ? "Where it landed vs the pregame total"
-        : `Final ${vocab.unit} distribution`,
+        // #2442's wording, through #2441's unit helper: an undeclared sport
+        // has no unit to interpolate, and inlining it produced "Final
+        // distribution" with a double space.
+        ? "Where it landed vs what was expected"
+        : unitPhrase("Final", vocab, "distribution"),
       headline: headlineValue,
       rangeMin,
       rangeMax,
@@ -545,9 +590,8 @@ export default function MarketMapSection({
       const parsed = [...homeClean, ...awayClean];
       if (parsed.length === 0) continue;
 
-      const sportKey_ = (sportKey || "").toLowerCase();
-      const isLowScoring = sportKey_.includes("baseball") || sportKey_.includes("hockey");
-      const maxM = isLowScoring ? 5 : 18;
+      // #2441: same declared reach as the full-game rail above.
+      const maxM = vocab.marginRange;
       const density = buildDensityFromSpreads(parsed, -maxM, maxM, 12);
 
       // Ladder: sort sequentially along number line (away big → tie → home big)
@@ -557,7 +601,7 @@ export default function MarketMapSection({
         return marginA - marginB;
       });
       const ladder: MarketMapLadderRow[] = allSorted.map((s) => ({
-        label: `${s.isHome ? hAbbr : aAbbr} +${s.threshold}`,
+        label: marginLadderLabel(s.isHome ? hAbbr : aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
         side: (s.isHome ? "right" : "left") as "left" | "right",
       }));
@@ -721,7 +765,7 @@ export default function MarketMapSection({
             value: ht,
             type: "actual",
             label: "Actual",
-            displayValue: `${ht} ${vocab.unit}`,
+            displayValue: withUnit(ht, vocab),
           });
         }
       }
@@ -745,7 +789,7 @@ export default function MarketMapSection({
           value: ht,
           type: "final",
           label: "Final",
-          displayValue: `${ht} ${vocab.unit}`,
+          displayValue: withUnit(ht, vocab),
         });
       }
 
@@ -763,7 +807,7 @@ export default function MarketMapSection({
         data: {
           variant: "total" as const,
           title: `${label} ${vocab.totalTitle.toLowerCase()}`,
-          subtitle: `${label} ${vocab.unit} distribution`,
+          subtitle: unitPhrase(label, vocab, "distribution"),
           headline: headlineVal,
           rangeMin: effectiveMin,
           rangeMax: effectiveMax,
@@ -790,7 +834,16 @@ export default function MarketMapSection({
       {hasMargin && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
           <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            Margin maps
+            {/* #2442, CERT-642's second finding. "Total maps" is the betting
+                noun for an over/under and it survived the first sweep because
+                the guard's fixture supplied no totals, so this column never
+                rendered. Both headings now come from the sport's declared
+                vocabulary, like the titles inside them.
+
+                #2441 adds the empty-unit arm: an UNDECLARED sport has no unit
+                to build a heading from, and interpolating one produces " maps".
+                So it falls back to the plain noun rather than to a guess. */}
+            {vocab.unit ? `${vocab.marginTitle.replace(/ map$/, "")} maps` : "Margin maps"}
           </div>
           {marginData && (
             <MarketMap variant="margin" {...marginData} status={status} />
@@ -805,7 +858,7 @@ export default function MarketMapSection({
       {hasTotal && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
           <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            Total maps
+            {vocab.unit ? `${vocab.totalTitle.replace(/ map$/, "")} maps` : "Scoring maps"}
           </div>
           {totalData && (
             <MarketMap variant="total" {...totalData} status={status} />

@@ -655,7 +655,17 @@ const OWED: Record<string, string[]> = {
   // "Kalshi + Polymarket, unified"; with that line rewritten the surface ships
   // clean, so the key is deleted rather than left as an empty array.
   "app/futures": ["price-family"],
-  "app/events": ["price-family", "blend"],
+  // #2442's `moneyline` rule is OWED here, and the reason is the ruling's own
+  // distinction rather than a shortage of time. The two hits are the
+  // methodology copy on `/events/{id}/models` — "Moneyline odds from each
+  // bookmaker are converted to implied probabilities, then the vig is
+  // removed". That names the format we convert AWAY from, in a paragraph whose
+  // whole subject is that we do not show it. Alex's 2026-07-31 ruling draws
+  // exactly this line: the rule bans a betting format used as a SELLING POINT,
+  // never naming the thing Bain Luck refuses to show, and `/about`'s
+  // `Not "-150 / +130"` is the pinned counter-example. Deleting this sentence
+  // would make the methodology page less honest, not more compliant.
+  "app/events": ["price-family", "blend", "moneyline"],
   // `app/categories`, `app/search`, `app/hub`, `app/my-stuff`, `app/sports` and
   // `app/playoffs` sat here until UX-P220. Each held ruling-142 entries only, so
   // with the last promise rewritten the keys are deleted rather than emptied —
@@ -665,6 +675,12 @@ const OWED: Record<string, string[]> = {
   // Components shared across routes: the marketing blurbs on the landing shell
   // and `lib/priceCadenceCopy.ts`. The live-game chart caption was the third
   // and is gone; `check-back`, `once-the` and `will-populate` went with it.
+  // `app/admin` is NOT listed for #2442's `moneyline` rule even though the
+  // console describes what it ingests as "Moneyline, spreads, totals from 10+
+  // sportsbooks". It is already in `EXEMPT_SURFACES` above — an operator
+  // surface behind the admin secret, where the supplier's vocabulary is the
+  // correct vocabulary — and an OWED entry that `unowned()` can never reach is
+  // exactly the dead debt this map's own discipline forbids.
   shared: ["blend", "price-family"],
 };
 

@@ -71,7 +71,8 @@ describe("groupMatchupsByFamily — the wall gets bounded", () => {
     expect(groups!.map((g) => g.label)).toEqual([
       "Completed matches",
       "Set winners",
-      "Game totals",
+      // #2442: was "Game totals" — the betting noun for an over/under.
+      "Combined score",
       "Match winners",
     ]);
     expect(groups!.map((g) => g.items.length)).toEqual([100, 10, 40, 150]);

@@ -235,21 +235,157 @@ export function buildDensityFromThresholds(
   return smoothed.map((d) => Math.round((d / peak) * 96));
 }
 
-export function sportVocab(sportKey: string | undefined): {
+/**
+ * HOW A SPORT IS SCORED — DECLARED, NEVER ASSUMED (#2441).
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * Alex, on `/events/15293846` (a US Open match) on 2026-08-31: the page showed
+ * **`PRE-GAME BER +4.5`**, **`Total: expected vs final — PRE-GAME 40`**,
+ * **`Margin: expected vs final`** and a rail reading **`WAW by 18+ / BER by
+ * 18+`**. *"Tennis has no point spread and no 40-point total. This is a generic
+ * event template applied to a sport it does not fit, and it is the clearest
+ * single tell that the page was not built for tennis."*
+ *
+ * Every one of those numbers came from here. The old `sportVocab` named three
+ * sports and **fell through to points for everything else** — so tennis,
+ * cricket, golf, darts, chess and every sport we have not yet met inherited
+ * basketball's furniture by default, and the ±18 rail inherited basketball's
+ * scale.
+ *
+ * ═══ WHY A REGISTRY AND NOT A FOURTH `if` ═══
+ *
+ * A fallthrough default is a claim about every sport that has not been written
+ * down yet, made by whoever wrote the default. Adding `tennis` to the chain
+ * fixes the page Alex read and leaves the next sport to be discovered the same
+ * way — by him.
+ *
+ * So the polarity is inverted: **a sport gets scoring furniture only by being
+ * NAMED, with its unit and its scale.** `UNSCORED_IN_POINTS` is what an
+ * unrecognised sport gets, and it declares `hasDerivedSpread: false`, which
+ * SUPPRESSES the derived-spread marker rather than inventing one. Silence now
+ * means "we have not said", not "assume basketball". Same shape as the
+ * win-prob blend's declared prefix registry (CERT-636), and for the same
+ * reason: the previous version there was also a spelling test standing in for
+ * a semantic one.
+ *
+ * ═══ WHAT `hasDerivedSpread` ACTUALLY GATES ═══
+ *
+ * Not the ladder — the MARKER. A tennis match really does have a game-spread
+ * market (Kalshi quotes `Berrettini -1.5 games`) and a game total (`Over 34.5
+ * games`), and those are true things worth showing in their own units. What is
+ * NOT true is `current_odds.home_spread`, which is a POINTS figure derived from
+ * the moneyline by a model that assumes interchangeable points. On the
+ * Berrettini match that model produced **-4.3**, and the page printed it as
+ * `BER +4.5` over a sport with no points at all.
+ *
+ * So a sport that declares `hasDerivedSpread: false` keeps every market a
+ * bookmaker or exchange actually quoted, and loses only the number we made up.
+ */
+export interface SportScoringVocab {
   marginTitle: string;
   totalTitle: string;
+  /** Plural, as the axis and the tiles say it: "points", "runs", "games". */
   unit: string;
   unitSingular: string;
-} {
+  /**
+   * How far the margin rail reaches, in THIS sport's units. Was `18` for
+   * everything that was not baseball/hockey/soccer, which is how a tennis rail
+   * came to be labelled `by 18+`.
+   */
+  marginRange: number;
+  /**
+   * May the page draw a spread it DERIVED from the win probability?
+   *
+   * True only where the sport is scored in interchangeable points and an
+   * expected margin is a real quantity. `false` is the default an unnamed sport
+   * inherits, because the failure it prevents (a fabricated margin in a unit
+   * the sport does not have) is worse than the one it causes (a marker missing
+   * from a sport that could have had one, which is one line to add here).
+   */
+  hasDerivedSpread: boolean;
+}
+
+/**
+ * The declared sports. A prefix/substring match against the sport key, in
+ * order, so `basketball_nba` and `basketball_ncaab` share one entry.
+ *
+ * Ranges are the sport's own realistic spread of outcomes, not a round number:
+ * an NBA game is decided by up to ~18, a baseball game by ~5, a best-of-five
+ * tennis match by ~6 games in the margin the market actually quotes.
+ */
+const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
+  {
+    match: ["baseball", "mlb"],
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true },
+  },
+  {
+    match: ["hockey", "nhl"],
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true },
+  },
+  {
+    match: ["soccer", "mls", "epl", "uefa", "fifa"],
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true },
+  },
+  {
+    // #2441's subject. A tennis match is scored in games inside sets; the
+    // market quotes a game spread and a game total, and NEITHER is a point.
+    // `hasDerivedSpread: false` is what stops `BER +4.5` being drawn from a
+    // points model over a sport with no points.
+    match: ["tennis"],
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false },
+  },
+  {
+    match: ["basketball", "nba", "wnba", "ncaab"],
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true },
+  },
+  {
+    match: ["americanfootball", "nfl", "ncaaf"],
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true },
+  },
+];
+
+/**
+ * What a sport we have not declared gets.
+ *
+ * Deliberately NOT basketball's entry under another name. The titles avoid
+ * naming a unit at all, the rail is narrow, and no derived spread is drawn —
+ * so an undeclared sport renders only what a market actually quoted, in the
+ * market's own words, and nothing this file invented.
+ */
+export const UNSCORED_IN_POINTS: SportScoringVocab = {
+  marginTitle: "Margin map",
+  totalTitle: "Scoring map",
+  unit: "",
+  unitSingular: "",
+  marginRange: 6,
+  hasDerivedSpread: false,
+};
+
+export function sportVocab(sportKey: string | undefined): SportScoringVocab {
   const key = (sportKey || "").toLowerCase();
-  if (key.includes("baseball") || key.includes("mlb")) {
-    return { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run" };
+  if (!key) return UNSCORED_IN_POINTS;
+  for (const entry of SPORT_SCORING) {
+    if (entry.match.some((m) => key.includes(m))) return entry.vocab;
   }
-  if (key.includes("hockey") || key.includes("nhl")) {
-    return { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal" };
-  }
-  if (key.includes("soccer") || key.includes("mls") || key.includes("epl")) {
-    return { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal" };
-  }
-  return { marginTitle: "Margin map", totalTitle: "Total map", unit: "points", unitSingular: "point" };
+  return UNSCORED_IN_POINTS;
+}
+
+/**
+ * `"33 games"`, or just `"33"` for a sport whose unit we have not declared.
+ *
+ * `UNSCORED_IN_POINTS.unit` is deliberately the empty string — an undeclared
+ * sport should print the number a market quoted and NOT a unit this file
+ * guessed. Every template that interpolates the unit therefore has to survive
+ * it being absent, and doing that inline produces `"33 "` and
+ * `"Final  distribution"`. One helper, so a new call site cannot reintroduce
+ * the double space.
+ */
+export function withUnit(value: string | number, vocab: SportScoringVocab): string {
+  return vocab.unit ? `${value} ${vocab.unit}` : String(value);
+}
+
+/** `"Final games distribution"` / `"Final distribution"`. Same reason. */
+export function unitPhrase(prefix: string, vocab: SportScoringVocab, suffix: string): string {
+  return [prefix, vocab.unit, suffix].filter(Boolean).join(" ");
 }
