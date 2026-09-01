@@ -91,3 +91,49 @@ def derive_completed_at(last_snapshot, commence_time, now=None):
     if last_snapshot < commence_time:
         return None
     return last_snapshot
+
+
+#: Statuses a staleness net can put an event into. Both are "we stopped hearing
+#: about it", neither is "a source told us it finished".
+_NET_SETTLED_STATUSES = ("closed", "completed")
+
+
+def settlement_is_a_staleness_artifact(
+    status, home_score, away_score, new_commence, completed_at
+) -> bool:
+    """Did a staleness net settle an event that had not been played? (q066b)
+
+    Three facts have to hold at once, and the conjunction is what makes it safe:
+
+    1. **The row is settled** — ``closed`` or ``completed``.
+    2. **It carries no score.** This is the load-bearing one. Every net in this
+       codebase settles on ELAPSED WALL-CLOCK, never on a result, so a settled
+       row with no score is a row nothing ever reported a finish for. A scored
+       row is left alone no matter what else is true: a real result outranks any
+       schedule correction, and gotcha #21 says never bulk-disturb resolution.
+    3. **The owning provider has since moved the start PAST the recorded
+       completion.** ``completed_at < new_commence`` is the #46 inversion, read
+       here from the other side: normally it means a wrong-sibling fold and the
+       correction must be refused, but on an unscored row it means the settlement
+       timestamp predates the game it claims to have ended — so the settlement is
+       the wrong field, not the start.
+
+    Same class of evidence as ``espn_helpers.espn_replay_unsettles`` (ESPN
+    reporting IN PROGRESS on a row we call settled), reached through a different
+    door: there the live source contradicts the state, here the SCHEDULE source
+    does. Both are proof the settled state is wrong, and both clear it.
+
+    The producing shape, measured on the live US Open slate 2026-09-01: The Odds
+    API published all of Aug 31's matches at one session-start default of
+    15:00:00Z, the clock promoted them to ``live`` at 15:00, the staleness nets
+    closed them during an ordinary poll gap, and 35 matches sat marked finished
+    with no result while bookmakers were still actively pricing them — nine of
+    them being played the following day.
+    """
+    if status not in _NET_SETTLED_STATUSES:
+        return False
+    if home_score is not None or away_score is not None:
+        return False
+    if completed_at is None or new_commence is None:
+        return False
+    return completed_at < new_commence
