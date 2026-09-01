@@ -7,7 +7,6 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedBundleData, FeedConceptData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
-import { shapeForbidsKernel } from "@/lib/marketShape";
 import { isTrending, suppressBareZeroFuturesCard, feedItemHasRenderableContent, feedItemHref } from "./discover/utils";
 import { useSwipe } from "./discover/shared";
 import { EventCard } from "./discover/EventCard";
@@ -129,16 +128,6 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
     transition: swipe.offset === 0 ? "transform 0.3s ease" : "none",
   };
 
-  // UX-P237 — a futures item has TWO possible cards (the CERT-606 lesson), and
-  // the `outcome_distribution` hint is what routes it to ComparisonCard. The
-  // stored-shape veto has to be applied on THIS route too: without it a market
-  // the classifier typed `quantity` is handed to the leaderboard here and never
-  // reaches FuturesCard's ladder at all, so fixing only FuturesCard would leave
-  // the defect live for every quantity market carrying 4+ top_outcomes.
-  const comparisonForbidden =
-    item.type === "futures" &&
-    shapeForbidsKernel((item.data as FeedFuturesData).market_type, "top-3");
-
   // L2-164 Item 3: belt-and-suspenders 0% guard — never render a bare live-looking
   // sub-1% futures hero (the stale post-Open golf-card class). Suppress the whole
   // card here (not just the number) so no empty swipe wrapper is left behind; the
@@ -176,7 +165,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
 
       <div className="relative z-10" style={cardStyle}>
         {item.type === "event" && <EventCard item={item} data={item.data as FeedEventData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />}
-        {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 && !comparisonForbidden ? (
+        {item.type === "futures" && (item.data as FeedFuturesData).discover_card?.suggested_format === "outcome_distribution" && (item.data as FeedFuturesData).top_outcomes?.length >= 4 ? (
           <ComparisonCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} pin={pinFor?.((item.data as FeedFuturesData).id)} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
         ) : item.type === "futures" ? (
           <FuturesCard item={item} data={item.data as FeedFuturesData} liked={liked} setLiked={setLikedWithTracking} onDismiss={handleLessLike} trending={trending} showProbabilityHint={showProbabilityHint} pin={pinFor?.((item.data as FeedFuturesData).id)} onDetailClick={() => trackAction("detail_click")} onShare={() => trackAction("share")} onContextExpand={() => trackAction("context_expand")} onContextCollapse={() => trackAction("context_collapse")} />
