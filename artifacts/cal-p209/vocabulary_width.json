@@ -1,0 +1,118 @@
+{
+  "sha": "c139713996b7e957ac4eb239c82faf3b3f84ce10",
+  "reachability": {
+    "envelope_unavailable": "LIVE \u2014 any DB error or session failure on the cursor read",
+    "envelope_malformed": "LIVE \u2014 checksum/shape failure on a torn or truncated write",
+    "envelope_wrong_type": "LIVE \u2014 payload not a dict",
+    "envelope_wrong_version": "ON A SCHEMA BUMP \u2014 and it SHADOWS the static 'schema_mismatch' token, which can only fire when the envelope version is RIGHT and the inner payload field is wrong",
+    "envelope_stale": "ONLY AFTER A 14-DAY GAP \u2014 STATE_MAX_AGE_S = 14*86400 and the cursor is rewritten per banked unit"
+  },
+  "population": "distinct cursor_reason string VALUES emittable on the deployed sha",
+  "arms": {
+    "arm1_known_hit_reproduced": true,
+    "arm1_known_hit": "legacy_fingerprint_accepted",
+    "arm2_hit_shape": "dynamic f-string reason f\"envelope_{read.status}\" over an enum owned by durable_state.py",
+    "arm3_coverage": {
+      "reason_return_sites": 15,
+      "classified": 15,
+      "unclassified": [],
+      "fraction": 1.0
+    },
+    "arm5_counterfactual": {
+      "reachable_statuses_at_fstring": [
+        "malformed",
+        "stale",
+        "unavailable",
+        "wrong_type",
+        "wrong_version"
+      ],
+      "expansion_beyond_one_token": 4,
+      "collapse_harmful": true,
+      "note": "expansion == 0 would mean P208's single token was correct and this finding voids"
+    }
+  },
+  "producer": {
+    "static_constants_defined": 15,
+    "static_values_emitted": [
+      "absent",
+      "input_fingerprint_changed",
+      "lease_held_by_other",
+      "legacy_fingerprint_accepted",
+      "malformed",
+      "malformed_units",
+      "nothing_banked",
+      "population_version_changed",
+      "read_failed",
+      "resumable",
+      "schema_mismatch",
+      "task_mismatch",
+      "unencoded_units",
+      "unfolded_units",
+      "unit_key_mismatch"
+    ],
+    "static_emitted_count": 15,
+    "dynamic_template": "envelope_{read.status}",
+    "dynamic_expansion": [
+      "envelope_malformed",
+      "envelope_stale",
+      "envelope_unavailable",
+      "envelope_wrong_type",
+      "envelope_wrong_version"
+    ],
+    "status_domain_provenance": [
+      "backend/app/utils/durable_state.py:331 OK='ok'",
+      "backend/app/utils/durable_state.py:256 MISSING='missing'",
+      "backend/app/utils/durable_state.py:258 WRONG_TYPE='wrong_type'",
+      "backend/app/utils/durable_state.py:273 MALFORMED='malformed'",
+      "backend/app/utils/durable_state.py:278 MALFORMED='malformed'",
+      "backend/app/utils/durable_state.py:283 MALFORMED='malformed'",
+      "backend/app/utils/durable_state.py:290 MALFORMED='malformed'",
+      "backend/app/utils/durable_state.py:308 WRONG_VERSION='wrong_version'",
+      "backend/app/utils/durable_state.py:314 MALFORMED='malformed'",
+      "backend/app/utils/durable_state.py:325 STALE='stale'",
+      "backend/app/utils/durable_state.py:235 status=<param status> \u2014 domain from signature default + call-site overrides",
+      "backend/app/services/durable_snapshots.py:201 literal 'missing'",
+      "backend/app/services/durable_snapshots.py:198 failed_read default=UNAVAILABLE",
+      "backend/app/services/durable_snapshots.py:241 failed_read default=UNAVAILABLE",
+      "backend/app/utils/durable_state.py failed_read signature default='unavailable'"
+    ],
+    "TOTAL_DISTINCT_VALUES": 20
+  },
+  "p208_comparison": {
+    "p208_claimed_total": 15,
+    "p208_claimed_wipes": 11,
+    "measured_total": 20,
+    "measured_wipes": 15
+  },
+  "reader": {
+    "rubric_tokens_named": [
+      "input_fingerprint_changed",
+      "legacy_fingerprint_accepted",
+      "resumable"
+    ],
+    "rubric_names_of_wipes": [
+      "input_fingerprint_changed"
+    ],
+    "wipe_coverage_p208": "1/11 = 9.1%",
+    "wipe_coverage_measured": "1/15 = 6.7%"
+  },
+  "wipe_tokens": [
+    "envelope_malformed",
+    "envelope_stale",
+    "envelope_unavailable",
+    "envelope_wrong_type",
+    "envelope_wrong_version",
+    "input_fingerprint_changed",
+    "malformed",
+    "malformed_units",
+    "population_version_changed",
+    "read_failed",
+    "schema_mismatch",
+    "task_mismatch",
+    "unencoded_units",
+    "unfolded_units",
+    "unit_key_mismatch"
+  ],
+  "verdict": "CONFIRMED",
+  "shape_guard_failures": []
+}
