@@ -73,58 +73,24 @@ SOON = NOW + timedelta(days=2)
 
 #: LAT-P181. The cycling arm needs one more thing than the other two, and it is
 #: not a date — it is an EDITION. `list_cycling_concepts` only counts a market
-#: whose `resolution_date.year` equals the year in its config slug
-#: (`event_cycling.CYCLING_RACES`, currently `vuelta-2026` and friends), and only
-#: surfaces the concept if that resolution is still ahead of `now`.
+#: whose resolution year names an edition the config holds, and only surfaces the
+#: concept if that resolution is still ahead of `now`.
 #:
-#: Those two conditions are jointly unsatisfiable once the configured year is
-#: over, so NO date this test can pick keeps the arm alive past 2026-12-31.
+#: LAT-P181 could only defuse that here, with an autouse fixture that injected a
+#: `vuelta-<specimen year>` entry into the hand-written `CYCLING_RACES` calendar —
+#: because while the calendar listed EDITIONS, those two conditions became jointly
+#: unsatisfiable the moment the configured year ran out, and no date this file
+#: could pick kept the arm alive past 2026-12-31.
 #:
-#: That is a PRODUCT fact, not a test fact: cycling concepts disappear from
-#: Discover on 2027-01-01 for users too, until the next editions are added to
-#: `CYCLING_RACES`. It is filed on its own account. It is emphatically not this
-#: file's subject — this file counts how many reads the scan makes — and a test
-#: about read-counting must not be the thing that reports a stale product config,
-#: because the only way it can report it is by taking `deploy` down on 01-01.
+#: #2482 (LAT-P182) shipped the product fix that comment asked for: the config now
+#: names year-less race FAMILIES and the edition is DERIVED from the market's own
+#: `resolution_date`. There is no calendar left to pin, so the fixture is gone —
+#: not disabled, obsolete. Any year the clock lands in resolves on its own.
 #:
-#: So the specimen carries a clock-derived resolution, and `cycling_edition`
-#: below gives the lister an edition for whatever year that lands in. The arm
-#: stays fully exercised forever and the calendar is left out of it.
+#: The arm is still fully exercised, and not by assumption: three tests below
+#: assert `cycling` is actually among the domains returned, so if the specimen
+#: ever stops resolving, this file goes red rather than quietly counting two arms.
 CYCLING_RESOLUTION = NOW + timedelta(days=13)
-
-
-@pytest.fixture(autouse=True)
-def cycling_edition(monkeypatch):
-    """Give the lister a Vuelta edition for the specimen's own year.
-
-    LAT-P181. `CYCLING_RACES` is a hand-maintained calendar and the specimen has
-    to name an edition it holds. Rather than pin the specimen to the calendar —
-    which is the bomb — this pins the calendar to the specimen, for the duration
-    of this file only.
-
-    It ADDS an edition; it never removes or rewrites one, so every real config
-    entry is still in play and a regression in the matching itself still shows up
-    here. What it removes is this file's ability to fail on 01-01 for a reason
-    that has nothing to do with counting reads.
-    """
-    import re
-
-    from app.utils import event_cycling as ec
-
-    year = CYCLING_RESOLUTION.year
-    slug = f"vuelta-{year}"
-    if slug in ec.CYCLING_RACES:
-        return
-    monkeypatch.setitem(
-        ec.CYCLING_RACES,
-        slug,
-        ec.CyclingRaceConfig(
-            slug=slug,
-            display=f"Vuelta a España {year}",
-            name_re=re.compile(r"vuelta(\s+a\s+espa)?", re.IGNORECASE),
-            aliases=(f"vuelta-a-espana-{year}", "vuelta"),
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------
