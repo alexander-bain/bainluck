@@ -2989,11 +2989,18 @@ def _assemble_completed_winner_field(
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
+    golf_data: dict | None = None,
 ) -> dict | None:
     """Build tournament data from closed/resolved markets for completed tournaments.
 
     Called when the main golf listing doesn't include the tournament (markets closed).
     Returns a tournament dict compatible with get_golf_tournament's expectations, or None.
+
+    ``golf_data`` is the golf listing the CALLER already holds. It is used for one
+    thing — reading ``pga_schedule`` — and passing it in is what stops this function
+    from rebuilding that entire listing a second time inside the same request
+    (LAT-P186). It stays optional so the function is still usable, and testable,
+    on its own; when it is omitted the cached listing is fetched here instead.
     """
     # LAT-P014/#1107: match on a NARROW projection, then hydrate only the matches.
     #
@@ -3087,13 +3094,19 @@ async def _build_completed_tournament(
         tournament_markets
     )
 
-    # Try to find schedule data from the golf API response (already cached)
+    # Try to find schedule data from the golf listing. LAT-P186: this comment said
+    # "already cached" and then called the UNCACHED `get_golf()`, so a completed
+    # tournament paid the full listing rebuild TWICE per request — once in
+    # `get_golf_tournament` to discover the slug was absent, and again here to read
+    # a single key off the result. The caller now hands its copy down; the cached
+    # read is only reached when this function is called directly.
     start_date = None
     end_date = None
     venue = None
     schedule_status = None
     try:
-        golf_data = await get_golf(db=db)
+        if golf_data is None:
+            golf_data = await get_golf_cached(db=db)
         schedule = golf_data.get("pga_schedule", [])
         for event in schedule:
             # Match by multiple strategies: display name slug, key slug, or
@@ -3148,8 +3161,37 @@ async def get_golf_tournament(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed tournament data for a specific golf tournament."""
-    # Reuse get_golf() for its caching and aggregation
-    golf_data = await get_golf(db=db)
+    # LAT-P186/#1107: this said "reuse get_golf() for its caching" and called the
+    # UNCACHED function. The caching lives in `get_golf_cached()` — its sibling
+    # thirty lines up, which is what `GET /api/golf` is wired to. So the golf
+    # landing page read Redis in ~45 ms while this route rebuilt the entire golf
+    # listing from scratch on every single request, and `_build_completed_tournament`
+    # (whose own comment also said "already cached") rebuilt it a SECOND time in the
+    # same request to read one field off it.
+    #
+    # MEASURED on production 2026-09-01, `x-timing-split`, median of 5:
+    #     /api/golf/tournaments/us-open       2,076 ms wall   1,556 ms app   q=19
+    #     /api/golf/tournaments/the-masters   1,795 ms wall   1,391 ms app   q=18
+    #     /api/golf            (cached)          45 ms wall       0 ms db    q=0
+    # `app` dominates every slug because the rebuild is mostly Python over every
+    # open golf market's eagerly-loaded outcomes, plus up to three DataGolf schedule
+    # fetches — none of which this route needs freshly built.
+    #
+    # Serving the cached listing is a FRESHNESS change and it was sized, not assumed:
+    #   - `/api/golf` and the Discover feed's golf base ALREADY serve exactly this
+    #     payload, so the detail page was the one surface that disagreed with them.
+    #   - Snapshot cadence for the currently-open golf markets is ~8 distinct hours
+    #     out of 26, with 4-6 hour gaps — the underlying prices move SLOWER than the
+    #     hourly precompute that writes this key.
+    #   - Cached vs live, compared field-by-field on both open tournaments:
+    #     15/15 golfers identical, 0 differing probabilities.
+    # `get_golf_cached` falls back to the live `get_golf()` on a cache miss, so a
+    # cold Redis degrades to exactly today's behaviour rather than to an error.
+    #
+    # Everything that must be current is still read live BELOW this line: the
+    # placement grid, round groups, related futures and the evolution-market pick
+    # all issue their own queries against the DB.
+    golf_data = await get_golf_cached(db=db)
 
     tournaments = golf_data.get("tournaments", [])
 
@@ -3164,7 +3206,7 @@ async def get_golf_tournament(
     if not tournament:
         # Fallback: tournament may have completed and its markets closed.
         # Query closed/resolved markets directly to serve completed tournament data.
-        tournament = await _build_completed_tournament(slug, db)
+        tournament = await _build_completed_tournament(slug, db, golf_data=golf_data)
         if not tournament:
             raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
 
