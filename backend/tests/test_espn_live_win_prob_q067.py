@@ -244,19 +244,35 @@ class _FakeSession:
     """Enough session to run the task: one candidate select, then updates,
     snapshot lookups and adds."""
 
-    def __init__(self, rows, existing_snapshot=None):
+    def __init__(self, rows, existing_snapshot=None, fail_merges=()):
         self.rows = rows
         self.existing_snapshot = existing_snapshot
+        #: 0-based indices of merge attempts that should raise, the way a real
+        #: Postgres statement error would.
+        self.fail_merges = set(fail_merges)
         self.updates = []          # ORM Core updates (stat_model's writer)
         self.merges = []           # the server-side JSONB merge this task uses
+        self.merge_attempts = 0
         self.added = []
         self.commits = 0
+        self.rollbacks = 0
+        self.aborted = False       # a real driver refuses everything after an error
 
     async def execute(self, stmt, params=None):
+        if self.aborted:
+            raise RuntimeError(
+                "current transaction is aborted, commands ignored until "
+                "end of transaction block"
+            )
         if isinstance(stmt, Update):
             self.updates.append(stmt.compile().params)
             return _FakeResult([])
         if isinstance(stmt, TextClause):
+            attempt = self.merge_attempts
+            self.merge_attempts += 1
+            if attempt in self.fail_merges:
+                self.aborted = True
+                raise RuntimeError("null value violates not-null constraint")
             self.merges.append(params or {})
             return _FakeResult([])
         # Selects are told apart by what they select, not by call order — the
@@ -275,7 +291,13 @@ class _FakeSession:
         self.added.append(obj)
 
     async def commit(self):
+        if self.aborted:
+            raise RuntimeError("cannot commit an aborted transaction")
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+        self.aborted = False
 
 
 class _Ctx:
@@ -455,6 +477,197 @@ class TestLiveWinProbTask:
         stats, _session, service = _run(monkeypatch, [], {})
         assert stats["status"] == "no_live_espn_events"
         assert service.calls == []
+
+
+class TestCERT653Repairs:
+    """The two ship failures CERT-653 blocked on, plus the transaction cascade it
+    named in passing. All three are two-cycle or two-game shapes — a single happy
+    call cannot see any of them, which is why the original 28 guards missed them."""
+
+    def test_a_failed_write_does_not_lose_the_chart_point(self, monkeypatch):
+        """CERT-653 [P1]. `_LAST_READING` used to advance before the write. When
+        the write failed, the next cycle saw the same `point_count`, took the
+        cached value with `value_is_new=False`, and never appended the point —
+        a transient DB error punching a permanent hole in the curve."""
+        mod._reset_caches_for_test()
+        session = _FakeSession([_row(stamp_age_s=2600)], fail_merges={0})
+        service = _ScriptedService(
+            {"baseball_mlb": ESPNLiveWinProbability(0.177, point_count=65)}
+        )
+        monkeypatch.setattr(mod, "get_task_session", lambda: _Ctx(session))
+        monkeypatch.setattr(
+            "app.services.espn_api.ESPNAPIService", lambda *a, **k: service
+        )
+
+        first = asyncio.run(mod._sync_espn_live_win_probability())
+        assert first["refreshed"] == 0
+        assert first["write_rollbacks"] == 1
+        assert session.rollbacks == 1
+        # Nothing durable, so nothing remembered.
+        assert mod._LAST_READING == {}
+
+        # Cycle two: the feed has NOT moved. The point must still land.
+        second = asyncio.run(mod._sync_espn_live_win_probability())
+        assert second["value_changed"] == 1, "the missed point was never written"
+        assert second["unchanged_reaffirmed"] == 0
+        assert {type(o).__name__ for o in session.added} == {
+            "ESPNSnapshot", "WinProbSnapshot"
+        }
+        # And the retry paid for a full read, not the 1-request shortcut.
+        assert service.calls[-1][2] is None
+
+    def test_a_failed_write_does_not_wipe_the_rest_of_the_slate(self, monkeypatch):
+        """A Postgres statement error aborts the TRANSACTION. Without a rollback
+        the per-item try/except turns one bad write into a wiped pass — exactly
+        the gotcha #42 failure it was written to prevent."""
+        mod._reset_caches_for_test()
+        rows = [_row(event_id=i, stamp_age_s=2600) for i in range(1, 5)]
+        session = _FakeSession(rows, fail_merges={0})
+        service = _ScriptedService(
+            {"baseball_mlb": ESPNLiveWinProbability(0.5, point_count=7)}
+        )
+        monkeypatch.setattr(mod, "get_task_session", lambda: _Ctx(session))
+        monkeypatch.setattr(
+            "app.services.espn_api.ESPNAPIService", lambda *a, **k: service
+        )
+        stats = asyncio.run(mod._sync_espn_live_win_probability())
+
+        assert stats["write_rollbacks"] == 1
+        assert stats["refreshed"] == 3, "healthy siblings must survive"
+        assert len(stats["errors"]) == 1
+        assert [m["event_id"] for m in session.merges] == [2, 3, 4]
+
+    def test_a_rolled_back_batch_is_not_remembered_as_written(self, monkeypatch):
+        """Writes commit in batches, so a rollback discards games that already
+        wrote successfully in the same batch. Those must be re-read, not cached."""
+        mod._reset_caches_for_test()
+        rows = [_row(event_id=i, stamp_age_s=2600) for i in range(1, 4)]
+        session = _FakeSession(rows, fail_merges={2})   # 1 and 2 write, 3 fails
+        service = _ScriptedService(
+            {"baseball_mlb": ESPNLiveWinProbability(0.5, point_count=7)}
+        )
+        monkeypatch.setattr(mod, "get_task_session", lambda: _Ctx(session))
+        monkeypatch.setattr(
+            "app.services.espn_api.ESPNAPIService", lambda *a, **k: service
+        )
+        asyncio.run(mod._sync_espn_live_win_probability())
+
+        # Events 1 and 2 wrote, but their batch never committed — the rollback
+        # took them with it, so nothing may claim they are durable.
+        assert mod._LAST_READING == {}
+
+    def test_a_404_retires_the_event_not_the_league(self, monkeypatch):
+        """CERT-653 [P1]. `status in (400, 404)` collapsed two scopes: 400 is the
+        league saying it has no probabilities, 404 is one stale espn_id. Reading
+        the second as the first stopped every MLB curve on the worker."""
+        mod._reset_caches_for_test()
+        rows = [_row(event_id=1), _row(event_id=2)]
+        session = _FakeSession(rows)
+
+        def script(known):
+            # Only the FIRST event id is unknown to ESPN.
+            return script.by_call.pop(0)
+        script.by_call = [
+            ESPNLiveWinProbability(None, event_missing=True),
+            ESPNLiveWinProbability(0.61, point_count=12),
+        ]
+        service = _ScriptedService({"baseball_mlb": script})
+        monkeypatch.setattr(mod, "get_task_session", lambda: _Ctx(session))
+        monkeypatch.setattr(
+            "app.services.espn_api.ESPNAPIService", lambda *a, **k: service
+        )
+        stats = asyncio.run(mod._sync_espn_live_win_probability())
+
+        assert stats["event_not_found"] == 1
+        assert stats["refreshed"] == 1, "the sibling game must still refresh"
+        assert "baseball_mlb" not in mod._UNSUPPORTED_LEAGUES
+        assert session.merges[0]["event_id"] == 2
+
+    def test_a_persistently_404ing_event_stops_costing_a_request(self, monkeypatch):
+        mod._reset_caches_for_test()
+        service_calls = []
+
+        for cycle in range(mod.MAX_EVENT_404_STRIKES + 2):
+            session = _FakeSession([_row(event_id=1)])
+            service = _ScriptedService(
+                {"baseball_mlb": ESPNLiveWinProbability(None, event_missing=True)}
+            )
+            monkeypatch.setattr(mod, "get_task_session", lambda s=session: _Ctx(s))
+            monkeypatch.setattr(
+                "app.services.espn_api.ESPNAPIService", lambda *a, s=service, **k: s
+            )
+            stats = asyncio.run(mod._sync_espn_live_win_probability())
+            service_calls.append(len(service.calls))
+
+        assert service_calls == [1] * mod.MAX_EVENT_404_STRIKES + [0, 0]
+        assert stats["event_retired_404"] == 1
+        assert "baseball_mlb" not in mod._UNSUPPORTED_LEAGUES
+
+    def test_a_transient_404_that_clears_does_not_accumulate_strikes(self, monkeypatch):
+        mod._reset_caches_for_test()
+        for reading in (
+            ESPNLiveWinProbability(None, event_missing=True),
+            ESPNLiveWinProbability(0.4, point_count=2),
+            ESPNLiveWinProbability(None, event_missing=True),
+        ):
+            session = _FakeSession([_row(event_id=1, stamp_age_s=2600)])
+            service = _ScriptedService({"baseball_mlb": reading})
+            monkeypatch.setattr(mod, "get_task_session", lambda s=session: _Ctx(s))
+            monkeypatch.setattr(
+                "app.services.espn_api.ESPNAPIService", lambda *a, s=service, **k: s
+            )
+            asyncio.run(mod._sync_espn_live_win_probability())
+
+        # A good read clears the count, so an event that flickers is never retired.
+        assert mod._EVENT_404_STRIKES[1] == 1
+
+    def test_the_service_keeps_the_two_statuses_apart(self):
+        for status, expect in ((400, "league"), (404, "event")):
+            svc = _RecordingService(_core_responses(), statuses={"index": status})
+            r = asyncio.run(svc.get_live_win_probability("baseball_mlb", "1"))
+            assert r is not None
+            if expect == "league":
+                assert r.supported is False and r.event_missing is False
+            else:
+                assert r.supported is True and r.event_missing is True
+
+    def test_a_real_404_over_the_real_service_spares_the_league(self, monkeypatch):
+        """End of the chain, not the middle of it. The two tests above each hold
+        one half — the service returning the right flag, and the task acting on
+        it — and neither would catch the halves being rewired. This one drives a
+        genuine HTTP 404 through `ESPNAPIService` into the task."""
+        mod._reset_caches_for_test()
+        rows = [_row(event_id=1), _row(event_id=2)]
+        session = _FakeSession(rows)
+
+        class _PerEventService(ESPNAPIService):
+            def __init__(self):
+                super().__init__()
+                self.script = _core_responses(point_count=12, home=0.61)
+                self.urls = []
+
+            async def _get_with_status(self, url):
+                self.urls.append(url)
+                if "/events/401816701/" in url:      # event 1's espn_id
+                    return 404, None
+                if "?limit=1&page=" in url:
+                    return 200, self.script["page"]
+                if url.endswith("probabilities?limit=1"):
+                    return 200, self.script["index"]
+                return 200, self.script["point"]
+
+        service = _PerEventService()
+        monkeypatch.setattr(mod, "get_task_session", lambda: _Ctx(session))
+        monkeypatch.setattr(
+            "app.services.espn_api.ESPNAPIService", lambda *a, **k: service
+        )
+        stats = asyncio.run(mod._sync_espn_live_win_probability())
+
+        assert stats["event_not_found"] == 1
+        assert stats["refreshed"] == 1
+        assert "baseball_mlb" not in mod._UNSUPPORTED_LEAGUES
+        assert session.merges[0]["event_id"] == 2
+        assert session.merges[0]["home"] == pytest.approx(0.61)
 
 
 class TestTheEntryMatchesTheCanonicalWriter:

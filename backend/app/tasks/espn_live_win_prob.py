@@ -91,16 +91,34 @@ MAX_GAME_AGE_HOURS = 10
 #: (gotcha #6: a module-global cache never holds live ORM rows).
 _UNSUPPORTED_LEAGUES: set[str] = set()
 
-#: event_id -> (point_count, home_win_probability) from the last successful read,
-#: so an unchanged feed costs one request instead of three. Plain data, bounded
-#: by `_forget_finished_events` to the games currently in flight.
+#: event_id -> (point_count, home_win_probability), and ONLY for readings whose
+#: write has been COMMITTED.
+#:
+#: CERT-653 [P1]: this used to advance the moment the reading was fetched. If the
+#: write then failed, the next cycle saw an unchanged `point_count`, took the
+#: cached value with `value_is_new=False`, re-stamped, and never appended the
+#: chart point — so one transient database error permanently punched a hole in the
+#: very curve this task exists to draw. A cache that says "we have this" is only
+#: honest after the row is durable, so entries are promoted at the commit boundary
+#: and dropped on rollback.
 _LAST_READING: dict[int, tuple[int, float]] = {}
+
+#: event_id -> consecutive 404s from ESPN. A 404 means THIS event id is unknown to
+#: ESPN, which for a stale or wrong `espn_id` never resolves; three strikes retires
+#: the event so it stops costing a request every minute. It never retires the
+#: league (CERT-653 [P1] — that was the bug).
+_EVENT_404_STRIKES: dict[int, int] = {}
+
+#: Consecutive 404s before an event stops being probed. Not one: ESPN can 404 a
+#: game briefly while its own feed opens.
+MAX_EVENT_404_STRIKES = 3
 
 
 def _reset_caches_for_test() -> None:
     """Clear the process-global memos. Tests only."""
     _UNSUPPORTED_LEAGUES.clear()
     _LAST_READING.clear()
+    _EVENT_404_STRIKES.clear()
 
 
 def _forget_finished_events(live_event_ids) -> None:
@@ -109,8 +127,9 @@ def _forget_finished_events(live_event_ids) -> None:
     A worker that runs for weeks would otherwise accumulate one entry per game
     it ever saw. The live slate is the natural bound.
     """
-    for stale_id in [k for k in _LAST_READING if k not in live_event_ids]:
-        _LAST_READING.pop(stale_id, None)
+    for cache in (_LAST_READING, _EVENT_404_STRIKES):
+        for stale_id in [k for k in cache if k not in live_event_ids]:
+            cache.pop(stale_id, None)
 
 
 def _parse_stamp(raw):
@@ -188,11 +207,22 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
         "unchanged_reaffirmed": 0,
         "no_reading": 0,
         "unsupported_league": 0,
+        "event_not_found": 0,
+        "event_retired_404": 0,
         "already_fresh": 0,
         "over_budget": 0,
         "out_of_time": 0,
+        "write_rollbacks": 0,
         "errors": [],
     }
+    #: Readings written but NOT yet committed. Promoted into `_LAST_READING` only
+    #: when the commit lands, dropped on rollback (CERT-653 [P1]).
+    pending: dict[int, tuple[int, float]] = {}
+
+    async def _commit(session):
+        await session.commit()
+        _LAST_READING.update(pending)
+        pending.clear()
 
     now = datetime.now(timezone.utc)
     deadline = now + timedelta(seconds=DEADLINE_SECONDS)
@@ -220,6 +250,9 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
                         continue
                     if sport_key in _UNSUPPORTED_LEAGUES:
                         stats["unsupported_league"] += 1
+                        continue
+                    if _EVENT_404_STRIKES.get(row.id, 0) >= MAX_EVENT_404_STRIKES:
+                        stats["event_retired_404"] += 1
                         continue
 
                     stamp = _parse_stamp(_espn_stamp_of(row.win_probability_sources))
@@ -259,6 +292,21 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
                         )
                         continue
 
+                    if reading.event_missing:
+                        # ESPN does not know THIS id. Never the league.
+                        strikes = _EVENT_404_STRIKES.get(row.id, 0) + 1
+                        _EVENT_404_STRIKES[row.id] = strikes
+                        stats["event_not_found"] += 1
+                        if strikes >= MAX_EVENT_404_STRIKES:
+                            logger.warning(
+                                "ESPN has 404'd event %s (espn_id=%s, %s) %d times — "
+                                "retiring this EVENT, not the league. A wrong espn_id "
+                                "is the usual cause.",
+                                row.id, row.espn_id, sport_key, strikes,
+                            )
+                        continue
+                    _EVENT_404_STRIKES.pop(row.id, None)
+
                     home_wp = reading.home_win_probability
                     if home_wp is None:
                         # The feed has not moved since our last read. Re-affirm
@@ -273,16 +321,32 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
                         home_wp = round(float(home_wp), 4)
                         value_is_new = cached is None or cached[1] != home_wp
 
-                    if reading.point_count is not None:
-                        _LAST_READING[row.id] = (reading.point_count, home_wp)
-
                     try:
                         await _write_reading(
                             session, row, home_wp, value_is_new=value_is_new,
                         )
                     except Exception as e:
+                        # A Postgres statement error aborts the TRANSACTION, so
+                        # without this rollback every later game in the slate dies
+                        # on `InFailedSQLTransaction` — one bad write becomes a
+                        # wiped pass, which is the gotcha #42 class the per-item
+                        # try/except was supposed to prevent. The rollback also
+                        # discards the uncommitted writes since the last commit,
+                        # so `pending` is dropped with them: those games must be
+                        # re-read and re-written, not remembered as done.
                         stats["errors"].append(f"write_{row.id}: {str(e)[:80]}")
+                        stats["write_rollbacks"] += 1
+                        pending.clear()
+                        try:
+                            await session.rollback()
+                        except Exception as rb:
+                            stats["errors"].append(f"rollback: {str(rb)[:80]}")
+                            raise
                         continue
+
+                    # Only now, and still only provisionally — the commit promotes it.
+                    if reading.point_count is not None:
+                        pending[row.id] = (reading.point_count, home_wp)
 
                     stats["refreshed"] += 1
                     if value_is_new:
@@ -291,9 +355,9 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
                         stats["unchanged_reaffirmed"] += 1
 
                     if stats["refreshed"] % COMMIT_EVERY == 0:
-                        await session.commit()
+                        await _commit(session)
 
-                await session.commit()
+                await _commit(session)
             finally:
                 await service.close()
 

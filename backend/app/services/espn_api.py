@@ -132,6 +132,12 @@ class ESPNLiveWinProbability:
     last_modified: Optional[str] = None
     point_count: Optional[int] = None
     supported: bool = True
+    #: This ONE event id is unknown to ESPN (404 "No event found for eventId").
+    #: Kept apart from `supported` because they are different scopes and CERT-653
+    #: caught them collapsed: a 404 is an event-level miss — a stale or wrong
+    #: `espn_id` on one row — and reading it as "the league has no probabilities"
+    #: retired every MLB game on the worker until it restarted.
+    event_missing: bool = False
 
 
 class ESPNAPIService:
@@ -590,8 +596,13 @@ class ESPNAPIService:
         )
 
         status, index = await self._get_with_status(f"{base}?limit=1")
-        if status in (400, 404):
+        # 400 is the LEAGUE speaking: "Probabilities are not supported for sport:
+        # soccer, league: eng.1". 404 is one event id speaking: "No event found
+        # for eventId". Same falsy body, different blast radius — gotcha #53.
+        if status == 400:
             return ESPNLiveWinProbability(None, supported=False)
+        if status == 404:
+            return ESPNLiveWinProbability(None, event_missing=True)
         if not index:
             return None
 
