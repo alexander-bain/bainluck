@@ -9,6 +9,7 @@ The property that matters is TOTALITY. A sharded suite whose partition drops a
 file reports green while testing less, and nothing about that green looks wrong.
 """
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -110,3 +111,54 @@ def test_every_shard_is_nonempty_at_the_configured_count():
     assert len(real) > 100, "test discovery found almost nothing"
     for i, b in enumerate(ci_shard.partition(real, 4), start=1):
         assert b, f"shard {i} of 4 is empty"
+
+
+def test_verify_says_how_much_of_its_skew_estimate_is_actually_measured(monkeypatch, capsys):
+    """A skew estimate computed from placeholders must not read as a healthy one.
+
+    LAT-P183. `--verify` graded the packing with the SAME weights LPT packed
+    against, so the two cancelled to a confident zero wherever a weight was the
+    DEFAULT_WEIGHT placeholder rather than a measurement. On 2026-09-01 that was
+    481 of 1,080 files, and the line printed `estimated shard skew: 0.0%` for a
+    partition whose legs ran 328s / 506s / 411s / 324s on the runner — 56% real
+    skew, reported as perfect balance. Nothing raised, because nothing was
+    broken; the estimate simply had nothing to see.
+
+    Two arms, because a warning that fires always is as useless as one that never
+    fires: mostly-unmeasured must warn, fully-measured must not.
+    """
+    files = ci_shard.discover_test_files()
+    monkeypatch.setattr(ci_shard, "pytest_collected_files", lambda: (files, ""))
+    args = argparse.Namespace(of=4)
+
+    # Arm 1: hints cover a small minority of the suite — the 2026-09-01 state.
+    monkeypatch.setattr(ci_shard, "load_durations", lambda: {f: 1.0 for f in files[:5]})
+    assert ci_shard.cmd_verify(args) == 0, "staleness is a wall-clock cost, never a failure"
+    stale = capsys.readouterr().out
+    assert "::warning::" in stale and "STALE" in stale
+    assert "--record" in stale, "the warning must say how to fix it"
+    assert "DEFAULT_WEIGHT placeholder" in stale, "the skew line must disclose its basis"
+
+    # Arm 2: every file measured — the estimate is worth reading, so stay quiet.
+    monkeypatch.setattr(ci_shard, "load_durations", lambda: {f: 1.0 for f in files})
+    assert ci_shard.cmd_verify(args) == 0
+    fresh = capsys.readouterr().out
+    assert "STALE" not in fresh
+    assert f"{len(files)}/{len(files)} measured files" in fresh
+
+
+def test_the_shipped_hints_are_not_stale_right_now():
+    """The state LAT-P183 left the repo in, pinned so a silent decay is visible.
+
+    Deliberately asserts against the SAME threshold `--verify` warns on, so this
+    test and CI's warning can never disagree about what stale means.
+    """
+    files = ci_shard.discover_test_files()
+    weights = json.loads((BACKEND / "scripts" / "ci_shard_durations.json").read_text())["files"]
+    measured = sum(1 for f in files if f in weights)
+    coverage = 100.0 * measured / len(files)
+    assert coverage >= ci_shard.STALE_HINTS_COVERAGE_PCT, (
+        f"only {measured}/{len(files)} ({coverage:.0f}%) test files have a measured duration. "
+        "The shards are being packed by guess and the wall clock is paying for it. "
+        "Refresh from a CI run's logs: python scripts/ci_shard.py --record <log>"
+    )

@@ -99,6 +99,37 @@ jobs:
         # -q against pytest.ini's `addopts = -v`: verbosity is summed, so the
         # old `tests/ -v` here actually ran at verbosity 2. This lands at 0 —
         # progress dots, with --tb=short preserved for real failures.
+        #
+        # `--durations=0` is what keeps the BALANCE HINTS honest, and it is not
+        # decoration. `scripts/ci_shard.py` packs the shards LPT-greedy against
+        # measured per-file seconds in `ci_shard_durations.json`; a file with no
+        # measurement is packed at the flat DEFAULT_WEIGHT guess instead. That
+        # file was last recorded by hand on 2026-08-10 and by 2026-09-01 it
+        # covered 599 of 1,061 test files — so 44% of the suite, and roughly
+        # two thirds of the packer's total weight budget, was a constant rather
+        # than a measurement. The packer was balancing a fiction, and the shards
+        # it produced ran 338s / 247s / 244s / 221s at p50 (n=604 runs): the job
+        # waits for the slowest leg, so 79s of every run at p50 and 114s at p90
+        # was pure imbalance — 13.0 hours of CI wall clock over 30 days.
+        #
+        # A hint file that can only be refreshed by remembering to refresh it
+        # goes stale again, and the staleness is silent: the partition stays
+        # total and disjoint, CI stays green, and only the clock knows. So every
+        # run now emits the measurement its own next partition needs, and a
+        # refresh is a log download rather than a local suite run:
+        #
+        #   python scripts/ci_shard.py --record <(cat shard1.log ... shard4.log)
+        #
+        # Recording from the RUNNER's clock rather than a laptop's is not a
+        # convenience either. Local wall clock is ~3.5x the runner's on this
+        # suite and the ratio is not uniform across files — integration tests
+        # stretch far more than unit tests — so weights recorded locally
+        # mis-rank files against each other and pack a worse partition than the
+        # runner's own numbers do.
+        #
+        # Cost: pytest suppresses sub-5ms entries, so this adds a bounded tail
+        # of a few thousand lines to a log that is already ~100 KB. It changes
+        # no test, no selection and no exit code.
         run: |
           set -o pipefail
           FILES="$(python scripts/ci_shard.py --shard ${{ matrix.shard }} --of ${{ strategy.job-total }})"
@@ -108,7 +139,7 @@ jobs:
             exit 1
           fi
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: $(echo $FILES | wc -w) test files"
-          python -m pytest $FILES -q
+          python -m pytest $FILES -q --durations=0
 
   # Item 1.4 — the assertion that makes sharding safe to trust.
   #

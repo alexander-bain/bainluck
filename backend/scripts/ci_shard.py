@@ -57,6 +57,11 @@ DURATIONS_FILE = Path(__file__).resolve().parent / "ci_shard_durations.json"
 # whichever bin happens to be last.
 DEFAULT_WEIGHT = 2.0
 
+# Below this share of files carrying a real measurement, `--verify` stops
+# presenting its skew estimate as informative and says the hints are stale.
+# See the long comment in `cmd_verify` for why this warns rather than fails.
+STALE_HINTS_COVERAGE_PCT = 90.0
+
 
 def discover_test_files() -> list[str]:
     """Every `test_*.py` under tests/, as posix paths relative to backend/.
@@ -183,13 +188,46 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 f"(empty or fully-skipped?): {phantom}"
             )
 
-    loads = [
-        round(sum(load_durations().get(f, DEFAULT_WEIGHT) for f in b), 1) for b in bins
-    ]
+    weights = load_durations()
+    loads = [round(sum(weights.get(f, DEFAULT_WEIGHT) for f in b), 1) for b in bins]
     print(f"shards={args.of} files={len(ours)} collected={len(collected)} est_seconds={loads}")
+
+    # THE SKEW NUMBER IS ONLY WORTH THE WEIGHTS IT IS COMPUTED FROM, SO SAY SO.
+    #
+    # LPT packs against `weights` and this line then grades the packing with the
+    # same `weights` — so it is not an independent check, and where a weight is
+    # the DEFAULT_WEIGHT placeholder it is not a measurement at all. Both halves
+    # cancel to a confident zero. Measured 2026-09-01: 599 of 1,080 files had a
+    # recorded duration, and this line printed "estimated shard skew: 0.0%" for
+    # a partition whose legs ran 328s / 506s / 411s / 324s on the runner — 56%
+    # real skew, reported as perfect. Nothing was broken; the estimate simply had
+    # nothing to see, and an estimate with nothing to see reads exactly like a
+    # healthy one. That is the same shape as a green from a gate that never ran.
+    #
+    # So the coverage is printed next to the skew, always, and drifts loudly.
+    # A WARNING and not an error, deliberately: staleness costs wall clock, never
+    # correctness — the partition is total and disjoint whatever the weights say —
+    # and a step that reds a legitimate push (adding a batch of test files) is a
+    # step that acquires a `|| true`. The threshold sits far below normal churn:
+    # at 1,080 files it takes ~108 unmeasured newcomers to trip, which is
+    # staleness rather than a busy week.
+    measured = sum(1 for f in ours if f in weights)
+    coverage = 100.0 * measured / len(ours) if ours else 0.0
     if loads and min(loads) > 0:
         skew = (max(loads) - min(loads)) / min(loads) * 100
-        print(f"estimated shard skew: {skew:.1f}% (slowest vs fastest)")
+        print(
+            f"estimated shard skew: {skew:.1f}% (slowest vs fastest) — computed from "
+            f"{measured}/{len(ours)} measured files ({coverage:.0f}% of the suite); "
+            f"the rest are packed at the {DEFAULT_WEIGHT}s DEFAULT_WEIGHT placeholder"
+        )
+    if coverage < STALE_HINTS_COVERAGE_PCT:
+        print(
+            f"::warning::shard balance hints are STALE — only {measured}/{len(ours)} files "
+            f"({coverage:.0f}%) have a measured duration, so the skew above is largely "
+            f"fiction and the shards are packed by guess. Refresh from a CI run's own logs: "
+            f"download the four backend-tests job logs, strip the timestamp prefix, and run "
+            f"`python scripts/ci_shard.py --record <concatenated.log>`."
+        )
 
     if failures:
         for f in failures:
