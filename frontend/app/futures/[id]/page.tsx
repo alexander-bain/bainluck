@@ -1392,7 +1392,18 @@ function RelatedEventRow({ event }: { event: RelatedEvent }) {
       <div className="flex items-center gap-3 flex-shrink-0">
         {event.linked_teams.map((lt) => (
           <span key={lt.team_name} className="text-xs text-text-secondary">
-            <span className="font-medium text-text-primary">{lt.team_name.split(" ").pop()}</span>
+            {/* #2553: this was `lt.team_name.split(" ").pop()` — the last word,
+                on the theory that the last word of a team name is its nickname.
+                It is for "Cincinnati Reds"; it is not for the half of world
+                sport that puts the club type at the END. The same strip printed
+                three favourites as "FC", "City" and "FC" (San Diego FC,
+                Sporting Kansas City, Minnesota United FC), which is not a
+                shortened name, it is no name at all.
+                The whole name, truncated by the box if it has to be: a clipped
+                "Philadelphia Phi…" still says who, and "FC" never did. */}
+            <span className="font-medium text-text-primary max-w-[10rem] truncate inline-block align-bottom">
+              {lt.team_name}
+            </span>
             {lt.probability !== null && (
               <span className="ml-1 font-mono text-text-muted">
                 {Math.round(lt.probability * 100)}%
