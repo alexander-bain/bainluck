@@ -45,10 +45,11 @@ population it serves is 16 simultaneous live MLB games (p90 = 11) over the last
 7 days, so the default budget covers the whole slate at its busiest.
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update as _sql_update
+from sqlalchemy import select, text
 
 from app.models.models import Event, Sport
 from app.tasks.base import get_task_session
@@ -311,6 +312,47 @@ async def _sync_espn_live_win_probability(budget: int = DEFAULT_EVENT_BUDGET):
     return stats
 
 
+#: Merge ONE source key server-side instead of writing back a dict we read.
+#:
+#: Every other writer of `win_probability_sources` does read-modify-write through
+#: `stamp_source_reading` and gets away with it because it reads and writes in the
+#: same breath. This task cannot: it selects the whole live slate up front and
+#: then spends up to 1.77 s of network per game, so a row picked up late in the
+#: cycle was read tens of seconds ago — and in those seconds Kalshi (p50 age
+#: 7.4 s) and the betting line (23.1 s) have both written. Writing our
+#: remembered dict back would silently roll their readings backwards, once a
+#: minute, on exactly the live games this queue exists to keep fresh.
+#:
+#: `CAST(:entry AS jsonb)` and not `:entry::jsonb` — asyncpg reads `::` as the
+#: start of a bind parameter.
+_MERGE_ESPN_SOURCE = text("""
+    UPDATE events
+    SET win_probability_sources = jsonb_set(
+            COALESCE(win_probability_sources, '{}'::jsonb),
+            '{espn}',
+            CASE
+                WHEN jsonb_typeof(win_probability_sources -> 'espn') = 'object'
+                    THEN (win_probability_sources -> 'espn') || CAST(:entry AS jsonb)
+                ELSE CAST(:entry AS jsonb)
+            END,
+            true
+        ),
+        espn_win_prob_home = :home
+    WHERE id = :event_id
+""")
+
+
+def espn_source_entry(home_wp: float, now=None) -> dict:
+    """The `win_probability_sources.espn` entry this task writes.
+
+    Kept byte-identical to what `stamp_source_reading` produces, and pinned to it
+    by a guard, because that function's docstring asks every writer of this
+    column to route through it and this one deliberately does not (see
+    `_MERGE_ESPN_SOURCE` for why). Same shape, different transport.
+    """
+    return stamp_source_reading({}, "espn", home_wp, now=now)["espn"]
+
+
 async def _write_reading(session, row, home_wp: float, value_is_new: bool):
     """Persist one reading: the blend stamp, and — if it moved — the chart point.
 
@@ -325,12 +367,13 @@ async def _write_reading(session, row, home_wp: float, value_is_new: bool):
 
     away_wp = round(1.0 - home_wp, 4)
 
-    # gotcha #4: JSONB goes out through a Core update, never ORM assignment.
-    stamped = stamp_source_reading(row.win_probability_sources, "espn", home_wp)
     await session.execute(
-        _sql_update(Event)
-        .where(Event.id == row.id)
-        .values(win_probability_sources=stamped, espn_win_prob_home=home_wp)
+        _MERGE_ESPN_SOURCE,
+        {
+            "entry": json.dumps(espn_source_entry(home_wp)),
+            "home": home_wp,
+            "event_id": row.id,
+        },
     )
 
     if not value_is_new:

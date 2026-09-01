@@ -23,12 +23,14 @@ C. `compute_and_write_stat_model` stopped at `ee.status != "in"`, which is what
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.sql import Update
+from sqlalchemy.sql.elements import TextClause
 
 from app.services.espn_api import (
     ESPNAPIService,
@@ -245,21 +247,29 @@ class _FakeSession:
     def __init__(self, rows, existing_snapshot=None):
         self.rows = rows
         self.existing_snapshot = existing_snapshot
-        self.updates = []
+        self.updates = []          # ORM Core updates (stat_model's writer)
+        self.merges = []           # the server-side JSONB merge this task uses
         self.added = []
         self.commits = 0
 
-    async def execute(self, stmt):
+    async def execute(self, stmt, params=None):
         if isinstance(stmt, Update):
             self.updates.append(stmt.compile().params)
             return _FakeResult([])
-        # Told apart by what they select, not by call order — the task runs more
-        # than once per test and a counter would silently stop serving
-        # candidates on the second cycle.
+        if isinstance(stmt, TextClause):
+            self.merges.append(params or {})
+            return _FakeResult([])
+        # Selects are told apart by what they select, not by call order — the
+        # task runs more than once per test and a counter would silently stop
+        # serving candidates on the second cycle.
         names = {c["name"] for c in stmt.column_descriptions}
         if "espn_id" in names:
             return _FakeResult(self.rows)
         return _FakeResult([self.existing_snapshot] if self.existing_snapshot else [])
+
+    def espn_entry(self, i=0):
+        """The `win_probability_sources.espn` entry written by merge `i`."""
+        return json.loads(self.merges[i]["entry"])
 
     def add(self, obj):
         self.added.append(obj)
@@ -321,14 +331,16 @@ class TestLiveWinProbTask:
         assert stats["value_changed"] == 1
         assert service.closed is True
 
-        params = session.updates[0]
-        assert params["espn_win_prob_home"] == pytest.approx(0.177)
-        espn = params["win_probability_sources"]["espn"]
+        assert session.merges[0]["home"] == pytest.approx(0.177)
+        assert session.merges[0]["event_id"] == 1
+        espn = session.espn_entry(0)
         assert espn["value"] == pytest.approx(0.177)
         # The stamp is the point of the whole task.
         assert _parse(espn["updated_at"]) > datetime.now(timezone.utc) - timedelta(seconds=60)
-        # Siblings survive the JSONB write (gotcha #4's other half).
-        assert params["win_probability_sources"]["kalshi"]["value"] == 0.29
+        # Only the espn key is sent. The siblings are never read back and
+        # rewritten, so a Kalshi tick landing mid-cycle cannot be rolled back.
+        assert set(session.merges[0]) == {"entry", "home", "event_id"}
+        assert set(espn) == {"value", "updated_at"}
 
         # Both series get the point: espn_snapshots feeds the models page,
         # win_prob_snapshots feeds the multi-source chart.
@@ -364,10 +376,8 @@ class TestLiveWinProbTask:
         assert stats["unchanged_reaffirmed"] == 1
         assert stats["value_changed"] == 0
         # Stamp written on the second cycle...
-        assert len(session.updates) == 2
-        assert session.updates[1]["win_probability_sources"]["espn"]["value"] == (
-            pytest.approx(0.177)
-        )
+        assert len(session.merges) == 2
+        assert session.espn_entry(1)["value"] == pytest.approx(0.177)
         # ...and NO second chart point, because nothing happened in the game.
         assert len(session.added) == 2
 
@@ -390,9 +400,7 @@ class TestLiveWinProbTask:
             {"baseball_mlb": ESPNLiveWinProbability(0.44, point_count=3)},
         )
         assert stats["refreshed"] == 1
-        assert session.updates[0]["win_probability_sources"]["espn"]["value"] == (
-            pytest.approx(0.44)
-        )
+        assert session.espn_entry(0)["value"] == pytest.approx(0.44)
 
     def test_an_unsupported_league_is_asked_once_per_worker(self, monkeypatch):
         """Soccer has no ESPN win probability anywhere. One 400 retires the
@@ -441,12 +449,45 @@ class TestLiveWinProbTask:
 
         assert stats["refreshed"] == 1
         assert len(stats["errors"]) == 1
-        assert session.updates[0]["espn_win_prob_home"] == pytest.approx(0.71)
+        assert session.merges[0]["home"] == pytest.approx(0.71)
 
     def test_no_live_games_is_a_named_outcome(self, monkeypatch):
         stats, _session, service = _run(monkeypatch, [], {})
         assert stats["status"] == "no_live_espn_events"
         assert service.calls == []
+
+
+class TestTheEntryMatchesTheCanonicalWriter:
+    """`stamp_source_reading`'s docstring asks every writer of this column to
+    route through it. This task deliberately does not — it merges one key
+    server-side so a Kalshi tick landing mid-cycle cannot be rolled back by our
+    remembered dict. Same shape, different transport, and that has to stay true."""
+
+    def test_shape_is_byte_identical_to_stamp_source_reading(self):
+        from app.tasks.espn_live_win_prob import espn_source_entry
+        from app.utils.aggregation import stamp_source_reading
+
+        now = datetime(2026, 9, 1, 4, 32, 11, 123456, tzinfo=timezone.utc)
+        assert espn_source_entry(0.177, now=now) == (
+            stamp_source_reading({}, "espn", 0.177, now=now)["espn"]
+        )
+
+    def test_the_merge_touches_only_the_espn_key(self):
+        """Read as SQL, not as intent: the statement must name `{espn}` as its
+        `jsonb_set` path and must not assign the whole column."""
+        import re
+        from app.tasks.espn_live_win_prob import _MERGE_ESPN_SOURCE
+
+        sql = " ".join(str(_MERGE_ESPN_SOURCE).split())
+        assert "jsonb_set(" in sql and "'{espn}'" in sql
+        # The column is assigned exactly once, and only ever from a jsonb_set —
+        # never from a whole dict the caller brought with it.
+        assert re.findall(r"win_probability_sources\s*=\s*(\w+)", sql) == [
+            "jsonb_set"
+        ], sql
+        # asyncpg reads `::` as a bind parameter, so the cast must be CAST(...).
+        assert ":entry::jsonb" not in sql
+        assert "CAST(:entry AS jsonb)" in sql
 
 
 def _parse(raw):
