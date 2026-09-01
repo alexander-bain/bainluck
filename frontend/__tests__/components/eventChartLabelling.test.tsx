@@ -51,6 +51,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 import { TournamentBackLink } from "@/components/event/TournamentExtensions";
+import { eventTournamentKey } from "@/lib/eventOutcome";
 import type { EventTournamentResponse } from "@/lib/types";
 
 /** What `useSWR` will answer for the next render. */
@@ -170,6 +171,17 @@ describe("#2448 — the chart's labels, and the way back up", () => {
    * the SWR key verbatim so SWR dedupes them. A key spelled differently in the
    * two components would be a silent doubling of the round trip the eligibility
    * gate exists to avoid, and nothing on the page would look wrong.
+   *
+   * ⚠️ THIS GUARD PINNED THE LITERAL AND #2447 MOVED IT. The key was written
+   * out at each call site when this was authored; #2447 lifted it into
+   * `eventTournamentKey()` so the event page could share it, and the third
+   * assertion here — `toContain('["event-tournament", eventId]')` — went red
+   * against its own ship. The guard was right to redden, so the repair is not
+   * to delete the clause but to move it to where the key now lives: the call
+   * sites are asserted to route through the ONE resolver, and the resolver is
+   * asserted to still produce the wire key. Pinning only the call sites would
+   * let the key itself be renamed silently, which is the exact failure this
+   * test exists for.
    */
   it("every register read in this module uses ONE SWR key", () => {
     // Comments stripped: the doc comments quote the key, and a guard that
@@ -189,6 +201,14 @@ describe("#2448 — the chart's labels, and the way back up", () => {
     );
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(new Set(calls).size).toBe(1);
-    expect(calls[0]).toContain('["event-tournament", eventId]');
+    expect(calls[0]).toContain("eventTournamentKey(eventId)");
+
+    // The other surface — the event page's own read — goes through the same
+    // resolver, which is the half of "one request" this file cannot see.
+    const page = readFileSync(join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
+    expect(page).toContain("eventTournamentKey(eventId)");
+
+    // And the resolver still spells the wire key the route is mounted at.
+    expect(eventTournamentKey(4242)).toEqual(["event-tournament", 4242]);
   });
 });

@@ -348,9 +348,12 @@ export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): numbe
     }
     // The board's current number too: a contender whose history is one reading
     // draws no line, but its legend value is on screen and the axis must be
-    // able to contain it.
-    if (Number.isFinite(entry.probability) && entry.probability > max) {
-      max = entry.probability;
+    // able to contain it. `entry.probability` is nullable where `point`'s is
+    // not — a contender with no price at all — and `Number.isFinite` is not a
+    // type predicate, so the null is ruled out here rather than by it.
+    const current = entry.probability;
+    if (current !== null && Number.isFinite(current) && current > max) {
+      max = current;
     }
   }
   const wanted = max * CEILING_HEADROOM;
