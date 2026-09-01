@@ -25,6 +25,13 @@
  *   3. `scripts/fetch-shipped-copy.mjs` — the fetcher that fills that
  *      directory. It carries no rules of its own, deliberately: a scanner that
  *      re-declares the list is a scanner that drifts from it.
+ *   4. `noReadingCopyClaims.test.tsx` — the FOURTH consumer, and the only one
+ *      that applies `HISTORY_CLAIM_BANS`. It reads the empty-state / no-reading
+ *      producers by name, because that group's scope is WHERE the string lives
+ *      and only a render knows that. See the fence below.
+ *
+ * ⚠️ **THE FOUR DO NOT ALL APPLY THE SAME LIST ANY MORE, AND THAT IS THE POINT.**
+ * Consumers 1-3 carry `ALL_COPY_BANS`; consumer 4 carries `NO_READING_COPY_BANS`.
  *
  * ═══ WHAT IS BANNED, AND ON WHOSE AUTHORITY ═══
  *
@@ -35,6 +42,20 @@
  * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
  * | `PRICE_FORMAT_BANS` | the standing no-price-format ruling, #2442 | the reader gets a probability, never a betting line |
+ * | `HISTORY_CLAIM_BANS` | Alex D25-scope 2026-08-31 + **Alex COPY BAN, 2026-09-01** | the two sentences we actually shipped, as literals — **in the no-reading components only** |
+ *
+ * ⚠️ **THE LAST ROW IS THE ONLY GROUP THAT IS NOT CODEBASE-WIDE, AND THAT IS
+ * ALEX'S RULING, NOT AN IMPLEMENTATION CONVENIENCE.** It wanted a ruling for
+ * five rounds; on 2026-08-31 it got one, and the ruling was about SCOPE rather
+ * than about the words. See `ALL_COPY_BANS` / `NO_READING_COPY_BANS` below —
+ * the fence is the two lists, and the reasoning is written there.
+ *
+ * ⚠️ **AND IT IS THE ONLY GROUP THAT IS NOT A PATTERN.** On 2026-09-01 Alex
+ * ruled the grammar out of it entirely: the guard is a literal blocklist of the
+ * sentences production actually served, and the general rule — no accuracy or
+ * history claims, ever — is a rule for whoever writes the copy, in
+ * `docs/design-system.md`, not a regex. The reasoning is above
+ * `HISTORY_CLAIM_LITERALS`.
  *
  * ═══ WHAT IS NOT BANNED ═══
  *
@@ -335,6 +356,185 @@ export const PRICE_FORMAT_BANS: CopyBan[] = [
   },
 ];
 
+/**
+ * ═══ THE HISTORY CLAIMS — ALEX, "COPY BAN", 2026-09-01 ═══
+ *
+ * > I'd generally prefer not to broadly claim amazing accuracy… just write
+ * > better copy… **Why don't we just stop making broad claims in the first
+ * > place?**
+ *
+ * The ban stays. What is deleted is the machine that tried to *recognise* one.
+ *
+ * ═══ WHAT WAS HERE, AND WHAT IT COST ═══
+ *
+ * Until this commit this group was eleven regexes composed from three exported
+ * noun vocabularies (`READING`, `OUR_SUBJECT`, `MARKET_OBJECT`), a determiner
+ * list, a demonstrative page-subject anchor, a dangling-preposition heuristic
+ * for interpolated subjects, and a clause-window wrapper. Roughly four hundred
+ * lines whose whole job was to decide, from a bare string, whether an English
+ * sentence was making a claim about our record.
+ *
+ * It went to cert six times and came back BLOCK six times. **Not once was the
+ * finding a missed empty-state sentence.** Every round was the same shape: the
+ * classifier rejected ordinary, true prose. Verbatim from the cert log —
+ *
+ *   CERT-551  "Market data never reached us during the outage."
+ *   CERT-551  "There was no market access at any time during the outage."
+ *   CERT-549  "The ball never reached us in the upper deck."
+ *   CERT-549  "We never had a number to play for"
+ *   CERT-547  "Nobody ever reported the game was delayed."
+ *   CERT-547  "We never had an answer for their press."
+ *   CERT-546  "We never had a chance after halftime."
+ *   CERT-546  "The quarterback has not once received a snap under center."
+ *   CERT-539  "At no point did either player face a break point."
+ *   CERT-539  "The comeback was never complete."
+ *   CERT-539  "Nobody ever scored more than 30 points in this game."
+ *
+ * Each round answered by making the pattern cleverer, and each traded one
+ * direction of error for the other. Round 6 moved the fence instead of the
+ * pattern, which stopped the bleeding — the classifier now only reads two
+ * components — but left a four-hundred-line prose classifier sitting behind
+ * that fence, ready to do the same thing to the next sentence written inside it.
+ *
+ * ═══ WHY A LITERAL LIST IS NOT A RETREAT ═══
+ *
+ * The obvious objection is UX-P213's, and it was right about its own design: a
+ * literal cannot be widened without hand-enumerating grammar, so a paraphrase
+ * walks around it. That objection assumes the list is the thing stopping the
+ * claim from being written. **It is not, and it never was.**
+ *
+ * A regex cannot stop a writer from making a claim; it can only recognise the
+ * shapes somebody already thought of, and the record above is what it does to
+ * every shape nobody thought of. What stops the claim is the rule in the copy
+ * guide — `docs/design-system.md`, CONTENT FUNDAMENTALS: **our copy makes no
+ * accuracy claim and no claim about our whole record, ever.** That is a rule
+ * for a person, enforced at review, and it has no false-positive rate because
+ * a person can read the sentence.
+ *
+ * So the two layers do different jobs, and neither pretends to do the other's:
+ *
+ *   • **the copy guide** carries the general rule, unbounded and unhedged;
+ *   • **this list** carries the specific sentences we are known to have served,
+ *     so a revert, a rebase or a copy-paste cannot put one back silently.
+ *
+ * A regression guard is exactly what a literal list is good at, and it is the
+ * only claim this list makes.
+ *
+ * ═══ THE BAR FOR ADDING A LINE ═══
+ *
+ * An entry needs `seen` — the commit that served it. **Not a sentence somebody
+ * worried about; a sentence a reader could have read.** That is the whole
+ * discipline: without it this list grows back into the classifier by
+ * accumulation, one plausible paraphrase at a time.
+ */
+
+/** A sentence production actually served, recorded as the bytes it served. */
+export interface CopyBanLiteral {
+  /** Stable id, so a report can name the line that fired. */
+  id: string;
+  /**
+   * The exact substring, copied from the commit named in `seen`.
+   *
+   * A FRAGMENT, not a whole sentence, wherever the shipped copy interpolated:
+   * the template `No number ever reached us for ${who}, so this comparison was
+   * never complete.` never existed as one string, and both halves are
+   * independently the claim.
+   */
+  literal: string;
+  /** The commit that served it — the evidence, and the bar for a new entry. */
+  seen: string;
+  why: string;
+}
+
+/**
+ * The sentences, and there are only ever the ones we shipped.
+ *
+ * Both come from `TournamentProps.incompleteComparisonNote` as it stood at
+ * `a227c5c4` (UX-P211, live 2026-08-30/31) and were replaced by `fa8abe08`
+ * (UX-P212) after CERT-537 found them. The card printed a claim about all of
+ * history directly above the `observed_at` field that disproves it: a row with
+ * `probability: null` and a populated timestamp is ordinary wire data, and the
+ * timestamp is positive proof that a number DID reach us.
+ *
+ * ⚠️ THE TAILS ARE ASYMMETRIC ON PURPOSE, AND GETTING THIS WRONG WOULD BAN THE
+ * FIX. The condemned settled sentence ends `…so this comparison was never
+ * complete.`; the sentence shipping TODAY ends `…so this comparison is not
+ * complete.` Only the first is here. The second tail is the repair, it is on
+ * production right now, and a list that banned it would fail the build on the
+ * copy the ruling asked for.
+ */
+export const HISTORY_CLAIM_LITERALS: CopyBanLiteral[] = [
+  {
+    id: "no-number-ever-reached-us",
+    literal: "No number ever reached us for",
+    seen: "a227c5c4 (UX-P211), replaced by fa8abe08 (UX-P212) after CERT-537",
+    why: "quantifies over all of history; the payload carries the latest observation, not the archive — and `observed_at` beside it often proves a number DID reach us",
+  },
+  {
+    id: "comparison-was-never-complete",
+    // The served template reads `…, so this comparison was never complete.`
+    // The leading "so " is dropped: it is the conjunction that joined this
+    // clause to the one before it, not part of the claim, and keeping it would
+    // let the identical sentence through the moment it stood on its own.
+    literal: "this comparison was never complete",
+    seen: "a227c5c4 (UX-P211), replaced by fa8abe08 (UX-P212) after CERT-537",
+    why: "settles a question about the whole past that no field on the card records; the shipped repair says `is not complete`, about the present",
+  },
+  {
+    id: "no-number-has-reached-us",
+    literal: "No number has reached us for",
+    seen: "a227c5c4 (UX-P211), replaced by fa8abe08 (UX-P212) — the open-tense twin CERT-537 did not render",
+    why: "the identical claim about our record in the present perfect, disproven by the identical field; the shipped repair says `We have no number for`, about what we hold now",
+  },
+];
+
+/** Regex metacharacters, so a literal is matched as the bytes it is. */
+function escapeLiteral(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A literal entry as a `CopyBan`, so every consumer keeps one shape.
+ *
+ * Case-insensitive and nothing else. No word boundaries, no clause windows, no
+ * vocabulary — a re-shipped sentence in different casing is the same sentence,
+ * and any other latitude is the classifier coming back.
+ */
+export function literalBan(entry: CopyBanLiteral): CopyBan {
+  return {
+    id: entry.id,
+    pattern: new RegExp(escapeLiteral(entry.literal), "i"),
+    why: `${entry.why} (served at ${entry.seen})`,
+  };
+}
+
+export const HISTORY_CLAIM_BANS: CopyBan[] = HISTORY_CLAIM_LITERALS.map(literalBan);
+
+/**
+ * ═══ THE FENCE — ALEX, D25-scope, 2026-08-31 — AND IT STAYS ═══
+ *
+ * > **The ban applies only to copy emitted by the empty-state / no-reading
+ * > components. It does not apply to prose anywhere else in the codebase.**
+ *
+ * `HISTORY_CLAIM_BANS` is deliberately NOT in `ALL_COPY_BANS`. The 2026-09-01
+ * ruling replaced the *mechanism* inside the fence; it did not move the fence,
+ * so neither does this commit.
+ *
+ * ⚠️ It is fair to ask whether a literal list still needs a fence — three exact
+ * production fragments cannot false-positive on a paragraph, so running them
+ * codebase-wide would cost nothing and catch a re-paste anywhere. It would also
+ * be a lane quietly widening a ruling that was handed down eight days ago, and
+ * it would change nothing today: both sentences are emitted by the fenced
+ * components and by nothing else. Named here for Alex rather than taken.
+ *
+ * ⚠️ **THE BUNDLE SCANNER STILL CANNOT ENFORCE THIS GROUP** — unchanged, and
+ * for the structural reason, not the old one. A minified chunk hands you a bare
+ * string with no component and no call site, so "which component emitted this"
+ * is unanswerable there by construction. The group is enforced at RENDER time
+ * over the named producers in
+ * `__tests__/components/noReadingCopyClaims.test.tsx`; the bundle layer carries
+ * `ALL_COPY_BANS`.
+ */
 /** Every rule, in the order a report should read them. */
 export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
@@ -342,6 +542,19 @@ export const ALL_COPY_BANS: CopyBan[] = [
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
   ...PRICE_FORMAT_BANS,
+];
+
+/**
+ * The list that applies INSIDE the fence: everything above, plus the history
+ * claims. Only the no-reading / empty-state producers are read with this.
+ *
+ * Derived from `ALL_COPY_BANS` rather than re-spelled, so a group added to the
+ * codebase-wide list is covered here without touching this line — the drift that
+ * `event_concept_population.py` exists to prevent, one file over.
+ */
+export const NO_READING_COPY_BANS: CopyBan[] = [
+  ...ALL_COPY_BANS,
+  ...HISTORY_CLAIM_BANS,
 ];
 
 export interface CopyBanHit {
