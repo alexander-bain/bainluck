@@ -78,6 +78,32 @@ DETERMINISTIC_SOURCES: frozenset[str] = frozenset({
     "datagolf_played_lost",
 })
 
+# The subset of tier 2 whose grade is computed from OUR OWN ``events`` columns
+# (scores / box score / scoring plays) rather than from an external venue's
+# settlement. Ruling 038's invariant — no tier-3 member reads our events — is
+# stated against this set.
+#
+# MAINTAIN THIS. Adding a source that reads ``events`` to produce a grade means
+# adding it here, and if it is also in AUTHORITATIVE_SOURCES,
+# ``tests/test_resolution_authority_038.py`` goes red. That suite also SCANS
+# ``backfill_winners`` for undeclared members, so the set cannot quietly rot.
+#
+# QUEUE 067 — WHY THIS LIVES HERE AND NOT IN THE TEST FILE THAT DEFINED IT.
+# It is now load-bearing in production: it is the exact answer to "which grades
+# stop being true the moment we correct a score?", which is what
+# ``scripts/repair_event_final_scores.py`` must retract after it fixes a wrong
+# final. A grade derived from a column we just overwrote is stale BY
+# CONSTRUCTION, and the set that knows which those are cannot live somewhere
+# only the tests can reach. The 038 suite imports it from here, so there is
+# still exactly one list and the scan still guards it.
+EVENTS_DERIVED_SOURCES: frozenset[str] = frozenset({
+    "box_score",          # events.box_score_data → player props
+    "box_score_bound",    # events.box_score_data, graded as a bound
+    "scoring_plays",      # events.box_score_data["scoring_plays"]
+    "game_score",         # events.home_score / events.away_score
+    "poly_total_score",   # events.home_score + events.away_score  (moved by 038)
+})
+
 # Tier 1 — terminal/soft: structural losers/voids (deterministic, no winner) and
 # the soft "clean" close-probability resolution. Overwritable by a hard result.
 #
