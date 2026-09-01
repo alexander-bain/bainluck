@@ -129,6 +129,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     "league_context_grid_cache_mutations": [("MUTANTS", 2, 3, "SERVICE")],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
+    # Q499. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in one table (the drain
+    # and the venue client whose `closed=false` default the drain exists to
+    # defeat), so the target is carried per-entry at index 1 — the
+    # `golf_schedule_cache_mutations` shape.
+    "polymarket_leg_label_drain_mutations": [("MUTANTS", 3, 4, 1)],
     # LAT-P138. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above. Four targets in one table — the
     # route, its producer, the beat wiring and the enrolment ledger — so the
