@@ -60,6 +60,26 @@ ANCHORS = {
     "test_gold_label_store_convergence.py": "NOW",
     "test_feed_concept_single_scan.py": "NOW",
     "test_golf_tour_badge_uxp185.py": "_FEED_NOW",
+    # 🔴 THE ORIGINAL BURN, AND CERT-589's SHIP DELIVERED IN ONE LINE.
+    #
+    # This is the file whose literal `datetime(2026, 8, 1, 12, 0)` crossed
+    # `SENTINEL_MAX_AGE_S` on 2026-08-31 and cost fifteen hours. `41b2479c`
+    # (CERT-602) made its anchor clock-following and is on master; the ALLOWLIST
+    # GRAMMAR that stops the next one being *written* was CERT-589's subject
+    # (`cf97a474`), which has held a GREEN token, unmerged, since 17:19Z and
+    # survived four integrator sweeps. INT-190 asked for it to be rebased.
+    #
+    # It does not need to be. `cf97a474` adds 588 lines to THIS ONE FILE, and
+    # `tests/lib_clock_anchor.py` is that same grammar lifted out and generalised
+    # over the anchor NAME — same refusals (IfExp/BoolOp/Compare/Subscript/
+    # comprehension/lambda), same runtime tracking check, and a name parameter
+    # `cf97a474` could not have because it was hardcoded to `NOW`.
+    #
+    # So the anchor stays as master has it and the grammar layers over it, which
+    # is exactly the resolution INT-190 asked for — reached by adding this file
+    # to the guard rather than by a conflict-prone rebase of a superseded
+    # implementation. Disposition for CERT-589 is written up in CODEX-REPORT-2.md.
+    "test_sentinel_durable_evidence_298.py": "NOW",
 }
 
 #: Module-scope instants that are genuinely calendar FACTS rather than fixtures
@@ -113,6 +133,12 @@ RE_PINS = {
     "test_golf_tour_badge_uxp185.py": (
         "_FEED_NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)",
         "_FEED_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)",
+    ),
+    # The literal that actually detonated on 2026-08-31, restored verbatim. If
+    # any control in this file has to keep working, it is this one.
+    "test_sentinel_durable_evidence_298.py": (
+        "NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)",
+        "NOW = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)",
     ),
 }
 
