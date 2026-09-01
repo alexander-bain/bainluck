@@ -327,7 +327,22 @@ POST_LOOP_RESERVE_SECONDS = 4.0
 #: the reserve — nothing left for the serialization and dependency commit this
 #: same reserve names. "The failure path costs more than the success path" is the
 #: easy thing to forget when sizing a budget from the happy case.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 2.5
+#:
+#: CERT-673 (`Q497-BOUND-INVALIDATE-CLEANUP`) raised this from 2.5, because the
+#: cleanup turned out to be TWO steps and only one of them was counted. A
+#: rollback that does not land is followed by an invalidate, which was a graceful
+#: close bounded at ~2.0s by SQLAlchemy's dialect rather than by this rail — so
+#: the true worst case was 1.5 (derived write) + 0.5 + ~2.0 = ~4.0 against a 2.5
+#: reserve. The invalidate is now bounded (`INVALIDATE_BUDGET_SECONDS`), which
+#: brings the cleanup to `cleanup_budget_seconds()` = 1.0 and the charged total
+#: to 2.5; this is 3.0 so that the 0.5 of headroom the reserve also promises to
+#: serialization and the dependency's commit is real rather than notional.
+#:
+#: The cost is paid by the terminal count, which is explicitly degradable — it
+#: reports itself unmeasured and never reports zero — and NOT by the working
+#: loop: `POST_LOOP_RESERVE_SECONDS` is unchanged, so `budget_headroom_seconds()`
+#: and the number of events a healthy call drains are both untouched.
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 3.0
 
 #: CERT-667 (`Q496-END-TO-END-DB-DEADLINE`): bound on the page SELECT, which was
 #: the FIRST unbounded statement in the request and ran before any deadline the
@@ -435,6 +450,45 @@ POOL_ACQUIRE_SLACK_SECONDS = 0.5
 #: the failure path was written to preserve: the response, and the cursor in it.
 ROLLBACK_BUDGET_SECONDS = 0.5
 
+#: CERT-673 (`Q497-BOUND-INVALIDATE-CLEANUP`): bound on the INVALIDATE that runs
+#: when the bounded rollback does not land. It is the second half of the cleanup
+#: and it was the last await on the failure path with no bound of ours.
+#:
+#: "No bound of ours" rather than "no bound", and the distinction is the whole
+#: reason this constant exists. ``AsyncSession.invalidate()`` does NOT abruptly
+#: drop the connection: SQLAlchemy's asyncpg dialect implements the invalidation
+#: as ``AsyncAdapt_terminate.terminate()``, which — when called in a greenlet,
+#: which is exactly the invalidated-connection case — first attempts a GRACEFUL
+#: close, ``await self._connection.close(timeout=2)``. That is a network round
+#: trip to a database we have already established is not answering, and its
+#: ceiling is a literal hardcoded in a third-party dialect (SQLAlchemy 2.0.50,
+#: ``dialects/postgresql/asyncpg.py``), not a number this rail chose.
+#:
+#: So the real worst case of the cleanup was ``ROLLBACK_BUDGET_SECONDS`` + ~2.0s,
+#: against a ``POST_LOOP_NON_COUNT_RESERVE_SECONDS`` that was 2.5 and had already
+#: spent 1.5 of it on the write. The reserve was over-committed by ~1.5s on the
+#: exact path it was widened for, and the overrun lands as the H12-with-no-body
+#: this rail exists to prevent.
+#:
+#: Bounding it here rather than widening the reserve to ~4.5s is deliberate on
+#: two counts. Widening would have to come out of the terminal count's budget and
+#: eventually out of the working loop, so a rarer failure path would make every
+#: healthy call drain fewer events. And sizing our budget around a literal inside
+#: someone else's dialect is a coupling nobody can see: a SQLAlchemy upgrade that
+#: changed the 2 would silently invalidate the arithmetic here, with no test of
+#: ours able to notice. A rail may bound its own use of a shared resource — the
+#: same argument that kept ``pool_timeout`` untouched in CERT-670.
+#:
+#: Cancelling this await is SAFE and it still drops the connection, which is the
+#: point of calling it at all. The graceful close is wrapped in ``asyncio
+#: .shield``, so cancelling the outer wait does not cancel the close itself — it
+#: raises ``CancelledError`` at the shield's await, and SQLAlchemy handles that
+#: case explicitly: ``_terminate_handled_exceptions()`` names ``CancelledError``,
+#: the handler calls ``_terminate_force_close()`` (asyncpg's synchronous, no-I/O
+#: ``terminate()``), and only then re-raises. The connection is discarded either
+#: way; what the bound buys is that it is discarded on OUR schedule.
+INVALIDATE_BUDGET_SECONDS = 0.5
+
 
 class ClientDeadlineExceeded(Exception):
     """A database unit did not finish inside the rail's CLIENT-side bound.
@@ -462,6 +516,23 @@ def client_db_budget_seconds(server_budget_s: float) -> float:
     enforced — the same class of gap twice over.
     """
     return server_budget_s + POOL_ACQUIRE_SLACK_SECONDS
+
+
+def cleanup_budget_seconds() -> float:
+    """What the CLEANUP after a failed database unit can cost, worst case.
+
+    Both halves, because both run: the bounded rollback, and — only when that
+    rollback does not land — the bounded invalidate. A guard that charges a
+    reserve for the rollback alone is describing half of a path that always
+    executes as a whole, which is how the invalidate came to be unaccounted for
+    in the first place.
+
+    Expressed as a function for the same reason ``client_db_budget_seconds`` is:
+    the reserves are asserted against the DERIVED total, so adding a third
+    cleanup step forces the arithmetic to be re-checked instead of silently
+    over-committing a budget that still reads as if it fits.
+    """
+    return ROLLBACK_BUDGET_SECONDS + INVALIDATE_BUDGET_SECONDS
 
 
 async def _bounded_statement(
@@ -533,11 +604,23 @@ async def _safe_rollback(session) -> None:
             ROLLBACK_BUDGET_SECONDS,
         )
     try:
-        await session.invalidate()
+        # CERT-673 (`Q497-BOUND-INVALIDATE-CLEANUP`) — BOUNDED, because this is a
+        # GRACEFUL close under the hood (see `INVALIDATE_BUDGET_SECONDS`) and so
+        # it talks to the database we already know is not answering. Unbounded by
+        # us, its ceiling was a literal in SQLAlchemy's dialect, and the two
+        # cleanup halves together could outlast the reserve that pays for them.
+        await asyncio.wait_for(session.invalidate(), timeout=INVALIDATE_BUDGET_SECONDS)
     except Exception:  # noqa: BLE001 — there is nothing further to try
+        # `asyncio.TimeoutError` lands here with everything else, deliberately:
+        # the connection has been force-closed by SQLAlchemy's own cancellation
+        # handler by the time this is reached, so there is no separate recovery
+        # to attempt and nothing an operator would do differently. What matters
+        # is that the response — and the cursor in it — still gets returned.
         logger.warning(
             "repair_polymarket_sport_category: could not invalidate the "
-            "connection after a failed rollback"
+            "connection inside %.2fs after a failed rollback; returning the "
+            "response anyway",
+            INVALIDATE_BUDGET_SECONDS,
         )
 
 
@@ -1382,6 +1465,12 @@ async def repair(
             # more derived numbers, because it is one constant and the derivation
             # is `client_db_budget_seconds`.
             "pool_acquire_slack_s": POOL_ACQUIRE_SLACK_SECONDS,
+            # CERT-673: the CLEANUP after a failed unit is itself two bounded
+            # steps, and it is charged to the same reserve as the write. Reported
+            # as the derived total because that is the quantity the reserve is
+            # asserted against — publishing the rollback alone is what made the
+            # invalidate easy to miss.
+            "cleanup_budget_s": cleanup_budget_seconds(),
             "worst_case_headroom_s": round(budget_headroom_seconds(), 2),
         },
     }
