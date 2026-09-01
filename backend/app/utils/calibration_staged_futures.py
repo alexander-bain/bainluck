@@ -112,6 +112,7 @@ __all__ = [
     "DISTINCT_CENSUS_COLUMNS",
     "GROUP_KEY_COLUMNS",
     "INTEGER_ADDITIVE_COLUMNS",
+    "NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
     "REPRESENTATIVE_TIE_COLUMN",
     "STAGED_FUTURES_SCHEMA",
     "UNIT_KEY_VM_ID",
@@ -323,8 +324,27 @@ MEMBER_SEPARATOR = "\x1e"
 #: every banked unit wholesale. **A cursor therefore only ever sees ONE census
 #: set in its lifetime**, and a caller that turns the switch on must pass
 #: ``census_columns`` explicitly; the pinning test fails until it does.
-DECLARED_CENSUS_COLUMNS: tuple[str, ...] = tuple(DEFAULT_CENSUS_COLUMNS) + (
-    REPRESENTATIVE_TIE_COLUMN,
+#: CAL-P162's per-cell disclosure columns, mirrored (CAL-P164).
+#:
+#: Generated in the frozen module from ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS``,
+#: which ruling 009 bars importing here — so this is a LITERAL, and the same
+#: characterization test that pins the rest of the mirror reads that tuple out
+#: of the frozen file as text and derives what this must equal. Adding a cell
+#: there reds the pin. That indirection is the point: CAL-P162 added the
+#: columns to the statement and to neither declaration, and because the guard
+#: at the time only checked that the two declarations agreed WITH EACH OTHER,
+#: it stayed green while the first banked unit raised
+#: ``UndeclaredColumnError``. Agreement is not coverage.
+NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = (
+    "nxb_cell_esports",
+    "nxb_cell_0",
+    "nxb_cell_1",
+)
+
+DECLARED_CENSUS_COLUMNS: tuple[str, ...] = (
+    tuple(DEFAULT_CENSUS_COLUMNS)
+    + (REPRESENTATIVE_TIE_COLUMN,)
+    + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
 )
 
 

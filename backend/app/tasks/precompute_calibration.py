@@ -1379,6 +1379,22 @@ def nonexclusive_bundle_cell_labels() -> tuple[tuple[str, str], ...]:
     return tuple(labels)
 
 
+#: The aggregate columns those labels name, in emission order (CAL-P164).
+#:
+#: Named because THREE places need this set and deriving it three times is how
+#: they drift: the statement that emits the columns, the staged merge that has
+#: to be TOLD they are census columns before it will accept a row carrying
+#: them, and the bank-time mirror in ``calibration_staged_futures``. CAL-P162
+#: emitted the columns and told neither consumer, so the first unit that
+#: returned a row raised ``UndeclaredColumnError`` and no generation could bank
+#: — a fail-closed merge doing exactly its job. The mirror is pinned against
+#: this tuple by a characterization test; adding a cell to
+#: ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` reds that pin rather than production.
+NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = tuple(
+    column for _, column in nonexclusive_bundle_cell_labels()
+)
+
+
 def nonexclusive_bundle_cell_columns_sql() -> str:
     """One ``COUNT(*) FILTER`` per disclosed cell, for the summary aggregate.
 
@@ -4036,10 +4052,17 @@ async def _run_staged_futures(db, runner, sql_builder):
     # one chunk's mass, and a dropped one silently disappears from the payload.
     # So the statement's census set is declared HERE, next to the statement that
     # emits it, rather than left to a default in the pure module that cannot see
-    # a column this build added. Both extras are conditional:
+    # a column this build added. Three extras beyond the default set:
     #   * ``representative_tie_broken`` — Queue 300D Item 1, always emitted.
+    #   * ``nxb_cell_*`` — CAL-P162's per-cell disclosure, always emitted, and
+    #     generated from the constant so a new cell arrives here automatically
+    #     rather than being remembered (CAL-P164).
     #   * ``cb_*`` — Queue 300C's coverage census, only when it is switched on.
-    census_columns = tuple(DEFAULT_CENSUS_COLUMNS) + ("representative_tie_broken",)
+    census_columns = (
+        tuple(DEFAULT_CENSUS_COLUMNS)
+        + ("representative_tie_broken",)
+        + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
+    )
     if COVERAGE_CENSUS_ENABLED:
         census_columns += tuple(
             _coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS

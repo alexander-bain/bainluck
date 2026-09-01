@@ -12,7 +12,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 55,
+  "input_count": 56,
   "inputs": [
     {
       "covered_by_value": false,
@@ -362,6 +362,17 @@
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
+      "name": "NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
+      "sql_interpolated": false,
+      "used_in": [
+        "_run_staged_futures"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
       "name": "NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_CENSUS_RULE_TEXT",
       "sql_interpolated": false,
@@ -647,8 +658,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "068f13897a29f8bcfeb71c2e25e00ebd7054dd9a2e26006425f7b225fe235e79",
-  "uncovered_behavior_or_evidence": 29,
-  "uncovered_count": 50,
+  "source_sha256": "ed5895a8084ef601141c31aada87c723927f68e65ec40b8ba01ff5fc87982948",
+  "uncovered_behavior_or_evidence": 30,
+  "uncovered_count": 51,
   "uncovered_sql_shaping": 21
 }
