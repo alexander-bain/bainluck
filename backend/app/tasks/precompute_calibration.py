@@ -1600,17 +1600,29 @@ PLAYER_PROPS_PLACEHOLDER_RULE_TEXT = (
 #:   3. the disclosure is RENDERED FROM THIS MAP, never hard-coded — when the
 #:      backend stops emitting the cell the sentence leaves the page without a
 #:      copy change. A hard-coded line would still be there a year after the fix;
-#:   4. 🔴 THE FALSIFIER: if the writer fix lands and this exclusion does NOT
-#:      empty, then design §3 was WRONG — the near-0.50 spray was not the writer
-#:      — and the exclusion must be **re-argued from scratch, never extended**.
-#:      An exclusion that outlives its stated cause is one with no stated cause.
+#:   4. 🔴 THE FALSIFIER: if the writer fix lands and the TEMPORARY count does
+#:      NOT empty, then design §3 was WRONG — the near-0.50 spray was not the
+#:      writer — and the exclusion must be **re-argued from scratch, never
+#:      extended**. An exclusion that outlives its stated cause is one with no
+#:      stated cause.
 #:
 #: Note what this does NOT promise. R1 and R2 are the HISTORICAL residue of the
 #: same family — 1,258 of their 1,284 rows sit in the OLD holdout half — and
 #: fixing the writer forward does not un-write the back catalogue, so those arms
-#: are expected to STAY. What empties is the M1/R3 population. Nobody should
-#: promise the count reaches literally zero until it is measured; what is
-#: promised is that the rows come back and the count falls.
+#: are expected to STAY. What empties is the M1/R3 population.
+#:
+#: 🔴 CERT-647 (CAL-P170) — THAT PARAGRAPH WAS TRUE AND THE SHIP DID NOT OBEY IT.
+#: This map was emitted unconditionally from the constant and `temporary_excluded`
+#: carried the full four-arm union, so the page rendered clause 2's promise over
+#: a population whose majority the paragraph above says will not return, and
+#: clauses 3 and 4 were unreachable: a constant map never stops being emitted, so
+#: the sentence could not leave the page and the falsifier could not fire. The
+#: emission is now gated on the temporary count and the payload publishes the
+#: temporary and historical cohorts separately. Clause 3 and clause 4 became
+#: TRUE STATEMENTS at that commit; before it they were intentions.
+#:
+#: Nobody should promise the count reaches literally zero until it is measured;
+#: what is promised is that the M1/R3 rows come back and THAT count falls.
 PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL: dict[str, str] = {
     "polymarket/baseball": (
         "the Polymarket player-prop writer stops overwriting the market's own "
@@ -3038,19 +3050,50 @@ def _calibration_population_ctes(
             -- threshold of 1.15 the difference cannot change membership, and
             -- `test_player_props_placeholder_kprime.py` pins that reasoning
             -- rather than leaving it as a comment.
+            --
+            -- CERT-647 (CAL-P170): the arms are carried out of this CTE
+            -- SEPARATELY, because the page makes a PROMISE about them that is
+            -- only true of two of the four. R3 and M1 are the arms the writer
+            -- repair ends: when the writer stops manufacturing a near-0.50
+            -- price, the container stops summing past 1.15 and the forced
+            -- midpoint stops matching, so those rows re-enter on their own. R1
+            -- and R2 are the HISTORICAL residue of the same defect already
+            -- written to the back catalogue — 1,258 of their 1,284 rows sit in
+            -- the OLD holdout half — and fixing the writer FORWARD does not
+            -- un-write them. Publishing one count under one temporary promise
+            -- told a reader the whole exclusion empties itself; it does not.
+            -- Each arm is evaluated EXACTLY ONCE, in the inner SELECT, and
+            -- membership is filtered on the results outside it. Writing the
+            -- predicates a second time in a WHERE would be two copies of one
+            -- rule in one query — how a mirror stops mirroring — and it would
+            -- also put R3's sum test in the CTE twice, which is the shape
+            -- `test_the_props_cte_never_tests_the_bundle_shape` reads as RULE E
+            -- leaking in by the back door. Membership is unchanged: COALESCE
+            -- only turns a NULL into false, and a NULL never matched anyway.
             player_props_placeholder_markets AS (
-                SELECT mrs.market_id
-                FROM market_result_shape mrs
-                JOIN market_info mi ON mi.market_id = mrs.market_id
-                LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
-                WHERE (mi.source, mrs.category)
-                        IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
-                  AND (
-                        {half_spike_pair_predicate('mrs')}
-                        OR {published_pair_coherence_predicate('mrs')}
-                        OR {player_props_container_predicate(
-                                'mi.market_name', 'bps.cp_sum')}
-                  )
+                SELECT arms.market_id,
+                    arms.ppp_historical_arm,
+                    arms.ppp_temporary_arm
+                FROM (
+                    SELECT mrs.market_id,
+                        -- R1/R2 — the arms that STAY after the writer repair.
+                        COALESCE(
+                            {half_spike_pair_predicate('mrs')}
+                            OR {published_pair_coherence_predicate('mrs')}, false
+                        ) AS ppp_historical_arm,
+                        -- R3 — the arm the writer repair ends. COALESCE because
+                        -- `bps.cp_sum` arrives on a LEFT JOIN and a NULL sum
+                        -- must read as "did not match", never as NULL.
+                        COALESCE({player_props_container_predicate(
+                                    'mi.market_name', 'bps.cp_sum')}, false
+                        ) AS ppp_temporary_arm
+                    FROM market_result_shape mrs
+                    JOIN market_info mi ON mi.market_id = mrs.market_id
+                    LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
+                    WHERE (mi.source, mrs.category)
+                            IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
+                ) arms
+                WHERE arms.ppp_historical_arm OR arms.ppp_temporary_arm
             ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
@@ -3381,6 +3424,34 @@ def _calibration_population_ctes(
                             AND {forced_midpoint_predicate('fo')}
                         )
                     ) AS is_player_props_placeholder,
+                    -- CERT-647 (CAL-P170): the TEMPORARY subset of the flag
+                    -- above — the rows that actually re-enter when the writer
+                    -- is repaired, which is what the page promises.
+                    --
+                    -- 🔴 THE `AND NOT historical` IS THE WHOLE POINT, not a
+                    -- tidy-up. A row held by R3 or M1 *and also* by R1 or R2
+                    -- does NOT come back: the temporary arms release it and the
+                    -- historical arms keep holding it. Counting it as temporary
+                    -- would promise a return that never happens, which is the
+                    -- same class of lie CERT-647 blocked, one level down. So
+                    -- "temporary" means held ONLY by arms that end.
+                    --
+                    -- Subset by construction: every disjunct here implies a
+                    -- disjunct of `is_player_props_placeholder`, so the
+                    -- temporary count can never exceed the total.
+                    -- `test_player_props_placeholder_kprime.py` asserts the
+                    -- containment on rows rather than trusting the reading.
+                    (
+                        (
+                            COALESCE(ppp.ppp_temporary_arm, false)
+                            OR (
+                                (cv.source, cv.category)
+                                    IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
+                                AND {forced_midpoint_predicate('fo')}
+                            )
+                        )
+                        AND NOT COALESCE(ppp.ppp_historical_arm, false)
+                    ) AS is_player_props_placeholder_temporary,
                     -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
                     -- not a set of losses (is_winner's default is False).
                     (nwm.market_id IS NOT NULL) AS is_no_winner_market,
@@ -4109,6 +4180,16 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                         AS player_props_placeholder_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_player_props_placeholder)
                         AS player_props_placeholder_markets,
+                    -- CERT-647 (CAL-P170): the temporary SUBSET of the pair
+                    -- above. Emitted as its own count rather than derived on
+                    -- the Python side, because the historical remainder is
+                    -- published as `total - temporary` and a derived total is
+                    -- how the two halves stop summing to the whole.
+                    COUNT(*) FILTER (WHERE is_player_props_placeholder_temporary)
+                        AS player_props_placeholder_temporary_excluded,
+                    COUNT(DISTINCT market_id)
+                        FILTER (WHERE is_player_props_placeholder_temporary)
+                        AS player_props_placeholder_temporary_markets,
                     -- CAL-P162 (#1978): the PER-CELL split of the same count.
                     -- Alex's rank-2 ruling requires the disclosure name which
                     -- cell shrank; one total cannot, because the filter is
@@ -4213,6 +4294,11 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     AS player_props_placeholder_excluded,
                 MAX(ls.player_props_placeholder_markets)
                     AS player_props_placeholder_markets,
+                -- CERT-647 (CAL-P170): same carry for the temporary subset.
+                MAX(ls.player_props_placeholder_temporary_excluded)
+                    AS player_props_placeholder_temporary_excluded,
+                MAX(ls.player_props_placeholder_temporary_markets)
+                    AS player_props_placeholder_temporary_markets,
                 -- CAL-P162 (#1978): carry the per-cell split through the outer
                 -- aggregate, generated from the same constant as the inner one.
                 """
@@ -5050,9 +5136,27 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].player_props_placeholder_excluded is not None
             else 0
         )
-        player_props_placeholder_markets = (
-            int(rows[0].player_props_placeholder_markets)
-            if rows and rows[0].player_props_placeholder_markets is not None
+        # `player_props_placeholder_markets` is deliberately NOT read here any
+        # more. It was the value published as `temporary_excluded_markets`, and
+        # CERT-647 is the finding that the union is not the temporary cohort —
+        # so the payload now carries the temporary market count below and the
+        # union market count has no honest consumer in this bullet. The COLUMN
+        # stays emitted and declared: it is banked census like its neighbours,
+        # and dropping it would change the declared census set and invalidate
+        # every banked unit for a cosmetic saving.
+        #
+        # CERT-647 (CAL-P170): the temporary subset, read the same way. Defaults
+        # to 0 — and 0 is the SAFE default here in the direction that matters:
+        # a missing count renders NO temporary promise rather than promising a
+        # return for rows nobody counted.
+        player_props_placeholder_temporary_excluded = (
+            int(rows[0].player_props_placeholder_temporary_excluded)
+            if rows and rows[0].player_props_placeholder_temporary_excluded is not None
+            else 0
+        )
+        player_props_placeholder_temporary_markets = (
+            int(rows[0].player_props_placeholder_temporary_markets)
+            if rows and rows[0].player_props_placeholder_temporary_markets is not None
             else 0
         )
         # CAL-P162 (#1978): the per-cell split behind the same total. Alex's
@@ -6026,11 +6130,43 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             ),
             "excluded": esports_bundle_excluded + player_props_placeholder_excluded,
             "excluded_by_cell": nonexclusive_bundle_by_cell,
-            "temporary_by_cell": dict(PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL),
+            # 🔴 CERT-647 (CAL-P170) — THIS MAP IS NO LONGER A CONSTANT.
+            #
+            # It shipped as `dict(...)` of a module constant, so the sentence
+            # "part of this is temporary" was rendered whenever the cell was
+            # excluded AT ALL — including after the writer repair, when the only
+            # rows left would be the historical R1/R2 residue that never returns.
+            # The disclosure's own clause 3 promises the sentence "leaves the
+            # page without a copy change when the backend stops emitting the
+            # cell", and a constant can never stop emitting. The falsifier in
+            # clause 4 was therefore unfalsifiable by construction.
+            #
+            # Gated on the TEMPORARY count, which is what the sentence is about.
+            # When the writer is fixed and M1/R3 fall to zero the map empties,
+            # the sentence disappears, and the historical remainder stays
+            # excluded and stays disclosed by the per-cell count above — which
+            # is exactly the behaviour clause 4 says to look for.
+            "temporary_by_cell": (
+                dict(PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL)
+                if player_props_placeholder_temporary_excluded > 0
+                else {}
+            ),
             # Rank 1's own numbers, so the temporary half of the bullet is
             # checkable on its own rather than only as part of a sum.
-            "temporary_excluded": player_props_placeholder_excluded,
-            "temporary_excluded_markets": player_props_placeholder_markets,
+            #
+            # 🔴 `temporary_excluded` counts the M1/R3 cohort ONLY. It shipped
+            # as the full R1+R2+R3+M1 union, which made the field's NAME false:
+            # it said "this many rows are coming back" over a population whose
+            # majority is historical residue that is not. The two halves below
+            # sum to the per-cell total, so a reader can still add the bullet up.
+            "temporary_excluded": player_props_placeholder_temporary_excluded,
+            "temporary_excluded_markets": player_props_placeholder_temporary_markets,
+            # The complement, published rather than left to subtraction: the
+            # rows excluded for good unless separately repaired or re-ruled.
+            "historical_excluded": (
+                player_props_placeholder_excluded
+                - player_props_placeholder_temporary_excluded
+            ),
         },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {

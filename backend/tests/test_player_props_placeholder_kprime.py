@@ -407,3 +407,208 @@ def test_r3_sums_over_the_shipped_published_sum_and_says_so(props_cte: str):
     """
     assert "bundle_price_sum bps" in props_cte
     assert "FROM deduped" not in props_cte
+
+
+# ---------------------------------------------------------------------------
+# 7. CERT-647 — the temporary promise covers only the rows that come back.
+#
+# 🔴 WHAT WENT WRONG, because a guard that does not say it invites the revert.
+# K' shipped with `temporary_excluded` carrying the full R1+R2+R3+M1 union and
+# `temporary_by_cell` emitted unconditionally from a module constant. The page
+# printed the per-cell total, then "Part of this is temporary by design", then
+# "this exclusion empties itself" — over a population whose MAJORITY is the
+# historical R1/R2 residue that a forward writer fix cannot reach. The branch's
+# own constants block said so in prose while the payload said the opposite.
+#
+# The arms are now split. "Temporary" means held ONLY by arms that end.
+# ---------------------------------------------------------------------------
+
+
+def _bundle_filter_entry(key: str) -> str:
+    """The source text of one entry INSIDE `nonexclusive_bundle_filter`.
+
+    Scoped to that sub-dict rather than searched globally, so a same-named key
+    in a neighbouring filter can never be graded here by accident. Raises on a
+    key it cannot find: a disclosure guard that quietly grades nothing is the
+    failure mode this whole section exists to catch.
+    """
+    outer = _payload_literal_source("nonexclusive_bundle_filter")
+    tree = ast.parse(outer.strip())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values):
+                if isinstance(k, ast.Constant) and k.value == key:
+                    segment = ast.get_source_segment(outer.strip(), v)
+                    if not segment:
+                        raise AssertionError(f"{key!r} has no readable source")
+                    return segment
+    raise AssertionError(f"{key!r} is not a key of nonexclusive_bundle_filter")
+
+
+def _eval_entry(key: str, *, temporary: int, total: int):
+    """Evaluate a shipped payload expression against a specimen.
+
+    This RUNS the expression the build ships rather than pattern-matching it.
+    The two counts are deliberately different numbers so a expression that
+    reaches for the wrong variable produces the wrong value instead of an
+    accidental match.
+    """
+    namespace = {
+        "dict": dict,
+        "PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL": (
+            pc.PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL
+        ),
+        "player_props_placeholder_temporary_excluded": temporary,
+        "player_props_placeholder_temporary_markets": temporary,
+        "player_props_placeholder_excluded": total,
+        "player_props_placeholder_markets": total,
+        "esports_bundle_excluded": 0,
+    }
+    # Parenthesised because a multi-line payload expression carries the
+    # indentation it had in the source and `eval` rejects it otherwise.
+    return eval("(" + _bundle_filter_entry(key) + ")", namespace)  # noqa: S307
+
+
+def test_the_temporary_sentence_disappears_when_nothing_is_temporary():
+    """🔴 THE CERT-647 SPECIMEN: zero temporary, non-zero historical.
+
+    This is the state the page reaches the day the writer is repaired — M1 and
+    R3 stop matching, the R1/R2 back catalogue stays excluded. The page gates
+    the whole "part of this is temporary" block on this map being non-empty, so
+    an empty map here IS the sentence leaving the page.
+
+    The shipped expression was `dict(PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL)`
+    — a constant, which returns the cell in this specimen and leaves the promise
+    on the page forever. That is what this test kills.
+    """
+    assert _eval_entry("temporary_by_cell", temporary=0, total=1_284) == {}
+
+
+def test_the_historical_rows_are_still_excluded_in_that_same_specimen():
+    """...and the sentence disappearing must NOT be read as the rows returning.
+
+    Same specimen. The exclusion total is untouched and the historical count
+    carries the whole of it, so the reader still meets the removal — they just
+    stop being told it is coming back.
+    """
+    assert _eval_entry("historical_excluded", temporary=0, total=1_284) == 1_284
+    assert _eval_entry("temporary_excluded", temporary=0, total=1_284) == 0
+
+
+def test_temporary_excluded_counts_the_temporary_cohort_not_the_union():
+    """The field's NAME is the claim. It said "this many rows are coming back"
+    while carrying a union whose majority is not.
+
+    The two specimen numbers are distinct on purpose: an expression that
+    published the union would return 1,284 here and this assertion names which
+    number it actually got.
+    """
+    assert _eval_entry("temporary_excluded", temporary=26, total=1_284) == 26
+    assert _eval_entry("temporary_excluded_markets", temporary=26, total=1_284) == 26
+
+
+def test_the_two_cohorts_sum_to_the_exclusion_total():
+    """The page prints the per-cell total and then splits it. A reader must be
+    able to add the halves and land on the number above them — the same property
+    the per-cell map has against `excluded`, one level down.
+    """
+    temporary = _eval_entry("temporary_excluded", temporary=26, total=1_284)
+    historical = _eval_entry("historical_excluded", temporary=26, total=1_284)
+    assert temporary + historical == 1_284
+
+
+def test_the_temporary_cell_is_emitted_while_the_cohort_is_non_empty():
+    """The other direction, so the gate is not satisfied by returning `{}`
+    unconditionally — which would pass every test above and silently drop
+    Alex's disclosure clause entirely."""
+    assert _eval_entry("temporary_by_cell", temporary=26, total=1_284) == {
+        "polymarket/baseball": pc.PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL[
+            "polymarket/baseball"
+        ]
+    }
+
+
+def _temporary_flag_expression(ctes: str) -> str:
+    """The SQL of `is_player_props_placeholder_temporary`, or a loud failure."""
+    marker = "AS is_player_props_placeholder_temporary"
+    if marker not in ctes:
+        raise AssertionError("the temporary flag is not emitted by the statement")
+    end = ctes.index(marker)
+    start = ctes.rindex("ppp.ppp_temporary_arm", 0, end)
+    return ctes[start:end]
+
+
+def test_the_temporary_flag_releases_nothing_the_historical_arms_still_hold(
+    ctes: str,
+):
+    """🔴 THE LOAD-BEARING CONJUNCT.
+
+    A row held by R3 or M1 *and also* by R1 or R2 does not come back: the
+    temporary arms release it and the historical arms keep holding it. Counting
+    it as temporary would promise a return that never happens — CERT-647's
+    finding, one level down. Drop this `AND NOT` and the temporary count
+    silently inflates toward the union it used to be.
+    """
+    flag = _temporary_flag_expression(ctes)
+    assert "AND NOT COALESCE(ppp.ppp_historical_arm, false)" in flag
+
+
+def test_the_arms_are_carried_out_of_the_cte_on_the_right_side(props_cte: str):
+    """R1/R2 are historical, R3 is temporary, and the CTE must not swap them.
+
+    Asserted on which PREDICATE lands in which column rather than on the column
+    names, because the names are the easy half to get right.
+    """
+    historical = props_cte[
+        props_cte.index("AS ppp_historical_arm") - 600 :
+        props_cte.index("AS ppp_historical_arm")
+    ]
+    temporary = props_cte[
+        props_cte.index("AS ppp_temporary_arm") - 400 :
+        props_cte.index("AS ppp_temporary_arm")
+    ]
+    # R1's exact spike and R2's pair-coherence test are the historical arms.
+    assert "pp_half_legs = 2" in historical
+    assert "pp_open_sum" in historical
+    # R3's name+sum container test is the temporary one, and R1/R2's shape
+    # aggregates must NOT appear beside it.
+    assert "ILIKE" in temporary
+    assert "pp_half_legs = 2" not in temporary
+
+
+def test_a_null_sum_does_not_read_as_a_temporary_match(props_cte: str):
+    """`bps.cp_sum` arrives on a LEFT JOIN. Without the COALESCE a market with
+    no price sum yields NULL, `NOT NULL` is NULL, and the row falls out of BOTH
+    cohorts — the halves stop summing to the total and the page's arithmetic
+    quietly breaks."""
+    temporary = props_cte[: props_cte.index("AS ppp_temporary_arm")]
+    assert "COALESCE(" in temporary
+
+
+def test_the_temporary_columns_are_declared_to_the_fail_closed_merger():
+    """CAL-P162's lesson, applied to the columns this repair adds. A census
+    column emitted and undeclared raises `UndeclaredColumnError` at BANK time
+    and no generation can publish."""
+    from app.utils.calibration_staged_futures import (
+        DEFAULT_CENSUS_COLUMNS,
+        DISTINCT_CENSUS_COLUMNS,
+    )
+
+    assert "player_props_placeholder_temporary_excluded" in DEFAULT_CENSUS_COLUMNS
+    assert "player_props_placeholder_temporary_markets" in DEFAULT_CENSUS_COLUMNS
+    # The market count is COUNT(DISTINCT market_id) and sums across chunks only
+    # because it is declared as one; the outcome count is a plain COUNT(*).
+    assert "player_props_placeholder_temporary_markets" in DISTINCT_CENSUS_COLUMNS
+    assert (
+        "player_props_placeholder_temporary_excluded" not in DISTINCT_CENSUS_COLUMNS
+    )
+
+
+def test_the_temporary_flag_gates_no_curve_row_of_its_own(ctes: str):
+    """The split is a DISCLOSURE change, not a population change. `deduped` and
+    both field-completeness filters gate on the union flag; if the temporary
+    flag ever appears in a gate, this repair has quietly changed which rows the
+    published curve contains — a different ship, and a Tier 1 one.
+    """
+    assert "NOT ro.is_player_props_placeholder_temporary" not in ctes
+    assert ctes.count("NOT ro.is_player_props_placeholder") == 3

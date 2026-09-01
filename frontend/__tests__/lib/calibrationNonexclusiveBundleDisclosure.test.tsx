@@ -202,9 +202,49 @@ describe("CAL-P119 — a temporary exclusion is disclosed as temporary", () => {
     // dropped.
     expect(copy).toMatch(/temporary by design/i);
     expect(copy).toMatch(/re-enter the curve/i);
-    expect(copy).toMatch(/empties itself/i);
     // And the page must not let the removal read as a verdict on the rows.
-    expect(copy).toMatch(/not claiming they are gone for good/i);
+    expect(copy).toMatch(/not claiming/i);
+    expect(copy).toMatch(/gone for good/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 CERT-647 — AND THE PROMISE MUST NOT COVER THE ROWS THAT NEVER COME BACK.
+  //
+  // This suite used to assert the copy said "this exclusion empties itself",
+  // and the page said it — beside a count that was the whole R1+R2+R3+M1 union.
+  // Only the M1/R3 arms end with the writer repair. R1/R2 are the same defect
+  // already written into the back catalogue and a forward fix does not un-write
+  // them; the backend's own constants block said so while the payload said the
+  // opposite. So the assertion above was pinning a false sentence, and these
+  // replace it: the temporary COUNT is rendered, and what stays is named.
+  // -------------------------------------------------------------------------
+  test("the temporary count is rendered, not left to the nearest number", () => {
+    const region = disclosureRegion(SOURCE);
+    // Without this the reader binds "part of this is temporary" to the per-cell
+    // total printed immediately above it — which is exactly what CERT-647
+    // caught. The count has to be in the sentence making the claim.
+    expect(region).toContain("data.nonexclusive_bundle_filter.temporary_excluded");
+    const copy = readerCopy(region);
+    expect(copy).toMatch(/coming back/i);
+  });
+
+  test("the rows that are NOT coming back are named as such", () => {
+    const region = disclosureRegion(SOURCE);
+    expect(region).toContain("data.nonexclusive_bundle_filter.historical_excluded");
+    const copy = readerCopy(region);
+    // The page has to say the back catalogue stays, and say why. Dropping this
+    // returns the page to a single undifferentiated temporary promise.
+    expect(copy).toMatch(/are not/i);
+    expect(copy).toMatch(/back catalogue/i);
+    expect(copy).toMatch(/stay excluded/i);
+  });
+
+  test("the page never promises the whole exclusion empties itself", () => {
+    // The exact sentence CERT-647 blocked. It is asserted ABSENT rather than
+    // simply not-asserted-present, because "we removed the clause" is a fact a
+    // later editor can undo by accident while every other test stays green.
+    const copy = readerCopy(disclosureRegion(SOURCE));
+    expect(copy).not.toMatch(/exclusion empties itself/i);
   });
 
   test("it says the price was wrong, not the question", () => {
@@ -230,5 +270,14 @@ describe("CAL-P119 — a temporary exclusion is disclosed as temporary", () => {
 
   test("the payload type carries the per-cell revert condition", () => {
     expect(API_SOURCE).toContain("temporary_by_cell?: Record<string, string>");
+  });
+
+  test("the payload type carries both cohorts, so the bullet can add up", () => {
+    // CERT-647: `temporary_excluded` is the M1/R3 cohort and
+    // `historical_excluded` is its complement. A type carrying only the first
+    // is one a later reader will assume covers the whole exclusion — the
+    // original mistake, preserved in the contract.
+    expect(API_SOURCE).toContain("temporary_excluded?: number;");
+    expect(API_SOURCE).toContain("historical_excluded?: number;");
   });
 });

@@ -193,6 +193,11 @@ def _futures_row(**kw):
         # ATTRIBUTE, so a fixture that omits a column the statement emits fails
         # loudly here rather than publishing a silent zero.
         player_props_placeholder_excluded=3, player_props_placeholder_markets=2,
+        # CERT-647 (CAL-P170): a PROPER subset of the pair above — 1 of the 3
+        # rows is temporary, so the historical remainder is 2. Equal values
+        # would let a payload that published the union pass unnoticed.
+        player_props_placeholder_temporary_excluded=1,
+        player_props_placeholder_temporary_markets=1,
     )
     base.update(kw)
     return SimpleNamespace(**base)

@@ -273,6 +273,10 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     # guard being appeased.
     "player_props_placeholder_excluded",
     "player_props_placeholder_markets",
+    # CERT-647 (CAL-P170): the TEMPORARY subset of the pair above, declared in
+    # the same commit that emits it for the same reason its parent was.
+    "player_props_placeholder_temporary_excluded",
+    "player_props_placeholder_temporary_markets",
 )
 
 #: The census columns that are ``COUNT(DISTINCT ...)`` rather than ``COUNT(*)``.
@@ -301,6 +305,10 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         # `player_props_placeholder_excluded` is a plain COUNT(*) and correctly
         # stays out of this set.
         "player_props_placeholder_markets",
+        # CERT-647 (CAL-P170): the temporary subset's market count is the same
+        # COUNT(DISTINCT market_id) shape and belongs here for the same reason.
+        # Its outcome-level sibling is a plain COUNT(*) and correctly does not.
+        "player_props_placeholder_temporary_markets",
     }
 )
 

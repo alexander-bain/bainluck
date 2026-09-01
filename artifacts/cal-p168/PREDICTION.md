@@ -112,3 +112,47 @@ print('baseball :', [c for c in d['by_category'] if 'baseball' in str(c)][:2])
 "
 ```
 Grade §1 first (the cell), §3 second (the sentence rendered), §2 last and only as direction.
+
+---
+
+## 8. AMENDMENT — CERT-647 (CAL-P170, 2026-09-01 ~04:3xZ / 2026-08-31 ~9:3x pm PT)
+
+🔴 **§6 ABOVE IS NOT REWRITTEN AND MUST NOT BE.** It is the pre-registered bar and it keeps its
+registered shape. This section records that §6 contradicts itself, which half was right, and what
+the ship was changed to.
+
+**The contradiction, in §6's own two sentences:**
+
+> "When lane1 queue 022 repairs the writer, **this exclusion must empty itself**. […] R1 and R2 are
+> expected to *stay* (1,258 of their 1,284 rows are historical residue in the OLD half); only the
+> M1/R3 population returns."
+
+Both cannot be true. The second sentence is the correct one — it is the measured one — and the
+first is the slogan inherited from design §9.2 clause 4.
+
+**CERT-647 blocked the ship on the slogan having reached the payload.** `temporary_excluded`
+published the whole R1+R2+R3+M1 union, and `temporary_by_cell` was emitted unconditionally from a
+module constant, so the page rendered "part of this is temporary … this exclusion empties itself"
+over a count whose majority never returns. The prediction was right and the payload disagreed with
+it; that is the defect, and it is repaired on this branch rather than argued away.
+
+**The falsifier now has a field that can actually falsify it.** §6 keys on
+`excluded_by_cell["polymarket/baseball"]`, which is the UNION and therefore falls only partly even
+when the diagnosis is completely correct — an untestable bar. Read it on `temporary_excluded`
+instead, which counts the M1/R3 cohort alone:
+
+| after the writer repair | correct diagnosis | §3 was wrong |
+|---|---|---|
+| `temporary_excluded` | → **0** | stays non-zero |
+| `temporary_by_cell` | → **`{}`** (sentence leaves the page) | still carries the cell |
+| `excluded_by_cell["polymarket/baseball"]` | falls to ≈ the R1/R2 residue, **not to 0** | unchanged |
+| `historical_excluded` | ≈ unchanged — this is expected, not a failure | — |
+
+**§7's grading command still works** and now prints the split. Add `temporary_excluded` and
+`historical_excluded` to what you read off it; `temporary_by_cell` going `{}` is the sentence
+leaving the page, which is clause 3 of the design becoming a true statement rather than an
+intention.
+
+**What did NOT change:** no predicate, no allowlist, no row. K′ is the same four arms over the same
+cell and the published curve contains exactly the rows it contained before this amendment —
+`test_the_temporary_flag_gates_no_curve_row_of_its_own` pins that. §1-§5 are graded unchanged.

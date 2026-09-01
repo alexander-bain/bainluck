@@ -2007,7 +2007,19 @@ export default function CalibrationPage() {
                   page must never let a temporary exclusion read as a permanent
                   one. Rendered from the payload, per cell, with the condition
                   that ends it — when the writer is fixed the backend stops
-                  emitting the cell and this sentence disappears on its own. */}
+                  emitting the cell and this sentence disappears on its own.
+
+                  🔴 CERT-647 — AND NEVER THE MIRROR IMAGE EITHER. This block
+                  used to sit directly under the per-cell counts and promise
+                  that "this exclusion empties itself", while the count beside
+                  it was the whole R1+R2+R3+M1 union. Most of that union is the
+                  historical residue the forward writer fix cannot reach, so the
+                  page was promising a return for rows that never come back. The
+                  temporary COUNT is now rendered explicitly instead of leaving
+                  the reader to bind the sentence to the nearest number, and the
+                  closing sentence names what stays. `temporary_excluded` is the
+                  M1/R3 cohort only; the backend omits the cell entirely once it
+                  reaches zero, so the falsifier below is a real one. */}
               {data.nonexclusive_bundle_filter.temporary_by_cell &&
                 Object.keys(data.nonexclusive_bundle_filter.temporary_by_cell).length > 0 && (
                   <span
@@ -2016,15 +2028,23 @@ export default function CalibrationPage() {
                   >
                     {" "}
                     <strong className="text-text-primary">Part of this is temporary by design.</strong>{" "}
+                    {typeof data.nonexclusive_bundle_filter.temporary_excluded === "number"
+                      ? `${data.nonexclusive_bundle_filter.temporary_excluded.toLocaleString()} of the rows above are coming back: `
+                      : ""}
                     {Object.entries(data.nonexclusive_bundle_filter.temporary_by_cell)
                       .map(([cell, condition]) => `${cell} — returns when ${condition}`)
                       .join("; ")}
                     . Those rows are real questions whose published price was written wrong, not
                     rows that were never forecasts &mdash; the market&rsquo;s own quote is intact and
                     only our copy of it is bad. So they are set aside while that defect is fixed,
-                    and no longer: once it is, they re-enter the curve and this exclusion empties
-                    itself. We are not claiming they are gone for good &mdash; if this sentence
-                    outlives the fix, the exclusion is the thing that is wrong.
+                    and no longer: once it is, they re-enter the curve and this sentence disappears
+                    from the page.{" "}
+                    {typeof data.nonexclusive_bundle_filter.historical_excluded === "number" &&
+                    data.nonexclusive_bundle_filter.historical_excluded > 0
+                      ? `The other ${data.nonexclusive_bundle_filter.historical_excluded.toLocaleString()} are not: they are the same defect already written into the back catalogue, and repairing the writer going forward does not un-write them. They stay excluded until they are separately repaired or separately ruled on, and we are not going to describe them as temporary to make the number smaller. `
+                      : ""}
+                    We are not claiming the coming-back rows are gone for good &mdash; if this
+                    sentence outlives the fix, the exclusion is the thing that is wrong.
                   </span>
                 )}
             </li>
