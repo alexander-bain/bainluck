@@ -184,6 +184,26 @@ def compute_source_home_probability(
         for sibling in group:
             if sibling.market.id == primary.market.id:
                 continue
+            # A Kalshi sibling must be a WINNER line too, or this is not a
+            # devig. The devig exists for Kalshi's per-team pair ("Celtics
+            # win?" / "76ers win?"), where both halves price the same question
+            # from opposite sides. Tennis is the case that made the missing
+            # check bite: `kxatpsetwinner` carries the SAME two player names as
+            # `kxatpmatch`, so `_home_probability_for_market` resolves it
+            # happily and the mean of "wins the match" and "wins set 2" would
+            # be stamped as the match moneyline — a number belonging to neither
+            # question. For a genuine per-team pair both markets share one
+            # prefix, so this gate is a no-op there.
+            #
+            # Gated on Kalshi only, exactly as `is_game_winner_market` and the
+            # primary's own admission check above are: that predicate is
+            # hard-False for every other source, so applying it unconditionally
+            # would silently retire the Polymarket devig instead of protecting
+            # it.
+            if sibling.market.source == "kalshi" and not is_game_winner_market(
+                sibling.market
+            ):
+                continue
             sibling_reading = _home_probability_for_market(
                 sibling, matchup, home_team_name, away_team_name,
             )

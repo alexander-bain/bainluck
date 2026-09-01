@@ -39,6 +39,41 @@ logger = logging.getLogger(__name__)
 # combat fight-winner prefix, and nothing else.
 COMBAT_FIGHT_WINNER_PREFIXES = frozenset({"kxufcfight", "kxboxing"})
 
+# Tennis is the THIRD shape of this same bug, and it was the one still open.
+# Racquet sports encode the match-winner as a ``…match`` ticker (kxatpmatch,
+# kxwtamatch, kxatpchallengermatch) or a ``…doubles`` ticker for pairs — none of
+# which end in ``game``, so every one of them was excluded exactly the way the
+# combat bouts were before #1024. Measured on production 2026-09-01 across a
+# 3-day window of linked Kalshi markets: `kxatpmatch` 89 linked events, `kxwtamatch`
+# 88, `kxatpchallengermatch` 75 — and **zero** of the 265 carried a `kalshi` key in
+# `win_probability_sources`. Every ``…game`` prefix in the same census sat at
+# near-parity (kxmlbgame 77/77, kxcs2game 114/118, kxufcfight 31/31).
+#
+# The cost was not one missing source. `betting` is the only other source tennis
+# has (no ESPN model, no stat_model), so an empty `kalshi` key left
+# `win_prob_history` completely empty, which left `len(agg_sources) == 1`, which
+# is the gate in `routes/events.py` that refuses to compute `aggregate_line`.
+# Result: on all 14 live US Open matches the chart had no source lines and no
+# Bain Luck line at all, and three of them rendered a literally blank chart.
+# That is Alex's "our probability graphs don't update".
+#
+# ENUMERATED, NOT SUFFIXED, and that is load-bearing: `prefix.endswith("match")`
+# would also admit ``kxatpexactmatch`` / ``kxwtaexactmatch`` — the six-outcome
+# EXACT SCORE field market, which is a prop, not a moneyline. Same trap for the
+# set-winner line (``kxatpsetwinner``), which carries the identical two player
+# names as the match winner and would read as a moneyline to every downstream
+# check. The winner line has to be named.
+TENNIS_MATCH_WINNER_PREFIXES = frozenset({
+    "kxatpmatch",
+    "kxwtamatch",
+    "kxatpchallengermatch",
+    "kxwtachallengermatch",
+    "kxatpdoubles",
+    "kxwtadoubles",
+    "kxatpchallengerdoubles",
+    "kxwtachallengerdoubles",
+})
+
 
 def _ticker_prefix(external_id: Optional[str]) -> str:
     """Lowercased ticker prefix (the token before the first ``-``)."""
@@ -59,14 +94,21 @@ def feeds_win_prob_blend(external_id: Optional[str]) -> bool:
     """Whether a Kalshi ticker's YES probability should write into the event
     ``win_probability_sources`` blend.
 
-    Admits team-sport game winners (prefix ends in ``game``) and combat fight
-    winners (``kxufcfight`` / ``kxboxing``). Everything else — spreads, totals,
-    player props, method/round/distance combat props — is excluded. Replaces the
-    old ``prefix.endswith("game")`` heuristic, which silently dropped every
-    combat bout (their tickers don't end in ``game``) from the blend.
+    Admits team-sport game winners (prefix ends in ``game``), combat fight
+    winners (``kxufcfight`` / ``kxboxing``) and racquet-sport match winners
+    (``kxatpmatch`` / ``kxwtamatch`` / challenger + doubles variants). Everything
+    else — spreads, totals, player props, set winners, exact scores,
+    method/round/distance combat props — is excluded. Replaces the old
+    ``prefix.endswith("game")`` heuristic, which silently dropped every combat
+    bout, and then every tennis match, for the same reason: their tickers don't
+    end in ``game``.
     """
     prefix = _ticker_prefix(external_id)
-    return prefix.endswith("game") or prefix in COMBAT_FIGHT_WINNER_PREFIXES
+    return (
+        prefix.endswith("game")
+        or prefix in COMBAT_FIGHT_WINNER_PREFIXES
+        or prefix in TENNIS_MATCH_WINNER_PREFIXES
+    )
 
 
 # ── Game-level market detection ──────────────────────────────────────────────
