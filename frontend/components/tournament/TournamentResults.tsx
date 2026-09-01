@@ -479,8 +479,13 @@ export default function TournamentResults({
           <b className="font-semibold text-text-secondary">
             {links.linked} of {links.total}
           </b>{" "}
-          open a match page. The rest are matches we hold no linked market for, so
-          there is no page to send you to yet.
+          {/* Careful with this sentence: the rows that do not link fail for TWO
+              different reasons — most are qualifying matches we hold no market
+              for at all, but some do have a market that is simply not yet tied
+              to an event (#2592). "We hold no market for them" would be false
+              of the second group, so the claim is about the LINK, which is the
+              only thing true of both. */}
+          open a match page. We cannot link the rest to one yet.
         </p>
       )}
       <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="results-provenance">
