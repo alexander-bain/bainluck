@@ -424,3 +424,144 @@ class TestTheBufferCannotGrowWithoutBound:
             "the parked set must stay at one entry per outcome; "
             f"got {stats}"
         )
+
+
+# ------------------------- the repair: CERT-654's BLOCK, made a test ----------
+
+
+class TestTheFinalFlushRetriesInsteadOfRequeueing:
+    """CERT-654 BLOCK, reproduced and then closed.
+
+    The certifier's finding, verbatim: *"A failure in the recycle-time final
+    flush requeues into the consumer-local buffer and then immediately returns,
+    destroying the retry. Exact-head probe: `writes=[]`, `errors=1`,
+    `requeued=1`."* Exactly right, and the original Q491 guard could not see it
+    because every case it tested received another PERIODIC flush.
+
+    These tests remove that safety net: ``flush`` is set LONGER than ``recycle``
+    so ``flush_loop`` never fires and **the only flush of the consumer's life is
+    the one in the `finally`**. That is the shape the certifier probed, and it
+    is the shape a real recycle hits every ``SUBSCRIPTION_REFRESH_SECONDS``.
+    """
+
+    async def test_polymarket_final_flush_recovers_a_failed_write(
+        self, monkeypatch
+    ):
+        writes, stats, budget = await _run_poly(
+            monkeypatch,
+            [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
+            fail_writes=1,
+            flush=5.0,      # longer than the recycle: no periodic flush EVER runs
+            recycle=0.25,
+        )
+
+        assert budget["failed"] == 1, (
+            "the harness must actually have failed a write, or this proves "
+            f"nothing; got {budget}"
+        )
+        # THE REPAIR. Pre-repair this was `writes == []` — the price was requeued
+        # into a buffer the consumer then abandoned.
+        assert writes == [(YES_OUTCOME_ID, pytest.approx(0.70))], (
+            "the final flush must RETRY a failed write, not requeue it into a "
+            f"buffer nobody reads again; got writes={writes} stats={stats}"
+        )
+        assert stats["final_flush_retries"] >= 1, (
+            f"the retry should be counted, not silent; got {stats}"
+        )
+        assert stats["final_flush_dropped"] == 0, (
+            f"nothing was lost, so nothing should be reported lost; got {stats}"
+        )
+
+    async def test_kalshi_final_flush_recovers_a_failed_write(self, monkeypatch):
+        """The twin. Both sockets share the constant and the defect."""
+        writes, stats, budget = await _run_kalshi(
+            monkeypatch,
+            [json.dumps({
+                "type": "ticker",
+                "msg": {
+                    "market_ticker": KALSHI_TICKER,
+                    "yes_bid_dollars": "0.40",
+                    "yes_ask_dollars": "0.44",
+                },
+            })],
+            fail_writes=1,
+            flush=5.0,
+            recycle=0.25,
+        )
+
+        assert budget["failed"] == 1
+        assert writes, (
+            "the Kalshi final flush must retry a failed write; "
+            f"got writes={writes} stats={stats}"
+        )
+        assert stats["final_flush_retries"] >= 1
+        assert stats["final_flush_dropped"] == 0
+
+    async def test_no_periodic_flush_really_ran(self, monkeypatch):
+        """Non-vacuity for the SETUP, not the ship.
+
+        If `flush=5.0` did not actually suppress `flush_loop`, the two tests
+        above would be re-testing the ordinary periodic retry and would pass for
+        the wrong reason — the exact way the original Q491 guard missed this.
+        With one healthy tick and no failures there must be exactly ONE write,
+        produced by the final drain.
+        """
+        writes, stats, _budget = await _run_poly(
+            monkeypatch,
+            [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
+            fail_writes=0,
+            flush=5.0,
+            recycle=0.25,
+        )
+
+        assert writes == [(YES_OUTCOME_ID, pytest.approx(0.70))]
+        assert stats["errors"] == 0
+        assert stats["final_flush_retries"] == 0, (
+            "a healthy final flush needs no retry; a non-zero count here means "
+            f"the periodic loop was running after all: {stats}"
+        )
+
+    async def test_an_unrecoverable_final_flush_is_LOUD_not_silent(
+        self, monkeypatch, caplog
+    ):
+        """The honest half. A bounded retry can still exhaust itself, and when
+        it does the price really is gone — so it must be reported as lost rather
+        than left to be inferred from a silence (gotcha #53)."""
+        monkeypatch.setattr(poly_task, "FINAL_FLUSH_ATTEMPTS", 2)
+
+        with caplog.at_level("ERROR"):
+            writes, stats, budget = await _run_poly(
+                monkeypatch,
+                [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
+                fail_writes=10_000,   # never recovers
+                flush=5.0,
+                recycle=0.25,
+            )
+
+        assert writes == []
+        assert budget["failed"] == 2, (
+            "the drain must have made exactly FINAL_FLUSH_ATTEMPTS tries, so the "
+            f"bound is real and not accidental; got {budget}"
+        )
+        assert stats["final_flush_dropped"] == 1, (
+            f"a stranded price must be counted as dropped; got {stats}"
+        )
+        assert any("STRANDED" in r.message or "STRANDED" in r.getMessage()
+                   for r in caplog.records), (
+            "a genuinely lost price must be logged loudly, never inferred from "
+            "a quiet stats dict"
+        )
+
+    async def test_the_bound_is_a_named_constant_not_an_inlined_number(self):
+        """`FINAL_FLUSH_ATTEMPTS` is monkeypatched by the test above, so it must
+        stay a module attribute both sockets read — the same lesson
+        `PRICE_FLUSH_SECONDS` taught when the flush interval was inlined and the
+        retry was untestable."""
+        assert isinstance(kalshi_task.FINAL_FLUSH_ATTEMPTS, int)
+        assert kalshi_task.FINAL_FLUSH_ATTEMPTS >= 2, (
+            "a 'bounded retry' of one attempt is not a retry"
+        )
+        assert poly_task.FINAL_FLUSH_ATTEMPTS == kalshi_task.FINAL_FLUSH_ATTEMPTS, (
+            "both sockets share the constant so one dyno cannot run two "
+            "different drain policies"
+        )

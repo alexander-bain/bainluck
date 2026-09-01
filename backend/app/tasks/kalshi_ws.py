@@ -36,6 +36,20 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
 #: this is how long the price waits for the next attempt.
 PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 
+# Q491 repair (CERT-654 BLOCK). The periodic flush can afford to requeue a failed
+# batch because another flush is `PRICE_FLUSH_SECONDS` away. **The final flush has
+# no successor** — after it the consumer returns and the buffer is garbage — so
+# requeueing there discarded the batch exactly as the pre-Q491 code did, and the
+# recycle path runs it every `SUBSCRIPTION_REFRESH_SECONDS`, not just at shutdown.
+# The last drain therefore RETRIES instead of requeueing.
+#
+# No sleep between attempts, deliberately: this runs inside a `finally` that is
+# also reached via `CancelledError`, and awaiting a sleep during cancellation
+# raises immediately and would abandon the drain. Each attempt opens a FRESH
+# session (and so a fresh connection), which is what a connection-level transient
+# actually needs in order to clear.
+FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
+
 
 async def _run_kalshi_ws_consumer():
     """Main WebSocket consumer loop.
@@ -137,6 +151,11 @@ async def _run_kalshi_ws_consumer():
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
         # `errors` alone cannot distinguish a retried batch from a lost one.
         "requeued": 0,
+        # Q491 repair: the final drain retries instead of requeueing, because
+        # nothing runs after it. These two separate "we had to try again" from
+        # "we gave up and a price is gone".
+        "final_flush_retries": 0,
+        "final_flush_dropped": 0,
     }
 
     # -- Buffered price updates --
@@ -212,6 +231,38 @@ async def _run_kalshi_ws_consumer():
         await blend_refresher.refresh(
             event_ids_for_outcomes(event_id_by_outcome, batch.keys())
         )
+
+    async def drain_prices():
+        """The LAST flush of this consumer's life — retry, never requeue.
+
+        Q491 repair (CERT-654 BLOCK). `flush_prices` hands a failed batch back to
+        `price_buffer` so the next periodic flush retries it. At recycle and at
+        shutdown there IS no next flush, so that requeue is a silent drop — the
+        certifier's exact-head probe read `writes=[]`, `errors=1`, `requeued=1`.
+        Here we call `flush_prices` again instead, up to `FINAL_FLUSH_ATTEMPTS`,
+        each attempt on a fresh session.
+
+        Every attempt after the first is counted, so a dyno that routinely needs
+        them is visible rather than merely quiet.
+        """
+        for attempt in range(FINAL_FLUSH_ATTEMPTS):
+            await flush_prices()
+            async with buffer_lock:
+                if not price_buffer:
+                    return
+            if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
+                stats["final_flush_retries"] += 1
+        async with buffer_lock:
+            stranded = len(price_buffer)
+        if stranded:
+            # Loud: this is the one place a price genuinely cannot be retried
+            # again, so it must never be inferable only from a silence.
+            stats["final_flush_dropped"] += stranded
+            logger.error(
+                "Kalshi WS: %d price updates STRANDED after %d final-flush "
+                "attempts — these are lost, not deferred",
+                stranded, FINAL_FLUSH_ATTEMPTS,
+            )
 
     def _parse_dollar(val) -> float | None:
         if val is None or val == "":
@@ -366,7 +417,9 @@ async def _run_kalshi_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
-        await flush_prices()
+        # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
+        # must RETRY rather than requeue into a buffer nobody will read again.
+        await drain_prices()
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
     return stats

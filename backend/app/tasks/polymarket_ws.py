@@ -14,7 +14,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.tasks.kalshi_ws import PRICE_FLUSH_SECONDS, SUBSCRIPTION_REFRESH_SECONDS
+from app.tasks.kalshi_ws import (
+    FINAL_FLUSH_ATTEMPTS,
+    PRICE_FLUSH_SECONDS,
+    SUBSCRIPTION_REFRESH_SECONDS,
+)
 from app.tasks.polymarket import _poly_book_is_untradeable
 
 logger = logging.getLogger(__name__)
@@ -280,6 +284,11 @@ async def _run_polymarket_ws_consumer():
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
         # `errors` alone cannot distinguish a retried batch from a lost one.
         "requeued": 0,
+        # Q491 repair: the final drain retries instead of requeueing, because
+        # nothing runs after it. These two separate "we had to try again" from
+        # "we gave up and a price is gone".
+        "final_flush_retries": 0,
+        "final_flush_dropped": 0,
     }
 
     # Buffered price updates
@@ -348,6 +357,35 @@ async def _run_polymarket_ws_consumer():
         await blend_refresher.refresh(
             event_ids_for_outcomes(event_id_by_outcome, batch.keys())
         )
+
+    async def drain_prices():
+        """The LAST flush of this consumer's life — retry, never requeue.
+
+        Q491 repair (CERT-654 BLOCK), twin of the Kalshi socket's. `flush_prices`
+        hands a failed batch back to `price_buffer` so the next periodic flush
+        retries it. At recycle and at shutdown there IS no next flush, so that
+        requeue is a silent drop — the certifier's exact-head probe read
+        `writes=[]`, `errors=1`, `requeued=1`. Call `flush_prices` again instead,
+        up to `FINAL_FLUSH_ATTEMPTS`, each attempt on a fresh session.
+        """
+        for attempt in range(FINAL_FLUSH_ATTEMPTS):
+            await flush_prices()
+            async with buffer_lock:
+                if not price_buffer:
+                    return
+            if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
+                stats["final_flush_retries"] += 1
+        async with buffer_lock:
+            stranded = len(price_buffer)
+        if stranded:
+            # Loud: this is the one place a price genuinely cannot be retried
+            # again, so it must never be inferable only from a silence.
+            stats["final_flush_dropped"] += stranded
+            logger.error(
+                "Polymarket WS: %d price updates STRANDED after %d final-flush "
+                "attempts — these are lost, not deferred",
+                stranded, FINAL_FLUSH_ATTEMPTS,
+            )
 
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
@@ -494,7 +532,9 @@ async def _run_polymarket_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
-        await flush_prices()
+        # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
+        # must RETRY rather than requeue into a buffer nobody will read again.
+        await drain_prices()
 
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
