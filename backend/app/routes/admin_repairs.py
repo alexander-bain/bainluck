@@ -305,8 +305,22 @@ _REPAIRS = {
     # Newest-commence-first: gotcha #41's tail-starvation is ACCEPTED and named,
     # because Polymarket EVENT data is durable so the tail cannot rot, and
     # `remaining_events` is reported every call so it is never silent.
-    # Paging is a keyset: `?after_commence=&after_id=` from `next_cursor`.
-    # Accepts ?limit=&after_commence=&after_id=.
+    # Paging is a keyset: `?after_date=&after_id=` from `next_cursor`.
+    # Accepts ?limit=&after_date=&after_id=.
+    # 🔴 Q496: this block used to say `after_commence`, which the dispatcher
+    # does not declare. FastAPI drops an unknown query param SILENTLY, so an
+    # operator following the comment got an inactive keyset and re-read page ONE
+    # forever while the response looked busy. The rail's signature and the
+    # forwarding filter always said `after_date`; only the prose was wrong, and
+    # no gate covered prose. `tests/test_repair_polymarket_sport_category_q496.py`
+    # now fails the build if ANY comment in this file names a param the
+    # dispatcher cannot pass.
+    # The default `limit` is safe to run as documented: the rail's own budget is
+    # derived from the 30s router wall (Q496), so an over-running call returns a
+    # partial page WITH its cursor instead of an H12 with no body.
+    # Read `scan_exhausted`, NOT `remaining_events`, to know when you are done —
+    # the latter counts the suspect category, which legitimately contains the
+    # Setka control and so has a positive floor.
     # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
     # state, not a standing job.
     "polymarket-sport-category": (
