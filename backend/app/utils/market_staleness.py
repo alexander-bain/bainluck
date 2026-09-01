@@ -482,31 +482,70 @@ def newest_outcome_stamp(outcomes) -> datetime | None:
     return newest
 
 
-def freshness_clock(
-    market_updated_at: datetime | None,
+#: How long a market's prices may stand still before the market is treated as
+#: over. **This is NOT the parent row's threshold and must never be folded into
+#: it** — see `prices_have_stopped` for the measurement that separates them.
+PRICES_STOPPED_DAYS = 14
+
+
+def prices_have_stopped(
     newest_outcome_at: datetime | None,
-) -> datetime | None:
-    """The last moment this market gave evidence of being alive — the OLDER stamp.
+    now: datetime,
+    *,
+    max_days: float = PRICES_STOPPED_DAYS,
+) -> bool:
+    """Has this market's pricing stopped altogether? (UX-P251)
 
-    A market counts as fresh only if BOTH clocks agree it is, so a poller
-    touching the parent row can no longer vouch for prices it did not move.
+    ``None`` — no outcome carries a stamp — is **False**. That is "no evidence",
+    not evidence of death; a writer that never sets the column must not take its
+    whole source dark.
 
-    ═══ WHY THE OLDER ONE, AND NOT SIMPLY THE PRICES' ═══
+    ═══ 🔴 WHY THIS IS A SEPARATE BLOCKER WITH A SEPARATE NUMBER ═══
 
-    The prices' clock is the more truthful of the two and the honest end state
-    is to read it alone. That is not what this returns, deliberately. Measured
-    on production 2026-09-01 over the 29,658 candidate markets:
+    The first version of this ship folded the prices' clock into
+    ``market.updated_at`` — took the older of the two stamps and let the four
+    existing staleness blockers run on the result at their own ``2`` days. It
+    was green, its guard was green, and its battery killed 10 of 11 mutants.
+    **A census by market tier is what caught it**, before merge and by one query:
 
-        645  parent fresh (≤2d), prices older than 2 days  -> this change BLOCKS
-        897  parent stale (>2d), prices fresher than 2 days -> currently blocked
+        tier 3: 17 of 17 admitted markets blocked — 100%
+        tier 4:  6 of 7                          —  86%
 
-    Reading the prices alone would also ADMIT those 897 — a feed-composition
-    change no gate in UX-P251 validates. Taking the older stamp makes this
-    change one-directional: everything it moves, it moves out. The 897 are a
-    separate question with their own evidence to gather.
+    Those are not dead markets. They are ``NFC East Division Winner``,
+    ``College Football Heisman Trophy Winner``, ``NHL Pacific Division Winner``,
+    ``Top Fantasy Rookie QB/RB/TE/WR``, the Biletnikoff and Doak Walker awards —
+    **season futures, priced four days ago, on the eve of the NFL season.** A
+    low-liquidity season future legitimately does not reprice daily, and the
+    parent-row clock had been accidentally protecting every one of them.
+
+    Two clocks measuring different things must not share a constant. The parent
+    stamp answers "is the poller still visiting this row" and 2 days is right
+    for it. This one answers "has anybody moved a price" and needs a threshold
+    from the price distribution, which is strongly bimodal — measured on
+    production 2026-09-01, over the 3,409 candidate markets the parent clock
+    admits:
+
+        > 2d   601 blocked      <- kills the whole season-futures shelf
+        > 7d   137
+        > 14d  107   <-- chosen
+        > 21d  107
+        > 30d  103
+        > 45d   67
+
+    Flat from 14 to 30: **almost nothing is frozen between two weeks and a
+    month**, so 14 sits at the start of the plateau with a fortnight of margin
+    below it. It catches the bridesmaids card (59 days) and everything above it,
+    and spares all 464 markets that merely price weekly.
+
+    Being a separate blocker also means the ``#1090`` broaden pass cannot relax
+    it: the two ``*_days`` knobs that pass varies reach the four parent-clock
+    blockers only. A market whose prices stopped a fortnight ago should not come
+    back merely because the pool is thin, and now it cannot.
     """
-    stamps = [s for s in (_as_utc(market_updated_at), _as_utc(newest_outcome_at)) if s]
-    return min(stamps) if stamps else None
+    stamp = _as_utc(newest_outcome_at)
+    if stamp is None:
+        return False
+    return (now - stamp).total_seconds() / 86400 > max_days
 
 
 def is_probability_extreme(probability: float | None) -> bool:

@@ -47,25 +47,37 @@ called.**
        ``onupdate`` column answers "did anything about this row change", which
        is a different question from the one every caller of it was asking.
 
-═══ WHAT THIS SHIPS, AND WHAT IT DELIBERATELY DOES NOT ═══
+═══ WHAT THIS SHIPS ═══
 
-Measured on production, 2026-09-01, over the 29,658 markets that pass the
-candidate SQL (``status='open'``, no ``event_id``, resolution date null or
-future):
+One new blocker, ``prices_stopped``, with **its own threshold of 14 days**. The
+four parent-row blockers are not touched, so the change is purely additive:
+nothing that is blocked today becomes visible today, and #2512 — that the parent
+clock ALSO wrongly suppresses 897 markets whose prices are fresh — stays open
+and stays somebody else's queue.
 
-    645  parent says fresh (≤2d), prices older than 2 days   -> NEWLY BLOCKED
-    897  parent says stale (>2d), prices fresher than 2 days  -> still blocked
+🔴 **VERSION ONE OF THIS SHIP DID FOLD THE TWO CLOCKS TOGETHER** and ran the
+existing blockers on the older stamp at their own 2 days. Every gate was green
+— 19 targeted tests, 5,489 frontend, all four CI backend shards, a battery that
+killed 10 of 11 mutants. **A census by market tier caught it before merge:**
 
-The clock is wrong in BOTH directions. This queue ships only the first half:
-the freshness clock becomes the OLDER of the two stamps, so a market must have
-positive evidence of recency from its own prices, and **nothing that is blocked
-today becomes visible today**. The 897 wrongly-suppressed markets are a
-loosening — a feed-composition change nothing in this queue validates — and
-they are named here with their number rather than absorbed silently.
+    tier 3: 17 of 17 admitted markets blocked — 100%
+    tier 4:  6 of 7                          —  86%
 
-The top ten outcomes are NOT a safe proxy for "the prices", and that is
-measured too: 207 of the 29,658 carry a tail outcome more than a day fresher
-than anything in their top ten. So the stamp is taken over ALL outcomes.
+``NFC East Division Winner``, the Heisman, ``NHL Pacific Division Winner``, the
+fantasy rookie markets — **season futures priced four days ago, on the eve of
+the NFL season.** A low-liquidity season future does not reprice daily, and the
+parent-row clock had been accidentally protecting every one of them. Two clocks
+measuring different things must not share a constant. `TestTheSeasonFuturesShelf`
+below is that shelf, kept as the regression case.
+
+The threshold sits in a measured gap, not at a guess. Over the 3,409 markets the
+parent clock admits: ``>2d 601 · >7d 137 · >14d 107 · >21d 107 · >30d 103 ·
+>45d 67``. Flat from 14 to 30 — almost nothing is frozen between a fortnight and
+a month.
+
+The top ten outcomes are NOT a safe proxy for "the prices", and that is measured
+too: 207 of the 29,658 carry a tail outcome more than a day fresher than
+anything in their top ten. So the stamp is taken over ALL outcomes.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -74,7 +86,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.routes.feed import _market_runtime_filter_trace
-from app.utils.market_staleness import freshness_clock, newest_outcome_stamp
+from app.utils.market_staleness import (
+    PRICES_STOPPED_DAYS,
+    newest_outcome_stamp,
+    prices_have_stopped,
+)
 
 NOW = datetime(2026, 9, 1, 12, 50, tzinfo=timezone.utc)
 
@@ -157,7 +173,7 @@ class TestTheCardAlexRead:
             "The wedding was two months ago and every price froze 59 days "
             "before this page was served. This card scored 88 on production."
         )
-        assert "stale_no_movement" in trace["blockers"]
+        assert "prices_stopped" in trace["blockers"]
 
     def test_and_the_PARENT_row_is_why_it_used_to_pass(self):
         """The defect, isolated: same market, same now, parent clock only.
@@ -200,27 +216,46 @@ class TestTheCardAlexRead:
 
 
 class TestTheClockItself:
-    """`freshness_clock` takes the OLDER stamp. Both arms, and both Nones."""
+    """`prices_have_stopped` — its own question, its own number."""
 
-    def test_takes_the_older_of_the_two(self):
-        parent = NOW - timedelta(hours=1)
-        prices = NOW - timedelta(days=59)
-        assert freshness_clock(parent, prices) == prices
-        assert freshness_clock(prices, parent) == prices
+    def test_the_threshold_is_a_fortnight_not_the_parent_clock_s_two_days(self):
+        # 🔴 THE NUMBER IS THE WHOLE FINDING. See the second version note in
+        # `TestTheSeasonFuturesShelf` below.
+        assert PRICES_STOPPED_DAYS == 14
 
-    def test_a_missing_stamp_is_not_a_fresh_one(self):
-        parent = NOW - timedelta(hours=1)
-        assert freshness_clock(parent, None) == parent
-        assert freshness_clock(None, parent) == parent
-        assert freshness_clock(None, None) is None
+    def test_a_boundary_not_a_slope(self):
+        assert prices_have_stopped(NOW - timedelta(days=14), NOW) is False
+        assert prices_have_stopped(NOW - timedelta(days=14, seconds=1), NOW) is True
+
+    def test_a_missing_stamp_is_NO_EVIDENCE_not_death(self):
+        # A writer that never sets the column must not take its whole source
+        # dark. `None` falls through to the parent-row rules, untouched.
+        assert prices_have_stopped(None, NOW) is False
 
     def test_naive_datetimes_are_read_as_utc(self):
         # Postgres hands these back tz-aware, but the ORM fixtures and some
         # older rows do not, and a naive/aware comparison raises TypeError at
         # request time rather than in any test.
-        naive = datetime(2026, 7, 4, 18, 16)
-        aware = datetime(2026, 7, 4, 18, 16, tzinfo=timezone.utc)
-        assert freshness_clock(naive, None) == aware
+        assert prices_have_stopped(datetime(2026, 7, 4, 18, 16), NOW) is True
+
+    def test_the_parent_row_clock_is_NOT_TOUCHED_by_this_ship(self):
+        """The 897 question is closed by construction, not by a promise.
+
+        The first version folded both clocks together and had to argue that it
+        was not also admitting the 897 markets the parent clock wrongly
+        suppresses. A separate blocker makes the change purely ADDITIVE: the
+        four parent-clock blockers read exactly what they read before, so
+        nothing that is blocked today can become visible today.
+        """
+        import inspect
+
+        from app.routes import feed as feed_module
+
+        src = inspect.getsource(feed_module._market_runtime_filter_trace)
+        assert "updated_at = _utc(market.updated_at)" in src, (
+            "the parent-row staleness rules must keep reading the parent row; "
+            "folding the price clock into them deletes the season-futures shelf"
+        )
 
     def test_newest_outcome_stamp_reads_EVERY_outcome_not_the_top_ten(self):
         # Measured on production: 207 of 29,658 candidate markets carry a tail
@@ -289,11 +324,9 @@ class TestTheClockItself:
             is None
         )
 
-        # And "no evidence" must fall back to the parent clock rather than
-        # reading as death — otherwise the swallow above becomes a silent
-        # suppression instead of a silent admission.
-        parent = NOW - timedelta(minutes=5)
-        assert freshness_clock(parent, newest_outcome_stamp([object()])) == parent
+        # And "no evidence" must not read as death — otherwise the swallow
+        # above becomes a silent suppression instead of a silent admission.
+        assert prices_have_stopped(newest_outcome_stamp([object()]), NOW) is False
 
     def test_the_orm_model_still_carries_the_column(self):
         """The tripwire, in the one place a `try/except` cannot swallow it.
@@ -365,12 +398,19 @@ class TestHealthySiblingsSurvive:
         )
         assert trace["eligible"], trace["blockers"]
 
-    def test_the_LOOSENING_half_is_deliberately_not_shipped(self):
-        """Parent stale + prices fresh stays BLOCKED. 897 rows on production.
+    def test_a_stale_PARENT_row_still_decides_on_its_own_terms(self):
+        """This ship is purely ADDITIVE to the parent-row rules — #2512 stands.
 
-        This is the half of the fix this queue does NOT ship, pinned so it reads
-        as a decision rather than an oversight. Deleting this test is how the
-        follow-up queue announces itself.
+        Version one folded the two clocks together, which meant it had to argue
+        that it was not also ADMITTING the 897 markets the parent clock wrongly
+        suppresses (prices fresh, parent stamp stale). A separate blocker closes
+        that question by construction instead of by argument: this market's
+        prices moved twenty minutes ago, so `prices_stopped` must NOT fire, and
+        whatever the parent-row rules then decide is exactly what they decided
+        before this branch existed.
+
+        #2512 — that the parent clock also wrongly suppresses — is still open
+        and is still not this queue's to answer.
         """
         outcomes = [
             _outcome(
@@ -390,7 +430,11 @@ class TestHealthySiblingsSurvive:
             NOW,
             newest_outcome_at=newest_outcome_stamp(outcomes),
         )
-        assert not trace["eligible"]
+        assert "prices_stopped" not in trace["blockers"], (
+            "this market's prices moved 20 minutes ago; a fortnight-scale "
+            "blocker has no business firing on it"
+        )
+        # …and the parent-row rule reaches its own verdict, untouched.
         assert "stale_no_movement" in trace["blockers"]
 
 
@@ -409,7 +453,7 @@ class TestBothFeedPathsUseTheSameClock:
     @pytest.mark.parametrize("func", ["_score_futures", "_score_sports_mode_futures"])
     def test_the_path_reads_the_outcome_clock(self, func):
         src = self._src(func)
-        assert "newest_outcome_stamp(" in src, (
+        assert "_newest_outcome_stamp(" in src, (
             f"{func} must derive its staleness from the outcomes' own stamps; "
             "market.updated_at is a touch-stamp on the parent row"
         )
@@ -445,3 +489,106 @@ class TestBothFeedPathsUseTheSameClock:
         from app.routes import feed as feed_module
 
         assert callable(feed_module._newest_outcome_stamp)
+
+
+class TestTheSeasonFuturesShelf:
+    """🔴 THE SECOND VERSION OF THIS SHIP EXISTS BECAUSE OF THIS CLASS.
+
+    Version one folded the prices' clock into ``market.updated_at`` and let the
+    four existing staleness blockers run on the older of the two at their own
+    **2 days**. Every gate was green: 19 targeted tests, 5,489 frontend, all
+    four CI backend shards, and a battery that killed 10 of 11 mutants.
+
+    **A census by market tier is what caught it, before merge and by one query:**
+
+        tier 3: 17 of 17 admitted markets blocked — 100%
+        tier 4:  6 of 7                          —  86%
+
+    Those are not dead markets. They are the rows below: season futures priced
+    four days ago, on the eve of the NFL season. A low-liquidity season future
+    legitimately does not reprice daily, and the parent-row clock — the one this
+    ship set out to discredit — had been accidentally protecting every one of
+    them.
+
+    Two clocks measuring different things must not share a constant. The whole
+    reason ``prices_stopped`` is a separate blocker with its own number is this
+    shelf, so the shelf is the regression case.
+    """
+
+    # Real names and real ages, from the production census on 2026-09-01.
+    STILL_LIVE = [
+        ("NFC East Division Winner", 4),
+        ("NHL Pacific Division Winner", 4),
+        ("Top Fantasy Rookie QB", 4),
+        ("Biletnikoff Award Winner", 4),
+        ("Doak Walker Award Winner", 4),
+        ("MVP Winner?", 4),
+        ("Pro Baseball Playoff Qualifiers", 14),
+        ("College Football Heisman Trophy Winner", 14),
+    ]
+    REALLY_DEAD = [
+        ("Ballon d'Or Winner 2026", 42),
+        ("Who will Taylor Swift's bridesmaids be?", 59),
+        ("Dublin-Central By-Election Winner", 101),
+        ("Rookie of the Year Winner", 128),
+        ("Most Improved Player Winner", 130),
+        ("Clutch Player of the Year Winner", 133),
+        ("Pro Basketball Playoff Qualifiers", 137),
+    ]
+
+    @pytest.mark.parametrize("name,age_days", STILL_LIVE)
+    def test_a_season_future_that_prices_weekly_KEEPS_its_card(self, name, age_days):
+        assert prices_have_stopped(NOW - timedelta(days=age_days), NOW) is False, (
+            f"{name!r} last priced {age_days}d ago is a live season future; "
+            "blocking it empties the whole tier-3/tier-4 shelf"
+        )
+
+    @pytest.mark.parametrize("name,age_days", REALLY_DEAD)
+    def test_a_market_that_stopped_a_month_ago_LOSES_its_card(self, name, age_days):
+        assert prices_have_stopped(NOW - timedelta(days=age_days), NOW) is True, (
+            f"{name!r} last priced {age_days}d ago is over"
+        )
+
+    def test_the_two_populations_do_not_touch(self):
+        """The threshold sits in a measured gap, not between two adjacent cases.
+
+        Production, over the 3,409 markets the parent clock admits:
+        >2d 601 · >7d 137 · >14d 107 · >21d 107 · >30d 103 · >45d 67.
+        Flat from 14 to 30 — almost nothing is frozen between a fortnight and a
+        month — so the threshold has real margin on both sides rather than
+        splitting a continuum.
+        """
+        oldest_live = max(age for _, age in self.STILL_LIVE)
+        youngest_dead = min(age for _, age in self.REALLY_DEAD)
+        assert oldest_live <= PRICES_STOPPED_DAYS < youngest_dead
+        assert youngest_dead - oldest_live >= 28, (
+            "the observed gap between the live shelf and the dead one is four "
+            "weeks; if it narrows, this threshold needs re-measuring rather "
+            "than nudging"
+        )
+
+    def test_the_whole_card_survives_the_oracle_not_just_the_helper(self):
+        """The shelf, through the real gate, not the pure function."""
+        outcomes = [
+            _outcome("Philadelphia Eagles", 0.42, NOW - timedelta(days=4), opening=0.38),
+            _outcome("Dallas Cowboys", 0.31, NOW - timedelta(days=4), opening=0.34),
+            _outcome("Washington Commanders", 0.19, NOW - timedelta(days=4), opening=0.20),
+            _outcome("New York Giants", 0.08, NOW - timedelta(days=4), opening=0.08),
+        ]
+        market = _market(
+            updated_at=NOW - timedelta(hours=3),
+            resolution_date=NOW + timedelta(days=140),
+            name="NFC East Division Winner",
+            category="americanfootball",
+        )
+        trace = _market_runtime_filter_trace(
+            market,
+            outcomes,
+            "Philadelphia Eagles",
+            0.42,
+            NOW,
+            sport_category="americanfootball",
+            newest_outcome_at=newest_outcome_stamp(outcomes),
+        )
+        assert "prices_stopped" not in trace["blockers"]
+        assert trace["eligible"], trace["blockers"]
