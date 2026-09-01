@@ -240,8 +240,8 @@ class TestEconomicsSeededFed:
         # route's _is_past_date filter (economics.py) never drops it as the
         # calendar advances. Was hardcoded "Jun 2026" and began failing once the
         # run date passed June 2026 — a date-drift bug in the test, not a route
-        # regression. (Latent: the Aug/Dec 2026 seeds in this file are still
-        # future today but will hit the same drift — flagged for follow-up.)
+        # regression. (The Aug/Dec 2026 seeds once flagged latent here hit that
+        # same drift and now use this pattern too — see the CPI and jobs tests.)
         _fut = datetime.now(timezone.utc) + timedelta(days=90)
         _mon, _yr = _fut.strftime("%b"), _fut.year
         mock_db.execute.return_value = _query_result([
@@ -273,11 +273,18 @@ class TestEconomicsSeededInflation:
     """CPI market is classified under inflation with correct bracket shape."""
 
     async def test_cpi_populates_inflation(self, client, mock_db):
+        # Date-robust for the same reason as test_fomc_meeting_populates: seed
+        # the CPI release in the FUTURE so the route's _is_past_date filter
+        # never drops it. Was hardcoded "Aug 2026" and began failing the moment
+        # UTC rolled into September 2026 — a date-drift bug in the test, not a
+        # route regression.
+        _fut = datetime.now(timezone.utc) + timedelta(days=90)
+        _mon, _yr = _fut.strftime("%b"), _fut.year
         mock_db.execute.return_value = _query_result([
             _market(
                 market_id=20,
-                name="CPI YoY for Aug 2026?",
-                external_id="kxcpi-aug2026",
+                name=f"CPI YoY for {_mon} {_yr}?",
+                external_id=f"kxcpi-{_mon.lower()}{_yr}",
                 source="kalshi",
                 outcomes=[
                     _outcome("2.0%-2.5%", 0.25, outcome_id=200, rank=1),
@@ -292,7 +299,7 @@ class TestEconomicsSeededInflation:
         assert inf["count"] == 1
         assert len(inf["cpi_releases"]) == 1
         cpi = inf["cpi_releases"][0]
-        assert cpi["mo"] == "Aug"
+        assert cpi["mo"] == _mon
         assert isinstance(cpi["brackets"], list)
         assert len(cpi["brackets"]) == 3
         assert "peakIs" in cpi
@@ -325,11 +332,16 @@ class TestEconomicsSeededJobs:
     """Jobs market is classified and placed in the jobs section."""
 
     async def test_jobs_market(self, client, mock_db):
+        # Date-robust: the "Dec 2026" seed flagged as latent alongside the CPI
+        # one would drift the same way once UTC passes December 2026.
+        _fut = datetime.now(timezone.utc) + timedelta(days=90)
+        _mon, _yr = _fut.strftime("%b"), _fut.year
+        _q = f"Unemployment rate above 4.5% by {_mon} {_yr}?"
         mock_db.execute.return_value = _query_result([
             _market(
                 market_id=40,
-                name="Unemployment rate above 4.5% by Dec 2026?",
-                external_id="kxunemployment-dec2026",
+                name=_q,
+                external_id=f"kxunemployment-{_mon.lower()}{_yr}",
                 source="kalshi",
                 outcomes=[
                     _outcome("Yes", 0.25, outcome_id=400, rank=1),
@@ -342,7 +354,7 @@ class TestEconomicsSeededJobs:
         assert body["themes"]["jobs"]["count"] == 1
         assert len(body["themes"]["jobs"]["markets"]) == 1
         row = body["themes"]["jobs"]["markets"][0]
-        assert row["q"] == "Unemployment rate above 4.5% by Dec 2026?"
+        assert row["q"] == _q
         assert row["market_id"] == 40
 
 
