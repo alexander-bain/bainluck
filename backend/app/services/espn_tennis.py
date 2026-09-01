@@ -533,6 +533,33 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     status = ((competition.get("status") or {}).get("type") or {})
                     espn_state = str(status.get("state") or "")
 
+                    # WHO IS PLAYING, READ ONCE FOR EVERY STATE (Q503).
+                    #
+                    # Hoisted above the `post`-only branch below, which is where
+                    # this used to be read. That placement is the reason the
+                    # `order_of_play` map carried a competition's clock but not
+                    # its competitors: the live and upcoming competitions — the
+                    # only ones the schedule card renders — `continue` before
+                    # ever reaching it.
+                    #
+                    # The cost of that gap, measured 2026-09-01: the card
+                    # rendered ESPN's "3rd Set" onto a Kalshi market's pairing
+                    # and showed Casper Ruud, who is not in the tournament,
+                    # live against Cerundolo. Nothing downstream could notice,
+                    # because nothing downstream was told who ESPN had on court.
+                    #
+                    # A doubles competition names a TEAM and no athlete, so this
+                    # yields `[]` there. That is silence, not a half-pair, and
+                    # the consumer must read it as such.
+                    competitor_names = [
+                        name
+                        for name in (
+                            ((c.get("athlete") or {}).get("displayName") or "")
+                            for c in (competition.get("competitors") or [])
+                        )
+                        if name
+                    ]
+
                     # EVERY COMPETITION THE SCOREBOARD NAMES IS PUBLISHED, AND
                     # THAT INCLUDES THE FINISHED ONES (CERT-517).
                     #
@@ -568,6 +595,10 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             "espn_round": (
                                 (competition.get("round") or {}).get("displayName")
                             ),
+                            # THE AUTHORITY ON WHO IS PLAYING (Q503). Empty
+                            # means the scoreboard named no athletes for this
+                            # competition — read it as silence.
+                            "players": competitor_names,
                         }
                         stats[slate_state] += 1
                     else:
@@ -580,11 +611,12 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     stats["final"] += 1
 
                     competitors = competition.get("competitors") or []
-                    names = [
-                        ((c.get("athlete") or {}).get("displayName") or "")
-                        for c in competitors
-                    ]
-                    if len([n for n in names if n]) != 2:
+                    # The same read the `order_of_play` entry above published,
+                    # reused rather than repeated — two copies of "who is
+                    # playing" in one loop is how the map and the results list
+                    # would come to disagree.
+                    names = competitor_names
+                    if len(names) != 2:
                         # A doubles competition names a TEAM, not an athlete, in
                         # some ESPN payloads. Counted rather than dropped so the
                         # doubles section's coverage is a number and not a

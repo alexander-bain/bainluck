@@ -73,6 +73,7 @@ without a database.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -186,6 +187,75 @@ def espn_competition_id(matchup: dict[str, Any]) -> Optional[str]:
         if candidate:
             return str(candidate)
     return None
+
+
+def _name_tokens(name: Any) -> frozenset[str]:
+    """A display name as its set of alphanumeric tokens, accent-folded."""
+    if not isinstance(name, str):
+        return frozenset()
+    folded = unicodedata.normalize("NFD", name).lower()
+    cleaned = "".join(ch if ch.isalnum() else " " for ch in folded)
+    return frozenset(token for token in cleaned.split() if token)
+
+
+def _token_covered(token: str, others: frozenset[str]) -> bool:
+    """Is ``token`` the same name-part as something in ``others``?
+
+    Prefix either way, so an initial matches the name it abbreviates:
+    ``j`` covers ``jj``, and ``J.J. Wolf`` is ``JJ Wolf``.
+    """
+    return any(
+        token == other or token.startswith(other) or other.startswith(token)
+        for other in others
+    )
+
+
+def _names_agree(a: Any, b: Any) -> bool:
+    """Are these two display names the same person?
+
+    Token SETS, where one side's tokens must all be covered by the other's.
+    Deliberately looser than ``espn_tennis.normalize_name``, which concatenates
+    and would therefore call ``Bu Yunchaokete`` and ``Yunchaokete Bu`` two
+    different people — ESPN and the register genuinely disagree on the leading
+    token for several names, and **a false disagreement here DELETES A REAL
+    MATCH from the card**, which is a worse defect than the one this exists to
+    catch.  One-way coverage handles the other two benign cases: a middle name
+    one side drops (``Juan Manuel Cerundolo`` / ``Juan Cerundolo``) and an
+    initialism (``J.J. Wolf`` / ``JJ Wolf``).
+
+    It stays strict where it has to be.  Two players who share a surname do not
+    agree — ``Francisco Cerundolo`` and ``Juan Manuel Cerundolo`` are both in
+    this draw and neither given name covers the other.
+
+    An empty name agrees with anything: it is an absent read, not a claim.
+    """
+    tokens_a, tokens_b = _name_tokens(a), _name_tokens(b)
+    if not tokens_a or not tokens_b:
+        return True
+    return all(t in tokens_b or _token_covered(t, tokens_b) for t in tokens_a) or all(
+        t in tokens_a or _token_covered(t, tokens_a) for t in tokens_b
+    )
+
+
+def pairing_agrees(ours: Any, theirs: Any) -> bool:
+    """Does our pairing name the same two people the authority does?
+
+    ``theirs`` is ESPN's competitor list for the competition this fixture is
+    anchored to.  Anything that is not a pair of names on EITHER side returns
+    ``True`` — silence and half-reads are facts about the read, never about the
+    match, which is the same posture ``order_of_play_complete`` is held to
+    (CERT-532/548, gotcha #53).  Only a full, unambiguous contradiction counts.
+
+    Matched without regard to side order, because ESPN's competitor order is
+    ingest order and the register's is the matchup key's.
+    """
+    if not isinstance(ours, list) or not isinstance(theirs, list):
+        return True
+    if len(ours) != 2 or len(theirs) != 2:
+        return True
+    straight = _names_agree(ours[0], theirs[0]) and _names_agree(ours[1], theirs[1])
+    crossed = _names_agree(ours[0], theirs[1]) and _names_agree(ours[1], theirs[0])
+    return straight or crossed
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -356,6 +426,37 @@ def build_match_row(
             # never folded into ALREADY_PLAYED, because one of these is a fact
             # from the source and the other is an inference from the clock.
             return None, "DECIDED"
+
+        # ═══ Q503: THE SCOREBOARD NAMES THE PLAYERS, TOO ═══
+        #
+        # Checked AFTER `DECIDED` on purpose: a finished match belongs to
+        # `build_results` whatever else is wrong with it, and re-labelling one
+        # as a pairing dispute would move it out of the section that can show
+        # its score.
+        #
+        # THE DEFECT, measured on production 2026-09-01: the register's pairing
+        # for competition 182710 was `Cerundolo vs Ruud` — a KALSHI MARKET'S
+        # NAME, pinned into the register by the post-ceremony census because no
+        # match market existed at ceremony time. Ruud had withdrawn; Arthur Gea
+        # was on court. The ceremony anchor was CORRECT, so every id-based check
+        # passed, and the card rendered ESPN's clock ("3rd Set") over a market's
+        # idea of who was playing. Four of 96 anchored fixtures were in this
+        # state, three of them on the day's card.
+        #
+        # A market ATTACHES to a fixture; it does not get to name one. So where
+        # the authority names both competitors and contradicts us, the fixture
+        # is withheld — not re-labelled. Re-labelling would carry a price
+        # quoted for a match nobody is playing onto the two people who really
+        # are, which is the same fabrication wearing better names. Rendering
+        # the authority's pairing as a first-class unpriced card is the next
+        # slice and needs player identity we do not hold for a post-ceremony
+        # entrant.
+        registered_names = [
+            (reg.by_entity.get(key) or {}).get("display_name") or key
+            for key in players
+        ]
+        if not pairing_agrees(registered_names, listed.get("players")):
+            return None, "PAIRING_DISAGREES"
 
     if started is None:
         return None, "NO_SCHEDULED_START"
@@ -662,6 +763,7 @@ def build_slate(
 
     rows: list[dict[str, Any]] = []
     dropped: dict[str, int] = {}
+    withheld_pairings: list[dict[str, Any]] = []
 
     for matchup in reg.matchups:
         row, reason = build_match_row(
@@ -676,6 +778,23 @@ def build_slate(
         if row is None:
             reason = reason or "UNKNOWN"
             dropped[reason] = dropped.get(reason, 0) + 1
+            if reason == "PAIRING_DISAGREES":
+                # THE QUARANTINE SAYS WHO (Q503, doctrine rule 6). A count
+                # alone is a shrug: "3 withheld" cannot be acted on, and the
+                # repair — the register naming a player who left the draw —
+                # is only obvious once both pairings are side by side.
+                comp_id = espn_competition_id(matchup)
+                listed = (order_of_play or {}).get(comp_id) if comp_id else None
+                withheld_pairings.append({
+                    "matchup_key": matchup.get("matchup_key"),
+                    "draw": matchup.get("draw"),
+                    "espn_competition_id": comp_id,
+                    "registered": [
+                        (reg.by_entity.get(key) or {}).get("display_name") or key
+                        for key in (matchup.get("players") or [])
+                    ],
+                    "authority": list((listed or {}).get("players") or []),
+                })
             continue
         rows.append(row)
 
@@ -716,6 +835,11 @@ def build_slate(
         # same payload without this, and the second one is nobody's emergency.
         "order_of_play_complete": bool(order_of_play_complete),
         "dropped": dict(sorted(dropped.items())),
+        # WHICH FIXTURES THE AUTHORITY CONTRADICTED, BY NAME (Q503). Empty is
+        # the healthy state and the honest one — an empty list says the
+        # scoreboard agreed with every anchored pairing it named, which is a
+        # different statement from never having asked.
+        "withheld_pairings": withheld_pairings,
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
         "age_hours": round(slate_age, 2) if slate_age is not None else None,

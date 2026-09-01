@@ -382,6 +382,9 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # read at all, and whether what was read was the whole of it.
         "in_progress": 0, "order_of_play_listed": 0,
         "order_of_play_complete": True,
+        # Q503: empty means the scoreboard contradicted no anchored pairing it
+        # named — not that the question went unasked.
+        "withheld_pairings": [],
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
