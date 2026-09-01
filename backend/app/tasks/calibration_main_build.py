@@ -59,6 +59,7 @@ from app.utils.calibration_phase_ledger import (
     PHASE_OUTPUT_KEYS,
     RESUMABLE_PHASES,
     RESUMED,
+    STAGED_UNIT_OVERRUN_FACTOR,
     TERMINAL_COMPLETE,
     TERMINAL_PARTIAL,
     TIMEOUT,
@@ -1010,6 +1011,65 @@ NULL_RUNNER = NullPhaseRunner()
 UNIT_WORST_HISTORY_KEY = "unit_worst_history"
 
 
+def _bootstrap_worst_history(unit_costs: dict[str, Any]) -> dict[str, list[int]]:
+    """The one-time upgrade for a ledger written before the ring existed —
+    CAL-P167 (#1978), repairing CERT-637.
+
+    CAL-P163 added a second, looser reference to the unit fence:
+    ``max(observed completions) * BUDGET_SAFETY`` beside the old
+    ``mean * STAGED_UNIT_OVERRUN_FACTOR``. It is inert on the state that
+    actually exists at deployment. **Every durable ledger written before that
+    deploy carries ``unit_costs`` and no ring**, so the max is ``None``, the
+    fence falls back to the mean, and the first new-code beat reproduces the
+    ratchet exactly — five completed, two cancelled, nothing published. The new
+    ring then records only the cheap units that fence admitted, which is not
+    enough to widen it, so the second beat is pinned too. CERT-637 named this
+    and it is not hypothetical: the beat gauges read five completed and two
+    cancelled at the moment that verdict was written.
+
+    The repair cannot recover the real worst case — the 308,586 ms completion
+    the ratchet forgot is genuinely absent from the legacy payload. What the
+    payload does carry is the mean, and one fact about it: **the legacy fence
+    admitted units at ``unit_ms * STAGED_UNIT_OVERRUN_FACTOR``, so a unit of
+    that size is the largest one the legacy regime could have completed.** That
+    ceiling is what the seed is, and it is why the factor here is
+    :data:`STAGED_UNIT_OVERRUN_FACTOR` rather than a number of this session's
+    choosing: it is not a new tuning, it is the bound the old code already ran.
+
+    Three properties make this safe to certify:
+
+    * **It cannot run away.** The seed is computed ONCE, from a mean that was
+      measured under the old bound, and then it is an ordinary ring entry. It is
+      never recomputed, so a rising mean cannot feed a widening fence back into
+      itself. On the specimen: seed ``58,279 x 4 = 233,116``, fence
+      ``233,116 x 1.5 - margin = 319,674`` — which admits the measured 300,000 ms
+      unit and still refuses the 901,266 ms CAL-P081 runaway, exactly as the
+      designed ring does.
+    * **It extinguishes itself.** The next :func:`save_phase_ledger` writes a
+      non-empty ring, so :data:`UNIT_WORST_HISTORY_KEY` exists from then on and
+      this function never fires again for that ledger.
+    * **It ages out.** The seed sits in a :data:`UNIT_WORST_WINDOW` ring like any
+      other entry, so a day of real observations replaces it — in either
+      direction. It is a floor for one day, not a permanent widening, which is
+      what stops a run of cheap beats re-closing the ratchet before an expensive
+      unit has had a chance to prove itself.
+
+    A ledger with no measured mean seeds nothing. There is no measurement to
+    scale, and the phase bound must stand (ruling 075).
+    """
+    seeded: dict[str, list[int]] = {}
+    for name, cost in (unit_costs or {}).items():
+        if not isinstance(cost, dict):
+            continue
+        mean_ms = cost.get("unit_ms")
+        if isinstance(mean_ms, bool) or not isinstance(mean_ms, (int, float)):
+            continue
+        if mean_ms <= 0:
+            continue
+        seeded[name] = [int(mean_ms * STAGED_UNIT_OVERRUN_FACTOR)]
+    return seeded
+
+
 async def load_phase_carryover() -> tuple[
     dict[str, list[int]], dict[str, list[int]], dict[str, Any], dict[str, list[int]]
 ]:
@@ -1036,15 +1096,21 @@ async def load_phase_carryover() -> tuple[
     floors = payload.get("floors")
     unit_costs = payload.get("unit_costs")
     worst = payload.get(UNIT_WORST_HISTORY_KEY)
+    costs = unit_costs if isinstance(unit_costs, dict) else {}
+    ring = (
+        merge_history(worst, {}, window=UNIT_WORST_WINDOW) if isinstance(worst, dict) else {}
+    )
+    # CAL-P167: a ledger written before the ring existed has a mean and no ring,
+    # and CAL-P163's fence is inert on exactly that state. Seed it once from the
+    # bound the legacy code itself ran. See :func:`_bootstrap_worst_history` —
+    # the seed cannot run away, extinguishes on the next save, and ages out.
+    if not ring:
+        ring = _bootstrap_worst_history(costs)
     return (
         merge_history(history, {}) if isinstance(history, dict) else {},
         merge_history(floors, {}) if isinstance(floors, dict) else {},
-        unit_costs if isinstance(unit_costs, dict) else {},
-        (
-            merge_history(worst, {}, window=UNIT_WORST_WINDOW)
-            if isinstance(worst, dict)
-            else {}
-        ),
+        costs,
+        ring,
     )
 
 

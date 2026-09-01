@@ -308,6 +308,17 @@ BUDGET_SAFETY = 1.5
 #: budget in this module already uses. A max needs less headroom than a mean
 #: does, which is why the two carry different multipliers. See
 #: :meth:`PhaseLedger.statement_timeout_for_unit`.
+#:
+#: **AMENDED CAL-P167 (#1978), repairing CERT-637: this factor has a SECOND
+#: reader, and it is not a second tuning.** Every durable ledger written before
+#: CAL-P163 carries a mean and no ring, so the repair above is inert on the only
+#: state that exists at deployment and the first new-code beat reproduces the
+#: pin. The upgrade path seeds the ring once at
+#: ``unit_ms * STAGED_UNIT_OVERRUN_FACTOR`` — not a chosen number, but the bound
+#: the legacy code was already running, and therefore the largest unit the
+#: legacy regime could have completed. Provenance, safety argument and the
+#: arithmetic on the specimen:
+#: :func:`app.tasks.calibration_main_build._bootstrap_worst_history`.
 STAGED_UNIT_OVERRUN_FACTOR = 4.0
 
 #: How many units one beat may lose to their own backstop before it stops trying
