@@ -976,12 +976,25 @@ async def test_the_terminal_count_is_armed_with_a_statement_timeout(fast, monkey
 
     await rail.repair(s, apply=False)
 
-    timeouts = [sql for sql, _ in s.statements if "STATEMENT_TIMEOUT" in sql.upper()]
-    assert timeouts, (
-        "the terminal count ran with no statement timeout. Statements seen: "
-        f"{[sql[:60] for sql, _ in s.statements]}"
+    # CERT-667 made this selection specific. It used to take the FIRST
+    # statement_timeout in the request, which WAS the count's — until the page
+    # SELECT got a bound of its own and became the first. The assertion then
+    # passed while measuring an entirely different statement: still green, no
+    # longer a guard on the thing it names. Anchor on the count itself.
+    sqls = [sql for sql, _ in s.statements]
+    count_at = next(
+        (i for i, sql in enumerate(sqls) if sql.upper().startswith("SELECT COUNT(")),
+        None,
     )
-    ms = int(timeouts[0].rsplit("=", 1)[1].strip())
+    assert count_at is not None, f"the terminal count never ran. Seen: {sqls!r}"
+    preceding = [
+        sql for sql in sqls[:count_at] if "STATEMENT_TIMEOUT" in sql.upper()
+    ]
+    assert preceding, (
+        "the terminal count ran with no statement timeout. Statements seen: "
+        f"{[sql[:60] for sql in sqls]}"
+    )
+    ms = int(preceding[-1].rsplit("=", 1)[1].strip())
     assert 0 < ms <= rail.ROUTER_WALL_SECONDS * 1000, (
         f"the count was armed with {ms}ms against a "
         f"{rail.ROUTER_WALL_SECONDS}s wall"

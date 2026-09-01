@@ -189,6 +189,61 @@ was FALSE, which is the worse half of the same bug.
    down to keep the headroom positive, and the count is armed with the time that
    ACTUALLY remains and reports itself unmeasured rather than dying.
 
+CERT-667 CORRECTIONS — THE BUDGET WAS END-TO-END EXCEPT WHERE IT TOUCHED THE DB
+===============================================================================
+
+Q496 derived every constant from the router wall and CERT-666 extended the
+reserve past the last fetch. Both bounded the VENUE. Neither bounded the
+DATABASE, and two statements sat outside the budget they were described by.
+Neither disproves the shipped rail — CERT-667 granted its token — but each is a
+way for an attended drain to lose its place, which is the one failure this rail
+exists to prevent.
+
+1. **The page SELECT ran before every deadline the rail checks.** It is the first
+   statement of the request; ``DEADLINE_SECONDS`` is not evaluated until it
+   returns, so a lock or a bad plan held the request to the wall with nothing
+   able to interrupt it. Now armed with ``TARGET_SELECT_BUDGET_SECONDS``, and a
+   timeout returns the named terminal ``paused_target_timeout`` carrying the
+   operator's OWN cursor — not a bare 500, which cannot be told from a broken
+   rail and carries no cursor at all.
+
+2. **The compare-and-set UPDATE was unbounded.** ``POST_LOOP_RESERVE_SECONDS``
+   said it covered "the last event's write and commit"; nothing made the write
+   honour that. The UPDATE takes a row lock on ``futures_markets``, which the
+   ordinary poller also writes, so a contended row could block past the wall.
+   Now armed with ``WRITE_BUDGET_SECONDS``, sized to fit inside that reserve.
+
+3. **(Found while fixing 2.)** The cursor still crossed unfinished work — one
+   statement further along than CERT-666 found it. CERT-666 moved the advance
+   from before the fetch to after it; the WRITE was downstream of the advance, so
+   a failed UPDATE left the event mis-filed with the cursor already past it and
+   the terminal reading ``changed``. The advance now happens per-outcome, after
+   the event is genuinely finished, and a failed write has its own count
+   (``write_failed``), its own field (``stopped_at_write_timeout``) and its own
+   terminal (``paused_write_timeout``) ranked above every success arm.
+
+4. **The census leaked its statement timeout onto the pooled connection.** A
+   plain ``SET`` inside a transaction that ``get_db_rw`` then COMMITS is a
+   property of the connection, not of the request; the connection returns to a
+   20-slot pool carrying a 12s ``statement_timeout`` that later requests inherit
+   invisibly. Now ``SET LOCAL``. Note which path leaked: the HEALTHY one — a
+   census that timed out left an aborted transaction whose commit degraded to a
+   rollback and took the ``SET`` with it.
+
+CERT-670 (P1) then found the floor under all of that. Every bound above is a
+PostgreSQL ``statement_timeout``, and PostgreSQL cannot enforce a bound it has
+not been sent — but the statement that SENDS it is also the statement that
+acquires the pooled connection, lazily, and the engine leaves SQLAlchemy's
+``pool_timeout`` at its 30s default: **exactly ``ROUTER_WALL_SECONDS``**. So
+under pool saturation the arming statement could burn the entire wall before any
+timeout existed, at all three sites, and the operator got back the H12 with no
+body and no cursor that this rail exists to prevent. Q497 had made the budget
+reach the database; it reached the database only once the database was already
+reachable. Every unit — checkout, ``SET LOCAL``, statement, commit — is now
+wrapped in a CLIENT-side deadline too, because a client-side deadline is the only
+one that can fire while the server is unreachable. **A bound you can only install
+over the channel you are trying to bound is not yet a bound.**
+
 ATTENDED ONLY: never wire this to a beat. It is a drain with an end state, not
 a standing job — when ``scan_exhausted`` comes back true the poller's own fixed
 classifier keeps new rows correct.
@@ -257,7 +312,51 @@ POST_LOOP_RESERVE_SECONDS = 4.0
 #: cannot be observed from inside it. The count is armed with whatever is left of
 #: the wall once this is set aside, which is why an over-running loop shortens
 #: the count's timeout instead of borrowing against work that still has to run.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 1.5
+#:
+#: CERT-670 (P1) raised this from 1.5. The thing charged to this reserve is no
+#: longer ``WRITE_BUDGET_SECONDS`` but ``client_db_budget_seconds(WRITE_BUDGET_
+#: SECONDS)`` — the write's server bound PLUS the client-side slack that now
+#: wraps it — and at 1.5 that derived number left nothing at all for the
+#: serialization and dependency commit this reserve also names. Widening the
+#: reserve rather than shrinking the write budget keeps the write's own bound at
+#: the value CERT-667 graded, and costs only the terminal count, which is
+#: explicitly degradable (it reports itself unmeasured; it never reports zero).
+#:
+#: And the reserve holds the write's CLEANUP too, not just the write. A starved
+#: write is followed by a bounded rollback, and at 2.0 the pair came to exactly
+#: the reserve — nothing left for the serialization and dependency commit this
+#: same reserve names. "The failure path costs more than the success path" is the
+#: easy thing to forget when sizing a budget from the happy case.
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 2.5
+
+#: CERT-667 (`Q496-END-TO-END-DB-DEADLINE`): bound on the page SELECT, which was
+#: the FIRST unbounded statement in the request and ran before any deadline the
+#: rail checks. Measured at 179ms on production; 10s is ~56x that.
+#:
+#: It does NOT widen the worst case, and the reason is worth stating because it
+#: is the whole argument for the number: ``started`` is captured BEFORE this
+#: query, so its time is already inside ``DEADLINE_SECONDS``' window — a slow
+#: SELECT does not add to the total, it just leaves the loop less room and the
+#: first deadline check stops it. That holds only while this stays at or under
+#: ``DEADLINE_SECONDS``, so a guard asserts exactly that rather than trusting the
+#: two numbers to be edited together.
+TARGET_SELECT_BUDGET_SECONDS = 10.0
+
+#: CERT-667 (`Q496-END-TO-END-DB-DEADLINE`): bound on each compare-and-set UPDATE.
+#:
+#: The write was the other half of the reserve the rail computed but never
+#: enforced. ``POST_LOOP_NON_COUNT_RESERVE_SECONDS`` already *claimed* to cover
+#: "the last event's write and commit"; nothing made the write honour it, so a
+#: row lock on ``futures_markets`` could hold the request past the wall and cost
+#: the operator the H12-with-no-body — the exact failure the budget exists to
+#: prevent, arrived at through the one statement the budget did not bound.
+#:
+#: Sized to fit INSIDE that reserve (a guard asserts it), leaving the remainder
+#: for response serialization and the request dependency's own commit. A
+#: mid-loop write costs the loop its own time and the next deadline check sees
+#: it; only the LAST write is charged to the reserve, which is why one constant
+#: covers both cases.
+WRITE_BUDGET_SECONDS = 1.0
 
 #: Events touched per apply call. A module constant, deliberately: the operator
 #: re-invokes with the returned cursor, the operator does not raise the ceiling.
@@ -294,6 +393,203 @@ SUSPECT_CATEGORY = "table_tennis"
 #: Both queries measured **94ms and 179ms** on production 2026-09-01, so 12s is
 #: ~60x the observed cost and still leaves 6s of the wall for everything else.
 CENSUS_STATEMENT_TIMEOUT_SECONDS = 12
+
+#: CERT-670 (P1) — A SERVER-SIDE BOUND DOES NOT EXIST UNTIL A CONNECTION DOES.
+#:
+#: Every bound above is a PostgreSQL ``statement_timeout``, and PostgreSQL cannot
+#: enforce a bound it has not been sent. ``AsyncSession`` acquires its connection
+#: LAZILY, on the first ``execute`` of a transaction — which is the very
+#: ``SET LOCAL`` that arms the bound. So the arming statement itself runs
+#: unbounded, and what it waits on is SQLAlchemy's pool: ``app/services/
+#: database.py`` builds the engine with ``pool_size=10, max_overflow=10`` and
+#: never sets ``pool_timeout``, leaving SQLAlchemy's default of **30 seconds —
+#: exactly ``ROUTER_WALL_SECONDS``**. Under pool saturation the first statement of
+#: a unit can therefore consume the whole wall before any timeout exists, and the
+#: operator gets the H12 with no body and no cursor that this entire rail exists
+#: to prevent. Q497 bounded the venue and the database and left the CONNECTION
+#: unbounded: the budget reached PostgreSQL, but only once PostgreSQL was already
+#: reachable.
+#:
+#: The fix is a CLIENT-side deadline around the whole unit — checkout, ``SET
+#: LOCAL``, statement, commit — because only a client-side deadline can fire
+#: while the server is still unreachable.
+#:
+#: This is SLACK, not a second budget. It sits just OUTSIDE each server bound so
+#: that in the normal case PostgreSQL's own ``statement_timeout`` wins the race
+#: and the rail takes its precise, already-guarded server-timeout path; the
+#: client bound is the backstop that fires only when the server never received
+#: the statement at all. What it has to cover is a healthy checkout plus two
+#: round trips — milliseconds — so it is small on purpose. A large value here
+#: would start swallowing server timeouts and report pool starvation for what is
+#: really a slow query.
+#:
+#: Deliberately NOT fixed by lowering the engine's ``pool_timeout``: that is a
+#: global property of every route in the app, and this is a hardening queue on
+#: one attended rail. A rail may bound its own use of a shared resource; it does
+#: not get to re-tune the resource for everyone else.
+POOL_ACQUIRE_SLACK_SECONDS = 0.5
+
+#: Bound on the CLEANUP rollback after a unit has already failed. A rollback is
+#: itself a statement on the same connection, so it can block for the same reason
+#: the statement did — and a cleanup that hangs costs the operator exactly what
+#: the failure path was written to preserve: the response, and the cursor in it.
+ROLLBACK_BUDGET_SECONDS = 0.5
+
+
+class ClientDeadlineExceeded(Exception):
+    """A database unit did not finish inside the rail's CLIENT-side bound.
+
+    Distinct from a PostgreSQL ``statement_timeout``, and the distinction is
+    operational rather than cosmetic. A server timeout means the database took
+    the statement and could not finish it — a lock, or a bad plan — and retrying
+    immediately is reasonable. This means the statement did not get that far:
+    almost always every pooled connection was checked out, so retrying
+    immediately just queues behind the same saturation.
+
+    Raised in place of ``asyncio.TimeoutError`` on purpose. ``asyncio.Timeout
+    Error`` is the builtin ``TimeoutError`` on 3.11+, which is an ``OSError``
+    subclass a driver could plausibly raise for something else entirely; a rail
+    that branches on it would be guessing.
+    """
+
+
+def client_db_budget_seconds(server_budget_s: float) -> float:
+    """The client-side bound that must sit OUTSIDE a server-side statement bound.
+
+    Expressed as a function so the guards can assert the DERIVED number fits the
+    reserve it is charged to. Asserting the server bound fits and leaving the
+    slack unaccounted is how the original bound came to be described but not
+    enforced — the same class of gap twice over.
+    """
+    return server_budget_s + POOL_ACQUIRE_SLACK_SECONDS
+
+
+async def _bounded_statement(
+    session,
+    *,
+    timeout_literal: str,
+    server_budget_s: float,
+    sql: str,
+    params: Optional[dict[str, Any]] = None,
+    commit: bool = False,
+):
+    """Run one statement under a server bound AND a client bound.
+
+    ``timeout_literal`` is whatever follows ``SET LOCAL statement_timeout = ``.
+    It is passed in rather than derived because the census states its bound in
+    seconds (``'12s'``) and the pager in milliseconds, and guards pin those exact
+    spellings — a helper that quietly normalised them would rewrite what those
+    guards read while still passing.
+
+    Raises ``ClientDeadlineExceeded`` when the client bound fires. Every call
+    site handles that separately from a server timeout, because the two mean
+    different things to the operator reading the terminal.
+    """
+
+    async def _unit():
+        # The pool checkout happens HERE, on the first execute of the
+        # transaction, BEFORE PostgreSQL can be told about any bound. That is
+        # the whole reason the wait_for has to wrap the SET and not just the
+        # statement the SET is arming.
+        await session.execute(text(f"SET LOCAL statement_timeout = {timeout_literal}"))
+        result = await session.execute(text(sql), params or {})
+        if commit:
+            # Inside the bound deliberately: a commit runs on the same
+            # connection and can block on the very lock the statement took.
+            await session.commit()
+        return result
+
+    try:
+        return await asyncio.wait_for(
+            _unit(), timeout=client_db_budget_seconds(server_budget_s)
+        )
+    except asyncio.TimeoutError as exc:
+        raise ClientDeadlineExceeded(
+            f"no answer inside the {client_db_budget_seconds(server_budget_s)}s "
+            f"client bound around a {server_budget_s}s server bound"
+        ) from exc
+
+
+async def _safe_rollback(session) -> None:
+    """Roll back without letting the cleanup cost the operator the response.
+
+    Bounded for the reason in ``ROLLBACK_BUDGET_SECONDS``, and if the bounded
+    rollback does not land the connection is INVALIDATED rather than left in an
+    unknown state. That second step is load-bearing: ``get_db_rw`` issues its own
+    ``commit()`` after this handler returns, so a session still holding a wedged
+    connection would turn a carefully built paused response — cursor and all —
+    into the bare 500 the response existed to replace. Invalidating discards the
+    connection instead of negotiating with it, which leaves the session able to
+    begin a fresh, empty transaction that commits without touching the pool.
+    """
+    try:
+        await asyncio.wait_for(session.rollback(), timeout=ROLLBACK_BUDGET_SECONDS)
+        return
+    except Exception:  # noqa: BLE001 — cleanup must never mask the real failure
+        logger.warning(
+            "repair_polymarket_sport_category: rollback did not land inside "
+            "%.2fs; invalidating the connection so the operator still gets a "
+            "response with a cursor",
+            ROLLBACK_BUDGET_SECONDS,
+        )
+    try:
+        await session.invalidate()
+    except Exception:  # noqa: BLE001 — there is nothing further to try
+        logger.warning(
+            "repair_polymarket_sport_category: could not invalidate the "
+            "connection after a failed rollback"
+        )
+
+
+def _paused_before_examining(
+    *,
+    incoming_cursor: Optional[dict[str, Any]],
+    cap: int,
+    started: float,
+    terminal: str,
+    stopped_at_pool_timeout: Optional[str],
+    reason: str,
+) -> dict[str, Any]:
+    """The response for a page that died before it examined anything.
+
+    Shared by the two ways the page SELECT can fail. CERT-670 noted the single
+    early return already duplicated the response shape instead of sharing a
+    builder, and flagged it as a drift risk if fields were added later; adding a
+    second such arm is exactly that "later", so the builder arrives with it.
+
+    Every count is zero and ``next_cursor`` is the cursor the operator HANDED IN,
+    unchanged. Nothing was examined, so nothing may advance — re-running with it
+    repeats the page rather than skipping it, which is the whole point of
+    answering at all instead of letting the router return H12 with no body.
+    """
+    return {
+        "repair": "polymarket-sport-category",
+        "applied": False,
+        "counts": {
+            "events_examined": 0,
+            "changed": 0,
+            "unchanged": 0,
+            "refused_other": 0,
+            "not_at_venue": 0,
+            "indeterminate": 0,
+            "write_failed": 0,
+            "markets_written": 0,
+        },
+        "changed_to": {},
+        "samples": [],
+        "remaining_events": None,
+        "remaining_events_measured": False,
+        "scan_exhausted": False,
+        "next_cursor": incoming_cursor,
+        "stopped_before": None,
+        "stopped_at_unresolved": None,
+        "stopped_at_write_timeout": None,
+        "stopped_at_pool_timeout": stopped_at_pool_timeout,
+        "terminal": terminal,
+        "reason": reason,
+        "cap": cap,
+        "elapsed_s": round(time.monotonic() - started, 2),
+    }
 
 
 def budget_headroom_seconds() -> float:
@@ -334,14 +630,40 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
     """
     started = time.monotonic()
     try:
-        await session.execute(
-            text(f"SET statement_timeout = '{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'")
-        )
-
+        # CERT-667 (`Q496-CENSUS-SET-LOCAL`) — THIS USED TO BE A PLAIN `SET`, AND A
+        # PLAIN `SET` OUTLIVES THE REQUEST THAT ISSUED IT.
+        #
+        # `get_db_rw` COMMITS the session when the handler returns, and a
+        # session-level `SET` inside a committed transaction is not undone — it is
+        # a property of the CONNECTION from then on. The connection then goes back
+        # to a pool (`pool_size=10, max_overflow=10`), so every later request that
+        # checks it out silently inherits a 12s `statement_timeout` it never asked
+        # for and cannot see. A census is a diagnostic; it must not re-arm the rest
+        # of the dyno.
+        #
+        # It leaks on the SUCCESS path specifically: on a timeout the transaction
+        # is already aborted, so the commit degrades to a rollback and takes the
+        # `SET` with it. The healthy run is the one that poisons the pool, which is
+        # why nothing ever attributed a stray cancellation to this line.
+        #
+        # `SET LOCAL` is scoped to the transaction and is reset at COMMIT or
+        # ROLLBACK either way. It is valid here because the session autobegins a
+        # real transaction on this very statement — the engine is not in
+        # AUTOCOMMIT, which matters: `SET LOCAL` outside a transaction block is a
+        # WARNING and a NO-OP, i.e. it would remove the bound rather than scope it.
+        #
+        # CERT-670 (P1): and both queries now run through `_bounded_statement`,
+        # so the `SET LOCAL` above cannot itself wait out the router wall
+        # acquiring the pooled connection it needs before PostgreSQL can be told
+        # anything. A census that H12s is the same silent failure as a census
+        # that returns a zero — worse, in fact, because `measured: false` never
+        # reaches the operator at all.
         rows = (
-            await session.execute(
-                text(
-                    """
+            await _bounded_statement(
+                session,
+                timeout_literal=f"'{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'",
+                server_budget_s=CENSUS_STATEMENT_TIMEOUT_SECONDS,
+                sql="""
                     SELECT
                       (CURRENT_DATE - fm.updated_at::date) AS days_since_touch,
                       count(*)                             AS markets,
@@ -354,9 +676,8 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
                     GROUP BY 1
                     ORDER BY 1
-                    """
-                ),
-                {"cat": SUSPECT_CATEGORY},
+                    """,
+                params={"cat": SUSPECT_CATEGORY},
             )
         ).all()
 
@@ -370,24 +691,37 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
         # Events are counted per staleness bucket above, so they do NOT sum: one
         # event's rows can straddle two buckets. Ask for the distinct figure.
         total_events = (
-            await session.execute(
-                text(
-                    """
+            await _bounded_statement(
+                session,
+                timeout_literal=f"'{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'",
+                server_budget_s=CENSUS_STATEMENT_TIMEOUT_SECONDS,
+                sql="""
                     SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
                       AND fm.status = 'open'
                       AND fm.llm_sport_category = :cat
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
-                    """
-                ),
-                {"cat": SUSPECT_CATEGORY},
+                    """,
+                params={"cat": SUSPECT_CATEGORY},
             )
         ).scalar() or 0
     except Exception as exc:  # noqa: BLE001 — a census timeout is not a zero
         # Gotcha #54: a census that could not measure returns `measured: false`
         # with a reason, NEVER a zero. A zero here would read as "the population
         # is drained" — the exact opposite of "we could not look".
+        #
+        # CERT-670 (P1): this arm deliberately also catches
+        # `ClientDeadlineExceeded`, and the `reason` below carries the type name,
+        # so "we could not look" and "we could not even get a connection to look
+        # with" are distinguishable without a second terminal on a diagnostic
+        # that has no cursor to protect.
+        #
+        # The rollback is new and is not tidiness. A client-side deadline cancels
+        # the statement mid-flight, and `get_db_rw` COMMITS after this handler
+        # returns — a wedged connection would turn this honest `measured: false`
+        # into the bare 500 it exists to replace.
+        await _safe_rollback(session)
         return {
             "repair": "polymarket-sport-category-census",
             "measured": False,
@@ -514,6 +848,17 @@ async def repair(
     started = time.monotonic()
     cap = min(int(limit or APPLY_EVENT_CAP), APPLY_EVENT_CAP)
 
+    # CERT-666 (P1): the cursor starts where the OPERATOR already was, not at
+    # None. A page whose very first event fails to resolve must hand back the
+    # cursor it was given — handing back None reads as "start over" and silently
+    # sends an attended drain to page one.
+    #
+    # CERT-667: computed BEFORE the page SELECT, because the SELECT can now fail
+    # in a bounded, reportable way and that report has to carry a cursor too.
+    incoming_cursor: Optional[dict[str, Any]] = (
+        {"after_date": after_date, "after_id": int(after_id)} if after_id is not None else None
+    )
+
     params: dict[str, Any] = {"cat": SUSPECT_CATEGORY, "cap": cap}
 
     # The cursor is a page position, and `after_id` alone is enough to name one.
@@ -552,10 +897,29 @@ async def repair(
     # straddle the boundary would have some rows removed, recompute a DIFFERENT
     # `max(commence_time)`, and so move in the ordering between pages — which is
     # exactly how a keyset both repeats and skips events.
-    targets = (
-        await session.execute(
-            text(
-                f"""
+    #
+    # CERT-667 (`Q496-END-TO-END-DB-DEADLINE`): armed with a statement timeout.
+    # This is the first statement of the request and it ran BEFORE every deadline
+    # the rail checks — the loop's ``DEADLINE_SECONDS`` cannot fire until this
+    # returns — so a lock on `futures_markets` or a bad plan held the request to
+    # the router wall with nothing able to interrupt it. That is an H12 with no
+    # body: no counts, no cursor, and an attended drain loses its place. Bounding
+    # the venue calls while leaving the query that FINDS them unbounded was the
+    # gap; the budget was end-to-end everywhere except its own first step.
+    #
+    # CERT-670 (P1): the statement timeout above is armed by a statement, and
+    # that statement is the one that acquires the pooled connection. Arming was
+    # therefore itself unbounded, and the pool's own wait is 30s — the router
+    # wall exactly. `_bounded_statement` puts a client-side deadline around the
+    # checkout as well as the query, which is the only bound that can fire while
+    # PostgreSQL is still unreachable.
+    try:
+        targets = (
+            await _bounded_statement(
+                session,
+                timeout_literal=str(int(TARGET_SELECT_BUDGET_SECONDS * 1000)),
+                server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
+                sql=f"""
                 SELECT ev.event_id, ev.commence_time, ev.anchor_id, ev.markets
                 FROM (
                   SELECT
@@ -574,11 +938,73 @@ async def repair(
                   {keyset}
                 ORDER BY ev.commence_time DESC NULLS LAST, ev.anchor_id DESC
                 LIMIT :cap
-                """
+                """,
+                params=params,
+            )
+        ).all()
+    # CERT-670 (P1): ordered before the generic arm, and it has to be — the two
+    # failures are indistinguishable in a stack trace and completely different to
+    # the operator. A server timeout says the database took the query and could
+    # not finish it; this says the query never got a connection to run on, so
+    # retrying straight away just re-joins the same queue.
+    except ClientDeadlineExceeded as exc:
+        await _safe_rollback(session)
+        paused = _paused_before_examining(
+            incoming_cursor=incoming_cursor,
+            cap=cap,
+            started=started,
+            terminal="paused_pool_timeout",
+            stopped_at_pool_timeout="target_select",
+            reason=(
+                f"the page SELECT did not get a database connection inside its "
+                f"{client_db_budget_seconds(TARGET_SELECT_BUDGET_SECONDS)}s client "
+                f"bound ({type(exc).__name__}: {exc})"[:300]
+                + ". This is almost always pool saturation rather than a slow "
+                "query — the statement never reached PostgreSQL, so no server "
+                "timeout could fire. THIS IS NOT A COMPLETED DRAIN and it is not "
+                "a verdict on any event: nothing was examined and nothing was "
+                "written. The cursor returned is the one you passed in. Retrying "
+                "immediately will usually queue behind the same saturation; give "
+                "the pool a moment first."
             ),
-            params,
         )
-    ).all()
+        logger.warning(
+            "repair_polymarket_sport_category: the target page SELECT did not get "
+            "a pooled connection inside its %.2fs client bound; returning the "
+            "operator's own cursor rather than an H12 with no body",
+            client_db_budget_seconds(TARGET_SELECT_BUDGET_SECONDS),
+        )
+        return paused
+    except Exception as exc:  # noqa: BLE001 — a bounded page SELECT is not a crash
+        # A statement timeout aborts the whole TRANSACTION, so the session is
+        # unusable until it is rolled back.
+        await _safe_rollback(session)
+        logger.warning(
+            "repair_polymarket_sport_category: the target page SELECT exceeded its "
+            "%.2fs budget; returning the operator's own cursor rather than a 500",
+            TARGET_SELECT_BUDGET_SECONDS,
+        )
+        # Gotcha #53/#54, and the same contract the census keeps: a step that could
+        # not run says so by NAME. Letting this escape gave the dispatcher a bare
+        # 500 whose detail does not distinguish "the database was busy" from "the
+        # rail is broken", and which carries no cursor — so an operator mid-drain
+        # could not tell a retry from a restart.
+        return _paused_before_examining(
+            incoming_cursor=incoming_cursor,
+            cap=cap,
+            started=started,
+            terminal="paused_target_timeout",
+            stopped_at_pool_timeout=None,
+            reason=(
+                f"the page SELECT did not finish inside its "
+                f"{TARGET_SELECT_BUDGET_SECONDS}s budget "
+                f"({type(exc).__name__}: {exc})"[:300]
+                + ". THIS IS NOT A COMPLETED DRAIN and it is not a verdict on any "
+                "event — nothing was examined and nothing was written. The cursor "
+                "returned is the one you passed in, so re-running retries the same "
+                "page."
+            ),
+        )
 
     counts = {
         "events_examined": 0,
@@ -587,22 +1013,27 @@ async def repair(
         "refused_other": 0,
         "not_at_venue": 0,
         "indeterminate": 0,
+        # CERT-667: an event the venue answered for, that we decided to move, and
+        # whose UPDATE then did not land. It is NOT `indeterminate` (the venue was
+        # fine) and NOT `changed` in any useful sense (nothing was written), so it
+        # gets its own number rather than hiding inside either.
+        "write_failed": 0,
         "markets_written": 0,
     }
     #: What it changed them TO. A single "changed" number cannot tell a correct
     #: drain from a rail that relabelled the bucket to one wrong answer.
     to_category: dict[str, int] = {}
     samples: list[dict[str, Any]] = []
-    # CERT-666 (P1): the cursor starts where the OPERATOR already was, not at
-    # None. A page whose very first event fails to resolve must hand back the
-    # cursor it was given — handing back None reads as "start over" and silently
-    # sends an attended drain to page one.
-    incoming_cursor: Optional[dict[str, Any]] = (
-        {"after_date": after_date, "after_id": int(after_id)} if after_id is not None else None
-    )
     next_cursor: Optional[dict[str, Any]] = incoming_cursor
     stopped_before: Optional[str] = None
     stopped_at_unresolved: Optional[str] = None
+    stopped_at_write_timeout: Optional[str] = None
+    # CERT-670 (P1): the write could not get a connection at all. Its own field
+    # rather than a flag on the one above, for the same reason `write_failed` is
+    # not folded into `indeterminate`: an operator who reads "the row was locked"
+    # waits and retries, and an operator who reads "the pool was empty" goes and
+    # looks at what else is holding twenty connections.
+    stopped_at_pool_timeout: Optional[str] = None
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         for t in targets:
@@ -636,14 +1067,23 @@ async def repair(
                 break
 
             # Resolved — `ok` or a 404 `not_at_venue`, both of which are real,
-            # repeatable answers. Only now may the cursor move past this event.
-            next_cursor = {
+            # repeatable answers.
+            #
+            # CERT-667: the cursor is PREPARED here and assigned only where this
+            # event is genuinely finished. CERT-666 (P1) moved the advance from
+            # before the fetch to after it, which fixed the venue half; the WRITE
+            # was still downstream of the advance, so a failed UPDATE left the
+            # event mis-filed with the cursor already past it — the same "cursor
+            # crosses unfinished work" defect, one statement further along. Every
+            # `continue` below therefore carries its own advance.
+            resolved_cursor = {
                 "after_date": t.commence_time.isoformat() if t.commence_time else None,
                 "after_id": int(t.anchor_id),
             }
 
             if status != "ok" or payload is None:
                 counts[status] += 1
+                next_cursor = resolved_cursor
                 continue
 
             category, llm_sport_category = classify_event_payload(payload)
@@ -652,12 +1092,14 @@ async def repair(
                 # Never overwrite a real value with the "other" default — the
                 # same guard the poller's own update_set carries.
                 counts["refused_other"] += 1
+                next_cursor = resolved_cursor
                 continue
 
             if llm_sport_category == SUSPECT_CATEGORY:
                 # The venue confirms it. Setka/TT-Cup lands here, which is how
                 # this rail proves it is safe rather than asserting it.
                 counts["unchanged"] += 1
+                next_cursor = resolved_cursor
                 continue
 
             counts["changed"] += 1
@@ -674,37 +1116,105 @@ async def repair(
                 )
 
             if not apply:
+                next_cursor = resolved_cursor
                 continue
 
-            # Core UPDATE, never ORM attribute assignment (gotchas #4/#5).
-            # Compare-and-set on the category we selected on, so a concurrent
-            # re-ingest that already corrected the row is never clobbered by a
-            # verdict computed before it landed.
-            r = await session.execute(
-                text(
-                    """
-                    UPDATE futures_markets
-                    SET llm_sport_category = :llm,
-                        category = CASE
-                            WHEN :cat_new = 'championship' THEN 'championship'
-                            ELSE category
-                        END,
-                        updated_at = NOW()
-                    WHERE source = 'polymarket'
-                      AND status = 'open'
-                      AND llm_sport_category = :cat_old
-                      AND market_metadata->>'polymarket_event_id' = :eid
-                    """
-                ),
-                {
-                    "llm": llm_sport_category,
-                    "cat_new": category,
-                    "cat_old": SUSPECT_CATEGORY,
-                    "eid": str(t.event_id),
-                },
-            )
+            # CERT-667 (`Q496-END-TO-END-DB-DEADLINE`) — THE WRITE WAS THE LAST
+            # STATEMENT THE BUDGET DESCRIBED BUT DID NOT ENFORCE.
+            #
+            # `POST_LOOP_NON_COUNT_RESERVE_SECONDS` already accounted for "the last
+            # event's write and commit", but nothing held the write to it: this
+            # UPDATE takes a row lock on `futures_markets`, which the ordinary
+            # Polymarket poller also writes, so a contended row could block here
+            # for as long as the other transaction lived — unbounded, past the
+            # router wall, H12 with no body, cursor lost. The rail bounded the
+            # venue and left the database open.
+            #
+            # Re-armed per event because the `commit()` below ends the transaction
+            # and a `SET LOCAL` dies with it.
+            #
+            # CERT-670 (P1): the commit is now INSIDE the bounded unit, and the
+            # unit is bounded on the client side as well. Two reasons. The commit
+            # runs on the same connection and can block on the same row lock the
+            # UPDATE took, so leaving it outside bounded the statement and not the
+            # operation. And this write begins a NEW transaction — the previous
+            # event's commit released the connection back to the pool — so the
+            # `SET LOCAL` that arms the bound has to check a connection out
+            # first, unbounded, against a pool whose own wait equals the router
+            # wall.
+            #
+            # A cancelled commit is genuinely ambiguous: the UPDATE may have
+            # landed on the server after we stopped waiting. That is safe here
+            # and it is the compare-and-set that makes it safe — a retry of an
+            # event that did commit matches no rows (`llm_sport_category` is no
+            # longer `:cat_old`), writes nothing, and reports rowcount 0. The
+            # ambiguity costs a wasted venue call, never a wrong row.
+            try:
+                # Core UPDATE, never ORM attribute assignment (gotchas #4/#5).
+                # Compare-and-set on the category we selected on, so a concurrent
+                # re-ingest that already corrected the row is never clobbered by a
+                # verdict computed before it landed.
+                r = await _bounded_statement(
+                    session,
+                    timeout_literal=str(int(WRITE_BUDGET_SECONDS * 1000)),
+                    server_budget_s=WRITE_BUDGET_SECONDS,
+                    sql="""
+                        UPDATE futures_markets
+                        SET llm_sport_category = :llm,
+                            category = CASE
+                                WHEN :cat_new = 'championship' THEN 'championship'
+                                ELSE category
+                            END,
+                            updated_at = NOW()
+                        WHERE source = 'polymarket'
+                          AND status = 'open'
+                          AND llm_sport_category = :cat_old
+                          AND market_metadata->>'polymarket_event_id' = :eid
+                        """,
+                    params={
+                        "llm": llm_sport_category,
+                        "cat_new": category,
+                        "cat_old": SUSPECT_CATEGORY,
+                        "eid": str(t.event_id),
+                    },
+                    commit=True,
+                )
+            except ClientDeadlineExceeded:
+                # Same stop-and-keep-the-cursor rule as the server timeout below,
+                # and deliberately its OWN field: "the pool was empty" and "the
+                # row was locked" send an operator to different places.
+                await _safe_rollback(session)
+                counts["write_failed"] += 1
+                stopped_at_pool_timeout = f"event_id={t.event_id} (write)"
+                logger.warning(
+                    "repair_polymarket_sport_category: the UPDATE for %s did not "
+                    "get a database connection inside its %.2fs client bound; "
+                    "stopping the scan with the cursor BEFORE it",
+                    t.event_id,
+                    client_db_budget_seconds(WRITE_BUDGET_SECONDS),
+                )
+                break
+            except Exception:  # noqa: BLE001 — a blocked write is not a verdict
+                # A statement timeout aborts the whole TRANSACTION, so the session
+                # is unusable until it is rolled back. Everything committed by the
+                # events BEFORE this one is already durable and stays counted.
+                await _safe_rollback(session)
+                counts["write_failed"] += 1
+                stopped_at_write_timeout = f"event_id={t.event_id}"
+                logger.warning(
+                    "repair_polymarket_sport_category: the UPDATE for %s exceeded "
+                    "its %.2fs budget; stopping the scan with the cursor BEFORE it",
+                    t.event_id,
+                    WRITE_BUDGET_SECONDS,
+                )
+                # Deliberately WITHOUT advancing the cursor: this event is still
+                # mis-filed, so re-running with `next_cursor` must retry it. Same
+                # rule as an unresolved venue answer — the cursor never crosses
+                # work that did not happen.
+                break
+
             counts["markets_written"] += r.rowcount
-            await session.commit()
+            next_cursor = resolved_cursor
 
     # CERT-666 (P2) — THE TERMINAL COUNT WAS THE LAST UNBOUNDED STATEMENT IN THE
     # REQUEST. It ran after the loop deadline had already passed, carried no
@@ -724,26 +1234,39 @@ async def repair(
     try:
         # Interpolated, not bound: `SET` takes no bind parameters. The value is
         # an int we computed from our own constants, never operator input.
-        await session.execute(text(f"SET LOCAL statement_timeout = {int(count_budget_s * 1000)}"))
+        #
+        # CERT-670 (P1): the loop's last commit released the connection, so this
+        # count checks one out again — the third site where arming the bound was
+        # itself unbounded.
         remaining = (
-            await session.execute(
-                text(
-                    """
+            await _bounded_statement(
+                session,
+                timeout_literal=str(int(count_budget_s * 1000)),
+                server_budget_s=count_budget_s,
+                sql="""
                     SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
                       AND fm.status = 'open'
                       AND fm.llm_sport_category = :cat
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
-                    """
-                ),
-                {"cat": SUSPECT_CATEGORY},
+                    """,
+                params={"cat": SUSPECT_CATEGORY},
             )
         ).scalar() or 0
     except Exception:  # noqa: BLE001 — a slow count must not cost the operator the cursor
         # A statement timeout aborts the whole TRANSACTION, not just the
         # statement, so the session is unusable until it is rolled back.
-        await session.rollback()
+        #
+        # CERT-670 (P1): `ClientDeadlineExceeded` lands here TOO, and that is the
+        # deliberate choice rather than an oversight. The count is a decoration on
+        # a drain that has already happened: every write above is committed and
+        # the cursor is already correct. Giving this arm a pause terminal would
+        # turn a successful page into a paused one over a number the response
+        # already knows how to describe as unmeasured — inventing a failure out of
+        # a missing statistic. `remaining_events_measured: false` is the whole
+        # contract here and it covers both ways of not knowing.
+        await _safe_rollback(session)
         remaining_measured = False
         logger.warning(
             "repair_polymarket_sport_category: remaining_events count exceeded its "
@@ -774,11 +1297,29 @@ async def repair(
     # actually sets today; the `indeterminate` count is the invariant — if a
     # later change turns that `break` back into a `continue`, completion still
     # cannot be claimed while any retryable result remains.
+    #
+    # CERT-667: and that nothing on the page was left UNWRITTEN. A short page
+    # every event of which the venue answered still is not a finished drain if
+    # one of those answers never reached the table — the row is as mis-filed as
+    # if we had never asked. Both terms again: `stopped_at_write_timeout` is what
+    # the loop sets today, `write_failed` is the invariant that survives someone
+    # turning that `break` back into a `continue`.
+    #
+    # CERT-670 (P1): and that nothing on the page was left unwritten because the
+    # rail could not reach the database at all. `write_failed` below already
+    # covers this arm as an invariant — the pool-timeout branch increments it for
+    # exactly that reason — and the named term is here anyway, on the same
+    # both-terms principle the two clauses above use: the count survives someone
+    # turning the `break` into a `continue`, and the field survives someone
+    # deciding a connection failure should not be counted as a failed write.
     scan_exhausted = (
         len(targets) < cap
         and stopped_before is None
         and stopped_at_unresolved is None
+        and stopped_at_write_timeout is None
+        and stopped_at_pool_timeout is None
         and counts["indeterminate"] == 0
+        and counts["write_failed"] == 0
     )
 
     result: dict[str, Any] = {
@@ -809,6 +1350,13 @@ async def repair(
         # CERT-666 (P1): the event the venue would not answer for. The cursor
         # stops BEFORE it, so re-running retries it. Never a verdict on the row.
         "stopped_at_unresolved": stopped_at_unresolved,
+        # CERT-667: the event the venue DID answer for and whose UPDATE did not
+        # land inside its budget. Also not a verdict, and also behind the cursor.
+        "stopped_at_write_timeout": stopped_at_write_timeout,
+        # CERT-670: the event whose UPDATE never reached the database, because no
+        # pooled connection came free inside the client bound. Also not a verdict,
+        # also behind the cursor — and a different thing to go and look at.
+        "stopped_at_pool_timeout": stopped_at_pool_timeout,
         "cap": cap,
         "ordering": (
             "newest commence_time first — the user-visible rows. Gotcha #41's "
@@ -821,6 +1369,19 @@ async def repair(
             "deadline_s": DEADLINE_SECONDS,
             "fetch_timeout_s": FETCH_TIMEOUT_SECONDS,
             "venue_pause_s": VENUE_PAUSE,
+            # CERT-667: the two DB bounds are reported because they are the two
+            # the rail previously described and did not enforce. Neither widens
+            # the worst case — the SELECT runs inside the deadline's own window
+            # and the write inside the post-loop reserve — so the headroom below
+            # is unchanged by them, which is a claim a guard checks.
+            "target_select_budget_s": TARGET_SELECT_BUDGET_SECONDS,
+            "write_budget_s": WRITE_BUDGET_SECONDS,
+            # CERT-670: the two SERVER bounds above are only reachable once a
+            # connection is, so the client-side slack that wraps every unit is
+            # published alongside them. Reported as the slack rather than as two
+            # more derived numbers, because it is one constant and the derivation
+            # is `client_db_budget_seconds`.
+            "pool_acquire_slack_s": POOL_ACQUIRE_SLACK_SECONDS,
             "worst_case_headroom_s": round(budget_headroom_seconds(), 2),
         },
     }
@@ -832,7 +1393,28 @@ async def repair(
     # did NOT finish, whatever else it managed, and the operator must re-run
     # before reading anything as complete. Checked first so no arm below can
     # quietly describe this as a finished drain.
-    if stopped_at_unresolved is not None:
+    # CERT-670 (P1): checked FIRST, above even `paused_unresolved`. Not because a
+    # lost connection is worse for the data — it is the same "one event behind the
+    # cursor is still mis-filed" — but because it is the only terminal here that
+    # says something about the DYNO rather than about an event. Ranked below the
+    # others it would be reachable only when nothing else went wrong, so the run
+    # that starves the pool AND then fails a venue call — the likely combination,
+    # since both follow from load — would report the venue and hide the cause.
+    if stopped_at_pool_timeout is not None:
+        result["terminal"] = "paused_pool_timeout"
+        result["reason"] = (
+            f"the database work for {stopped_at_pool_timeout} did not get a "
+            f"pooled connection inside its client bound — almost always pool "
+            "saturation, NOT a verdict on that event and NOT a slow query: the "
+            "statement never reached PostgreSQL, so no server timeout could "
+            "fire. The cursor deliberately stops BEFORE it, so re-running with "
+            "`next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN: that event "
+            "is still mis-filed. Everything committed above it on this page is "
+            "durable and still applies. Retrying immediately will usually queue "
+            "behind the same saturation — look at what else is holding "
+            "connections first."
+        )
+    elif stopped_at_unresolved is not None:
         result["terminal"] = "paused_unresolved"
         result["reason"] = (
             f"the venue did not answer for {stopped_at_unresolved} — a transient "
@@ -841,6 +1423,22 @@ async def repair(
             "with `next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN: the "
             "event may still be mis-filed, and anything already counted above it "
             "on this page is real and still applies."
+        )
+    elif stopped_at_write_timeout is not None:
+        # CERT-667: ranked with `paused_unresolved`, above every success arm, for
+        # the same reason — the run did NOT finish. Without this the terminal
+        # would have read "changed", because the classification counts are real
+        # and only the write is missing: the most reassuring possible wording for
+        # a page that left a user-visible row exactly as wrong as it found it.
+        result["terminal"] = "paused_write_timeout"
+        result["reason"] = (
+            f"the venue answered for {stopped_at_write_timeout} but its UPDATE did "
+            f"not land inside the {WRITE_BUDGET_SECONDS}s write budget — almost "
+            "always a row lock held by the ordinary poller, NOT a verdict on that "
+            "event. The cursor deliberately stops BEFORE it, so re-running with "
+            "`next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN: that event "
+            "is still mis-filed. Everything committed above it on this page is "
+            "durable and still applies."
         )
     elif counts["events_examined"] == 0:
         result["terminal"] = "complete" if scan_exhausted else "no_work"
