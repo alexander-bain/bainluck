@@ -14,6 +14,501 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+## STATUS 2026-08-31 19:5xZ (CAL-P161) — **CHECK 1 IS NOT "REFUTED" ANYWHERE ON THE TOP OF THE BOARD. IT IS UNMEASURED — THE SAMPLE IT RESTS ON IS BIASED LOW BY A FACTOR WE HAVE ALREADY MEASURED AS ∞ (0.000 → 0.148 ON THE SAME CELL).**
+
+*Executes CAL-P160's board-wide method correction — re-bound every cell's check 1 as
+`share × mean |price − outcome|` instead of `share` — from stored artifacts, zero queries. Doing
+the arithmetic did not re-close the rungs. It showed the **share input itself is void** for ranks
+1, 2, 3 and 4. This overturns CAL-P160's own "strengthened" soccer/cm bound, and it retires the
+`fallback share is 0.00–0.04 → ruled out` reading that has stood over this file since round 1.*
+
+### SESSION STATE (measured, `GET /api/admin/calibration-beat-gauges?full=true`)
+
+| gauge | session start (`18:37:31Z`) | session end (`19:42:39Z`) |
+|---|---|---|
+| `staged:units_banked` / `units_planned` | **65 / 128** — **NOT zeroed**; CAL-P160's Finding A signature did not fire | **70 / 128** |
+| `input_fingerprint` | `75faaed6`, unchanged | `75faaed6`, unchanged — **14** straight beats since `06:37Z` |
+| `staged:unit_ms_mean` | 217,588 | **186,191** |
+| `staged:beats_to_publish` | 9 | 5 |
+
+Published curve unchanged: `mce_closing_line` **1.86 pp**, `generated_at 2026-08-31T04:37:36Z`,
+population `q268`. Stale by design; the page is not broken. Hold per D34 remains ON —
+`precompute_calibration.py` untouched this session.
+
+Swap still in flight: `heroku pg:info -a bainluck` → `Status: Upgrading Plan: Replacing Primary`,
+plan still `Standard 0`, `66.1 GB / 64 GB (103.35%)`. **No folds ran.** Everything below is read
+from JSON already in this repo.
+
+### 🟢 FINDING 0 — CAL-P160'S "REFUTED AT THE FIRST MEASURABLE BEAT" IS ITSELF OVERTURNED: IT WAS THE SWAP'S TRANSIENT, EXACTLY AS ITS OWN HONEST BOUND ALLOWED
+
+CAL-P160 pre-registered the test: *"if `unit_ms_mean` returns toward 187,000 the degradation was
+the swap's transient; if it holds above 210,000 the prediction is refuted outright."* The
+`19:42:39Z` beat is the answer and it is unambiguous:
+
+| gauge | `17:37Z` pre | `18:37Z` degraded | **`19:42Z`** | verdict |
+|---|---:|---:|---:|---|
+| `staged:unit_ms_mean` | 187,139 | 217,588 | **186,191** | back to baseline — **transient** |
+| `staged:unit_ms_worst` | 135,937 | 250,681 | **146,637** | back in the 112–136k band |
+| `staged:units_banked` | 60 | 65 | **70** | +5, unbroken |
+| `staged:beats_to_publish` | 6 | 9 | 5 | — |
+
+**CAL-P160's Finding B verdict is withdrawn.** One degraded beat during a live primary swap was a
+transient, not a trend, and this lane called it a refutation on n=1. *(P159's underlying
+prediction is not thereby confirmed: it predicted cost would fall **toward 80,658 ms**. Cost
+returned to 186,191 — its pre-swap baseline, 2.3× above the predicted figure. The correct grade is
+**NOT YET SUPPORTED**, not "refuted": the upgrade has not settled, so the prediction has still
+never been tested under its own stated condition.)*
+
+### 🔴 FINDING 0b — **THE ETA THE HOLD RESTS ON IS WRONG BY ~2.3×. `beats_to_publish` IS NOT AN ETA.**
+
+Every directive since CAL-P158 has quoted `staged:beats_to_publish` as "the producer's OWN
+disclosed ETA, not an estimate." **It does not behave like one.** Over the 14 beats on fingerprint
+`75faaed6` the bank rose 5 → 70 — **65 units, +5 every single beat, zero exceptions** — while
+`beats_to_publish` fell only 9 → 5, and spiked back to 9 mid-run:
+
+```
+bank  5 10 15 20 25 30 35 40 45 50 55 60 65 70   (+5, 13/13 intervals)
+b2p   9  9  8  8  8  8  7  7  6  5  6  6  9  5   (non-monotonic; fell 4 while 65 units banked)
+```
+
+A real remaining-work ETA would have fallen ~13. This one tracks *recent in-beat throughput*, not
+remaining work, so it implies **11.6 units/beat** — a rate the producer has never once achieved.
+
+**The empirical clock is the trustworthy one.** 58 units remain at a measured, perfectly linear
++5/beat, over a measured mean beat interval of 60.4 min (`06:37:31Z` → `19:42:39Z`, 13 intervals):
+
+> **≈ 11.6 beats ≈ 11.7 hours → publish ≈ `2026-09-01 07:20Z` ≈ 00:20 PT tonight.**
+> Not the ~5 beats the gauge advertises.
+
+This does not change the hold — it changes what the hold *costs*, and that is Alex's call, so it
+is filed in `YOUR-TURN.md`. Any future directive quoting `beats_to_publish` as an ETA should quote
+`(units_planned − units_banked) / 5` instead and say so.
+
+### 🔴 FINDING A — THE RE-BOUND WAS EXECUTED, AND IT FAILED CLOSED, NOT OPEN
+
+CAL-P160 prescribed `share × mean |price − outcome|`. `mean |price − outcome|` is not stored, so
+each cell is bounded at its **maximum**: every fallback leg maximally wrong (`|p−o| = 1`), on the
+95% Clopper–Pearson **upper** bound of the sampled share. That is a hard ceiling — no
+distributional assumption. Read against `ece_eligible` from `artifacts/cal-p094/eligible_fold_all_cells.json`:
+
+| rank | cell | `ece_e` | `n_e` | sample | share | share↑95 | **ceiling pp** | **ceiling / ECE** |
+|---:|---|---:|---:|---|---:|---:|---:|---:|
+| 1 | baseball/quantity | 15.86 | 6,778 | **head** | 0.0045 | 0.0070 | 0.70 | 0.04 |
+| 2 | soccer/quantity | 8.51 | 5,749 | **head** | 0.0026 | 0.0095 | 0.95 | 0.11 |
+| 3 | soccer/container_member | 6.27 | 7,682 | **head** | 0.0050 | 0.0145 | 1.45 | 0.23 |
+| 4 | economics/quantity | 5.13 | 4,705 | **head** | 0.0448 | 0.0524 | **5.24** | **1.02** |
+| 6 | basketball/quantity | 5.73 | 2,104 | **random** | 0.1481 | 0.1798 | **17.98** | **3.14** |
+| 8 | tennis/quantity | 5.01 | 1,512 | **random** | 0.0304 | 0.0442 | 4.42 | 0.88 |
+| 9 | baseball/container_member | 12.44 | 286 | **head** | 0.0000 | 0.0130 | 1.30 | 0.10 |
+| 10 | golf/container_member | 25.11 | 118 | **head** | 0.0000 | 0.0081 | 0.81 | 0.03 |
+| 11 | esports/container_member | 3.15 | 8,217 | **head** | 0.0206 | 0.0443 | **4.43** | **1.41** |
+
+Taken at face value this closes ranks 1–3 hard (≤23% of the cell) and reopens 4, 6 and 11. **Do
+not take it at face value. The `sample` column is the whole story.**
+
+### 🔴 FINDING B — THE HEAD SAMPLE IS NOT MERELY BIASED; ITS BIAS HAS BEEN MEASURED, AND IT IS TOTAL
+
+Seven of the nine rows above are `ORDER BY id ASC LIMIT 500` head samples. Exactly one cell on
+this board was ever sampled **both** ways, and the two answers do not overlap:
+
+| basketball/quantity | n | fallback | share | artifact |
+|---|---:|---:|---:|---|
+| **head** (`ORDER BY id ASC LIMIT 500`) | 370 | 0 | **0.0000** | `round2/basketball_quantity_head_fallback.json` `179bbf20e2748d4c` 28.3ms |
+| **random** (Bernoulli 4%, unbiased) | 574 | 85 | **0.1481** | `round2/basketball_quantity_random_fallback.json` `c133ef220f2d71f1` 289.8ms |
+
+**The head sample read zero on a cell whose true share is ~15%.** The mechanism is already stated
+in this file (line ~969): oldest ids have `calibration_probability` backfilled to 100%, so the
+head is the one region of the id space where fallback *cannot* appear. This is not a wide error
+bar — it is a sample drawn from the complement of the population of interest. Corroborated in the
+same direction, never the other, on all three cells with both reads: tennis/q head 0.000 →
+random 0.0304; tennis/cm head 0.000 → random 0.0150; hockey/cm unordered heap 145/584 = **0.2483**.
+
+**Consequence, and it is the finding:** a Clopper–Pearson interval quantifies *sampling* error and
+says nothing about *selection* error. Every ceiling in Finding A's table marked `head` is
+therefore **not a bound at all** — it is a bound on the wrong population. The correct entry for
+those seven cells is **VOID**, not a number.
+
+**How much fallback would each head cell need to explain itself?** `ECE / (max(avg_open, 1−avg_open) × 100)`:
+
+| cell | `ece_e` | `avg_open` (fallback rows) | **required share** | is that reachable? |
+|---|---:|---:|---:|---|
+| golf/container_member | 25.11 | — | 25.1% | ~ hockey's measured 24.8% |
+| baseball/quantity | 15.86 | 0.843 | 18.8% | above basketball's 14.8%, below hockey's 24.8% |
+| baseball/container_member | 12.44 | — | 12.4% | **below basketball's measured 14.8%** |
+| economics/quantity | 5.13 | 0.538 | 9.5% | **below basketball's measured 14.8%** |
+| soccer/quantity | 8.51 | 0.010 | 8.6% | **below basketball's measured 14.8%** |
+| soccer/container_member | 6.27 | 0.977 | **6.4%** | **well below 14.8%** |
+| esports/container_member | 3.15 | 0.665 | **4.7%** | **well below 14.8%** |
+
+Every required share sits inside the range this project has actually measured on unbiased samples
+(1.5% – 24.8%). **Fallback alone can account for any of these cells at a share we have observed
+elsewhere on the same table.** Nothing here says it *does*. It says the rung is open.
+
+🔴 **This retires CAL-P160's own soccer/cm bound.** That entry wrote "check 1 refuted **by cost**,
+`0.005 × 97.7` ≈ ≤0.5 pp of 6.27" and called the rung closed-by-a-bound. The `0.005` is a head
+share on the cell class whose head reads zero when the truth is 0.148. The arithmetic was right;
+its input was void. **soccer/cm check 1 is reopened.** The correct statement is: *fallback would
+need to be ≥6.4% of soccer/cm legs, and we have never measured soccer/cm on an unbiased sample.*
+
+🟢 **One cell is genuinely closed, and only one.** `tennis/quantity`: unbiased random sample, 95%
+upper 0.0442, ceiling 4.42 pp against ECE 5.01 → **0.88×**. Closed — but only under the maximal
+`|p−o| = 1` assumption, with no margin. It is the sole check-1 verdict on this board currently
+resting on an unbiased measurement.
+
+### 🔴 FINDING C — THE `13.51` DISCRIMINATOR CANNOT RUN FROM STORED DATA, AND ITS PRE-REGISTRATION NEEDS ONE AMENDMENT
+
+`artifacts/cal-p094/pairclass_ece.json` stores **scalars only** (`ece`, `n`, `gap`, `winners` per
+class) — no per-bin vectors. CAL-P160's discriminator therefore genuinely requires a query and
+stays parked behind the swap. Confirmed, not assumed.
+
+The scalars do carry one structural fact that **amends** the pre-registration. Across every cell,
+the `ok` and `identical_noncomp` classes sit at *exactly* `winners = n/2` (soccer/cm ok
+2,834/5,668; baseball/q ok 2,439/4,880). That is **definitional, not a finding** — `pairclass`
+classifies two-leg pairs, and a well-formed pair contributes exactly one winner. But it has a
+consequence: in an exactly-paired class `mean(outcome)` is pinned at 0.5 by construction, so the
+class `gap` is **entirely** `mean(price) − 0.5`, i.e. a pair-sum deficit (soccer/cm pairs sum
+0.944, baseball/q 0.875), not a directional forecasting bias.
+
+**Amendment:** CAL-P094 rejected the collision partly because the gaps differ (−2.78 vs −6.23).
+Under the pairing, differing gaps mean nothing more than *differing pair-sum deficits* — so that
+half of CAL-P094's argument is void on a second, independent ground. **But the pair-sum route does
+not explain the collision either**: `golf/container_member`'s `ok` class sums to 0.9984 (near
+perfect) at ECE **25.11**, while soccer/cm sums to 0.944 at 13.51. Deficit and ECE do not track.
+When the discriminator runs it must record the **price histogram** alongside the per-bin error
+vector — under exact pairing the error vector is mirror-symmetric, so the price distribution is
+the part that actually carries cell identity.
+
+### 🟡 THE CELLS WHERE `ok` IS *NOT* PAIRED ARE A SEPARATE, UNNAMED CLASS
+
+Three `ok` classes break `winners = n/2` badly, and all three have **positive** gap:
+`economics/quantity` 1,752/4,705 = 37.2% (gap +4.20), `politics/quantity` 102/1,152 = 8.9%
+(+6.12), `geopolitics/quantity` 5/60 = 8.3% (+19.36). These are non-complementary multi-leg
+populations misclassified into a class whose name asserts they are clean pairs. **`economics/quantity`
+is rank 4 and is also one of the cells Finding A reopened** — two independent signals on the same
+cell. Not diagnosed here; recorded so it is not rediscovered a fourth time.
+
+### 🔴 WHAT THIS DOES TO THE NEXT QUERY — A RE-PRIORITISATION, STATED NOT SUBSTITUTED
+
+CAL-P160 pre-registered the per-bin `13.51` discriminator as the next query. **It should now run
+second.** The first query, when the swap settles, should be a **Bernoulli-random fallback
+re-measure on ranks 1–4** (`baseball/quantity`, `soccer/quantity`, `soccer/container_member`,
+`economics/quantity`), reusing the exact pattern already proven on basketball —
+`random() < 0.04 LIMIT 500` → `ANY` aggregation, `~290ms` measured, four cheap queries. Rationale:
+the collision check refines the *localisation* of a driver inside two cells; the random re-measure
+decides whether a **known, already-shipped defect class (#1978) is the driver of the top four
+cells at once**, and it is the rung every other rung on this board is stacked on top of. Also
+capture `avg(|price − outcome|)` over the fallback rows in the same pass so the next re-bound is
+exact instead of a ceiling.
+
+### CARRIED TO THE NEXT SESSION
+
+1. Read the gauge ring first (CAL-P160 Finding A signature — did not fire this session).
+2. CAL-P160's Finding B is **graded and withdrawn** (Finding 0). Nothing left open there. The live
+   number to carry is the bank and the **empirical** ETA, never `beats_to_publish` (Finding 0b).
+3. **Query 1 when the swap settles:** random fallback re-measure, ranks 1–4, + `avg|p−o|`.
+4. **Query 2:** the per-bin `13.51` discriminator, amended per Finding C to record price histograms.
+5. Check 1's status board-wide: **VOID on 7 cells, OPEN on basketball/q (3.14×), CLOSED on
+   tennis/q alone (0.88×).** Do not re-cite "fallback share is 0.00–0.04" — it is retired.
+
+---
+
+## STATUS 2026-08-31 19:3xZ (CAL-P160) — **THE HOLD IS CORRECT BUT ITS STATED REASON IS WRONG: THE BANK IS IN POSTGRES, AND POSTGRES IS BEING REPLACED RIGHT NOW.**
+
+*Agrees with CAL-P159 on the verdict (do not touch the file) and corrects it on two load-bearing
+facts. P159 recorded a prediction so it could be graded; this entry grades it, and it is refuted
+at the first measurable beat. Rank 3's ladder is advanced four rungs with **zero database load**.*
+
+### SESSION STATE (measured, `GET /api/admin/calibration-beat-gauges?full=true`, beat `18:37:31Z`)
+
+| gauge | value |
+|---|---|
+| `staged:units_banked` / `units_planned` | **65 / 128** (was 60 when P159 read it at `17:37Z`) |
+| `staged:beats_to_publish` | **9** — the producer's OWN disclosed ETA, not an estimate |
+| `input_fingerprint` | `75faaed6`, **unchanged across all 13 beats since `06:37Z`** |
+| rate | **+5 units/beat**, perfectly linear, 13 consecutive beats |
+
+Published curve unchanged: `mce_closing_line` **1.86 pp**, population `q268`, `generated_at`
+`2026-08-31T04:37:36Z`. Stale by design — the bank is mid-rebuild and the page correctly serves
+the last complete snapshot.
+
+### 🔴 FINDING A — "THE UNIT BANK IS IN REDIS, SO THE 60 UNITS SURVIVE THE PRIMARY SWAP" IS FALSE
+
+P159 wrote that sentence, and it is the reason the hold was believed safe across Alex's plan
+upgrade. **The bank is in PostgreSQL.** `app/tasks/task_checkpoint.py`'s module docstring is
+explicit, and explains why Redis was *rejected*:
+
+> *"The checkpoint goes in `durable_state_snapshots` (Queue 298's store), **not Redis**. Redis on
+> this project is a 50MB `allkeys-lru` instance running at ~97% of maxmemory — a checkpoint key
+> there is not 'persisted with a TTL', it is a key waiting to be evicted."*
+
+**Why this matters, and it is not academic.** `load_checkpoint()` (same file, l.97–121) is
+documented *"Any read problem at all yields a fresh checkpoint"* — on any non-`missing` read
+status it returns `new_checkpoint(...)` with action `invalidate`. The returned checkpoint is
+**empty**. So **one failed Postgres read zeroes the 65-unit bank** — and `heroku pg:info` right
+now reads `Status: Upgrading Plan: Replacing Primary`, i.e. a live failover whose defining event
+is exactly a dropped connection.
+
+The hold protects the bank from **our deploys**. Nothing protects it from **the swap**, and the
+recorded reasoning was wrong in the direction that hid the exposure.
+
+*Not a hazard, checked and cleared:* `CHECKPOINT_MAX_AGE_S = 14 * 86400`. Hours of failed beats
+during a swap cannot fossilise the bank. The age rule is not the risk; the read rule is.
+
+**Detection signature for the next session — check this FIRST:**
+* log line `checkpoint for <task> not resumable (<status>) — starting fresh`
+* gauge signature: `staged:units_banked` collapsing to ~5–7 on a beat, with `input_fingerprint`
+  **unchanged** at `75faaed6`. Fingerprint-unchanged is what distinguishes a swap-zeroed bank
+  from a deploy-invalidated one — a deploy moves the fingerprint, the swap does not.
+
+### 🔴 FINDING B — P159'S RECORDED PREDICTION, GRADED: **REFUTED AT THE FIRST MEASURABLE BEAT**
+
+P159 predicted: *"once the upgrade settles, per-unit cost should fall toward its former 80,658 ms;
+the remaining 68 units then need ~5 beats, not ~14."* Alex started the upgrade at **11:02 PT
+(18:02Z)**. The `18:37Z` beat is the first to overlap it. Every number moved the **wrong way**:
+
+| gauge | `17:37Z` (pre) | `18:37Z` (first overlapping beat) | direction |
+|---|---:|---:|---|
+| `staged:unit_ms_mean` | 187,139 | **217,588** | **+16%** — predicted to fall toward 80,658 |
+| `staged:unit_ms_worst` | 135,937 | **250,681** | **+84%** |
+| `staged:beats_to_publish` | 6 | **9** | **moved AWAY from publish** |
+| `staged:units_this_beat` | 7 | 6 | fewer |
+
+Corroborated independently: `heroku pg:info` reports `Rollback: earliest from 2026-08-31 18:37` —
+the rollback horizon was reset at **exactly** the beat that degraded, which is the swap starting
+real work. Plan still reads `Standard 0`, `66.1 GB / 64 GB (103.35%)`: **the upgrade has not
+settled, and while it is settling the producer is slower, not faster.**
+
+⚠️ **Honest bound: this is ONE beat.** The direction and the mechanism (a replacement primary
+streaming WAL competes for the same I/O) are coherent, but a single degraded beat is not a trend.
+**The grading completes at the `19:37Z` and `20:37Z` beats** — if `unit_ms_mean` returns toward
+187,000 the degradation was the swap's transient and P159's prediction is merely early; if it
+holds above 210,000 the prediction is refuted outright.
+
+### 🟢 FINDING C — RANK 3 (`soccer/container_member`) ADVANCED FOUR RUNGS, **ZERO DATABASE LOAD**
+
+Every number below is read from artifacts already stored in this repo. No fold was executed
+(see "why no folds ran" below). Cell: **6.27 pp, n=7,682, 5.7σ, impact 25,120.**
+
+| # | check | result | verdict |
+|---:|---|---|---|
+| 1 | price-source fallback (#1978) | share **0.005** (3 of 603) at `avg_open` **0.977** → worst case `0.005 × 97.7` ≈ **≤0.5 pp of 6.27** | **refuted BY COST, not just by share** |
+| 3 | shape / pair coherence | identical pairs are **1,882 of 7,682 (24.5%)** at 19.29 ECE / gap −15.14 — but excluding them makes the cell **WORSE, +6.54 → 12.81** | **present and large, but NOT the driver** |
+| 6 | binning noise floor | **5.7σ** | **real, not noise** |
+| — | **driver localised** | the structurally-**healthy** `ok` class: **n=5,668 = 73.8% of the cell, at 13.51 pp, gap −2.78** | **this is where the mechanism lives** |
+
+🔴 **A METHOD CORRECTION THAT APPLIES TO THE WHOLE BOARD, NOT JUST THIS CELL.** The check-1
+"Reading" paragraph further down this file concludes *"fallback share is 0.00–0.04 — this rules
+out the #1978 price-source fallback"*. That conclusion is drawn from **share alone**, and this
+lane has already proven twice (CAL-P094 item 1, CAL-P095's spike) that **share is not cost**. The
+stored `avg_open` column is the missing half, and it is null exactly when `fallback = 0`, which
+means it is the mean opening price **of the fallback rows only** — the rows that actually enter
+the curve at that price. Those prices are **degenerate**: soccer/cm **0.977**, soccer/q **0.010**,
+baseball/q 0.843, geopolitics/cm 0.763, esports/cm 0.665. A leg entering at 0.977 that loses
+contributes ~95 pp of bucket error. **The right statistic is `share × mean |price − outcome|`,
+never `share`.**
+
+**Completing that arithmetic here does not overturn the conclusion — it strengthens it.** At
+≤0.5 pp of a 6.27 pp cell, fallback is genuinely not the driver for soccer/cm. But the rung is
+now closed **by a bound** instead of by an incomplete argument, which is what the ladder needs.
+Every other cell's check 1 is closed on the incomplete argument and should be re-bounded the same
+cheap way — from stored artifacts, no queries.
+
+🔴 **THE `13.51` COLLISION IS REOPENED — ONE CHEAP CHECK, PRE-REGISTERED.** Rank 1
+(`baseball/quantity`) and rank 3 (`soccer/container_member`) **both** put ~72–74% of their mass in
+a structurally-healthy `ok` class measuring **13.51 pp**. CAL-P094 ruled this "a 2-decimal
+collision, not a shared computation", on the grounds that n differs (4,880 vs 5,668) and gap
+differs (−6.23 vs −2.78). **That argument is not airtight.** ECE is |bias| aggregated over bins;
+gap is signed mean bias. A shared *upstream binning or rounding* cause would produce matched ECE
+with **unmatched** gap — precisely the pattern observed. Two independent cells landing on the same
+13.51 is worth one cheap discriminating check, not a closed question, and both are the top of the
+burn-down. **Pre-registered discriminator:** compare the two `ok` classes' **per-bin** error
+vectors, not their scalars — a shared mechanism matches bin-by-bin, a coincidence does not.
+
+### WHY NO FOLDS RAN, AND WHY THAT IS THE CHARTER AND NOT A GAP
+
+The primary swap is in flight (Finding A). A heavy fold competes for I/O with the producer, and
+the producer's failure mode under a failed read is **not a slow beat — it is a zeroed bank**.
+Running diagnosis that could destroy the artefact the hold exists to protect inverts the point of
+the hold. This is the same call the lane made correctly this morning, and CLAUDE.md LANE ROLES
+already says it: *"Heavy measurement queries never run while an attended fold or apply is in
+flight."* The ladder was advanced four rungs from stored artifacts instead, and the one query that
+would close it is pre-registered above.
+
+### CARRIED TO THE NEXT SESSION
+
+1. Read the gauge ring **first** and check Finding A's detection signature before anything else.
+2. Grade Finding B at the `19:37Z` / `20:37Z` beats.
+3. Rank 3's driver is the `ok` class; run the pre-registered per-bin discriminator **after** the
+   swap settles.
+4. `CERT-530` needs nothing — GREEN and **already merged** into master as `cadf104e`.
+
+---
+
+## STATUS 2026-08-31 18:1xZ (CAL-P159) — **NO CELL TAKEN, DELIBERATELY: TAKING ONE TODAY WOULD DESTROY A CURVE DELTA ALREADY PAID FOR.**
+
+*This supersedes the CAL-P158 entry below on mechanism, and agrees with it on the verdict. P158
+said "the publisher is down, so nothing can be re-measured." That was right but incomplete, and
+the missing half reverses the recommendation from "wait" to "actively do not ship."*
+
+**What the gauge ring says (measured, `GET /api/admin/calibration-beat-gauges?full=true`, beat
+`17:37Z`):** `units_done 60 / units_planned 128`, `+5 units/beat`, `unit_ms_mean 187,139`,
+`cursor_resume 0`. The producer is **resuming correctly and banking durably.** It is not broken.
+
+**Why it restarted:** the `06:04Z` deploy (v3956/v3957) carried the three curve-affecting D-rules,
+all of which edit `precompute_calibration.py`. `_main_input_fingerprint()` hashes the *source* of
+`compute_calibration_payload` / `_calibration_population_ctes` / `_main_futures_sql`, so it moved
+(`b1820040 → 75faaed6`), and `_load_main_checkpoint()` correctly returned `INVALIDATE`. **The
+128-unit bank went to zero and has rebuilt to 60 across 13 beats.**
+
+🔴 **THE CONSEQUENCE FOR THIS FILE'S CHARTER.** A cell rule *is* an edit to those functions — that
+is where cell rules live. So landing the top open cell today would move the fingerprint again,
+reset 60 → 0, and push the next publish out another ~13 beats. It would also discard the delta
+from `67f5a6d3` / `fd033079` / `9c9f7abf` — **already merged, already deployed, never yet
+published**, and the dedup-join fix alone de-duplicates 36.65% of published rows. Trading a
+banked, paid-for delta for an unmeasurable new one is strictly negative under the finish-line
+ruling. **Working "big to small" today means protecting the queue, not adding to it.**
+
+**The unblock is real and it is in flight:** the 187 s/unit is Postgres `standard-0` at **103.3%
+of cap (66.1/64 GB)**; Alex started the plan upgrade at **11:02 PT today** (v3958/v3959). The unit
+bank is in **Redis**, so the 60 units survive the primary swap.
+
+**Prediction, recorded now so it can be graded:** once the upgrade settles, per-unit cost should
+fall toward its former `80,658 ms`; the remaining 68 units then need **~5 beats, not ~14**. The
+next published census should carry the three pending fixes. **Resume the burn-down at the first
+census with `generated_at` after the upgrade — and take rank 1 (`polymarket/baseball`) then, not
+before.**
+
+---
+
+## STATUS 2026-08-31 (CAL-P158) — NO CELL TAKEN, AND THAT IS THE FINDING: **THE PUBLISHER HAS BEEN DOWN FOR 12 HOURS, SO NO CELL FIX CAN SHOW A PUBLISHED DELTA.**
+
+*This entry exists to answer the charter's own question — the file went five days without an
+update; which reading is true? **Neither cleanly — it is a blend, and the second half is the
+defect.** `git log` on this file: last commit `ee25e1cd` (2026-08-25, CAL-P095). Most of
+CAL-P150→157 is publisher machinery (publish gate, staged-futures cursor, phase budgets,
+`is_winner` nullability, instrument rings) and correctly has nothing to say here. **But three
+commits on 2026-08-30 are curve-affecting and were never written back to this file** —
+`67f5a6d3` (D5: the curve's dedup join grouped on two of its five columns; 36.65% of published
+rows were the same outcome twice), `fd033079` (D12: rank 6 deleted, not fixed — the cell called
+`crypto` is 99.5% metal), `9c9f7abf` (D13: a lone claim published iff it WON). All three are in
+the deployed release v3957. So the write-back discipline this charter asks for did lapse, on
+exactly the commits that move the board.*
+
+### THE BLOCKER: the hourly producer has not published since 04:37Z, and cannot get near its own deadline
+
+Measured against production 2026-08-31 16:29–16:40Z (09:29–09:40 PT).
+
+| fact | value | source |
+|---|---|---|
+| last successful publish | `2026-08-31T04:37:36Z` | `/api/calibration` `generated_at` |
+| served payload age | **42,700 s (11.9 h)** | `cache.age_s` |
+| cache status / reason | `stale` / **`main_key_absent`** | `cache` |
+| fresh-key TTL | 7,200 s (`_MAIN_CACHE_TTL`) | `precompute_calibration.py:37` |
+| fresh key observed gone | `06:38Z` — exactly TTL after the 04:37Z publish | `artifacts/cal-p148/serve-phase-log.jsonl` (`"redis": null`) |
+| producer | `beats_missed: 11`, **`stalled: true`** | `/api/calibration` `producer` |
+| hourly failure | "futures generation incomplete — units banked, nothing published" | Sentry `7677340087`, **15 events in 24 h**, last 15:36Z |
+
+**The producer is not crashing — it is losing a race it cannot win.** The staged-futures build
+banks units durably and resumes, exactly as designed; it simply cannot finish a generation
+inside the window its output is allowed to live in:
+
+| quantity | measured | ledger key |
+|---|---:|---|
+| units planned per generation | **128** | `staged:units_planned` |
+| units banked so far | **55** | `staged:units_done` |
+| units **completed this beat** | **5** | `staged:units_completed_this_beat` |
+| units attempted this beat | 7 (2 cancelled) | `staged:units_this_beat` |
+| per-unit mean, completions | 92,265 ms | `staged:unit_ms_mean_completed` |
+| per-unit mean, **attempts** | **185,161 ms** | `staged:unit_ms_mean` |
+| futures phase budget / beat | 1,188,617 ms | `plan.phases[futures].budget_ms` |
+| futures phase **measured floor** | **1,351,045 ms** | `plan.phases[futures].floor_ms` |
+| **the build's own estimate** | **`beats_to_publish: 6`** | `staged:beats_to_publish` |
+
+Three numbers decide it:
+
+1. **`floor_ms` (1,351,045) EXCEEDS `budget_ms` (1,188,617).** The futures phase is allocated
+   less time than its own measured floor — `budget_basis: measured_elastic_cut`. It is cut
+   because the task's soft limit is 1,500 s and futures' floor alone (1,351 s) plus diagnostics
+   (124 s) plus sports (5 s) already reaches 1,480 s. There is no headroom left to give it.
+2. **A generation is ~6 beats away on the build's own optimistic estimate, ~15 on observed
+   throughput** (73 units remaining ÷ 5 completed/beat). Beats are hourly.
+3. **The fresh key lives 2 hours.** So even a perfect publish keeps the page fresh for 2 h out
+   of every ~6–15 h. **The page is structurally stale most of the time, and no calibration cell
+   fix can be shown to move the published curve until this is true no longer.**
+
+### The cancellation policy's own cost model no longer holds
+
+`STAGED_UNIT_MAX_CANCELLATIONS = 2` is documented as costing "at most eight units of an ~18-unit
+beat — under half". Observed this beat: **2 cancellations burned 835 s (417,647 ms + 417,175 ms)
+of a 1,340 s beat — 62%** — and the beat completed 7 units, not 18. The constant is not wrong;
+the measurement it was sized against has moved. It is **not** a livelock: the two cancelled units
+differed from the five that completed, so cancellation is load-dependent slowness, not two poison
+slots. Convergence is real. It is just slower than the deadline.
+
+### THE SECOND BLOCKER, LATENT BEHIND THE FIRST: the publish gate refuses a completed build
+
+The last time a build actually COMPLETED — 05:37Z, one hour after the last publish — the publish
+gate **rejected** it (Sentry `7677836808`):
+
+> population fell **−10.5% (930,149 → 832,872)**, limit −5%, and population_version was not
+> bumped (still `'q268'`) — resolution only ADDS outcomes, so a shrink is a lost cohort or a
+> changed rule, never elapsed time
+
+This matters because it is **downstream of the throughput problem and therefore invisible**: no
+build has completed since, so the gate has not been reached in 11 hours. The moment throughput
+is fixed, this is what the build hits next.
+
+`calibration_publish_gate.py:815-865` is explicit that a shrink is excused by exactly one thing —
+`if verdict.version_bumped: return verdict`. A matching predicate never excuses it. So the
+sanctioned remedy for a deliberate rule change is to bump `CALIBRATION_POPULATION_VERSION`
+(`precompute_calibration.py:603`, currently `"q268"`) and, per that constant's own docstring,
+ship `COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` **empty** if the methodology moved.
+
+**WHAT IS NOT ESTABLISHED, AND MUST NOT BE ASSUMED.** The tempting story is that yesterday's
+freeze-lift batch caused the shrink and simply forgot the bump. **That story is refuted by the
+clock:** the 05:37Z rejection ran on **v3955**, and `67f5a6d3` / `fd033079` / `9c9f7abf` are all
+NOT ancestors of v3955 — they arrived in v3956 (05:41Z) / v3957 (06:04Z), *after* the rejection.
+The gate class also has 51 lifetime events since 2026-08-18, so the shrink is a recurring
+condition that predates the batch, not a fresh side-effect of it.
+
+So the −10.5% is **cause-unestablished**, and the candidate it was measured on is already
+obsolete: the staged cursor's `input_fingerprint` has moved `b1820040… → 75faaed6…` across the
+v3957 deploy, so the next completed build is a *different* candidate whose population nobody has
+seen. **Do not bump the version to "fix" this.** A bump discards the 128-unit bank and restarts
+from zero (~14 beats by the q268 precedent, ~26 at today's 5-units/beat) — trading a page that is
+stale-but-showing-a-curve for one that could be dark indefinitely. The bump is only safe once
+throughput is fixed AND a completed build's population has been read and understood. Both
+sequencing constraints are the finding; neither is a task to start today.
+
+### Root cause of the throughput half is not in calibration code
+
+`unit_ms` has gone **80,658 ms → 185,161 ms (2.3×)** between the prior measurement and this beat
+(`staged:prior_unit_ms` vs `staged:unit_ms_mean`). Production Postgres is **still
+`standard-0`** (`heroku addons -a bainluck`, verified 16:35Z) — 4 GB RAM against a ~66 GB
+database. The plan upgrade Alex was handed on 2026-08-30 (`YOUR-TURN.md` §1, Step A) **has not
+been run**: `heroku data:maintenances:info DATABASE` reports `addon_plan: standard-0` and
+`reason: routine_maintenance`, not the changeover.
+
+**Consequence for this file's charter.** "Work big to small until we don't have a problem"
+presumes the board can be re-measured after a fix. It cannot right now. The top unclosed cell is
+still rank 1 `baseball/quantity`; it is untouched this session **deliberately**, because shipping
+a mechanism fix into a pipeline that has not published in 12 hours produces exactly the
+activity-without-progress the finish-line ruling forbids. **The next cell gets taken when the
+producer publishes again.**
+
+### The cells-at-bar number, corrected
+
+The needle is **31/49**, not the 29 carried in `YOUR-TURN.md` §5 nor the 30 attributed to the
+page. Both rails agree and cross-check clean (`calibration_threshold_table.py --payload`, exit 0;
+its `agreement()` fails the run if the scorecard disagrees). The 30-vs-29 split was a one-day
+disagreement fixed by CAL-P115 and pinned by
+`test_calibration_threshold_table_p112.py::test_no_class_is_looser_than_the_reader_bar`. It moved
+**29 → 31 overnight** (banked scorecards `20260830T223624` → `20260831T021905`). Headline MCE
+**1.86 pp** closing-line, CI [0.84, 1.95] — but on a payload frozen at 04:37Z, so it is 31/49 *as
+of yesterday evening*, and cannot advance while the publisher is down.
+
+---
+
 ## STATUS 2026-08-25 (CAL-P095) — RANK 2 WORKED. ITS SPIKE IS NOT ITS MECHANISM, AND THE WRITER WAS HIDING HALF OF EVERY PAIR.
 
 *Rank 1 `baseball/quantity` has a named mechanism and a staged apply, both untouchable this
@@ -757,7 +1252,17 @@ Each cell Round 1: `ORDER BY id ASC LIMIT 500` head sample (biased old) + `ANY` 
 | tennis/container_member | 500 | 86 | 86 | 0 | 0.000 | 0.319 | 12 | 0.319 | null | `5f466f7e9c782e2d` 823ms [roster_tennis_container_member.json 500] | `c47e6fac67da488a` 278ms [outcomes_tennis_cm n=86] |
 | geopolitics/container_member | 500 | 591 | 568 | 23 | 0.039 | 0.302 | 186 | 0.283 | 0.763 | `59b82ff0efe18b12` 4050ms [roster_geopolitics_container_member.json 500] | `0ed89a509dfe3171` 138ms [outcomes_geopolitics n=591] |
 
-**Reading:** In the 1000-market samples where outcomes exist, **fallback share is 0.00–0.04** — i.e., almost every outcome has `calibration_probability IS NOT NULL`. This **rules out** the #1978 price-source fallback (using opening where calib missing) as the driver for these cells at this sample. Basketball's known 24pp mechanism must be verified on the full cell with `ece_complete` split: if fallback is rare, the mechanism is not fallback share but **which-price value** (opening vs closing value difference) even when calib exists. See basketball section.
+🔴 **RETIRED 2026-08-31 (CAL-P161) — DO NOT CITE THE READING BELOW.** Every row in this table
+except the ones marked otherwise is an `ORDER BY id ASC LIMIT 500` **head** sample, and the head
+sample has been measured against an unbiased random sample on one cell: basketball/quantity read
+**0.000** on the head and **0.1481** on the random draw. Oldest ids have `calibration_probability`
+backfilled to 100%, so the head is drawn from the one region of the id space where fallback cannot
+appear. These shares are not low-precision estimates of the cell — they are estimates of a
+different population. **Treat every head share here as VOID, not as a bound.** See CAL-P161
+Findings A/B at the top of this file for the per-cell ceilings, the required-share table, and the
+pre-registered random re-measure that replaces this reading.
+
+~~**Reading (VOID):** In the 1000-market samples where outcomes exist, **fallback share is 0.00–0.04** — i.e., almost every outcome has `calibration_probability IS NOT NULL`. This **rules out** the #1978 price-source fallback (using opening where calib missing) as the driver for these cells at this sample.~~ Basketball's known 24pp mechanism must be verified on the full cell with `ece_complete` split: if fallback is rare, the mechanism is not fallback share but **which-price value** (opening vs closing value difference) even when calib exists. See basketball section.
 
 *Every number above cites stored JSON: `artifacts/subcohort2/roster_*.json` (columns [id], row_count, duration_ms, sql_fingerprint) and `artifacts/subcohort2/outcomes_*.json` (columns [n,has_calib,fallback,avg_prob,winners,sum_prob,avg_calib,avg_open], fingerprint, duration_ms). Sample is 1000-market head, not full census — stated inline.*
 

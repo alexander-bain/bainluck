@@ -137,10 +137,47 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         the totals returned to 54/50. Recorded rather than erased: a tripwire
         that only ever ratchets up teaches the next reader that coming back down
         is suspicious, and here it is exactly right.
+
+        CAL-P162 (2026-08-31) takes this to **55**, and ``uncovered_count``
+        stands still at 50 because the same queue moved one input in each
+        direction:
+
+        * ``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT`` is new and behaviour-only —
+          published rule prose for RULE E's disclosure. Uncovered, correctly, and
+          it does NOT touch the sql-shaping pin below.
+        * ``MEX_NORMALIZE_THRESHOLD`` moved the other way, from uncovered
+          sql-shaping to **covered by value**. It was always interpolated into
+          the emitted SQL, but until RULE E it only decided how a row was
+          PRICED; it now decides whether a row is PUBLISHED, because it is the
+          sum arm of the bundle exclusion. That is the fifth instance of the hole
+          ``_main_input_fingerprint``'s own comment describes, and it was closed
+          on the deploy that made it curve-shaping — closing it costs a full
+          rebuild on any other day.
+
+        CAL-P164 (2026-08-31) takes this to **56** / uncovered **51**, adding
+        ``NONEXCLUSIVE_BUNDLE_CELL_COLUMNS`` — the per-cell census column names
+        that CAL-P162 emitted and declared to nobody, which is what CERT-626
+        blocked. It is uncovered and that is correct, not a new hole:
+
+        * It is DERIVED, by a generator expression, from
+          ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS``, which is already
+          ``covered_by_value``. It has no independent degree of freedom — it
+          cannot change unless its parent does, and its parent invalidates every
+          banked unit by value. Covering a derived name would buy nothing and
+          cost a rebuild.
+        * It is behaviour-only, so ``uncovered_sql_shaping`` stands still at 21
+          — the pin below, which is the count with correctness consequences.
+        * Covering it directly is barred today anyway: adding an input to
+          ``_main_input_fingerprint`` wipes every banked unit, and ruling 024
+          puts that in the one combined invalidation window (see
+          ``FIX_SEQUENCING_NOTE``).
         """
-        assert artifact["input_count"] == 54
-        assert len(artifact["covered_by_value"]) == 4
-        assert artifact["uncovered_count"] == 50
+        assert artifact["input_count"] == 56
+        # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
+        # the deploy that made it decide PUBLICATION rather than only pricing.
+        # CAL-P164 added no by-value input, so this stands still.
+        assert len(artifact["covered_by_value"]) == 5
+        assert artifact["uncovered_count"] == 51
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -216,8 +253,19 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         emitted SQL), not about this repair, and quietly lowering a pin while
         being blocked for quietly raising one would be the same error twice.
         CERT-502's fix-sketch names that detector change as the real remedy.
+
+        🟢 **CAL-P162 (2026-08-31) takes this DOWN, 22 -> 21, and that direction
+        is the whole point of the pin.** ``MEX_NORMALIZE_THRESHOLD`` is now
+        hashed by value in ``_main_input_fingerprint``, so it is no longer an
+        uncovered sql-shaping input. Nothing about the detector changed and
+        nothing was reclassified to get here — the hole was closed, which is the
+        only legitimate way this number falls. The queue also ADDED a
+        behaviour-only input in the same commit
+        (``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT``) and it correctly did not
+        register here, which is the separation this test exists to enforce,
+        demonstrated in both directions at once.
         """
-        assert artifact["uncovered_sql_shaping"] == 22
+        assert artifact["uncovered_sql_shaping"] == 21
 
     def test_the_four_hashed_roots_are_derived_not_declared_here(self, artifact):
         assert sorted(artifact["hashed_roots"]) == [
@@ -265,7 +313,12 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
 
         CAL-P156 took it to 46 and then back to 45 when CERT-520 blocked the
         rung whose rule text caused the move. The cross-module FIVE never
-        changed, which is the clause that carries the meaning here."""
+        changed, which is the clause that carries the meaning here.
+
+        45 -> 46 at CAL-P164 (``NONEXCLUSIVE_BUNDLE_CELL_COLUMNS``). Same
+        direction, same reason as CERT-497/502: it is defined in the build
+        module, so the FIVE is untouched and this arithmetic is the only thing
+        that moves."""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -279,7 +332,7 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 45 == artifact["uncovered_count"]
+        assert len(cross) + 46 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

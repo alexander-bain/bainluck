@@ -2,6 +2,7 @@
   "covered_by_value": [
     "CALIBRATION_POPULATION_VERSION",
     "COVERAGE_CENSUS_ENABLED",
+    "MEX_NORMALIZE_THRESHOLD",
     "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY"
   ],
@@ -11,7 +12,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 54,
+  "input_count": 56,
   "inputs": [
     {
       "covered_by_value": false,
@@ -185,7 +186,9 @@
       "used_in": [
         "_build_nonexclusive_bundle_census",
         "_calibration_population_ctes",
-        "compute_calibration_payload"
+        "compute_calibration_payload",
+        "nonexclusive_bundle_cell_columns_sql",
+        "nonexclusive_bundle_cell_labels"
       ]
     },
     {
@@ -218,8 +221,8 @@
       "origin": "app.tasks.precompute_calibration:EXCLUSIVITY_PROVED_RELATIONS",
       "sql_interpolated": true,
       "used_in": [
-        "_calibration_population_ctes",
-        "compute_calibration_payload"
+        "compute_calibration_payload",
+        "exclusivity_proved_sql"
       ]
     },
     {
@@ -344,7 +347,7 @@
       ]
     },
     {
-      "covered_by_value": false,
+      "covered_by_value": true,
       "definition_sha16": null,
       "impact": "sql_shaping",
       "name": "MEX_NORMALIZE_THRESHOLD",
@@ -353,6 +356,17 @@
       "used_in": [
         "_calibration_population_ctes",
         "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_CELL_COLUMNS",
+      "sql_interpolated": false,
+      "used_in": [
+        "_run_staged_futures"
       ]
     },
     {
@@ -375,6 +389,19 @@
       "sql_interpolated": true,
       "used_in": [
         "_calibration_population_ctes",
+        "compute_calibration_payload",
+        "nonexclusive_bundle_cell_columns_sql",
+        "nonexclusive_bundle_cell_labels"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
         "compute_calibration_payload"
       ]
     },
@@ -631,8 +658,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "60fa9df1596cdd729c10c4f7db86496b7106b0a3ff7e7c993d372aa8aa29f1a6",
-  "uncovered_behavior_or_evidence": 28,
-  "uncovered_count": 50,
-  "uncovered_sql_shaping": 22
+  "source_sha256": "ed5895a8084ef601141c31aada87c723927f68e65ec40b8ba01ff5fc87982948",
+  "uncovered_behavior_or_evidence": 30,
+  "uncovered_count": 51,
+  "uncovered_sql_shaping": 21
 }

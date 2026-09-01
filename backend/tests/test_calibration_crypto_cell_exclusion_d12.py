@@ -41,14 +41,29 @@ from app.tasks import precompute_calibration as pc
 # 1. The tuple, and its scope.
 # ---------------------------------------------------------------------------
 
-def test_the_ruled_cell_is_present_and_is_the_only_one():
+def test_the_ruled_cells_are_exactly_the_ruled_cells():
     """Pinned as an exact set, not a membership check.
 
     A membership assertion would stay green while a later queue quietly added a
-    third cell. Every entry here deletes a cell from the published board, so the
-    list is a ledger of rulings and its length is part of the claim.
+    cell. Every entry here removes a cell from the published board, so the list
+    is a ledger of rulings and its length is part of the claim. Each tuple below
+    must name the ruling that put it there:
+
+      * ``(kalshi, crypto)`` — D12, Alex 2026-08-30 RULINGS-BATCH, freeze
+        exception granted ("delete via the approved exclusion list"), on
+        ``artifacts/cal-p121/RULE-DESIGN-kalshi-crypto.md`` §4 (RULE C).
+      * ``(kalshi, economics)`` — Alex 2026-08-28, option (b) APPROVED WITH
+        DISCLOSURE, on ``artifacts/cal-p114/RULE-DESIGN-kalshi-economics.md``
+        §9. Landed by CAL-P162 together with RULE E's structural arm, which it
+        must never ship without (see
+        ``test_rank2_tuple_never_ships_without_the_structural_arm``).
+
+    An entry that cannot name its ruling does not belong in this tuple.
     """
-    assert pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS == (("kalshi", "crypto"),)
+    assert pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS == (
+        ("kalshi", "crypto"),
+        ("kalshi", "economics"),
+    )
 
 
 def test_the_tuple_is_scoped_by_source_as_well_as_category():

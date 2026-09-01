@@ -1321,9 +1321,129 @@ ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
 # standing warning about exactly that: RULE T's category-only widening moved
 # `polymarket/tech` 8.04 -> 12.62, WORSE, and that cell is still UNMEASURED. A
 # (source, category) tuple cannot reach a cell nobody has folded.
+# CAL-P162 (#1978) — RANK 2 lands. `(kalshi, economics)` is added on Alex's
+# ruling of 2026-08-28, option (b) APPROVED WITH DISCLOSURE
+# (`artifacts/cal-p114/RULE-DESIGN-kalshi-economics.md` §9, scorecard §6d):
+# "the correlated intraday index-ladder rungs stop entering the published curve
+# (5.29 -> 2.61pp, cell stays material and PASSES), AND the removed rows are
+# disclosed on the page as a named, counted exclusion."
+#
+# WHY THIS CELL. 99.7% of `kalshi/economics` is cumulative intraday index and
+# commodity ladders — KXNASDAQ100U, KXINXU, KXDJI — published as N independent
+# rungs. `KXDJI-26JUL2814` is 76 outcomes, 76 winners, published price sum
+# 72.48; the median KXDJI market is 35 rungs / 24.5 winners / sum 21.66. These
+# rows were never competing answers to one question.
+#
+# 🔴 THIS TUPLE IS INERT — AND WORSE THAN INERT — WITHOUT RULE E'S SUM ARM.
+# 86.3% of the cell is caught by the >=2-winner arm, but the 13.4% remainder is
+# THE SAME LADDERS on a day the index landed on one rung. Excluding only the
+# multi-winner half takes the cell 5.29 -> 5.73: measurably WORSE THAN DOING
+# NOTHING (§6b policy B, "RULE T alone"). The `(source, category)` allowlist and
+# the structural sum arm are ONE deliverable and must never be split across two
+# deploys. `test_rank2_tuple_never_ships_without_the_structural_arm` is the
+# guard that says so in the suite rather than in a comment.
+#
+# 🔴 AND THE CELL LANDS *AT* ITS BAR, NOT UNDER IT. RULE E alone measures 3.00
+# against a 3.0 bar (§6b policy C). E+E2+E3 would land it at 2.61 — but E2 is
+# under scorecard §6i's **13-CAL HOLD** ("E2 must not land before 12-CAL is
+# decided") and is deliberately absent here, so this cell crosses off by 0.00 pp
+# of margin. Said before deploy, not discovered after.
+#
+# SCOPED BY SOURCE AS WELL AS CATEGORY, and this cell is the specimen that
+# proved the column is needed: under a category-only allowlist the same rule
+# takes `polymarket/economics` 3.91 -> 17.75 (CAL-P114 §5). One extra column in
+# a tuple is the difference between crossing rank 2 off and silently destroying
+# rank 15.
 NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS = (
     ("kalshi", "crypto"),
+    ("kalshi", "economics"),
 )
+
+def nonexclusive_bundle_cell_labels() -> tuple[tuple[str, str], ...]:
+    """The disclosed cells, as ``(payload label, aggregate column)`` pairs.
+
+    CAL-P162 (#1978), Alex's ruling of 2026-08-28 on rank 2: *"the removed rows
+    are disclosed on the page as a named, counted exclusion"* — and per-cell,
+    because the filter is allowlisted per cell and one total would hide WHICH
+    cell shrank. That is a clause of the ruling, not a nicety.
+
+    Derived from ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` rather than restated, so
+    the labels cannot drift from the tuples they describe. The esports entry is
+    category-only on purpose: that arm has never been source-scoped.
+    """
+    labels: list[tuple[str, str]] = [(ESPORTS_MULTI_BUNDLE_CATEGORY, "nxb_cell_esports")]
+    labels += [
+        (f"{src}/{cat}", f"nxb_cell_{idx}")
+        for idx, (src, cat) in enumerate(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)
+    ]
+    return tuple(labels)
+
+
+#: The aggregate columns those labels name, in emission order (CAL-P164).
+#:
+#: Named because THREE places need this set and deriving it three times is how
+#: they drift: the statement that emits the columns, the staged merge that has
+#: to be TOLD they are census columns before it will accept a row carrying
+#: them, and the bank-time mirror in ``calibration_staged_futures``. CAL-P162
+#: emitted the columns and told neither consumer, so the first unit that
+#: returned a row raised ``UndeclaredColumnError`` and no generation could bank
+#: — a fail-closed merge doing exactly its job. The mirror is pinned against
+#: this tuple by a characterization test; adding a cell to
+#: ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` reds that pin rather than production.
+NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = tuple(
+    column for _, column in nonexclusive_bundle_cell_labels()
+)
+
+
+def nonexclusive_bundle_cell_columns_sql() -> str:
+    """One ``COUNT(*) FILTER`` per disclosed cell, for the summary aggregate.
+
+    The aggregate this lands in is a single flat row, so the per-cell map is
+    rendered as N scalar columns rather than by re-shaping the query into a
+    GROUP BY — a grouped variant of this scan is the shape that times out
+    (see the row-path notes in the db-query rules).
+    """
+    parts = [
+        "COUNT(*) FILTER (WHERE is_esports_bundle AND category = "
+        f"'{ESPORTS_MULTI_BUNDLE_CATEGORY}') AS nxb_cell_esports"
+    ]
+    for idx, (src, cat) in enumerate(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS):
+        parts.append(
+            "COUNT(*) FILTER (WHERE is_esports_bundle "
+            f"AND source = '{src}' AND category = '{cat}') AS nxb_cell_{idx}"
+        )
+    return ",\n                    ".join(parts)
+
+
+def _nonexclusive_bundle_cell_passthrough_sql(alias: str = "ls") -> str:
+    """``MAX(...)`` pass-through of the per-cell columns for the outer aggregate."""
+    return ",\n                ".join(
+        f"MAX({alias}.{col}) AS {col}" for _, col in nonexclusive_bundle_cell_labels()
+    )
+
+
+NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT = (
+    "Excludes non-exclusive BUNDLES — markets of >=3 outcomes that are not proved "
+    "single-winner partitions, where independent questions were packed into one "
+    "market. A market qualifies when it resolved with >=2 winners OR when its "
+    "published prices sum past 1.15: a genuine partition sums to ~1 whatever it "
+    "resolves to, so the sum identifies a bundle even on a day it happened to "
+    "land on a single rung. Scoped per ruled (source, category) cell — never by "
+    "category alone, which was measured to take polymarket/economics from 3.91 to "
+    "17.75 pp. The rows are dropped from the curve, never re-graded: the many-YES "
+    "grading of a cumulative ladder is correct. Read-side only; never mutates "
+    "resolutions."
+)
+
+# CAL-P162 (#1978): clause 3 of Alex's ruling — "nobody later reads the smaller
+# curve as a fixed one" — is NOT carried here. It is page copy, hard-coded in
+# `frontend/app/calibration/page.tsx` and pinned by
+# `calibrationNonexclusiveBundleDisclosure.test.tsx` (6 tests, mutation-checked:
+# softening the closing clause reds it). A backend copy of the same sentence
+# would be a second hand-maintained rendering of one fact, which is the defect
+# this file's own D12 comment warns about — and the backend copy would be the
+# one nobody notices has drifted, because nothing renders it.
+
 
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
@@ -1346,7 +1466,16 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Since 2026-08-30 the same structural test also removes individually ruled "
     "(source, category) cells that are dominated by this shape — see "
     "`excluded_cells` for the current list, each of which is a separate ruling "
-    "with its own measured evidence, not a widening of the esports rule."
+    "with its own measured evidence, not a widening of the esports rule. "
+    # CAL-P162 (#1978) RULE E. The published text has to say the test is no
+    # longer a realization test, because a reader who assumes ">=2 winners"
+    # cannot account for the rows that left.
+    "Since 2026-08-31 the shape test is STRUCTURAL as well as realized: a market "
+    "of >=3 outcomes that is not a proved-exclusive partition is excluded when it "
+    "resolved with >=2 winners OR when its published prices sum past 1.15. A "
+    "genuine partition sums to ~1 whatever it resolves to, so the sum is what "
+    "identifies a bundle that happened to land on a single rung — the class the "
+    ">=2-winner test could never see. Read-side only; never mutates resolutions."
 )
 
 
@@ -1356,6 +1485,8 @@ def market_is_esports_multi_bundle(
     n_winners: int,
     *,
     source: str | None = None,
+    cp_sum: float | None = None,
+    exclusivity_proved: bool = False,
 ) -> bool:
     """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
 
@@ -1371,7 +1502,21 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    if not market_is_nonexclusive_bundle(n_outcomes, n_winners):
+    # CAL-P162 (#1978) RULE E: the shape test is now STRUCTURAL. The old call
+    # was `market_is_nonexclusive_bundle(n_outcomes, n_winners)` — realization
+    # only — and the 1-winner tail it could not see is the entire published
+    # residue of `polymarket/esports` and 13.4% of `kalshi/economics`. The
+    # >=2-winner arm is preserved verbatim inside the structural test, so every
+    # market the old rendering caught is still caught.
+    #
+    # `cp_sum` / `exclusivity_proved` are keyword-only WITH defaults for the same
+    # reason `source` is: a caller that did not say must not be able to trip a
+    # wider rule by accident. The defaults reproduce the OLD behaviour exactly
+    # (no sum => realization arm only; not proved => nothing suppressed), which
+    # is what keeps the four pre-existing call sites honest.
+    if not market_is_nonexclusive_bundle_structural(
+        n_outcomes, n_winners, cp_sum, exclusivity_proved=exclusivity_proved
+    ):
         return False
     if category == ESPORTS_MULTI_BUNDLE_CATEGORY:
         return True
@@ -1654,6 +1799,27 @@ def market_exclusivity_is_proved(
     return (outcome_relation or "") in EXCLUSIVITY_PROVED_RELATIONS
 
 
+def exclusivity_proved_sql(info_alias: str = "mi", shape_alias: str = "mrs") -> str:
+    """Render :func:`market_exclusivity_is_proved` as a SQL predicate.
+
+    CAL-P162 (#1978), RULE E. The proved-exclusivity test had exactly one SQL
+    rendering — inline in ``mex_field_candidates`` — and RULE E needs the same
+    test in a second place (a bundle must never be a proved-exclusive field).
+    Extracted rather than copied: two hand-maintained copies of one predicate is
+    the defect D12's own comment warns about, and here the copies would sit 80
+    lines apart in the same query. ``mex_field_candidates`` now calls this too,
+    so there is one rendering and ``test_exclusivity_proved_sql_mirrors_python``
+    pins it against the Python mirror rather than against a restatement.
+    """
+    return (
+        f"{info_alias}.market_type = 'field'"
+        f" AND {info_alias}.shape_exhaustive = 'true'"
+        f" AND {info_alias}.shape_expected_winners = '1'"
+        f" AND {info_alias}.shape_relation IN {_sql_str_tuple(EXCLUSIVITY_PROVED_RELATIONS)}"
+        f" AND {shape_alias}.win_count = 1"
+    )
+
+
 # Rung 4b — the category-independent non-exclusive bundle, MEASURED not excluded.
 #
 # ``market_is_esports_multi_bundle`` is the same structural test wearing a
@@ -1696,6 +1862,53 @@ def market_is_nonexclusive_bundle(n_outcomes: int, n_winners: int) -> bool:
     same predicate under its measured category scope. Read-side only (gotcha #21).
     """
     return n_outcomes >= 3 and n_winners >= 2
+
+
+def market_is_nonexclusive_bundle_structural(
+    n_outcomes: int,
+    n_winners: int,
+    cp_sum: float | None,
+    *,
+    exclusivity_proved: bool,
+) -> bool:
+    """RULE E: the bundle test as a STRUCTURE, not only as a realization.
+
+    CAL-P162 (#1978), on the design banked in
+    ``artifacts/cal-p112/RULE-DESIGN-polymarket-esports.md`` §4 and re-confirmed
+    on the exact rail by CAL-P114 §5c. A market with >=3 captured outcomes that
+    is **not** a proved-exclusive field is a non-exclusive bundle when EITHER
+
+      * it resolved with >=2 winners — :func:`market_is_nonexclusive_bundle`,
+        the shipped test, unchanged; OR
+      * its published price sum exceeds ``MEX_NORMALIZE_THRESHOLD`` (1.15).
+
+    **Why the second arm exists.** The shipped test is a REALIZATION and the
+    defect is a STRUCTURE: a genuine partition sums to ~1 whatever it resolves
+    to, while independent binaries packed into one market sum to N x p. A bundle
+    that happened to land on exactly one rung therefore escapes the >=2-winner
+    test entirely, and that 1-winner tail is the whole of what survives in
+    ``polymarket/esports`` (7.59 pp) and 99.7% of ``kalshi/economics`` (5.29 pp).
+    The threshold is not fitted here — it is the normalizer's own constant.
+
+    **``exclusivity_proved`` is load-bearing, not belt-and-braces.** Complete
+    proved-exclusive fields are the ``mex_field_candidates`` population and are
+    NORMALIZED, never excluded; the two sets must not overlap or an exclusion
+    would silently eat the normalizer's input. An INCOMPLETE proved field can sum
+    past 1.15 without being a bundle, which is exactly the row this clause saves.
+
+    ``cp_sum`` is None when the market contributed no eligible priced outcome; a
+    market with no sum cannot be shown to be structurally non-exclusive, so it
+    falls back to the realization arm alone (fails closed). Read-side only
+    (gotcha #21) — the many-YES ladder grading is correct, so these rows are
+    dropped from the curve, never re-graded.
+    """
+    if n_outcomes < 3:
+        return False
+    if exclusivity_proved:
+        return False
+    if n_winners >= 2:
+        return True
+    return cp_sum is not None and cp_sum > MEX_NORMALIZE_THRESHOLD
 
 
 # Queue #186 (#941, corrects #167): Kalshi player-prop threshold curve exclusion.
@@ -2461,12 +2674,50 @@ def _calibration_population_ctes(
             -- granted was for one tuple, not for a rename. What a reader needs
             -- is WHICH cells were excluded, and that is published as
             -- `excluded_by_cell` rather than inferred from a CTE name.
+            -- CAL-P162 (#1978) RULE E: the per-market published price sum, for
+            -- markets that are NOT the normalizer's proved-exclusive input.
+            -- `mex_field_divisor` below computes the same sum but only over
+            -- `mex_field_candidates`, which is by definition the set RULE E must
+            -- never touch — so the bundle arm cannot reuse it and needs its own.
+            -- The eligibility predicate is copied from `mex_field_divisor`
+            -- deliberately and must stay identical to it: the sum has to be over
+            -- the rows the curve PUBLISHES, or a market's structure is judged on
+            -- a population the reader never sees.
+            bundle_price_sum AS (
+                SELECT fo.market_id,
+                    SUM({curve_price}) AS cp_sum
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                {curve_price_join}
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  AND {kalshi_liquidity_exists_sql(source='mi.source')}
+                GROUP BY fo.market_id
+            ),
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
                 JOIN market_info mi ON mi.market_id = mrs.market_id
+                LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
                 WHERE mrs.n_outcomes >= 3
-                  AND mrs.win_count >= 2
+                  -- RULE E, arm 1 of 2: the shipped REALIZATION test, unchanged.
+                  -- Arm 2 is the STRUCTURE — a partition sums to ~1 whatever it
+                  -- resolves to, a bundle of independent binaries sums to N x p —
+                  -- and it is the only arm that can see a bundle which happened
+                  -- to land on one rung. That 1-winner tail is the whole published
+                  -- residue of `polymarket/esports` and 13.4% of
+                  -- `kalshi/economics`. Mirrors
+                  -- market_is_nonexclusive_bundle_structural().
+                  AND (
+                        mrs.win_count >= 2
+                        OR bps.cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                  )
+                  -- RULE E's disjointness clause, load-bearing: proved-exclusive
+                  -- fields are the normalizer's input and are NORMALIZED, never
+                  -- excluded. An INCOMPLETE proved field can sum past 1.15
+                  -- without being a bundle; this is the row it saves.
+                  AND NOT ({exclusivity_proved_sql('mi', 'mrs')})
                   AND (
                         mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
                         OR (mi.source, mrs.category)
@@ -2551,11 +2802,11 @@ def _calibration_population_ctes(
                 -- ``mutually_exclusive`` flag, an ``unknown`` relation and a
                 -- cumulative-threshold ladder (gotcha #17 co-winners) are all
                 -- refused. Mirrors market_exclusivity_is_proved().
-                WHERE mi.market_type = 'field'
-                  AND mi.shape_exhaustive = 'true'
-                  AND mi.shape_expected_winners = '1'
-                  AND mi.shape_relation IN {_sql_str_tuple(EXCLUSIVITY_PROVED_RELATIONS)}
-                  AND mrs.win_count = 1
+                -- CAL-P162 (#1978): rendered by exclusivity_proved_sql() rather
+                -- than inline, because RULE E's bundle arm needs the SAME test
+                -- 80 lines above and two copies of one predicate in one query is
+                -- how a mirror stops mirroring.
+                WHERE {exclusivity_proved_sql('mi', 'mrs')}
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist),
@@ -3487,6 +3738,14 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
+                    -- CAL-P162 (#1978): the PER-CELL split of the same count.
+                    -- Alex's rank-2 ruling requires the disclosure name which
+                    -- cell shrank; one total cannot, because the filter is
+                    -- allowlisted per cell. Columns are generated from the
+                    -- constant, so they cannot drift from the cells they count.
+                    """
+            + nonexclusive_bundle_cell_columns_sql()
+            + """,
                     -- Queue 299 (#1012): result-authority + shape rung counts.
                     -- Candidate-side (pre-dedup) counts, matching every other
                     -- exclusion block, so each rung's size is transparent.
@@ -3574,6 +3833,11 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
                 MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
+                -- CAL-P162 (#1978): carry the per-cell split through the outer
+                -- aggregate, generated from the same constant as the inner one.
+                """
+            + _nonexclusive_bundle_cell_passthrough_sql()
+            + """,
                 MAX(ls.no_winner_excluded) AS no_winner_excluded,
                 MAX(ls.no_winner_markets) AS no_winner_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
@@ -3788,10 +4052,17 @@ async def _run_staged_futures(db, runner, sql_builder):
     # one chunk's mass, and a dropped one silently disappears from the payload.
     # So the statement's census set is declared HERE, next to the statement that
     # emits it, rather than left to a default in the pure module that cannot see
-    # a column this build added. Both extras are conditional:
+    # a column this build added. Three extras beyond the default set:
     #   * ``representative_tie_broken`` — Queue 300D Item 1, always emitted.
+    #   * ``nxb_cell_*`` — CAL-P162's per-cell disclosure, always emitted, and
+    #     generated from the constant so a new cell arrives here automatically
+    #     rather than being remembered (CAL-P164).
     #   * ``cb_*`` — Queue 300C's coverage census, only when it is switched on.
-    census_columns = tuple(DEFAULT_CENSUS_COLUMNS) + ("representative_tie_broken",)
+    census_columns = (
+        tuple(DEFAULT_CENSUS_COLUMNS)
+        + ("representative_tie_broken",)
+        + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
+    )
     if COVERAGE_CENSUS_ENABLED:
         census_columns += tuple(
             _coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS
@@ -4393,6 +4664,17 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].esports_bundle_excluded is not None
             else 0
         )
+        # CAL-P162 (#1978): the per-cell split behind the same total. Alex's
+        # rank-2 ruling makes the per-cell map a clause of the exclusion, so it
+        # is read from the aggregate rather than reconstructed — and it is built
+        # from `nonexclusive_bundle_cell_labels()`, the same function that
+        # generated the columns, so a new ruled tuple adds a column AND a key
+        # together or neither.
+        nonexclusive_bundle_by_cell: dict[str, int] = {}
+        if rows:
+            for label, column in nonexclusive_bundle_cell_labels():
+                value = getattr(rows[0], column, None)
+                nonexclusive_bundle_by_cell[label] = int(value) if value is not None else 0
         # Queue #167 (#941/#1054): Kalshi player-prop threshold exclusion count.
         kalshi_prop_threshold_excluded = (
             int(rows[0].kalshi_prop_threshold_excluded)
@@ -5311,6 +5593,28 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
+        # CAL-P162 (#1978) — the disclosure half of Alex's rank-2 ruling
+        # (2026-08-28, option (b) APPROVED WITH DISCLOSURE). A NEW key, so the
+        # live `esports_multi_bundle_filter` contract does not change shape or
+        # meaning under existing consumers; the frontend half has been built and
+        # green since CAL-P114 and has rendered nothing until now because it is
+        # gated on `excluded > 0`.
+        #
+        # `temporary_by_cell` is EMPTY and that is deliberate, not an omission.
+        # It carries the cells whose exclusion ends when a named defect is
+        # repaired — today that is only `polymarket/baseball` (rank 1), which is
+        # ruled but NOT in this deploy. A payload with no temporary cells renders
+        # no claim that anything comes back, because no ruling in this release
+        # said so.
+        "nonexclusive_bundle_filter": {
+            "applies_to": ", ".join(
+                label for label, _ in nonexclusive_bundle_cell_labels()
+            ),
+            "rule": NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT,
+            "excluded": esports_bundle_excluded,
+            "excluded_by_cell": nonexclusive_bundle_by_cell,
+            "temporary_by_cell": {},
+        },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {
             "applies_to": "all",
@@ -5730,6 +6034,18 @@ def _main_input_fingerprint() -> str:
         # Hashed by NAME as well as value, like its two neighbours above, so it
         # is greppable rather than an incidental substring.
         f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
+        # CAL-P162 (#1978) — the FIFTH instance of the same hole, found by the
+        # same question the comment above prescribes. `MEX_NORMALIZE_THRESHOLD`
+        # was already interpolated into the emitted SQL (so the template hash
+        # cannot see its value), but until RULE E it only chose how a row was
+        # PRICED. It now also decides whether a row is PUBLISHED at all: it is
+        # the sum arm of the bundle exclusion. A change from 1.15 would silently
+        # move the published population while leaving this digest identical.
+        #
+        # Added on the deploy that made it curve-shaping, deliberately: closing
+        # this costs a full rebuild on any other day, and today the fingerprint
+        # is moving anyway.
+        f"mex_normalize_threshold={MEX_NORMALIZE_THRESHOLD}",
         source,
     )
 

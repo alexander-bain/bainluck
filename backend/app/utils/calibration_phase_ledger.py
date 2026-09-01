@@ -271,6 +271,54 @@ BUDGET_SAFETY = 1.5
 #: has to catch, and it is derived from that pair rather than chosen (ruling 075).
 #: The bound is a MULTIPLE OF A MEASUREMENT, never a pinned duration: with no
 #: measured unit cost there is nothing to multiply and the phase bound stands.
+#:
+#: **AMENDED CAL-P163 (#1978): this factor is still 4.0, but it is no longer
+#: the only reference.** The paragraph above sizes it against a measured
+#: spread — "72,202 ms mean over completions against a 210,379 ms mean over
+#: attempts (2.9x) ... four sits above the observed spread". That premise
+#: expired. The bound reads ``unit_ms``, which is the mean over units that
+#: COMPLETED, and a unit is only allowed to complete if it fit under the bound
+#: this same mean produced. **The reference is therefore computed exclusively
+#: from the units that survived it, and it ratchets one way:** cancel the
+#: expensive units, the completed mean falls, the bound tightens, more
+#: expensive units cancel. Survivorship bias inside a fence.
+#:
+#: Measured, on the producer's own ring, 2026-08-31. The ratchet closed at
+#: 06:37Z and stayed closed for sixteen consecutive beats, every one of them
+#: identical: **5 units completed, 7 attempted, 2 cancelled, terminal
+#: ``cancelled``, nothing published.** Before it, 11-14 units per beat and
+#: ``complete`` terminals. The 22:29Z ledger names the mechanism outright —
+#: ``staged:unit_cancelled_after_ms 274,893`` against
+#: ``staged:unit_ms_worst 76,208`` (76,208 x 4 - 30,000 = 274,832), then
+#: ``staged:window_stop:units_cancelling`` at
+#: :data:`STAGED_UNIT_MAX_CANCELLATIONS`. Units of 175,574 / 179,665 /
+#: 250,681 / 308,586 ms had all COMPLETED on earlier beats, so the units being
+#: killed at 275 s are not pathological — they are ordinary members of a
+#: population whose own worst case the fence had forgotten.
+#:
+#: And it was NOT the phase budget. That beat's ``futures`` phase held
+#: 1,188,617 ms of ``measured_elastic_cut`` and spent 878,583 — it stopped
+#: 310 s short of its own budget and 501 s short of the window, with
+#: ``_unit_fits_in_window`` never firing. A budget you do not reach is not
+#: what is capping you.
+#:
+#: The repair is :data:`PhaseBudget.unit_ms_worst`: keep this factor over the
+#: mean, and take the LOOSER of it and a ``max(observed completions)`` scaled
+#: by :data:`BUDGET_SAFETY` — the same ``max(observed) * 1.5`` rule every phase
+#: budget in this module already uses. A max needs less headroom than a mean
+#: does, which is why the two carry different multipliers. See
+#: :meth:`PhaseLedger.statement_timeout_for_unit`.
+#:
+#: **AMENDED CAL-P167 (#1978), repairing CERT-637: this factor has a SECOND
+#: reader, and it is not a second tuning.** Every durable ledger written before
+#: CAL-P163 carries a mean and no ring, so the repair above is inert on the only
+#: state that exists at deployment and the first new-code beat reproduces the
+#: pin. The upgrade path seeds the ring once at
+#: ``unit_ms * STAGED_UNIT_OVERRUN_FACTOR`` — not a chosen number, but the bound
+#: the legacy code was already running, and therefore the largest unit the
+#: legacy regime could have completed. Provenance, safety argument and the
+#: arithmetic on the specimen:
+#: :func:`app.tasks.calibration_main_build._bootstrap_worst_history`.
 STAGED_UNIT_OVERRUN_FACTOR = 4.0
 
 #: How many units one beat may lose to their own backstop before it stops trying
@@ -299,6 +347,25 @@ MIN_OBSERVATIONS = 1
 #: the ledger row cannot grow without limit, long enough that one anomalous
 #: beat cannot permanently inflate a budget once it ages out.
 HISTORY_WINDOW = 10
+
+#: Rolling window for the worst COMPLETED unit duration — CAL-P163 (#1978).
+#: LONGER than :data:`HISTORY_WINDOW`, and the asymmetry is the point.
+#:
+#: The two rings guard opposite hazards. A phase-duration ring feeds a BUDGET,
+#: where the risk is a single slow beat inflating an allowance forever, so ten
+#: beats is deliberately short. The unit-worst ring feeds an ADMISSION FLOOR,
+#: where the risk runs the other way: a window too short to remember how
+#: expensive a legitimate unit gets lets a run of cheap beats convince the
+#: fence that the expensive ones were never real. That is the ratchet described
+#: at :data:`STAGED_UNIT_OVERRUN_FACTOR`, and a ten-beat memory is inside it —
+#: the producer's collapse ran sixteen beats, so a ten-beat ring would have
+#: been entirely refilled from the collapsed regime and confirmed itself.
+#:
+#: 24 because that is one day of the hourly beat, the same M ruling 009's
+#: amendment chose for the same reason: it spans a regime change in either
+#: direction and needs no arithmetic to read. It still ages out — a genuinely
+#: cheaper population reclaims the fence in a day.
+UNIT_WORST_WINDOW = 24
 
 # --- Budget provenance -------------------------------------------------------
 #
@@ -349,6 +416,17 @@ class PhaseBudget:
     unit_ms: Optional[int] = None
     units_total: Optional[int] = None
     units_done: Optional[int] = None
+    #: Worst COMPLETED unit duration across the rolling history window —
+    #: CAL-P163 (#1978). A ``max(observed)`` beside ``unit_ms``'s mean, and the
+    #: two are kept apart because they answer different questions. The mean
+    #: costs the build ("how many beats remain"); only the max can say how
+    #: expensive a LEGITIMATE unit is known to get, which is the only question
+    #: an admission bound may ask.
+    #:
+    #: Still a completed duration, never a floor: a cancelled unit contributes
+    #: nothing here either. What changes is that the evidence is no longer
+    #: collapsed to a mean before the bound reads it.
+    unit_ms_worst: Optional[int] = None
     #: WHICH RULE produced ``budget_ms`` — one of the ``BUDGET_BASIS_*``
     #: constants. A number in a plan is not self-describing: 1,172,893 ms could
     #: be a measured cost or a reallocation, and only one of those is evidence
@@ -370,6 +448,7 @@ class PhaseBudget:
             "floor_ms": self.floor_ms,
             "floor_observations": self.floor_observations,
             "unit_ms": self.unit_ms,
+            "unit_ms_worst": self.unit_ms_worst,
             "units_total": self.units_total,
             "units_done": self.units_done,
             "budget_basis": self.budget_basis,
@@ -825,6 +904,26 @@ def _decode_unit_cost(raw: Any) -> tuple[Optional[int], Optional[int], Optional[
     return unit_ms, units_total, units_done
 
 
+def _decode_unit_worst(raw: Any) -> Optional[int]:
+    """One phase's worst COMPLETED unit duration, or ``None`` — CAL-P163.
+
+    Decoded apart from :func:`_decode_unit_cost` deliberately. That function is
+    all-or-nothing across three fields because a mean without its divisor is
+    not a measurement; this one is a single self-describing duration, and a
+    ledger written before this field existed must still yield its mean rather
+    than being discarded whole for lacking a max it could not have carried.
+
+    ``None`` means "no worst is known", which callers must read as *do not
+    widen*, never as *the worst is zero*.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("unit_ms_worst")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value) if value > 0 else None
+
+
 def derive_plan(
     history: Optional[dict[str, Any]] = None,
     *,
@@ -941,6 +1040,7 @@ def derive_plan(
                 floor_ms=floor_ms,
                 floor_observations=floor_count,
                 unit_ms=unit_ms,
+                unit_ms_worst=_decode_unit_worst(unit_costs.get(name)),
                 units_total=units_total,
                 units_done=units_done,
                 budget_basis=basis,
@@ -959,9 +1059,18 @@ def derive_plan(
 
 
 def merge_history(
-    history: Optional[dict[str, Any]], observations: dict[str, int]
+    history: Optional[dict[str, Any]],
+    observations: dict[str, int],
+    *,
+    window: int = HISTORY_WINDOW,
 ) -> dict[str, list[int]]:
-    """Fold this run's measured phase durations into the rolling window."""
+    """Fold this run's measured phase durations into the rolling window.
+
+    ``window`` defaults to :data:`HISTORY_WINDOW` so every existing caller is
+    unchanged. CAL-P163's unit-worst ring passes :data:`UNIT_WORST_WINDOW`
+    instead — same folding, same validation, a deliberately different memory.
+    """
+    span = max(1, int(window))
     merged: dict[str, list[int]] = {}
     for name, values in (history or {}).items():
         if not isinstance(values, list):
@@ -970,13 +1079,13 @@ def merge_history(
             int(v)
             for v in values
             if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
-        ][-HISTORY_WINDOW:]
+        ][-span:]
     for name, duration in observations.items():
         if not isinstance(duration, (int, float)) or isinstance(duration, bool):
             continue
         if duration < 0:
             continue
-        merged[name] = (merged.get(name, []) + [int(duration)])[-HISTORY_WINDOW:]
+        merged[name] = (merged.get(name, []) + [int(duration)])[-span:]
     return merged
 
 
@@ -1110,6 +1219,13 @@ class PhaseLedger:
         #: down and harder to see.
         self.stage_ok_totals: dict[str, int] = {}
         self.stage_ok_counts: dict[str, int] = {}
+        #: Worst COMPLETED stretch per stage — CAL-P163 (#1978). A third tally
+        #: rather than a derivation, because a max cannot be recovered from a
+        #: sum and a count, and the max is the only statistic that survives
+        #: being asked "how expensive does a legitimate one of these get".
+        #: Completed-only for the same reason the pair above is: a cancelled
+        #: stretch is a lower bound, and a max over lower bounds is not a cost.
+        self.stage_ok_maxima: dict[str, int] = {}
 
     def record_stage(self, name: str, duration_ms: int) -> None:
         """Add a COMPLETED stage observation. Repeats accumulate (7 diagnostic reads).
@@ -1134,6 +1250,7 @@ class PhaseLedger:
         if completed:
             self.stage_ok_totals[name] = self.stage_ok_totals.get(name, 0) + ms
             self.stage_ok_counts[name] = self.stage_ok_counts.get(name, 0) + 1
+            self.stage_ok_maxima[name] = max(self.stage_ok_maxima.get(name, 0), ms)
 
     def stage_mean_ms(self, name: str) -> float | None:
         """Mean cost of one ``name`` observation, or ``None`` if none were made.
@@ -1167,6 +1284,19 @@ class PhaseLedger:
         if count <= 0:
             return None
         return self.stage_ok_totals.get(name, 0) / count
+
+    def stage_completed_max_ms(self, name: str) -> Optional[int]:
+        """Worst COMPLETED ``name`` stretch this beat, or ``None`` — CAL-P163.
+
+        ``None`` when nothing of that name finished. Same contract as
+        :meth:`stage_completed_mean_ms` and for the same reason: a beat in
+        which every unit was cancelled knows nothing about what one costs, and
+        must say so rather than publish the worst truncation as a duration.
+        """
+        count = self.stage_ok_counts.get(name, 0)
+        if count <= 0:
+            return None
+        return self.stage_ok_maxima.get(name, 0) or None
 
     def record_gauge(self, name: str, value: int) -> None:
         """Set a LEVEL, replacing any prior reading — CAL-P024c.
@@ -1354,6 +1484,30 @@ class PhaseLedger:
             return None
         return int(budget.unit_ms)
 
+    def measured_unit_worst_ms(self, name: str) -> Optional[int]:
+        """The worst COMPLETED unit of ``name`` across the history window.
+
+        CAL-P163 (#1978). The companion to :meth:`measured_unit_ms`, and the
+        reason both exist: the mean answers "what does a unit cost" and the max
+        answers "how expensive is a unit KNOWN to legitimately get". Only the
+        second is a sound basis for deciding whether to admit one, because a
+        bound built from the mean of the survivors excludes, by construction,
+        every unit it is being asked about.
+
+        Carried on the plan rather than measured within the beat, so it is
+        available on the first unit — and drawn from a rolling window rather
+        than the previous beat alone, so one collapsed beat (every expensive
+        unit cancelled, the cheap ones averaged) cannot pin it low and hold the
+        ratchet shut.
+
+        ``None`` means no completed unit has ever been recorded, which callers
+        must read as *do not widen*, never as zero.
+        """
+        budget = self.plan.by_name(name)
+        if budget is None or not budget.unit_ms_worst:
+            return None
+        return int(budget.unit_ms_worst)
+
     def statement_timeout_for_unit(
         self, name: str, *, elapsed_ms: int, unit_ms: Optional[float] = None
     ) -> int:
@@ -1375,12 +1529,40 @@ class PhaseLedger:
         18:37:31Z beat would have been cancelled at ~289 s instead of 901 s,
         leaving ~610 s of window — about eight further units at the measured
         cost — where the beat instead banked nothing more and terminated RED.
+
+        **CAL-P163 (#1978): TWO measured references, and the looser wins.** As
+        written above, the only reference was a MEAN over completed units —
+        which is a mean over the units that were cheap enough to survive this
+        very bound. See :data:`STAGED_UNIT_OVERRUN_FACTOR` for the ratchet that
+        follows and the sixteen identical beats it produced. The second
+        reference is :meth:`measured_unit_worst_ms`, a ``max(observed
+        completions)`` over the history window, scaled by :data:`BUDGET_SAFETY`
+        — the same ``max(observed) * 1.5`` rule that produces every phase
+        budget in this module. A max needs less headroom than a mean does,
+        which is the whole reason the two carry different multipliers rather
+        than one being folded into the other.
+
+        Taking the ``max`` of the two bounds is what makes the fence stop
+        refusing units it has already watched succeed: a completed duration is
+        positive evidence that a unit of that size is legitimate, and no fence
+        may cancel at 275 s a unit whose own population has completed at 309 s.
+        It cannot run away, because widening requires a COMPLETION at the wider
+        size — the 901,266 ms specimen would need a 600,844 ms completed unit
+        in the ring to be admitted, and there has never been one.
+
+        Every branch still ends at ``min(phase_bound, ...)``, so a unit can no
+        more outlive the beat than it could before, and with neither reference
+        measured the phase bound stands unchanged (ruling 075).
         """
         phase_bound = self.statement_timeout_for(name, elapsed_ms=elapsed_ms)
         measured = unit_ms if unit_ms and unit_ms > 0 else self.measured_unit_ms(name)
-        if not measured or measured <= 0:
+        mean_basis = int(measured * STAGED_UNIT_OVERRUN_FACTOR) if measured and measured > 0 else 0
+        worst = self.measured_unit_worst_ms(name)
+        worst_basis = int(worst * BUDGET_SAFETY) if worst and worst > 0 else 0
+        basis = max(mean_basis, worst_basis)
+        if basis <= 0:
             return phase_bound
-        unit_bound = _statement_timeout_for(max(2, int(measured * STAGED_UNIT_OVERRUN_FACTOR)))
+        unit_bound = _statement_timeout_for(max(2, basis))
         return max(1, min(phase_bound, unit_bound))
 
     def as_payload(self) -> dict[str, Any]:

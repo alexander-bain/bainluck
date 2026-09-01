@@ -329,6 +329,10 @@ class TestCalibrationPublicEndpoint:
             # payload compatibility holds.
             "representative_tie_authority",
             "esports_multi_bundle_filter",  # Queue #159 (#1010)
+            # CAL-P162 (#1978): the disclosure half of Alex's rank-2 ruling. A
+            # NEW key deliberately — the line above is a public contract and
+            # changing its shape would break existing consumers.
+            "nonexclusive_bundle_filter",
             # Queue 299 (#1012): result authority before shape, then evidence-
             # based exclusivity. Each rung ships its own rule + live count.
             "no_winner_filter",  # rung 1: the market graded nobody

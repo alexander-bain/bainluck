@@ -36,6 +36,7 @@ from app.utils.calibration_staged_futures import (
     DECLARED_CENSUS_COLUMNS,
     DEFAULT_CENSUS_COLUMNS,
     GROUP_KEY_COLUMNS,
+    NONEXCLUSIVE_BUNDLE_CELL_COLUMNS,
     REASON_UNFOLDED_UNITS,
     REPRESENTATIVE_TIE_COLUMN,
     MAIN_BUILD_TASK,
@@ -60,6 +61,11 @@ OWNER = "worker-a"
 CENSUS = DECLARED_CENSUS_COLUMNS
 
 _FROZEN = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "precompute_calibration.py"
+
+
+def tree_of(path: pathlib.Path) -> ast.Module:
+    """Parse a source file as TEXT. A read, not an import (ruling 009)."""
+    return ast.parse(path.read_text())
 
 
 # =============================================================================
@@ -369,13 +375,40 @@ class TestTheGuards:
             and any(isinstance(t, ast.Name) and t.id == "census_columns" for t in node.targets)
         ]
         assert len(assigns) == 1, "the build's census_columns assignment moved"
-        assert (
-            ast.unparse(assigns[0].value)
-            == "tuple(DEFAULT_CENSUS_COLUMNS) + ('representative_tie_broken',)"
+        assert ast.unparse(assigns[0].value) == (
+            "tuple(DEFAULT_CENSUS_COLUMNS) + ('representative_tie_broken',)"
+            " + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS"
         )
-        assert DECLARED_CENSUS_COLUMNS == tuple(DEFAULT_CENSUS_COLUMNS) + (
-            REPRESENTATIVE_TIE_COLUMN,
+        assert DECLARED_CENSUS_COLUMNS == (
+            tuple(DEFAULT_CENSUS_COLUMNS)
+            + (REPRESENTATIVE_TIE_COLUMN,)
+            + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
         )
+
+    def test_the_mirrored_cell_columns_match_the_frozen_builds_own_cell_tuple(self):
+        """The mirror's LITERAL half, derived from the frozen source (CAL-P164).
+
+        ``NONEXCLUSIVE_BUNDLE_CELL_COLUMNS`` is generated in the frozen module
+        from ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS``, which ruling 009 bars
+        importing here, so this side is spelled out. Spelling it out is what
+        makes a fourth ruled cell able to reach the statement while missing the
+        declaration — so the expectation is DERIVED from that tuple read as
+        text, not restated. Add a cell and this reds; production does not.
+        """
+        cells = [
+            node
+            for node in ast.walk(tree_of(_FROZEN))
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS"
+                for t in node.targets
+            )
+        ]
+        assert len(cells) == 1, "the excluded-cells tuple moved or multiplied"
+        expected = ("nxb_cell_esports",) + tuple(
+            f"nxb_cell_{idx}" for idx, _ in enumerate(ast.literal_eval(cells[0].value))
+        )
+        assert NONEXCLUSIVE_BUNDLE_CELL_COLUMNS == expected
 
     def test_the_mirrored_finalizer_still_matches_the_frozen_one(self):
         """``_finalize`` above is a copy of a barred file's logic. Pin it.
