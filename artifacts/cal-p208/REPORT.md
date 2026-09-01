@@ -63,7 +63,7 @@ Both were written into `PC1-PREREGISTERED.md` and committed (`418fe5bb`) **befor
 | **1 — token** | `legacy_fingerprint_accepted` present, `resumable` absent | at 22:36:02Z the converged ledger carried `staged:cursor_reason:legacy_fingerprint_accepted` as the **sole** cursor_reason key | ✅ **PASS** |
 | **2 — negative control** | `committed_units` ≥ 70, never 0 | 70 → 71 (22:17:57Z) → 75, plateau. **Never 0.** | ✅ **PASS** |
 | **3 — re-stamp** | `e2040f90…` → `78143607db6fd8116af5fadeffef6799` | flipped at 22:17:57Z, on the first banked unit, to exactly that value | ✅ **PASS** |
-| **4 — reverts** | 23:15Z beat shows `resumable`, never `legacy_*` again | *(see §7)* | ✅ **PASS** |
+| **4 — reverts** | 23:15Z beat shows `resumable`, never `legacy_*` again | at 23:34:21Z the 23:15Z beat converged carrying `staged:cursor_reason:resumable`; the cutover token fired **exactly once** | ✅ **PASS** |
 
 🔴 **The load-bearing inference is arms 2+3 TOGETHER, not arm 1.** The cursor was re-stamped to the
 narrow digest **while still carrying its 70 units**. Every INVALIDATE path in
@@ -130,14 +130,35 @@ n is now **3**: 3.25× (`P206-2`), 4.0× (`P207-2`), 2.75× (P208). Direction co
 optimistic. 🔴 **Still not a population result — do not quote it as one.** 🔴 **Still do not fix it**
 (it would be the third guess at that denominator; ruling 134, a fold's call).
 
-## 7. ARM 4 — the revert
+## 7. ARM 4 — the revert, and the full timeline
 
-*(filled in at 23:3xZ — see `pc1-observations.jsonl`)*
+**116 samples, one per minute, 21:57:52Z → 23:35:21Z.** Every state change:
 
-Note arm 4 is also **entailed by construction** from arm 3: `legacy_accepted` is set only when
+| time | token (ledger, beat-END) | bank (cursor, per-UNIT) | stamped digest |
+|---|---|---|---|
+| 21:57:52Z | `resumable` | 70 | **WIDE** `e2040f90…` |
+| **22:17:57Z** | `resumable` *(still last beat's)* | **71** | 🔴 **NARROW `78143607…`** |
+| 22:18–22:22Z | `resumable` | 72 → 73 → 74 → **75** | NARROW |
+| **22:36:02Z** | 🟢 **`legacy_fingerprint_accepted`** | 75 | NARROW |
+| 23:17–23:22Z | `legacy_fingerprint_accepted` *(still)* | 76 → 77 → 78 → 79 → **80** | NARROW |
+| **23:34:21Z** | 🟢 **`resumable`** — reverted | 80 | NARROW |
+
+`legacy_fingerprint_accepted` fired **exactly once**. Arm 4 passes.
+
+Arm 4 is also **entailed by construction** from arm 3: `legacy_accepted` is set only when
 `raw.get("input_fingerprint") != expected AND == legacy`. The cursor now carries the narrow digest,
 so the outer condition is False and the branch is unreachable for this cursor. The observation is
-confirmation, not the proof.
+confirmation, not the proof — but it is the confirmation the pre-registration asked for.
+
+🔴 **THE TIMELINE ALSO SHOWS THE TRAP `P203-1` KEEPS TEACHING, IN A NEW PLACE.** Between 22:17:57Z
+and 22:36:02Z — **eighteen minutes** — the CURSOR said the cutover had happened (re-stamped, bank
+climbing) while the LEDGER still read `resumable` from the *previous* beat. Same again at
+23:17–23:34. **A session that read only the ledger during that window would have concluded the
+cutover had not fired.** Grade the cursor for anything time-sensitive; the token arrives ~19 minutes
+late, by design.
+
+**Throughput was unaffected across both beats:** 70 → 75 → 80, +5 units per beat, identical to the
+pre-deploy 21:15Z beat. The deploy cost nothing.
 
 ## 8. HONEST LIMITS — carried forward, unchanged
 
