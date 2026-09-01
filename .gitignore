@@ -161,3 +161,4 @@ _to_delete/
 # months reading like a current report. Snapshots belong in docs/archive/ under a dated
 # name, added deliberately with `git add -f`.
 /calibration_report.html
+.env*
