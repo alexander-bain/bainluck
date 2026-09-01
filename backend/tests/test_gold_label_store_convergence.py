@@ -326,7 +326,20 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.models.models import DiscoverReviewDecision, RankingJudgment  # noqa: E402
 from app.routes import admin_label_pass  # noqa: E402
 
-NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+#: LAT-P181 — this was the literal `datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)`
+#: and it was measured to take eight tests in this file red on **2026-09-20**.
+#:
+#: `FUTURE` is the specimen market's `resolution_date`, and the label route
+#: refuses a decision on a market whose lifecycle is already over — `{'reason':
+#: 'lifecycle_past'}`, HTTP 409. Written as `NOW + 30 days` off a pinned `NOW`,
+#: "the future" was a fixed calendar date, and thirty days after it was written
+#: the future became the past. The eight tests here are about which STORE a
+#: decision writes to; none of them is about dates, and all of them would have
+#: started failing on `409 != 200` on a day nobody chose.
+#:
+#: Gotcha #44 — offset FIRST, then truncate. Derived from the clock, `FUTURE` is
+#: always thirty days out.
+NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 FUTURE = NOW + timedelta(days=30)
 
 

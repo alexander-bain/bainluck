@@ -626,7 +626,15 @@ def _georgia_specimen(*, winner: bool):
         external_id="KXGAPRIMARY1R-26MAY19",
         source="kalshi",
         llm_sport_category="politics",
-        resolution_date=datetime(2027, 5, 31, tzinfo=timezone.utc),
+        # LAT-P181 — this was the literal `datetime(2027, 5, 31, tzinfo=timezone.utc)`
+        # and it was measured to take `test_the_same_market_ungraded_still_renders`
+        # red on **2027-06-07**. The specimen's whole point is a resolution date
+        # far enough out that neither `status` nor the stale cutoff can see the
+        # market is over — which is a statement about a DISTANCE from now, not
+        # about May 2027. Pinned to a date, the distance shrinks by a day every
+        # day until the cutoff catches it and the ungraded control stops
+        # rendering, failing a test that is about winner state.
+        resolution_date=now + timedelta(days=273),
         outcomes=[
             _settled_outcome("Governor", 0.98, outcome_id=1, rank=1,
                              winner=winner, resolution_source="kalshi"),

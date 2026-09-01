@@ -71,6 +71,61 @@ from app.utils import event_concept_population as population
 NOW = datetime.now(timezone.utc)
 SOON = NOW + timedelta(days=2)
 
+#: LAT-P181. The cycling arm needs one more thing than the other two, and it is
+#: not a date — it is an EDITION. `list_cycling_concepts` only counts a market
+#: whose `resolution_date.year` equals the year in its config slug
+#: (`event_cycling.CYCLING_RACES`, currently `vuelta-2026` and friends), and only
+#: surfaces the concept if that resolution is still ahead of `now`.
+#:
+#: Those two conditions are jointly unsatisfiable once the configured year is
+#: over, so NO date this test can pick keeps the arm alive past 2026-12-31.
+#:
+#: That is a PRODUCT fact, not a test fact: cycling concepts disappear from
+#: Discover on 2027-01-01 for users too, until the next editions are added to
+#: `CYCLING_RACES`. It is filed on its own account. It is emphatically not this
+#: file's subject — this file counts how many reads the scan makes — and a test
+#: about read-counting must not be the thing that reports a stale product config,
+#: because the only way it can report it is by taking `deploy` down on 01-01.
+#:
+#: So the specimen carries a clock-derived resolution, and `cycling_edition`
+#: below gives the lister an edition for whatever year that lands in. The arm
+#: stays fully exercised forever and the calendar is left out of it.
+CYCLING_RESOLUTION = NOW + timedelta(days=13)
+
+
+@pytest.fixture(autouse=True)
+def cycling_edition(monkeypatch):
+    """Give the lister a Vuelta edition for the specimen's own year.
+
+    LAT-P181. `CYCLING_RACES` is a hand-maintained calendar and the specimen has
+    to name an edition it holds. Rather than pin the specimen to the calendar —
+    which is the bomb — this pins the calendar to the specimen, for the duration
+    of this file only.
+
+    It ADDS an edition; it never removes or rewrites one, so every real config
+    entry is still in play and a regression in the matching itself still shows up
+    here. What it removes is this file's ability to fail on 01-01 for a reason
+    that has nothing to do with counting reads.
+    """
+    import re
+
+    from app.utils import event_cycling as ec
+
+    year = CYCLING_RESOLUTION.year
+    slug = f"vuelta-{year}"
+    if slug in ec.CYCLING_RACES:
+        return
+    monkeypatch.setitem(
+        ec.CYCLING_RACES,
+        slug,
+        ec.CyclingRaceConfig(
+            slug=slug,
+            display=f"Vuelta a España {year}",
+            name_re=re.compile(r"vuelta(\s+a\s+espa)?", re.IGNORECASE),
+            aliases=(f"vuelta-a-espana-{year}", "vuelta"),
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # The specimen population — production-shaped, not invented
@@ -140,7 +195,14 @@ MARKETS: tuple[dict, ...] = (
         "name": "Vuelta a Espana 2026 Winner",
         "status": "open",
         "commence_time": SOON,
-        "resolution_date": datetime(2026, 9, 14, tzinfo=timezone.utc),
+        # LAT-P181 — this was `datetime(2026, 9, 14, tzinfo=timezone.utc)` and it
+        # was measured to take this file red on **2026-09-14**. The anchor above
+        # is honestly clock-derived; this ONE field was not, and one field is
+        # enough. The lister only surfaces a concept whose resolution is ahead of
+        # `now`, so the cycling specimen would have vanished from its own test on
+        # a date nobody chose, and two tests about read-counting would have
+        # started failing about something else entirely.
+        "resolution_date": CYCLING_RESOLUTION,
         "market_metadata": {},
     },
 )
