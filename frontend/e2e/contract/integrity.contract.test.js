@@ -33,6 +33,20 @@ const { evaluateJourney } = require("../helpers/journey");
  * nobody ever wrote. Each of those is a fixture below.
  */
 
+/**
+ * Strip comments before matching. The explanation of WHY the old selector was
+ * wrong necessarily quotes it, and losing that history to satisfy a regex would
+ * be the wrong trade — the guard is about executable selectors.
+ *
+ * INT-192: this used to be applied per-assertion, and only ever to the NEGATIVE
+ * ones. The POSITIVE containment assertions ran against raw file text, where a
+ * hook that had been deleted but whose explanation survived — or one parked in
+ * a commented-out block — still read as shipped. Same blindness, opposite sign.
+ * It is applied at the READ boundary now so no site can be written without it.
+ */
+const stripComments = (raw) =>
+  raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
 const SHA_DEPLOYED = "1".repeat(40);
 const SHA_NEWER = "2".repeat(40);
 const SHA_FOREIGN = "3".repeat(40);
@@ -661,14 +675,8 @@ describe("workflow dispatch input safety", () => {
 
 describe("Discover audit hooks are state-based", () => {
   const repoRoot = path.join(__dirname, "..", "..", "..");
-  const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
+  const read = (...p) => stripComments(fs.readFileSync(path.join(repoRoot, ...p), "utf8"));
   const specs = ["discover-smoke.spec.ts", "discover-latency.spec.ts"];
-  /**
-   * Strip comments before matching. The explanation of WHY the old selector
-   * was wrong necessarily quotes it, and losing that history to satisfy a
-   * regex would be the wrong trade — the guard is about executable selectors.
-   */
-  const code = (raw) => raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
   it("no spec selects a card by a Tailwind layout class", () => {
     // `break-inside-avoid` is shared with DiscoverSkeletonGrid, so a feed
@@ -677,14 +685,14 @@ describe("Discover audit hooks are state-based", () => {
     // through the selector rather than the `.catch()`.
     for (const spec of specs) {
       const raw = read("frontend", "e2e", "specs", spec);
-      assert.ok(!code(raw).includes("break-inside-avoid"), `${spec} still selects by layout class`);
+      assert.ok(!raw.includes("break-inside-avoid"), `${spec} still selects by layout class`);
       assert.ok(raw.includes('[data-testid="discover-card"]'), `${spec} must use the stable card hook`);
     }
   });
 
   it("no spec identifies the empty state by its copy", () => {
     for (const spec of specs) {
-      const raw = code(read("frontend", "e2e", "specs", spec));
+      const raw = read("frontend", "e2e", "specs", spec);
       assert.ok(
         !/getByText\(NAMED_EMPTY/.test(raw) && !raw.includes('const NAMED_EMPTY = "You'),
         `${spec} still matches editable copy`
@@ -703,7 +711,7 @@ describe("Discover audit hooks are state-based", () => {
     // that computes its own boolean can grade itself more leniently than the
     // contract fixtures do, which is the false green this whole rail exists to
     // prevent — in either direction.
-    const raw = code(read("frontend", "e2e", "specs", "discover-smoke.spec.ts"));
+    const raw = read("frontend", "e2e", "specs", "discover-smoke.spec.ts");
     assert.ok(raw.includes('[data-testid="discover-skeleton"]'));
     assert.match(raw, /measureMainRegion\(page, SKELETON\)/, "the skeleton must be measured");
     assert.match(raw, /mainRegion,/, "the measurements must reach the evaluator");
@@ -720,7 +728,7 @@ describe("Discover audit hooks are state-based", () => {
     // checks would agree by construction and neither could catch the other's
     // false positive — and the card selector has produced one before (L2-223's
     // `break-inside-avoid`).
-    const classifier = code(read("frontend", "e2e", "helpers", "contentState.js"));
+    const classifier = read("frontend", "e2e", "helpers", "contentState.js");
     for (const forbidden of ["realCardFound", "emptyState", "discover-card"]) {
       assert.ok(
         !classifier.includes(forbidden),
@@ -766,20 +774,19 @@ describe("Discover audit hooks are state-based", () => {
 
 describe("Sports latency audit hooks are state-based", () => {
   const repoRoot = path.join(__dirname, "..", "..", "..");
-  const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
-  const code = (raw) => raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const read = (...p) => stripComments(fs.readFileSync(path.join(repoRoot, ...p), "utf8"));
   const specRaw = () => read("frontend", "e2e", "specs", "sports-latency.spec.ts");
 
   it("selects the card by a stable hook, never a Tailwind layout class", () => {
     const raw = specRaw();
-    assert.ok(!code(raw).includes("break-inside-avoid"), "sports-latency selects by layout class");
+    assert.ok(!raw.includes("break-inside-avoid"), "sports-latency selects by layout class");
     assert.ok(raw.includes('[data-testid="sports-card"]'), "sports-latency must use the stable card hook");
   });
 
   it("does not smooth a missing card into a first-card time (the C96 [P1] shape)", () => {
     // `firstCardMs` must be null when no card was found — never an unconditional
     // `Date.now() - t0`. This is the exact false green discover-latency once had.
-    const raw = code(specRaw());
+    const raw = specRaw();
     assert.match(raw, /realCardFound \? Date\.now\(\) - t0 : null/, "no-card must yield null, not a number");
   });
 
@@ -816,16 +823,24 @@ describe("Sports latency audit hooks are state-based", () => {
 
 describe("event-page pack can prove both hero states", () => {
   const repoRoot = path.join(__dirname, "..", "..", "..");
-  const read = (...p) => fs.readFileSync(path.join(repoRoot, ...p), "utf8");
+  const read = (...p) => stripComments(fs.readFileSync(path.join(repoRoot, ...p), "utf8"));
   const specRaw = () => read("frontend", "e2e", "specs", "event-page.spec.ts");
   const pageRaw = () => read("frontend", "app", "events", "[id]", "page.tsx");
   // LAT-P119 (#2085) extracted the live/pregame hero's two percents into their
   // own component, so the hook no longer lives in `page.tsx`. It still ships to
   // the browser, which is what the pack needs and what this contract is really
-  // about — but a source read has to follow it. The settled hero is untouched
-  // and stays pinned in the page.
+  // about — but a source read has to follow it.
+  //
+  // UX-P240 (#2443, CERT-641) did the same to the SETTLED hero: it now renders
+  // through `SettledOutcomeHero` so the outcome is a real component rather than
+  // inline JSX. Same reasoning, same remedy — read the component, and keep the
+  // page pinned to rendering it. The comment that used to say "the settled hero
+  // is untouched and stays pinned in the page" is what went stale here, and the
+  // gate went red on a healthy page for exactly one cycle because of it.
   const heroPairRaw = () =>
     read("frontend", "components", "EventHeroProbabilityPair.tsx");
+  const settledHeroRaw = () =>
+    read("frontend", "components", "event", "SettledOutcomeHero.tsx");
 
   it("the page ships a stable hook for the LIVE/PREGAME hero", () => {
     // Pinned in BOTH directions, because the extraction created two ways to
@@ -836,8 +851,13 @@ describe("event-page pack can prove both hero states", () => {
       heroPairRaw().includes('data-testid="event-hero-probability"'),
       "the hero-pair component must still carry the pack's hook"
     );
+    // Matched as a whole JSX tag for the same reason as the settled hero below:
+    // a bare `includes` is satisfied by any component whose name merely STARTS
+    // with this one (`<EventHeroProbabilityPairFoo`), so renaming the render
+    // away would leave the gate green. CERT-641's cycle tightened the settled
+    // assertion and deliberately left this one; it is the same defect.
     assert.ok(
-      pageRaw().includes("<EventHeroProbabilityPair"),
+      /<EventHeroProbabilityPair[\s/>]/.test(pageRaw()),
       "the page must still render the component that carries the hook"
     );
     // The rail reads `data-probability` here and on the Discover card that
@@ -850,14 +870,27 @@ describe("event-page pack can prove both hero states", () => {
   });
 
   it("the page ships a stable hook for the SETTLED hero", () => {
-    const page = pageRaw();
+    // Pinned in BOTH directions, for the same reason as the live/pregame hero
+    // above: the component could drop the hook, or the page could stop
+    // rendering the component. Either one silently re-reds the pack against a
+    // healthy page. Checking only the component would be the weaker gate the
+    // extraction tempts you into.
     assert.ok(
-      page.includes('data-testid="event-hero-settled"'),
+      settledHeroRaw().includes('data-testid="event-hero-settled"'),
       "a finished game must be provable, not just a scheduled one"
     );
     assert.ok(
-      page.includes("data-winner="),
+      settledHeroRaw().includes("data-winner="),
       "the winner must be readable as data, never scraped from prose"
+    );
+    // Matched as a whole JSX tag, not a substring: a bare `includes` here is
+    // satisfied by any component whose name merely STARTS with this one
+    // (`<SettledOutcomeHeroFoo`), so renaming the render away would leave the
+    // gate green. The delimiter is what makes this assertion mean the thing it
+    // says.
+    assert.ok(
+      /<SettledOutcomeHero[\s/>]/.test(pageRaw()),
+      "the page must still render the component that carries the settled hook"
     );
   });
 
@@ -868,7 +901,7 @@ describe("event-page pack can prove both hero states", () => {
   });
 
   it("does not smooth a missing hero into a first-card time (the C96 [P1] shape)", () => {
-    const raw = specRaw().replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const raw = specRaw();
     assert.ok(
       !/firstCardMs:\s*Date\.now\(\) - startedAt\s*[,}]/.test(raw),
       "an absent hero must yield null, never an unconditional elapsed number"

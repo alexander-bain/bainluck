@@ -137,10 +137,74 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         the totals returned to 54/50. Recorded rather than erased: a tripwire
         that only ever ratchets up teaches the next reader that coming back down
         is suspicious, and here it is exactly right.
+
+        CAL-P162 (2026-08-31) takes this to **55**, and ``uncovered_count``
+        stands still at 50 because the same queue moved one input in each
+        direction:
+
+        * ``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT`` is new and behaviour-only —
+          published rule prose for RULE E's disclosure. Uncovered, correctly, and
+          it does NOT touch the sql-shaping pin below.
+        * ``MEX_NORMALIZE_THRESHOLD`` moved the other way, from uncovered
+          sql-shaping to **covered by value**. It was always interpolated into
+          the emitted SQL, but until RULE E it only decided how a row was
+          PRICED; it now decides whether a row is PUBLISHED, because it is the
+          sum arm of the bundle exclusion. That is the fifth instance of the hole
+          ``_main_input_fingerprint``'s own comment describes, and it was closed
+          on the deploy that made it curve-shaping — closing it costs a full
+          rebuild on any other day.
+
+        CAL-P164 (2026-08-31) takes this to **56** / uncovered **51**, adding
+        ``NONEXCLUSIVE_BUNDLE_CELL_COLUMNS`` — the per-cell census column names
+        that CAL-P162 emitted and declared to nobody, which is what CERT-626
+        blocked. It is uncovered and that is correct, not a new hole:
+
+        * It is DERIVED, by a generator expression, from
+          ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS``, which is already
+          ``covered_by_value``. It has no independent degree of freedom — it
+          cannot change unless its parent does, and its parent invalidates every
+          banked unit by value. Covering a derived name would buy nothing and
+          cost a rebuild.
+        * It is behaviour-only, so ``uncovered_sql_shaping`` stands still at 21
+          — the pin below, which is the count with correctness consequences.
+        * Covering it directly is barred today anyway: adding an input to
+          ``_main_input_fingerprint`` wipes every banked unit, and ruling 024
+          puts that in the one combined invalidation window (see
+          ``FIX_SEQUENCING_NOTE``).
+
+        CAL-P168 (2026-08-31) takes this to **65** / uncovered **54**, the
+        largest single jump in the file's history, and the shape of the jump is
+        the thing to read rather than its size. Rank 1 (`polymarket/baseball`,
+        K' = R1+R2+R3+M1) added NINE inputs:
+
+        * **six arrive COVERED** — the cell allowlist, R1's exact 0.5000 spike,
+          R3's title pattern, and M1's two band edges plus its drift floor. Each
+          is interpolated into the emitted SQL by a helper, so hashing the CTE
+          builder's source cannot see their values, and each decides WHICH ROWS
+          THE CURVE PUBLISHES. They are hashed by value in
+          ``_main_input_fingerprint`` on the deploy that creates them, which is
+          why ``covered_by_value`` moves 5 -> 11 while nine inputs appear.
+        * **two are behaviour-only** — the rule sentence and the temporary-cell
+          map. Prose and disclosure copy; they shape nothing and correctly leave
+          ``uncovered_sql_shaping`` alone.
+        * **one is the cross-module tier** — ``PAIR_SUM_TOLERANCE``, imported
+          from the write-side coherence rule so the two halves cannot disagree.
+          It IS hashed by value, but ``derive_declared`` only credits names
+          defined in this module, so it cannot read as covered. That +1 is
+          argued in its own place below, twice.
+
+        The ratchet was not loosened to absorb this: it is a pin, it fired, and
+        every one of the nine is accounted for by name.
         """
-        assert artifact["input_count"] == 54
-        assert len(artifact["covered_by_value"]) == 4
-        assert artifact["uncovered_count"] == 50
+        assert artifact["input_count"] == 65
+        # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
+        # the deploy that made it decide PUBLICATION rather than only pricing.
+        # CAL-P164 added no by-value input, so this stands still.
+        # CAL-P168: 5 -> 11. Six of rank 1's seven population-shaping constants
+        # closed on the deploy that created them; the seventh cannot be credited
+        # here because it is cross-module (see the two tests below).
+        assert len(artifact["covered_by_value"]) == 11
+        assert artifact["uncovered_count"] == 54
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -216,6 +280,49 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         emitted SQL), not about this repair, and quietly lowering a pin while
         being blocked for quietly raising one would be the same error twice.
         CERT-502's fix-sketch names that detector change as the real remedy.
+
+        🟢 **CAL-P162 (2026-08-31) takes this DOWN, 22 -> 21, and that direction
+        is the whole point of the pin.** ``MEX_NORMALIZE_THRESHOLD`` is now
+        hashed by value in ``_main_input_fingerprint``, so it is no longer an
+        uncovered sql-shaping input. Nothing about the detector changed and
+        nothing was reclassified to get here — the hole was closed, which is the
+        only legitimate way this number falls. The queue also ADDED a
+        behaviour-only input in the same commit
+        (``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT``) and it correctly did not
+        register here, which is the separation this test exists to enforce,
+        demonstrated in both directions at once.
+
+        🔴 **CAL-P168 (2026-08-31) TAKES THIS 21 -> 22, AND THE ARGUMENT IS THAT
+        THE ENTRY IS A DETECTOR LIMIT, NOT A HOLE.** Rank 1 (`polymarket/
+        baseball`, K' = R1+R2+R3+M1) added SEVEN new SQL-shaping constants —
+        the cell allowlist, R1's 0.5000, R2's pair tolerance, R3's name pattern,
+        and M1's two band edges plus its drift floor. **Six of the seven were
+        closed in the same commit** by hashing them BY VALUE in
+        ``_main_input_fingerprint``, which is the only legitimate way this
+        number stays flat, and they register here as covered.
+
+        The seventh, ``PAIR_SUM_TOLERANCE``, is hashed by value in exactly the
+        same call — but it is IMPORTED from ``app.utils.pair_opening_coherence``,
+        and ``derive_declared`` only credits coverage for names in
+        ``_module_defs`` (constants defined in the build module). A cross-module
+        input therefore CANNOT read as covered no matter how it is hashed. So
+        this +1 is the detector's blind spot being counted, and it is counted
+        rather than worked around: the test below tracks the cross-module tier
+        by name, so the entry is visible there too and nothing is hidden.
+
+        🟢 **AND ONE MISCOUNT WAS REFUSED RATHER THAN ABSORBED.** Writing the
+        payload's rule sentence as ``A + " " + B`` moved
+        ``NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT`` — a prose sentence — into this
+        count, because the detector marks any name beside a string constant in a
+        ``+``. That would have made this 23. The prose is joined with
+        ``" ".join(...)`` instead and the pin is 22. Note the difference from
+        D21's ``BOOKMAKER_CURVE_REDIS_KEY`` above, which was COUNTED and where
+        ``.join`` was explicitly called out as hiding: there, the name had to
+        reach an operator-facing message and the value really can change the
+        published population. Here it is two sentences of documentation being
+        concatenated, the value shapes nothing, and the concatenation style was
+        an incidental choice — so choosing the other style is not hiding a name
+        from a tripwire, it is not putting a non-input in front of one.
         """
         assert artifact["uncovered_sql_shaping"] == 22
 
@@ -265,7 +372,32 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
 
         CAL-P156 took it to 46 and then back to 45 when CERT-520 blocked the
         rung whose rule text caused the move. The cross-module FIVE never
-        changed, which is the clause that carries the meaning here."""
+        changed, which is the clause that carries the meaning here.
+
+        45 -> 46 at CAL-P164 (``NONEXCLUSIVE_BUNDLE_CELL_COLUMNS``). Same
+        direction, same reason as CERT-497/502: it is defined in the build
+        module, so the FIVE is untouched and this arithmetic is the only thing
+        that moves.
+
+        🔴 **CAL-P168 MAKES IT SIX, AND THAT IS THIS TEST'S FIRST REAL EVENT.**
+        Every movement recorded above was in the module-local arithmetic while
+        "the cross-module FIVE never changed" carried the meaning. Rank 1's R2
+        arm reuses ``PAIR_SUM_TOLERANCE`` — the tolerance the WRITE-side pair
+        coherence rule already ships — by importing it rather than restating it,
+        so that the read-side exclusion and the write-side rule cannot disagree
+        about what "the pair sums to 1" means. That is the right call for the
+        rule and it is honestly a new member of the unguarded tier: the value
+        lives in another module, another queue can change it, and this build's
+        published population moves when it does.
+
+        Two things bound the exposure, and neither is a reason to stop counting
+        it. It IS hashed by value in ``_main_input_fingerprint``
+        (``player_props_pair_tolerance=``), so a change still invalidates every
+        banked unit — the detector simply cannot credit cross-module coverage.
+        And ``definition_sha16`` is populated for it, so this artifact moves when
+        the constant's definition moves, which is what makes the tier a tripwire
+        rather than a list. **The tier is now SIX and the name is written here so
+        the next reader inherits the fact rather than rediscovering it.**"""
         cross = sorted(
             r["name"]
             for r in artifact["inputs"]
@@ -275,11 +407,20 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         assert cross == [
             "CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL",
             "CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL",
+            "PAIR_SUM_TOLERANCE",
             "PRICE_DERIVED_SOURCES_SQL",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
         ]
-        assert len(cross) + 45 == artifact["uncovered_count"]
+        # The cross-module tier carries a definition digest precisely so that a
+        # change to a constant this module does not own still moves the
+        # artifact. Asserted for the new entry rather than assumed.
+        pair_tolerance = next(
+            r for r in artifact["inputs"] if r["name"] == "PAIR_SUM_TOLERANCE"
+        )
+        assert pair_tolerance["definition_sha16"]
+        assert pair_tolerance["origin"].startswith("app.utils.pair_opening_coherence")
+        assert len(cross) + 48 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

@@ -14,7 +14,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.tasks.kalshi_ws import SUBSCRIPTION_REFRESH_SECONDS
+from app.tasks.kalshi_ws import (
+    FINAL_FLUSH_ATTEMPTS,
+    PRICE_FLUSH_SECONDS,
+    SUBSCRIPTION_REFRESH_SECONDS,
+)
 from app.tasks.polymarket import _poly_book_is_untradeable
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,7 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
+    from app.tasks.polymarket_token_topup import topup_clob_tokens
     from app.utils.price_change_stamp import price_changed_at_value
 
     ws = PolymarketWebSocket()
@@ -163,14 +168,18 @@ async def _run_polymarket_ws_consumer():
     asset_to_market: dict[str, int] = {}   # asset_id → market_id
     condition_to_market: dict[str, int] = {}  # condition_id → market_id
 
+    tokens_by_market: dict[int, list[str]] = {}
+
     async with get_task_session() as session:
         market_result = await session.execute(
             select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
             .where(FuturesMarket.id.in_(list(market_ids)))
         )
+        ext_by_market: dict[int, str] = {}
         for mid, mext, metadata in market_result.all():
             if mext:
                 condition_to_market[mext] = mid
+                ext_by_market[mid] = mext
             if not metadata:
                 continue
             tokens = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
@@ -185,8 +194,40 @@ async def _run_polymarket_ws_consumer():
             for token in tokens:
                 asset_ids.append(str(token))
                 asset_to_market[str(token)] = mid
+            tokens_by_market[mid] = [str(t) for t in tokens]
 
-        # Map asset_ids to outcomes via order (first token = yes, second = no)
+        # Q490 — ask for the slate's tokens instead of waiting for a rotation.
+        # The ingest stamp (Q460) is correct and covers the catalogue, but Gamma
+        # caps `/events` at offset 2000, so the poll addresses ~2,000 of ~39,000
+        # open markets per run on a rotating cursor. Measured 2h after that
+        # deploy: 701 markets carried tokens and 0 of the 77 on THIS slate did.
+        # `/markets?condition_ids=` does not paginate, so the fast lane can name
+        # exactly what it needs. Bounded by the slate size, which is ~77.
+        topup_missing = [
+            (mid, ext_by_market.get(mid))
+            for mid in market_ids
+            if mid not in tokens_by_market
+        ]
+        if topup_missing:
+            try:
+                topped = await topup_clob_tokens(session, topup_missing)
+            except Exception:
+                # A Gamma outage must not take the socket down with it: the
+                # markets that already have tokens keep streaming, and the next
+                # recycle retries. Loud, because a silently-empty top-up is the
+                # failure this whole queue exists to end.
+                logger.exception(
+                    "Polymarket WS: token top-up failed for %d markets; "
+                    "continuing with the %d already stamped",
+                    len(topup_missing), len(tokens_by_market),
+                )
+                topped = {}
+            for mid, tokens in topped.items():
+                tokens_by_market[mid] = tokens
+                for token in tokens:
+                    asset_ids.append(token)
+                    asset_to_market[token] = mid
+
         outcome_result = await session.execute(
             select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.external_id)
             .where(FuturesOutcome.market_id.in_(list(market_ids)))
@@ -196,21 +237,58 @@ async def _run_polymarket_ws_consumer():
         for oid, mid, ext in outcome_result.all():
             outcomes_by_market.setdefault(mid, []).append((oid, ext or ""))
 
+    # Q489 — WHICH outcome an asset id belongs to. Both CLOB tokens of a binary
+    # (`clobTokenIds == [yesToken, noToken]`) map to the same FuturesMarket, and
+    # the price handlers used to resolve every tick to `outcomes[0]` — the
+    # Over/Yes leg — because this map was declared and never filled. A No-token
+    # `best_bid_ask` therefore wrote P(No) into the Yes outcome, and since both
+    # legs stream continuously the rendered number would oscillate between p and
+    # 1-p on every tick. That is strictly worse than a stale price: a stale card
+    # is wrong once, an inverted card is wrong at random.
+    #
+    # The pairing is positional and both sides are already ordered the same way:
+    # Gamma serves `[yes, no]`, and the ingest inserts the Over/Yes outcome
+    # before the Under/No one (`polymarket.py`, the sub-market loop), so ordering
+    # by `FuturesOutcome.id` reproduces the token order. `zip` is deliberate — a
+    # market whose outcome count disagrees with its token count maps only the
+    # pairs it can prove and leaves the rest unmapped, so a shape we did not
+    # anticipate drops ticks instead of writing them to the wrong leg.
+    for mid, mtokens in tokens_by_market.items():
+        for token, (oid, _ext) in zip(mtokens, outcomes_by_market.get(mid, [])):
+            asset_to_outcome[token] = oid
+
+    unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
+
     if not asset_ids:
         logger.info("Polymarket WS: no asset IDs found in market_metadata")
         return {"status": "no_asset_ids"}
 
     logger.info(
-        "Polymarket WS: %d asset IDs (%d markets)",
+        "Polymarket WS: %d asset IDs (%d markets), %d mapped to an outcome, "
+        "%d unmapped (ticks dropped rather than mis-attributed)",
         len(asset_ids), len(market_ids),
+        len(asset_to_outcome), len(unmapped_assets),
     )
 
     stats = {
         "assets_subscribed": len(asset_ids),
+        # Q489: the number that says whether a tick can land on the right leg.
+        # `assets_subscribed` counts what we listen to; this counts what we can
+        # actually attribute, and the gap between them is the silent-loss bound.
+        "assets_mapped": len(asset_to_outcome),
+        "assets_unmapped": len(unmapped_assets),
         "price_updates": 0,
         "trade_updates": 0,
         "resolutions": 0,
         "errors": 0,
+        # Q491: prices a failed flush put BACK on the buffer instead of dropping.
+        # `errors` alone cannot distinguish a retried batch from a lost one.
+        "requeued": 0,
+        # Q491 repair: the final drain retries instead of requeueing, because
+        # nothing runs after it. These two separate "we had to try again" from
+        # "we gave up and a price is gone".
+        "final_flush_retries": 0,
+        "final_flush_dropped": 0,
     }
 
     # Buffered price updates
@@ -229,7 +307,14 @@ async def _run_polymarket_ws_consumer():
             if not price_buffer:
                 return
             batch = dict(price_buffer)
-            price_buffer.clear()
+        # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
+        # CLEARED HERE. Twin of the Kalshi socket: draining first and putting
+        # the batch back on failure only covers the failures you thought to
+        # catch, and `except Exception` never sees `CancelledError` (a
+        # BaseException), so a recycle cancelling `flush_loop` between the drain
+        # and the write lost the batch with `errors=0, requeued=0` — invisible.
+        # Entries now leave only after the write lands, so nothing needs to be
+        # "put back", because it was never taken away.
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
@@ -252,15 +337,85 @@ async def _run_polymarket_ws_consumer():
                     )
             stats["price_updates"] += len(batch)
         except Exception:
+            # Q491 — THE SHIP. The batch is still in `price_buffer`, so the next
+            # flush retries it. Before Q491 the buffer was drained up front and
+            # a failed write DISCARDED those prices outright: the socket only
+            # refills an outcome when that market ticks again, and 86.7% of open
+            # Polymarket markets never tick at all, so one transient error froze
+            # a card at its old number indefinitely with no `last_updated`
+            # either (#2024).
+            #
+            # Bounded by construction: the buffer is keyed by outcome_id over a
+            # fixed slate, so a long outage holds at most one entry per
+            # subscribed outcome however many attempts are burned.
             stats["errors"] += 1
-            logger.exception("Polymarket WS: flush error")
+            stats["requeued"] += len(batch)
+            logger.exception(
+                "Polymarket WS: flush error (%d retained for retry)", len(batch)
+            )
             return
+
+        # Q491 repair 2 — the write landed, so and only so do these entries
+        # leave the buffer. The `== prob` test is what used to be `setdefault`:
+        # `handle_price` may have buffered a FRESHER price for the same outcome
+        # while this write was in flight, and that newer value is the truth, so
+        # it must survive to the next flush rather than be dropped as "already
+        # written". Same contract, enforced at removal instead of at re-queue.
+        async with buffer_lock:
+            for outcome_id, prob in batch.items():
+                if price_buffer.get(outcome_id) == prob:
+                    del price_buffer[outcome_id]
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
         # `Event.win_probability_sources`, the JSONB the card actually renders.
         await blend_refresher.refresh(
             event_ids_for_outcomes(event_id_by_outcome, batch.keys())
         )
+
+    async def drain_prices():
+        """The LAST flush of this consumer's life — retry, never requeue.
+
+        Q491 repair (CERT-654 BLOCK), twin of the Kalshi socket's. `flush_prices`
+        hands a failed batch back to `price_buffer` so the next periodic flush
+        retries it. At recycle and at shutdown there IS no next flush, so that
+        requeue is a silent drop — the certifier's exact-head probe read
+        `writes=[]`, `errors=1`, `requeued=1`. Call `flush_prices` again instead,
+        up to `FINAL_FLUSH_ATTEMPTS`, each attempt on a fresh session.
+        """
+        try:
+            for attempt in range(FINAL_FLUSH_ATTEMPTS):
+                await flush_prices()
+                async with buffer_lock:
+                    if not price_buffer:
+                        return
+                if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
+                    stats["final_flush_retries"] += 1
+        except asyncio.CancelledError:
+            # Q491 repair 2: a hard cancel during the LAST drain. The
+            # cancellation must keep travelling (CERT-491 — swallowing it makes
+            # the runner relaunch a consumer the process is stopping), but the
+            # prices it strands must be REPORTED on the way out rather than
+            # vanishing at the silent `errors=0, requeued=0` CERT-659 measured.
+            stranded = len(price_buffer)
+            if stranded:
+                stats["final_flush_dropped"] += stranded
+                logger.error(
+                    "Polymarket WS: %d price updates STRANDED by cancellation "
+                    "during the final drain — these are lost, not deferred",
+                    stranded,
+                )
+            raise
+        async with buffer_lock:
+            stranded = len(price_buffer)
+        if stranded:
+            # Loud: this is the one place a price genuinely cannot be retried
+            # again, so it must never be inferable only from a silence.
+            stats["final_flush_dropped"] += stranded
+            logger.error(
+                "Polymarket WS: %d price updates STRANDED after %d final-flush "
+                "attempts — these are lost, not deferred",
+                stranded, FINAL_FLUSH_ATTEMPTS,
+            )
 
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
@@ -294,12 +449,12 @@ async def _run_polymarket_ws_consumer():
         if prob <= 0 or prob >= 1:
             return
 
-        # Find the outcome for this asset_id
-        outcomes = outcomes_by_market.get(market_id, [])
-        if not outcomes:
+        # Q489: the outcome this ASSET is the book for — not "the market's first
+        # outcome". `prob` here is the midpoint of THIS token's own book, so on
+        # the No token it is P(No), which belongs on the No leg and nowhere else.
+        outcome_id = asset_to_outcome.get(asset_id)
+        if outcome_id is None:
             return
-        # First outcome is typically the "Yes" side
-        outcome_id = outcomes[0][0]
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
@@ -321,10 +476,11 @@ async def _run_polymarket_ws_consumer():
         if prob <= 0 or prob >= 1:
             return
 
-        outcomes = outcomes_by_market.get(market_id, [])
-        if not outcomes:
+        # Q489: same contract as `handle_price` — a `last_trade_price` is a trade
+        # in THIS token, so it grades THIS token's leg.
+        outcome_id = asset_to_outcome.get(asset_id)
+        if outcome_id is None:
             return
-        outcome_id = outcomes[0][0]
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
@@ -373,7 +529,7 @@ async def _run_polymarket_ws_consumer():
 
     async def flush_loop():
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(PRICE_FLUSH_SECONDS)
             await flush_prices()
 
     async def stats_loop():
@@ -406,7 +562,9 @@ async def _run_polymarket_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
-        await flush_prices()
+        # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
+        # must RETRY rather than requeue into a buffer nobody will read again.
+        await drain_prices()
 
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats

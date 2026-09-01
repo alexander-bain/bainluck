@@ -54,6 +54,7 @@ import AdvancementPath, {
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import { broadcastFor, type PlayerImage } from "@/lib/slate";
 import { fetchEventTournament } from "@/lib/api";
+import { eventTournamentKey, isTournamentSportKey } from "@/lib/eventOutcome";
 import type {
   EventTournamentResponse,
   TournamentAdvancementRow,
@@ -207,9 +208,9 @@ export default function TournamentExtensions({
    */
   sportKey?: string | null;
 }) {
-  const eligible = !!sportKey && TOURNAMENT_SPORT_KEY.test(sportKey);
+  const eligible = isTournamentSportKey(sportKey);
   const { data } = useSWR<EventTournamentResponse>(
-    eligible ? ["event-tournament", eventId] : null,
+    eligible ? eventTournamentKey(eventId) : null,
     () => fetchEventTournament(eventId),
     { revalidateOnFocus: false, refreshInterval: 120000 },
   );
@@ -277,15 +278,15 @@ export default function TournamentExtensions({
 }
 
 /**
- * Which sport keys can possibly be in a tournament container.
+ * The eligibility test and the SWR key both moved to `lib/eventOutcome.ts`
+ * (#2443), where the hero can share them.
  *
- * A prefix test and not the server's exact list: the client must not carry a
- * second copy of `REGISTERED_TOURNAMENTS` that goes stale the day a second
- * tournament is registered. Over-asking is one cheap `null` answer; under-asking
- * is a section that silently stops appearing.
+ * They are shared rather than copied for a reason this file already implies:
+ * the request this section makes is now also the request the hero's winner
+ * name comes from, and two regexes that agree today are two chances to fire
+ * one and not the other — which reads as a hero saying "Final" above a section
+ * that knows the score.
  */
-export const TOURNAMENT_SPORT_KEY = /^tennis_(atp|wta)_/;
-
 /**
  * ═══ THE WAY BACK UP (#2448, Alex's third item) ═══
  *
@@ -356,9 +357,9 @@ export function useTournamentPlayerFaces(
   homeName: string,
   awayName: string
 ): { home: PlayerImage | null; away: PlayerImage | null } {
-  const eligible = !!sportKey && TOURNAMENT_SPORT_KEY.test(sportKey);
+  const eligible = isTournamentSportKey(sportKey);
   const { data } = useSWR<EventTournamentResponse>(
-    eligible ? ["event-tournament", eventId] : null,
+    eligible ? eventTournamentKey(eventId) : null,
     () => fetchEventTournament(eventId),
     { revalidateOnFocus: false, refreshInterval: 120000 },
   );
@@ -443,9 +444,9 @@ export function TournamentBackLink({
   /** Analytics hook, so this link is tracked exactly as its sibling is. */
   onNavigate?: (href: string) => void;
 }) {
-  const eligible = !!sportKey && TOURNAMENT_SPORT_KEY.test(sportKey);
+  const eligible = isTournamentSportKey(sportKey);
   const { data } = useSWR<EventTournamentResponse>(
-    eligible ? ["event-tournament", eventId] : null,
+    eligible ? eventTournamentKey(eventId) : null,
     () => fetchEventTournament(eventId),
     { revalidateOnFocus: false, refreshInterval: 120000 },
   );

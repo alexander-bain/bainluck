@@ -31,7 +31,11 @@ from app.utils.resolution_authority import (
     OVERWRITABLE_WINNER_SOURCES_SQL,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
-from app.utils.winner_field_coherence import INCOHERENT_FIELD_HAVING_SQL
+from app.utils.winner_field_coherence import (
+    DUPLICATE_CONDITION_LEG_SQL,
+    INCOHERENT_FIELD_HAVING_SQL,
+    IS_DUPLICATE_CONDITION_LEG_SQL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -4774,11 +4778,98 @@ async def _backfill_from_current_probability():
         "all_losers_set": 0,
         "single_winners": 0,
         "single_losers": 0,
+        # Q487 / CERT-639: rows un-crowned by Pass 0 so Pass 1 can re-grade them.
+        "dup_leg_ungraded": 0,
+        "dup_leg_markets": 0,
         "errors": [],
     }
 
     try:
         async with get_task_session() as session:
+            # ── Pass 0 (Q487, repairs CERT-639's BLOCK) ───────────────────────
+            # The forward filters below stop NEW duplicate-leg crownings. They do
+            # nothing for the 235 rows across 217 markets already crowned, and
+            # those do NOT self-heal: once every row on the market reads
+            # `clean_resolution`/`api_settlement`, `_backfill_polymarket_winners`'
+            # "stuck" query skips it (:4923 wants a source OUTSIDE that pair) and
+            # its >1-winner escape hatch does not fire either, because a
+            # contaminated field has exactly ONE winner. So a user keeps seeing
+            # "No" win a 25-city market forever. CERT-639 was right to block on it.
+            #
+            # Un-grade the contaminated markets so Pass 1, immediately below and
+            # in this same run, re-grades them from the now-filtered field. That
+            # in-process re-resolve is what satisfies gotcha #21 — never bulk-reset
+            # `is_winner` without an immediate re-resolve source. It is NOT staged
+            # as a separate reset.
+            #
+            # 🔴 It does NOT flip the contaminants to `false`. That would assert
+            # the real candidates lost, which is the same invention inverted. It
+            # returns the market to ungraded and lets the ordinary grader speak.
+            #
+            # Only OVERWRITABLE rows are cleared, so an authoritative grade
+            # (leaderboard / game_score / datagolf) on the same market survives.
+            #
+            # Idempotent and self-limiting: after Pass 1 re-grades, the leg rows
+            # stay NULL (Pass 1's UPDATE excludes them), so the next run finds
+            # nothing. No flapping.
+            repair = await session.execute(text("""
+                    WITH contaminated AS (
+                        SELECT DISTINCT fo.market_id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        WHERE fm.source = 'polymarket'
+                          AND fo.is_winner IS TRUE
+                          AND """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
+                    )
+                    UPDATE futures_outcomes fo
+                    SET is_winner = NULL,
+                        resolution_source = NULL,
+                        last_updated = NOW()
+                    FROM contaminated c
+                    WHERE fo.market_id = c.market_id
+                      AND (
+                          -- ARM A — THE LEG ITSELF, UNCONDITIONALLY, whatever
+                          -- wrote it. Repairs CERT-640: gating this on
+                          -- OVERWRITABLE left 6 measured rows crowned
+                          -- (`clob_authoritative` 2, `api_settlement` 1,
+                          -- NULL 3 — none of them overwritable), so the exact
+                          -- user-visible "No" winners survived the fix meant to
+                          -- remove them.
+                          --
+                          -- The principle the first cut got wrong: OVERWRITABLE
+                          -- protects *legitimate grades*, and a duplicate
+                          -- condition leg's grade is NEVER legitimate. It is the
+                          -- negation of a sibling candidate, not a candidate —
+                          -- no source's authority can make it one. An
+                          -- authoritative writer that crowned it was itself
+                          -- misled by the unscoped `external_id` write this
+                          -- queue fixes upstream.
+                          """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
+
+                          -- ARM B — its SIBLINGS, only where the grade is
+                          -- price-derived or a guess. A real authoritative grade
+                          -- (leaderboard / game_score / datagolf / a genuine
+                          -- settlement on a real candidate) survives untouched.
+                          OR COALESCE(fo.resolution_source, '') IN
+                             """ + OVERWRITABLE_WINNER_SOURCES_SQL + """
+                      )
+                    RETURNING fo.market_id, """ + IS_DUPLICATE_CONDITION_LEG_SQL + """
+                """))
+            _repaired = repair.all()
+            stats["dup_leg_ungraded"] = len(_repaired)
+            stats["dup_leg_markets"] = len({r[0] for r in _repaired})
+            # Split so a run that clears only siblings cannot report the same as
+            # one that actually un-crowned the legs — the legs ARE the ship.
+            stats["dup_leg_crowns_cleared"] = sum(1 for r in _repaired if r[1])
+            if _repaired:
+                logger.info(
+                    "Q487 Pass 0: un-graded %d rows (%d of them duplicate legs) "
+                    "across %d contaminated markets; Pass 1 re-grades now",
+                    stats["dup_leg_ungraded"], stats["dup_leg_crowns_cleared"],
+                    stats["dup_leg_markets"],
+                )
+            await session.commit()
+
             # Pass 1: Clean resolution (all at 0 or 1)
             result = await session.execute(text("""
                     WITH cleanly_resolved AS (
@@ -4786,6 +4877,12 @@ async def _backfill_from_current_probability():
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
+                          -- Q487: a duplicate condition leg must not supply the
+                          -- terminality that makes this field look cleanly
+                          -- resolved. Measured specimen 59835854: without the
+                          -- contaminant every remaining row is <= 0.05, so there
+                          -- is nothing to crown — which is the honest answer.
+                          AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         GROUP BY fm.id, fm.mutually_exclusive
                         HAVING SUM(CASE WHEN fo.is_winner
                                    AND fo.resolution_source NOT IN
@@ -4816,6 +4913,10 @@ async def _backfill_from_current_probability():
                     FROM cleanly_resolved cr
                     WHERE fo.market_id = cr.market_id
                       AND fo.current_probability IS NOT NULL
+                      -- Q487: ...and must not RECEIVE the stamp. Both halves are
+                      -- needed: excluding it from the CTE only stops it
+                      -- justifying the grade, not being crowned by it.
+                      AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                     RETURNING fo.is_winner
                 """))
             rows = result.all()
@@ -5627,13 +5728,16 @@ async def _backfill_polymarket_winners_from_api(
 
                     r_w = await session.execute(
                         text("""
-                            UPDATE futures_outcomes
+                            UPDATE futures_outcomes fo
                             SET current_probability = :price,
                                 is_winner = :won,
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
-                            WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                            WHERE fo.external_id = :cid
+                              AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                              -- Q487: external_id is NOT unique; a duplicate
+                              -- condition leg must not be crowned here either.
+                              AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         """),
                         {"price": prices[0], "won": yes_won, "cid": cid},
                     )
@@ -5646,13 +5750,16 @@ async def _backfill_polymarket_winners_from_api(
                     no_cid = f"{cid}_no"
                     r_n = await session.execute(
                         text("""
-                            UPDATE futures_outcomes
+                            UPDATE futures_outcomes fo
                             SET current_probability = :price,
                                 is_winner = :won,
                                 resolution_source = 'api_settlement',
                                 last_updated = NOW()
-                            WHERE external_id = :cid
-                              AND COALESCE(resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                            WHERE fo.external_id = :cid
+                              AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                              -- Q487: external_id is NOT unique; a duplicate
+                              -- condition leg must not be crowned here either.
+                              AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                         """),
                         {
                             "price": (
@@ -6316,8 +6423,10 @@ async def _resolve_winners_only(limit: int = 2000):
                         if yes_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                UPDATE futures_outcomes fo SET is_winner=true, resolution_source='api_settlement', last_updated=NOW()
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                                 {"t": yes_t},
                             )
@@ -6325,8 +6434,10 @@ async def _resolve_winners_only(limit: int = 2000):
                         if no_t:
                             r = await sess.execute(
                                 text("""
-                                UPDATE futures_outcomes SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
-                                WHERE external_id=ANY(:t) AND (resolution_source IS NULL OR resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                UPDATE futures_outcomes fo SET is_winner=false, resolution_source='api_settlement', last_updated=NOW()
+                                WHERE fo.external_id=ANY(:t) AND (fo.resolution_source IS NULL OR fo.resolution_source IN """ + OVERWRITABLE_WINNER_SOURCES_SQL + """)
+                                -- Q487: external_id is NOT unique.
+                                AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                                 {"t": no_t},
                             )

@@ -56,6 +56,7 @@ from app.services.anchor_channel import (
     record_anchor,
 )
 from app.utils.espn_helpers import commence_correction_inverts_completion
+from app.utils.event_completion import settlement_is_a_staleness_artifact
 from app.utils.name_normalization import names_match
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,8 @@ _SOURCE_PRIORITY = {
 def commence_time_write_authorized(
     current_source: Optional[str],
     incoming_source: Optional[str],
+    *,
+    same_record_revision: bool = False,
 ) -> tuple[bool, str]:
     """May ``incoming_source`` overwrite a ``commence_time`` written by
     ``current_source``? Returns ``(authorized, reason)``.
@@ -100,11 +103,49 @@ def commence_time_write_authorized(
       worst provenance become the only unfixable ones. An unknown *incoming*
       source has no established authority and loses to everything known. So
       provenance we cannot vouch for may be corrected, and may not correct.
+
+    ── ``same_record_revision``: a provider may revise its OWN reading (q066b) ──
+
+    "A tie loses" is right about two *rivals* and wrong about one *record*. When
+    the incoming claim's provider id is ALREADY the id on this row — Step 1, an
+    exact-id match, no window and no names — the two readings are not two
+    authorities disagreeing. They are one provider's row at two points in time,
+    and the later one is the provider correcting itself. Refusing it does not
+    hold a line; it freezes whatever the provider happened to publish first.
+
+    Measured on the live US Open slate, 2026-09-01: The Odds API publishes the
+    whole next day at one session-start default — all 21 ATP and 20 WTA matches
+    at ``2026-09-02T15:00:00Z``, because no order of play exists yet — and then
+    STAGGERS THE SAME EVENT IDS to real times once it does (Sep 1 read back
+    15:00, 16:10, 16:40, 17:20, 17:50, 19:00, 20:30, 21:00, 23:00, 00:10). There
+    is no placeholder field in the payload to detect: the only difference between
+    the placeholder and the truth is that the provider sent the truth LATER. So
+    the tie rule is not conservative here — it is the thing that makes the
+    placeholder permanent, and every downstream clock reads it as a start.
+
+    It is scoped to identity, not merely to source. ``incoming_source`` must EQUAL
+    ``current_source``: a provider revising the value it itself wrote is a
+    revision, whereas a different provider arriving at parity is still two
+    authorities and still loses. And an unknown source cannot revise — it has no
+    established authority to correct (same reason it cannot outrank).
+
+    This does not widen absorption by one row. Step 1 is exact-id and was never
+    the absorber; ``ODDS_LISTING_IS_NOT_A_DEREFERENCE`` closed that route through
+    the ±28h structured matcher and is untouched here. Nor does it override the
+    #46 inversion guard in ``_update_fields_by_priority``, which still refuses to
+    move a completed event's start past its own ``completed_at``.
     """
     incoming = _SOURCE_PRIORITY.get(incoming_source or "", 0)
     current = _SOURCE_PRIORITY.get(current_source or "", 0)
     if incoming > current:
         return (True, "ok")
+    if (
+        same_record_revision
+        and incoming_source
+        and incoming_source == current_source
+        and incoming_source in _SOURCE_PRIORITY
+    ):
+        return (True, f"revision: {incoming_source} correcting its own record")
     return (
         False,
         f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "
@@ -320,8 +361,22 @@ async def find_or_create_event(
             # Steps 1-3: Try to find existing event
             event = await _find_existing(session, identity, sport_id)
             if event:
+                # BEFORE `_attach_claim`, not after (CERT-671 follow-up
+                # `Q066B-PREATTACH-REVISION-PROVENANCE`). `_attach_claim` writes
+                # this claim's id into a previously-EMPTY column, so asking
+                # afterwards makes a claim that reached this row by anchor or by
+                # structured match indistinguishable from one that was already
+                # bound to it — a FRESH ATTACHMENT would read as a revision and
+                # take a write it never earned. The Odds listing path cannot
+                # reach structured matching today
+                # (`ODDS_LISTING_IS_NOT_A_DEREFERENCE`), so this is a trap for the
+                # next caller rather than a live defect; it is closed by ordering
+                # rather than by a comment telling people to be careful.
+                same_record = claim_is_same_record(event, identity.claim)
                 attached_new = _attach_claim(event, identity.claim)
-                _update_fields_by_priority(event, identity)
+                _update_fields_by_priority(
+                    event, identity, same_record=same_record,
+                )
                 await session.flush()
                 # A correspondence is established when a previously-empty column
                 # just took this id, or when the provider has no column that
@@ -745,42 +800,126 @@ def _attach_claim(event: Event, claim: EventClaim) -> bool:
     return False
 
 
-def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:
+#: Per-provider id column on ``events``, for the providers that have one. The
+#: same three arms ``_attach_claim`` writes, read back so a caller can ask "is
+#: this claim's id ALREADY the id on this row?" without duplicating the mapping.
+_SOURCE_ID_COLUMN = {
+    "odds_api": "external_id",
+    "statpal": "statpal_fixture_id",
+    "espn": "espn_id",
+}
+
+
+def claim_is_same_record(event: Event, claim: EventClaim) -> bool:
+    """Is this claim the provider re-reading the row it already owns? (q066b)
+
+    True only for an EXACT id identity: the provider has an id column on
+    ``events`` and the value in it equals this claim's id. That is Step 1 —
+    reached with no time window and no name match — so it carries no absorption
+    risk of its own, and it is the one condition under which a second reading
+    from the same source is a REVISION rather than a rival.
+
+    False for the id-column-less providers (``kalshi``, ``polymarket``): they
+    reach a row through the anchor channel, not through a column, so "the id on
+    the row" is not a question this function can answer for them, and answering
+    it optimistically would hand a revision right to the sources ranked 0.
+    """
+    column = _SOURCE_ID_COLUMN.get(claim.source)
+    if column is None:
+        return False
+    existing = getattr(event, column, None)
+    return bool(existing) and existing == claim.source_id
+
+
+def _update_fields_by_priority(
+    event: Event, identity: EventIdentity, *, same_record: bool = False,
+) -> None:
     """Update event fields if the incoming source has higher priority.
 
     Source priority: ESPN > StatPal > Odds API > prediction markets.
     Higher-priority sources overwrite team names and commence_time.
+
+    ``commence_time`` additionally accepts a same-record revision at parity —
+    see ``commence_time_write_authorized``. Team names deliberately do NOT: the
+    ship this rides is a wrong START TIME (q066b), and a name rewrite is a
+    different blast radius that no evidence here asks for.
+
+    ``same_record`` is a PARAMETER and not recomputed here, because the only
+    honest moment to ask it is before ``_attach_claim`` runs (CERT-671
+    follow-up). It **defaults to False** — fail closed. A caller that has not
+    established the claim's provenance gets the pre-q066b behaviour, which is
+    the conservative one; the alternative default, recomputing from the row,
+    would hand revision authority to exactly the caller who forgot to think
+    about it.
     """
     incoming_priority = _SOURCE_PRIORITY.get(identity.claim.source, 0)
     current_priority = _SOURCE_PRIORITY.get(event.commence_time_source or "", 0)
 
     if incoming_priority > current_priority:
-        # Higher-priority source: update team names and time
+        # Higher-priority source: update team names.
         if identity.home_team_name:
             event.home_team_name = identity.home_team_name
         if identity.away_team_name:
             event.away_team_name = identity.away_team_name
-        if identity.commence_time:
-            # Guard (#46 invariant; gotcha #32 family): refuse to move
-            # commence_time to a value AFTER an already-completed event's
-            # completed_at. That inversion (completed_at < commence_time) means we
-            # folded a higher-priority source's forward commence_time onto the
-            # WRONG sibling (series row-reuse / doubleheader). The ESPN write path
-            # already guards this; the registry did not. Only the commence_time
-            # move is refused — team-name updates above still apply.
-            if event.completed_at is not None and commence_correction_inverts_completion(
-                identity.commence_time, event.completed_at
-            ):
-                logger.warning(
-                    "Refusing commence_time move on completed event %s: incoming "
-                    "commence=%s is AFTER completed_at=%s (would invert #46 "
-                    "invariant — likely wrong-sibling match from source %s)",
-                    event.id, identity.commence_time, event.completed_at,
-                    identity.claim.source,
+
+    # commence_time has its own authority question, because it accepts one thing
+    # the team names do not: the owning provider revising its own record (q066b).
+    outranks, _why = commence_time_write_authorized(
+        event.commence_time_source,
+        identity.claim.source,
+        same_record_revision=same_record,
+    )
+    if identity.commence_time and outranks:
+        # Guard (#46 invariant; gotcha #32 family): refuse to move
+        # commence_time to a value AFTER an already-completed event's
+        # completed_at. That inversion (completed_at < commence_time) means we
+        # folded a higher-priority source's forward commence_time onto the
+        # WRONG sibling (series row-reuse / doubleheader). The ESPN write path
+        # already guards this; the registry did not. Only the commence_time
+        # move is refused — team-name updates above still apply.
+        #
+        # UNLESS the settlement it would invert is itself a staleness artifact —
+        # an unscored row a wall-clock net closed for a game that had not been
+        # played. Then the inversion is evidence ABOUT THE COMPLETION, not about
+        # the start, and refusing the correction is what keeps an unplayed match
+        # wearing a FINAL badge. The scored case is untouched, so a real result
+        # still wins every argument (gotcha #21).
+        #
+        # Asked only of a row that HAS a completion. An unsettled row cannot
+        # carry an artifact settlement, so the score columns are never read on
+        # the overwhelmingly common path.
+        inverts = event.completed_at is not None and commence_correction_inverts_completion(
+            identity.commence_time, event.completed_at
+        )
+        artifact = inverts and settlement_is_a_staleness_artifact(
+            event.status, event.home_score, event.away_score,
+            identity.commence_time, event.completed_at,
+        )
+        if inverts and not artifact:
+            logger.warning(
+                "Refusing commence_time move on completed event %s: incoming "
+                "commence=%s is AFTER completed_at=%s (would invert #46 "
+                "invariant — likely wrong-sibling match from source %s)",
+                event.id, identity.commence_time, event.completed_at,
+                identity.claim.source,
+            )
+        else:
+            event.commence_time = identity.commence_time
+            event.commence_time_source = identity.commence_time_source or identity.claim.source
+            if artifact:
+                # Void the artifact, exactly as `repair_inverted_mlb_events`
+                # voids its own: back to `scheduled` with no completion. The
+                # 60-second `transition_event_statuses` re-promotes it to `live`
+                # off the CORRECTED start, so this un-settles without asserting
+                # anything about when the match will actually be played.
+                logger.info(
+                    "Voiding staleness-artifact settlement on event %s: %s->scheduled, "
+                    "completed_at %s cleared (unscored, and %s moved the start to %s)",
+                    event.id, event.status, event.completed_at,
+                    identity.claim.source, identity.commence_time,
                 )
-            else:
-                event.commence_time = identity.commence_time
-                event.commence_time_source = identity.commence_time_source or identity.claim.source
+                event.status = "scheduled"
+                event.completed_at = None
 
 
 # ── Sport resolution cache ──────────────────────────────────────────

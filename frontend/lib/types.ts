@@ -7,7 +7,9 @@ import type { ConfidenceSignals } from "@/lib/confidence";
 // definition of a prop card, not a second copy that agrees today (UX-P152).
 import type { MatchProp } from "@/lib/matchDetail";
 // Same reasoning as `MatchProp` above: the finished match the by-event route
-// serves IS a results-list row, so it is that type and not a copy of it (#2447).
+// serves IS a results-list row, so it is that type and not a copy of it (#2447),
+// and the hub's result rows and an event page's settled hero are the SAME fact,
+// so they share the one type (#2443).
 import type { TournamentResult } from "@/lib/tournamentResults";
 
 export interface Sport {
@@ -2208,6 +2210,17 @@ export interface EventTournamentResponse {
   props_count: number;
   props_dropped: Record<string, number>;
   decided: boolean;
+  /**
+   * The decided result — winner, score line and how it ended (#2443).
+   *
+   * The route has always returned this beside `decided`, and until #2443
+   * nothing read it and it was not even declared here, which is the whole
+   * reason a settled US Open match could render a `FINAL` badge with no
+   * outcome under it. Optional, because the ordinary answer for an event that
+   * is not in a tournament — or is in one and has not been played — is that
+   * there is no result yet.
+   */
+  result?: TournamentResult | null;
   /**
    * Where to watch, by region (UX-P154). The route has always returned it —
    * `"broadcasts": reg.broadcasts` — and nothing read it, because Alex's

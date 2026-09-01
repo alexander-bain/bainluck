@@ -22,7 +22,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | pm-never-graded-census | pm-never-graded
              | event-create-from-truth | team-identity-mapping-repair
              | event-espn-id | label-store-converge
-             | label-defect-routes }
+             | label-defect-routes
+             | polymarket-sport-category-census | polymarket-sport-category }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -38,7 +39,9 @@ transactional session and RETURNS its own before/after census in the response bo
      push, which answers whether this comment is decoration. Re-synced again
      2026-08-20, UX-P112, adding label-store-converge in the commit that
      registered it. Re-synced again 2026-08-21, UX-P118, adding
-     label-defect-routes in the commit that registered it.)
+     label-defect-routes in the commit that registered it. Re-synced again
+     2026-09-01, Q495, adding the two polymarket-sport-category entries in the
+     commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -267,6 +270,71 @@ _REPAIRS = {
     # unattributable.
     "pm-never-graded": (
         "app.tasks.repair_pm_never_graded",
+        "repair",
+    ),
+    # Q495 (the drain half of Q493/CERT-663): read-only census of the open
+    # Polymarket rows still filed `table_tennis`, split by how many DAYS since
+    # ingest last touched them — because staleness IS the argument for the rail.
+    # Q493 fixed the classifier and was graded correct on production (44 of the
+    # 44 rows the first post-deploy beat re-ingested migrated), but 177 of the
+    # 283 rows it did not reach had not been re-ingested in four days, so they
+    # cannot self-heal. A census timeout returns `measured: false` with a
+    # reason, NEVER a zero (gotcha #54) — a zero here would read as "drained".
+    # Never writes: `apply` is accepted and ignored.
+    "polymarket-sport-category-census": (
+        "app.tasks.repair_polymarket_sport_category",
+        "census",
+    ),
+    # Q495: the WRITE half. Re-asks `gamma/events/{id}` for each mis-filed event
+    # and stores the answer of the SHIPPED ingest cascade (`_tags_to_category` +
+    # `resolve_event_category`), run byte-for-byte as `_process_event_batch`
+    # runs it. It contains NO sport rules of its own — a DB-only rule would be a
+    # second classifier free to drift from the poller, and the tags are not
+    # persisted, so the venue is the only place the answer exists.
+    # Setka/TT-Cup is a CONTROL, not an exclusion: those events ride the same
+    # path and the venue's own `Table Tennis` tag keeps them put, landing in
+    # `counts["unchanged"]`. A run that changes everything is as suspect as one
+    # that changes nothing.
+    # Writes `llm_sport_category` (+ `category` on promotion) by Core UPDATE,
+    # compare-and-set on the category it selected on, so a concurrent re-ingest
+    # is never clobbered. Touches no prices, outcomes or resolution fields.
+    # Nothing is written on 429/5xx/timeout (`indeterminate`, #36), on 404
+    # (`not_at_venue`), or when the cascade returns None/"other"
+    # (`refused_other`) — each is counted, and each zero state gets its OWN
+    # terminal rather than one silent success (gotcha #53).
+    # Newest-commence-first: gotcha #41's tail-starvation is ACCEPTED and named,
+    # because Polymarket EVENT data is durable so the tail cannot rot, and
+    # `remaining_events` is reported every call so it is never silent.
+    # Paging is a keyset: `?after_date=&after_id=` from `next_cursor`.
+    # Accepts ?limit=&after_date=&after_id=.
+    # 🔴 Q496: this block used to say `after_commence`, which the dispatcher
+    # does not declare. FastAPI drops an unknown query param SILENTLY, so an
+    # operator following the comment got an inactive keyset and re-read page ONE
+    # forever while the response looked busy. The rail's signature and the
+    # forwarding filter always said `after_date`; only the prose was wrong, and
+    # no gate covered prose. `tests/test_repair_polymarket_sport_category_q496.py`
+    # now fails the build if ANY comment in this file names a param the
+    # dispatcher cannot pass.
+    # The default `limit` is safe to run as documented: the rail's own budget is
+    # derived from the 30s router wall (Q496), so an over-running call returns a
+    # partial page WITH its cursor instead of an H12 with no body.
+    # Read `scan_exhausted`, NOT `remaining_events`, to know when you are done —
+    # the latter counts the suspect category, which legitimately contains the
+    # Setka control and so has a positive floor.
+    # CERT-667/CERT-670: four terminals mean PAUSED, not finished, and all four
+    # hand back a cursor that RETRIES the row rather than stepping over it —
+    # `paused_unresolved` (the venue did not answer), `paused_write_timeout` (it
+    # answered but the UPDATE did not land inside its budget, almost always a row
+    # lock held by the ordinary poller), `paused_target_timeout` (the page
+    # SELECT itself did not finish; nothing was examined) and
+    # `paused_pool_timeout` (no pooled database connection came free inside the
+    # client bound, so the statement never reached PostgreSQL at all — retrying
+    # immediately usually just queues behind the same saturation). Re-invoke with
+    # `next_cursor` on any of them. None of the four is a verdict on any event.
+    # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
+    # state, not a standing job.
+    "polymarket-sport-category": (
+        "app.tasks.repair_polymarket_sport_category",
         "repair",
     ),
     # #1796/#1902 (queue 369): the attended event-CREATE consumer. Alex approved

@@ -69,3 +69,16 @@ pytest>=7.4.4
 pytest-asyncio>=0.23.3
 black>=24.1.0
 ruff>=0.1.13
+# Real Postgres parser for the staged-census contract guard (CAL-P164/P165).
+# `test_calibration_staged_census_contract_p164.py` reads the columns the frozen
+# statement actually EMITS out of the rendered SQL, because `AS <name>` occurs all
+# over the CTE ladder and only the outer projection is the contract. Declared here
+# because CI installs from this file alone: the guard was importing sqlglot while
+# the manifest never named it, so it collected only on a machine that happened to
+# have it. Lower bound is the version the guard was proven against, not a guess.
+# The `<31` is NOT decoration. A bare `>=30.14.0` resolves to 30.17.0 in CI today,
+# a version this sandbox cannot install to test (the venv pip has no index access),
+# and `named_selects` returning something other than the outer projection would red
+# the whole backend job rather than one test. Pinned to the proven major; widen it
+# by testing it, not by deleting it.
+sqlglot>=30.14.0,<31

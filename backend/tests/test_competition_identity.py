@@ -308,10 +308,41 @@ async def test_the_stored_envelope_carries_the_competition_block():
 
     assert built["competition"]["slug"] == "the-masters"
     stored = json.loads(rc.store[cache_mod.cache_keys("event:golf:the-masters").primary])
-    assert stored["competition"]["next_edition"]["start"] == "2027-04-08", (
+
+    # LAT-P181 — this used to assert `== "2027-04-08"`, and it was measured to go
+    # red on **2027-04-12**: `majors_calendar.yaml` is a FORWARD horizon file
+    # whose last Masters entry ends 2027-04-11, so the day after it, the "next"
+    # edition is a different one and eventually None.
+    #
+    # 🔴 THE INTENT BEHIND THE LITERAL WAS A REMINDER — "keep the majors calendar
+    # populated" — and that intent is legitimate. What is not legitimate is
+    # collecting it here, because the only way a test can deliver a reminder is
+    # by taking `deploy` down on the day it comes due. It has been moved to
+    # `horizon_sentinel`, which files an issue and blocks nothing
+    # (`test_horizon_calendar_exhaustion.py`).
+    #
+    # What is left is this test's actual subject, stated without a date: the
+    # block that `competition_block` computes has to SURVIVE stripping,
+    # quality-taking and stamping into the stored payload. Comparing stored
+    # against freshly-computed is exactly that claim, and it is true at every
+    # clock.
+    expected = ci.competition_block("event:golf:the-masters", datetime.now(timezone.utc))
+    assert stored["competition"] == expected, (
         "the block reached the return value but not the STORED payload — every "
         "reader after the first TTL would see a page with no next edition"
     )
+    # ...and the comparison must not be two Nones agreeing with each other. If
+    # the calendar has genuinely run out, `next_edition` is None for a real
+    # reason and this assertion would be vacuous, so it is stated rather than
+    # assumed — and it is a `skip`, not a failure, because an empty calendar is
+    # the sentinel's news to deliver and not a reason to stop deploys.
+    if expected.get("next_edition") is None:
+        pytest.skip(
+            "majors_calendar.yaml has no future Masters edition, so the "
+            "survives-storage claim cannot be made about a populated block. "
+            "horizon_sentinel files this; it is not a deploy gate."
+        )
+    assert stored["competition"]["next_edition"]["start"]
 
 
 @pytest.mark.asyncio

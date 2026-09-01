@@ -17,6 +17,25 @@ func formatProbability(_ value: Double, renderedPercent: Int? = nil) -> String {
     return "\(Int(pct.rounded()))%"
 }
 
+/// The absent-value marker for a number we do not have. `ladderPercent` already
+/// returns this for a nil rung; the two spellings must not drift, and
+/// `MissingProbabilityRenderTests` fails if they do.
+let absentProbabilityMarker = "\u{2014}"
+
+/// A probability we do not have is not a probability of zero.
+///
+/// `formatProbability(x ?? 0)` renders "<1%" — a confident claim that the outcome
+/// is nearly impossible — for a row whose price simply never arrived. The backend
+/// serialises "no price" and "priced at exactly zero" identically as `null`, so no
+/// client can tell those apart and none may pretend to.
+///
+/// Callers holding a genuine `Double` keep calling `formatProbability` directly;
+/// this is for the ones holding an optional straight off the wire.
+func formatProbabilityOrDash(_ value: Double?, renderedPercent: Int? = nil) -> String {
+    guard let value else { return absentProbabilityMarker }
+    return formatProbability(value, renderedPercent: renderedPercent)
+}
+
 /// Format a future date as a compact countdown: "2h 15m", "35m", "3d 5h".
 func formatCountdown(from date: Date) -> String? {
     let interval = date.timeIntervalSinceNow

@@ -1,17 +1,28 @@
 # CALIBRATION SCORECARD
 
-## 🎯 THE NEEDLE: **29 / 49 cells at bar** — `2026-08-28T20:37:41Z`
+## 🎯 THE NEEDLE: **31 / 49 cells at bar** — `2026-08-31T04:37:36Z` ⚠️ *census is STALE, see below*
 
 *Cells at bar = material cells (n ≥ 1,000) NOT queued, scored against the bars Alex ratified on
 2026-08-28: **A 2.5 pp / B 3.0 pp / C 3.0 pp** (§1b). **FIXED = 49/49 AND Alex's eyeball on the
 calibration page confirming it is up to standard.** His sign-off is the final gate, not the number
 alone. Series starts here.*
 
-**Published curve: 1.89 pp** (`mce_closing_line`, CI [0.87, 1.98]) — **🟡 → FLAT-TO-WORSE over 30 days.**
+**Published curve: 1.86 pp** (`mce_closing_line`, CI [0.84, 1.95]) — **🟢 → IMPROVING, and this is
+the first move that is not drift.**
 1.23 pp (2026-07-24) → 1.88 pp (2026-08-20) → 1.90 pp (2026-08-27) → 1.90 pp (2026-08-28 `17:33Z`)
-→ **1.89 pp (2026-08-28 `20:37Z`)**. The last point is the first DOWN move this page has recorded
-— queued excess-outcomes 480,342 → **455,783** on the old flat bar — and it is **drift, not
-progress**: nothing has shipped into the producer since 2026-08-13. See §3.
+→ 1.89 pp (2026-08-28 `20:37Z`) → **1.86 pp (2026-08-31 `04:37Z`)**. Cells at bar **29 → 31**;
+queued excess-outcomes 455,783 → **455,808**. Two cells crossed their bar against the ratified
+bars, which is the metric the finish-line ruling names.
+
+> 🔴 **CAL-P159, 2026-08-31 — the producer has been dark for 13 beats and the number above is
+> frozen at `04:37Z`.** The instrument reports it itself: `availability: "stale"`,
+> `producer_stalled: true`, `producer_beats_missed: 13`. The hourly `:15` beat has not published
+> since, so **every rule merged after `04:37Z` is currently worth ZERO on this page** — including
+> three curve-affecting fixes that are merged AND deployed (Heroku v3956/v3957) but have never
+> reached a published census: `67f5a6d3` (dedup join grouped on two of five columns — 36.65% of
+> published rows duplicated), `fd033079` (rank 6 deleted, crypto is 99.5% metal) and `9c9f7abf`
+> (a lone claim published iff it WON). The 31/49 above does **not** include them. Restoring the
+> publish is therefore not maintenance — it is the pending curve delta. Diagnosis: §10.
 
 *Re-run: `python3 backend/scripts/calibration_scorecard.py --live --record --markdown`.
 Everything on this page is folded from the payload `https://api.bainluck.com/api/calibration`
@@ -954,11 +965,11 @@ uses the directive's rule: **not deployed and re-measured = ZERO.** Re-render wi
 | # | published cell | cls | ECE | n | gap | bar | excess | σ | excess-outcomes | mechanism known? | status |
 |--:|---|:-:|--:|--:|--:|--:|--:|--:|--:|---|---|
 | 1 | `polymarket/baseball` | B | 4.80 | 43,768 | +3.03 | 3.0 | +1.80 | 7.5 | 78,782 | ✅ **named, designed AND RULED (CAL-P117 §6c, Alex 2026-08-28 "EXCLUDE NOW + FIX WRITER")** — 54.4% is `Player Props` containers whose published price is a manufactured coin flip. K′ → **2.71 pp PASS**, 17,827 rows. Exclusion is **TEMPORARY BY DESIGN**, §6f | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6f) |
-| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | **ZERO** — ruled, unbuilt (disclosure surface BUILT, §6d) |
-| 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | **ZERO** — designed, unbuilt |
+| 2 | `kalshi/economics` | C | 5.29 | 28,613 | −0.47 | 3.0 | +2.29 | 7.8 | 65,524 | ✅ **named, designed AND RULED (CAL-P114 §6b, Alex 2026-08-28 option b)** — 99.7% cumulative index ladders; rules E+E2+E3 → 2.61 pp PASS, **approved with disclosure** | 🔨 **BUILT by CAL-P162** (RULE E + the `(kalshi, economics)` tuple), awaiting cert. **E2 withheld under 13-CAL**, so the landing number is RULE E's **3.00**, not 2.61 — *at* the bar, zero margin |
+| 3 | `polymarket/esports` | B | 7.59 | 14,053 | +6.02 | 3.0 | +4.59 | 10.9 | 64,503 | ✅ **named and designed (CAL-P112, §6a; re-checked on the exact rail, CAL-P114)** — the 1-winner tail `esports_multi_bundle_filter` cannot reach | 🔨 **BUILT by CAL-P162** on the same mechanism as rank 2. **Reduced, NOT crossed off** — 7.59 → 3.29, still over its 3.0 bar; excess 64,503 → ~3,371 |
 | 4 | `polymarket/soccer` | B | 3.42 | 106,803 | +2.16 | 3.0 | +0.42 | 2.8 | 44,857 | ❌ **none — the named mechanism was measured on the published cell and REFUSED (CAL-P118, §6e)**; O/U ladder coherence reaches 7.4% of the cell and moves it **+0.03 pp, worse on both holdout halves** | **ZERO** — and no longer designed |
 | 5 | `odds_api_bookmaker/basketball_nba` | A | 5.18 | 10,186 | +1.03 | **2.5** | +2.68 | 5.4 | 27,298 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 573 games behind these rows, so the board’s σ counts one outcome ~17.8x. **σ = 1.28, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
-| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | **ZERO** — designed, unbuilt; the rule **deletes the cell** (3 rows → absence) |
+| 6 | `kalshi/crypto` | C | 7.60 | 4,565 | +1.84 | 3.0 | +4.60 | 6.2 | 20,999 | ✅ **named and designed (CAL-P121, §6h)** — the cell is **99.5% metal**, not crypto — gold/silver/lithium/nickel threshold ladders the LLM relabelled (exactly 1 of 4,566 rows is a cryptocurrency market) — and 99.9% is `bundle_multiwin`. **RULE C** = one tuple on rank 2's already-ruled allowlist → removes 4,563 of 4,566 rows | 🟢 **BUILT AND DEPLOYED 2026-08-30 as `fd033079`** (D12 freeze exception). Not yet PUBLISHED — the rebuild that would show it has never completed a beat. The rule **deletes the cell** (3 rows → absence), so the board's denominator goes 49 → 48 on the next published curve |
 | 7 | `odds_api_bookmaker/baseball_mlb_preseason` | A | 8.24 | 3,253 | −7.67 | **2.5** | +5.74 | 6.5 | 18,672 | ❌ none — and none is owed. CAL-P120 (§6g) folded the cell at GAME grain: 217 games behind these rows, so the board’s σ counts one outcome ~15.0x. **σ = 1.69, under the 2.0 gate** | **NOT ESTABLISHED — do not work (CAL-P120)** |
 | 8 | `kalshi/entertainment` | C | 5.21 | 8,355 | +1.07 | 3.0 | +2.21 | 4.0 | 18,465 | ✅ **named and measured (CAL-P122, §6i)** — the exit-exam's settlement-timing lead is refuted cell-wide (`moved` 4.96 vs `unmoved` 6.37). 4.7% of the cell is a class that **cannot contain a loss**: `clean_vms`' `has_winner >= 1` drops **432 authoritative graded losses** and keeps 395 winners. **The honest cell is 6.30 on n 8,850**, and the σ shortcut would have demoted it (1.74σ bound vs **4.66σ measured**) | **ZERO — and NO RULE IS BANKED.** Every passing policy deletes the filtered class; the same rule on the corrected population reads 5.75 and fails. **Alex: 12-CAL + 13-CAL (HOLD RULE E2)** |
 | 9 | `kalshi/golf` | B | 3.88 | 20,500 | +3.72 | 3.0 | +0.88 | 2.5 | 18,040 | ⚠️ `golf_placeholder_filter` live since 07-09 | **shipped, insufficient** |
@@ -2071,6 +2082,61 @@ instrument this board is missing, and it is bigger than either cell.
 
 ---
 
+## 6k. 🔨 THE FIRST BUILD — CAL-P162, and §4's "40 merges, zero published movement" gets its answer
+
+**Two ranked cells left the designed column and entered the built one, on ONE mechanism and in ONE
+deploy.** Branch `program/calibration-119`, awaiting cert. This is the first entry on this page
+whose status is neither *designed* nor *measured* nor *refused*.
+
+### What was built
+
+**RULE E — the bundle test becomes STRUCTURAL.** A market of `>=3` captured outcomes that is **not
+a proved-exclusive field** is excluded when it resolved with `>=2` winners (the shipped test,
+unchanged) **OR** its published price sum exceeds `MEX_NORMALIZE_THRESHOLD` (1.15). Plus
+`('kalshi','economics')` on the `(source, category)` allowlist, plus the `nonexclusive_bundle_filter`
+payload key with per-cell counts — the disclosure half of Alex's rank-2 ruling, whose page copy has
+been built and rendering nothing since CAL-P114.
+
+| cell | before | after (measured, exact rail) | crosses off? |
+|---|--:|--:|---|
+| rank 2 `kalshi/economics` | 5.29 | **3.00** | ✅ — *at* the bar, **zero margin** |
+| rank 3 `polymarket/esports` | 7.59 | **3.29** | ❌ — excess 64,503 → ~3,371, still over its bar |
+
+**One mechanism reached both, which is why they shipped together.** The 1-winner tail the shipped
+realization test could never see is the entire published residue of rank 3 and 13.4% of rank 2.
+
+### 🔴 Two things withheld, on purpose, and both are owed to Alex
+
+1. **RULE E2 was NOT built, against directive 929's instruction.** 929 says build rank 2 as
+   E+E2+E3. §6i's **13-CAL** — this page's own finding — says E2 must not land before 12-CAL is
+   decided, because E2's stated justification was **measured false** (the capture is two-sided; the
+   *filter* is one-sided). Landing a published exclusion whose stated cause this lane disproved is
+   §6f clause 4's defect exactly. **The cost is the margin: 3.00 instead of 2.61.**
+2. **RULE E3 was NOT built.** It is a *global* widening of `malformed_binaries`, sized on **116
+   esports outcomes**, with an unmeasured curve-wide blast radius. Parked, not dropped.
+
+### The correction this queue makes to the board
+
+**Rank 6 was already done.** Directive 929 listed `kalshi/crypto` (20,999) as "ZERO, unbuilt"
+because it read §6's 08-28 table; the rule shipped **2026-08-30 as `fd033079`** under D12. The
+board and the directive were both a deploy behind the code. Of 929's 229,808 excess-outcomes,
+**150,526 are now covered by shipped code** and the remainder is almost entirely rank 1.
+
+### The prediction, recorded before the code
+
+`artifacts/cal-p162/PREDICTION.md`: **31/49 → 32/48 cells at bar**, headline **1.86 → 1.78 pp**
+(band 1.70–1.86). The falsifier is stated there: if `kalshi/economics` does not land at or under
+3.0 on the published population, RULE E must be **re-argued, not re-tuned**. If the headline
+*rises*, the first suspect is de-cancellation (§2), not a broken filter.
+
+> **What this does not claim.** Nothing here has published. The unit bank stood at **75/128** when
+> this was built and this deploy resets it to zero by design. §4's charge — *"40 merges in 14 days
+> and not one of them changed what publishes"* — is answered only when the curve republishes and
+> the prediction above is graded. **A build is not a ship.** What has changed is that the thing
+> waiting on the rebuild is now a rule rather than another instrument.
+
+---
+
 ## 7. ~~The first test of the loop~~ — the prediction, and the measurement that refuted it
 
 The directive names the soccer/quantity ladder rule as the first cell driven through
@@ -2249,6 +2315,66 @@ diagnosis — that is the point.**
    not a failure.
 6. **Fix the twin** (Blocker 2) so the *next* rule's delta is predicted by measurement rather than
    by the arithmetic in §7.
+
+---
+
+## 10. CAL-P159, 2026-08-31 — why the curve is frozen at `04:37Z`, in one causal chain
+
+**The producer is not crashing, not deadlocked, and not misconfigured. It is losing a throughput
+race, and the race was restarted from zero by our own deploy.** Read beat-by-beat from the gauge
+ring (`GET /api/admin/calibration-beat-gauges?full=true`), not inferred:
+
+| beat (UTC) | terminal | `units_banked` | `rebuild_units_banked` |
+|---|---|---|---|
+| 02:19 | complete | 128 | 0 |
+| 03:36 | complete | 128 | 13 |
+| 04:37 | **complete — last published census** | 128 | 25 |
+| 05:37 | failed (publish gate: `population_shrink` −10.5%) | 128 | 36 |
+| 06:37 → 17:37 (13 beats) | **cancelled ×13** | — | — |
+
+Then the raw gauges on the most recent beat (`17:37Z`), which is where the story actually is:
+
+```
+staged:units_done      = 60      staged:units_planned  = 128
+staged:units_completed_this_beat = 5     staged:units_this_beat = 7   (2 cancelled)
+staged:unit_ms_mean    = 187,139         staged:cursor_resume  = 0
+staged:units_drifted   = 46  of  staged:units_drift_checkable = 55
+```
+
+**The chain:**
+
+1. `06:04Z` — Heroku **v3956/v3957** deploy the three curve-affecting D-rules (`67f5a6d3`,
+   `fd033079`, `9c9f7abf`). All three edit `backend/app/tasks/precompute_calibration.py`; two also
+   move `calibration_fingerprint_derived_map.json`.
+2. `_main_input_fingerprint()` hashes the **source** of `compute_calibration_payload`,
+   `_calibration_population_ctes` and `_main_futures_sql`. It moved `b1820040 → 75faaed6`.
+3. `_load_main_checkpoint()` returns **`INVALIDATE`** on a fingerprint mismatch — by design, and
+   the design is right: *"a payload half-built by the old code and half by the new is worse than
+   one that took an extra beat."* **The 128-unit bank went to 0.**
+4. Thirteen beats have rebuilt it to **60/128** at ~5 units/beat. At `187 s/unit` against a
+   ~`1,188 s` phase budget, only ~6-7 unit attempts fit in a beat, so ~**14 more beats** are needed.
+
+**Root cause of the 187 s/unit — and it is not in calibration code.** Production Postgres is
+`standard-0`, **66.1 GB against a 64 GB cap (103.3%)**, per-unit cost up 2.3× from `80,658 ms`.
+🟢 **Alex began the plan upgrade at 11:02 PT today** (v3958/v3959, `Upgrading Plan: Replacing
+Primary`). The unit bank lives in **Redis**, not Postgres, so **the 60 banked units survive the
+primary swap.**
+
+**Three things follow, and the third is the one that matters today:**
+
+* `units_drifted: 46/55` is a **disclosure, not a rebuild trigger** — `roster_drift()` counts, it
+  does not discard (that was CAL-P016's mistake, deliberately reverted). Drift does not block
+  convergence; only throughput does.
+* The three pending fixes are **worth a real curve delta** — the dedup-join bug alone duplicated
+  **36.65% of published rows**. They are merged, deployed, and have never reached a census. They
+  land on the published curve at the first successful publish.
+* 🔴 **THE SEQUENCING CONSTRAINT. Any further edit to the fingerprinted source resets 60 → 0 and
+  costs another ~13 beats.** That includes *any new cell rule*, because cell rules live in exactly
+  those functions. So **the correct calibration action today is to ship no rule change** — shipping
+  one would destroy the pending delta from three fixes already paid for, to chase a fourth that
+  could not be re-measured either. Under the finish-line ruling that trade is strictly negative.
+  Checked at `18:1xZ`: the only unmerged branches touching that file are `calibration-94/-96/-99`,
+  all ruling-009 frozen and not in today's merge queue. **Keeping it that way is the ship.**
 
 ---
 

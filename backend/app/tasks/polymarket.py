@@ -17,7 +17,11 @@ from app.utils.feed_market_quality import (
     FEED_PHANTOM_MIN_SPREAD,
     is_fabricated_midpoint,
 )
-from app.utils.winner_field_coherence import count_near_certain, field_is_incoherent
+from app.utils.winner_field_coherence import (
+    DUPLICATE_CONDITION_LEG_SQL,
+    count_near_certain,
+    field_is_incoherent,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
@@ -136,6 +140,15 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "wta": "tennis",
     "wimbledon": "tennis",
     "us open tennis": "tennis",
+    # Q493: Polymarket tags Setka/TT-Cup events "Table Tennis" (+ "Setka") and
+    # real ATP/WTA events "Tennis". Both were true all along and neither was
+    # read: "table tennis" was absent here, so a Setka event fell through to the
+    # "sports" catch-all and could only be rescued by the #1230 child-prop
+    # heuristic. Honouring the source's own tag is strictly stronger than
+    # inferring the sport from a games threshold.
+    "table tennis": "table_tennis",
+    "table-tennis": "table_tennis",
+    "setka": "table_tennis",
     "boxing": "boxing",
     "cricket": "cricket",
     "ipl": "cricket",
@@ -270,6 +283,12 @@ _SPORT_CATEGORIES = {
     "basketball", "football", "baseball", "hockey", "mma", "soccer",
     "golf", "tennis", "boxing", "cricket", "rugby", "motorsports",
     "olympics", "esports", "horse_racing", "lacrosse",
+    # Q493: present so a "Table Tennis" tag yields ("championship",
+    # "table_tennis") — byte-identical to what arm 1 has always returned. This
+    # set is read ONLY by _tags_to_category above; the link-rate denominator is
+    # a separate list (`_LINK_RATE_SPORT_CATEGORIES`, admin_matching.py) and
+    # table_tennis is deliberately absent from it, as #1230 requires.
+    "table_tennis",
 }
 
 
@@ -442,8 +461,17 @@ def resolve_event_category(
     title = title or ""
 
     # 1 — table tennis, at the group level, before anything can guess baseball.
-    if detect_table_tennis_group(group_names):
-        return "championship", "table_tennis", "table_tennis"
+    # Q493: only when the tags said nothing usable — which is arm 1's own stated
+    # precondition. Its whole justification is that a Setka parent title is a bare
+    # "Player vs. Player" with no sport keyword AND no usable tag, so the fallback
+    # would guess baseball. When Polymarket has already named the sport, there is
+    # nothing to rescue and this heuristic must not overrule it: a real US Open
+    # match tagged "Tennis" carries per-SET games props ("Set 1 Games O/U 8.5")
+    # whose totals sit below the table-tennis threshold, so the unguarded arm
+    # relabelled the entire main draw `table_tennis`.
+    if not llm_sport_category or llm_sport_category == "other":
+        if detect_table_tennis_group(group_names):
+            return "championship", "table_tennis", "table_tennis"
 
     # 2 — the tags said nothing usable.
     if not llm_sport_category or llm_sport_category == "other":
@@ -1125,10 +1153,10 @@ async def _process_event_batch(
                         if prob is None or prob <= 0:
                             continue
 
-                        # Prefer groupItemTitle (e.g., "33°F or below") over question parsing
-                        outcome_name = market.group_item_title or _extract_outcome_name(
-                            market.question, event.title
-                        )
+                        # Prefer groupItemTitle (e.g., "33°F or below") over question
+                        # parsing; Q492 rescues the case where both collapse onto the
+                        # event's own title and so name no side.
+                        outcome_name = _leg_label(market, event.title)
 
                         outcome_data.append({
                             "external_id": market.condition_id,
@@ -1222,6 +1250,15 @@ async def _process_event_batch(
                             "volume_24h": sub_volume_24h,
                             "volume_updated_at": func.now(),
                         }
+                        # Q493: repair the sport on RE-INGEST, not only at birth.
+                        # The parent's `update_set` has always carried this and
+                        # the sub-market's never did, so a group whose sport was
+                        # corrected kept its children on the stale value forever
+                        # — 306 of the 639 mis-filed US Open rows measured on
+                        # `c3143bc2` were children. Same guard as the parent:
+                        # never overwrite a real value with the "other" default.
+                        if llm_sport_category and llm_sport_category != "other":
+                            sub_set["llm_sport_category"] = llm_sport_category
                         if sub_meta_insert:
                             # MERGE, never clobber — same COALESCE(md,'{}') || idiom
                             # the backfill uses, so re-ingests and prior backfills
@@ -1553,9 +1590,11 @@ async def _process_event_batch(
                             )
                         if prob is None or prob <= 0:
                             continue
-                        outcome_name = market.group_item_title or _extract_outcome_name(
-                            market.question, event.title
-                        )
+                        # Q492: this is the parent anchor of a game-level event, and
+                        # its moneyline leg is exactly the one Polymarket sends with
+                        # no groupItemTitle — the case that produced a price labelled
+                        # with the whole matchup.
+                        outcome_name = _leg_label(market, event.title)
                         outcome_data.append({
                             "external_id": market.condition_id,
                             "name": outcome_name,
@@ -2137,6 +2176,54 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
     return None, None
 
 
+def _label_key(value: str | None) -> str:
+    """Whitespace- and case-insensitive comparison key for an outcome label."""
+    return " ".join((value or "").split()).casefold()
+
+
+def _leg_label(market, event_title: str) -> str:
+    """The display label for this market's index-0 (Yes-side) price.
+
+    Q492. Both writers below resolve ``outcome_prices[0]`` and then named it from
+    ``groupItemTitle``, falling back to question parsing. Neither names a *side*.
+    For a game-level matchup Polymarket sends the moneyline with
+    ``groupItemTitle: null`` and the question set to the event's own title, so
+    ``_extract_outcome_name``'s "short enough, use it directly" fallback labelled
+    the price with the whole matchup — a card reading
+    "US Open WTA: Iga Swiatek vs Nadia Podoroska 89.5%". 89.5% of *what*? The
+    number names no side, and the reader cannot recover one.
+
+    ``outcomes`` is the parallel array to ``outcome_prices``, so ``outcomes[0]``
+    is the only label that is definitionally the leg this price belongs to — the
+    same rule as Q489, where a CLOB tick had to land on the leg whose book it
+    was. It is used only to rescue a label that has collapsed onto the market's
+    own name; an informative ``groupItemTitle`` ("Set 1 Winner", "33°F or below")
+    is left exactly as it was.
+
+    A bare Yes/No token is not a rescue — it names no side either — so a leg that
+    can only be described by its parent's title keeps that title rather than
+    being relabelled "Yes".
+    """
+    derived = (market.group_item_title or "").strip() or _extract_outcome_name(
+        market.question, event_title
+    )
+    if _label_key(derived) != _label_key(event_title):
+        return derived
+
+    tokens = list(getattr(market, "outcomes", None) or [])
+    token = (tokens[0] or "").strip() if tokens else ""
+    if not token or _label_key(token) in _YES_NO_LABELS:
+        return derived
+    if _label_key(token) == _label_key(event_title):
+        return derived
+    return token
+
+
+# A leg labelled only "Yes"/"No" names no side, so it is never a rescue for a
+# label that has collapsed onto the market's own name (see :func:`_leg_label`).
+_YES_NO_LABELS = frozenset({"yes", "no"})
+
+
 def _extract_outcome_name(question: str, event_title: str) -> str:
     """
     Extract a clean outcome name from a Polymarket market question.
@@ -2391,15 +2478,31 @@ async def _sync_polymarket_resolved_status():
                             loser_cids.extend([cid, f"{cid}_yes"])
                             winner_cids.append(f"{cid}_no")
 
+                    # Q487: these WHERE clauses key on `external_id` alone, and
+                    # `futures_outcomes.external_id` is NOT unique — one condition
+                    # can sit on two markets under two conventions. Measured on
+                    # production: `0xeda9…e084_yes` and `…_no` each exist on BOTH
+                    # container_member 13798072 ("Will Zoë Kravitz be one of Taylor
+                    # Swift's bridesmaids?", where they are the real outcomes) AND
+                    # field market 12194657 ("Who will Taylor Swift's bridesmaids
+                    # be?", where they are duplicates of the bare `…e084` Zoë row).
+                    # One settlement writes all of them. On the field market that
+                    # crowns a bare "No" over ten named people — and unlike
+                    # `clean_resolution`, `api_settlement` IS calibration-truth
+                    # eligible, so the wrong grade reaches the published curve.
+                    # Scoped by the shared duplicate-leg rule, not by market id:
+                    # the container_member rows are the legitimate target and must
+                    # keep being written.
                     if winner_cids:
                         r_w = await session.execute(
                             text("""
-                                UPDATE futures_outcomes
+                                UPDATE futures_outcomes fo
                                 SET current_probability = 1.0,
                                     is_winner = true,
                                     resolution_source = 'api_settlement'
-                                WHERE external_id = ANY(:cids)
-                                  AND COALESCE(resolution_source, '') != 'api_settlement'
+                                WHERE fo.external_id = ANY(:cids)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                             {"cids": winner_cids},
                         )
@@ -2408,12 +2511,13 @@ async def _sync_polymarket_resolved_status():
                     if loser_cids:
                         r_l = await session.execute(
                             text("""
-                                UPDATE futures_outcomes
+                                UPDATE futures_outcomes fo
                                 SET current_probability = 0.0,
                                     is_winner = false,
                                     resolution_source = 'api_settlement'
-                                WHERE external_id = ANY(:cids)
-                                  AND COALESCE(resolution_source, '') != 'api_settlement'
+                                WHERE fo.external_id = ANY(:cids)
+                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
+                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
                             """),
                             {"cids": loser_cids},
                         )

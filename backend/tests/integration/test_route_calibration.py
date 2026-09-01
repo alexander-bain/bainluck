@@ -124,6 +124,12 @@ def _bucket_row(
         esports_bundle_excluded=0,
         kalshi_prop_threshold_excluded=0,
         weather_wide_spread_excluded=0,
+        # CAL-P168 (#1978) rank 1 — read by attribute off row 0.
+        player_props_placeholder_excluded=0,
+        player_props_placeholder_markets=0,
+        # CERT-647 (CAL-P170) — the temporary subset, same attribute read.
+        player_props_placeholder_temporary_excluded=0,
+        player_props_placeholder_temporary_markets=0,
     )
 
 
@@ -329,6 +335,10 @@ class TestCalibrationPublicEndpoint:
             # payload compatibility holds.
             "representative_tie_authority",
             "esports_multi_bundle_filter",  # Queue #159 (#1010)
+            # CAL-P162 (#1978): the disclosure half of Alex's rank-2 ruling. A
+            # NEW key deliberately — the line above is a public contract and
+            # changing its shape would break existing consumers.
+            "nonexclusive_bundle_filter",
             # Queue 299 (#1012): result authority before shape, then evidence-
             # based exclusivity. Each rung ships its own rule + live count.
             "no_winner_filter",  # rung 1: the market graded nobody

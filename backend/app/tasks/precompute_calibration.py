@@ -22,6 +22,10 @@ from app.utils.calibration_coverage_bridge import RUNG_KEYS as _COVERAGE_RUNG_KE
 from app.utils.calibration_coverage_bridge import (
     build_coverage_census as _build_coverage_census,
 )
+# CAL-P168 (#1978): R2's tolerance is the SHIPPED writer-side one, imported
+# rather than restated — the read-side exclusion and the write-side coherence
+# rule must not be able to disagree about what "the pair sums to 1" means.
+from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE
 from app.utils.resolution_authority import (
     CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL,
     CALIBRATION_TRUTH_INELIGIBLE_SOURCES_SQL,
@@ -1321,9 +1325,416 @@ ESPORTS_MULTI_BUNDLE_CATEGORY = "esports"
 # standing warning about exactly that: RULE T's category-only widening moved
 # `polymarket/tech` 8.04 -> 12.62, WORSE, and that cell is still UNMEASURED. A
 # (source, category) tuple cannot reach a cell nobody has folded.
+# CAL-P162 (#1978) — RANK 2 lands. `(kalshi, economics)` is added on Alex's
+# ruling of 2026-08-28, option (b) APPROVED WITH DISCLOSURE
+# (`artifacts/cal-p114/RULE-DESIGN-kalshi-economics.md` §9, scorecard §6d):
+# "the correlated intraday index-ladder rungs stop entering the published curve
+# (5.29 -> 2.61pp, cell stays material and PASSES), AND the removed rows are
+# disclosed on the page as a named, counted exclusion."
+#
+# WHY THIS CELL. 99.7% of `kalshi/economics` is cumulative intraday index and
+# commodity ladders — KXNASDAQ100U, KXINXU, KXDJI — published as N independent
+# rungs. `KXDJI-26JUL2814` is 76 outcomes, 76 winners, published price sum
+# 72.48; the median KXDJI market is 35 rungs / 24.5 winners / sum 21.66. These
+# rows were never competing answers to one question.
+#
+# 🔴 THIS TUPLE IS INERT — AND WORSE THAN INERT — WITHOUT RULE E'S SUM ARM.
+# 86.3% of the cell is caught by the >=2-winner arm, but the 13.4% remainder is
+# THE SAME LADDERS on a day the index landed on one rung. Excluding only the
+# multi-winner half takes the cell 5.29 -> 5.73: measurably WORSE THAN DOING
+# NOTHING (§6b policy B, "RULE T alone"). The `(source, category)` allowlist and
+# the structural sum arm are ONE deliverable and must never be split across two
+# deploys. `test_rank2_tuple_never_ships_without_the_structural_arm` is the
+# guard that says so in the suite rather than in a comment.
+#
+# 🔴 AND THE CELL LANDS *AT* ITS BAR, NOT UNDER IT. RULE E alone measures 3.00
+# against a 3.0 bar (§6b policy C). E+E2+E3 would land it at 2.61 — but E2 is
+# under scorecard §6i's **13-CAL HOLD** ("E2 must not land before 12-CAL is
+# decided") and is deliberately absent here, so this cell crosses off by 0.00 pp
+# of margin. Said before deploy, not discovered after.
+#
+# SCOPED BY SOURCE AS WELL AS CATEGORY, and this cell is the specimen that
+# proved the column is needed: under a category-only allowlist the same rule
+# takes `polymarket/economics` 3.91 -> 17.75 (CAL-P114 §5). One extra column in
+# a tuple is the difference between crossing rank 2 off and silently destroying
+# rank 15.
 NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS = (
     ("kalshi", "crypto"),
+    ("kalshi", "economics"),
 )
+
+
+# ---------------------------------------------------------------------------
+# CAL-P168 (#1978) — RANK 1, `polymarket/baseball`. K' = R1 + R2 + R3 + M1.
+#
+# Design + ruling: `artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md`
+# (Alex, 2026-08-28: **EXCLUDE NOW + FIX WRITER**). Port scope:
+# `artifacts/cal-p165/PORT-SCOPE-rank1-polymarket-baseball.md`. Prediction
+# recorded BEFORE this code: `artifacts/cal-p168/PREDICTION.md`.
+#
+# 🔴 THIS IS NOT RULE E AND MUST NEVER BE WIRED INTO IT. The two filters share a
+# payload key and a disclosure bullet; they share NO predicate. Extending RULE E
+# to this cell was MEASURED AND REFUSED: `is_nonexclusive_bundle` on
+# polymarket/baseball reads **8.35** and RULE E's own sum arm reads **9.02**
+# against a 4.71 control — nearly double the error (design §2). The sum ladder
+# here is not monotone: the best-calibrated class in this cell is the one that
+# is NOT a partition (sum 2-5, 2.28 pp) and the worst is the one that looks most
+# like one (sum <= 1.15, 9.02 pp). **Whatever is wrong here is not the bundle
+# shape**, so `('polymarket','baseball')` is deliberately ABSENT from
+# NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS above and carries its own allowlist below.
+#
+# WHAT IS WRONG IS OUR WRITER, NOT THE MARKET (design §3). Market 56675315,
+# `Miami Marlins vs. Houston Astros - Player Props`, 37 legs, published sum
+# 19.13: `Yordan Alvarez: Home Runs O/U 1.5` was quoted 0.0355 by the market and
+# PUBLISHED by us at 0.5005. The opening column is a coherent monotone prop
+# ladder; the published column is a spray of 0.5000/0.5005/0.5050/0.9050/0.0950
+# that carries no relationship to it. Cell-wide, corr(published, open) falls
+# 0.897 -> 0.677 inside these containers, and 242 legs are published in
+# [0.45,0.55] where only 39 OPENED there — a **6.2x manufacture of coin flips**
+# on a population whose realized base rate is 0.18. The curve publishes
+# COALESCE(calibration_probability, opening_probability) (gotcha #144 /
+# ruling 103), so the curve publishes the spray.
+#
+# 🔴 THE CONTROL EARNS THE RULE THE RIGHT TO EXIST. Rows that moved just as far
+# from their open but landed somewhere OTHER than 0.50 read ECE 12.62 with a
+# TWO-SIDED -2.92 gap, while rows forced INTO [0.45,0.55] read 44.36 with
+# ECE == gap (every bin errs one way: published ~0.50, loses). Ordinary line
+# movement and a placeholder overwrite are distinguishable, so M1 may name one
+# without deleting the other. Do not widen M1's band or drop its drift floor
+# without re-folding that control.
+#
+# EVERY ARM IS LOAD-BEARING; ONLY THE CONJUNCTION PASSES (design §4/§7):
+#
+#     policy                       n        ECE    holdout OLD / NEW
+#     control                      41,127   4.71   6.83 / 4.96
+#     R1+R2 (the banked pair)      39,878   4.19   fails
+#     R1+R2+R3                     17,961   2.79   2.99 / 2.56
+#     K' = R1+R2+R3+M1             17,827   2.71   2.90 / 2.63   <- ships
+#
+# 🔴 DROPPING R2 ALONE PUTS THE CELL BACK OVER THE BAR AT 3.10, even though R2's
+# solo delta is -0.11 pp. A rule whose solo delta is a rounding error can still
+# be the arm that decides a pass — CAL-P112's "T and E ship together" on a new
+# cell. Do not prune an arm because it looks inert in isolation.
+#
+# 🔴 AND THE HOLDOUT REFUSED FOUR POLICIES THE POOLED NUMBER ADMITTED. R1+R2+M1
+# reads **2.16** — the best pooled ECE in the whole design — and leaves the OLD
+# half at 5.13, because M1 is a FORWARD signature (1,525 of its 1,739 props rows
+# are in the NEW half). Shipping the best pooled number would have fixed nothing
+# about the back catalogue. Likewise M2 (the >0.10 rung) pushes OLD back over at
+# 3.06 and is deliberately NOT an arm, and R3-restricted-to-sum>15 passes pooled
+# at 2.94 while failing BOTH halves. **Never re-tune these on a pooled number.**
+#
+# THE HONEST EDGE, carried from design §4 rather than discovered after deploy:
+# 2.71 against a 3.0 bar is **0.77σ under it** (σ = 50/√17,827 = 0.37). A pass,
+# and not a comfortable one. And because the excluded population is expected to
+# RETURN (see the temporary map below), this cell will be re-scored when it does.
+
+#: K''s own `(source, category)` allowlist — NOT RULE E's, for the measured
+#: reason above. Scoped by SOURCE as well as category: CAL-P114 measured what
+#: category-only scoping costs (`polymarket/economics` 3.91 -> 17.75), and that
+#: correction is inherited here rather than re-derived.
+PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS = (("polymarket", "baseball"),)
+
+#: R1's exact value. Scoped to 0.5000 and deliberately NOT a tolerance band: the
+#: neighbouring 0.5005 has the identical signature at 1/18th the size, and
+#: widening to a band turns a self-evidencing exact match into a judgement call
+#: (CAL-P094). That widening is a separate ruling with its own census.
+PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE = "0.5000"
+
+#: R3's title match. A rule keyed on a provider's market TITLE is a real
+#: weakness, named in design §6.1: it breaks the day Polymarket renames the
+#: container. §7 measured the candidate successor (M1) and found it a
+#: COMPLEMENT, not a replacement — M1 removes 168 rows the name arm cannot see
+#: (ECE 12.87, forced-to-half legs in non-props markets) and R3 removes 19,980
+#: rows M1 cannot see (the props residual, 28.36 on the OLD half). The weakness
+#: is reduced, not removed, and the design ships with it stated.
+PLAYER_PROPS_NAME_PATTERN = "%player props%"
+
+#: M1's band and drift floor (design §7). The band is where the writer parks a
+#: manufactured price; the floor is what separates it from ordinary line
+#: movement. Both are pinned by the control class described above.
+PLAYER_PROPS_MIDPOINT_BAND_LO = 0.45
+PLAYER_PROPS_MIDPOINT_BAND_HI = 0.55
+PLAYER_PROPS_FORCED_DRIFT_MIN = 0.25
+
+
+def player_props_pair_shape_columns(outcome_alias: str = "fo") -> str:
+    """R1/R2's per-market pair aggregates, as a SELECT column list. Pure.
+
+    Aggregated over ALL outcomes of the market — the same basis
+    ``market_result_shape`` always used, so the shape reflects the market as
+    CAPTURED rather than as published. This mirrors the ``pr`` rollup in
+    ``scripts/calibration_cell_exact.py`` that measured the design, and
+    ``test_player_props_placeholder_kprime.py`` asserts the two agree.
+    """
+    o = outcome_alias
+    return (
+        f"COUNT(*) FILTER (WHERE lower(btrim({o}.name)) = 'over') AS pp_named_over,\n"
+        "                    "
+        f"COUNT(*) FILTER (WHERE lower(btrim({o}.name)) = 'under') AS pp_named_under,\n"
+        "                    "
+        f"COUNT(*) FILTER (WHERE ROUND({o}.opening_probability, 4) "
+        f"= {PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE}) AS pp_half_legs,\n"
+        "                    "
+        f"SUM({o}.opening_probability) AS pp_open_sum,\n"
+        "                    "
+        f"COUNT(*) FILTER (WHERE {o}.opening_probability IS NOT NULL) "
+        "AS pp_open_legs,\n"
+        "                    "
+        f"SUM(COALESCE({o}.calibration_probability, {o}.opening_probability)) "
+        "AS pp_pub_sum,\n"
+        "                    "
+        f"COUNT(*) FILTER (WHERE COALESCE({o}.calibration_probability, "
+        f"{o}.opening_probability) IS NOT NULL) AS pp_pub_legs"
+    )
+
+
+def two_leg_over_under_clauses(shape_alias: str = "mrs") -> str:
+    """The shape half of BOTH pair arms: exactly two legs, named Over/Under.
+
+    Hoisted because R1 and R2 agree on what an O/U pair IS and two copies of
+    one predicate in one query is how a mirror stops mirroring (CERT-403B, at
+    the shape level). Rendered without its own parentheses so each arm appends
+    its value clauses inside one bracket.
+    """
+    a = shape_alias
+    return (
+        f"{a}.n_outcomes = 2 AND {a}.pp_named_over = 1 AND {a}.pp_named_under = 1"
+    )
+
+
+def half_spike_pair_predicate(shape_alias: str = "mrs") -> str:
+    """R1 — TRUE when BOTH legs of an O/U pair open at exactly 0.5000. Pure.
+
+    ``pp_half_legs = 2`` with ``n_outcomes = 2`` says *every* leg of this market
+    is exactly 0.5000, which is the arithmetic signature of the writer defect:
+    the Over leg took 0.5 from an untraded market's precomputed price and the
+    Under leg was written as its complement ``1 - 0.5`` (CAL-P094: 924/924 such
+    Under legs carry neither a bid nor an ask). **A market with ONE 0.5000 leg
+    is an ordinary even-money price and is KEPT** — that criterion lives in the
+    predicate rather than in prose.
+    """
+    a = shape_alias
+    return f"({two_leg_over_under_clauses(a)} AND {a}.pp_half_legs = 2)"
+
+
+def published_pair_coherence_predicate(shape_alias: str = "mrs") -> str:
+    """R2 — the OPENING pair sums to 1 but the PUBLISHED pair does not. Pure.
+
+    Both legs leave. The opening pair being coherent is what makes this a
+    statement about our publication rather than about the market: the market
+    quoted a consistent two-sided price and the published copy of it does not
+    add up. Tolerance is the shipped ``PAIR_SUM_TOLERANCE`` (0.02), imported
+    rather than restated so it cannot drift from the writer-side rule.
+    """
+    a = shape_alias
+    return (
+        f"({two_leg_over_under_clauses(a)}\n"
+        f"                        AND {a}.pp_open_legs = 2 AND {a}.pp_pub_legs = 2\n"
+        f"                        AND ABS({a}.pp_open_sum - 1) <= {PAIR_SUM_TOLERANCE}\n"
+        f"                        AND ABS({a}.pp_pub_sum - 1) > {PAIR_SUM_TOLERANCE})"
+    )
+
+
+def player_props_container_predicate(
+    name_expr: str = "mi.market_name", sum_expr: str = "bps.cp_sum"
+) -> str:
+    """R3 — a Player Props container whose published prices sum past 1.15. Pure.
+
+    🔴 THE THRESHOLD IS RULE E'S OWN CONSTANT (``MEX_NORMALIZE_THRESHOLD``), NOT
+    A FITTED ONE, and that is the single most useful fact in the design: the
+    holdout REFUSED sum > 15 (passes pooled 2.94, fails both halves) and sum > 5
+    (OLD 3.06, over the bar) and admitted the threshold that was already in the
+    codebase. It is doing real work rather than passing everything — the props
+    containers BELOW it (1,077 rows) read 2.15 and 2.61 and are left in.
+    """
+    return f"({name_expr} ILIKE '{PLAYER_PROPS_NAME_PATTERN}' AND {sum_expr} > {MEX_NORMALIZE_THRESHOLD})"
+
+
+def forced_midpoint_predicate(outcome_alias: str = "fo") -> str:
+    """M1 — the published price landed in [0.45,0.55] from an open >0.25 away.
+
+    Reads ``calibration_probability`` DIRECTLY rather than ``{curve_price}``,
+    and that is deliberate on two counts. Whether our writer overwrote a price
+    is a property of THAT column, not of whichever horizon a reader is on — so
+    M1 is horizon-invariant, and a row's membership cannot change because the
+    curve is being re-expressed at a different snapshot. And a row with no
+    ``calibration_probability`` at all was never overwritten: it is the
+    ``opening_probability`` FALLBACK (design §3's 123-row class, ECE 2.78), it
+    is KEPT, and a NULL here yields NULL from BETWEEN and falls through.
+    """
+    o = outcome_alias
+    return (
+        f"({o}.calibration_probability BETWEEN {PLAYER_PROPS_MIDPOINT_BAND_LO} "
+        f"AND {PLAYER_PROPS_MIDPOINT_BAND_HI}\n"
+        f"                     AND ABS({o}.calibration_probability - "
+        f"{o}.opening_probability) > {PLAYER_PROPS_FORCED_DRIFT_MIN})"
+    )
+
+
+PLAYER_PROPS_PLACEHOLDER_RULE_TEXT = (
+    "Excludes Polymarket baseball rows whose PUBLISHED price is ours rather than "
+    "the market's. Four arms, every one load-bearing: both legs of a two-leg "
+    "Over/Under market opening at exactly 0.5000 (the placeholder pair, where the "
+    "Under leg was written as 1 minus a price the Over leg never traded); a "
+    "two-leg pair whose OPENING prices sum to 1 but whose PUBLISHED prices do "
+    "not; a 'Player Props' container whose published prices sum past 1.15; and "
+    "any row published into [0.45, 0.55] having opened more than 0.25 away. That "
+    "last arm is separated from ordinary line movement by measurement, not "
+    "assertion: rows that moved as far but landed elsewhere error two-sidedly "
+    "and are KEPT. The market's own quote is intact in every case — only our "
+    "copy of it is wrong. Read-side only; never mutates resolutions."
+)
+
+#: The cells whose exclusion ENDS when a named defect elsewhere is repaired, and
+#: the condition that ends it. Rendered by the page as
+#: "<cell> — returns when <condition>", so the value is a lowercase clause.
+#:
+#: 🔴 TEMPORARY BY DESIGN (design §9.2), and the four clauses of Alex's ruling
+#: that depend on it:
+#:   1. this allowlist entry is EXPECTED TO BE REMOVED — it is a hold placed on
+#:      a cell while a named defect elsewhere is repaired, not permanent scope;
+#:   2. the rows return as GOOD DATA — not deleted, not re-graded, not written
+#:      off. When the writer publishes the market's own quote again, M1 stops
+#:      matching, R3 stops carrying them, and the count falls on its own;
+#:   3. the disclosure is RENDERED FROM THIS MAP, never hard-coded — when the
+#:      backend stops emitting the cell the sentence leaves the page without a
+#:      copy change. A hard-coded line would still be there a year after the fix;
+#:   4. 🔴 THE FALSIFIER: if the writer fix lands and the TEMPORARY count does
+#:      NOT empty, then design §3 was WRONG — the near-0.50 spray was not the
+#:      writer — and the exclusion must be **re-argued from scratch, never
+#:      extended**. An exclusion that outlives its stated cause is one with no
+#:      stated cause.
+#:
+#: Note what this does NOT promise. R1 and R2 are the HISTORICAL residue of the
+#: same family — 1,258 of their 1,284 rows sit in the OLD holdout half — and
+#: fixing the writer forward does not un-write the back catalogue, so those arms
+#: are expected to STAY. What empties is the M1/R3 population.
+#:
+#: 🔴 CERT-647 (CAL-P170) — THAT PARAGRAPH WAS TRUE AND THE SHIP DID NOT OBEY IT.
+#: This map was emitted unconditionally from the constant and `temporary_excluded`
+#: carried the full four-arm union, so the page rendered clause 2's promise over
+#: a population whose majority the paragraph above says will not return, and
+#: clauses 3 and 4 were unreachable: a constant map never stops being emitted, so
+#: the sentence could not leave the page and the falsifier could not fire. The
+#: emission is now gated on the temporary count and the payload publishes the
+#: temporary and historical cohorts separately. Clause 3 and clause 4 became
+#: TRUE STATEMENTS at that commit; before it they were intentions.
+#:
+#: Nobody should promise the count reaches literally zero until it is measured;
+#: what is promised is that the M1/R3 rows come back and THAT count falls.
+PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL: dict[str, str] = {
+    "polymarket/baseball": (
+        "the Polymarket player-prop writer stops overwriting the market's own "
+        "quote with a near-0.50 placeholder, and those forecasts are scored on "
+        "the price the market actually made"
+    ),
+}
+
+
+def nonexclusive_bundle_cell_labels() -> tuple[tuple[str, str], ...]:
+    """The disclosed cells, as ``(payload label, aggregate column)`` pairs.
+
+    CAL-P162 (#1978), Alex's ruling of 2026-08-28 on rank 2: *"the removed rows
+    are disclosed on the page as a named, counted exclusion"* — and per-cell,
+    because the filter is allowlisted per cell and one total would hide WHICH
+    cell shrank. That is a clause of the ruling, not a nicety.
+
+    Derived from ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` rather than restated, so
+    the labels cannot drift from the tuples they describe. The esports entry is
+    category-only on purpose: that arm has never been source-scoped.
+    """
+    labels: list[tuple[str, str]] = [(ESPORTS_MULTI_BUNDLE_CATEGORY, "nxb_cell_esports")]
+    labels += [
+        (f"{src}/{cat}", f"nxb_cell_{idx}")
+        for idx, (src, cat) in enumerate(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)
+    ]
+    # CAL-P168 (#1978): rank 1's cells report through the SAME per-cell map,
+    # because the page renders one filter as one bullet and a reader who meets
+    # "N rows were removed" must meet "and part of that is coming back" in the
+    # same breath rather than two bullets later (design §9.4). The LABEL is
+    # shared; the PREDICATE behind it is not — these columns count
+    # `is_player_props_placeholder`, never `is_esports_bundle`.
+    labels += [
+        (f"{src}/{cat}", f"pp_cell_{idx}")
+        for idx, (src, cat) in enumerate(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)
+    ]
+    return tuple(labels)
+
+
+#: The aggregate columns those labels name, in emission order (CAL-P164).
+#:
+#: Named because THREE places need this set and deriving it three times is how
+#: they drift: the statement that emits the columns, the staged merge that has
+#: to be TOLD they are census columns before it will accept a row carrying
+#: them, and the bank-time mirror in ``calibration_staged_futures``. CAL-P162
+#: emitted the columns and told neither consumer, so the first unit that
+#: returned a row raised ``UndeclaredColumnError`` and no generation could bank
+#: — a fail-closed merge doing exactly its job. The mirror is pinned against
+#: this tuple by a characterization test; adding a cell to
+#: ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` reds that pin rather than production.
+NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = tuple(
+    column for _, column in nonexclusive_bundle_cell_labels()
+)
+
+
+def nonexclusive_bundle_cell_columns_sql() -> str:
+    """One ``COUNT(*) FILTER`` per disclosed cell, for the summary aggregate.
+
+    The aggregate this lands in is a single flat row, so the per-cell map is
+    rendered as N scalar columns rather than by re-shaping the query into a
+    GROUP BY — a grouped variant of this scan is the shape that times out
+    (see the row-path notes in the db-query rules).
+    """
+    parts = [
+        "COUNT(*) FILTER (WHERE is_esports_bundle AND category = "
+        f"'{ESPORTS_MULTI_BUNDLE_CATEGORY}') AS nxb_cell_esports"
+    ]
+    for idx, (src, cat) in enumerate(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS):
+        parts.append(
+            "COUNT(*) FILTER (WHERE is_esports_bundle "
+            f"AND source = '{src}' AND category = '{cat}') AS nxb_cell_{idx}"
+        )
+    # CAL-P168 (#1978): rank 1's per-cell counts. A DIFFERENT flag on the same
+    # row shape — the cell conjunct is kept anyway so the column counts what its
+    # label says even if the flag's own scope is ever widened.
+    for idx, (src, cat) in enumerate(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS):
+        parts.append(
+            "COUNT(*) FILTER (WHERE is_player_props_placeholder "
+            f"AND source = '{src}' AND category = '{cat}') AS pp_cell_{idx}"
+        )
+    return ",\n                    ".join(parts)
+
+
+def _nonexclusive_bundle_cell_passthrough_sql(alias: str = "ls") -> str:
+    """``MAX(...)`` pass-through of the per-cell columns for the outer aggregate."""
+    return ",\n                ".join(
+        f"MAX({alias}.{col}) AS {col}" for _, col in nonexclusive_bundle_cell_labels()
+    )
+
+
+NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT = (
+    "Excludes non-exclusive BUNDLES — markets of >=3 outcomes that are not proved "
+    "single-winner partitions, where independent questions were packed into one "
+    "market. A market qualifies when it resolved with >=2 winners OR when its "
+    "published prices sum past 1.15: a genuine partition sums to ~1 whatever it "
+    "resolves to, so the sum identifies a bundle even on a day it happened to "
+    "land on a single rung. Scoped per ruled (source, category) cell — never by "
+    "category alone, which was measured to take polymarket/economics from 3.91 to "
+    "17.75 pp. The rows are dropped from the curve, never re-graded: the many-YES "
+    "grading of a cumulative ladder is correct. Read-side only; never mutates "
+    "resolutions."
+)
+
+# CAL-P162 (#1978): clause 3 of Alex's ruling — "nobody later reads the smaller
+# curve as a fixed one" — is NOT carried here. It is page copy, hard-coded in
+# `frontend/app/calibration/page.tsx` and pinned by
+# `calibrationNonexclusiveBundleDisclosure.test.tsx` (6 tests, mutation-checked:
+# softening the closing clause reds it). A backend copy of the same sentence
+# would be a second hand-maintained rendering of one fact, which is the defect
+# this file's own D12 comment warns about — and the backend copy would be the
+# one nobody notices has drifted, because nothing renders it.
+
 
 ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Excludes esports 'match bundle' markets — Polymarket packs a whole match "
@@ -1346,7 +1757,16 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "Since 2026-08-30 the same structural test also removes individually ruled "
     "(source, category) cells that are dominated by this shape — see "
     "`excluded_cells` for the current list, each of which is a separate ruling "
-    "with its own measured evidence, not a widening of the esports rule."
+    "with its own measured evidence, not a widening of the esports rule. "
+    # CAL-P162 (#1978) RULE E. The published text has to say the test is no
+    # longer a realization test, because a reader who assumes ">=2 winners"
+    # cannot account for the rows that left.
+    "Since 2026-08-31 the shape test is STRUCTURAL as well as realized: a market "
+    "of >=3 outcomes that is not a proved-exclusive partition is excluded when it "
+    "resolved with >=2 winners OR when its published prices sum past 1.15. A "
+    "genuine partition sums to ~1 whatever it resolves to, so the sum is what "
+    "identifies a bundle that happened to land on a single rung — the class the "
+    ">=2-winner test could never see. Read-side only; never mutates resolutions."
 )
 
 
@@ -1356,6 +1776,8 @@ def market_is_esports_multi_bundle(
     n_winners: int,
     *,
     source: str | None = None,
+    cp_sum: float | None = None,
+    exclusivity_proved: bool = False,
 ) -> bool:
     """True if a resolved market is an esports match-bundle excluded from the curve (Queue #159).
 
@@ -1371,7 +1793,21 @@ def market_is_esports_multi_bundle(
     the many-YES cumulative-ladder grading is correct, so the rows are dropped
     from the curve rather than re-graded.
     """
-    if not market_is_nonexclusive_bundle(n_outcomes, n_winners):
+    # CAL-P162 (#1978) RULE E: the shape test is now STRUCTURAL. The old call
+    # was `market_is_nonexclusive_bundle(n_outcomes, n_winners)` — realization
+    # only — and the 1-winner tail it could not see is the entire published
+    # residue of `polymarket/esports` and 13.4% of `kalshi/economics`. The
+    # >=2-winner arm is preserved verbatim inside the structural test, so every
+    # market the old rendering caught is still caught.
+    #
+    # `cp_sum` / `exclusivity_proved` are keyword-only WITH defaults for the same
+    # reason `source` is: a caller that did not say must not be able to trip a
+    # wider rule by accident. The defaults reproduce the OLD behaviour exactly
+    # (no sum => realization arm only; not proved => nothing suppressed), which
+    # is what keeps the four pre-existing call sites honest.
+    if not market_is_nonexclusive_bundle_structural(
+        n_outcomes, n_winners, cp_sum, exclusivity_proved=exclusivity_proved
+    ):
         return False
     if category == ESPORTS_MULTI_BUNDLE_CATEGORY:
         return True
@@ -1654,6 +2090,27 @@ def market_exclusivity_is_proved(
     return (outcome_relation or "") in EXCLUSIVITY_PROVED_RELATIONS
 
 
+def exclusivity_proved_sql(info_alias: str = "mi", shape_alias: str = "mrs") -> str:
+    """Render :func:`market_exclusivity_is_proved` as a SQL predicate.
+
+    CAL-P162 (#1978), RULE E. The proved-exclusivity test had exactly one SQL
+    rendering — inline in ``mex_field_candidates`` — and RULE E needs the same
+    test in a second place (a bundle must never be a proved-exclusive field).
+    Extracted rather than copied: two hand-maintained copies of one predicate is
+    the defect D12's own comment warns about, and here the copies would sit 80
+    lines apart in the same query. ``mex_field_candidates`` now calls this too,
+    so there is one rendering and ``test_exclusivity_proved_sql_mirrors_python``
+    pins it against the Python mirror rather than against a restatement.
+    """
+    return (
+        f"{info_alias}.market_type = 'field'"
+        f" AND {info_alias}.shape_exhaustive = 'true'"
+        f" AND {info_alias}.shape_expected_winners = '1'"
+        f" AND {info_alias}.shape_relation IN {_sql_str_tuple(EXCLUSIVITY_PROVED_RELATIONS)}"
+        f" AND {shape_alias}.win_count = 1"
+    )
+
+
 # Rung 4b — the category-independent non-exclusive bundle, MEASURED not excluded.
 #
 # ``market_is_esports_multi_bundle`` is the same structural test wearing a
@@ -1696,6 +2153,53 @@ def market_is_nonexclusive_bundle(n_outcomes: int, n_winners: int) -> bool:
     same predicate under its measured category scope. Read-side only (gotcha #21).
     """
     return n_outcomes >= 3 and n_winners >= 2
+
+
+def market_is_nonexclusive_bundle_structural(
+    n_outcomes: int,
+    n_winners: int,
+    cp_sum: float | None,
+    *,
+    exclusivity_proved: bool,
+) -> bool:
+    """RULE E: the bundle test as a STRUCTURE, not only as a realization.
+
+    CAL-P162 (#1978), on the design banked in
+    ``artifacts/cal-p112/RULE-DESIGN-polymarket-esports.md`` §4 and re-confirmed
+    on the exact rail by CAL-P114 §5c. A market with >=3 captured outcomes that
+    is **not** a proved-exclusive field is a non-exclusive bundle when EITHER
+
+      * it resolved with >=2 winners — :func:`market_is_nonexclusive_bundle`,
+        the shipped test, unchanged; OR
+      * its published price sum exceeds ``MEX_NORMALIZE_THRESHOLD`` (1.15).
+
+    **Why the second arm exists.** The shipped test is a REALIZATION and the
+    defect is a STRUCTURE: a genuine partition sums to ~1 whatever it resolves
+    to, while independent binaries packed into one market sum to N x p. A bundle
+    that happened to land on exactly one rung therefore escapes the >=2-winner
+    test entirely, and that 1-winner tail is the whole of what survives in
+    ``polymarket/esports`` (7.59 pp) and 99.7% of ``kalshi/economics`` (5.29 pp).
+    The threshold is not fitted here — it is the normalizer's own constant.
+
+    **``exclusivity_proved`` is load-bearing, not belt-and-braces.** Complete
+    proved-exclusive fields are the ``mex_field_candidates`` population and are
+    NORMALIZED, never excluded; the two sets must not overlap or an exclusion
+    would silently eat the normalizer's input. An INCOMPLETE proved field can sum
+    past 1.15 without being a bundle, which is exactly the row this clause saves.
+
+    ``cp_sum`` is None when the market contributed no eligible priced outcome; a
+    market with no sum cannot be shown to be structurally non-exclusive, so it
+    falls back to the realization arm alone (fails closed). Read-side only
+    (gotcha #21) — the many-YES ladder grading is correct, so these rows are
+    dropped from the curve, never re-graded.
+    """
+    if n_outcomes < 3:
+        return False
+    if exclusivity_proved:
+        return False
+    if n_winners >= 2:
+        return True
+    return cp_sum is not None and cp_sum > MEX_NORMALIZE_THRESHOLD
 
 
 # Queue #186 (#941, corrects #167): Kalshi player-prop threshold curve exclusion.
@@ -2339,6 +2843,11 @@ def _calibration_population_ctes(
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
+                    -- CAL-P168 (#1978): R3 matches the market's own TITLE. Named
+                    -- `market_name` rather than `name` because `futures_outcomes`
+                    -- also has a `name` and an unqualified one in a downstream
+                    -- join would resolve to whichever the planner reached first.
+                    fm.name AS market_name,
                     COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
                     fm.mutually_exclusive,
                     fm.market_type,
@@ -2381,7 +2890,13 @@ def _calibration_population_ctes(
                     -- Queue 299 rung 2: captured draw/no-result authority.
                     COUNT(*) FILTER (
                         WHERE lower(btrim(fo.name)) IN {_sql_str_tuple(DRAW_AUTHORITY_OUTCOME_NAMES)}
-                    ) AS draw_member_count
+                    ) AS draw_member_count,
+                    -- CAL-P168 (#1978): K''s pair arms (R1, R2). Aggregated here
+                    -- rather than in their own scan for the reason this CTE
+                    -- exists at all — one per-market structural pass feeds every
+                    -- shape rung. Same ALL-outcomes basis as n_outcomes/win_count,
+                    -- which is what the design's fold measured.
+                    {player_props_pair_shape_columns('fo')}
                 FROM futures_outcomes fo
                 JOIN market_info mi ON mi.market_id = fo.market_id
                 GROUP BY fo.market_id, mi.category, mi.market_type
@@ -2461,17 +2976,124 @@ def _calibration_population_ctes(
             -- granted was for one tuple, not for a rename. What a reader needs
             -- is WHICH cells were excluded, and that is published as
             -- `excluded_by_cell` rather than inferred from a CTE name.
+            -- CAL-P162 (#1978) RULE E: the per-market published price sum, for
+            -- markets that are NOT the normalizer's proved-exclusive input.
+            -- `mex_field_divisor` below computes the same sum but only over
+            -- `mex_field_candidates`, which is by definition the set RULE E must
+            -- never touch — so the bundle arm cannot reuse it and needs its own.
+            -- The eligibility predicate is copied from `mex_field_divisor`
+            -- deliberately and must stay identical to it: the sum has to be over
+            -- the rows the curve PUBLISHES, or a market's structure is judged on
+            -- a population the reader never sees.
+            bundle_price_sum AS (
+                SELECT fo.market_id,
+                    SUM({curve_price}) AS cp_sum
+                FROM futures_outcomes fo
+                JOIN market_info mi ON mi.market_id = fo.market_id
+                {curve_price_join}
+                WHERE fo.opening_probability IS NOT NULL
+                  AND fo.opening_probability > 0 AND fo.opening_probability < 1
+                  AND fo.resolution_source IN {CALIBRATION_TRUTH_ELIGIBLE_SOURCES_SQL}
+                  AND {kalshi_liquidity_exists_sql(source='mi.source')}
+                GROUP BY fo.market_id
+            ),
             esports_multi_bundles AS (
                 SELECT mrs.market_id
                 FROM market_result_shape mrs
                 JOIN market_info mi ON mi.market_id = mrs.market_id
+                LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
                 WHERE mrs.n_outcomes >= 3
-                  AND mrs.win_count >= 2
+                  -- RULE E, arm 1 of 2: the shipped REALIZATION test, unchanged.
+                  -- Arm 2 is the STRUCTURE — a partition sums to ~1 whatever it
+                  -- resolves to, a bundle of independent binaries sums to N x p —
+                  -- and it is the only arm that can see a bundle which happened
+                  -- to land on one rung. That 1-winner tail is the whole published
+                  -- residue of `polymarket/esports` and 13.4% of
+                  -- `kalshi/economics`. Mirrors
+                  -- market_is_nonexclusive_bundle_structural().
+                  AND (
+                        mrs.win_count >= 2
+                        OR bps.cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                  )
+                  -- RULE E's disjointness clause, load-bearing: proved-exclusive
+                  -- fields are the normalizer's input and are NORMALIZED, never
+                  -- excluded. An INCOMPLETE proved field can sum past 1.15
+                  -- without being a bundle; this is the row it saves.
+                  AND NOT ({exclusivity_proved_sql('mi', 'mrs')})
                   AND (
                         mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
                         OR (mi.source, mrs.category)
                             IN {_sql_pair_tuple(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}
                   )
+            ),
+            -- CAL-P168 (#1978) RANK 1 — K''s three MARKET-level arms.
+            --
+            -- 🔴 READ THE CONSTANTS BLOCK BEFORE TOUCHING THIS. This is NOT
+            -- RULE E. It sits directly below `esports_multi_bundles` because
+            -- the two report through one payload key, and that adjacency is
+            -- exactly what makes it easy to "tidy" them into one CTE. Doing so
+            -- would apply RULE E's bundle test to polymarket/baseball, which
+            -- was MEASURED at 8.35 against a 4.71 control. They share a
+            -- disclosure and nothing else.
+            --
+            -- M1 is deliberately ABSENT here: it is a ROW-level arm (one leg
+            -- leaves, not the market) and is applied in `ranked_outcomes`. R1
+            -- and R2 take BOTH legs of a pair; R3 takes the whole container.
+            --
+            -- The sum for R3 is `bundle_price_sum`, the shipped rendering of
+            -- "the per-market published price sum", because R3's threshold IS
+            -- RULE E's constant and must be evaluated on the quantity that
+            -- constant is defined against. The design's fold summed over
+            -- `deduped` instead — a post-dedup, post-normalization sum which
+            -- cannot be referenced from here without a cycle. The two bases
+            -- differ; at a props container's measured sum of 15-19 against a
+            -- threshold of 1.15 the difference cannot change membership, and
+            -- `test_player_props_placeholder_kprime.py` pins that reasoning
+            -- rather than leaving it as a comment.
+            --
+            -- CERT-647 (CAL-P170): the arms are carried out of this CTE
+            -- SEPARATELY, because the page makes a PROMISE about them that is
+            -- only true of two of the four. R3 and M1 are the arms the writer
+            -- repair ends: when the writer stops manufacturing a near-0.50
+            -- price, the container stops summing past 1.15 and the forced
+            -- midpoint stops matching, so those rows re-enter on their own. R1
+            -- and R2 are the HISTORICAL residue of the same defect already
+            -- written to the back catalogue — 1,258 of their 1,284 rows sit in
+            -- the OLD holdout half — and fixing the writer FORWARD does not
+            -- un-write them. Publishing one count under one temporary promise
+            -- told a reader the whole exclusion empties itself; it does not.
+            -- Each arm is evaluated EXACTLY ONCE, in the inner SELECT, and
+            -- membership is filtered on the results outside it. Writing the
+            -- predicates a second time in a WHERE would be two copies of one
+            -- rule in one query — how a mirror stops mirroring — and it would
+            -- also put R3's sum test in the CTE twice, which is the shape
+            -- `test_the_props_cte_never_tests_the_bundle_shape` reads as RULE E
+            -- leaking in by the back door. Membership is unchanged: COALESCE
+            -- only turns a NULL into false, and a NULL never matched anyway.
+            player_props_placeholder_markets AS (
+                SELECT arms.market_id,
+                    arms.ppp_historical_arm,
+                    arms.ppp_temporary_arm
+                FROM (
+                    SELECT mrs.market_id,
+                        -- R1/R2 — the arms that STAY after the writer repair.
+                        COALESCE(
+                            {half_spike_pair_predicate('mrs')}
+                            OR {published_pair_coherence_predicate('mrs')}, false
+                        ) AS ppp_historical_arm,
+                        -- R3 — the arm the writer repair ends. COALESCE because
+                        -- `bps.cp_sum` arrives on a LEFT JOIN and a NULL sum
+                        -- must read as "did not match", never as NULL.
+                        COALESCE({player_props_container_predicate(
+                                    'mi.market_name', 'bps.cp_sum')}, false
+                        ) AS ppp_temporary_arm
+                    FROM market_result_shape mrs
+                    JOIN market_info mi ON mi.market_id = mrs.market_id
+                    LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
+                    WHERE (mi.source, mrs.category)
+                            IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
+                ) arms
+                WHERE arms.ppp_historical_arm OR arms.ppp_temporary_arm
             ),
             -- L2-79 Item 2: golf FIELD/winner one-sided-ask placeholder markets —
             -- mutually-exclusive golf markets with >=2 outcomes in the >=0.80 band
@@ -2551,11 +3173,11 @@ def _calibration_population_ctes(
                 -- ``mutually_exclusive`` flag, an ``unknown`` relation and a
                 -- cumulative-threshold ladder (gotcha #17 co-winners) are all
                 -- refused. Mirrors market_exclusivity_is_proved().
-                WHERE mi.market_type = 'field'
-                  AND mi.shape_exhaustive = 'true'
-                  AND mi.shape_expected_winners = '1'
-                  AND mi.shape_relation IN {_sql_str_tuple(EXCLUSIVITY_PROVED_RELATIONS)}
-                  AND mrs.win_count = 1
+                -- CAL-P162 (#1978): rendered by exclusivity_proved_sql() rather
+                -- than inline, because RULE E's bundle arm needs the SAME test
+                -- 80 lines above and two copies of one predicate in one query is
+                -- how a mirror stops mirroring.
+                WHERE {exclusivity_proved_sql('mi', 'mrs')}
                   AND fo.opening_probability IS NOT NULL
                   AND fo.opening_probability > 0 AND fo.opening_probability < 1
                   -- Queue #261 Item 1: calibration-truth eligibility (allowlist),
@@ -2785,6 +3407,51 @@ def _calibration_population_ctes(
                     mb.win_count AS malformed_win_count,
                     -- Queue #159 (#1010): esports match-bundle exclusion flag.
                     (emb.market_id IS NOT NULL) AS is_esports_bundle,
+                    -- CAL-P168 (#1978) RANK 1: K' = R1 + R2 + R3 + M1.
+                    -- R1/R2/R3 arrive market-level via the join; M1 is the
+                    -- ROW-level arm and is evaluated here, cell-scoped in its
+                    -- own right so the flag can never act outside the ruled
+                    -- allowlist even though it does not go through the CTE.
+                    -- M1 is ADDITIVE, not a successor to R3: it removes 168
+                    -- forced-to-half legs in markets that are NOT props
+                    -- containers (ECE 12.87) which the name arm cannot see,
+                    -- while R3 removes 19,980 rows M1 cannot see. Both stay.
+                    (
+                        ppp.market_id IS NOT NULL
+                        OR (
+                            (cv.source, cv.category)
+                                IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
+                            AND {forced_midpoint_predicate('fo')}
+                        )
+                    ) AS is_player_props_placeholder,
+                    -- CERT-647 (CAL-P170): the TEMPORARY subset of the flag
+                    -- above — the rows that actually re-enter when the writer
+                    -- is repaired, which is what the page promises.
+                    --
+                    -- 🔴 THE `AND NOT historical` IS THE WHOLE POINT, not a
+                    -- tidy-up. A row held by R3 or M1 *and also* by R1 or R2
+                    -- does NOT come back: the temporary arms release it and the
+                    -- historical arms keep holding it. Counting it as temporary
+                    -- would promise a return that never happens, which is the
+                    -- same class of lie CERT-647 blocked, one level down. So
+                    -- "temporary" means held ONLY by arms that end.
+                    --
+                    -- Subset by construction: every disjunct here implies a
+                    -- disjunct of `is_player_props_placeholder`, so the
+                    -- temporary count can never exceed the total.
+                    -- `test_player_props_placeholder_kprime.py` asserts the
+                    -- containment on rows rather than trusting the reading.
+                    (
+                        (
+                            COALESCE(ppp.ppp_temporary_arm, false)
+                            OR (
+                                (cv.source, cv.category)
+                                    IN {_sql_pair_tuple(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}
+                                AND {forced_midpoint_predicate('fo')}
+                            )
+                        )
+                        AND NOT COALESCE(ppp.ppp_historical_arm, false)
+                    ) AS is_player_props_placeholder_temporary,
                     -- Queue 299 rung 1: the market graded NOBODY — UNKNOWN truth,
                     -- not a set of losses (is_winner's default is False).
                     (nwm.market_id IS NOT NULL) AS is_no_winner_market,
@@ -2897,6 +3564,8 @@ def _calibration_population_ctes(
                 {curve_price_join}
                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
+                LEFT JOIN player_props_placeholder_markets ppp
+                    ON ppp.market_id = fo.market_id
                 LEFT JOIN no_winner_markets nwm ON nwm.market_id = fo.market_id
                 LEFT JOIN draw_authority_markets dam ON dam.market_id = fo.market_id
                 LEFT JOIN orphan_partition_markets opm ON opm.market_id = fo.market_id
@@ -2938,6 +3607,11 @@ def _calibration_population_ctes(
                         WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
+                          -- CAL-P168: K' is a published per-outcome exclusion
+                          -- too, so a field that loses a member to it is PARTIAL
+                          -- and must be dropped whole rather than normalized
+                          -- over its survivors.
+                          AND NOT ro.is_player_props_placeholder
                           AND NOT ro.is_golf_placeholder
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
@@ -2954,6 +3628,7 @@ def _calibration_population_ctes(
                           AND ro.is_liquid AND NOT ro.is_poly_placeholder
                           AND NOT ro.is_malformed_binary
                           AND NOT ro.is_esports_bundle
+                          AND NOT ro.is_player_props_placeholder
                           AND NOT ro.is_golf_placeholder
                           AND NOT ro.is_kalshi_prop_threshold
                           AND NOT ro.is_weather_wide_spread
@@ -3065,6 +3740,12 @@ def _calibration_population_ctes(
                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
                     AND NOT ro.is_malformed_binary
                     AND NOT ro.is_esports_bundle
+                    -- CAL-P168 (#1978) RANK 1: K' leaves the published curve.
+                    -- Read-side only (gotcha #21) — the rows are dropped, never
+                    -- re-graded. `is_winner` is truth and stays untouched; what
+                    -- is wrong is the PRICE WE PUBLISHED, and the market's own
+                    -- quote is still sitting in `opening_probability`.
+                    AND NOT ro.is_player_props_placeholder
                     AND NOT ro.is_golf_placeholder
                     AND NOT ro.is_kalshi_prop_threshold
                     AND NOT ro.is_weather_wide_spread
@@ -3487,6 +4168,36 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     -- Queue #159: esports match-bundle exclusion count (eligible
                     -- outcomes flagged in ranked_outcomes that the filter drops).
                     COUNT(*) FILTER (WHERE is_esports_bundle) AS esports_bundle_excluded,
+                    -- CAL-P168 (#1978): rank 1's total, counted separately from
+                    -- the bundle total because they are different rules. The
+                    -- payload ADDS them for `nonexclusive_bundle_filter.excluded`
+                    -- (one bullet, one number the per-cell map must sum to) and
+                    -- keeps `esports_multi_bundle_filter.excluded` on the bundle
+                    -- count alone — that key is a live public contract about the
+                    -- bundle rule and must not silently start meaning something
+                    -- broader.
+                    COUNT(*) FILTER (WHERE is_player_props_placeholder)
+                        AS player_props_placeholder_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_player_props_placeholder)
+                        AS player_props_placeholder_markets,
+                    -- CERT-647 (CAL-P170): the temporary SUBSET of the pair
+                    -- above. Emitted as its own count rather than derived on
+                    -- the Python side, because the historical remainder is
+                    -- published as `total - temporary` and a derived total is
+                    -- how the two halves stop summing to the whole.
+                    COUNT(*) FILTER (WHERE is_player_props_placeholder_temporary)
+                        AS player_props_placeholder_temporary_excluded,
+                    COUNT(DISTINCT market_id)
+                        FILTER (WHERE is_player_props_placeholder_temporary)
+                        AS player_props_placeholder_temporary_markets,
+                    -- CAL-P162 (#1978): the PER-CELL split of the same count.
+                    -- Alex's rank-2 ruling requires the disclosure name which
+                    -- cell shrank; one total cannot, because the filter is
+                    -- allowlisted per cell. Columns are generated from the
+                    -- constant, so they cannot drift from the cells they count.
+                    """
+            + nonexclusive_bundle_cell_columns_sql()
+            + """,
                     -- Queue 299 (#1012): result-authority + shape rung counts.
                     -- Candidate-side (pre-dedup) counts, matching every other
                     -- exclusion block, so each rung's size is transparent.
@@ -3574,6 +4285,25 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.field_incomplete_markets) AS field_incomplete_markets,
                 MAX(ls.field_incomplete_outcomes) AS field_incomplete_outcomes,
                 MAX(ls.esports_bundle_excluded) AS esports_bundle_excluded,
+                -- CAL-P168 (#1978) rank 1: the same carry for K''s totals. A
+                -- column emitted by the inner scan and dropped here reads as a
+                -- missing attribute at runtime and a silently absent disclosure
+                -- on the page — the exclusion failing OPEN. Caught in build by
+                -- `test_no_column_is_declared_that_the_statement_never_emits`.
+                MAX(ls.player_props_placeholder_excluded)
+                    AS player_props_placeholder_excluded,
+                MAX(ls.player_props_placeholder_markets)
+                    AS player_props_placeholder_markets,
+                -- CERT-647 (CAL-P170): same carry for the temporary subset.
+                MAX(ls.player_props_placeholder_temporary_excluded)
+                    AS player_props_placeholder_temporary_excluded,
+                MAX(ls.player_props_placeholder_temporary_markets)
+                    AS player_props_placeholder_temporary_markets,
+                -- CAL-P162 (#1978): carry the per-cell split through the outer
+                -- aggregate, generated from the same constant as the inner one.
+                """
+            + _nonexclusive_bundle_cell_passthrough_sql()
+            + """,
                 MAX(ls.no_winner_excluded) AS no_winner_excluded,
                 MAX(ls.no_winner_markets) AS no_winner_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
@@ -3788,10 +4518,17 @@ async def _run_staged_futures(db, runner, sql_builder):
     # one chunk's mass, and a dropped one silently disappears from the payload.
     # So the statement's census set is declared HERE, next to the statement that
     # emits it, rather than left to a default in the pure module that cannot see
-    # a column this build added. Both extras are conditional:
+    # a column this build added. Three extras beyond the default set:
     #   * ``representative_tie_broken`` — Queue 300D Item 1, always emitted.
+    #   * ``nxb_cell_*`` — CAL-P162's per-cell disclosure, always emitted, and
+    #     generated from the constant so a new cell arrives here automatically
+    #     rather than being remembered (CAL-P164).
     #   * ``cb_*`` — Queue 300C's coverage census, only when it is switched on.
-    census_columns = tuple(DEFAULT_CENSUS_COLUMNS) + ("representative_tie_broken",)
+    census_columns = (
+        tuple(DEFAULT_CENSUS_COLUMNS)
+        + ("representative_tie_broken",)
+        + NONEXCLUSIVE_BUNDLE_CELL_COLUMNS
+    )
     if COVERAGE_CENSUS_ENABLED:
         census_columns += tuple(
             _coverage_bridge_column(key) for key in _COVERAGE_RUNG_KEYS
@@ -4393,6 +5130,46 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].esports_bundle_excluded is not None
             else 0
         )
+        # CAL-P168 (#1978) RANK 1: K''s total, read the same way.
+        player_props_placeholder_excluded = (
+            int(rows[0].player_props_placeholder_excluded)
+            if rows and rows[0].player_props_placeholder_excluded is not None
+            else 0
+        )
+        # `player_props_placeholder_markets` is deliberately NOT read here any
+        # more. It was the value published as `temporary_excluded_markets`, and
+        # CERT-647 is the finding that the union is not the temporary cohort —
+        # so the payload now carries the temporary market count below and the
+        # union market count has no honest consumer in this bullet. The COLUMN
+        # stays emitted and declared: it is banked census like its neighbours,
+        # and dropping it would change the declared census set and invalidate
+        # every banked unit for a cosmetic saving.
+        #
+        # CERT-647 (CAL-P170): the temporary subset, read the same way. Defaults
+        # to 0 — and 0 is the SAFE default here in the direction that matters:
+        # a missing count renders NO temporary promise rather than promising a
+        # return for rows nobody counted.
+        player_props_placeholder_temporary_excluded = (
+            int(rows[0].player_props_placeholder_temporary_excluded)
+            if rows and rows[0].player_props_placeholder_temporary_excluded is not None
+            else 0
+        )
+        player_props_placeholder_temporary_markets = (
+            int(rows[0].player_props_placeholder_temporary_markets)
+            if rows and rows[0].player_props_placeholder_temporary_markets is not None
+            else 0
+        )
+        # CAL-P162 (#1978): the per-cell split behind the same total. Alex's
+        # rank-2 ruling makes the per-cell map a clause of the exclusion, so it
+        # is read from the aggregate rather than reconstructed — and it is built
+        # from `nonexclusive_bundle_cell_labels()`, the same function that
+        # generated the columns, so a new ruled tuple adds a column AND a key
+        # together or neither.
+        nonexclusive_bundle_by_cell: dict[str, int] = {}
+        if rows:
+            for label, column in nonexclusive_bundle_cell_labels():
+                value = getattr(rows[0], column, None)
+                nonexclusive_bundle_by_cell[label] = int(value) if value is not None else 0
         # Queue #167 (#941/#1054): Kalshi player-prop threshold exclusion count.
         kalshi_prop_threshold_excluded = (
             int(rows[0].kalshi_prop_threshold_excluded)
@@ -5311,6 +6088,86 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
         },
+        # CAL-P162 (#1978) — the disclosure half of Alex's rank-2 ruling
+        # (2026-08-28, option (b) APPROVED WITH DISCLOSURE). A NEW key, so the
+        # live `esports_multi_bundle_filter` contract does not change shape or
+        # meaning under existing consumers; the frontend half has been built and
+        # green since CAL-P114 and has rendered nothing until now because it is
+        # gated on `excluded > 0`.
+        #
+        # CAL-P168 (#1978) — RANK 1 LANDS, and `temporary_by_cell` is no longer
+        # empty. It shipped as `{}` from CAL-P162 until now because the only
+        # temporary cell was `polymarket/baseball`, which was ruled but unbuilt;
+        # the page is gated on this map being non-empty, so THIS is the payload
+        # that first renders "part of this is temporary by design" to a reader.
+        #
+        # 🔴 `excluded` IS THE SUM OF TWO DIFFERENT RULES and has to be, because
+        # the page prints one total followed by the per-cell map and a reader
+        # must be able to add the cells up and get the total. `rule` therefore
+        # describes BOTH predicates — a single rule sentence over a two-rule
+        # total would be the one lie this bullet cannot afford. What keeps them
+        # honest is that no row can be counted twice: the cells are disjoint by
+        # construction (RULE E's allowlist and K''s share no tuple), and
+        # `test_player_props_placeholder_kprime.py` asserts that disjointness
+        # rather than trusting it.
+        "nonexclusive_bundle_filter": {
+            "applies_to": ", ".join(
+                label for label, _ in nonexclusive_bundle_cell_labels()
+            ),
+            # `join`, not `A + " " + B`, and the reason is worth a line: the
+            # fingerprint-coverage detector classifies any name appearing beside
+            # a string constant in a `+` expression as SQL-INTERPOLATED, so the
+            # concatenated form silently moved `NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT`
+            # into `uncovered_sql_shaping` — a rule sentence counted as a value
+            # that shapes the population. That is CERT-502's finding exactly
+            # ("a tripwire you widen the definition of is not a tripwire"), so
+            # the prose is joined rather than the pin raised on a miscount.
+            "rule": " ".join(
+                (
+                    NONEXCLUSIVE_BUNDLE_FILTER_RULE_TEXT,
+                    PLAYER_PROPS_PLACEHOLDER_RULE_TEXT,
+                )
+            ),
+            "excluded": esports_bundle_excluded + player_props_placeholder_excluded,
+            "excluded_by_cell": nonexclusive_bundle_by_cell,
+            # 🔴 CERT-647 (CAL-P170) — THIS MAP IS NO LONGER A CONSTANT.
+            #
+            # It shipped as `dict(...)` of a module constant, so the sentence
+            # "part of this is temporary" was rendered whenever the cell was
+            # excluded AT ALL — including after the writer repair, when the only
+            # rows left would be the historical R1/R2 residue that never returns.
+            # The disclosure's own clause 3 promises the sentence "leaves the
+            # page without a copy change when the backend stops emitting the
+            # cell", and a constant can never stop emitting. The falsifier in
+            # clause 4 was therefore unfalsifiable by construction.
+            #
+            # Gated on the TEMPORARY count, which is what the sentence is about.
+            # When the writer is fixed and M1/R3 fall to zero the map empties,
+            # the sentence disappears, and the historical remainder stays
+            # excluded and stays disclosed by the per-cell count above — which
+            # is exactly the behaviour clause 4 says to look for.
+            "temporary_by_cell": (
+                dict(PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL)
+                if player_props_placeholder_temporary_excluded > 0
+                else {}
+            ),
+            # Rank 1's own numbers, so the temporary half of the bullet is
+            # checkable on its own rather than only as part of a sum.
+            #
+            # 🔴 `temporary_excluded` counts the M1/R3 cohort ONLY. It shipped
+            # as the full R1+R2+R3+M1 union, which made the field's NAME false:
+            # it said "this many rows are coming back" over a population whose
+            # majority is historical residue that is not. The two halves below
+            # sum to the per-cell total, so a reader can still add the bullet up.
+            "temporary_excluded": player_props_placeholder_temporary_excluded,
+            "temporary_excluded_markets": player_props_placeholder_temporary_markets,
+            # The complement, published rather than left to subtraction: the
+            # rows excluded for good unless separately repaired or re-ruled.
+            "historical_excluded": (
+                player_props_placeholder_excluded
+                - player_props_placeholder_temporary_excluded
+            ),
+        },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {
             "applies_to": "all",
@@ -5730,6 +6587,46 @@ def _main_input_fingerprint() -> str:
         # Hashed by NAME as well as value, like its two neighbours above, so it
         # is greppable rather than an incidental substring.
         f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
+        # CAL-P162 (#1978) — the FIFTH instance of the same hole, found by the
+        # same question the comment above prescribes. `MEX_NORMALIZE_THRESHOLD`
+        # was already interpolated into the emitted SQL (so the template hash
+        # cannot see its value), but until RULE E it only chose how a row was
+        # PRICED. It now also decides whether a row is PUBLISHED at all: it is
+        # the sum arm of the bundle exclusion. A change from 1.15 would silently
+        # move the published population while leaving this digest identical.
+        #
+        # Added on the deploy that made it curve-shaping, deliberately: closing
+        # this costs a full rebuild on any other day, and today the fingerprint
+        # is moving anyway.
+        f"mex_normalize_threshold={MEX_NORMALIZE_THRESHOLD}",
+        # CAL-P168 (#1978) — the SIXTH instance, and the largest single batch of
+        # it, closed on the deploy that creates it rather than left for the
+        # tripwire to count. Every one of these is INTERPOLATED into the emitted
+        # SQL by a helper that ``inspect.getsource`` cannot see through (it
+        # returns a function's own text, never its callees'), and every one of
+        # them decides WHICH ROWS THE CURVE PUBLISHES:
+        #
+        #   * the allowlist decides which cell K' acts on at all;
+        #   * 0.5000 is R1's exact spike — widening it to a band is a separate
+        #     ruling with its own census, and this digest is what would make
+        #     such a widening visible instead of silent;
+        #   * the tolerance is R2's coherence window (imported from the
+        #     writer-side rule, so it can move without this file changing —
+        #     which is exactly why hashing the template text is not enough);
+        #   * the name pattern is R3's title match, the arm the design already
+        #     records as its weakest link;
+        #   * the band and drift floor are M1, and they are the numbers that
+        #     separate a manufactured coin flip from ordinary line movement.
+        #
+        # Change any of them and a cursor banked under the old value would
+        # otherwise stay resumable by code carrying the new one, merging units
+        # built from two different populations into one published payload.
+        f"player_props_cells={sorted(PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)}",
+        f"player_props_half_spike={PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE}",
+        f"player_props_pair_tolerance={PAIR_SUM_TOLERANCE}",
+        f"player_props_name_pattern={PLAYER_PROPS_NAME_PATTERN}",
+        f"player_props_band={PLAYER_PROPS_MIDPOINT_BAND_LO},{PLAYER_PROPS_MIDPOINT_BAND_HI}",
+        f"player_props_forced_drift={PLAYER_PROPS_FORCED_DRIFT_MIN}",
         source,
     )
 

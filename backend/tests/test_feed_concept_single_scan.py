@@ -71,6 +71,27 @@ from app.utils import event_concept_population as population
 NOW = datetime.now(timezone.utc)
 SOON = NOW + timedelta(days=2)
 
+#: LAT-P181. The cycling arm needs one more thing than the other two, and it is
+#: not a date — it is an EDITION. `list_cycling_concepts` only counts a market
+#: whose resolution year names an edition the config holds, and only surfaces the
+#: concept if that resolution is still ahead of `now`.
+#:
+#: LAT-P181 could only defuse that here, with an autouse fixture that injected a
+#: `vuelta-<specimen year>` entry into the hand-written `CYCLING_RACES` calendar —
+#: because while the calendar listed EDITIONS, those two conditions became jointly
+#: unsatisfiable the moment the configured year ran out, and no date this file
+#: could pick kept the arm alive past 2026-12-31.
+#:
+#: #2482 (LAT-P182) shipped the product fix that comment asked for: the config now
+#: names year-less race FAMILIES and the edition is DERIVED from the market's own
+#: `resolution_date`. There is no calendar left to pin, so the fixture is gone —
+#: not disabled, obsolete. Any year the clock lands in resolves on its own.
+#:
+#: The arm is still fully exercised, and not by assumption: three tests below
+#: assert `cycling` is actually among the domains returned, so if the specimen
+#: ever stops resolving, this file goes red rather than quietly counting two arms.
+CYCLING_RESOLUTION = NOW + timedelta(days=13)
+
 
 # ---------------------------------------------------------------------------
 # The specimen population — production-shaped, not invented
@@ -140,7 +161,14 @@ MARKETS: tuple[dict, ...] = (
         "name": "Vuelta a Espana 2026 Winner",
         "status": "open",
         "commence_time": SOON,
-        "resolution_date": datetime(2026, 9, 14, tzinfo=timezone.utc),
+        # LAT-P181 — this was `datetime(2026, 9, 14, tzinfo=timezone.utc)` and it
+        # was measured to take this file red on **2026-09-14**. The anchor above
+        # is honestly clock-derived; this ONE field was not, and one field is
+        # enough. The lister only surfaces a concept whose resolution is ahead of
+        # `now`, so the cycling specimen would have vanished from its own test on
+        # a date nobody chose, and two tests about read-counting would have
+        # started failing about something else entirely.
+        "resolution_date": CYCLING_RESOLUTION,
         "market_metadata": {},
     },
 )

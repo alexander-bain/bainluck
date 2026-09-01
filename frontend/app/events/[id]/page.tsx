@@ -5,8 +5,14 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, formatProbability } from "@/lib/api";
-import type { TeamProgressionResponse } from "@/lib/types";
+import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
+import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import {
+  eventTournamentKey,
+  isTournamentSportKey,
+  resolveEventOutcome,
+} from "@/lib/eventOutcome";
+import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
@@ -273,6 +279,19 @@ export default function EventPage({ params }: EventPageProps) {
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
+  // #2443 — the container the event belongs to, which for a registered
+  // tournament carries the decided result the hero needs to name a winner.
+  //
+  // The SAME key `TournamentExtensions` uses, so this is one request between
+  // the two of them and not two; the hero simply needs it resolved above the
+  // fold rather than when a lazy section below the chart mounts. Gated on the
+  // shared sport-key test, so no event outside a tournament sport asks.
+  const { data: eventTournament } = useSWR<EventTournamentResponse>(
+    isTournamentSportKey(event?.sport) ? eventTournamentKey(eventId) : null,
+    () => fetchEventTournament(eventId),
+    { revalidateOnFocus: false, refreshInterval: 120000 },
+  );
+
   // Team championship progression (playoff path from grid data — always available for both teams)
   const { data: teamProgression } = useSWR<TeamProgressionResponse>(
     ["team-progression", eventId],
@@ -385,23 +404,35 @@ export default function EventPage({ params }: EventPageProps) {
   // L2-112 Item 1: settled events get a winner treatment (final score + winner
   // chip), NOT a stale pregame percentage. Mirrors the futures settled-hero rule
   // (FuturesHero.tsx) — the probability journey stays in the chart below.
-  // Winner is derived from the final score, not the pregame favorite.
-  const settledWinnerName =
-    isFinished && bestHomeScore !== null && bestAwayScore !== null && bestHomeScore !== bestAwayScore
-      ? (bestHomeScore > bestAwayScore
-          ? (event.home_team.split(" ").pop() || event.home_team)
-          : (event.away_team.split(" ").pop() || event.away_team))
-      : null;
+  // Winner is derived from the result, not the pregame favorite.
+  //
+  // #2443: "derived from the result" used to mean `home_score > away_score` and
+  // nothing else, which is why a settled tennis match — no integers on the row,
+  // by nature — printed a bare "Final" over two players and no outcome. The
+  // authority ladder lives in `lib/eventOutcome.ts`; the score rung is
+  // unchanged, and the container rung answers for every sport whose result is
+  // not a pair of integers.
+  const settledOutcome = resolveEventOutcome({
+    isFinished,
+    homeTeam: event.home_team,
+    awayTeam: event.away_team,
+    homeScore: bestHomeScore,
+    awayScore: bestAwayScore,
+    tournamentResult: eventTournament?.result ?? null,
+  });
 
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
   // pre-game win probability ("were 35% pregame"). This is what makes an upset
   // read surprising at a glance. Data = the opening blend (opening_odds).
+  //
+  // Keyed on the resolved SIDE rather than on the score comparison, so it
+  // follows the ladder: an outcome whose winner could not be matched to either
+  // competitor reports no side, and this stays silent rather than crediting the
+  // home player's opening number to whoever actually won.
   const settledWinnerPregameProb =
-    settledWinnerName !== null && openingHomeProb !== null && openingAwayProb !== null
-      ? (bestHomeScore! > bestAwayScore! ? openingHomeProb : openingAwayProb)
+    settledOutcome?.winnerSide && openingHomeProb !== null && openingAwayProb !== null
+      ? (settledOutcome.winnerSide === "home" ? openingHomeProb : openingAwayProb)
       : null;
-  const settledWinnerWasUnderdog =
-    settledWinnerPregameProb !== null && settledWinnerPregameProb < 0.4;
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
@@ -698,49 +729,16 @@ export default function EventPage({ params }: EventPageProps) {
             {/* Center: Giant Probability (live/pregame) OR winner treatment (settled) */}
             <div className="flex flex-col items-center px-2 sm:px-4 flex-shrink-0">
               {isFinished ? (
-                /* Settled: winner name + chip, no big number (mirrors FuturesHero's
-                   resolved rule). The score is shown under each team; the win-prob
-                   journey stays in the chart below. */
-                /* UX-P043 (#1649): the settled hero's stable hook. The browser
-                   pack read `event-hero-probability` as "the hero rendered",
-                   but that testid lives on the !isFinished branch only — by
-                   design, since "settled means settled: heroes show winners".
-                   In the evening the first game on /sports IS final, so the
-                   pack failed 4/4 on a hero working exactly as intended. This
-                   makes the settled treatment provable in its own right rather
-                   than something the pack has to route around. */
-                <div
-                  className="flex flex-col items-center gap-1.5"
-                  data-testid="event-hero-settled"
-                  data-winner={settledWinnerName ?? ""}
-                >
-                  {settledWinnerName ? (
-                    <>
-                      <span className="text-base sm:text-lg font-semibold text-text-primary tracking-tight text-center">
-                        {settledWinnerName}
-                      </span>
-                      <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">
-                        Won
-                      </span>
-                      {settledWinnerPregameProb !== null && (
-                        <span
-                          className={`text-[11px] ${
-                            settledWinnerWasUnderdog
-                              ? "text-amber-600 font-semibold"
-                              : "text-text-muted"
-                          }`}
-                        >
-                          {settledWinnerWasUnderdog ? "Upset · " : ""}
-                          were {Math.round(settledWinnerPregameProb * 100)}% pregame
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-text-muted/15 text-text-secondary">
-                      {bestHomeScore !== null && bestAwayScore !== null ? "Final · Tied" : "Final"}
-                    </span>
-                  )}
-                </div>
+                /* Settled: winner name + chip + the result in the sport's own
+                   units, no big number (mirrors FuturesHero's resolved rule).
+                   The win-prob journey stays in the chart below. Extracted to
+                   `SettledOutcomeHero` by #2443 so the outcome is renderable —
+                   and therefore assertable — on its own. */
+                <SettledOutcomeHero
+                  outcome={settledOutcome}
+                  hasNumericScore={bestHomeScore !== null && bestAwayScore !== null}
+                  winnerPregameProb={settledWinnerPregameProb}
+                />
               ) : (
               // #2085: the two sides are ONE decision — see
               // `EventHeroProbabilityPair` and `resolveProbability`. This used

@@ -178,6 +178,126 @@ def _copy_repeats_market_name(copy: str | None, market_name: str | None) -> bool
     return copy_tokens[:prefix_len] == name_tokens[:prefix_len]
 
 
+# ── The negation label never becomes the subject of "leads at" (UX-P239) ──────
+#
+# `humanize_binary_outcome_name` above MANUFACTURES the No-side label by
+# restating the market's own question behind a negation marker, and truncating
+# it to 40 characters. Fed back into this module's copy templates as
+# `leader_name`, that produces a sentence whose grammatical subject is a
+# truncated double negative, and readers take the percentage as the answer to
+# the question rather than to its negation. Measured on the live feed
+# 2026-08-31 21:5xZ, `GET /api/feed?limit=60`, both of the two-outcome futures
+# cards that were leading on the No side:
+#
+#   59934328  Will "Onslaught" score at least 80 on the Tomatometer?  (Yes 26%)
+#             context_summary: 'No: "Onslaught" score at least 80 on ... leads at 74%'
+#   57792416  Will Neuralink's valuation hit (HIGH) $47.5B by Aug 31? (Yes 27.5%)
+#             context_summary: 'Not Neuralink's valuation leads at 72%'
+#
+# The precedent is already in the tree: `routes/feed.py` carries a note
+# preferring "Anthropic leads at 69%" over "Yes leads at 69%" — a bare side word
+# is a poor subject. This is the mirror case, and it resolves the other way: once
+# the label is a negation of the question, the bare side word is the ONLY honest
+# subject, because every longer form restates the question it is negating.
+#
+# 🔴 THE RULE IS PAIR-RELATIVE, and a bare prefix regex would be wrong. The Fed's
+# real outcome row is "No change", which `/^no\b/` matches. Requiring the text
+# after the marker to RESTATE THE MARKET NAME is what keeps "No change" — whose
+# question is about a rate decision, not about "change" — from being rewritten.
+# The restatement test is the guard; the prefix alone is not. This mirrors
+# `frontend/lib/discover/heroOutcome.ts`, which makes the same distinction
+# against the SIBLING outcome; here the question itself is the counterpart,
+# because that is what the label was manufactured from.
+
+_NEGATION_PREFIX_RE = re.compile(r"^\s*(?:no|not)\s*[:\-–—]?\s+", re.IGNORECASE)
+
+# Below this many characters a restatement is too short to be evidence of one.
+_MIN_RESTATEMENT_CHARS = 4
+
+# Stripped before comparing a restatement against the question it restates.
+#
+# 🔴 CERT-624: THIS CAME OFF THE QUESTION ONLY, AND THAT WAS THE BUG.
+# `humanize_binary_outcome_name`'s Strategy 2 removes a leading "Will " and
+# nothing else, so a question opening with any OTHER auxiliary keeps it in the
+# manufactured label: `"Does Alcaraz reach the semifinals?"` becomes
+# `"Not: Does Alcaraz reach the semifinals"`. Stripping the word from one side
+# of an equality then GUARANTEES the two token lists cannot align, so the
+# predicate returned False and the label reached the reader whole —
+# `Not: Does Alcaraz reach the semifinals leads at 72%`. That title is checked
+# in at `scripts/populate_tournament_props.py:468`; every positive specimen in
+# the guard happened to open with "Will", which is why the suite stayed green.
+# The word must come off BOTH sides or NEITHER.
+_LEADING_INTERROGATIVE_RE = re.compile(
+    r"^(?:will|would|does|do|did|is|are|was|were|can|could|should|has|have|had)\b",
+    re.IGNORECASE,
+)
+
+# `humanize_binary_outcome_name` marks a label it had to shorten by ending it
+# with this; see `_negates_market_question` for why that matters.
+_TRUNCATION_MARKER = "..."
+
+
+def _comparable_tokens(text: str | None) -> list[str]:
+    """Tokens of `text` with a leading interrogative auxiliary dropped.
+
+    Applied to the label and the question through the SAME function, so the two
+    sides cannot be normalised differently again.
+    """
+    stripped = (text or "").strip()
+    tokens = _normalized_copy_tokens(stripped)
+    if tokens and _LEADING_INTERROGATIVE_RE.match(stripped):
+        return tokens[1:]
+    return tokens
+
+
+def _negates_market_question(label: str | None, market_name: str | None) -> bool:
+    """True when `label` reads as an explicit negation of the market's question."""
+    text = (label or "").strip()
+    if not text or not (market_name or "").strip():
+        return False
+
+    marker = _NEGATION_PREFIX_RE.match(text)
+    if not marker:
+        return False
+
+    restatement = text[marker.end() :].strip()
+    if len(restatement) < _MIN_RESTATEMENT_CHARS:
+        return False
+
+    restatement_tokens = _comparable_tokens(restatement)
+    question_tokens = _comparable_tokens(market_name)
+    if not restatement_tokens or not question_tokens:
+        return False
+
+    # Only the LABEL is ever shortened; the question arrives whole. Compare over
+    # the overlap, so a label carrying fewer tokens than its question still
+    # counts as restating it.
+    overlap = min(len(restatement_tokens), len(question_tokens))
+
+    # The 40-character cut lands mid-WORD, not on a token boundary, so a label
+    # ending in the marker has an unreliable FINAL token — "September" arrives
+    # as "septe". Everything before it must still match exactly; only that last
+    # token is allowed to merely OPEN the word it was cut from.
+    if restatement.endswith(_TRUNCATION_MARKER):
+        head = overlap - 1
+        if restatement_tokens[:head] != question_tokens[:head]:
+            return False
+        return question_tokens[head].startswith(restatement_tokens[head])
+
+    return restatement_tokens[:overlap] == question_tokens[:overlap]
+
+
+def _answering_side_label(label: str | None, market_name: str | None) -> str | None:
+    """Collapse a negation-of-the-question label to the bare side word it means.
+
+    Every other label is returned untouched — this never rewrites a real
+    outcome name, only the restatement this module manufactured.
+    """
+    if _negates_market_question(label, market_name):
+        return "No"
+    return label
+
+
 def generate_event_reason(
     home_team: str,
     away_team: str,
@@ -317,6 +437,14 @@ def generate_futures_reason(
     """
     reasons = set(highlight_reasons)
 
+    # Once, before any branch reads them: a label that merely negates the
+    # market's own question can never be this sentence's subject. Applied to
+    # every outcome-label input rather than to the nine f-strings below, so a
+    # tenth template cannot reintroduce the defect.
+    leader_name = _answering_side_label(leader_name, market_name)
+    top_mover_name = _answering_side_label(top_mover_name, market_name)
+    top_surprise_name = _answering_side_label(top_surprise_name, market_name)
+
     if "stale_past_resolution" in reasons:
         return ""
 
@@ -428,6 +556,13 @@ def generate_futures_headline(
     """Generate compact, specific card text for futures Discover cards."""
     reasons = set(highlight_reasons)
 
+    # Same single point as the other two generators. `market_name` is optional
+    # here, and `_answering_side_label` is a no-op without it — a headline with
+    # no question to negate is left exactly as it renders today.
+    leader_name = _answering_side_label(leader_name, market_name)
+    top_mover_name = _answering_side_label(top_mover_name, market_name)
+    top_surprise_name = _answering_side_label(top_surprise_name, market_name)
+
     if "stale_past_resolution" in reasons:
         return ""
 
@@ -532,6 +667,10 @@ def generate_futures_context_summary(
     """
     headline = (headline or "").strip()
     reasons = set(highlight_reasons)
+
+    # Same single point as `generate_futures_reason`, and before the closure
+    # below captures it.
+    leader_name = _answering_side_label(leader_name, market_name)
 
     if "stale_past_resolution" in reasons:
         return ""

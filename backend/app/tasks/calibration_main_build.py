@@ -59,9 +59,11 @@ from app.utils.calibration_phase_ledger import (
     PHASE_OUTPUT_KEYS,
     RESUMABLE_PHASES,
     RESUMED,
+    STAGED_UNIT_OVERRUN_FACTOR,
     TERMINAL_COMPLETE,
     TERMINAL_PARTIAL,
     TIMEOUT,
+    UNIT_WORST_WINDOW,
     MainBuildCheckpoint,
     PhaseLedger,
     PhasePlan,
@@ -717,6 +719,26 @@ class PhaseRunner:
         timeout_ms = self.ledger.statement_timeout_for_unit(
             phase, elapsed_ms=self.elapsed_ms(), unit_ms=unit_ms
         )
+        # CAL-P163 (#1978): say WHICH evidence bounded this unit, and how far the
+        # bound sits from the window that was actually available. Without this
+        # pair, a cancelled unit records only that it was cancelled — the same
+        # ledger entry whether the fence was 100 ms too tight or 600 s too
+        # tight, and those call for opposite responses. The sixteen-beat pin
+        # this fix addresses cost a day to attribute for exactly that reason.
+        self.ledger.record_gauge(
+            f"staged:unit_bound_ms:{phase}", int(timeout_ms)
+        )
+        self.ledger.record_gauge(
+            f"staged:unit_bound_headroom_ms:{phase}",
+            max(0, self.ledger.remaining_ms(elapsed_ms=self.elapsed_ms()) - int(timeout_ms)),
+        )
+        worst = self.ledger.measured_unit_worst_ms(phase)
+        if worst:
+            self.ledger.record_gauge(f"staged:unit_worst_carried_ms:{phase}", int(worst))
+        else:
+            # Ruling 075, second clause: "no carried worst" must not render
+            # identically to "the carried worst is zero".
+            self.ledger.record_gauge(f"staged:unit_worst_reason:unmeasured:{phase}", 1)
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
         await self.tag_session(db)
         return timeout_ms
@@ -982,16 +1004,83 @@ NULL_RUNNER = NullPhaseRunner()
 # =============================================================================
 
 
-async def load_phase_measurements() -> tuple[
-    dict[str, list[int]], dict[str, list[int]], dict[str, Any]
+#: Durable key for the rolling ring of worst COMPLETED unit durations —
+#: CAL-P163 (#1978). Beside ``unit_costs`` rather than inside it because the
+#: two have different lifetimes: the unit cost is a level the newest beat
+#: overwrites, this is a window the newest beat appends to.
+UNIT_WORST_HISTORY_KEY = "unit_worst_history"
+
+
+def _bootstrap_worst_history(unit_costs: dict[str, Any]) -> dict[str, list[int]]:
+    """The one-time upgrade for a ledger written before the ring existed —
+    CAL-P167 (#1978), repairing CERT-637.
+
+    CAL-P163 added a second, looser reference to the unit fence:
+    ``max(observed completions) * BUDGET_SAFETY`` beside the old
+    ``mean * STAGED_UNIT_OVERRUN_FACTOR``. It is inert on the state that
+    actually exists at deployment. **Every durable ledger written before that
+    deploy carries ``unit_costs`` and no ring**, so the max is ``None``, the
+    fence falls back to the mean, and the first new-code beat reproduces the
+    ratchet exactly — five completed, two cancelled, nothing published. The new
+    ring then records only the cheap units that fence admitted, which is not
+    enough to widen it, so the second beat is pinned too. CERT-637 named this
+    and it is not hypothetical: the beat gauges read five completed and two
+    cancelled at the moment that verdict was written.
+
+    The repair cannot recover the real worst case — the 308,586 ms completion
+    the ratchet forgot is genuinely absent from the legacy payload. What the
+    payload does carry is the mean, and one fact about it: **the legacy fence
+    admitted units at ``unit_ms * STAGED_UNIT_OVERRUN_FACTOR``, so a unit of
+    that size is the largest one the legacy regime could have completed.** That
+    ceiling is what the seed is, and it is why the factor here is
+    :data:`STAGED_UNIT_OVERRUN_FACTOR` rather than a number of this session's
+    choosing: it is not a new tuning, it is the bound the old code already ran.
+
+    Three properties make this safe to certify:
+
+    * **It cannot run away.** The seed is computed ONCE, from a mean that was
+      measured under the old bound, and then it is an ordinary ring entry. It is
+      never recomputed, so a rising mean cannot feed a widening fence back into
+      itself. On the specimen: seed ``58,279 x 4 = 233,116``, fence
+      ``233,116 x 1.5 - margin = 319,674`` — which admits the measured 300,000 ms
+      unit and still refuses the 901,266 ms CAL-P081 runaway, exactly as the
+      designed ring does.
+    * **It extinguishes itself.** The next :func:`save_phase_ledger` writes a
+      non-empty ring, so :data:`UNIT_WORST_HISTORY_KEY` exists from then on and
+      this function never fires again for that ledger.
+    * **It ages out.** The seed sits in a :data:`UNIT_WORST_WINDOW` ring like any
+      other entry, so a day of real observations replaces it — in either
+      direction. It is a floor for one day, not a permanent widening, which is
+      what stops a run of cheap beats re-closing the ratchet before an expensive
+      unit has had a chance to prove itself.
+
+    A ledger with no measured mean seeds nothing. There is no measurement to
+    scale, and the phase bound must stand (ruling 075).
+    """
+    seeded: dict[str, list[int]] = {}
+    for name, cost in (unit_costs or {}).items():
+        if not isinstance(cost, dict):
+            continue
+        mean_ms = cost.get("unit_ms")
+        if isinstance(mean_ms, bool) or not isinstance(mean_ms, (int, float)):
+            continue
+        if mean_ms <= 0:
+            continue
+        seeded[name] = [int(mean_ms * STAGED_UNIT_OVERRUN_FACTOR)]
+    return seeded
+
+
+async def load_phase_carryover() -> tuple[
+    dict[str, list[int]], dict[str, list[int]], dict[str, Any], dict[str, list[int]]
 ]:
-    """Everything prior beats measured: durations, floors, and unit costs.
+    """Everything a prior beat banked, in ONE durable read.
 
-    One durable read for all three, because they live on one row and they are
-    always wanted together — a plan built from two of them is a plan reasoning
-    from partial evidence about whether it can reason at all.
+    Durations, floors, unit costs, and (CAL-P163) the rolling ring of worst
+    COMPLETED unit durations. One read because they live on one row and a plan
+    built from a subset is a plan reasoning from partial evidence about whether
+    it can reason at all.
 
-    ``({}, {}, {})`` is the honest answer to every read problem: with nothing
+    Four empty dicts is the honest answer to every read problem: with nothing
     read, nothing is measured, and :func:`derive_plan` renders ``no_data``
     rather than a reassuring empty finding.
     """
@@ -1001,26 +1090,61 @@ async def load_phase_measurements() -> tuple[
         LEDGER_IDENTITY, expected_version=PHASE_LEDGER_SCHEMA, max_age_s=STATE_MAX_AGE_S
     )
     if not read.ok or read.envelope is None or not isinstance(read.envelope.payload, dict):
-        return {}, {}, {}
+        return {}, {}, {}, {}
     payload = read.envelope.payload
     history = payload.get("history")
     floors = payload.get("floors")
     unit_costs = payload.get("unit_costs")
+    worst = payload.get(UNIT_WORST_HISTORY_KEY)
+    costs = unit_costs if isinstance(unit_costs, dict) else {}
+    ring = (
+        merge_history(worst, {}, window=UNIT_WORST_WINDOW) if isinstance(worst, dict) else {}
+    )
+    # CAL-P167: a ledger written before the ring existed has a mean and no ring,
+    # and CAL-P163's fence is inert on exactly that state. Seed it once from the
+    # bound the legacy code itself ran. See :func:`_bootstrap_worst_history` —
+    # the seed cannot run away, extinguishes on the next save, and ages out.
+    if not ring:
+        ring = _bootstrap_worst_history(costs)
     return (
         merge_history(history, {}) if isinstance(history, dict) else {},
         merge_history(floors, {}) if isinstance(floors, dict) else {},
-        unit_costs if isinstance(unit_costs, dict) else {},
+        costs,
+        ring,
     )
+
+
+async def load_phase_measurements() -> tuple[
+    dict[str, list[int]], dict[str, list[int]], dict[str, Any]
+]:
+    """Durations, floors and unit costs as :func:`derive_plan` wants them.
+
+    CAL-P163 folds the worst-unit ring INTO the unit costs here rather than
+    handing ``derive_plan`` a fourth argument: ``unit_ms_worst`` is a fact
+    about the same phase's units as ``unit_ms``, and the plan should receive
+    one description of a unit, not two that a caller has to keep in step. The
+    fold takes the ``max`` over the window — the ring exists so that one
+    collapsed beat cannot pin the worst case low, and only the max reads it
+    that way.
+    """
+    history, floors, unit_costs, worst_history = await load_phase_carryover()
+    if not worst_history:
+        return history, floors, unit_costs
+    merged = {name: dict(cost) for name, cost in unit_costs.items() if isinstance(cost, dict)}
+    for name, ring in worst_history.items():
+        if not ring:
+            continue
+        merged.setdefault(name, {})["unit_ms_worst"] = max(ring)
+    return history, floors, merged
 
 
 async def load_phase_history() -> tuple[dict[str, list[int]], dict[str, list[int]]]:
     """Prior runs' per-phase durations and floors, or ``({}, {})``.
 
-    The two-value view of :func:`load_phase_measurements`, kept because that is
-    what the save path wants: it merges history and floors and has no use for
-    the unit costs, which are a level rather than a rolling window.
+    The two-value view, kept for callers that merge the rolling windows and
+    have no use for the unit description.
     """
-    history, floors, _ = await load_phase_measurements()
+    history, floors, _, _ = await load_phase_carryover()
     return history, floors
 
 
@@ -1507,6 +1631,9 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
     unit was cancelled contributes no cost rather than a truncated one. The
     consumer (``derive_plan``) re-validates all three fields anyway; this side
     simply refuses to invent them.
+
+    ``unit_ms_worst`` is folded in by :func:`save_phase_ledger` from the rolling
+    ring, not from this beat alone — see :func:`_unit_worst_from`.
     """
     mean_ms = runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE)
     if mean_ms is None or mean_ms <= 0:
@@ -1521,6 +1648,30 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
             "units_done": banked,
         }
     }
+
+
+def _unit_worst_from(runner: PhaseRunner) -> dict[str, int]:
+    """This beat's worst COMPLETED unit duration — CAL-P163 (#1978).
+
+    Shaped as ``{phase: duration_ms}`` so it can go straight through
+    :func:`merge_history`, which already owns the rolling-window semantics this
+    needs and validates every value on the way in and out.
+
+    A ring rather than a level, unlike ``unit_costs``. The level is right for
+    the mean, which describes where the build currently stands; it is wrong for
+    the max, because a single collapsed beat — every expensive unit cancelled,
+    only the cheap ones averaged — would overwrite the worst case with a small
+    number and hold the admission bound shut on exactly the beats that need it
+    open. The window is :data:`HISTORY_WINDOW`, the same ten beats every phase
+    budget is measured over, so one anomalous beat still ages out.
+    """
+    worst = runner.ledger.stage_completed_max_ms(STAGED_UNIT_STAGE)
+    if not worst or worst <= 0:
+        # Every unit cancelled, or none ran. Contributes NOTHING to the ring —
+        # never a zero, which would be read as a measured worst case of zero and
+        # is the one value that makes the fence maximally tight.
+        return {}
+    return {PHASE_FUTURES: int(worst)}
 
 
 async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]] = None) -> str:
@@ -1540,10 +1691,10 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     if extra:
         payload.update(extra)
     try:
-        prior_history, prior_floors = await load_phase_history()
+        prior_history, prior_floors, prior_unit_costs, prior_worst = await load_phase_carryover()
     except Exception as exc:  # noqa: BLE001 — a lost history is not a lost ledger
         logger.warning("calibration phase ledger: history read failed: %s", exc)
-        prior_history, prior_floors = {}, {}
+        prior_history, prior_floors, prior_unit_costs, prior_worst = {}, {}, {}, {}
     payload["history"] = merge_history(prior_history, runner.ledger.observations())
     payload["floors"] = merge_history(prior_floors, runner.ledger.floors())
     # CAL-P067: the measured per-unit cost has to survive the beat that measured
@@ -1552,9 +1703,25 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     # Unlike history/floors this is a LEVEL, not a rolling window: it describes
     # where the staged build currently stands, so the newest reading replaces
     # the previous one rather than accumulating beside it.
-    unit_costs = _unit_costs_from(runner)
+    #
+    # CAL-P163: a level still has to be CARRIED. ``payload`` is built fresh from
+    # this run, so a beat that completed no unit used to write the row back
+    # without ``unit_costs`` at all — silently erasing what earlier beats
+    # measured and sending the next plan back to no-data. Refusing to invent a
+    # cost (above) and refusing to keep one that was measured are different
+    # things, and only the first was intended.
+    unit_costs = _unit_costs_from(runner) or prior_unit_costs
     if unit_costs:
         payload["unit_costs"] = unit_costs
+    # CAL-P163: the worst COMPLETED unit, as a rolling window. Appended to
+    # rather than overwritten, so a collapsed beat contributes its (small) worst
+    # completion without discarding the larger ones that admission decisions
+    # depend on — and still ages out after HISTORY_WINDOW beats.
+    worst_history = merge_history(
+        prior_worst, _unit_worst_from(runner), window=UNIT_WORST_WINDOW
+    )
+    if worst_history:
+        payload[UNIT_WORST_HISTORY_KEY] = worst_history
 
     result = await publish_snapshot_standalone(
         DurableEnvelope.build(
