@@ -34,6 +34,12 @@ async def run_kalshi():
                 logger.info("Kalshi WS: no markets, retrying in 60s")
                 await asyncio.sleep(60)
                 continue
+            if result and result.get("status") == "resubscribe":
+                # Q460: a planned recycle so the slate can be re-read, not a
+                # fault. Sleeping the error backoff here would blind the fast
+                # lane for ten seconds out of every ten minutes for no reason.
+                logger.info("Kalshi WS: refreshing subscription list")
+                continue
         except Exception as e:
             logger.exception("Kalshi WS crashed: %s", e)
         await asyncio.sleep(10)
@@ -49,6 +55,10 @@ async def run_polymarket():
             if result and result.get("status") in ("no_markets", "no_asset_ids"):
                 logger.info("Polymarket WS: no markets, retrying in 60s")
                 await asyncio.sleep(60)
+                continue
+            if result and result.get("status") == "resubscribe":
+                # Planned recycle (Q460), same as the Kalshi arm above.
+                logger.info("Polymarket WS: refreshing subscription list")
                 continue
         except Exception as e:
             logger.exception("Polymarket WS crashed: %s", e)
