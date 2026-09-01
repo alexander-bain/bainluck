@@ -37,18 +37,42 @@ from datetime import timedelta
 # minutes the espn_sync docstring has always claimed.
 STILL_ACTIVE_MINUTES = 30
 
-# One batched query for a whole candidate set: the most recent snapshot from any
-# source that lands at or after the event's own commence_time. Pre-commence rows
-# are excluded because a pregame line says nothing about when play ended.
+# One batched query for a whole candidate set, answering TWO different questions
+# about the same evidence. Pre-commence rows are excluded from both because a
+# pregame line says nothing about when play ended.
+#
+#   last_snap — the most recent CHANGE. What the price last moved to, and hence
+#     the best estimate of when the game ended (``derive_completed_at``).
+#   last_seen — the most recent CONFIRMATION. When a source last told us this
+#     reading was still standing, whether or not the number moved.
+#
+# THE TWO ARE NOT THE SAME COLUMN, and conflating them is the #2444 producer.
+# Both snapshot tables dedup at write time (see the model docstrings): re-polling
+# and seeing the SAME value bumps ``valid_until`` and ``reading_count`` and
+# leaves ``captured_at`` alone. So a market we are polling successfully every few
+# minutes looks, through ``captured_at``, completely silent for as long as its
+# price sits still — which for a pre-match tennis line is hours.
+#
+# ``game_may_still_be_running`` asks "is anything still reporting?", so it must
+# read ``last_seen``. Measured on the 2026-08-30 US Open draw: 73 of 75 events
+# closed by the staleness nets had a bookmaker actively confirming a price at the
+# moment they were declared over. Reading ``captured_at`` there fabricated 73
+# completions, and each one clipped the real in-play movement out of the chart —
+# a US Open match page whose win-probability line never moved for an entire
+# match. ``derive_completed_at`` keeps reading ``last_snap``: once a close IS
+# legitimate, the last real price change is still the better end-time estimate.
 LAST_POST_COMMENCE_SNAPSHOT_SQL = """
-    SELECT x.event_id, MAX(x.captured_at) AS last_snap
+    SELECT x.event_id,
+           MAX(x.captured_at) AS last_snap,
+           MAX(GREATEST(x.captured_at, COALESCE(x.valid_until, x.captured_at)))
+               AS last_seen
     FROM (
-        SELECT w.event_id, w.captured_at
+        SELECT w.event_id, w.captured_at, w.valid_until
           FROM win_prob_snapshots w
           JOIN events e ON e.id = w.event_id
          WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
         UNION ALL
-        SELECT o.event_id, o.captured_at
+        SELECT o.event_id, o.captured_at, o.valid_until
           FROM odds_snapshots o
           JOIN events e ON e.id = o.event_id
          WHERE o.event_id = ANY(:event_ids) AND o.captured_at >= e.commence_time
@@ -57,20 +81,26 @@ LAST_POST_COMMENCE_SNAPSHOT_SQL = """
 """
 
 
-def game_may_still_be_running(last_snapshot, now) -> bool:
+def game_may_still_be_running(last_seen, now) -> bool:
     """Is there live evidence that this game has NOT finished?
 
     True ⇒ hold off. A wall-clock timeout on a game something is still reporting
     on is the frozen-score producer: closing here writes a mid-game score into a
     settled event and grades the blend off it.
 
-    No snapshot at all is NOT evidence of activity — that is the ordinary case
+    ``last_seen`` is the last CONFIRMATION — the ``last_seen`` column of
+    ``LAST_POST_COMMENCE_SNAPSHOT_SQL``, not ``last_snap``. Passing the last
+    price CHANGE here reads a quiet market as a dead one; see that query's
+    comment for the 73-of-75 measurement. A source repeating a number is a
+    source that is still reporting.
+
+    Nothing seen at all is NOT evidence of activity — that is the ordinary case
     for an event whose sources went quiet, and it must stay closeable or the
     staleness net stops doing its job.
     """
-    if last_snapshot is None or now is None:
+    if last_seen is None or now is None:
         return False
-    return (now - last_snapshot) < timedelta(minutes=STILL_ACTIVE_MINUTES)
+    return (now - last_seen) < timedelta(minutes=STILL_ACTIVE_MINUTES)
 
 
 def derive_completed_at(last_snapshot, commence_time, now=None):

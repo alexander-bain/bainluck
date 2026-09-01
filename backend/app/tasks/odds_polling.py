@@ -122,7 +122,11 @@ def get_max_duration_for_sport(sport_key: str) -> float:
 
 
 async def _last_post_commence_snapshot(session, event_id):
-    """Last real snapshot at/after this event's start, or None.
+    """(last_snap, last_seen) at/after this event's start; (None, None) if neither.
+
+    Two values because they answer two questions — the last price CHANGE dates
+    the close, the last CONFIRMATION decides whether to take it at all. See
+    ``LAST_POST_COMMENCE_SNAPSHOT_SQL``.
 
     Per-event rather than batched: only events that are actually about to close
     pay for it, and a staleness close is rare by construction.
@@ -134,7 +138,7 @@ async def _last_post_commence_snapshot(session, event_id):
     row = (await session.execute(
         _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL), {"event_ids": [event_id]}
     )).first()
-    return row.last_snap if row else None
+    return (row.last_snap, row.last_seen) if row else (None, None)
 
 
 async def detect_and_close_stale_events(session) -> int:
@@ -235,6 +239,26 @@ async def detect_and_close_stale_events(session) -> int:
                     close_reason = "all_bookmakers_stale"
 
             if should_close:
+                # The other half of the shared guard (#2444). This net's own
+                # staleness test already reads valid_until, so in the ordinary
+                # case the guard agrees with it — but "both producers are wired"
+                # was only ever true of espn_sync, and a net that can close an
+                # event must be able to see that something is still reporting on
+                # it. Consulted only on the close path, so no extra query in the
+                # common case.
+                from app.utils.event_completion import game_may_still_be_running
+
+                last_snap, last_seen = await _last_post_commence_snapshot(
+                    session, event.id
+                )
+                if game_may_still_be_running(last_seen, now):
+                    logger.info(
+                        f"Held event {event.id} ({event.home_team_name} vs "
+                        f"{event.away_team_name}): a source confirmed a reading at "
+                        f"{last_seen}, so {close_reason} is not evidence it is over"
+                    )
+                    continue
+
                 close_values = {"status": "closed"}
                 if not event.completed_at:
                     # gotcha #22: completed_at is a GAME-END time. now() is when
@@ -247,8 +271,7 @@ async def detect_and_close_stale_events(session) -> int:
                     from app.utils.event_completion import derive_completed_at
 
                     close_values["completed_at"] = derive_completed_at(
-                        await _last_post_commence_snapshot(session, event.id),
-                        event.commence_time,
+                        last_snap, event.commence_time
                     )
                 await session.execute(
                     Event.__table__.update()

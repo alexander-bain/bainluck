@@ -110,6 +110,43 @@ class TestSnapshotEvidenceQuery:
         assert "win_prob_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
         assert "odds_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
 
+    def test_it_returns_both_the_last_change_and_the_last_confirmation(self):
+        # #2444. Two questions, two columns: last_snap dates a close, last_seen
+        # decides whether to take it. One query so the producers and the repair
+        # can never disagree about either.
+        from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+        assert "AS last_snap" in LAST_POST_COMMENCE_SNAPSHOT_SQL
+        assert "AS last_seen" in LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+    def test_the_confirmation_column_reads_valid_until(self):
+        # Both snapshot tables bump valid_until (not captured_at) when a poll
+        # re-sees the same value. A last_seen that ignores valid_until is just
+        # last_snap under another name, and the defect is back.
+        from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+        sql = LAST_POST_COMMENCE_SNAPSHOT_SQL
+        assert sql.count("valid_until") >= 3, (
+            "valid_until must be selected from BOTH snapshot tables and used in "
+            "the last_seen aggregate"
+        )
+        assert "GREATEST" in sql, (
+            "last_seen must never go backwards from last_snap — a row whose "
+            "valid_until is NULL or stale still confirms at its captured_at"
+        )
+        assert "COALESCE" in sql, "a NULL valid_until must fall back, not poison MAX"
+
+    def test_both_snapshot_arms_carry_the_confirmation_column(self):
+        # A one-armed fix would silently keep the defect for whichever source
+        # the arm it missed happens to be the freshest on.
+        from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
+
+        arms = LAST_POST_COMMENCE_SNAPSHOT_SQL.split("UNION ALL")
+        assert len(arms) == 2
+        for arm in arms:
+            if "FROM win_prob_snapshots" in arm or "FROM odds_snapshots" in arm:
+                assert "valid_until" in arm
+
     def test_it_is_batched(self):
         from sqlalchemy import text
 
@@ -154,6 +191,42 @@ class TestBothProducersAreWired:
         src = inspect.getsource(detect_and_close_stale_events)
         assert "derive_completed_at" in src
         assert 'close_values["completed_at"] = now' not in src
+
+    def test_odds_polling_also_holds_a_game_that_may_still_be_running(self):
+        # #2444: this class is called TestBothProducersAreWired, but only
+        # espn_sync was ever asserted to consult the still-running guard. A net
+        # that can close an event must be able to see that something is still
+        # reporting on it.
+        import inspect
+
+        from app.tasks.odds_polling import detect_and_close_stale_events
+
+        src = inspect.getsource(detect_and_close_stale_events)
+        assert "game_may_still_be_running" in src
+
+    def test_neither_net_asks_the_hold_question_with_the_last_price_change(self):
+        # The whole #2444 defect in one assertion. Both snapshot tables dedup at
+        # write time, so `captured_at`/`last_snap` is the last time the price
+        # MOVED — passing it to the hold guard reads a market we are polling
+        # successfully as a dead one. The guard must be asked with `last_seen`.
+        import inspect
+
+        from app.tasks.espn_sync import _transition_event_statuses_impl
+        from app.tasks.odds_polling import detect_and_close_stale_events
+
+        for fn in (_transition_event_statuses_impl, detect_and_close_stale_events):
+            src = inspect.getsource(fn)
+            for line in src.splitlines():
+                if "game_may_still_be_running(" not in line:
+                    continue
+                arg = line.split("game_may_still_be_running(", 1)[1]
+                assert "last_snap" not in arg, (
+                    f"{fn.__name__} asks the hold question with the last price "
+                    f"CHANGE, not the last confirmation: {line.strip()}"
+                )
+                assert "last_seen" in arg, (
+                    f"{fn.__name__} must pass last_seen: {line.strip()}"
+                )
 
     def test_the_statpal_end_time_is_still_preferred_when_we_have_one(self):
         import inspect
@@ -219,6 +292,14 @@ class _Ev:
 
 
 class _NetSession:
+    """Fake session for the net.
+
+    ``snapshots`` maps event id → either a single datetime (the price changed
+    then and was last confirmed then — the two coincide) or an explicit
+    ``(last_snap, last_seen)`` pair, which is how a frozen-but-still-quoted
+    market looks: an old change, a recent confirmation.
+    """
+
     def __init__(self, live, snapshots):
         self._selects = [[], live, [], []]  # scheduled, live, bogus, future-settled
         self._snapshots = snapshots
@@ -229,7 +310,11 @@ class _NetSession:
         if "MAX(x.captured_at)" in sql:
             from types import SimpleNamespace
             return type("R", (), {"all": lambda _s: [
-                SimpleNamespace(event_id=i, last_snap=t)
+                SimpleNamespace(
+                    event_id=i,
+                    last_snap=(t[0] if isinstance(t, tuple) else t),
+                    last_seen=(t[1] if isinstance(t, tuple) else t),
+                )
                 for i, t in self._snapshots.items() if i in params["event_ids"]
             ]})()
         if sql.startswith("UPDATE"):
@@ -288,6 +373,45 @@ class TestStalenessNetEndToEnd:
         assert stats["live_to_closed"] == 0
         # And critically: the blend was NOT graded off the halftime score.
         assert session.blend_updates == []
+
+    @pytest.mark.asyncio
+    async def test_a_frozen_price_that_is_still_being_quoted_is_not_silence(self):
+        # #2444, the US Open producer. A pre-match tennis line sits at the same
+        # number for hours: every poll re-confirms it, so valid_until climbs and
+        # captured_at does not. Asking the hold question with the last CHANGE
+        # reads an actively-quoted market as a dead one and fabricates a
+        # completion — which then clips the real in-play movement out of the
+        # chart, and the match page shows a win-probability line that never
+        # moves. Measured on the 2026-08-30 draw: 73 of 75 closes were this.
+        ev = _Ev(7, "tennis_atp_us_open", NOW - timedelta(hours=7))
+        session, stats = await _run_net(
+            # price last MOVED 6h ago; a book CONFIRMED it 2 minutes ago
+            [ev], {7: (NOW - timedelta(hours=6), NOW - timedelta(minutes=2))}, NOW
+        )
+        assert ev.status == "live", (
+            "a market a bookmaker is still quoting was declared over"
+        )
+        assert ev.completed_at is None
+        assert stats["held_still_running"] == 1
+        assert stats["live_to_closed"] == 0
+        assert session.blend_updates == []
+
+    @pytest.mark.asyncio
+    async def test_a_frozen_price_nobody_is_quoting_any_more_still_closes(self):
+        # The other direction, or the fix would just disable the net: when the
+        # books stop confirming too, the event is genuinely over and the last
+        # real change is still what dates it.
+        moved = NOW - timedelta(hours=6)
+        ev = _Ev(8, "tennis_atp_us_open", NOW - timedelta(hours=7))
+        _, stats = await _run_net(
+            [ev], {8: (moved, NOW - timedelta(hours=5))}, NOW
+        )
+        assert ev.status == "closed"
+        assert ev.completed_at == moved, (
+            "the close must still be dated by the last price CHANGE, not by the "
+            "last confirmation — last_seen decides whether, last_snap decides when"
+        )
+        assert stats["live_to_closed"] == 1
 
     @pytest.mark.asyncio
     async def test_a_genuinely_finished_game_still_closes(self):
