@@ -6,6 +6,9 @@ import type { ConfidenceSignals } from "@/lib/confidence";
 // The props section is shared with the tournament hub's match rows — one
 // definition of a prop card, not a second copy that agrees today (UX-P152).
 import type { MatchProp } from "@/lib/matchDetail";
+// Same reasoning as `MatchProp` above: the finished match the by-event route
+// serves IS a results-list row, so it is that type and not a copy of it (#2447).
+import type { TournamentResult } from "@/lib/tournamentResults";
 
 export interface Sport {
   id: number;
@@ -2213,5 +2216,18 @@ export interface EventTournamentResponse {
    * the ruling's "detail view" is this page and the field is finally consumed.
    */
   broadcasts?: { region: string; channels: string[]; note: string | null }[];
+  /**
+   * The finished match, as the tournament's results list holds it (#2447).
+   *
+   * The route has always returned it; nothing declared it, so nothing could
+   * read it. It carries `players[].image` — the register's censused
+   * `player_image` block, the SAME one the tournament page's `PlayerAvatar`
+   * renders — which is what lets the event hero draw a photograph of the person
+   * instead of falling through a TEAM logo ladder to initials.
+   *
+   * Typed off `TournamentResult` rather than restated: a second copy of this
+   * shape is a second thing to keep in step with `build_results`.
+   */
+  result?: TournamentResult | null;
   generated_at?: string;
 }

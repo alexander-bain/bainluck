@@ -31,6 +31,13 @@ const TournamentBackLink = dynamic(
   () => import("@/components/event/TournamentExtensions").then((m) => m.TournamentBackLink),
   { ssr: false }
 );
+/* #2447: the register's censused player photo, at the FRONT of the hero's
+   existing team-logo ladder. Same SWR key again, so still one request.
+   NOT `dynamic`, unlike its two neighbours above: this component WRAPS the
+   hero's existing logo markup as its fallback, so lazy-loading it would blank
+   the avatar of every event on the site until the chunk arrived. The two
+   sections below are additive and can afford to appear late; a hero cannot. */
+import { TournamentPlayerFace } from "@/components/event/TournamentExtensions";
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -626,6 +633,22 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center justify-between">
             {/* Home Team */}
             <div className="flex flex-col items-center flex-1">
+              {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
+                  `home_team_data.logo_large` -> `espnTeamLogoByName` ->
+                  initials, and both of the first two are TEAM resolvers. A
+                  tennis player is not a team, so every US Open match fell
+                  straight through to initials while the register — four
+                  sections down this same page — held a censused photograph of
+                  the same person. This adds the register to the FRONT of the
+                  ladder and leaves every other rung exactly where it was. */}
+              <TournamentPlayerFace
+                eventId={eventId}
+                sportKey={event.sport}
+                homeName={event.home_team}
+                awayName={event.away_team}
+                side="home"
+                size={56}
+                fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
@@ -648,6 +671,8 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
+                }
+              />
               <TeamNameLink
                 name={event.home_team}
                 sportKey={event.sport}
@@ -805,6 +830,15 @@ export default function EventPage({ params }: EventPageProps) {
 
             {/* Away Team */}
             <div className="flex flex-col items-center flex-1">
+              {/* #2447, the other side. Same ladder, same new first rung. */}
+              <TournamentPlayerFace
+                eventId={eventId}
+                sportKey={event.sport}
+                homeName={event.home_team}
+                awayName={event.away_team}
+                side="away"
+                size={56}
+                fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
@@ -827,6 +861,8 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
+                }
+              />
               <TeamNameLink
                 name={event.away_team}
                 sportKey={event.sport}

@@ -171,16 +171,24 @@ describe("#2448 — the chart's labels, and the way back up", () => {
    * two components would be a silent doubling of the round trip the eligibility
    * gate exists to avoid, and nothing on the page would look wrong.
    */
-  it("shares its SWR key with the sections below it", () => {
-    // Comments stripped: the doc comment above the link quotes the key, and a
-    // guard that counted prose would pass on two mentions and one call site.
+  it("every register read in this module uses ONE SWR key", () => {
+    // Comments stripped: the doc comments quote the key, and a guard that
+    // counted prose would pass on mentions rather than on call sites.
     const src = readFileSync(
       join(__dirname, "../../components/event/TournamentExtensions.tsx"),
       "utf8"
     )
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "");
-    const keys = src.match(/\["event-tournament", eventId\]/g) ?? [];
-    expect(keys).toHaveLength(2);
+
+    // Every `useSWR(` call's first argument, whatever it is. Counting a literal
+    // would go vacuous the moment somebody renamed the key; this reddens
+    // instead, because it asserts against what the calls actually pass.
+    const calls = [...src.matchAll(/useSWR<[^>]*>\(\s*([^\n]*?),\s*$/gm)].map((m) =>
+      m[1].trim()
+    );
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(calls).size).toBe(1);
+    expect(calls[0]).toContain('["event-tournament", eventId]');
   });
 });
