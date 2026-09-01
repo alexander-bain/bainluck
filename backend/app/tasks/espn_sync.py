@@ -1353,19 +1353,23 @@ async def _transition_event_statuses_impl() -> dict:
         # derived winner inverted. One batched query answers both "is it still
         # running?" and "when did it end?" (gotcha #22 — completed_at is a
         # game-end time, never a backend processing timestamp).
+        # Two maps, two questions. last_seen (last confirmation) decides whether
+        # to hold; last_snap (last price change) dates the close once we take it.
+        # #2444: reading last_snap for the hold treats a repeated quote as
+        # silence and fabricates completions on markets we are polling fine.
         last_snaps: dict = {}
+        last_seens: dict = {}
         if live_events:
             from sqlalchemy import text as _sql_text
 
             from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
 
-            last_snaps = {
-                row.event_id: row.last_snap
-                for row in (await session.execute(
-                    _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL),
-                    {"event_ids": [e.id for e in live_events]},
-                )).all()
-            }
+            for row in (await session.execute(
+                _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL),
+                {"event_ids": [e.id for e in live_events]},
+            )).all():
+                last_snaps[row.event_id] = row.last_snap
+                last_seens[row.event_id] = row.last_seen
 
         from app.utils.event_completion import (
             derive_completed_at,
@@ -1385,7 +1389,7 @@ async def _transition_event_statuses_impl() -> dict:
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
             if hours_since_start > max_hours + 0.5:
                 last_snap = last_snaps.get(event.id)
-                if game_may_still_be_running(last_snap, now):
+                if game_may_still_be_running(last_seens.get(event.id), now):
                     # Leave it live. The next pass re-checks, and a real source
                     # will almost always settle it before we need to guess.
                     stats["held_still_running"] += 1
