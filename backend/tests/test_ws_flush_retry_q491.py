@@ -180,6 +180,14 @@ class _FlakySession:
                 stmt.table.name == "futures_outcomes"
                 and "current_probability" in params
             ):
+                # Q491 repair 2 (CERT-659): a recycle cancelling `flush_loop`
+                # lands as a CancelledError INSIDE the write, which is a
+                # BaseException and so slips past `except Exception`. Simulated
+                # here rather than raced, so the guard is deterministic.
+                if self._budget.get("cancel_writes", 0) > 0:
+                    self._budget["cancel_writes"] -= 1
+                    self._budget["cancelled"] = self._budget.get("cancelled", 0) + 1
+                    raise asyncio.CancelledError()
                 if self._budget["fail_writes"] > 0:
                     self._budget["fail_writes"] -= 1
                     self._budget["failed"] += 1
@@ -234,7 +242,7 @@ def _poly_frame(event_type, asset_id, **kw):
 
 
 async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
-                    recycle=0.5):
+                    recycle=0.5, cancel_writes=0):
     """Drive the real Polymarket consumer to one planned recycle.
 
     ``flush`` well under ``recycle`` so the loop gets many attempts: the ship is
@@ -242,7 +250,8 @@ async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
     be what the assertion is balanced on.
     """
     writes: list[tuple[int, float]] = []
-    budget = {"fail_writes": fail_writes, "failed": 0}
+    budget = {"fail_writes": fail_writes, "failed": 0,
+              "cancel_writes": cancel_writes, "cancelled": 0}
     gate = asyncio.Event() if gated else None
     ack = asyncio.Event() if gated else None
 
@@ -257,9 +266,10 @@ async def _run_poly(monkeypatch, frames, fail_writes=0, gated=(), flush=0.02,
 
 
 async def _run_kalshi(monkeypatch, frames, fail_writes=0, flush=0.02,
-                      recycle=0.5):
+                      recycle=0.5, cancel_writes=0):
     writes: list[tuple[int, float]] = []
-    budget = {"fail_writes": fail_writes, "failed": 0}
+    budget = {"fail_writes": fail_writes, "failed": 0,
+              "cancel_writes": cancel_writes, "cancelled": 0}
 
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
@@ -565,3 +575,166 @@ class TestTheFinalFlushRetriesInsteadOfRequeueing:
             "both sockets share the constant so one dyno cannot run two "
             "different drain policies"
         )
+
+
+# --------------- the class kill: CERT-659's BLOCK, and everything like it -----
+
+
+class TestACancellationMidWriteCannotLoseAPrice:
+    """CERT-659 BLOCK, round two's finding, reproduced and closed at the class.
+
+    Verbatim: *"recycle can cancel a periodic flush after it clears the buffer
+    and before its write lands; `CancelledError` bypasses the `except Exception`
+    requeue, and the final drain sees nothing. Exact-head deterministic probe:
+    `writes=[]`, `errors=0`, `requeued=0`, `final_flush_retries=0`,
+    `final_flush_dropped=0`."*
+
+    🔴 **The lesson these two blocks add up to, and why this fix is shaped
+    differently from the last two.** Rounds one and two both said *drain the
+    buffer, then put it back if the thing you caught happens*. That can only ever
+    cover the failures someone thought to catch, and two certs found two nobody
+    had: a failure on the final flush, and a `BaseException` that `except
+    Exception` cannot see. **So the buffer is no longer drained up front at
+    all** — entries are removed only after the write lands. There is nothing to
+    put back because nothing was taken away, and a third unanticipated failure
+    mode has nowhere to lose a price.
+
+    The `errors=0, requeued=0` half of the probe is the important half: the old
+    shape lost the price **silently**, so no counter could even report it.
+    """
+
+    async def test_polymarket_cancellation_between_read_and_write_keeps_the_price(
+        self, monkeypatch
+    ):
+        writes, stats, budget = await _run_poly(
+            monkeypatch,
+            [_poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")],
+            cancel_writes=1,
+            flush=0.02,
+            recycle=0.4,
+        )
+
+        assert budget["cancelled"] == 1, (
+            f"the harness must actually have cancelled a write; got {budget}"
+        )
+        assert writes == [(YES_OUTCOME_ID, pytest.approx(0.70))], (
+            "a cancellation landing between the buffer read and the write must "
+            "not lose the price — the buffer still holds it and a later flush "
+            f"(or the final drain) must write it; got writes={writes} stats={stats}"
+        )
+        assert stats["final_flush_dropped"] == 0, stats
+
+    async def test_kalshi_cancellation_between_read_and_write_keeps_the_price(
+        self, monkeypatch
+    ):
+        writes, stats, budget = await _run_kalshi(
+            monkeypatch,
+            [json.dumps({
+                "type": "ticker",
+                "msg": {
+                    "market_ticker": KALSHI_TICKER,
+                    "yes_bid_dollars": "0.40",
+                    "yes_ask_dollars": "0.44",
+                },
+            })],
+            cancel_writes=1,
+            flush=0.02,
+            recycle=0.4,
+        )
+
+        assert budget["cancelled"] == 1, budget
+        assert writes == [(KALSHI_OUTCOME_ID, pytest.approx(0.42))], (
+            f"got writes={writes} stats={stats}"
+        )
+        assert stats["final_flush_dropped"] == 0, stats
+
+    async def test_a_cancelled_final_drain_reports_the_loss_before_it_dies(
+        self, monkeypatch, caplog
+    ):
+        """The worst ordering, and the one that decides whether this fix is
+        honest: the cancellation lands on the FINAL drain, where there is no
+        later flush at all.
+
+        Two things must both hold, and they pull in opposite directions.
+        **The cancellation must keep travelling** — CERT-491's contract;
+        swallowing it makes the runner relaunch a consumer the process is trying
+        to stop. **And the stranded price must be reported on the way out** —
+        `errors=0, requeued=0, final_flush_dropped=0` is precisely the silent
+        reading CERT-659 measured, and a loss nobody can see is the failure this
+        whole queue exists to end (gotcha #53).
+        """
+        monkeypatch.setattr(poly_task, "FINAL_FLUSH_ATTEMPTS", 2)
+
+        with caplog.at_level("ERROR"):
+            with pytest.raises(asyncio.CancelledError):
+                await _run_poly(
+                    monkeypatch,
+                    [_poly_frame(
+                        "best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72"
+                    )],
+                    cancel_writes=10_000,   # every write, drain attempts included
+                    flush=5.0,              # no periodic flush: the drain is the only one
+                    recycle=0.25,
+                )
+
+        stranded = [
+            r for r in caplog.records
+            if "STRANDED" in r.getMessage() and "cancellation" in r.getMessage()
+        ]
+        assert stranded, (
+            "a price the consumer could not write before being cancelled must be "
+            "logged loudly; the pre-fix code lost it at a silent 0/0/0. Records: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    async def test_a_fresher_tick_still_wins_over_a_written_one(self, monkeypatch):
+        """Non-vacuity for the REMOVAL rule, which replaced `setdefault`.
+
+        Entries now leave the buffer only when `price_buffer[oid] == prob`. If
+        that equality test were dropped for a plain `del`, a fresher tick that
+        arrived while the write was in flight would be deleted unwritten — the
+        stale-price bug from round one, re-introduced at the other end. Two
+        successive ticks on the same leg must both reach the DB, newest last.
+        """
+        writes, stats, _budget = await _run_poly(
+            monkeypatch,
+            [
+                _poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72"),
+                _poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.88", best_ask="0.92"),
+            ],
+            flush=0.02,
+            recycle=0.4,
+        )
+
+        assert writes, f"nothing was written at all; stats={stats}"
+        assert writes[-1] == (YES_OUTCOME_ID, pytest.approx(0.90)), (
+            "the newest price must be the last one written — a removal rule that "
+            f"ignores supersession would drop it; got {writes}"
+        )
+
+    async def test_the_buffer_is_not_drained_before_the_write(self):
+        """Structural, and it RAISES rather than passing when it cannot parse.
+
+        Both defects came from the same shape: `batch = dict(price_buffer)`
+        immediately followed by `price_buffer.clear()`. That pairing must not
+        come back in either socket, whatever new `except` clauses get added
+        around it.
+        """
+        import inspect
+        import re
+
+        for mod, name in ((kalshi_task, "kalshi_ws"), (poly_task, "polymarket_ws")):
+            src = inspect.getsource(mod)
+            if "batch = dict(price_buffer)" not in src:
+                raise AssertionError(
+                    f"{name}: cannot find the buffer snapshot this guard exists "
+                    "to protect — re-point the guard rather than deleting it"
+                )
+            drained = re.search(
+                r"batch = dict\(price_buffer\)\s*\n\s*price_buffer\.clear\(\)", src
+            )
+            assert drained is None, (
+                f"{name}: the buffer is drained BEFORE the write again. That is "
+                "the shape CERT-654 and CERT-659 both blocked — a price is lost "
+                "by any failure the `except` clause does not happen to catch."
+            )

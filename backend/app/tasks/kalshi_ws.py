@@ -175,8 +175,16 @@ async def _run_kalshi_ws_consumer():
             if not price_buffer:
                 return
             batch = dict(price_buffer)
-            price_buffer.clear()
-
+        # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
+        # CLEARED HERE. Draining first and putting the batch back on failure
+        # only covers the failures you thought to catch, and two rounds of certs
+        # found two we had not: `except Exception` never sees `CancelledError`
+        # (it is a BaseException), so a recycle cancelling `flush_loop` between
+        # the drain and the write lost the batch with `errors=0, requeued=0` —
+        # invisible. Entries are now removed ONLY after the write lands, so no
+        # failure mode — exception, cancellation, or a hard kill between the two
+        # — can lose a price the buffer was holding. Nothing needs to be
+        # "put back", because it was never taken away.
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
@@ -202,26 +210,29 @@ async def _run_kalshi_ws_consumer():
             stats["flushes"] += 1
             stats["price_updates"] += len(batch)
         except Exception:
+            # Q491 — the batch is still in `price_buffer`, so the next flush
+            # retries it. Before Q491 the buffer was drained up front and a
+            # failed write discarded those prices outright: the socket only
+            # refills an outcome when that market ticks again, and 86.7% of open
+            # Polymarket markets never tick, so one transient error left the
+            # card on its old number with a stale `last_updated` (#2024).
             stats["errors"] += 1
-            # Q491 — same defect as the Polymarket socket, same fix. The batch
-            # is drained from `price_buffer` before the write, so a failed write
-            # used to discard those prices; the socket only refills an outcome
-            # when that market ticks again, so one transient error left the card
-            # on its old number with a stale `last_updated` (#2024) until the
-            # next tick. Put the batch back for the next 2s flush.
-            #
-            # `setdefault`, not `update`: `handle_ticker` may have buffered a
-            # FRESHER price for the same outcome while the failed write was in
-            # flight, and that newer value wins. Bounded by construction — one
-            # entry per subscribed outcome, whatever the outage length.
-            async with buffer_lock:
-                for outcome_id, prob in batch.items():
-                    price_buffer.setdefault(outcome_id, prob)
             stats["requeued"] += len(batch)
             logger.exception(
-                "Kalshi WS: flush error (%d updates requeued)", len(batch)
+                "Kalshi WS: flush error (%d updates retained for retry)", len(batch)
             )
             return
+
+        # Q491 repair 2 — the write landed, so and only so do these entries
+        # leave the buffer. The `== prob` test is what used to be `setdefault`:
+        # `handle_ticker` may have buffered a FRESHER price for the same outcome
+        # while this write was in flight, and that newer value is the truth, so
+        # it must survive to the next flush rather than be dropped as "already
+        # written". Same contract, enforced at removal instead of at re-queue.
+        async with buffer_lock:
+            for outcome_id, prob in batch.items():
+                if price_buffer.get(outcome_id) == prob:
+                    del price_buffer[outcome_id]
 
         # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
         # renders `Event.win_probability_sources`. Push the freshly-flushed
@@ -245,13 +256,29 @@ async def _run_kalshi_ws_consumer():
         Every attempt after the first is counted, so a dyno that routinely needs
         them is visible rather than merely quiet.
         """
-        for attempt in range(FINAL_FLUSH_ATTEMPTS):
-            await flush_prices()
-            async with buffer_lock:
-                if not price_buffer:
-                    return
-            if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
-                stats["final_flush_retries"] += 1
+        try:
+            for attempt in range(FINAL_FLUSH_ATTEMPTS):
+                await flush_prices()
+                async with buffer_lock:
+                    if not price_buffer:
+                        return
+                if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
+                    stats["final_flush_retries"] += 1
+        except asyncio.CancelledError:
+            # Q491 repair 2: a hard cancel during the LAST drain. The
+            # cancellation must keep travelling (CERT-491 — swallowing it makes
+            # the runner relaunch a consumer the process is stopping), but the
+            # prices it strands must be REPORTED on the way out rather than
+            # vanishing at the silent `errors=0, requeued=0` CERT-659 measured.
+            stranded = len(price_buffer)
+            if stranded:
+                stats["final_flush_dropped"] += stranded
+                logger.error(
+                    "Kalshi WS: %d price updates STRANDED by cancellation "
+                    "during the final drain — these are lost, not deferred",
+                    stranded,
+                )
+            raise
         async with buffer_lock:
             stranded = len(price_buffer)
         if stranded:

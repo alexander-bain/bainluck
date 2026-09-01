@@ -307,7 +307,14 @@ async def _run_polymarket_ws_consumer():
             if not price_buffer:
                 return
             batch = dict(price_buffer)
-            price_buffer.clear()
+        # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
+        # CLEARED HERE. Twin of the Kalshi socket: draining first and putting
+        # the batch back on failure only covers the failures you thought to
+        # catch, and `except Exception` never sees `CancelledError` (a
+        # BaseException), so a recycle cancelling `flush_loop` between the drain
+        # and the write lost the batch with `errors=0, requeued=0` — invisible.
+        # Entries now leave only after the write lands, so nothing needs to be
+        # "put back", because it was never taken away.
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
@@ -330,27 +337,34 @@ async def _run_polymarket_ws_consumer():
                     )
             stats["price_updates"] += len(batch)
         except Exception:
-            stats["errors"] += 1
-            # Q491 — THE SHIP. The batch was drained from `price_buffer` before
-            # the write, so a failed write used to DISCARD those prices outright.
-            # The socket only refills an outcome when that market ticks again,
-            # and 86.7% of open Polymarket markets never tick at all — so one
-            # transient error froze a card at its old number indefinitely, with
-            # no `last_updated` either (#2024). Put the batch back so the next
-            # 2s flush retries it.
+            # Q491 — THE SHIP. The batch is still in `price_buffer`, so the next
+            # flush retries it. Before Q491 the buffer was drained up front and
+            # a failed write DISCARDED those prices outright: the socket only
+            # refills an outcome when that market ticks again, and 86.7% of open
+            # Polymarket markets never tick at all, so one transient error froze
+            # a card at its old number indefinitely with no `last_updated`
+            # either (#2024).
             #
-            # `setdefault`, not `update`: `handle_price` may have buffered a
-            # FRESHER price for the same outcome while the failed write was in
-            # flight, and that newer value is the truth — re-queuing must never
-            # resurrect a stale price over it. Bounded by construction: the
-            # buffer is keyed by outcome_id over a fixed slate, so a long
-            # outage parks at most one entry per subscribed outcome.
-            async with buffer_lock:
-                for outcome_id, prob in batch.items():
-                    price_buffer.setdefault(outcome_id, prob)
+            # Bounded by construction: the buffer is keyed by outcome_id over a
+            # fixed slate, so a long outage holds at most one entry per
+            # subscribed outcome however many attempts are burned.
+            stats["errors"] += 1
             stats["requeued"] += len(batch)
-            logger.exception("Polymarket WS: flush error (%d requeued)", len(batch))
+            logger.exception(
+                "Polymarket WS: flush error (%d retained for retry)", len(batch)
+            )
             return
+
+        # Q491 repair 2 — the write landed, so and only so do these entries
+        # leave the buffer. The `== prob` test is what used to be `setdefault`:
+        # `handle_price` may have buffered a FRESHER price for the same outcome
+        # while this write was in flight, and that newer value is the truth, so
+        # it must survive to the next flush rather than be dropped as "already
+        # written". Same contract, enforced at removal instead of at re-queue.
+        async with buffer_lock:
+            for outcome_id, prob in batch.items():
+                if price_buffer.get(outcome_id) == prob:
+                    del price_buffer[outcome_id]
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
         # `Event.win_probability_sources`, the JSONB the card actually renders.
@@ -368,13 +382,29 @@ async def _run_polymarket_ws_consumer():
         `writes=[]`, `errors=1`, `requeued=1`. Call `flush_prices` again instead,
         up to `FINAL_FLUSH_ATTEMPTS`, each attempt on a fresh session.
         """
-        for attempt in range(FINAL_FLUSH_ATTEMPTS):
-            await flush_prices()
-            async with buffer_lock:
-                if not price_buffer:
-                    return
-            if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
-                stats["final_flush_retries"] += 1
+        try:
+            for attempt in range(FINAL_FLUSH_ATTEMPTS):
+                await flush_prices()
+                async with buffer_lock:
+                    if not price_buffer:
+                        return
+                if attempt + 1 < FINAL_FLUSH_ATTEMPTS:
+                    stats["final_flush_retries"] += 1
+        except asyncio.CancelledError:
+            # Q491 repair 2: a hard cancel during the LAST drain. The
+            # cancellation must keep travelling (CERT-491 — swallowing it makes
+            # the runner relaunch a consumer the process is stopping), but the
+            # prices it strands must be REPORTED on the way out rather than
+            # vanishing at the silent `errors=0, requeued=0` CERT-659 measured.
+            stranded = len(price_buffer)
+            if stranded:
+                stats["final_flush_dropped"] += stranded
+                logger.error(
+                    "Polymarket WS: %d price updates STRANDED by cancellation "
+                    "during the final drain — these are lost, not deferred",
+                    stranded,
+                )
+            raise
         async with buffer_lock:
             stranded = len(price_buffer)
         if stranded:
