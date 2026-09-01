@@ -3098,15 +3098,19 @@ async def _build_completed_tournament(
     # "already cached" and then called the UNCACHED `get_golf()`, so a completed
     # tournament paid the full listing rebuild TWICE per request — once in
     # `get_golf_tournament` to discover the slug was absent, and again here to read
-    # a single key off the result. The caller now hands its copy down; the cached
-    # read is only reached when this function is called directly.
+    # a single key off the result. The caller now hands its copy down.
+    #
+    # The direct-call fallback stays on the LIVE builder for the same reason the
+    # caller does: see the CERT-686 note at the `get_golf` call in
+    # `get_golf_tournament`. Reading the hourly cache here would reintroduce the
+    # stale-winner-field regression through the side door.
     start_date = None
     end_date = None
     venue = None
     schedule_status = None
     try:
         if golf_data is None:
-            golf_data = await get_golf_cached(db=db)
+            golf_data = await get_golf(db=db)
         schedule = golf_data.get("pga_schedule", [])
         for event in schedule:
             # Match by multiple strategies: display name slug, key slug, or
@@ -3161,37 +3165,41 @@ async def get_golf_tournament(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed tournament data for a specific golf tournament."""
-    # LAT-P186/#1107: this said "reuse get_golf() for its caching" and called the
-    # UNCACHED function. The caching lives in `get_golf_cached()` — its sibling
-    # thirty lines up, which is what `GET /api/golf` is wired to. So the golf
-    # landing page read Redis in ~45 ms while this route rebuilt the entire golf
-    # listing from scratch on every single request, and `_build_completed_tournament`
-    # (whose own comment also said "already cached") rebuilt it a SECOND time in the
-    # same request to read one field off it.
+    # LAT-P186/#1107: the comment that used to sit here said "Reuse get_golf() for
+    # its caching and aggregation" — and `get_golf()` has NO caching. The caching is
+    # `get_golf_cached()`, its sibling thirty lines up, which is what `GET /api/golf`
+    # is wired to. `_build_completed_tournament` carried the same wrong belief in its
+    # own comment ("already cached") and called `get_golf()` a SECOND time in the same
+    # request to read one field off the result, so a completed tournament paid the
+    # entire listing rebuild TWICE.
     #
     # MEASURED on production 2026-09-01, `x-timing-split`, median of 5:
     #     /api/golf/tournaments/us-open       2,076 ms wall   1,556 ms app   q=19
     #     /api/golf/tournaments/the-masters   1,795 ms wall   1,391 ms app   q=18
     #     /api/golf            (cached)          45 ms wall       0 ms db    q=0
-    # `app` dominates every slug because the rebuild is mostly Python over every
-    # open golf market's eagerly-loaded outcomes, plus up to three DataGolf schedule
-    # fetches — none of which this route needs freshly built.
+    # `app` dominates every slug: the rebuild is mostly Python over every open golf
+    # market's eagerly-loaded outcomes, plus up to three DataGolf schedule fetches.
     #
-    # Serving the cached listing is a FRESHNESS change and it was sized, not assumed:
-    #   - `/api/golf` and the Discover feed's golf base ALREADY serve exactly this
-    #     payload, so the detail page was the one surface that disagreed with them.
-    #   - Snapshot cadence for the currently-open golf markets is ~8 distinct hours
-    #     out of 26, with 4-6 hour gaps — the underlying prices move SLOWER than the
-    #     hourly precompute that writes this key.
-    #   - Cached vs live, compared field-by-field on both open tournaments:
-    #     15/15 golfers identical, 0 differing probabilities.
-    # `get_golf_cached` falls back to the live `get_golf()` on a cache miss, so a
-    # cold Redis degrades to exactly today's behaviour rather than to an error.
+    # 🔴 THIS CALL DELIBERATELY STAYS ON THE LIVE `get_golf()`. DO NOT "OPTIMISE" IT TO
+    # `get_golf_cached()`. That was tried and CERT-686 BLOCKED it, correctly:
+    #   - during play the DataGolf task writes `FuturesOutcome.current_probability`
+    #     every 90 SECONDS, while `bainluck:category:golf` is produced hourly with a
+    #     7,200 s TTL. Sourcing the winner field from it makes the headline "who wins?"
+    #     number lag by up to an hour, and up to two after a missed precompute. An
+    #     exact-SHA probe held a cached 18% against a live 61% leaderboard row.
+    #   - `fuse_golf_live()` overlays position/score/thru/round ONLY. It never replaces
+    #     `probability`, so nothing downstream repairs the staleness.
+    #   - a cached still-open entry is also found BEFORE the completed-market fallback
+    #     below, which keeps pre-settlement probabilities on screen after the database
+    #     already has a winner.
+    # The freshness evidence that argued for the cache measured `futures_odds_snapshots`
+    # cadence on UPCOMING tournaments and mistook it for the freshness of the live
+    # field. Wrong table, wrong state. A cached read here needs a live-winner overlay
+    # and a settlement bypass first — it is not a one-word swap.
     #
-    # Everything that must be current is still read live BELOW this line: the
-    # placement grid, round groups, related futures and the evolution-market pick
-    # all issue their own queries against the DB.
-    golf_data = await get_golf_cached(db=db)
+    # What this queue DOES remove is the DUPLICATE: the listing is built ONCE per
+    # request and handed to `_build_completed_tournament` instead of rebuilt there.
+    golf_data = await get_golf(db=db)
 
     tournaments = golf_data.get("tournaments", [])
 
