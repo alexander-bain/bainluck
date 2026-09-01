@@ -241,6 +241,7 @@ class TestBeatScheduleCompleteness:
         "capture-featured-markets-daily",
         "enrich-market-images",
         "enrich-tmdb-images",
+        "backfill-image-dimensions",
         "merge-duplicate-events",
         "reconcile-unanchored-events",
         "merge-degenerate-combat-events",

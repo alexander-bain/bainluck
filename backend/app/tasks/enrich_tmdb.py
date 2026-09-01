@@ -22,6 +22,7 @@ import httpx
 from sqlalchemy import select, update
 
 from app.tasks.base import get_task_session
+from app.utils.image_dimensions import tmdb_declared_width
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,13 @@ async def enrich_tmdb_images(limit: int = 50):
             if url:
                 # Prefer real TMDB art over the generic Pexels stock image.
                 values["image_url"] = url
+                # This REPLACES a Pexels photo, so the stored dimensions must be
+                # replaced in the same statement — leaving them would leave the
+                # old photo's size describing the new image. TMDB names the
+                # rendered width in the path and honours it exactly; the height
+                # is not derivable here and is left for the backfill to measure.
+                values["image_width"] = tmdb_declared_width(url)
+                values["image_height"] = None
                 stats["found"] += 1
             else:
                 stats["no_match"] += 1

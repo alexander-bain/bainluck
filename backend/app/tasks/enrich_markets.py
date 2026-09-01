@@ -18,6 +18,7 @@ import httpx
 from sqlalchemy import select, update, func
 
 from app.tasks.base import get_task_session
+from app.utils.image_dimensions import delivered_dimensions
 from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
     DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
@@ -436,8 +437,14 @@ def _extract_image_keywords(name: str, category: str | None) -> str:
     return " ".join(words)
 
 
-async def _fetch_pexels_image(query: str) -> str | None:
-    """Fetch best image from Pexels. Gets 5 candidates and picks the highest resolution landscape."""
+async def _fetch_pexels_image(query: str) -> tuple[str, int, int] | None:
+    """Fetch best image from Pexels. Gets 5 candidates and picks the highest resolution landscape.
+
+    Returns (url, source_width, source_height). The source dimensions are the
+    chosen photo's own, already present in the search response — they cost no
+    extra request and are what lets us record the delivered raster's true size
+    (see app/utils/image_dimensions.py).
+    """
     if not PEXELS_API_KEY:
         return None
     try:
@@ -482,7 +489,10 @@ async def _fetch_pexels_image(query: str) -> str | None:
             if not best:
                 best = photos[0]
 
-            return best["src"].get("large", best["src"]["medium"])
+            url = best["src"].get("large", best["src"]["medium"])
+            if not url:
+                return None
+            return url, best.get("width") or 0, best.get("height") or 0
     except Exception as e:
         logger.error("Pexels fetch error for '%s': %s", query, e)
         return None
@@ -496,7 +506,7 @@ async def enrich_market_images(limit: int = 50):
         logger.info("PEXELS_API_KEY not set — skipping image enrichment")
         return {"skipped": True}
 
-    stats = {"fetched": 0, "found": 0, "errors": 0}
+    stats = {"fetched": 0, "found": 0, "errors": 0, "sized": 0}
 
     async with get_task_session() as session:
         result = await session.execute(
@@ -515,14 +525,22 @@ async def enrich_market_images(limit: int = 50):
             if not query.strip():
                 continue
 
-            url = await _fetch_pexels_image(query)
+            picked = await _fetch_pexels_image(query)
             stats["fetched"] += 1
 
-            if url:
+            if picked:
+                url, source_w, source_h = picked
+                # Record the delivered raster's true size alongside the URL.
+                # Always written together: dimensions that outlive the photo
+                # they describe are worse than no dimensions at all.
+                delivered = delivered_dimensions(url, source_w, source_h)
+                width, height = delivered if delivered else (None, None)
+                if delivered:
+                    stats["sized"] += 1
                 await session.execute(
                     update(FuturesMarket)
                     .where(FuturesMarket.id == market_id)
-                    .values(image_url=url)
+                    .values(image_url=url, image_width=width, image_height=height)
                 )
                 stats["found"] += 1
             else:
