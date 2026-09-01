@@ -553,3 +553,71 @@ def test_both_backlogs_empty_reports_drained(run_task) -> None:
 
     assert result["backlog_drained"] is True, f"{result}"
     assert result["graded_backlog_drained"] is True, f"{result}"
+
+
+# ---------------------------------------------------------------------------
+# The WRITER-side semantics, ported from CAL-P159's file at this same path
+# ---------------------------------------------------------------------------
+# CAL-P173 (#1978), under INT-190 directive 936 step 2. Two lanes independently
+# created `test_movement_window.py` for item 12. Everything above is lane1/Q482's
+# sweep — the FIX. CAL-P159's 118-line file pinned the *unfixed writer
+# semantics*, and the rebase that resolved the add/add collision took master's
+# file whole, which silently dropped four pins.
+#
+# Two of the four were re-checked against this branch's code and survive; they
+# are ported here rather than restored as a second file at the same path (which
+# is what 936 forbids and what caused the collision). The other two were dropped
+# on measurement, not on taste:
+#
+#   * `..._the_upstream_fix_has_not_silently_landed_elsewhere` pinned the
+#     ABSENCE of the very sweep this file now tests — `app.tasks.__init__` has
+#     `SET probability_change_24h = NULL` twice. Correct when written, obsolete
+#     now.
+#   * `..._the_movers_bound_still_documents_why_read_side_is_wrong` is covered
+#     by `tests/test_futures_movers_pool_bound.py`.
+#
+# Why these two still earn their place AFTER the fix: the sweep retires stale
+# deltas downstream, but no writer was changed. The field is still a per-write
+# delta over whatever interval happened to elapse — the sweep bounds how long a
+# lie survives, it does not make the number mean 24 hours. A reader who sees
+# only the sweep will assume it does.
+
+
+class TestTheFieldStillDoesNotMeanWhatItIsNamed:
+    def test_every_writer_computes_a_per_write_delta_not_a_windowed_one(self):
+        """All four writers store ``new - previous``, over whatever interval that was."""
+        import inspect
+
+        from app.tasks import futures as futures_task
+        from app.tasks import kalshi as kalshi_task
+        from app.tasks import polymarket as polymarket_task
+
+        kalshi_src = inspect.getsource(kalshi_task)
+        poly_src = inspect.getsource(polymarket_task)
+        futures_src = inspect.getsource(futures_task)
+
+        assert "- FuturesOutcome.current_probability" in kalshi_src
+        assert "- FuturesOutcome.current_probability" in poly_src
+        assert "prob_change = prob - old_prob" in futures_src
+
+    def test_no_writer_recomputes_it_over_a_real_24_hour_window(self):
+        """Renamed from ``test_nothing_recomputes_it_over_a_real_24_hour_window``.
+
+        The original name and docstring became false the day lane1/Q482's sweep
+        landed: something DOES now bound the field to a window. That something is
+        `update_max_movement`, downstream of every writer — so the scope this
+        pin can honestly claim is the WRITERS, and the name now says so.
+
+        If this ever fails, a writer has grown a windowed recompute and the two
+        mechanisms are both bounding the same column. Reconcile them before
+        deleting this — do not simply relax it.
+        """
+        import inspect
+
+        from app.tasks import futures as futures_task
+        from app.tasks import kalshi as kalshi_task
+        from app.tasks import polymarket as polymarket_task
+
+        for mod in (kalshi_task, polymarket_task, futures_task):
+            src = inspect.getsource(mod)
+            assert "interval '24 hours'" not in src, mod.__name__

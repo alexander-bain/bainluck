@@ -265,6 +265,18 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "mex_published_outcomes",
     "published_outcomes",
     "published_questions",
+    # CAL-P168 (#1978) rank 1: K''s totals. Declared in the SAME commit that
+    # emits them — CAL-P162 emitted its columns and declared them nowhere, and
+    # the first banked unit raised UndeclaredColumnError so no generation could
+    # publish. This pair reproduced that failure exactly during the build and
+    # the fail-closed merge caught it, which is the guard working rather than a
+    # guard being appeased.
+    "player_props_placeholder_excluded",
+    "player_props_placeholder_markets",
+    # CERT-647 (CAL-P170): the TEMPORARY subset of the pair above, declared in
+    # the same commit that emits it for the same reason its parent was.
+    "player_props_placeholder_temporary_excluded",
+    "player_props_placeholder_temporary_markets",
 )
 
 #: The census columns that are ``COUNT(DISTINCT ...)`` rather than ``COUNT(*)``.
@@ -288,6 +300,15 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         "nonexclusive_bundle_markets",
         "mex_published_markets",
         "published_questions",
+        # CAL-P168: COUNT(DISTINCT market_id), additive over a partition of
+        # markets exactly like its neighbours. The outcome-level
+        # `player_props_placeholder_excluded` is a plain COUNT(*) and correctly
+        # stays out of this set.
+        "player_props_placeholder_markets",
+        # CERT-647 (CAL-P170): the temporary subset's market count is the same
+        # COUNT(DISTINCT market_id) shape and belongs here for the same reason.
+        # Its outcome-level sibling is a plain COUNT(*) and correctly does not.
+        "player_props_placeholder_temporary_markets",
     }
 )
 
@@ -335,10 +356,17 @@ MEMBER_SEPARATOR = "\x1e"
 #: at the time only checked that the two declarations agreed WITH EACH OTHER,
 #: it stayed green while the first banked unit raised
 #: ``UndeclaredColumnError``. Agreement is not coverage.
+#: CAL-P168 adds ``pp_cell_0`` — rank 1's `polymarket/baseball` per-cell count.
+#: It is generated in the frozen module from a DIFFERENT constant
+#: (``PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS``) than the ``nxb_cell_*`` half,
+#: because the two halves are different rules sharing one disclosure; the
+#: characterization test reads BOTH tuples out of the frozen file as text and
+#: derives what this must equal, so adding a cell to either one reds the pin.
 NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = (
     "nxb_cell_esports",
     "nxb_cell_0",
     "nxb_cell_1",
+    "pp_cell_0",
 )
 
 DECLARED_CENSUS_COLUMNS: tuple[str, ...] = (

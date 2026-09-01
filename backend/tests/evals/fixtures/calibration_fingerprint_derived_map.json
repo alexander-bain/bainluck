@@ -4,6 +4,12 @@
     "COVERAGE_CENSUS_ENABLED",
     "MEX_NORMALIZE_THRESHOLD",
     "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS",
+    "PLAYER_PROPS_FORCED_DRIFT_MIN",
+    "PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE",
+    "PLAYER_PROPS_MIDPOINT_BAND_HI",
+    "PLAYER_PROPS_MIDPOINT_BAND_LO",
+    "PLAYER_PROPS_NAME_PATTERN",
+    "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY"
   ],
   "hashed_roots": [
@@ -12,7 +18,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 56,
+  "input_count": 65,
   "inputs": [
     {
       "covered_by_value": false,
@@ -355,7 +361,8 @@
       "sql_interpolated": true,
       "used_in": [
         "_calibration_population_ctes",
-        "compute_calibration_payload"
+        "compute_calibration_payload",
+        "player_props_container_predicate"
       ]
     },
     {
@@ -422,6 +429,107 @@
       "impact": "behavior_or_evidence",
       "name": "ORPHAN_PARTITION_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:ORPHAN_PARTITION_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "48005fca7b411b6d",
+      "impact": "sql_shaping",
+      "name": "PAIR_SUM_TOLERANCE",
+      "origin": "app.utils.pair_opening_coherence:PAIR_SUM_TOLERANCE",
+      "sql_interpolated": true,
+      "used_in": [
+        "published_pair_coherence_predicate"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_FORCED_DRIFT_MIN",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_FORCED_DRIFT_MIN",
+      "sql_interpolated": true,
+      "used_in": [
+        "forced_midpoint_predicate"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_HALF_SPIKE_EXACT_VALUE",
+      "sql_interpolated": true,
+      "used_in": [
+        "player_props_pair_shape_columns"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_MIDPOINT_BAND_HI",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_MIDPOINT_BAND_HI",
+      "sql_interpolated": true,
+      "used_in": [
+        "forced_midpoint_predicate"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_MIDPOINT_BAND_LO",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_MIDPOINT_BAND_LO",
+      "sql_interpolated": true,
+      "used_in": [
+        "forced_midpoint_predicate"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_NAME_PATTERN",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_NAME_PATTERN",
+      "sql_interpolated": true,
+      "used_in": [
+        "player_props_container_predicate"
+      ]
+    },
+    {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "nonexclusive_bundle_cell_columns_sql",
+        "nonexclusive_bundle_cell_labels"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "PLAYER_PROPS_PLACEHOLDER_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_PLACEHOLDER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL",
+      "origin": "app.tasks.precompute_calibration:PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL",
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
@@ -658,8 +766,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "ed5895a8084ef601141c31aada87c723927f68e65ec40b8ba01ff5fc87982948",
-  "uncovered_behavior_or_evidence": 30,
-  "uncovered_count": 51,
-  "uncovered_sql_shaping": 21
+  "source_sha256": "f8ab05f1a2ebb984ea4d1f0ddc3c0fd2272fe4fa042dcbcc26e8c7401ae44157",
+  "uncovered_behavior_or_evidence": 32,
+  "uncovered_count": 54,
+  "uncovered_sql_shaping": 22
 }

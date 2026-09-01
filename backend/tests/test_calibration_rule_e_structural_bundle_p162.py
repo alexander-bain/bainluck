@@ -231,14 +231,30 @@ def test_the_per_cell_labels_are_derived_from_the_allowlist():
     """A new ruled tuple adds a column AND a payload key together, or neither."""
     labels = pc.nonexclusive_bundle_cell_labels()
     assert labels[0] == (pc.ESPORTS_MULTI_BUNDLE_CATEGORY, "nxb_cell_esports")
+    # CAL-P168: the map is rendered from TWO allowlists behind one disclosure —
+    # RULE E's bundle cells, then K''s player-props cells. The ORDER is asserted
+    # because the column suffixes are positional (`nxb_cell_{idx}` /
+    # `pp_cell_{idx}`): a cell inserted rather than appended would renumber the
+    # columns under a banked cursor that still carries the old ones.
     assert [label for label, _ in labels[1:]] == [
         f"{src}/{cat}" for src, cat in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+    ] + [
+        f"{src}/{cat}" for src, cat in pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS
     ]
     columns = pc.nonexclusive_bundle_cell_columns_sql()
     for _, column in labels:
         assert f"AS {column}" in columns
     for src, cat in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS:
         assert f"source = '{src}'" in columns and f"category = '{cat}'" in columns
+    # Each half must count its OWN flag. The whole design refuses RULE E's
+    # predicate on K''s cell (measured 8.35 vs a 4.71 control), so a per-cell
+    # column that counted `is_esports_bundle` for polymarket/baseball would
+    # publish a number produced by a rule that was never applied to it.
+    for src, cat in pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS:
+        assert (
+            "COUNT(*) FILTER (WHERE is_player_props_placeholder "
+            f"AND source = '{src}' AND category = '{cat}')" in columns
+        )
 
 
 def test_the_per_cell_columns_survive_into_the_query_that_runs():
@@ -281,21 +297,97 @@ def test_the_rule_text_states_both_arms_and_the_per_cell_scoping():
     assert "never by " in text and "category alone" in text
 
 
-def test_temporary_by_cell_is_empty_because_no_temporary_cell_shipped():
-    """🔴 Empty ON PURPOSE, and this guard is why that is checkable.
+def test_every_temporary_cell_is_excluded_and_every_excluded_cell_is_declared():
+    """🔴 CAL-P168 REWRITES THIS GUARD, AND THE REASON IS THE POINT.
 
-    ``temporary_by_cell`` carries cells whose exclusion ENDS when a named defect
-    is repaired. Today that is only ``polymarket/baseball`` (rank 1), which is
-    ruled but NOT in this deploy. A payload with no temporary cells must render
-    no claim that anything comes back — no ruling in this release said so.
+    It shipped as ``test_temporary_by_cell_is_empty_because_no_temporary_cell_
+    shipped``, asserting ``('polymarket','baseball')`` was absent from
+    ``NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS`` and promising it would red "when rank
+    1 lands, and updating it is the reminder that the revert condition has to be
+    named". **Rank 1 landed and it stayed green.** The design REFUSES RULE E's
+    predicate on this cell (measured 8.35 against a 4.71 control), so rank 1
+    correctly shipped on its OWN allowlist — and the guard was watching the one
+    tuple the cell was never going to join. It would have stayed green forever
+    while the disclosure it protects went unwritten.
 
-    When rank 1 lands, this test is the one that must be updated, and updating
-    it is the reminder that the revert condition has to be named.
+    Generalisable, and the reason this docstring is long: **a guard that names
+    the mechanism it expects rather than the OUTCOME it requires goes vacuous
+    the moment the mechanism is implemented differently.** The old assertion
+    tested "is the cell in this list"; what the ruling requires is "if the cell
+    is excluded anywhere, is the promise on the page". So that is what is tested
+    now, in BOTH directions and over BOTH allowlists.
     """
-    assert not any(
-        cell == ("polymarket", "baseball")
-        for cell in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
-    ), (
-        "rank 1 has joined the allowlist — its exclusion is TEMPORARY BY DESIGN, "
-        "so temporary_by_cell must now carry it with the condition that ends it"
+    temporary = pc.PLAYER_PROPS_PLACEHOLDER_TEMPORARY_BY_CELL
+    excluded_labels = {
+        f"{src}/{cat}"
+        for src, cat in (
+            tuple(pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)
+            + tuple(pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS)
+        )
+    }
+
+    # Direction 1: a cell cannot promise to come back unless it actually left.
+    # A stale entry here renders "returns when ..." for rows still in the curve.
+    assert set(temporary) <= excluded_labels, (
+        f"temporary_by_cell names cells that are not excluded: "
+        f"{sorted(set(temporary) - excluded_labels)}"
+    )
+
+    # Direction 2 — the clause of Alex's ruling. Rank 1's exclusion is TEMPORARY
+    # BY DESIGN: the rows are real questions whose published price WE wrote
+    # wrong, so the page must never let it read as permanent. If the cell is
+    # excluded, the map must carry it AND name the condition that ends it.
+    for src, cat in pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS:
+        label = f"{src}/{cat}"
+        assert label in temporary, (
+            f"{label} is excluded by K' — its exclusion is TEMPORARY BY DESIGN, "
+            "so temporary_by_cell must carry it with the condition that ends it"
+        )
+        condition = temporary[label]
+        # The page renders "<cell> — returns when <condition>", so an empty or
+        # placeholder condition produces a sentence that promises a return
+        # without saying what would cause it. That is worse than silence.
+        assert isinstance(condition, str) and len(condition.split()) >= 5, (
+            f"{label}'s revert condition must be a real clause, got {condition!r}"
+        )
+        assert not condition.rstrip().endswith("."), (
+            "the page appends its own punctuation after the condition"
+        )
+
+    # RULE E's cells are NOT temporary and must never acquire a condition: Alex
+    # ruled rank 2 as a permanent structural exclusion and the page would
+    # otherwise claim a return that no ruling promised (design §9.1).
+    for src, cat in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS:
+        assert f"{src}/{cat}" not in temporary, (
+            f"{src}/{cat} is a PERMANENT structural exclusion (ruled option (b), "
+            "never 'EXCLUDE NOW + FIX WRITER') and must not promise a return"
+        )
+
+
+def test_the_two_allowlists_are_disjoint_so_no_row_is_counted_twice():
+    """🔴 The payload SUMS two different rules into one ``excluded`` total.
+
+    The page prints that total and then the per-cell map beneath it, so a reader
+    must be able to add the cells up and get the total. That only holds while no
+    row can be flagged by both rules — and the only structural guarantee of that
+    is that the two allowlists share no ``(source, category)`` tuple.
+
+    It is asserted rather than trusted because the failure is silent: a cell in
+    both lists would be counted once by ``is_esports_bundle`` and once by
+    ``is_player_props_placeholder``, and the disclosure would overstate the
+    exclusion by the size of the overlap while every individual number still
+    looked self-consistent.
+    """
+    overlap = set(pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS) & set(
+        pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS
+    )
+    assert not overlap, (
+        f"a cell in BOTH allowlists is double-counted in the disclosure: {overlap}"
+    )
+    # And the measured reason it must stay that way: RULE E on this cell reads
+    # 8.35 / 9.02 against a 4.71 control. Adding the tuple to RULE E's list
+    # would not merely double-count, it would nearly double the cell's error.
+    assert ("polymarket", "baseball") not in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS, (
+        "RULE E's bundle predicate on polymarket/baseball was MEASURED at 8.35 "
+        "against a 4.71 control and is REFUSED by the design (§2)"
     )
