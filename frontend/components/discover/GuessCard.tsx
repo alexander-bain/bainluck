@@ -7,6 +7,8 @@ import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { getSessionId, generateThreshold } from "./utils";
+import { ForYouChip } from "./shared";
+import { forYouCue } from "@/lib/discover/forYouCue";
 
 interface GuessCardProps {
   item: FeedItem;
@@ -127,6 +129,8 @@ export function GuessCard({
   if (!isEvent && (!leader || leader.probability == null || leader.probability === 0)) return null;
   if (isEvent && (eventData!.current_odds?.home_probability == null || eventData!.current_odds?.home_probability === 0)) return null;
 
+  const cue = forYouCue(item);
+
   return (
     <div data-guess-card data-market-id={itemId} className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg">
       <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: catGradient }}>
@@ -138,7 +142,18 @@ export function GuessCard({
       </div>
 
       <div className="p-4">
-        <h3 className="font-bold text-lg leading-tight mb-3">{cardTitle}</h3>
+        {/* UX-P248 / CERT-678 repair — the guess slot is a REAL feed position.
+            `app/discover/page.tsx` renders `<GuessCard item={gi.item!} />`
+            INSTEAD of `<DiscoverCard>` when the slot is a guess, on the same
+            personalized `event`/`futures` item every other card receives. So a
+            reader whose team put this market in front of them was told nothing
+            purely because the feed chose to ask them to guess it. Neither the
+            cert block nor the original ship named this path.
+
+            The chip carries no probability, so it cannot spoil the question it
+            sits above. */}
+        <h3 className={`font-bold text-lg leading-tight ${cue ? "mb-1.5" : "mb-3"}`}>{cardTitle}</h3>
+        {cue && <div className="mb-3"><ForYouChip cue={cue} /></div>}
 
         {!guess ? (
           <>

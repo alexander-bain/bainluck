@@ -4,7 +4,8 @@ import Link from "next/link";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars } from "./shared";
+import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars, ForYouChip } from "./shared";
+import { forYouCue } from "@/lib/discover/forYouCue";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
@@ -44,6 +45,13 @@ export function ComparisonCard({
   const shareUrl = buildDiscoverShareUrl(`/futures/${data.id}`, "futures", data.id);
   const shareText = `Compare: ${data.name} on Bain Luck.`;
 
+  // UX-P248 / CERT-678 repair. This is the SECOND time this card has been the
+  // missed rendering (see the `pin` prop's comment above, CERT-606). A futures
+  // item has two possible components and `DiscoverCard` picks THIS one whenever
+  // the format is `outcome_distribution` with >=4 outcomes — a shape that is
+  // common, not exotic. Exhaustive-within-one-component is the recurring error;
+  // `forYouCueRenderPaths.test.tsx` now enumerates the components instead.
+  const cue = forYouCue(item);
   const outcomes = data.top_outcomes || [];
   const maxProb = Math.max(...outcomes.map((o) => o.probability ?? 0), 0.01);
 
@@ -70,6 +78,10 @@ export function ComparisonCard({
             {data.name}
           </h3>
         </Link>
+
+        {/* Why this card is in front of THIS reader — same placement as every
+            other card: under the question, in the flow, never a floating badge. */}
+        <ForYouChip cue={cue} />
 
         {contextSnippet && (
           <ExpandableContextText

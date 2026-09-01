@@ -110,7 +110,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
 
   return (
-    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : ""}`}>
+    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : ""}`} data-card-format="event">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
