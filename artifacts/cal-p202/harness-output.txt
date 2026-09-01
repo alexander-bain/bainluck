@@ -1,0 +1,91 @@
+CAL-P202 — Q11 on the staged drift digest's columns
+==========================================================================
+repo root : /Users/bain/bainluck-dev/calibration
+cwd       : /private/tmp
+
+DIGEST — row fields observed, by builder
+  generation_fingerprint     ['is_grouped', 'market_id', 'source', 'vm_id']
+  plan_units                 ['is_grouped', 'market_id', 'source', 'vm_id']
+  UNION                      ['is_grouped', 'market_id', 'source', 'vm_id']
+
+POPULATION — GROUP_KEY_COLUMNS (imported from the module)
+  BLIND      bucket_idx
+  OBSERVED   source
+  BLIND      category
+  BLIND      price_moved
+  BLIND      is_nonexclusive_bundle
+
+  observed : 1/5
+  BLIND    : 4/5  -> ['bucket_idx', 'category', 'price_moved', 'is_nonexclusive_bundle']
+
+COVERAGE OF THE RECORDED MARKER
+  the conveyor's group-key hazard names : ['category']
+  group keys actually blind to the digest: ['bucket_idx', 'category', 'price_moved', 'is_nonexclusive_bundle']
+  => the recorded hazard covers 1/4 = 25.0% of its own named population
+  UNRECORDED : ['bucket_idx', 'price_moved', 'is_nonexclusive_bundle']
+
+DERIVATIONS + WRITER CENSUS (call sites, NOT defects)
+  bucket_idx
+    expr : LEAST(FLOOR(adj_opening_probability * 10)::int, 9)
+    via  : adj_opening_probability <- raw_cp = COALESCE(fo.calibration_probability, fo.opening_probability)
+    SET calibration_probability = ... : 21 site(s)
+        app/tasks/backfill_winners.py:2587
+        app/tasks/backfill_winners.py:2647
+        app/tasks/backfill_winners.py:2709
+        app/tasks/backfill_winners.py:8007
+        app/tasks/backfill_winners.py:8055
+        app/tasks/backfill_winners.py:8104
+        ... and 15 more
+    SET opening_probability = ... : 11 site(s)
+        app/tasks/backfill_winners.py:2722
+        app/tasks/backfill_winners.py:5082
+        app/tasks/backfill_winners.py:5101
+        app/tasks/backfill_winners.py:5145
+        app/tasks/backfill_winners.py:5166
+        app/tasks/backfill_winners.py:5180
+        ... and 5 more
+  category
+    expr : COALESCE(fm.llm_sport_category, 'uncategorized')
+    via  : direct
+    SET llm_sport_category = ... : 3 site(s)
+        app/tasks/backfill_winners.py:6858
+        app/tasks/repair_polymarket_sport_category.py:1163
+        app/routes/admin_matching.py:447
+  price_moved
+    expr : fo.calibration_probability IS DISTINCT FROM fo.opening_probability
+    via  : direct
+    SET calibration_probability = ... : 21 site(s)
+        app/tasks/backfill_winners.py:2587
+        app/tasks/backfill_winners.py:2647
+        app/tasks/backfill_winners.py:2709
+        app/tasks/backfill_winners.py:8007
+        app/tasks/backfill_winners.py:8055
+        app/tasks/backfill_winners.py:8104
+        ... and 15 more
+    SET opening_probability = ... : 11 site(s)
+        app/tasks/backfill_winners.py:2722
+        app/tasks/backfill_winners.py:5082
+        app/tasks/backfill_winners.py:5101
+        app/tasks/backfill_winners.py:5145
+        app/tasks/backfill_winners.py:5166
+        app/tasks/backfill_winners.py:5180
+        ... and 5 more
+  is_nonexclusive_bundle
+    expr : (nbm.market_id IS NOT NULL)
+    via  : nonexclusive_bundle_markets <- market_result_shape.win_count <- fo.is_winner
+    SET is_winner = ... : 56 site(s)
+        app/tasks/backfill_winners.py:190
+        app/tasks/backfill_winners.py:408
+        app/tasks/backfill_winners.py:422
+        app/tasks/backfill_winners.py:529
+        app/tasks/backfill_winners.py:546
+        app/tasks/backfill_winners.py:723
+        ... and 50 more
+
+CONTROL ARMS
+  PASS  A1 positive      'source' reads OBSERVED
+  PASS  A2 known hit     'category' reads BLIND (hazard reproduced)
+  PASS  B1 distinctness  'is_grouped' in digest, not in population
+  PASS  B2 provenance    population == module literal
+
+RESULT: all four control arms held.
