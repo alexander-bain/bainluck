@@ -1,0 +1,40 @@
+==============================================================================
+CAL-P198 — no-production-consumer census, three modules P197 did not reach
+root: /Users/bain/bainluck-dev/calibration
+app files scanned: 422   test files scanned: 1094
+==============================================================================
+
+------------------------------------------------------------------------------
+CONTROL — the widened census must still find P197's known orphan
+------------------------------------------------------------------------------
+  PASS  P197's known finding still surfaces
+        orphans   : none
+        test-only : ['failed_phase']
+        NOTE: P197 called it an orphan (it scanned backend/app only).
+              The finer split puts it in TEST-ONLY — tested, never wired.
+
+------------------------------------------------------------------------------
+TARGETS
+------------------------------------------------------------------------------
+
+### backend/app/utils/calibration_staged_futures.py
+    public members scanned (module-level defs + class methods): 36
+    ORPHAN (no reference in app OR tests): 0
+    TEST-ONLY (tested, never referenced by production code): 0
+
+### backend/app/tasks/calibration_main_build.py
+    public members scanned (module-level defs + class methods): 49
+    ORPHAN (no reference in app OR tests): 0
+    TEST-ONLY (tested, never referenced by production code): 1
+        <module>.load_phase_history   line 1141   — 1 test reference(s)
+            backend/tests/test_calibration_phase_ledger.py:340: history, floors = await build.load_phase_history()
+
+### backend/app/utils/calibration_staged_disclosure.py
+    public members scanned (module-level defs + class methods): 3
+    ORPHAN (no reference in app OR tests): 0
+    TEST-ONLY (tested, never referenced by production code): 0
+
+==============================================================================
+TOTAL across the three targets — orphans: 0   test-only: 1
+CONTROL: PASS
+==============================================================================

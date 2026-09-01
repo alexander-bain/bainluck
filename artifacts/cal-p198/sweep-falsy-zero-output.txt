@@ -1,0 +1,47 @@
+==============================================================================
+CAL-P198 — falsy-zero sweep, four unswept calibration modules
+root: /Users/bain/bainluck-dev/calibration
+==============================================================================
+
+### CONTROL: the two already-swept modules must re-surface their known hits
+
+  PASS  calibration_phase_ledger.py: known falsy-zero near line 1299 -> 1 hit(s) in window, 18 total in file
+          L1299 [or] self.stage_ok_maxima.get()   return self.stage_ok_maxima.get(name, 0) or None
+  PASS  calibration_main_build.py: known falsy-zero near line 1613 -> 2 hit(s) in window, 6 total in file
+          L1613 [ifexp] completed_mean   projection_mean = completed_mean if completed_mean else mean_ms
+          L1615 [ifexp] completed_mean   "staged:beats_basis:completed" if completed_mean else "staged:beats_basis:mixed", 1
+
+### backend/app/tasks/calibration_beat_gauge_sampler.py  —  5 truth-tested numeric site(s)
+
+  L385   [ifexp  ] rows
+          "oldest_generation": rows[0].get("generation") if rows else None,
+  L386   [ifexp  ] rows
+          "newest_generation": rows[-1].get("generation") if rows else None,
+  L387   [ifexp  ] rows
+          "newest_generated_at": rows[-1].get("generated_at") if rows else None,
+  L390   [ifexp  ] bounds
+          "bound_min_generation": min(bounds, default=(None, None))[1] if bounds else None,
+  L392   [ifexp  ] rows
+          "bound_latest_pp": rows[-1].get("tolerance_pp") if rows else None,
+
+### backend/app/tasks/calibration_graded_share.py  —  2 truth-tested numeric site(s)
+
+  L174   [not    ] rows
+          if not rows:
+  L237   [ifexp  ] pages_failed
+          + (f"{pages_failed} page(s) failed; " if pages_failed else "")
+
+### backend/app/tasks/calibration_published_twin_worker.py  —  0 truth-tested numeric site(s)
+
+
+### backend/app/tasks/calibration_sentinel.py  —  2 truth-tested numeric site(s)
+
+  L851   [not    ] res.total
+          if not res or not res.total:
+  L1088  [if     ] samples
+          if samples:
+
+==============================================================================
+TOTAL candidate sites across the four unswept modules: 9
+CONTROL: PASS
+==============================================================================
