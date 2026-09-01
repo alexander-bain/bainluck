@@ -471,11 +471,32 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
+      {/* LAT-P179: the hero used to be a CSS `background: url(...)`, which the
+          browser can neither lazy-load nor skip — every one of the ~20 cards a
+          cold Discover load mounts fetched its photo immediately, at low
+          priority, even the ~18 below the fold. That is what pushed the cold
+          load's last-byte `finish` out past 10 s while `load` fired at 983 ms.
+          A real <img> gives the browser back `loading="lazy"`, so an off-screen
+          hero is not fetched at all until the card approaches the viewport.
+          The gradient moves onto the container so it now serves as the
+          placeholder behind a not-yet-loaded photo instead of a blank box. */}
       <div className={`relative ${hasImage ? "aspect-[16/10]" : "h-32"} flex flex-col justify-end overflow-hidden`} style={{
-        background: hasImage
-          ? `url(${data.image_url}) center/cover`
-          : CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
+        background: CATEGORY_GRADIENTS[data.llm_sport_category?.toLowerCase() ?? ""] || "linear-gradient(135deg, #0f172a, #1e293b)",
       }}>
+        {/* Decorative — the card's accessible name is on the <article>, and the
+            CSS background this replaces carried no accessible name either. */}
+        {data.image_url && (
+          <img
+            src={data.image_url}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover object-center"
+            data-testid="futures-hero-image"
+          />
+        )}
+
         {/* Scrim gradient */}
         <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0.04) 55%, rgba(0,0,0,0.22))" }} />
 
