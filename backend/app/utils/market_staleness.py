@@ -5,6 +5,7 @@ the real-world event has passed (e.g., "Eurovision" after May 31).
 """
 
 import re
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 _MONTH_NAME_TO_NUMBER = {
@@ -400,6 +401,220 @@ def expired_ladder_rungs(
             continue
         expired.add(name)
     return expired
+
+
+def _as_utc(value) -> datetime | None:
+    """A stamp, normalised to UTC — or ``None`` for anything that is not one.
+
+    Naive stamps are read as UTC: comparing a naive and an aware datetime raises
+    ``TypeError``, and it would raise at request time rather than in any test.
+
+    The ``isinstance`` is not defensive noise. This reads a column straight off
+    whatever object the caller has, and the one caller sits inside
+    ``_score_futures``'s per-market ``try/except`` — so a non-datetime here does
+    not surface as an error, it surfaces as a card that silently vanished. The
+    DB column is ``DateTime(timezone=True)``, so a non-datetime is never a
+    legitimate stamp and reading it as "no evidence" is the right answer.
+    """
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+#: The two columns this reads, newest-evidence first. Order is the whole
+#: semantic: ``price_changed_at`` answers the question being asked and
+#: ``last_updated`` is only ever a bound on it. See `newest_outcome_stamp`.
+_MOVEMENT_STAMP_COLUMNS = ("price_changed_at", "last_updated")
+
+
+def _outcome_movement_stamp(outcome) -> datetime | None:
+    """When THIS outcome's price last moved — or the tightest bound available.
+
+    ``price_changed_at`` when the row carries one; otherwise ``last_updated``.
+    Both shapes the feed carries are read (ORM row and the scoring loop's plain
+    dict), and an unreadable value on either column is skipped rather than
+    raised on — see `newest_outcome_stamp` for why a raise here is invisible.
+    """
+    is_mapping = isinstance(outcome, Mapping)
+    for column in _MOVEMENT_STAMP_COLUMNS:
+        raw = outcome.get(column) if is_mapping else getattr(outcome, column, None)
+        stamp = _as_utc(raw)
+        if stamp is not None:
+            return stamp
+    return None
+
+
+def newest_outcome_stamp(outcomes) -> datetime | None:
+    """When any of this market's prices last MOVED, or ``None`` if unknowable.
+
+    ═══ 🔴 WHY THIS IS NOT ``last_updated`` ALONE (CERT-688) ═══
+
+    Version two of this ship read ``FuturesOutcome.last_updated`` and nothing
+    else. The cert refuted it in one probe: a market with ``price_changed_at``
+    59 days old and ``last_updated`` three minutes old came back ``eligible``
+    with no blockers. **An actively polled market whose probability froze two
+    months ago still reached the feed** — which is this ship's own failure
+    class, one column to the left.
+
+    The model says so in as many words: ``last_updated`` is a *TOUCH-STAMP.
+    Written unconditionally by every poll, so it answers "when did the poller
+    last SEE this row", NOT "when did this price move"*. ``price_changed_at``
+    (#2024) is the column that answers the question this gate asks, maintained
+    by `app/utils/price_change_stamp.py` on all five price-writing paths.
+
+    ═══ WHY ``last_updated`` IS STILL THE FALLBACK, NOT DELETED ═══
+
+    ``price_changed_at`` is NULLABLE and populated FORWARD — the model comment
+    is explicit that *"a consumer switching to it must decide what NULL means
+    for its own question rather than inheriting a fabricated value"*. Measured
+    on production 2026-09-01: the column holds 116,719 of 3,911,727 outcome
+    rows (3%) and its oldest value is **2026-08-20 — twelve days of history**.
+    Keying on it alone would disarm a fourteen-day gate completely, and the
+    named specimen proves it: all twelve outcomes of market ``12194657`` read
+    ``price_changed_at IS NULL``.
+
+    So NULL falls back to ``last_updated``, and the fallback is *sound* rather
+    than merely convenient: **a price cannot have moved after the poller last
+    wrote the row.** ``last_updated`` is therefore a genuine UPPER BOUND on the
+    movement time, and using an upper bound can only make a market look
+    FRESHER than it is. For a suppression gate that is the safe direction —
+    it can never over-block, which is exactly the CERT-685 failure this ship
+    already has a shelf of regression cases for.
+
+    Because ``price_changed_at`` is written on the same statement as the price,
+    it is always ``<= last_updated``, so this can only move a market's clock
+    BACKWARDS. Composition, measured across all 37,967 open markets:
+
+        blocked on last_updated alone   9,457
+        blocked on this coalesce        9,457
+        NEWLY blocked                       0
+        clock value actually changed    4,495
+
+    Four and a half thousand markets get a truer clock; none of them crosses
+    the fourteen-day line, because twelve days of column history cannot. The
+    arm is correct now and *becomes load-bearing* as coverage matures — which
+    is why `TestAnActivelyPolledFrozenMarket` fakes the clock rather than
+    waiting for it.
+
+    ═══ ALL OUTCOMES, NOT THE TOP TEN ═══
+
+    Measured on production 2026-09-01: of the 29,658 markets that pass the
+    candidate SQL, **207 carry a tail outcome more than a day fresher than
+    anything in their top ten by probability**. The scoring loop works from a
+    top-ten slice, so a stamp taken from that slice would call those 207 dead.
+    This takes the whole set.
+
+    ``None`` means *no outcome carries either stamp*, which is different from
+    *the stamps are old*. ``freshness_clock`` treats it as "no evidence either
+    way" rather than as evidence of death — a writer that never sets the
+    column must not take its whole source dark.
+
+    ═══ WHY THIS IS NOT ``market.updated_at`` EITHER (UX-P251) ═══
+
+    ``futures_markets.updated_at`` carries ``onupdate=func.now()``, so it is a
+    touch-stamp on the PARENT row: a volume refresh or a category re-label
+    rewrites it without a single price moving. Every staleness gate on the feed
+    read that column, which is why a market whose twelve prices all froze on
+    2026-07-04 reported ``days_stale ≈ 0`` on 2026-09-01 and scored 88 on
+    Discover.
+
+    ═══ TWO SHAPES, AND WHY AN UNREADABLE ONE DOES *NOT* RAISE ═══
+
+    The feed carries an outcome in two forms — the ORM row and the plain
+    ``outcomes_data`` dict the scoring loop builds from it — and both reach this
+    function, so both are read.
+
+    🔴 The first version of this helper RAISED on a shape it could not read, on
+    the argument that returning ``None`` would silently disarm the gate. That
+    argument was right about the danger and wrong about the remedy, and the full
+    suite is what showed it: **the only caller is inside ``_score_futures``'s
+    per-market ``try/except``** (gotcha #42, one bad item must never wipe a
+    scoring pass). A raise there is not loud. It is caught, logged at WARNING,
+    and the market is dropped from the feed — so the "strict" version turned a
+    shape mismatch into *invisible card loss*, which is strictly worse than
+    falling back to the parent clock and is the very failure class this ship is
+    about.
+
+    The tripwire belongs somewhere that cannot be swallowed, so it is a test:
+    ``test_the_orm_model_still_carries_the_columns`` asserts the real
+    ``FuturesOutcome`` has BOTH columns. A schema change fails CI instead of
+    quietly emptying Discover — or, for ``price_changed_at``, instead of
+    quietly demoting the gate back to the touch-stamp CERT-688 refuted.
+    """
+    newest: datetime | None = None
+    for outcome in outcomes or ():
+        stamp = _outcome_movement_stamp(outcome)
+        if stamp is not None and (newest is None or stamp > newest):
+            newest = stamp
+    return newest
+
+
+#: How long a market's prices may stand still before the market is treated as
+#: over. **This is NOT the parent row's threshold and must never be folded into
+#: it** — see `prices_have_stopped` for the measurement that separates them.
+PRICES_STOPPED_DAYS = 14
+
+
+def prices_have_stopped(
+    newest_outcome_at: datetime | None,
+    now: datetime,
+    *,
+    max_days: float = PRICES_STOPPED_DAYS,
+) -> bool:
+    """Has this market's pricing stopped altogether? (UX-P251)
+
+    ``None`` — no outcome carries a stamp — is **False**. That is "no evidence",
+    not evidence of death; a writer that never sets the column must not take its
+    whole source dark.
+
+    ═══ 🔴 WHY THIS IS A SEPARATE BLOCKER WITH A SEPARATE NUMBER ═══
+
+    The first version of this ship folded the prices' clock into
+    ``market.updated_at`` — took the older of the two stamps and let the four
+    existing staleness blockers run on the result at their own ``2`` days. It
+    was green, its guard was green, and its battery killed 10 of 11 mutants.
+    **A census by market tier is what caught it**, before merge and by one query:
+
+        tier 3: 17 of 17 admitted markets blocked — 100%
+        tier 4:  6 of 7                          —  86%
+
+    Those are not dead markets. They are ``NFC East Division Winner``,
+    ``College Football Heisman Trophy Winner``, ``NHL Pacific Division Winner``,
+    ``Top Fantasy Rookie QB/RB/TE/WR``, the Biletnikoff and Doak Walker awards —
+    **season futures, priced four days ago, on the eve of the NFL season.** A
+    low-liquidity season future legitimately does not reprice daily, and the
+    parent-row clock had been accidentally protecting every one of them.
+
+    Two clocks measuring different things must not share a constant. The parent
+    stamp answers "is the poller still visiting this row" and 2 days is right
+    for it. This one answers "has anybody moved a price" and needs a threshold
+    from the price distribution, which is strongly bimodal — measured on
+    production 2026-09-01, over the 3,409 candidate markets the parent clock
+    admits:
+
+        > 2d   601 blocked      <- kills the whole season-futures shelf
+        > 7d   137
+        > 14d  107   <-- chosen
+        > 21d  107
+        > 30d  103
+        > 45d   67
+
+    Flat from 14 to 30: **almost nothing is frozen between two weeks and a
+    month**, so 14 sits at the start of the plateau with a fortnight of margin
+    below it. It catches the bridesmaids card (59 days) and everything above it,
+    and spares all 464 markets that merely price weekly.
+
+    Being a separate blocker also means the ``#1090`` broaden pass cannot relax
+    it: the two ``*_days`` knobs that pass varies reach the four parent-clock
+    blockers only. A market whose prices stopped a fortnight ago should not come
+    back merely because the pool is thin, and now it cannot.
+    """
+    stamp = _as_utc(newest_outcome_at)
+    if stamp is None:
+        return False
+    return (now - stamp).total_seconds() / 86400 > max_days
 
 
 def is_probability_extreme(probability: float | None) -> bool:

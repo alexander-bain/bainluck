@@ -3846,6 +3846,8 @@ from app.utils.market_staleness import (
     expired_ladder_rungs as _expired_ladder_rungs,
     infer_market_real_world_end as _infer_market_real_world_end,
     is_title_implied_stale as _market_title_implied_stale_blocker,
+    newest_outcome_stamp as _newest_outcome_stamp,
+    prices_have_stopped as _prices_have_stopped,
 )
 
 
@@ -4096,6 +4098,7 @@ def _market_runtime_filter_trace(
     now: datetime,
     sport_category: str | None = None,
     *,
+    newest_outcome_at: datetime | None,
     stale_no_movement_days: float = 2,
     no_resolution_stale_days: float = 5,
     strict_no_movement_days: float | None = None,
@@ -4147,6 +4150,13 @@ def _market_runtime_filter_trace(
     # Dead market: all outcomes at zero probability
     if probs_available and all(p < 0.001 for p in probs_available):
         blockers.append("all_outcomes_zero")
+    # UX-P251: the prices themselves have stopped. Deliberately NOT folded into
+    # the `market.updated_at` staleness below — that column is an `onupdate`
+    # touch-stamp on the PARENT row and answers a different question at a
+    # different scale. `prices_have_stopped` carries the tier census that proves
+    # sharing one constant would have deleted the whole season-futures shelf.
+    if _prices_have_stopped(newest_outcome_at, now):
+        blockers.append("prices_stopped")
 
     leader_opening = None
     if leader_name:
@@ -4313,6 +4323,7 @@ def build_effective_settlement_followup_item(
         leader_prob,
         now,
         sport_category=market.llm_sport_category,
+        newest_outcome_at=_newest_outcome_stamp(market.outcomes),
     )
     if "sports_effectively_settled" not in runtime_filters["blockers"]:
         return None
@@ -4478,6 +4489,7 @@ def _score_market_trace(
         leader_prob,
         now,
         sport_category=market.llm_sport_category,
+        newest_outcome_at=_newest_outcome_stamp(market.outcomes),
     )
 
     highlight_result = compute_futures_highlight(
@@ -6397,6 +6409,18 @@ async def _score_sports_mode_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # UX-P251: the staleness clock is taken from the PRICES, not from
+            # the parent row's `onupdate` touch-stamp. Third occurrence of the
+            # same rule on this list — deferred here, either column lazy-loads
+            # per outcome and crashes the async route.
+            #
+            # BOTH, and in this order (CERT-688). `price_changed_at` (#2024) is
+            # the column that answers "when did this price MOVE";
+            # `last_updated` is the unconditional poll touch-stamp and serves
+            # only as the upper bound for the 97% of rows where the newer
+            # column is still NULL. See `newest_outcome_stamp`.
+            FuturesOutcome.price_changed_at,
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -6524,6 +6548,11 @@ async def _score_sports_mode_futures(
             and abs(o["probability_change_24h"]) > 0.001
             for o in outcomes_data
         )
+        # UX-P251: the Sports tab has its OWN copy of the parent-row staleness
+        # rule, so it needs its own copy of the prices-stopped one too —
+        # otherwise a fix to `/api/feed` is a half-swept fix.
+        if _prices_have_stopped(_newest_outcome_stamp(market.outcomes), now):
+            continue
         if market.updated_at:
             days_stale = (
                 now
@@ -7403,6 +7432,18 @@ async def _score_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # UX-P251: the staleness clock is taken from the PRICES, not from
+            # the parent row's `onupdate` touch-stamp. Third occurrence of the
+            # same rule on this list — deferred here, either column lazy-loads
+            # per outcome and crashes the async route.
+            #
+            # BOTH, and in this order (CERT-688). `price_changed_at` (#2024) is
+            # the column that answers "when did this price MOVE";
+            # `last_updated` is the unconditional poll touch-stamp and serves
+            # only as the upper bound for the 97% of rows where the newer
+            # column is still NULL. See `newest_outcome_stamp`.
+            FuturesOutcome.price_changed_at,
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -7818,6 +7859,7 @@ async def _score_futures(
                 leader_prob,
                 now,
                 sport_category=market.llm_sport_category,
+                newest_outcome_at=_newest_outcome_stamp(market.outcomes),
                 stale_no_movement_days=_gate_no_movement_days,
                 no_resolution_stale_days=_gate_no_resolution_days,
                 strict_no_movement_days=_strict_no_movement_days,
