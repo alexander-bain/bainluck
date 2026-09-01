@@ -26,11 +26,13 @@ import {
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
 import {
+  FEED_EVENT_PCT,
   initialFeedRequest,
   nextFeedRequest,
   dedupeById,
   shouldLoadNextPage,
 } from "@/lib/discover/feedPaging";
+import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
@@ -678,7 +680,7 @@ export default function DiscoverPage() {
       // background revalidation reuses the same key/shape (no duplicate initial).
       const { limit, offset } = initialFeedRequest();
       return fetchFeed(
-        { limit, offset, event_pct: 0.15 },
+        { limit, offset, event_pct: FEED_EVENT_PCT },
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
       );
     },
@@ -731,7 +733,7 @@ export default function DiscoverPage() {
       const loadedItems = [...page1Items, ...allItems];
       const loadedIds = new Set(loadedItems.map(getItemId));
       const { limit, offset } = nextFeedRequest(loadedItems.length);
-      const resp = await fetchFeed({ limit, offset, event_pct: 0.15 });
+      const resp = await fetchFeed({ limit, offset, event_pct: FEED_EVENT_PCT });
       const decision = decideFeedPage({
         payload: resp,
         previousHasMore: true,
@@ -1177,6 +1179,11 @@ export default function DiscoverPage() {
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="min-h-screen bg-surface-deep">
+      {/* LAT-P184 (D-C, staged loading). FIRST node in the Discover tree so the
+          parser reaches it — and puts the first screen's request on the wire —
+          before the header, the skeleton grid and the footer are even parsed,
+          let alone before any entry chunk has executed. */}
+      <FeedBootScript />
       {/* Header */}
       <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
         <div className="max-w-7xl mx-auto px-4 py-3">
