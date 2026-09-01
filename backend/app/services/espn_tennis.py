@@ -560,6 +560,28 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                         if name
                     ]
 
+                    # AND WHO THEY ARE, NOT ONLY WHAT THEY ARE CALLED (Q505).
+                    #
+                    # Q503 could withhold a fixture whose pairing the authority
+                    # contradicts, but not RENDER the authority's own — a name
+                    # is not a person, and a card needs an identity to key on
+                    # and a flag to draw. `_competitor_view` is the draw
+                    # ingest's existing answer to exactly that question, so
+                    # this is the same reader, not a second one.
+                    #
+                    # Kept BESIDE `competitor_names` rather than replacing it.
+                    # `determined` is stricter than "has a display name" — it
+                    # also demands a positive athlete id — and the pairing
+                    # comparison above must not silently inherit that: a real
+                    # player ESPN publishes without an id would drop out of the
+                    # list, shorten it to one, and turn a contradiction into
+                    # silence. Two questions, two reads, and the stricter one
+                    # gates only the thing that needs identity.
+                    competitor_views = [
+                        _competitor_view(c)
+                        for c in (competition.get("competitors") or [])
+                    ]
+
                     # EVERY COMPETITION THE SCOREBOARD NAMES IS PUBLISHED, AND
                     # THAT INCLUDES THE FINISHED ONES (CERT-517).
                     #
@@ -599,6 +621,11 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             # means the scoreboard named no athletes for this
                             # competition — read it as silence.
                             "players": competitor_names,
+                            # THE SAME TWO PEOPLE, WITH IDENTITY (Q505): id,
+                            # flag, country and `determined`. A consumer that
+                            # wants to DRAW this pairing rather than compare it
+                            # reads this; see `_competitor_view`.
+                            "competitors": competitor_views,
                         }
                         stats[slate_state] += 1
                     else:

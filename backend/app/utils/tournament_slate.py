@@ -753,6 +753,165 @@ def build_match_row(
     }, None
 
 
+def authority_match_row(
+    matchup: dict[str, Any],
+    listed: dict[str, Any],
+    *,
+    now: datetime,
+) -> Optional[dict[str, Any]]:
+    """The fixture as the AUTHORITY names it — unpriced, or ``None``.
+
+    ═══ Q505: WITHHOLDING THE WRONG MATCH IS HALF THE REPAIR ═══
+
+    Q503 established that a market may not name a fixture, and withheld the
+    four US Open fixtures whose register pairing ESPN contradicted.  That was
+    the right refusal and it left the card with a hole: at 15:20 PT on
+    2026-09-01 the top row read *"Casper Ruud 60% / Juan Manuel Cerundolo
+    40% — 1:20 PM"* while Cerundolo was on court against **Arthur Gea**, and
+    Q503's answer was for that row to disappear.  Three matches really being
+    played would then have been absent from the day's card — which is doctrine
+    rule 1's other failure, "every match exactly once", arrived at from the
+    other side.
+
+    **Only the NAMES were ever in dispute.**  The ESPN competition anchor on
+    each of these fixtures is correct (182710 really is the match on court),
+    so its draw, its round, its clock and its state are facts about a fixture
+    we have correctly identified.  What the register got wrong — from a Kalshi
+    market's title, pinned by a post-ceremony census — is who is playing it.
+    So this row is the register's fixture with **the authority's two people
+    substituted and the price removed**, not a new fixture invented here.
+
+    THE PRICE IS REMOVED AND THAT IS THE POINT.  Q503 declined to re-label
+    because carrying a 60/40 quoted for a match nobody is playing onto the two
+    who really are "would be the same fabrication wearing better names".  That
+    objection is to the NUMBER, not to the names: ``priced`` is ``False`` and
+    both probabilities are ``None``, so the card prints two people and a clock
+    and claims nothing about who wins.  When the match market for the real
+    pairing is linked, the ordinary priced row takes over.
+
+    IT ALSO DOES NOT LINK.  ``event_id`` is ``None``, so the card is not
+    clickable — ``build_match_detail`` is passed no ``order_of_play`` and would
+    render the fabricated pairing on the detail page (Q503 carry-forward 1).  A
+    dead-ended honest card is better than a live link to the lie.
+
+    ``None`` when the scoreboard does not name two identified people for this
+    competition: doubles competitions name a team and no athlete, and a
+    qualifier slot names "TBD" with a non-positive id.  A half-read is silence,
+    and silence leaves Q503's plain withhold in place — the caller must not
+    invent a side.
+    """
+    competitors = listed.get("competitors")
+    if not isinstance(competitors, list) or len(competitors) != 2:
+        return None
+    if not all(
+        isinstance(c, dict) and c.get("determined") and c.get("name")
+        for c in competitors
+    ):
+        return None
+
+    # ESPN's `order` is the scoreboard's own top-to-bottom, and it is the only
+    # ordering available: with no probabilities there is no favourite to lead
+    # with, and the register's side order describes a pairing that is wrong.
+    ordered = sorted(
+        competitors,
+        key=lambda c: (c.get("order") is None, c.get("order") or 0),
+    )
+
+    started = _parse_moment(listed.get("start_at")) or _parse_moment(
+        matchup.get("scheduled_date")
+    )
+    if started is None:
+        # Every row on this card sorts on its start and every renderer prints
+        # one. A row with no start is not a better card than no row.
+        return None
+
+    comp_id = listed.get("espn_competition_id") or espn_competition_id(matchup)
+
+    sides = [
+        {
+            # NOT a register entity key — there is no register entity for a
+            # player who entered after the ceremony, which is exactly how two
+            # of these four arrived. Namespaced so it can never collide with
+            # one, and so a reader of the payload can see at a glance that this
+            # side came from the scoreboard.
+            "entity_key": f"espn:athlete:{c.get('espn_athlete_id')}",
+            "display_name": c.get("name"),
+            # The register holds the seed, and the register is what is wrong
+            # about this fixture. ESPN's scoreboard competitor carries none.
+            "seed": None,
+            "country": c.get("country"),
+            # No face: the verified-photograph census is keyed on register
+            # entities (`census_player_images.py`), and ESPN's own headshots
+            # failed that census at 40%/28% coverage. The flag is on the same
+            # record as the name at 100%, which is `PlayerAvatar`'s second step
+            # and what every draw sheet in tennis has printed for fifty years.
+            "image": {"url": None, "flag_url": c.get("flag_url")},
+            "role": "contender",
+            "probability": None,
+            "opening_probability": None,
+            "move": None,
+            "raw_probability": None,
+            "raw_opening_probability": None,
+            "observed_at": None,
+            "age_hours": None,
+            "price_state": "unpriced",
+            "liquidity": LIQUIDITY_UNKNOWN,
+            "liquidity_reasons": [],
+        }
+        for c in ordered
+    ]
+
+    return {
+        "priced": False,
+        # THE COMPETITION IS THE KEY, NOT THE REGISTER'S MATCHUP.
+        #
+        # Reusing the register's `matchup_key` would file two different
+        # pairings under one id and hand the fabricated one a route into every
+        # consumer that keys on it. The competition id is the thing both
+        # halves actually agree on, and it is the authority's own name for
+        # this fixture.
+        "matchup_key": f"espn:{comp_id}",
+        "event_id": None,
+        # Facts about the FIXTURE, which is correctly anchored — see the
+        # docstring. Only the pairing was ever in dispute.
+        "draw": matchup.get("draw"),
+        "draw_label": draw_label(str(matchup.get("draw") or "")),
+        "round": matchup.get("round"),
+        "scheduled_date": started.isoformat(),
+        "live_state": str(listed.get("state") or "") or None,
+        "status_detail": listed.get("status_detail"),
+        "start_is_tbd": listed.get("start_is_tbd") is True,
+        "sides": sides,
+        # `coherent: False` with `priced: False` is the released-draw shape the
+        # card already renders (UX-P142): a full row, faces and names, and no
+        # number. It is NOT the incoherent-pair shape, which collapses the row
+        # to one line — that treatment is for a split we are refusing to show,
+        # and here there is no split to refuse.
+        "coherent": False,
+        "raw_sum": None,
+        "opening_raw_sum": None,
+        "probability_is_live": False,
+        "price_state": "unpriced",
+        "observed_at": None,
+        "age_hours": None,
+        "freshest_observed_at": None,
+        "freshest_age_hours": None,
+        "stale_sides": [],
+        "mixed_freshness": False,
+        "favourite": None,
+        "has_moved": False,
+        # No source priced this pairing. `1` here would be a claim that one did.
+        "source_count": 0,
+        "liquidity": LIQUIDITY_UNKNOWN,
+        "liquidity_reasons": [],
+        # WHO NAMED THESE TWO PEOPLE. Absent on every ordinary row, so a
+        # consumer that has never heard of this field cannot mistake one for
+        # the other, and a guard can assert the substitution actually happened
+        # rather than inferring it from a missing price.
+        "pairing_source": "authority",
+    }
+
+
 def build_slate(
     register: dict[str, Any],
     *,
@@ -818,6 +977,22 @@ def build_slate(
                 # is only obvious once both pairings are side by side.
                 comp_id = espn_competition_id(matchup)
                 listed = (order_of_play or {}).get(comp_id) if comp_id else None
+                # ═══ Q505: AND THE CARD SHOWS THE MATCH THAT IS ON ═══
+                #
+                # The withhold above removes a pairing nobody is playing. On
+                # its own it also removes a fixture that IS being played, and
+                # the reader is left with a hole where a live match should be.
+                # So the same fixture comes back named by the authority and
+                # carrying no price — see `authority_match_row`. `None` means
+                # the scoreboard did not name two identified people, and then
+                # the plain withhold stands.
+                replacement = (
+                    authority_match_row(matchup, listed, now=now)
+                    if listed is not None
+                    else None
+                )
+                if replacement is not None:
+                    rows.append(replacement)
                 withheld_pairings.append({
                     "matchup_key": matchup.get("matchup_key"),
                     "draw": matchup.get("draw"),
@@ -827,6 +1002,12 @@ def build_slate(
                         for key in (matchup.get("players") or [])
                     ],
                     "authority": list((listed or {}).get("players") or []),
+                    # Did the reader get the real match back, or only lose the
+                    # wrong one? Two different states of this page, and a
+                    # count of withholds cannot tell them apart.
+                    "replaced_by": (
+                        replacement.get("matchup_key") if replacement else None
+                    ),
                 })
             continue
         rows.append(row)
@@ -873,6 +1054,12 @@ def build_slate(
         # scoreboard agreed with every anchored pairing it named, which is a
         # different statement from never having asked.
         "withheld_pairings": withheld_pairings,
+        # HOW MANY ROWS THE SCOREBOARD NAMED RATHER THAN THE REGISTER (Q505).
+        # A repair backlog with a number on it: every one of these is a
+        # register row still carrying a player who is not in the draw.
+        "authority_pairings": sum(
+            1 for r in rows if r.get("pairing_source") == "authority"
+        ),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
         "age_hours": round(slate_age, 2) if slate_age is not None else None,
