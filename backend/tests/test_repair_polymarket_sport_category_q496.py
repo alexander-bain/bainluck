@@ -195,17 +195,26 @@ def test_the_worst_case_request_fits_under_the_router_wall():
     """The deadline is checked at the TOP of the loop, so it is not the bound.
 
     After the deadline passes the rail may still start one whole fetch and one
-    whole pause. The number that matters is therefore
-    ``DEADLINE + FETCH_TIMEOUT + VENUE_PAUSE``, and the old constants
-    (55 + 25 + 0.35 = 80.35s against a 30s wall) failed it by a factor of two
-    and a half — an over-running call returned H12 with NO BODY, so the operator
-    lost the cursor and the drain lost its place.
+    whole pause — and after THAT returns it still has to write, commit, count
+    and serialize. The old constants (55 + 25 + 0.35 = 80.35s against a 30s
+    wall) failed by a factor of two and a half; an over-running call returned
+    H12 with NO BODY, so the operator lost the cursor and the drain lost its
+    place.
+
+    CERT-666 (P2) added the fourth term. ``DEADLINE + FETCH_TIMEOUT +
+    VENUE_PAUSE`` was a SUBTOTAL being reported as a worst case: it stopped
+    counting at the last fetch, and so advertised 1.65s of headroom the rail did
+    not have. The post-loop write, commit and terminal count are real request
+    time and are now reserved.
 
     Recomputed here from the constants rather than restated, so raising any one
     of them fails this test instead of quietly re-opening the hole.
     """
     worst_case = (
-        rail.DEADLINE_SECONDS + rail.FETCH_TIMEOUT_SECONDS + rail.VENUE_PAUSE
+        rail.DEADLINE_SECONDS
+        + rail.FETCH_TIMEOUT_SECONDS
+        + rail.VENUE_PAUSE
+        + rail.POST_LOOP_RESERVE_SECONDS
     )
     assert worst_case < rail.ROUTER_WALL_SECONDS, (
         f"worst-case request is {worst_case}s against a "
@@ -219,6 +228,11 @@ def test_the_worst_case_request_fits_under_the_router_wall():
         rail.ROUTER_WALL_SECONDS - worst_case
     )
     assert rail.budget_headroom_seconds() > 0
+    # The terminal count's slice is carved OUT of the post-loop reserve, never
+    # added beside it — if it were larger, arming the count's statement timeout
+    # would hand it time already promised to the write, the commit and the
+    # serialization that still have to happen.
+    assert 0 < rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS < rail.POST_LOOP_RESERVE_SECONDS
 
 
 def test_the_documented_default_page_cannot_spend_the_budget_on_sleep_alone():
@@ -784,3 +798,240 @@ def test_the_rail_still_refuses_to_learn_a_sport_rule():
             f"the rail has grown a sport rule of its own via {banned!r}: "
             f"{offenders[:3]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# CERT-666 (P1) — a transient venue failure must never be reported as a
+# finished drain, and must never be left behind an advanced cursor.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_transient_failure_on_a_short_page_is_not_a_finished_drain(fast, monkeypatch):
+    """THE CERT-666 DEFECT, reproduced.
+
+    A short page (so no row sorts after it) whose LAST event the venue fails to
+    answer for. Before the fix this reported `scan_exhausted=true` and a terminal
+    reading "this was the LAST page, so the drain is finished" — while the failed
+    event sat unchanged in the suspect category, still mis-filed, still hidden
+    from the user, and behind a cursor that guaranteed nothing would look at it
+    again.
+
+    A 429/5xx/timeout is not a verdict, and this is the whole ship: the drain may
+    only say it reached the end when it actually did.
+    """
+    monkeypatch.setattr(rail, "APPLY_EVENT_CAP", 5)
+    s = _Session(
+        targets=[
+            _Row("1", _Ts("2026-08-30T18:00:00+00:00"), 11),
+            _Row("2", _Ts("2026-08-30T17:00:00+00:00"), 12),
+        ],
+        remaining=40,
+    )
+    _venue(monkeypatch, {"1": _SETKA, "2": ("indeterminate", None)})
+
+    out = await rail.repair(s, apply=True)
+
+    assert out["counts"]["indeterminate"] == 1
+    assert out["scan_exhausted"] is False, (
+        "a short page is NOT an exhausted scan when an event on it went "
+        "unresolved — page length proves nothing sorts after the page, not that "
+        "everything in it was answered"
+    )
+    assert out["terminal"] == "paused_unresolved", (
+        f"terminal is {out['terminal']!r}; a run holding an unresolved event "
+        f"must not present as any kind of completion"
+    )
+    assert out["stopped_at_unresolved"] == "event_id=2"
+    assert "complete" not in out["terminal"]
+    assert "finished" not in out["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_stops_before_the_unresolved_event_not_after_it(fast, monkeypatch):
+    """The cursor is a watermark over RESOLVED work.
+
+    It used to be assigned before the fetch, so it moved past an event the venue
+    never answered for. It must name the last event that actually got an answer.
+    """
+    monkeypatch.setattr(rail, "APPLY_EVENT_CAP", 5)
+    s = _Session(
+        targets=[
+            _Row("1", _Ts("2026-08-30T18:00:00+00:00"), 11),
+            _Row("2", _Ts("2026-08-30T17:00:00+00:00"), 12),
+        ],
+        remaining=40,
+    )
+    _venue(monkeypatch, {"1": _SETKA, "2": ("indeterminate", None)})
+
+    out = await rail.repair(s, apply=True)
+
+    assert out["next_cursor"] == {"after_date": "2026-08-30T18:00:00+00:00", "after_id": 11}, (
+        "the cursor advanced past the event the venue did not answer for — "
+        "re-running would skip it forever"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_unresolved_event_is_revisited_by_the_cursor_it_emits(fast, monkeypatch):
+    """Two calls, end to end: the cursor from the paused call must bring the
+    failed event BACK, and only then may the drain report completion.
+
+    This is the guard CERT-666 asked for. The first call's emitted cursor is fed
+    straight back in — not a hand-built one — so an off-by-one in the watermark
+    shows up as the failed event never being re-fetched.
+    """
+    monkeypatch.setattr(rail, "APPLY_EVENT_CAP", 5)
+    row1 = _Row("1", _Ts("2026-08-30T18:00:00+00:00"), 11)
+    row2 = _Row("2", _Ts("2026-08-30T17:00:00+00:00"), 12)
+
+    s1 = _Session(targets=[row1, row2], remaining=40)
+    _venue(monkeypatch, {"1": _SETKA, "2": ("indeterminate", None)})
+    first = await rail.repair(s1, apply=True)
+    assert first["terminal"] == "paused_unresolved"
+
+    cursor = first["next_cursor"]
+    assert cursor is not None
+    # The emitted cursor must be spellable as repair()'s own parameters, or the
+    # operator cannot feed it back at all (the Q495-DOC-CURSOR-NAME class).
+    import inspect
+
+    accepted = set(inspect.signature(rail.repair).parameters)
+    for key in cursor:
+        assert key in accepted, f"next_cursor emits {key!r}, which repair() cannot accept"
+
+    # Page two: the keyset now excludes the resolved row1 but NOT row2.
+    s2 = _Session(targets=[row2], remaining=40)
+    seen = _venue(monkeypatch, {"2": _SETKA})
+    second = await rail.repair(s2, apply=True, **cursor)
+
+    assert "2" in seen, (
+        "the event the venue failed on was never re-fetched — the drain skipped "
+        "it permanently, which is the defect this guard exists for"
+    )
+    assert second["scan_exhausted"] is True, (
+        "once every event resolves, the short page IS the end and the rail must "
+        "still be able to say so — otherwise this fix traded a false completion "
+        "for an unreachable one"
+    )
+    assert second["terminal"] == "examined_no_change_complete"
+
+
+@pytest.mark.asyncio
+async def test_a_first_event_failure_hands_back_the_cursor_it_was_given(fast, monkeypatch):
+    """If nothing on the page resolves there is no new watermark — and returning
+    `null` would read as "start over", silently sending an attended drain back to
+    page one and re-walking everything it already did."""
+    monkeypatch.setattr(rail, "APPLY_EVENT_CAP", 5)
+    s = _Session(targets=[_Row("9", _Ts("2026-08-30T12:00:00+00:00"), 90)], remaining=40)
+    _venue(monkeypatch, {"9": ("indeterminate", None)})
+
+    out = await rail.repair(
+        s, apply=True, after_date="2026-08-30T18:00:00+00:00", after_id=11
+    )
+
+    assert out["next_cursor"] == {"after_date": "2026-08-30T18:00:00+00:00", "after_id": 11}, (
+        "a page that resolved nothing dropped the operator's cursor — feeding "
+        "the response back would restart the drain at page one"
+    )
+    assert out["terminal"] == "paused_unresolved"
+
+
+@pytest.mark.asyncio
+async def test_work_done_before_the_failure_is_kept_and_reported(fast, monkeypatch):
+    """Pausing is not rolling back. Events resolved before the failure were
+    written, and the operator must be able to see that rather than assume the
+    whole page was lost."""
+    monkeypatch.setattr(rail, "APPLY_EVENT_CAP", 5)
+    s = _Session(
+        targets=[
+            _Row("1", _Ts("2026-08-30T18:00:00+00:00"), 11),
+            _Row("2", _Ts("2026-08-30T17:00:00+00:00"), 12),
+        ],
+        remaining=40,
+    )
+    _venue(monkeypatch, {"1": _TENNIS, "2": ("indeterminate", None)})
+
+    out = await rail.repair(s, apply=True)
+
+    assert out["counts"]["changed"] == 1
+    assert len(s.writes) == 1, "the resolved event's write was lost by the pause"
+    assert s.commits == 1
+    assert out["terminal"] == "paused_unresolved"
+
+
+# ---------------------------------------------------------------------------
+# CERT-666 (P2) — the terminal count was the last unbounded statement.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_terminal_count_is_armed_with_a_statement_timeout(fast, monkeypatch):
+    """It ran after the deadline had already passed, with no bound of its own, so
+    a lock or a bad plan could hold the request past the router wall on its own —
+    costing the operator the H12-with-no-body this whole rail is shaped to
+    avoid."""
+    s = _Session(targets=[], remaining=40)
+    _venue(monkeypatch, {})
+
+    await rail.repair(s, apply=False)
+
+    timeouts = [sql for sql, _ in s.statements if "STATEMENT_TIMEOUT" in sql.upper()]
+    assert timeouts, (
+        "the terminal count ran with no statement timeout. Statements seen: "
+        f"{[sql[:60] for sql, _ in s.statements]}"
+    )
+    ms = int(timeouts[0].rsplit("=", 1)[1].strip())
+    assert 0 < ms <= rail.ROUTER_WALL_SECONDS * 1000, (
+        f"the count was armed with {ms}ms against a "
+        f"{rail.ROUTER_WALL_SECONDS}s wall"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_timing_out_terminal_count_is_unmeasured_not_zero_and_not_a_500(
+    fast, monkeypatch
+):
+    """`remaining_events: 0` means drained. A count that never returned must not
+    borrow that meaning, and must not take the response — and therefore the
+    cursor — down with it (gotcha #53)."""
+
+    class _CountDies(_Session):
+        async def execute(self, stmt, params=None):
+            sql = " ".join(str(stmt).split())
+            if sql.upper().startswith("SELECT COUNT("):
+                self.statements.append((sql, dict(params or {})))
+                raise RuntimeError("canceling statement due to statement timeout")
+            return await super().execute(stmt, params)
+
+    s = _CountDies(targets=[], remaining=40)
+    _venue(monkeypatch, {})
+
+    out = await rail.repair(s, apply=False)
+
+    assert out["remaining_events_measured"] is False
+    assert out["remaining_events"] is None, (
+        "an unmeasured count reported a number — a reader cannot tell it from a "
+        "real drain"
+    )
+    assert s.rollbacks == 1, (
+        "a statement timeout aborts the whole TRANSACTION, so the session is "
+        "unusable until it is rolled back"
+    )
+    # The cursor and the terminal still have to survive: losing them is the
+    # failure the bound exists to prevent.
+    assert "terminal" in out and "scan_exhausted" in out
+
+
+@pytest.mark.asyncio
+async def test_a_measured_terminal_count_still_says_so(fast, monkeypatch):
+    """The positive control for the flag above — without it, a rail that always
+    reported `measured: false` would pass the timeout test."""
+    s = _Session(targets=[], remaining=40)
+    _venue(monkeypatch, {})
+
+    out = await rail.repair(s, apply=False)
+
+    assert out["remaining_events_measured"] is True
+    assert out["remaining_events"] == 40
+    assert s.rollbacks == 0

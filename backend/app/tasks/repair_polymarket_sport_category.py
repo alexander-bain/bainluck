@@ -102,8 +102,11 @@ tail. It does here too, and that is the accepted trade:
     Kalshi MARKET data, `app/utils/kalshi_retention.py`), so the tail cannot rot
     while it waits — the argument that forces oldest-first-within-a-floor on the
     Kalshi rails does not apply;
-  * the tail is never silent: ``remaining`` is reported on every call and the
-    operator pages with ``next_cursor`` until it reaches zero.
+  * the tail is never silent: ``remaining_events`` is reported on every call and
+    the operator pages with ``next_cursor`` until ``scan_exhausted`` comes back
+    true. NOT until ``remaining_events`` reaches zero — it counts the suspect
+    category, which legitimately contains the control events, so it has a
+    positive floor and zero is unreachable.
 
 Paging is a KEYSET (``after_date`` + ``after_id``), never an offset: this
 repair removes rows from its own population, so an offset would skip exactly as
@@ -156,6 +159,36 @@ operator can finish a drain.
    cursor filters its output, so the filtered quantity is the quantity the
    cursor names.
 
+CERT-666 CORRECTIONS — THE DRAIN COULD STILL SAY "FINISHED" WHEN IT WAS NOT
+===========================================================================
+
+Q496 made the end state REACHABLE. CERT-666 found it was also reachable when it
+was FALSE, which is the worse half of the same bug.
+
+1. **A transient venue failure was advanced past and reported as complete.**
+   The cursor was assigned BEFORE the fetch, so a 429/5xx/timeout on the last
+   short page left the event unchanged in the suspect category, moved the cursor
+   PAST it, and — because exhaustion was computed from the page length alone —
+   returned ``scan_exhausted=true`` and a terminal reading "this was the LAST
+   page, so the drain is finished". The operator would stop with a user-visible
+   match still hidden from Tennis, and the emitted cursor guaranteed nothing
+   would ever look at it again. **A transient failure is not a verdict.**
+
+   Now: the cursor advances only past RESOLVED events (``ok`` or a 404
+   ``not_at_venue``), the scan STOPS at the first unresolved one, and exhaustion
+   additionally requires ``indeterminate == 0`` so completion is impossible
+   while any retryable result remains. The state has its own terminal,
+   ``paused_unresolved``, and its own field, ``stopped_at_unresolved``.
+
+2. **The advertised headroom omitted everything after the last fetch.** The
+   worst case was reported as ``DEADLINE + FETCH_TIMEOUT + VENUE_PAUSE``, but
+   the last event still classifies, UPDATEs and commits after that fetch, and
+   the ``remaining_events`` count then ran with NO statement timeout at all —
+   the one genuinely unbounded statement in the request. Now
+   ``POST_LOOP_RESERVE_SECONDS`` is part of the budget, the deadline and cap came
+   down to keep the headroom positive, and the count is armed with the time that
+   ACTUALLY remains and reports itself unmeasured rather than dying.
+
 ATTENDED ONLY: never wire this to a beat. It is a drain with an end state, not
 a standing job — when ``scan_exhausted`` comes back true the poller's own fixed
 classifier keeps new rows correct.
@@ -191,10 +224,40 @@ FETCH_TIMEOUT_SECONDS = 8
 #: so the true worst case is this plus one whole fetch plus one pause — see
 #: ``budget_headroom_seconds()``, which is asserted by a guard rather than left
 #: as arithmetic in a comment.
-DEADLINE_SECONDS = 20
+#:
+#: CERT-666 (P2) lowered this from 20. The loop deadline was being treated as if
+#: the response were free after it, but the LAST event still classifies, UPDATEs
+#: and commits after its fetch, and the terminal count then runs — see
+#: ``POST_LOOP_RESERVE_SECONDS``.
+DEADLINE_SECONDS = 15
 
 #: Pause between venue calls. Polymarket's Gamma limiter is real.
 VENUE_PAUSE = 0.35
+
+#: CERT-666 (P2): time reserved for everything that happens AFTER the loop's last
+#: fetch returns, all of which was previously unbudgeted and some of which was
+#: unbounded:
+#:
+#:   * the last event's classify + Core UPDATE + ``commit()``,
+#:   * the ``remaining_events`` terminal count — a ``count(DISTINCT ...)`` that
+#:     carried NO statement timeout at all, so a lock or a bad plan could hold
+#:     the request past the wall on its own,
+#:   * response serialization and the request dependency's own commit, which
+#:     runs after the handler has already returned.
+#:
+#: The deadline bounds when the rail stops STARTING work; this bounds the work it
+#: has already committed to finishing. ``repair()`` arms a Postgres
+#: ``statement_timeout`` from the budget genuinely remaining at that moment, so
+#: the count cannot outlive its reservation even if this estimate is wrong.
+POST_LOOP_RESERVE_SECONDS = 4.0
+
+#: The slice of ``POST_LOOP_RESERVE_SECONDS`` that is NOT the terminal count: the
+#: last event's write and commit, response serialization, and the request
+#: dependency's own commit — which runs after the handler has returned and so
+#: cannot be observed from inside it. The count is armed with whatever is left of
+#: the wall once this is set aside, which is why an over-running loop shortens
+#: the count's timeout instead of borrowing against work that still has to run.
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 1.5
 
 #: Events touched per apply call. A module constant, deliberately: the operator
 #: re-invokes with the returned cursor, the operator does not raise the ceiling.
@@ -204,15 +267,19 @@ VENUE_PAUSE = 0.35
 #: DOCUMENTED DEFAULT was the case most likely to H12, and the operator would
 #: have read that as the rail being broken.
 #:
-#: 20 is sized on MEASURED numbers, not a guess. The target query was run
-#: against production on 2026-09-01 (`EXPLAIN ANALYZE`, first page, no cursor):
-#: **179ms** for 25 rows, so the DB is not the cost — the venue calls are. At
-#: ~0.75s per event (a Gamma fetch plus VENUE_PAUSE) a 20-event page lands near
-#: 15s, inside the 20s deadline with margin, so a full page normally COMPLETES
-#: and ``stopped_before`` stays the exception it is meant to be. It is also the
-#: value the operator instructions already carried, so the documented default
-#: and the documented invocation finally agree.
-APPLY_EVENT_CAP = 20
+#: Sized on MEASURED numbers, not a guess. The target query was run against
+#: production on 2026-09-01 (`EXPLAIN ANALYZE`, first page, no cursor): **179ms**
+#: for 25 rows, so the DB is not the cost — the venue calls are.
+#:
+#: CERT-666 (P2) lowered this again, from 20 to 15, because reserving the
+#: post-loop work took ``DEADLINE_SECONDS`` down to 15. At ~0.75s per event (a
+#: Gamma fetch plus VENUE_PAUSE) a 15-event page lands near 11.3s, inside the 15s
+#: deadline with margin — so a full page still normally COMPLETES and
+#: ``stopped_before`` stays the exception it is meant to be. Had the cap stayed
+#: at 20 the documented default would have run to ~15s and hit the deadline
+#: routinely, which is safe (partial answer WITH a cursor) but would have made
+#: the exceptional state the normal one.
+APPLY_EVENT_CAP = 15
 
 #: The category this rail drains. Named once so the census and the repair
 #: cannot disagree about their own population.
@@ -233,16 +300,25 @@ def budget_headroom_seconds() -> float:
     """Seconds left under the router wall in the rail's WORST case.
 
     The deadline is checked at the top of the loop, so after it passes the rail
-    may still start one fetch and one pause. The worst case is therefore
-    ``DEADLINE + FETCH_TIMEOUT + VENUE_PAUSE``, not ``DEADLINE``. Expressed as a
-    function so a guard can assert it stays positive, rather than as a comment
-    that goes stale the first time someone raises one of the three numbers.
+    may still start one fetch and one pause. And after THAT fetch returns the
+    rail still has real work to do — the last event's write and commit, the
+    terminal count, serialization, the dependency's commit. So the worst case is
+    ``DEADLINE + FETCH_TIMEOUT + VENUE_PAUSE + POST_LOOP_RESERVE``, not
+    ``DEADLINE``, and not the three-constant subtotal this function returned
+    before CERT-666 (P2) — that version reported 1.65s of headroom the rail did
+    not actually have, because it stopped counting at the last fetch.
+
+    Expressed as a function so a guard can assert it stays positive, rather than
+    as a comment that goes stale the first time someone raises one of the four
+    numbers.
 
     Positive means an over-running call returns a partial answer WITH its
     cursor. Negative means it returns H12 with no body, and an attended drain
     silently loses its place.
     """
-    return ROUTER_WALL_SECONDS - (DEADLINE_SECONDS + FETCH_TIMEOUT_SECONDS + VENUE_PAUSE)
+    return ROUTER_WALL_SECONDS - (
+        DEADLINE_SECONDS + FETCH_TIMEOUT_SECONDS + VENUE_PAUSE + POST_LOOP_RESERVE_SECONDS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -517,8 +593,16 @@ async def repair(
     #: drain from a rail that relabelled the bucket to one wrong answer.
     to_category: dict[str, int] = {}
     samples: list[dict[str, Any]] = []
-    next_cursor: Optional[dict[str, Any]] = None
+    # CERT-666 (P1): the cursor starts where the OPERATOR already was, not at
+    # None. A page whose very first event fails to resolve must hand back the
+    # cursor it was given — handing back None reads as "start over" and silently
+    # sends an attended drain to page one.
+    incoming_cursor: Optional[dict[str, Any]] = (
+        {"after_date": after_date, "after_id": int(after_id)} if after_id is not None else None
+    )
+    next_cursor: Optional[dict[str, Any]] = incoming_cursor
     stopped_before: Optional[str] = None
+    stopped_at_unresolved: Optional[str] = None
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         for t in targets:
@@ -527,13 +611,36 @@ async def repair(
                 break
 
             counts["events_examined"] += 1
+
+            status, payload = await _fetch_event(client, str(t.event_id))
+            await asyncio.sleep(VENUE_PAUSE)
+
+            if status == "indeterminate":
+                # CERT-666 (P1) — THE CURSOR MUST NOT CROSS UNFINISHED WORK.
+                #
+                # This used to advance `next_cursor` BEFORE the fetch, then
+                # `continue`. So an ordinary 429/5xx/timeout on the last short
+                # page left the event unchanged in the suspect category, moved
+                # the cursor PAST it, and — because exhaustion was computed from
+                # the page length alone — reported the drain finished. The
+                # operator stopped with a mis-filed, user-visible match still
+                # hidden, and the emitted cursor guaranteed it would never be
+                # looked at again. A transient venue failure is not a verdict.
+                #
+                # We stop here instead, leaving the cursor on the last RESOLVED
+                # event, so re-running with `next_cursor` retries this one.
+                # Backing off is also the correct response to the 429 that most
+                # often causes this.
+                counts["indeterminate"] += 1
+                stopped_at_unresolved = f"event_id={t.event_id}"
+                break
+
+            # Resolved — `ok` or a 404 `not_at_venue`, both of which are real,
+            # repeatable answers. Only now may the cursor move past this event.
             next_cursor = {
                 "after_date": t.commence_time.isoformat() if t.commence_time else None,
                 "after_id": int(t.anchor_id),
             }
-
-            status, payload = await _fetch_event(client, str(t.event_id))
-            await asyncio.sleep(VENUE_PAUSE)
 
             if status != "ok" or payload is None:
                 counts[status] += 1
@@ -599,21 +706,50 @@ async def repair(
             counts["markets_written"] += r.rowcount
             await session.commit()
 
-    remaining = (
-        await session.execute(
-            text(
-                """
-                SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
-                FROM futures_markets fm
-                WHERE fm.source = 'polymarket'
-                  AND fm.status = 'open'
-                  AND fm.llm_sport_category = :cat
-                  AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
-                """
-            ),
-            {"cat": SUSPECT_CATEGORY},
+    # CERT-666 (P2) — THE TERMINAL COUNT WAS THE LAST UNBOUNDED STATEMENT IN THE
+    # REQUEST. It ran after the loop deadline had already passed, carried no
+    # statement timeout, and a lock or a bad plan could therefore hold the
+    # request past the router wall on its own — costing the operator the H12 with
+    # no body, and so the cursor, which is the exact failure this rail exists to
+    # avoid. Give it the budget that ACTUALLY remains rather than a constant: if
+    # the loop over-ran, the count gets less time, not the same time.
+    count_budget_s = max(
+        0.25,
+        ROUTER_WALL_SECONDS
+        - (time.monotonic() - started)
+        - POST_LOOP_NON_COUNT_RESERVE_SECONDS,
+    )
+    remaining: Optional[int] = None
+    remaining_measured = True
+    try:
+        # Interpolated, not bound: `SET` takes no bind parameters. The value is
+        # an int we computed from our own constants, never operator input.
+        await session.execute(text(f"SET LOCAL statement_timeout = {int(count_budget_s * 1000)}"))
+        remaining = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
+                    FROM futures_markets fm
+                    WHERE fm.source = 'polymarket'
+                      AND fm.status = 'open'
+                      AND fm.llm_sport_category = :cat
+                      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                    """
+                ),
+                {"cat": SUSPECT_CATEGORY},
+            )
+        ).scalar() or 0
+    except Exception:  # noqa: BLE001 — a slow count must not cost the operator the cursor
+        # A statement timeout aborts the whole TRANSACTION, not just the
+        # statement, so the session is unusable until it is rolled back.
+        await session.rollback()
+        remaining_measured = False
+        logger.warning(
+            "repair_polymarket_sport_category: remaining_events count exceeded its "
+            "%.2fs budget; reporting it unmeasured rather than losing the response",
+            count_budget_s,
         )
-    ).scalar() or 0
 
     # Q496 — SCAN EXHAUSTION IS A DIFFERENT FACT FROM `remaining_events`, and
     # conflating them made the drain's success state unreachable.
@@ -628,7 +764,22 @@ async def repair(
     # Exhaustion is instead proven by the PAGER: the page came back short of the
     # cap (so no row sorts after it) and the loop consumed all of it (so nothing
     # was left unexamined by the deadline).
-    scan_exhausted = len(targets) < cap and stopped_before is None
+    #
+    # CERT-666 (P1): exhaustion also requires that nothing on the page was left
+    # UNRESOLVED. A short, fully-consumed page proves no row sorts after it — it
+    # does not prove every row in it was answered, and a transient venue failure
+    # leaves an event that may still be mis-filed sitting behind the cursor.
+    #
+    # Both terms are deliberate. `stopped_at_unresolved` is what the loop
+    # actually sets today; the `indeterminate` count is the invariant — if a
+    # later change turns that `break` back into a `continue`, completion still
+    # cannot be claimed while any retryable result remains.
+    scan_exhausted = (
+        len(targets) < cap
+        and stopped_before is None
+        and stopped_at_unresolved is None
+        and counts["indeterminate"] == 0
+    )
 
     result: dict[str, Any] = {
         "repair": "polymarket-sport-category",
@@ -636,7 +787,10 @@ async def repair(
         "counts": counts,
         "changed_to": to_category,
         "samples": samples,
-        "remaining_events": int(remaining),
+        "remaining_events": int(remaining) if remaining_measured else None,
+        # CERT-666 (P2): "it returned" is not "it worked" (gotcha #53). A count
+        # that ran out of budget reports itself unmeasured; it never reports 0.
+        "remaining_events_measured": remaining_measured,
         # NB: this string may not name the control league. `SUSPECT_CATEGORY` is
         # the only sport literal permitted in executable code here, and the Q495
         # anti-drift guard scans string literals too — correctly, since a rule
@@ -645,11 +799,16 @@ async def repair(
             "count of the SUSPECT CATEGORY, which legitimately includes the "
             "control events the venue confirms really do belong to it. It has a "
             "positive floor and reaching zero is NOT the end state — read "
-            "`scan_exhausted` for that."
+            "`scan_exhausted` for that. `null` means the count ran out of its "
+            "budget and was NOT measured; it never means zero — see "
+            "`remaining_events_measured`."
         ),
         "scan_exhausted": scan_exhausted,
         "next_cursor": next_cursor,
         "stopped_before": stopped_before,
+        # CERT-666 (P1): the event the venue would not answer for. The cursor
+        # stops BEFORE it, so re-running retries it. Never a verdict on the row.
+        "stopped_at_unresolved": stopped_at_unresolved,
         "cap": cap,
         "ordering": (
             "newest commence_time first — the user-visible rows. Gotcha #41's "
@@ -669,7 +828,21 @@ async def repair(
     # "It returned" is not "it worked" (gotcha #53 / task_verdict). Each zero
     # state is a DIFFERENT real state and gets its own terminal rather than
     # sharing one silent success.
-    if counts["events_examined"] == 0:
+    # CERT-666 (P1): an unresolved event outranks every other terminal. The run
+    # did NOT finish, whatever else it managed, and the operator must re-run
+    # before reading anything as complete. Checked first so no arm below can
+    # quietly describe this as a finished drain.
+    if stopped_at_unresolved is not None:
+        result["terminal"] = "paused_unresolved"
+        result["reason"] = (
+            f"the venue did not answer for {stopped_at_unresolved} — a transient "
+            "failure (timeout, 429, 5xx, or an unreadable body), NOT a verdict on "
+            "that event. The cursor deliberately stops BEFORE it, so re-running "
+            "with `next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN: the "
+            "event may still be mis-filed, and anything already counted above it "
+            "on this page is real and still applies."
+        )
+    elif counts["events_examined"] == 0:
         result["terminal"] = "complete" if scan_exhausted else "no_work"
         result["reason"] = (
             "the pager reached the end of the population under this cursor — "
