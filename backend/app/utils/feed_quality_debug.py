@@ -75,6 +75,14 @@ _STALE_ROOT_CAUSES = {
         "label": "No recent market update",
         "recommended_action": "Check source polling and live-price refresh for this market.",
     },
+    "stale_prices": {
+        "code": "no_recent_price_write",
+        "label": "Market row is fresh but no price has been written",
+        "recommended_action": (
+            "The poller is still touching this row while the upstream has stopped "
+            "pricing it — check whether the market settled or was delisted upstream."
+        ),
+    },
     "stale_no_movement": {
         "code": "stale_without_movement",
         "label": "No recent price movement",
@@ -160,6 +168,18 @@ def diagnose_stale_card_root_cause(
         resolution_date = _parse_datetime(data.get("resolution_date"))
         if resolution_date and resolution_date < now:
             return stale_root_cause_for_reason("past_resolution")
+
+        # Q502: a fresh row does not mean a fresh price. When the payload carries a
+        # price clock, it is the one that decides — and it gets its own root cause,
+        # because "nothing has polled this" and "the poller is still writing a row
+        # whose prices died two months ago" need different fixes.
+        price_updated_at = _parse_datetime(data.get("price_updated_at"))
+        if (
+            price_updated_at
+            and (now - price_updated_at).total_seconds() / 86400
+            > stale_no_movement_days
+        ):
+            return stale_root_cause_for_reason("stale_prices")
 
         updated_at = _parse_datetime(data.get("updated_at"))
         if (
