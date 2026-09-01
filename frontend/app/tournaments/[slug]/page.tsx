@@ -423,7 +423,18 @@ export default function TournamentPage() {
                     day's card and above the board: what just happened is worth
                     less than what is on now and more than the season-long title
                     race. Its data is ESPN's, which is stated on the section. */}
-                <TournamentResults results={data.results} draw={draw} />
+                {/* #2449: ONE name per round. The results feed speaks ESPN's
+                    ordinal ("Round 1"); every other surface on this page speaks
+                    the register's ladder ("Round of 128"). `rounds.length` is
+                    this tournament's own ladder length when the draw exists, so
+                    the ordinal resolves against the real draw rather than an
+                    assumed one; before the draw it is 0 and `roundHeading`
+                    falls back to the 7-round ladder the pills already assume. */}
+                <TournamentResults
+                  results={data.results}
+                  draw={draw}
+                  roundCount={rounds.length > 0 ? rounds.length : undefined}
+                />
 
                 {board && <TournamentBoard board={board} seriesColors={seriesColors} />}
 
@@ -471,9 +482,15 @@ export default function TournamentPage() {
             to know it. The `max-w-[74ch]` is the other half of the desktop
             work: at 1280px this line would otherwise run the full shell. */}
         <footer className="border-t border-surface-border px-4 py-5 text-[11.5px] leading-relaxed text-text-muted lg:px-6">
+          {/* #2451: this said "a fixed 0–100 scale" and that is no longer
+              true — the trend chart's ceiling now steps to fit the field while
+              its baseline stays pinned at zero. A footer that describes a scale
+              the chart no longer uses is the same class of defect as an
+              unlabelled axis, so it changed in the same commit. */}
           <span className="block max-w-[74ch]">
             Each probability combines what several prediction markets are saying. Trend
-            lines are daily readings on a fixed 0&ndash;100 scale, with no smoothing.
+            lines are daily readings with no smoothing, drawn from zero to a labelled
+            top that fits the field.
           </span>
         </footer>
       </div>

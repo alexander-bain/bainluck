@@ -286,6 +286,99 @@ export interface ChartGeometry {
   dates: string[];
   width: number;
   height: number;
+  /**
+   * The top of the y-axis, as a probability (#2451). Always anchored at 0.
+   * See `chartCeiling` for the whole argument.
+   */
+  ceiling: number;
+}
+
+/**
+ * ═══ THE Y-AXIS HAS A TOP NOW, AND IT SAYS WHAT IT IS (#2451) ═══
+ *
+ * Alex, on the TO WIN THE TITLE chart: *"renders three contender lines inside
+ * roughly the bottom 15% of the plot area, with **no y-axis labels at all**.
+ * Alcaraz 34.5%, Zverev 23.5%, Shelton 9.3% — all visually flat and
+ * indistinguishable."* And the instruction: **"Fix the scale, do not smooth the
+ * line."**
+ *
+ * The scale was a hard 0–100. That is the right default for a two-horse
+ * question and the wrong one for a 128-player draw, where a runaway favourite
+ * is 35% and the third contender is 9%: two thirds of the plot is permanently
+ * empty and the whole title race is drawn in the bottom third, where a
+ * ten-point gap between Alcaraz and Zverev is 13px on a phone.
+ *
+ * ### Zero stays. The top moves.
+ *
+ * The classic chart lie is a truncated baseline — cropping the bottom to
+ * magnify a wiggle. That is not on the table and is not what this does: the
+ * axis is ALWAYS anchored at 0, so a line's height remains proportional to the
+ * probability and a player at 9% is drawn at 9% of the ceiling, not floated up
+ * from a fake floor.
+ *
+ * What adapts is the CEILING, and only in coarse steps: 10%, 25%, 50%, 100%.
+ * Coarse deliberately — a continuous fit-to-max would rescale the plot every
+ * time the leader moved a point, and a chart whose axis changes daily makes
+ * movement unreadable, which is the opposite of the standing ruling that
+ * movement is the product. Four steps means the axis holds still for weeks at a
+ * time and changes when the shape of the race genuinely changes.
+ *
+ * Worked on the men's board Alex was reading: max 0.345 → ceiling 0.5. Alcaraz
+ * lands at 69% of the plot height instead of 34%, Zverev at 47%, Shelton at
+ * 19%. The gap he could not see is now half the plot.
+ *
+ * ### And it is only honest because it is LABELLED
+ *
+ * A moving ceiling with no y-axis labels would be strictly worse than a fixed
+ * one: the reader would have no way to know the top had changed. The labels are
+ * the other half of this fix, not a decoration on it — see `chartYLabels`.
+ */
+const CEILING_STEPS = [0.1, 0.25, 0.5, 1] as const;
+
+/** Room above the leader, so the top line is not welded to the frame. */
+const CEILING_HEADROOM = 1.15;
+
+export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): number {
+  let max = 0;
+  for (const entry of series) {
+    for (const point of pointsInTimeframe(entry.points, timeframe)) {
+      if (Number.isFinite(point.probability) && point.probability > max) {
+        max = point.probability;
+      }
+    }
+    // The board's current number too: a contender whose history is one reading
+    // draws no line, but its legend value is on screen and the axis must be
+    // able to contain it. `entry.probability` is nullable where `point`'s is
+    // not — a contender with no price at all — and `Number.isFinite` is not a
+    // type predicate, so the null is ruled out here rather than by it.
+    const current = entry.probability;
+    if (current !== null && Number.isFinite(current) && current > max) {
+      max = current;
+    }
+  }
+  const wanted = max * CEILING_HEADROOM;
+  return CEILING_STEPS.find((step) => step >= wanted) ?? 1;
+}
+
+/**
+ * The y-axis labels, top to bottom, as `{probability, label}` (#2451).
+ *
+ * Three of them — top, middle, zero — and never more. This plot is 96px tall on
+ * a phone; a fourth rule would be 24px from its neighbours and the labels would
+ * collide. The zero line is always drawn because it is the claim the whole
+ * scale rests on: a reader who can see the baseline can see that nothing has
+ * been cropped.
+ */
+export function chartYLabels(ceiling: number): { probability: number; label: string }[] {
+  return [ceiling, ceiling / 2, 0].map((probability) => ({
+    probability,
+    // Whole percents: the steps are 10/25/50/100, so halves land on 5/12.5/25/50
+    // and only the 25 case needs a decimal. `12.5%` is correct and reads as
+    // precision nobody asked for on an axis label, so it rounds — and the
+    // rounding is visible only on a rule the reader is using to place a line,
+    // never on a number the page states as a fact.
+    label: `${Math.round(probability * 100)}%`,
+  }));
 }
 
 /**
@@ -307,7 +400,12 @@ export function chartGeometry(
       dates.add(point.date);
     }
   }
-  return { dates: Array.from(dates).sort(), width, height };
+  return {
+    dates: Array.from(dates).sort(),
+    width,
+    height,
+    ceiling: chartCeiling(series, timeframe),
+  };
 }
 
 /**
@@ -372,7 +470,8 @@ export function dateX(iso: string, geometry: ChartGeometry): number | null {
 }
 
 /**
- * One series as SVG polyline points on a FIXED 0-100 y-axis.
+ * One series as SVG polyline points, on a ZERO-ANCHORED y-axis whose top is
+ * `geometry.ceiling` (#2451 — see `chartCeiling`).
  *
  * Returns "" for fewer than two points. x is the point's position in CALENDAR
  * TIME across the shared domain (see `dateX`), so a series that started late
@@ -395,8 +494,12 @@ export function seriesPoints(
       if (!geometry.dates.includes(point.date)) return null;
       const x = dateX(point.date, geometry);
       if (x === null) return null;
-      const clamped = Math.max(0, Math.min(1, point.probability));
-      const y = geometry.height - clamped * geometry.height;
+      // Clamped to the CEILING, not to 1. A reading above the top of the axis
+      // would otherwise be drawn off the plot; `chartCeiling` picks a step that
+      // contains every point, so this only fires on a non-finite value.
+      const top = geometry.ceiling > 0 ? geometry.ceiling : 1;
+      const clamped = Math.max(0, Math.min(top, point.probability));
+      const y = geometry.height - (clamped / top) * geometry.height;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .filter((value): value is string => value !== null)

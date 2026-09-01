@@ -31,6 +31,19 @@ const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), 
 // 94 events on the whole site render it and none of them should pay for it in
 // the initial bundle.
 const TournamentExtensions = dynamic(() => import("@/components/event/TournamentExtensions"), { ssr: false });
+/* #2448: the way back UP the container. Same SWR key as the sections below, so
+   the two are one request. Renders nothing off-tournament. */
+const TournamentBackLink = dynamic(
+  () => import("@/components/event/TournamentExtensions").then((m) => m.TournamentBackLink),
+  { ssr: false }
+);
+/* #2447: the register's censused player photo, at the FRONT of the hero's
+   existing team-logo ladder. Same SWR key again, so still one request.
+   NOT `dynamic`, unlike its two neighbours above: this component WRAPS the
+   hero's existing logo markup as its fallback, so lazy-loading it would blank
+   the avatar of every event on the site until the chunk arrived. The two
+   sections below are additive and can afford to appear late; a hero cannot. */
+import { TournamentPlayerFace } from "@/components/event/TournamentExtensions";
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -458,6 +471,19 @@ export default function EventPage({ params }: EventPageProps) {
     <div className="space-y-3">
       {/* Navigation */}
       <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+        {/* #2448: A TOURNAMENT IS A CONTAINER, AND A CONTAINER NEEDS A WAY OUT.
+            Alex: "no link back to the tournament (only Back to events)". The
+            tournament page routes a match card down here; this page routed back
+            to Discover — not the tournament, not even the sport. Rendered
+            BEFORE the generic link because the specific container is the one
+            the reader arrived through, and it renders nothing at all for the
+            events that are not in a register, which is nearly all of them. */}
+        <TournamentBackLink
+          eventId={eventId}
+          sportKey={event.sport}
+          onNavigate={(href) => trackNavigationClick('back', `/events/${eventId}`, href)}
+        />
         <Link
           href="/"
           onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
@@ -478,6 +504,7 @@ export default function EventPage({ params }: EventPageProps) {
           </svg>
           ← Back to events
         </Link>
+        </div>
 
         {/* Visual countdown timer */}
         {!isFinished && (
@@ -637,6 +664,22 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center justify-between">
             {/* Home Team */}
             <div className="flex flex-col items-center flex-1">
+              {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
+                  `home_team_data.logo_large` -> `espnTeamLogoByName` ->
+                  initials, and both of the first two are TEAM resolvers. A
+                  tennis player is not a team, so every US Open match fell
+                  straight through to initials while the register — four
+                  sections down this same page — held a censused photograph of
+                  the same person. This adds the register to the FRONT of the
+                  ladder and leaves every other rung exactly where it was. */}
+              <TournamentPlayerFace
+                eventId={eventId}
+                sportKey={event.sport}
+                homeName={event.home_team}
+                awayName={event.away_team}
+                side="home"
+                size={56}
+                fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
@@ -659,6 +702,8 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
+                }
+              />
               <TeamNameLink
                 name={event.home_team}
                 sportKey={event.sport}
@@ -783,6 +828,15 @@ export default function EventPage({ params }: EventPageProps) {
 
             {/* Away Team */}
             <div className="flex flex-col items-center flex-1">
+              {/* #2447, the other side. Same ladder, same new first rung. */}
+              <TournamentPlayerFace
+                eventId={eventId}
+                sportKey={event.sport}
+                homeName={event.home_team}
+                awayName={event.away_team}
+                side="away"
+                size={56}
+                fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
@@ -805,6 +859,8 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
                 </span>
               </div>
+                }
+              />
               <TeamNameLink
                 name={event.away_team}
                 sportKey={event.sport}

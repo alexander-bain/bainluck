@@ -9,6 +9,7 @@ import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   defaultMatchRound,
   matchRoundPills,
+  matchRoundReconciliation,
   matchesInRound,
   titleChipDescription,
   titleChipLabel,
@@ -16,10 +17,10 @@ import {
   type MatchListSide,
   type MatchRoundKey,
 } from "@/lib/matchList";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import {
   dayHeading,
   formatMove,
-  formatSlateProbability,
   localDayKey,
   moveDirection,
   type SlateNotice,
@@ -118,14 +119,49 @@ function OutcomeChip({ won }: { won: boolean }) {
   );
 }
 
+/**
+ * ═══ THE TWO NUMBERS ON A MATCH CARD ARE ONE ANSWER (#2452) ═══
+ *
+ * Alex, adding up two numbers on the live page: `Berrettini 78% + Wawrinka 23%`
+ * = **101**, on a page whose whole promise is honest probability. Four cards on
+ * his screen, two of them wrong, and nothing about the page explained which.
+ *
+ * It is the exact defect #2060 and UX-P114 already fixed twice elsewhere. A
+ * tennis match quote is a complement pair by construction — the two sides sum
+ * to 1.0 to six places in the served payload — and rounding each side
+ * independently with half-up sends BOTH up whenever `p * 100` lands on `.5`.
+ * It never prints 99; it prints 101 or it prints right.
+ *
+ * MEASURED against the live `/api/tournaments/us-open` payload on 2026-09-01,
+ * before this change: **12 of the 30 match cards in the list printed 101** —
+ * `0.275/0.725`, `0.075/0.925`, `0.505/0.495`, `0.965/0.035` and eight more,
+ * every one of them an exact-1.0 pair on a half-cent grid. Two fifths of the
+ * list. Not an edge case; the common case.
+ *
+ * The fix is not new arithmetic. `renderedDuelPercents` is the product's
+ * standing answer to this question — contract-backed across web, server and
+ * Swift (`contracts/rendered_percent.json`), used by the Discover card, the
+ * event hero, the feed card and the results list. This list was simply the one
+ * surface still calling a bare per-side `Math.round`. It rounds the FAVOURITE
+ * once and derives the underdog as `100 −` that, so the pair cannot sum to
+ * anything but 100, and a pair that is genuinely NOT complementary (outside
+ * [0.99, 1.01]) is left alone rather than normalized into a fiction.
+ *
+ * The percents are therefore computed once per ROW, in `MatchRow`, and handed
+ * down. They cannot be computed in `SideLine`: a side alone does not know its
+ * opponent, and that missing knowledge is the entire bug.
+ */
 function SideLine({
   side,
   entry,
   favourite,
+  percent,
 }: {
   side: MatchListSide;
   entry: MatchListEntry;
   favourite: boolean;
+  /** This side's whole percent, rounded WITH its opponent. `null` when unpriced. */
+  percent: number | null;
 }) {
   if (side.placeholder !== "none") {
     // NEVER a bare em-dash (UX-P137, ruling 3). A round-one hole is a register
@@ -228,8 +264,9 @@ function SideLine({
               entry.isLive && !entry.decided ? "text-text-primary" : "text-text-secondary"
             }`}
             data-testid="match-probability"
+            data-percent={percent ?? undefined}
           >
-            {formatSlateProbability(side.matchProbability)}
+            {percent === null ? "—" : `${percent}%`}
           </span>
         )}
       </span>
@@ -294,6 +331,12 @@ function MatchRow({
     : null;
   const names = entry.sides.map((side) => side.displayName).join(" v ");
 
+  /* #2452: ONE rounding for the pair, here, where both sides are in scope. */
+  const [firstPercent, secondPercent] = renderedDuelPercents(
+    entry.sides[0].matchProbability,
+    entry.sides[1].matchProbability
+  );
+
   return (
     <li
       data-testid="match-row"
@@ -357,6 +400,7 @@ function MatchRow({
             <SideLine
               side={entry.sides[0]}
               entry={entry}
+              percent={firstPercent}
               favourite={
                 !entry.decided &&
                 (entry.sides[0].matchProbability ?? 0) >=
@@ -366,6 +410,7 @@ function MatchRow({
             <SideLine
               side={entry.sides[1]}
               entry={entry}
+              percent={secondPercent}
               favourite={
                 !entry.decided &&
                 (entry.sides[1].matchProbability ?? 0) >
@@ -485,6 +530,7 @@ export default function TournamentMatches({
   const visible = expanded ? inRound : inRound.slice(0, COLLAPSED_LIST_COUNT);
   const activePill = pills.find((pill) => pill.round === active);
   const incoherent = inRound.filter((entry) => !entry.coherent).length;
+  const reconciliation = matchRoundReconciliation(active, inRound.length);
 
   return (
     <section data-testid="tournament-matches" data-round={active}>
@@ -558,6 +604,22 @@ export default function TournamentMatches({
           · {inRound.length} {inRound.length === 1 ? "match" : "matches"}
         </span>
       </h2>
+
+      {/* WHAT HAPPENED TO THE REST OF THE ROUND (#2450). Alex added `ROUND OF
+          128 · 25 matches` to `FINISHED · 71` and got a number a 128-draw
+          cannot produce, because the two headings count different populations
+          and neither said so. The round's size is definitional — a round of 128
+          IS 64 matches — so stating it lets the arithmetic close without the
+          page claiming a finished-count it cannot stand behind. See
+          `matchRoundReconciliation`. */}
+      {reconciliation && (
+        <p
+          className="-mt-1 mb-2 text-[11px] leading-snug text-text-muted"
+          data-testid="match-round-reconciliation"
+        >
+          {reconciliation}
+        </p>
+      )}
 
       {/* Every number says what it means (UX-P137, ruling 2). */}
       <div

@@ -23,6 +23,7 @@ import {
   seriesPoints,
   shortDateLabel,
   type AxisTick,
+  type ChartGeometry,
 } from "@/lib/contenderChart";
 import {
   DRAW_ORDER,
@@ -127,6 +128,21 @@ describe("item 6 — the chart's x-axis", () => {
   /** The three plot widths the tiers are spent at — see `TIER_PLOT_PX`. */
   const PLOT_PX: Record<string, number> = { major: 358, wide: 486, fine: 817 };
 
+  /**
+   * A plot geometry for the x-axis assertions below.
+   *
+   * `ceiling` is the y-axis top (#2451) and none of these cases read it, so it
+   * is pinned at `1` — the fixed 0–100 axis this file was written against —
+   * which keeps every x assertion measuring exactly what it measured before
+   * the ceiling existed.
+   */
+  const geo = (dates: string[]): ChartGeometry => ({
+    dates,
+    width: 320,
+    height: 96,
+    ceiling: 1,
+  });
+
   /** The gaps between consecutive ticks, in viewBox units, rounded to kill float noise. */
   const gapsOf = (ticks: AxisTick[]) =>
     ticks.slice(1).map((tick, i) => Number((tick.x - ticks[i].x).toFixed(6)));
@@ -137,7 +153,7 @@ describe("item 6 — the chart's x-axis", () => {
     // `artifacts-ux-p207/axis-before.txt`: five labels at 0 / 16.7 / 30.0 /
     // 83.3 / 100 percent — gaps of 16.7, 13.3, 53.3 and 16.7. Four labels
     // crammed into the first third and half the axis empty.
-    const ticks = axisTicks({ dates: PRODUCTION_MENS_DATES, width: 320, height: 96 });
+    const ticks = axisTicks(geo(PRODUCTION_MENS_DATES));
 
     // AFTER: one weekly step, anchored on the latest reading.
     expect(ticks.map((tick) => tick.label)).toEqual([
@@ -158,7 +174,7 @@ describe("item 6 — the chart's x-axis", () => {
     // go: 17 Aug and 24 Aug are inside the fifteen-day hole and no reading
     // exists on either, and they are exactly the two labels that let a reader
     // see the hole is a fortnight rather than "some unlabelled distance".
-    const ticks = axisTicks({ dates: PRODUCTION_MENS_DATES, width: 320, height: 96 });
+    const ticks = axisTicks(geo(PRODUCTION_MENS_DATES));
     const unobserved = ticks.filter((tick) => !PRODUCTION_MENS_DATES.includes(tick.date));
     expect(unobserved.map((tick) => tick.label)).toEqual(["17 Aug", "24 Aug"]);
 
@@ -167,7 +183,7 @@ describe("item 6 — the chart's x-axis", () => {
     const holed = [row({ trend: PRODUCTION_MENS_DATES.map((date) => ({ date, probability: 0.4 })) })];
     const drawn = seriesPoints(
       chartSeriesFor(holed, [holed[0].entity_key])[0],
-      { dates: PRODUCTION_MENS_DATES, width: 320, height: 96 },
+      geo(PRODUCTION_MENS_DATES),
       "ALL"
     );
     const xs = drawn.split(" ").map((pair) => Number(pair.split(",")[0]));
@@ -198,7 +214,7 @@ describe("item 6 — the chart's x-axis", () => {
     // before this change (40% / 20% / 40%).
     for (const span of [1, 2, 3, 5, 6, 7, 10, 12, 13, 20, 24, 30, 45, 60, 90, 120, 200, 400, 900]) {
       const dates = dailyDates("2024-01-01", span + 1);
-      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      const ticks = axisTicks(geo(dates));
       for (const [name, tiers] of [["phone", PHONE], ["lg", LG], ["2xl", XXL]] as const) {
         const visible = atTier(ticks, tiers as string[]);
         expect(visible.length).toBeGreaterThanOrEqual(2);
@@ -215,7 +231,7 @@ describe("item 6 — the chart's x-axis", () => {
     // looks like and is not what was filed.
     for (const span of [5, 12, 29, 30, 45, 200]) {
       const dates = dailyDates("2024-03-01", span + 1);
-      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      const ticks = axisTicks(geo(dates));
       expect(ticks[ticks.length - 1].x).toBe(320);
       expect(ticks[ticks.length - 1].date).toBe(dates[dates.length - 1]);
       expect(ticks[0].x).toBeGreaterThanOrEqual(0);
@@ -259,7 +275,7 @@ describe("item 6 — the chart's x-axis", () => {
     // than like a different chart: every label a phone shows is still there, at
     // the same position, when the desktop adds more between them.
     for (const span of [10, 12, 20, 24, 60, 120, 900]) {
-      const ticks = axisTicks({ dates: dailyDates("2024-05-01", span + 1), width: 320, height: 96 });
+      const ticks = axisTicks(geo(dailyDates("2024-05-01", span + 1)));
       const phone = atTier(ticks, PHONE);
       const lg = atTier(ticks, LG);
       for (const tick of phone) expect(lg).toContainEqual(tick);
@@ -273,7 +289,7 @@ describe("item 6 — the chart's x-axis", () => {
     // 44px centre to centre: a `26 Aug` label is ~30px at `text-[9.5px]` in
     // tabular figures, plus 14px of air.
     for (const span of [1, 5, 7, 10, 12, 13, 24, 30, 45, 60, 90, 200, 400, 900]) {
-      const ticks = axisTicks({ dates: dailyDates("2024-07-01", span + 1), width: 320, height: 96 });
+      const ticks = axisTicks(geo(dailyDates("2024-07-01", span + 1)));
       for (const [tiers, px] of [[PHONE, 358], [LG, 486], [XXL, 817]] as const) {
         const visible = atTier(ticks, tiers as string[]);
         for (let i = 1; i < visible.length; i += 1) {
@@ -295,7 +311,7 @@ describe("item 6 — the chart's x-axis", () => {
   it("never repeats a date and never leaves the drawn window", () => {
     for (const span of [1, 2, 5, 12, 30, 91, 400]) {
       const dates = dailyDates("2025-02-01", span + 1);
-      const ticks = axisTicks({ dates, width: 320, height: 96 });
+      const ticks = axisTicks(geo(dates));
       expect(new Set(ticks.map((t) => t.date)).size).toBe(ticks.length);
       for (const tick of ticks) {
         expect(tick.date >= dates[0]).toBe(true);
@@ -327,10 +343,10 @@ describe("item 6 — the chart's x-axis", () => {
   });
 
   it("offers no ticks for a domain that cannot be drawn", () => {
-    expect(axisTicks({ dates: [], width: 320, height: 96 })).toEqual([]);
-    expect(axisTicks({ dates: ["2026-08-26"], width: 320, height: 96 })).toEqual([]);
+    expect(axisTicks(geo([]))).toEqual([]);
+    expect(axisTicks(geo(["2026-08-26"]))).toEqual([]);
     // A domain of two entries on the SAME day has no width to divide.
-    expect(axisTicks({ dates: ["2026-08-26", "2026-08-26"], width: 320, height: 96 })).toEqual([]);
+    expect(axisTicks(geo(["2026-08-26", "2026-08-26"]))).toEqual([]);
   });
 
   it("labels a date day-first, because the month repeats and the day does not", () => {
@@ -343,7 +359,7 @@ describe("item 6 — the chart's x-axis", () => {
     // `ALL` on a field with four readings is four days, and the timeframe
     // button says `ALL` either way.
     expect(axisSpanDays(geometry)).toBe(29);
-    expect(axisSpanDays({ dates: ["2026-08-26"], width: 320, height: 96 })).toBeNull();
+    expect(axisSpanDays(geo(["2026-08-26"]))).toBeNull();
   });
 
   it("names the window from the DOMAIN, not from the ticks", () => {
@@ -352,7 +368,7 @@ describe("item 6 — the chart's x-axis", () => {
     // the footer beside it said "29d shown" — the same disagreement this queue
     // is removing, in two modalities.
     expect(axisWindow(geometry)).toEqual({ from: "28 Jul", to: "26 Aug" });
-    expect(axisWindow({ dates: ["2026-08-26"], width: 320, height: 96 })).toBeNull();
+    expect(axisWindow(geo(["2026-08-26"]))).toBeNull();
     const ticks = axisTicks(geometry);
     expect(ticks[0].label).not.toBe("28 Jul");
   });

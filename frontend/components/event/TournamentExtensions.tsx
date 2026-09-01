@@ -42,15 +42,17 @@
  * promise of something that is not there.
  */
 
+import React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 
 import MatchProps from "@/components/tournament/MatchProps";
+import PlayerAvatar from "@/components/tournament/PlayerAvatar";
 import AdvancementPath, {
   type AdvancementStage,
 } from "@/components/event/AdvancementPath";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
-import { broadcastFor } from "@/lib/slate";
+import { broadcastFor, type PlayerImage } from "@/lib/slate";
 import { fetchEventTournament } from "@/lib/api";
 import { eventTournamentKey, isTournamentSportKey } from "@/lib/eventOutcome";
 import type {
@@ -285,3 +287,190 @@ export default function TournamentExtensions({
  * one and not the other — which reads as a hero saying "Final" above a section
  * that knows the score.
  */
+/**
+ * ═══ THE WAY BACK UP (#2448, Alex's third item) ═══
+ *
+ * *"no link back to the tournament (only `Back to events`)"*.
+ *
+ * A tournament is a container for related events (Alex's own architecture note,
+ * quoted at the top of this file), and a container you can only descend into is
+ * a one-way door. The tournament page routes a match card to `/events/{id}`;
+ * the event page routed back to `/`, which is Discover — not the tournament,
+ * not even the sport.
+ *
+ * ### Why this lives here rather than in the page
+ *
+ * The link needs the tournament's slug and title, and this module is already
+ * the one thing on the event page that knows them. It shares the SWR key
+ * `["event-tournament", eventId]` with `TournamentExtensions` verbatim, so the
+ * two components are ONE request — SWR dedupes on the key, and a second key
+ * spelled differently would be a silent doubling of the round trip that the
+ * eligibility gate above exists to avoid.
+ *
+ * Renders NOTHING for the ~94-events-in-the-whole-site case where the event is
+ * not in a register, and nothing while the request is in flight. A back link
+ * that appears a beat late is better than a placeholder that reserves space for
+ * a link most events will never have.
+ */
+/**
+ * ═══ ONE RESOLVER, BOTH SURFACES (#2447) ═══
+ *
+ * Alex: *"`/events/15293846` renders `MB` and `SW` avatar initials for
+ * Berrettini and Wawrinka. The tournament page renders photographs for the same
+ * two players. One resolver should serve both."*
+ *
+ * The event hero's face ladder is `home_team_data.logo_large` →
+ * `espnTeamLogoByName(name, sport_key)` → initials. Both of the first two are
+ * TEAM resolvers. A tennis player is not a team, has no `teams` row and no ESPN
+ * team logo, so the ladder falls straight through to step three on every match
+ * at this tournament — while the register, four sections down the same page,
+ * holds a verified photograph of the same person.
+ *
+ * The register's resolver is `player_image`, censused offline by
+ * `backend/scripts/census_player_images.py` against the article's own
+ * description, precisely because a bare-name lookup returns a Serbian
+ * footballer for `Aleksandar Kovacevic` and a US President for `Andrew
+ * Johnson`. That verification is the whole value of the pin, and it is why this
+ * reads the register rather than adding a fourth guess to the ladder.
+ *
+ * ### Matched BY NAME, in both branches, deliberately
+ *
+ * The payload's `result.players` carry no home/away semantics, and
+ * `advancement.home_team` carries them but is built by a different path. A
+ * positional read would swap two faces the day either ordering changes, and a
+ * wrong face is the exact failure the census exists to prevent — instant,
+ * confident, and unverifiable by the reader. So both branches match the event's
+ * own `home_team` / `away_team` strings and return `null` when they do not,
+ * which drops that side back to initials rather than to somebody else.
+ *
+ * ### Two branches because one is not enough
+ *
+ * `result` covers finished matches and carries the full `{url, flag_url}`
+ * block. `advancement` covers quoted players and carries a photo only. Measured
+ * on the live `/api/tournaments/by-event/15293846`: `advancement.away_team` is
+ * `null` — Wawrinka is not on the reach board — while `result.players` has both
+ * faces. Either branch alone leaves half of that match on initials.
+ */
+export function useTournamentPlayerFaces(
+  eventId: number,
+  sportKey: string | null | undefined,
+  homeName: string,
+  awayName: string
+): { home: PlayerImage | null; away: PlayerImage | null } {
+  const eligible = isTournamentSportKey(sportKey);
+  const { data } = useSWR<EventTournamentResponse>(
+    eligible ? eventTournamentKey(eventId) : null,
+    () => fetchEventTournament(eventId),
+    { revalidateOnFocus: false, refreshInterval: 120000 },
+  );
+
+  return {
+    home: registerFace(data, homeName),
+    away: registerFace(data, awayName),
+  };
+}
+
+const sameName = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** The register's pinned image for one named player, or `null`. Never a guess. */
+export function registerFace(
+  data: EventTournamentResponse | undefined,
+  name: string
+): PlayerImage | null {
+  if (!data || !name) return null;
+
+  const played = (data.result?.players ?? []).find((player) =>
+    sameName(player.display_name, name)
+  );
+  if (played?.image && (played.image.url || played.image.flag_url)) return played.image;
+
+  for (const row of [data.advancement?.home_team, data.advancement?.away_team]) {
+    if (row && sameName(row.name, name) && row.logo_url) {
+      // The reach board carries a photo and no flag. `flag_url: null` rather
+      // than an absent key, so `avatarKind` reads it the same way it reads the
+      // register's own block and cannot land on `flag` with nothing to draw.
+      return { url: row.logo_url, flag_url: null };
+    }
+  }
+  return null;
+}
+
+/**
+ * The event hero's avatar slot for ONE player (#2447).
+ *
+ * A component rather than a call to `useTournamentPlayerFaces` inside the page,
+ * for the ordinary reason: the hero sits below the page's loading and error
+ * returns, and a hook called there would change hook order between renders.
+ * Wrapping it means the page passes props and this decides.
+ *
+ * `fallback` is the hero's existing team-logo-then-initials markup, untouched
+ * and still the answer for every non-tournament event and for any player the
+ * register holds no image for. This adds a step to the FRONT of that ladder; it
+ * does not replace it.
+ */
+export function TournamentPlayerFace({
+  eventId,
+  sportKey,
+  homeName,
+  awayName,
+  side,
+  size,
+  fallback,
+}: {
+  eventId: number;
+  sportKey?: string | null;
+  homeName: string;
+  awayName: string;
+  side: "home" | "away";
+  size: number;
+  fallback: React.ReactNode;
+}) {
+  const faces = useTournamentPlayerFaces(eventId, sportKey, homeName, awayName);
+  const image = side === "home" ? faces.home : faces.away;
+  if (!image) return <>{fallback}</>;
+  return (
+    <PlayerAvatar name={side === "home" ? homeName : awayName} image={image} size={size} />
+  );
+}
+
+export function TournamentBackLink({
+  eventId,
+  sportKey,
+  onNavigate,
+}: {
+  eventId: number;
+  sportKey?: string | null;
+  /** Analytics hook, so this link is tracked exactly as its sibling is. */
+  onNavigate?: (href: string) => void;
+}) {
+  const eligible = isTournamentSportKey(sportKey);
+  const { data } = useSWR<EventTournamentResponse>(
+    eligible ? eventTournamentKey(eventId) : null,
+    () => fetchEventTournament(eventId),
+    { revalidateOnFocus: false, refreshInterval: 120000 },
+  );
+
+  const tournament = data?.tournament;
+  if (!tournament) return null;
+
+  return (
+    <Link
+      href={tournament.url}
+      onClick={() => onNavigate?.(tournament.url)}
+      className="inline-flex items-center text-caption text-text-secondary transition-colors hover:text-text-primary"
+      data-testid="tournament-back-link"
+      data-slug={tournament.slug}
+    >
+      <svg className="mr-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15 19l-7-7 7-7"
+        />
+      </svg>
+      {tournament.title}
+    </Link>
+  );
+}

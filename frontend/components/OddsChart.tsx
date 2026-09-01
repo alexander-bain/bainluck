@@ -1255,22 +1255,69 @@ export default function OddsChart({
 
       {/* Probability Chart with vertical team labels */}
       <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-80"}`}>
-        {/* Vertical team labels on left side of chart */}
+        {/* ═══ THE GUTTER IS AN AXIS, NOT TWO MORE SERIES NAMES (#2448) ═══
+
+            Alex, on `/events/15293846`: *"the y-axis is labelled with both
+            player names vertically, while the single plotted line is labelled
+            `Betting Odds` — three labels, one line."*
+
+            He was right about what he saw and the names were not the error. The
+            axis genuinely runs from "the away player wins" at 0% to "the home
+            player wins at 100%", so both names belong in the gutter — they are
+            its two POLES. What was missing is the only thing that turns two
+            names into an axis: a DIRECTION. Without it a reader has two names,
+            a 0–100 scale and a line, and no rule connecting them; every one of
+            the three labels is equally likely to be the line's.
+
+            One caret per pole fixes it and adds no words. `↑ BERRETTINI` at the
+            top and `↓ WAWRINKA` at the bottom says "up is Berrettini", which is
+            exactly the missing rule, and the section heading above the chart
+            ("Win Probability") already names the quantity while the legend
+            below names the source. Three ideas, each said once, instead of
+            three names competing to be the same one.
+
+            `aria-hidden` on the caret and a real sentence in `sr-only`: a
+            screen reader cannot see which end of a gutter a label is at, so the
+            glyph carries nothing for it and the sentence carries everything. */}
         <div className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
-          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+          <div
+            className="flex items-center gap-1"
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            data-testid="chart-axis-pole"
+            data-pole="home"
+          >
+            <span className="sr-only">
+              The line rises towards {homeShort}: the top of this axis is {homeShort} at 100%.
+            </span>
             {homeTeamLogo && (
               <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: homeTeamColor || "#16a34a" }}>
-              {homeShort}
+            <span
+              aria-hidden="true"
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={{ color: homeTeamColor || "#16a34a" }}
+            >
+              {"↑"} {homeShort}
             </span>
           </div>
-          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+          <div
+            className="flex items-center gap-1"
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            data-testid="chart-axis-pole"
+            data-pole="away"
+          >
+            <span className="sr-only">
+              The line falls towards {awayShort}: the bottom of this axis is {awayShort} at 100%.
+            </span>
             {awayTeamLogo && (
               <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: awayTeamColor || "#2563eb" }}>
-              {awayShort}
+            <span
+              aria-hidden="true"
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={{ color: awayTeamColor || "#2563eb" }}
+            >
+              {"↓"} {awayShort}
             </span>
           </div>
         </div>
@@ -1699,10 +1746,13 @@ export default function OddsChart({
         )}
       </div>
 
-      {/* Tap for details */}
-      <p className="text-xs text-text-muted text-center shrink-0">
-        Tap/hover for details
-      </p>
+      {/* #2448: `Tap/hover for details` DELETED.
+          Alex read it as body text under a chart, which is what it was — a
+          caption whose entire content was an instruction about our own UI. It
+          told a mouse user to hover and a phone user to tap, said nothing about
+          the match, and sat in the same visual slot the page uses for facts. A
+          tooltip that needs a caption announcing tooltips is not made
+          discoverable by the caption; it is made noisy. Nothing replaces it. */}
     </div>
   );
 }

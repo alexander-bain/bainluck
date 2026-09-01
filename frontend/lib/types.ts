@@ -6,8 +6,10 @@ import type { ConfidenceSignals } from "@/lib/confidence";
 // The props section is shared with the tournament hub's match rows — one
 // definition of a prop card, not a second copy that agrees today (UX-P152).
 import type { MatchProp } from "@/lib/matchDetail";
-// Same discipline for the decided result: the hub's result rows and an event
-// page's settled hero are the SAME fact, so they share the one type (#2443).
+// Same reasoning as `MatchProp` above: the finished match the by-event route
+// serves IS a results-list row, so it is that type and not a copy of it (#2447),
+// and the hub's result rows and an event page's settled hero are the SAME fact,
+// so they share the one type (#2443).
 import type { TournamentResult } from "@/lib/tournamentResults";
 
 export interface Sport {
@@ -2209,7 +2211,7 @@ export interface EventTournamentResponse {
   props_dropped: Record<string, number>;
   decided: boolean;
   /**
-   * The decided result — winner, score line and how it ended (#2443).
+   * The decided result — winner, score line and how it ended (#2443, #2447).
    *
    * The route has always returned this beside `decided`, and until #2443
    * nothing read it and it was not even declared here, which is the whole
@@ -2217,6 +2219,17 @@ export interface EventTournamentResponse {
    * outcome under it. Optional, because the ordinary answer for an event that
    * is not in a tournament — or is in one and has not been played — is that
    * there is no result yet.
+   *
+   * It is the SAME shape the tournament's own results list holds, so it also
+   * carries `players[].image` — the register's censused `player_image` block,
+   * the one the tournament page's `PlayerAvatar` renders — which is what lets
+   * the event hero draw a photograph of the person instead of falling through
+   * a TEAM logo ladder to initials (#2447).
+   *
+   * Typed off `TournamentResult` rather than restated: a second copy of this
+   * shape is a second thing to keep in step with `build_results`. #2443 and
+   * #2447 each declared this field for their own reader and the two
+   * declarations sat eleven lines apart; one field, one docstring.
    */
   result?: TournamentResult | null;
   /**

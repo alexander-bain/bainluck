@@ -11,6 +11,7 @@ import {
   axisWindow,
   chartGeometry,
   chartSeriesFor,
+  chartYLabels,
   chartableRows,
   filterCandidates,
   legendName,
@@ -165,11 +166,16 @@ export default function ContenderChart({
   const drawable = series.some(
     (entry) => pointsInTimeframe(entry.points, timeframe).length >= 2
   );
-  // RULING 6 (UX-P139). The y-axis has been a labelled, fixed 0-100 since the
-  // chart shipped; the x-axis had nothing at all, so a falling line could be a
-  // day or a month and the reader had no way to tell. On this page both are
-  // live possibilities.
+  // RULING 6 (UX-P139) gave the x-axis its ticks: it had nothing at all, so a
+  // falling line could be a day or a month and the reader had no way to tell.
+  //
+  // The note here used to claim the y-axis was "a labelled, fixed 0-100". It
+  // was fixed and it was never labelled — #2451 is Alex finding exactly that on
+  // the live page, and the comment had been asserting the opposite since the
+  // chart shipped. Both halves are true now, and both are guarded.
   const ticks = axisTicks(geometry, timeframe);
+  /* #2451: the y-axis's three rules and their labels, top first. */
+  const yLabels = chartYLabels(geometry.ceiling);
   const spanDays = axisSpanDays(geometry);
   // NOT named `window` — this is a client component and shadowing the global
   // inside a render body is a trap for whoever adds a `window.matchMedia` here.
@@ -240,6 +246,48 @@ export default function ContenderChart({
 
       {drawable ? (
         <>
+        {/* ═══ THE PLOT AND ITS Y-AXIS (#2451) ═══
+
+            Alex: the three lines sit "inside roughly the bottom 15% of the plot
+            area, with no y-axis labels at all ... all visually flat and
+            indistinguishable", and: "Fix the scale, do not smooth the line."
+
+            Two changes, and they only work together. `chartCeiling` moves the
+            TOP of the axis onto a coarse step above the leader (zero stays
+            anchored — a truncated baseline is the chart lie and is not on the
+            table), which on the men's board he was reading turns a leader
+            drawn at 34% of the height into one drawn at 69%. And the axis is
+            LABELLED, which is what makes a moving top honest rather than a
+            second way to mislead: an unlabelled adaptive scale is strictly
+            worse than an unlabelled fixed one.
+
+            `relative` on the wrapper so the labels can sit over the plot; they
+            are HTML positioned by percentage for the same reason the date
+            labels are, which the `svg` comment below spells out — with
+            `preserveAspectRatio="none"` any SVG text in here would be
+            stretched by the x-scale. */}
+        <div className="relative" data-testid="chart-plot">
+        <div
+          className="pointer-events-none absolute inset-0 z-10"
+          aria-hidden="true"
+          data-testid="chart-y-axis"
+          data-ceiling={yLabels[0].probability}
+        >
+          {yLabels.map((entry) => {
+            const fromTop = 1 - entry.probability / (yLabels[0].probability || 1);
+            return (
+              <span
+                key={entry.label}
+                className="absolute left-0 -translate-y-1/2 bg-surface-card/85 pr-1 text-[9.5px] font-semibold tabular-nums leading-none text-text-muted"
+                style={{ top: `${(fromTop * 100).toFixed(2)}%` }}
+                data-testid="chart-y-label"
+                data-probability={entry.probability}
+              >
+                {entry.label}
+              </span>
+            );
+          })}
+        </div>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           /**
@@ -277,6 +325,32 @@ export default function ContenderChart({
           }
           data-testid="chart-svg"
         >
+          {/* THE HORIZONTAL RULES (#2451), one per y label, so a reader can
+              carry a line's height across to a number. Drawn before the
+              vertical ticks and before every series, so nothing the chart is
+              about is ever behind a rule. The zero rule is the one that says
+              the baseline has not been cropped, and it is drawn a shade
+              stronger for that reason. */}
+          {yLabels.map((entry) => {
+            const y = HEIGHT - (entry.probability / (yLabels[0].probability || 1)) * HEIGHT;
+            const isZero = entry.probability === 0;
+            return (
+              <line
+                key={`y-${entry.label}`}
+                x1={0}
+                x2={WIDTH}
+                y1={y}
+                y2={y}
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-surface-border"
+                opacity={isZero ? 0.9 : 0.5}
+                vectorEffect="non-scaling-stroke"
+                data-testid="chart-y-rule"
+                data-probability={entry.probability}
+              />
+            );
+          })}
           {/* THE TICKS, drawn first so a line is never behind a rule. Vertical
               only: `preserveAspectRatio="none"` scales x and y independently,
               so any TEXT in here would be stretched — the labels are HTML
@@ -328,6 +402,7 @@ export default function ContenderChart({
             );
           })}
         </svg>
+        </div>
         {/* THE DATE LABELS. HTML rather than SVG text, and positioned by the
             same fraction of the width the tick uses, so they cannot drift from
             the rules they belong to. First is left-aligned and last is
