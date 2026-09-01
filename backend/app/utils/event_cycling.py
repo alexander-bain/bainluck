@@ -14,6 +14,14 @@ the slug's year against the market ``resolution_date`` year, so a 2027 slug neve
 resolves 2026 markets. The soccer coherence gate is ported so a broken/stale field
 (the "Peru 47%" class) never crowns a nonsense GC leader.
 
+#2482 (LAT-P182): the config names race FAMILIES, never editions. It used to hold a
+hand-written dict of year-stamped slugs (``vuelta-2026`` and friends), and because the
+edition guard also requires the resolution to be ahead of ``now``, those two conditions
+became jointly unsatisfiable the moment the configured year ran out — every cycling
+concept left Discover and could not come back until a human edited this file. An
+edition is now DERIVED from the market's own ``resolution_date`` year, so a new race
+year needs no config entry, no calendar maintenance and no January scramble.
+
 Pure helpers are unit-tested; build_event is exercised via the route test.
 """
 
@@ -22,6 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,48 +75,115 @@ _FIELD_SUM_MAX = 1.60
 
 @dataclass(frozen=True)
 class CyclingRaceConfig:
+    """One EDITION of a race — always year-stamped. Derived, never hand-written."""
+
     slug: str
     display: str
     name_re: re.Pattern
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
 
-# Editions with (or expecting) markets. Slug carries the year; name_re matches the
-# year-less market title. Add Giro/Vuelta editions here as markets appear.
-CYCLING_RACES: dict[str, CyclingRaceConfig] = {
-    "tour-de-france-2026": CyclingRaceConfig(
-        slug="tour-de-france-2026",
-        display="Tour de France 2026",
+@dataclass(frozen=True)
+class CyclingRaceFamily:
+    """A race that recurs every year. Carries no year and never needs editing.
+
+    #2482: this is the whole repair. The old config listed editions, so the
+    calendar had a fuse in it; a family has none. ``stem`` and ``alias_stems``
+    are year-less slug roots — every one of them resolves both bare
+    (``tdf`` -> the edition in play) and year-stamped (``tdf-2027``)."""
+
+    stem: str
+    display: str  # year-less; the edition appends its year
+    name_re: re.Pattern
+    alias_stems: tuple[str, ...] = field(default_factory=tuple)
+
+
+# The three Grand Tours. `name_re` matches the year-less market title
+# ("Vuelta a Espana Winner"); the edition's year comes from the market's own
+# `resolution_date`. Add a race here; never add a year.
+CYCLING_RACE_FAMILIES: dict[str, CyclingRaceFamily] = {
+    "tour-de-france": CyclingRaceFamily(
+        stem="tour-de-france",
+        display="Tour de France",
         name_re=re.compile(r"tour\s+de\s+france", re.IGNORECASE),
-        aliases=("tour-de-france", "tdf-2026", "tdf", "le-tour-2026"),
+        alias_stems=("tdf", "le-tour"),
     ),
-    "giro-2026": CyclingRaceConfig(
-        slug="giro-2026",
-        display="Giro d'Italia 2026",
+    "giro": CyclingRaceFamily(
+        stem="giro",
+        display="Giro d'Italia",
         name_re=re.compile(r"giro\s*(d[’']?\s*italia)?", re.IGNORECASE),
-        aliases=("giro-ditalia-2026", "giro"),
+        alias_stems=("giro-ditalia",),
     ),
-    "vuelta-2026": CyclingRaceConfig(
-        slug="vuelta-2026",
-        display="Vuelta a España 2026",
+    "vuelta": CyclingRaceFamily(
+        stem="vuelta",
+        display="Vuelta a España",
         name_re=re.compile(r"vuelta(\s+a\s+espa)?", re.IGNORECASE),
-        aliases=("vuelta-a-espana-2026", "vuelta"),
+        alias_stems=("vuelta-a-espana", "la-vuelta"),
     ),
 }
 
-_BY_SLUG: dict[str, CyclingRaceConfig] = {}
-for _cfg in CYCLING_RACES.values():
-    _BY_SLUG[_cfg.slug] = _cfg
-    for _a in _cfg.aliases:
-        _BY_SLUG.setdefault(_a, _cfg)
+# 🔴 THE STEMS ARE LOAD-BEARING, NOT COSMETIC. `app/config/majors_calendar.yaml`
+# already declares `event:cycling:giro-2027` and `event:cycling:tour-de-france-2027`
+# as expected concept surfaces, and `tasks/horizon_sentinel` page-checks each one
+# against `GET /api/event/{concept_key}`. `edition_config` must therefore produce
+# `giro-<year>` and `tour-de-france-<year>` — NOT the Competition Register's
+# standing slugs (`giro-ditalia`, `vuelta-a-espana`), which name the competition
+# rather than the edition. Measured pre-repair: both 2027 keys resolved to None,
+# so the page 404'd and the sentinel would have escalated
+# IN-PROGRESS-WITHOUT-PAGE (P0) in May 2027 for a page no data could produce.
+# `test_cycling_rolling_editions.py` binds this by reading the yaml.
+
+#: Year-less slug root -> family. Every stem and every alias stem.
+_BY_STEM: dict[str, CyclingRaceFamily] = {}
+for _fam in CYCLING_RACE_FAMILIES.values():
+    _BY_STEM[_fam.stem] = _fam
+    for _a in _fam.alias_stems:
+        _BY_STEM.setdefault(_a, _fam)
+
+#: A slug's trailing edition year, if it carries one. Anchored so the stem is
+#: everything before it — `vuelta-a-espana-2027` splits at the LAST group.
+_SLUG_EDITION_RE = re.compile(r"(?P<stem>.+?)-(?P<year>20\d{2})$")
 
 
-def parse_cycling_slug(slug: str) -> CyclingRaceConfig | None:
-    """Resolve a slug (canonical or alias) to a race config, else None."""
+@lru_cache(maxsize=256)
+def edition_config(stem: str, year: int) -> CyclingRaceConfig | None:
+    """The config for one edition of one family. Pure; memoized because the
+    (family, year) space is tiny and every call site rebuilds the same handful.
+
+    Bounded on purpose — the year is regex-constrained to `20\\d{2}`, so the
+    space is 3 families x 100 years, but an explicit `maxsize` keeps this from
+    being one more unbounded module-global on a hot path."""
+    fam = CYCLING_RACE_FAMILIES.get(stem)
+    if fam is None:
+        return None
+    return CyclingRaceConfig(
+        slug=f"{fam.stem}-{year}",
+        display=f"{fam.display} {year}",
+        name_re=fam.name_re,
+        aliases=tuple(f"{a}-{year}" for a in (fam.stem, *fam.alias_stems)),
+    )
+
+
+def parse_cycling_slug(
+    slug: str, *, now: datetime | None = None
+) -> CyclingRaceConfig | None:
+    """Resolve a slug (canonical or alias, year-stamped or bare) to an edition.
+
+    #2482: a year-stamped slug resolves to THAT edition for any year, so
+    `/event/event:cycling:tour-de-france-2031` works the day Kalshi lists it. A
+    BARE slug (`tdf`, `vuelta`) resolves to the edition currently in play — the
+    calendar year of `now` — rather than to a frozen 2026. `now` is a test seam;
+    production passes nothing."""
     if not slug:
         return None
     s = slug.strip().lower()
-    return _BY_SLUG.get(s)
+    m = _SLUG_EDITION_RE.fullmatch(s)
+    stem, year = (m.group("stem"), int(m.group("year"))) if m else (s, None)
+    if stem not in _BY_STEM:
+        return None
+    if year is None:
+        year = (now or datetime.now(timezone.utc)).year
+    return edition_config(_BY_STEM[stem].stem, year)
 
 
 def _slug_year(slug: str) -> int | None:
@@ -293,15 +369,35 @@ def cycling_status(status: str | None, resolution_date, now) -> str:
 
 
 def derive_cycling_concept(
-    external_id: str | None, name: str | None, llm_sport_category: str | None
+    external_id: str | None,
+    name: str | None,
+    llm_sport_category: str | None,
+    *,
+    now: datetime | None = None,
 ) -> dict | None:
     """Discovery-entry helper for search wiring: map a cycling GC-winner market to
-    its concept. Returns {key, name, domain} or None."""
+    its concept. Returns {key, name, domain} or None.
+
+    #2482: a market TITLE carries no year ("Tour de France Winner"), so the only
+    honest edition to name from a name alone is the one in play — the calendar
+    year of `now`. It used to name a hardcoded 2026 forever, which up-linked every
+    future search hit to a dead concept page. `now` is a test seam.
+
+    FOLLOW-UP `CYCLING-UPLINK-USE-RESOLUTION-DATE`: both call sites
+    (`routes/events.py` search, `concept_links.market_concept_key`) hold the whole
+    market row and could pass its `resolution_date` instead, which would also be
+    right for a market listed in one year and resolving in the next. Deliberately
+    not done here — it widens the diff onto a route file for an edge the rolling
+    year already handles in the common case."""
     if (llm_sport_category or "").lower() != "cycling":
         return None
     n = name or ""
-    for cfg in CYCLING_RACES.values():
-        if cfg.name_re.search(n) and is_gc_winner_field_market(n, cfg.name_re):
+    year = (now or datetime.now(timezone.utc)).year
+    for fam in CYCLING_RACE_FAMILIES.values():
+        if fam.name_re.search(n) and is_gc_winner_field_market(n, fam.name_re):
+            cfg = edition_config(fam.stem, year)
+            if cfg is None:  # unreachable; the stem came from the registry
+                return None
             return {"key": f"event:cycling:{cfg.slug}", "name": cfg.display, "domain": "cycling"}
     return None
 
@@ -332,13 +428,19 @@ async def list_cycling_concepts(
 
     per_race: dict[str, dict] = {}
     for name, status, res in rows:
-        for cfg in CYCLING_RACES.values():
-            if not cfg.name_re.search(name or ""):
+        for fam in CYCLING_RACE_FAMILIES.values():
+            if not fam.name_re.search(name or ""):
                 continue
-            # Edition guard: only count this race edition's markets.
-            yr = _slug_year(cfg.slug)
-            if yr is not None and res is not None and res.year != yr:
-                continue
+            # #2482 — THE REPAIR. The edition used to be looked UP in a
+            # hand-written per-year config, and a market whose resolution year had
+            # no entry was silently dropped. It is now DERIVED from the market's
+            # own resolution year, so grouping is still strictly per edition (a
+            # 2027 market never joins the 2026 card) but no year can be missing.
+            # A date-less market falls to the current year, which is what the old
+            # code did with it too — it bypassed the guard entirely.
+            cfg = edition_config(fam.stem, res.year if res is not None else now.year)
+            if cfg is None:  # unreachable; the stem came from the registry
+                break
             g = per_race.setdefault(
                 cfg.slug, {"cfg": cfg, "markets": 0, "resolution": res, "status": status}
             )

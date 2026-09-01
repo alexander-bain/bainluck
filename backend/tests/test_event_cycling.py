@@ -70,9 +70,16 @@ class TestNameGates:
 
 
 class TestSlugResolution:
+    # #2482: a BARE alias resolves to the edition in play, so `now` is injected
+    # rather than assumed. These used to read `== "tour-de-france-2026"` against
+    # the real clock, which was green forever only because the registry was frozen
+    # at 2026 — the assertion was pinning the bug. Rolling coverage across many
+    # instants lives in `test_cycling_rolling_editions.py`.
+    _AT = datetime(2026, 9, 1, tzinfo=timezone.utc)
+
     def test_canonical_and_alias(self):
         assert ec.parse_cycling_slug("tour-de-france-2026").display == "Tour de France 2026"
-        assert ec.parse_cycling_slug("tdf").slug == "tour-de-france-2026"
+        assert ec.parse_cycling_slug("tdf", now=self._AT).slug == "tour-de-france-2026"
         assert ec.parse_cycling_slug("nope-2099") is None
 
     def test_slug_year(self):
@@ -82,7 +89,11 @@ class TestSlugResolution:
 
 class TestDeriveConcept:
     def test_derives_from_gc_market(self):
-        c = ec.derive_cycling_concept("x", "Tour de France Winner", "cycling")
+        # #2482: the edition is the one in play, not a hardcoded 2026.
+        c = ec.derive_cycling_concept(
+            "x", "Tour de France Winner", "cycling",
+            now=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
         assert c == {
             "key": "event:cycling:tour-de-france-2026",
             "name": "Tour de France 2026",
