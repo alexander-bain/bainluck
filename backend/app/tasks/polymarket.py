@@ -140,6 +140,15 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "wta": "tennis",
     "wimbledon": "tennis",
     "us open tennis": "tennis",
+    # Q493: Polymarket tags Setka/TT-Cup events "Table Tennis" (+ "Setka") and
+    # real ATP/WTA events "Tennis". Both were true all along and neither was
+    # read: "table tennis" was absent here, so a Setka event fell through to the
+    # "sports" catch-all and could only be rescued by the #1230 child-prop
+    # heuristic. Honouring the source's own tag is strictly stronger than
+    # inferring the sport from a games threshold.
+    "table tennis": "table_tennis",
+    "table-tennis": "table_tennis",
+    "setka": "table_tennis",
     "boxing": "boxing",
     "cricket": "cricket",
     "ipl": "cricket",
@@ -274,6 +283,12 @@ _SPORT_CATEGORIES = {
     "basketball", "football", "baseball", "hockey", "mma", "soccer",
     "golf", "tennis", "boxing", "cricket", "rugby", "motorsports",
     "olympics", "esports", "horse_racing", "lacrosse",
+    # Q493: present so a "Table Tennis" tag yields ("championship",
+    # "table_tennis") — byte-identical to what arm 1 has always returned. This
+    # set is read ONLY by _tags_to_category above; the link-rate denominator is
+    # a separate list (`_LINK_RATE_SPORT_CATEGORIES`, admin_matching.py) and
+    # table_tennis is deliberately absent from it, as #1230 requires.
+    "table_tennis",
 }
 
 
@@ -446,8 +461,17 @@ def resolve_event_category(
     title = title or ""
 
     # 1 — table tennis, at the group level, before anything can guess baseball.
-    if detect_table_tennis_group(group_names):
-        return "championship", "table_tennis", "table_tennis"
+    # Q493: only when the tags said nothing usable — which is arm 1's own stated
+    # precondition. Its whole justification is that a Setka parent title is a bare
+    # "Player vs. Player" with no sport keyword AND no usable tag, so the fallback
+    # would guess baseball. When Polymarket has already named the sport, there is
+    # nothing to rescue and this heuristic must not overrule it: a real US Open
+    # match tagged "Tennis" carries per-SET games props ("Set 1 Games O/U 8.5")
+    # whose totals sit below the table-tennis threshold, so the unguarded arm
+    # relabelled the entire main draw `table_tennis`.
+    if not llm_sport_category or llm_sport_category == "other":
+        if detect_table_tennis_group(group_names):
+            return "championship", "table_tennis", "table_tennis"
 
     # 2 — the tags said nothing usable.
     if not llm_sport_category or llm_sport_category == "other":
@@ -1226,6 +1250,15 @@ async def _process_event_batch(
                             "volume_24h": sub_volume_24h,
                             "volume_updated_at": func.now(),
                         }
+                        # Q493: repair the sport on RE-INGEST, not only at birth.
+                        # The parent's `update_set` has always carried this and
+                        # the sub-market's never did, so a group whose sport was
+                        # corrected kept its children on the stale value forever
+                        # — 306 of the 639 mis-filed US Open rows measured on
+                        # `c3143bc2` were children. Same guard as the parent:
+                        # never overwrite a real value with the "other" default.
+                        if llm_sport_category and llm_sport_category != "other":
+                            sub_set["llm_sport_category"] = llm_sport_category
                         if sub_meta_insert:
                             # MERGE, never clobber — same COALESCE(md,'{}') || idiom
                             # the backfill uses, so re-ingests and prior backfills
