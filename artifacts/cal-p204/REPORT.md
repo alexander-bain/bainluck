@@ -177,3 +177,57 @@ twenty-third consecutive find came from a question the conveyor did not name.
 `P204-1` (headline), `P204-2`, `P204-3` → `.claude/handoff/PARKED-MEASUREMENTS.md`. On #2052.
 **All OPERATOR-visible; none belongs on `TOP-PRODUCT-DEFECTS.md`.** No `YOUR-TURN.md` edit (lanes
 may not). Nothing merged, nothing deployed, nothing in `app/` or `frontend/` touched.
+
+---
+
+## 7. 🔴 DIRECTIVE `975` — ANSWERED BY MEASUREMENT: THE BATCH IS ALREADY BUILT, MERGED **AND DEPLOYED**
+
+`975-freeze-parallel-branch-work.md` landed **mid-session** (the second `ls` caught it — P196/P199
+precedent) and asks this lane to *"BUILD the ruled freeze-lift batch on its branch: D5 dedup + D21 +
+D22 + D13 per-market + D12 crypto tuple, as ONE deploy-unit branch … rebase … stage the cert."*
+
+**I did not build it, because it already shipped.** Verified, not assumed:
+
+| D item (ruling, `RULINGS-BATCH-2026-08-30.md`) | evidence it is on master | on prod? |
+|---|---|---|
+| **D5** one-join dedup | CERT-504 **GREEN** @ `bd76c953` — **ancestor of master**. `deduped` CTE live at `precompute_calibration.py:2777-2788` | ✅ |
+| **D21** reader fix (absent key → named refusal) | same subject `bd76c953`; CERT-485/497/502 blocked it, **CERT-504 GREEN** closed it | ✅ |
+| **D22** diagnostics stops blocking publish | CERT-485: *"D22, D13 and D12 are clean on their reviewed deltas"*; `PHASE_DIAGNOSTICS` in `RESUMABLE_PHASES` (`calibration_phase_ledger.py:89`) | ✅ |
+| **D12** crypto cell | `("kalshi", "crypto")` exclusion tuple at `precompute_calibration.py:1362`; commit `6be79cd0` *"rank 6 was already done"* | ✅ |
+| **D13 per-market** (Alex's ~2:15pm addendum) | CERT-514 **BLOCKED** `70518c0d`; **resolved** by `3432dd4f` *"a graded claim stopped waiting on its ungraded neighbour, because the refusal moved down a grain"*. Live: `:3321` carries the comment **"🔴 THERE IS NO `ungraded_lone_claims = 0` CONJUNCT"** beside `:3364 OR graded_lone_claims >= 1` | ✅ |
+
+**Ancestry, run rather than inferred:** `bd76c953`, `7b401286`, `70518c0d`, `5a2b38a5`, `8258395c`
+are **all `git merge-base --is-ancestor` TRUE against `origin/master`**. Only `4d8373c6` is not — and
+it is CERT-638's superseded pre-rebase subject, replaced by `8258395c`, which *is* on master.
+
+**And it is on PRODUCTION.** `heroku releases -a bainluck` → **v3980, `Deploy b5c59f38`, 11:24:38 PT**
+— and `HEROKU_SLUG_COMMIT = b5c59f38fd1847ccb503f7ea2ad7f1f4a055c5d8`, **byte-identical to current
+`origin/master`**. (That release is the 11:24 deploy `985` names as the one that killed the drain.)
+This satisfies PROCESS-V2 clause 1 — *done = on production, checked once by the builder.*
+
+**Unmerged-branch sweep** (memory: *"sweep unmerged BRANCHES on your issue"*): every
+`origin/program/calibration-*` and calibration-adjacent ref carrying `backend/app`/`frontend`
+changes is `calibration-94`, `-96`, `-99` — **all far older than the 119/155/158 batch lineage** and
+none of them the freeze-lift work. `calibration-158` and `calibration-190` are test/docs only.
+**No branch holds ruled-and-unbuilt freeze-lift code.**
+
+### What I did about it (clause 7 — acted, did not ask)
+
+* 🔴 **Did NOT build a duplicate branch.** Re-implementing merged, deployed code would create a
+  second deploy-unit for work that already exists.
+* 🔴 **Did NOT stage a cert.** There is no unmerged subject to grade; a cert against already-merged,
+  already-deployed code is a false cert and would burn a lane4 slot. Author-never-certifies also
+  applies.
+* 🟢 **Did the check `975`'s real goal implies.** Its stated aim is *"when the curve publishes, this
+  branch should be sitting GREEN and ready so the freeze-lift merge is minutes, not hours."* The
+  measured answer is stronger than that: **the freeze-lift merge is a NO-OP — zero minutes.** Nothing
+  is queued behind the freeze. What remains is not a build and not a merge: it is the drain
+  (`run.6462`) completing a generation so the curve republishes.
+* ⚠️ **This means `985`'s freeze currently gates nothing this lane owns.** Still honoured in full —
+  I merged nothing, deployed nothing, and touched no `app/` file.
+
+⚠️ **Limit of this claim.** I verified the five D items are *present on master and deployed*. I did
+**not** re-verify each one behaves correctly in production — the curve has not republished since
+`2026-08-31T04:37:36Z`, so their effect on the published payload is **not yet observable**. That is
+the drain's job, and grading it is ITEM 3 step 3's pre-registered work, not something a build lane
+should pre-empt.
