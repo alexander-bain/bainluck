@@ -370,6 +370,16 @@ async def _poll_futures_odds():
                                 and float(existing.current_probability) > 0):
                             existing.current_probability = 0
                             existing.last_updated = now
+                            # Retire the movement delta in the same breath as
+                            # the zeroing (CERT-627). This line refreshes
+                            # `last_updated`, which is the stamp the movement
+                            # window expires on, so without this the row leaves
+                            # here looking FRESH while carrying the delta it had
+                            # when it was still live — and `/api/futures/movers`
+                            # ranks a market that just vanished from the feed.
+                            # A dead outcome has no movement; NULL is what every
+                            # reader of this column already treats as "none".
+                            existing.probability_change_24h = None
                             stats.setdefault("stale_zeroed", 0)
                             stats["stale_zeroed"] += 1
 

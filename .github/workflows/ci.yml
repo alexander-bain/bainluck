@@ -281,6 +281,38 @@ jobs:
             exit 1
           fi
 
+      - name: Movement window contract (real Postgres)
+        # item 12 / lane1 Q482. `probability_change_24h` froze: all four writers
+        # store a PER-WRITE delta and nothing recomputed it over a window, so a
+        # row that stops being written serves its last delta forever under a name
+        # that promises a day. Measured on production 2026-08-31: 1,604,840 of
+        # 2,186,901 non-null deltas were older than 24 h, and 17 of the 20 rows
+        # on `/api/futures/movers` — which publishes `timeframe_hours: 24` — had
+        # not been touched in 24 h, the oldest by six weeks.
+        #
+        # Real Postgres, because every assertion here is one a double cannot
+        # make: the `now() - interval` boundary between kept and retired, the
+        # `ORDER BY abs(...) DESC ... LIMIT` inside an `IN (SELECT ...)` that
+        # decides the first run clears the VISIBLE lie rather than a random
+        # slice, and a `NOT EXISTS` correlated against rows the same transaction
+        # just wrote. Above all it asserts, on rows, the identity
+        # `max_movement_24h == MAX(ABS(change))` that LAT-P108 proved
+        # /api/futures/movers' pool bound rests on — the sibling unit file
+        # (`tests/test_movement_window.py`) pins the wiring and cannot see any
+        # of it.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_movement_window_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/movement_window.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/movement_window.txt; then
+            echo "::error::movement window contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening
