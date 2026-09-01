@@ -734,18 +734,87 @@ def test_the_page_select_bound_cannot_exceed_the_loop_deadline():
     assert rail.TARGET_SELECT_BUDGET_SECONDS <= rail.DEADLINE_SECONDS
 
 
-def test_both_post_loop_database_units_fit_inside_the_reserve_they_are_charged_to():
-    """The DERIVED client bounds, not the server budgets. Asserting the server
-    bound fits and leaving the pool slack unaccounted is exactly how the sibling
-    rail's bound came to be described but not enforced (CERT-670)."""
-    charged = rail.client_db_budget_seconds(
-        rail.WRITE_BUDGET_SECONDS
-    ) + rail.client_db_budget_seconds(rail.COMMIT_BUDGET_SECONDS)
-    assert charged <= rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
-        f"the write and its commit are charged {charged}s against a "
-        f"{rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve that also has to "
-        "cover response serialization and the dependency's own commit"
+def test_everything_the_non_count_reserve_names_actually_fits_inside_it():
+    """The DERIVED client bounds, not the server budgets, and the FAILURE path,
+    not the happy one.
+
+    Asserting the server bound fits and leaving the pool slack unaccounted is
+    how the sibling rail's bound came to be described but not enforced
+    (CERT-670). Sizing from the happy path and forgetting the cleanup is how its
+    round two reached a 31.10s declared worst path against a 30s wall
+    (CERT-681). This asserts both, on the four things the reserve names.
+    """
+    charged = (
+        rail.client_db_budget_seconds(rail.WRITE_BUDGET_SECONDS)
+        + rail.client_db_budget_seconds(rail.COMMIT_BUDGET_SECONDS)
+        + rail.CLEANUP_RESERVE_SECONDS
+        + rail.SERIALIZATION_RESERVE_SECONDS
     )
+    assert charged <= rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
+        f"the write, its commit, one cleanup and the serialization are charged "
+        f"{charged}s against a {rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve"
+    )
+
+
+def test_the_terminal_count_has_a_budget_left_after_everything_else():
+    """The count is degradable, but it must be degradable by CHOICE — a reserve
+    that leaves it nothing means it never runs and `remaining_legs` is
+    permanently null, which reads as a broken rail rather than a busy one."""
+    left = rail.POST_LOOP_RESERVE_SECONDS - rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS
+    assert left >= rail.client_db_budget_seconds(rail.REMAINING_COUNT_MIN_BUDGET_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_write_does_not_also_start_the_terminal_count(monkeypatch, fast):
+    """🔴 THE CERT-681 GUARD, applied here before a certifier had to find it.
+
+    A failed write has already paid one cleanup. Starting the count anyway puts
+    a SECOND cleanup on a reserve that budgets one, and that is precisely the
+    arithmetic that took the sibling rail's declared worst path to 31.10s
+    against a 30s router wall — the H12-with-no-body that every budget in this
+    file exists to prevent, reached through the failure path rather than the
+    happy one.
+    """
+    market = _Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea"])
+    _venue(monkeypatch, _FakeService([market]))
+
+    class _WriteDies(_Session):
+        async def execute(self, stmt, params=None):
+            sql = " ".join(str(stmt).split())
+            if sql.upper().startswith("UPDATE"):
+                raise RuntimeError("canceling statement due to statement timeout")
+            return await super().execute(stmt, params)
+
+    session = _WriteDies(page=[_row(1, 10, "0xaa", "Manacor: A vs B")], remaining=99)
+    out = await rail.repair(session, apply=True)
+
+    assert out["terminal"] == "paused_write_timeout"
+    counts = [s for s, _p in session.statements if s.upper().startswith("SELECT COUNT(")]
+    assert counts == [], (
+        "the terminal count ran after a failed write, so a second cleanup is "
+        f"now on the worst path. Count statements issued: {counts!r}"
+    )
+    assert out["remaining_legs"] is None
+    assert out["remaining_legs_measured"] is False, (
+        "an unmeasured count reported itself measured — the operator would read "
+        "a null as zero remaining"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_count_still_runs_on_the_ordinary_path(monkeypatch, fast):
+    """The control for the guard above. Skipping the count ALWAYS would also
+    pass it, and would leave every successful call unable to say how much is
+    left."""
+    market = _Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea"])
+    _venue(monkeypatch, _FakeService([market]))
+    session = _Session(page=[_row(1, 10, "0xaa", "Manacor: A vs B")], remaining=1152)
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["terminal"] == "ok"
+    assert out["remaining_legs"] == 1152
+    assert out["remaining_legs_measured"] is True
 
 
 def test_the_non_count_reserve_fits_inside_the_whole_post_loop_reserve():

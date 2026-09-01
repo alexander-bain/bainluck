@@ -145,6 +145,20 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """        if True:""",
     ),
     (
+        "M-COUNTAFTERFAIL",
+        RAIL,
+        "run the terminal count after a failed write — CERT-681's second cleanup",
+        """    if write_terminal is None and count_budget >= REMAINING_COUNT_MIN_BUDGET_SECONDS:""",
+        """    if count_budget >= REMAINING_COUNT_MIN_BUDGET_SECONDS:""",
+    ),
+    (
+        "M-NOCLEANUPRESERVE",
+        RAIL,
+        "stop charging the cleanup to the reserve — the failure path goes unpaid",
+        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.5""",
+        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 3.5""",
+    ),
+    (
         "M-EXHAUSTED",
         RAIL,
         "report the scan exhausted on a full page — the tail is never drained",
@@ -174,7 +188,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-DEADLINE",
         RAIL,
         "raise the loop deadline past what the wall can carry — H12 with no cursor",
-        """DEADLINE_SECONDS = 15""",
+        """DEADLINE_SECONDS = 10""",
         """DEADLINE_SECONDS = 25""",
     ),
     (

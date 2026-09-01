@@ -127,30 +127,64 @@ VENUE_PAUSE = 0.35
 #: so the true worst case is this plus one whole batch pair plus one pause plus
 #: everything after the loop — see ``budget_headroom_seconds()``, which a guard
 #: asserts stays positive rather than leaving the arithmetic in a comment.
-DEADLINE_SECONDS = 15
+#:
+#: 10 rather than the sibling rail's 15, because the post-loop reserve here has
+#: to pay for a CLEANUP (below) and the loop is cheap: a full 120-leg page is
+#: three batch pairs, ~1.9s of measured venue time plus 1.05s of pause. 10s is
+#: over 3x that, so a full page still normally COMPLETES.
+DEADLINE_SECONDS = 10
+
+#: 🔴 WHAT ONE `_safe_rollback` COSTS. THIS IS THE CERT-681 LINE.
+#:
+#: CERT-681 blocked the sibling rail's round two on exactly this arithmetic: a
+#: failed final write pays a cleanup, the rail then unconditionally started its
+#: terminal count, a failed count paid a SECOND cleanup, and the post-loop
+#: reserve budgeted only one. Declared worst path 31.10s against a 30s wall —
+#: the H12-with-no-body the whole budget exists to prevent, arrived at through
+#: the failure path rather than the happy one.
+#:
+#: Two things follow, and both are enforced rather than described. First, this
+#: reserve exists at all. Second, ``repair()`` SKIPS the terminal count when the
+#: write has already failed, so at most ONE cleanup is ever on the worst path —
+#: a guard asserts that, because "we only clean up once" is the kind of claim
+#: that stays true until someone adds a branch.
+#:
+#: Sized from CERT-674's own reproduction against a real ``QueuePool``: the
+#: bounded rollback (``ROLLBACK_BUDGET_SECONDS``, 0.5s in the sibling) plus the
+#: invalidate, which the dialect's ``close(timeout=2)`` bounds at ~2s even where
+#: this rail does not. 3.0s covers the pair. Deliberately NOT derived from the
+#: sibling's constants by import: the invalidate's own budget exists only on the
+#: Q498 branch, and a number that silently changes meaning when a sibling merges
+#: is worse than one that is stated and guarded here.
+CLEANUP_RESERVE_SECONDS = 3.0
+
+#: Response serialization plus the request dependency's own commit, which runs
+#: after the handler has returned and so cannot be observed from inside it.
+SERIALIZATION_RESERVE_SECONDS = 0.5
 
 #: Time reserved for everything that happens AFTER the loop's last fetch: the
-#: single bulk write, its commit, the ``remaining_legs`` terminal count,
-#: response serialization, and the request dependency's own commit — which runs
-#: after the handler has returned and so cannot be observed from inside it.
-POST_LOOP_RESERVE_SECONDS = 5.5
+#: single bulk write, its commit, at most one cleanup, the ``remaining_legs``
+#: terminal count, response serialization, and the dependency's commit.
+POST_LOOP_RESERVE_SECONDS = 8.0
 
 #: The slice of the reserve that is NOT the terminal count. The count is armed
 #: with whatever is left of the wall once this is set aside, so an over-running
 #: loop shortens the count's timeout instead of borrowing against work that
-#: still has to run. It must cover the CLIENT bound of BOTH post-loop database
-#: units — the update and the commit — and their cleanup: "the failure path
-#: costs more than the success path" is the easy thing to forget when sizing a
-#: budget from the happy case. A guard asserts the two derived client bounds fit
-#: inside it, rather than trusting three numbers to be edited together.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 3.5
+#: still has to run. It must cover the CLIENT bound of both post-loop database
+#: units — the update and the commit — plus one cleanup and the serialization:
+#: "the failure path costs more than the success path" is the easy thing to
+#: forget when sizing a budget from the happy case, and it is what CERT-681
+#: withheld a token over. A guard asserts the DERIVED client bounds fit inside
+#: it, rather than trusting five numbers to be edited together.
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.5
 
 #: Bound on the page SELECT. It does not widen the worst case: ``started`` is
 #: captured BEFORE this query, so a slow SELECT does not add to the total, it
 #: just leaves the loop less room and the first deadline check stops it. That
 #: holds only while this stays at or under ``DEADLINE_SECONDS``, which a guard
-#: asserts.
-TARGET_SELECT_BUDGET_SECONDS = 10.0
+#: asserts. Measured 152ms for the filtered form and ~2.5s for the full
+#: per-category GROUP BY on production, so 8s is over 3x the worst observed.
+TARGET_SELECT_BUDGET_SECONDS = 8.0
 
 #: Bound on the single bulk compare-and-set UPDATE. One statement per page keyed
 #: by primary key over at most ``APPLY_LEG_CAP`` rows; the realistic cost is
@@ -230,7 +264,11 @@ def budget_headroom_seconds() -> float:
 
     The deadline is checked at the top of the loop, so after it passes the rail
     may still start one whole batch pair and one pause; and after that the write,
-    the terminal count, serialization and the dependency's commit still run.
+    its commit, ONE cleanup, the terminal count, serialization and the
+    dependency's commit still run. The cleanup is in that list because of
+    CERT-681 — see ``CLEANUP_RESERVE_SECONDS``. It appears once and not twice
+    because ``repair()`` skips the count after a failed write, which
+    ``test_a_failed_write_does_not_also_start_the_terminal_count`` pins.
 
     Expressed as a function so a guard can assert it stays positive, rather than
     as a comment that goes stale the first time someone raises one of the four
@@ -438,6 +476,12 @@ async def repair(
             terminal="paused_pool_timeout",
             reason=f"no pooled connection came free: {exc}",
         )
+    # Its own arm, and its own terminal: "the pool was empty" and "the row was
+    # locked" send an operator to different places. (This comment is also load
+    # bearing for `scan_mutation_residue.py` Pass B — without a line here, the
+    # closing paren above plus the bare `noqa` below reproduce
+    # `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement literal
+    # verbatim and this file reads as mutation residue. Do not delete it.)
     except Exception as exc:  # noqa: BLE001 — the page SELECT is the first thing
         await _safe_rollback(session)
         return _paused_before_examining(
@@ -684,6 +728,12 @@ async def repair(
     # ---- the terminal count ---------------------------------------------
     remaining: Optional[int] = None
     remaining_measured = False
+    # 🔴 CERT-681: A FAILED WRITE HAS ALREADY PAID ITS CLEANUP. Starting the
+    # count anyway puts a SECOND cleanup on the same reserve, and that is the
+    # arithmetic that took the sibling rail's worst path to 31.10s against a 30s
+    # wall. The count is degradable by construction — it reports itself
+    # unmeasured and never reports zero — and the page is paused anyway, so the
+    # operator is about to re-invoke and get a fresh count for free.
     spent = time.monotonic() - started
     # The SERVER bound, derived so that the CLIENT bound wrapped around it still
     # fits under the wall. `client_db_budget_seconds(0)` is the pool slack the
@@ -696,7 +746,7 @@ async def repair(
         - POST_LOOP_NON_COUNT_RESERVE_SECONDS
         - client_db_budget_seconds(0.0)
     )
-    if count_budget >= REMAINING_COUNT_MIN_BUDGET_SECONDS:
+    if write_terminal is None and count_budget >= REMAINING_COUNT_MIN_BUDGET_SECONDS:
         count_sql = f"""
             SELECT count(*)
               FROM futures_markets fm
