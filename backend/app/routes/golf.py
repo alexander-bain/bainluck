@@ -2989,11 +2989,18 @@ def _assemble_completed_winner_field(
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
+    golf_data: dict | None = None,
 ) -> dict | None:
     """Build tournament data from closed/resolved markets for completed tournaments.
 
     Called when the main golf listing doesn't include the tournament (markets closed).
     Returns a tournament dict compatible with get_golf_tournament's expectations, or None.
+
+    ``golf_data`` is the golf listing the CALLER already holds. It is used for one
+    thing — reading ``pga_schedule`` — and passing it in is what stops this function
+    from rebuilding that entire listing a second time inside the same request
+    (LAT-P186). It stays optional so the function is still usable, and testable,
+    on its own; when it is omitted the cached listing is fetched here instead.
     """
     # LAT-P014/#1107: match on a NARROW projection, then hydrate only the matches.
     #
@@ -3087,13 +3094,23 @@ async def _build_completed_tournament(
         tournament_markets
     )
 
-    # Try to find schedule data from the golf API response (already cached)
+    # Try to find schedule data from the golf listing. LAT-P186: this comment said
+    # "already cached" and then called the UNCACHED `get_golf()`, so a completed
+    # tournament paid the full listing rebuild TWICE per request — once in
+    # `get_golf_tournament` to discover the slug was absent, and again here to read
+    # a single key off the result. The caller now hands its copy down.
+    #
+    # The direct-call fallback stays on the LIVE builder for the same reason the
+    # caller does: see the CERT-686 note at the `get_golf` call in
+    # `get_golf_tournament`. Reading the hourly cache here would reintroduce the
+    # stale-winner-field regression through the side door.
     start_date = None
     end_date = None
     venue = None
     schedule_status = None
     try:
-        golf_data = await get_golf(db=db)
+        if golf_data is None:
+            golf_data = await get_golf(db=db)
         schedule = golf_data.get("pga_schedule", [])
         for event in schedule:
             # Match by multiple strategies: display name slug, key slug, or
@@ -3148,7 +3165,40 @@ async def get_golf_tournament(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed tournament data for a specific golf tournament."""
-    # Reuse get_golf() for its caching and aggregation
+    # LAT-P186/#1107: the comment that used to sit here said "Reuse get_golf() for
+    # its caching and aggregation" — and `get_golf()` has NO caching. The caching is
+    # `get_golf_cached()`, its sibling thirty lines up, which is what `GET /api/golf`
+    # is wired to. `_build_completed_tournament` carried the same wrong belief in its
+    # own comment ("already cached") and called `get_golf()` a SECOND time in the same
+    # request to read one field off the result, so a completed tournament paid the
+    # entire listing rebuild TWICE.
+    #
+    # MEASURED on production 2026-09-01, `x-timing-split`, median of 5:
+    #     /api/golf/tournaments/us-open       2,076 ms wall   1,556 ms app   q=19
+    #     /api/golf/tournaments/the-masters   1,795 ms wall   1,391 ms app   q=18
+    #     /api/golf            (cached)          45 ms wall       0 ms db    q=0
+    # `app` dominates every slug: the rebuild is mostly Python over every open golf
+    # market's eagerly-loaded outcomes, plus up to three DataGolf schedule fetches.
+    #
+    # 🔴 THIS CALL DELIBERATELY STAYS ON THE LIVE `get_golf()`. DO NOT "OPTIMISE" IT TO
+    # `get_golf_cached()`. That was tried and CERT-686 BLOCKED it, correctly:
+    #   - during play the DataGolf task writes `FuturesOutcome.current_probability`
+    #     every 90 SECONDS, while `bainluck:category:golf` is produced hourly with a
+    #     7,200 s TTL. Sourcing the winner field from it makes the headline "who wins?"
+    #     number lag by up to an hour, and up to two after a missed precompute. An
+    #     exact-SHA probe held a cached 18% against a live 61% leaderboard row.
+    #   - `fuse_golf_live()` overlays position/score/thru/round ONLY. It never replaces
+    #     `probability`, so nothing downstream repairs the staleness.
+    #   - a cached still-open entry is also found BEFORE the completed-market fallback
+    #     below, which keeps pre-settlement probabilities on screen after the database
+    #     already has a winner.
+    # The freshness evidence that argued for the cache measured `futures_odds_snapshots`
+    # cadence on UPCOMING tournaments and mistook it for the freshness of the live
+    # field. Wrong table, wrong state. A cached read here needs a live-winner overlay
+    # and a settlement bypass first — it is not a one-word swap.
+    #
+    # What this queue DOES remove is the DUPLICATE: the listing is built ONCE per
+    # request and handed to `_build_completed_tournament` instead of rebuilt there.
     golf_data = await get_golf(db=db)
 
     tournaments = golf_data.get("tournaments", [])
@@ -3164,7 +3214,7 @@ async def get_golf_tournament(
     if not tournament:
         # Fallback: tournament may have completed and its markets closed.
         # Query closed/resolved markets directly to serve completed tournament data.
-        tournament = await _build_completed_tournament(slug, db)
+        tournament = await _build_completed_tournament(slug, db, golf_data=golf_data)
         if not tournament:
             raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
 
