@@ -361,8 +361,22 @@ async def find_or_create_event(
             # Steps 1-3: Try to find existing event
             event = await _find_existing(session, identity, sport_id)
             if event:
+                # BEFORE `_attach_claim`, not after (CERT-671 follow-up
+                # `Q066B-PREATTACH-REVISION-PROVENANCE`). `_attach_claim` writes
+                # this claim's id into a previously-EMPTY column, so asking
+                # afterwards makes a claim that reached this row by anchor or by
+                # structured match indistinguishable from one that was already
+                # bound to it — a FRESH ATTACHMENT would read as a revision and
+                # take a write it never earned. The Odds listing path cannot
+                # reach structured matching today
+                # (`ODDS_LISTING_IS_NOT_A_DEREFERENCE`), so this is a trap for the
+                # next caller rather than a live defect; it is closed by ordering
+                # rather than by a comment telling people to be careful.
+                same_record = claim_is_same_record(event, identity.claim)
                 attached_new = _attach_claim(event, identity.claim)
-                _update_fields_by_priority(event, identity)
+                _update_fields_by_priority(
+                    event, identity, same_record=same_record,
+                )
                 await session.flush()
                 # A correspondence is established when a previously-empty column
                 # just took this id, or when the provider has no column that
@@ -817,7 +831,9 @@ def claim_is_same_record(event: Event, claim: EventClaim) -> bool:
     return bool(existing) and existing == claim.source_id
 
 
-def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:
+def _update_fields_by_priority(
+    event: Event, identity: EventIdentity, *, same_record: bool = False,
+) -> None:
     """Update event fields if the incoming source has higher priority.
 
     Source priority: ESPN > StatPal > Odds API > prediction markets.
@@ -827,6 +843,14 @@ def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:
     see ``commence_time_write_authorized``. Team names deliberately do NOT: the
     ship this rides is a wrong START TIME (q066b), and a name rewrite is a
     different blast radius that no evidence here asks for.
+
+    ``same_record`` is a PARAMETER and not recomputed here, because the only
+    honest moment to ask it is before ``_attach_claim`` runs (CERT-671
+    follow-up). It **defaults to False** — fail closed. A caller that has not
+    established the claim's provenance gets the pre-q066b behaviour, which is
+    the conservative one; the alternative default, recomputing from the row,
+    would hand revision authority to exactly the caller who forgot to think
+    about it.
     """
     incoming_priority = _SOURCE_PRIORITY.get(identity.claim.source, 0)
     current_priority = _SOURCE_PRIORITY.get(event.commence_time_source or "", 0)
@@ -843,7 +867,7 @@ def _update_fields_by_priority(event: Event, identity: EventIdentity) -> None:
     outranks, _why = commence_time_write_authorized(
         event.commence_time_source,
         identity.claim.source,
-        same_record_revision=claim_is_same_record(event, identity.claim),
+        same_record_revision=same_record,
     )
     if identity.commence_time and outranks:
         # Guard (#46 invariant; gotcha #32 family): refuse to move

@@ -75,6 +75,7 @@ none of it binds on a date.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -257,14 +258,20 @@ class TestTheProductionRowHeals:
 
     def test_the_placeholder_is_replaced_by_the_providers_real_time(self):
         event = _row()
-        _update_fields_by_priority(event, _identity(REAL_START))
+        _update_fields_by_priority(
+            event, _identity(REAL_START),
+            same_record=claim_is_same_record(event, _identity(REAL_START).claim),
+        )
         assert event.commence_time == REAL_START
         assert event.commence_time_source == "odds_api"
 
     def test_the_unplayed_match_stops_showing_as_finished(self):
         """The ship. `closed` with no result, on a match being played tomorrow."""
         event = _row()
-        _update_fields_by_priority(event, _identity(REAL_START))
+        _update_fields_by_priority(
+            event, _identity(REAL_START),
+            same_record=claim_is_same_record(event, _identity(REAL_START).claim),
+        )
         assert event.status == "scheduled"
         assert event.completed_at is None
 
@@ -277,7 +284,10 @@ class TestTheProductionRowHeals:
         and the test above would pass on a no-op.
         """
         event = _row(external_id="a-different-odds-api-id")
-        _update_fields_by_priority(event, _identity(REAL_START))
+        _update_fields_by_priority(
+            event, _identity(REAL_START),
+            same_record=claim_is_same_record(event, _identity(REAL_START).claim),
+        )
         assert event.commence_time == PLACEHOLDER
         assert event.status == "closed"
         assert event.completed_at == NET_CLOSED_AT
@@ -289,7 +299,10 @@ class TestTheProductionRowHeals:
         not an artifact, so the forward move is refused and the settlement stands.
         """
         event = _row(status="completed", home_score=1, away_score=2)
-        _update_fields_by_priority(event, _identity(REAL_START))
+        _update_fields_by_priority(
+            event, _identity(REAL_START),
+            same_record=claim_is_same_record(event, _identity(REAL_START).claim),
+        )
         assert event.commence_time == PLACEHOLDER
         assert event.status == "completed"
         assert event.completed_at == NET_CLOSED_AT
@@ -305,7 +318,10 @@ class TestTheProductionRowHeals:
         identity = _identity(REAL_START)
         identity.home_team_name = "WRONG"
         identity.away_team_name = "ALSO WRONG"
-        _update_fields_by_priority(event, identity)
+        _update_fields_by_priority(
+            event, identity,
+            same_record=claim_is_same_record(event, identity.claim),
+        )
         assert event.home_team_name == "Mary Stoiana"
         assert event.away_team_name == "Alexandra Eala"
         assert event.commence_time == REAL_START
@@ -319,10 +335,74 @@ class TestTheProductionRowHeals:
         producer.
         """
         event = _row(status="closed", completed_at=NET_CLOSED_AT)
-        _update_fields_by_priority(event, _identity(PLACEHOLDER))
+        _update_fields_by_priority(
+            event, _identity(PLACEHOLDER),
+            same_record=claim_is_same_record(event, _identity(PLACEHOLDER).claim),
+        )
         assert event.commence_time == PLACEHOLDER
         assert event.status == "closed"
         assert event.completed_at == NET_CLOSED_AT
+
+
+class TestAFreshAttachmentIsNotARevision:
+    """CERT-671 follow-up `Q066B-PREATTACH-REVISION-PROVENANCE`, closed.
+
+    `find_or_create_event` calls `_attach_claim` — which writes this claim's id
+    into a previously-EMPTY column — and then updates the fields.  Ask "is this
+    claim's id on the row?" in the wrong order and the answer is YES for a claim
+    that arrived a moment ago via the anchor channel or the ±28h structured
+    matcher, so a FRESH ATTACHMENT reads as a revision and takes a
+    `commence_time` write it never earned.
+
+    Not reachable from the Odds listing path today
+    (`ODDS_LISTING_IS_NOT_A_DEREFERENCE` keeps it out of structured matching),
+    so this guards a trap rather than a live defect — which is exactly the kind
+    that survives review and is found by the next incident.  Driven through the
+    real cascade, not through `_update_fields_by_priority` directly, because the
+    ordering IS the thing under test.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_claim_that_arrives_by_structured_match_cannot_revise(self):
+        from tests.test_event_registry import _FakeRegistrySession
+        from app.services.event_registry import _sport_id_cache, find_or_create_event
+
+        sport_id = 77
+        placeholder = datetime(2026, 9, 2, 15, 0, 0, tzinfo=UTC)
+        # The row exists, is odds_api-sourced, and holds NO odds_api id — so the
+        # incoming claim's id is genuinely new to it.
+        row = SimpleNamespace(
+            id=15300001, sport_id=sport_id,
+            home_team_name="Mary Stoiana", away_team_name="Alexandra Eala",
+            commence_time=placeholder, status="scheduled",
+            external_id=None, espn_id=None, statpal_fixture_id=None,
+            commence_time_source="odds_api", completed_at=None,
+            home_score=None, away_score=None, event_tags=[],
+        )
+        session = _FakeRegistrySession(
+            source_matches={}, structured_candidates=[row], sport_id=sport_id,
+        )
+        _sport_id_cache["tennis_wta_us_open"] = sport_id
+        try:
+            identity = _identity(REAL_START)
+            # arm B, so the claim is allowed to reach the structured matcher at all
+            identity.claim.schedule_derived = True
+            event, was_created = await find_or_create_event(session, identity)
+        finally:
+            _sport_id_cache.pop("tennis_wta_us_open", None)
+
+        assert was_created is False and event.id == row.id, (
+            "precondition: the claim must REACH the row by structured match, "
+            "otherwise this test proves nothing about ordering"
+        )
+        assert event.external_id == ODDS_ID, (
+            "precondition: _attach_claim must have written the id, which is the "
+            "very state that would fool a post-attach check"
+        )
+        assert event.commence_time == placeholder, (
+            "a claim whose id was NOT on this row before it arrived is a fresh "
+            "attachment, not a revision — it must not win the odds_api tie"
+        )
 
 
 class TestSimultaneousStartsAreNotADefect:
@@ -358,7 +438,10 @@ class TestSimultaneousStartsAreNotADefect:
                 claim=EventClaim("odds_api", f"efl-{n}", schedule_derived=False),
                 commence_time_source="odds_api",
             )
-            _update_fields_by_priority(event, identity)
+            _update_fields_by_priority(
+                event, identity,
+                same_record=claim_is_same_record(event, identity.claim),
+            )
 
         assert {e.commence_time for e in card} == {kickoff}
         assert {e.status for e in card} == {"scheduled"}
