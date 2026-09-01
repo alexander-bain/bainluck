@@ -844,8 +844,13 @@ describe("event-page pack can prove both hero states", () => {
       heroPairRaw().includes('data-testid="event-hero-probability"'),
       "the hero-pair component must still carry the pack's hook"
     );
+    // Matched as a whole JSX tag for the same reason as the settled hero below:
+    // a bare `includes` is satisfied by any component whose name merely STARTS
+    // with this one (`<EventHeroProbabilityPairFoo`), so renaming the render
+    // away would leave the gate green. CERT-641's cycle tightened the settled
+    // assertion and deliberately left this one; it is the same defect.
     assert.ok(
-      pageRaw().includes("<EventHeroProbabilityPair"),
+      /<EventHeroProbabilityPair[\s/>]/.test(pageRaw()),
       "the page must still render the component that carries the hook"
     );
     // The rail reads `data-probability` here and on the Discover card that
