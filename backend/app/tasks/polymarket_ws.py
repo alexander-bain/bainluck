@@ -107,6 +107,7 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
+    from app.tasks.polymarket_token_topup import topup_clob_tokens
     from app.utils.price_change_stamp import price_changed_at_value
 
     ws = PolymarketWebSocket()
@@ -170,9 +171,11 @@ async def _run_polymarket_ws_consumer():
             select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
             .where(FuturesMarket.id.in_(list(market_ids)))
         )
+        ext_by_market: dict[int, str] = {}
         for mid, mext, metadata in market_result.all():
             if mext:
                 condition_to_market[mext] = mid
+                ext_by_market[mid] = mext
             if not metadata:
                 continue
             tokens = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
@@ -188,6 +191,38 @@ async def _run_polymarket_ws_consumer():
                 asset_ids.append(str(token))
                 asset_to_market[str(token)] = mid
             tokens_by_market[mid] = [str(t) for t in tokens]
+
+        # Q490 — ask for the slate's tokens instead of waiting for a rotation.
+        # The ingest stamp (Q460) is correct and covers the catalogue, but Gamma
+        # caps `/events` at offset 2000, so the poll addresses ~2,000 of ~39,000
+        # open markets per run on a rotating cursor. Measured 2h after that
+        # deploy: 701 markets carried tokens and 0 of the 77 on THIS slate did.
+        # `/markets?condition_ids=` does not paginate, so the fast lane can name
+        # exactly what it needs. Bounded by the slate size, which is ~77.
+        topup_missing = [
+            (mid, ext_by_market.get(mid))
+            for mid in market_ids
+            if mid not in tokens_by_market
+        ]
+        if topup_missing:
+            try:
+                topped = await topup_clob_tokens(session, topup_missing)
+            except Exception:
+                # A Gamma outage must not take the socket down with it: the
+                # markets that already have tokens keep streaming, and the next
+                # recycle retries. Loud, because a silently-empty top-up is the
+                # failure this whole queue exists to end.
+                logger.exception(
+                    "Polymarket WS: token top-up failed for %d markets; "
+                    "continuing with the %d already stamped",
+                    len(topup_missing), len(tokens_by_market),
+                )
+                topped = {}
+            for mid, tokens in topped.items():
+                tokens_by_market[mid] = tokens
+                for token in tokens:
+                    asset_ids.append(token)
+                    asset_to_market[token] = mid
 
         outcome_result = await session.execute(
             select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.external_id)
