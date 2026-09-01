@@ -2206,6 +2206,19 @@ export interface CalibrationNonexclusiveBundleFilter {
    * only mis-written.
    */
   temporary_by_cell?: Record<string, string>;
+  /**
+   * CAL-P168: rank 1's own counts, so the temporary half of the bullet is
+   * checkable on its own rather than only as part of `excluded` — which is now
+   * the SUM of two different rules (the structural bundle filter and K').
+   *
+   * Not rendered today. They are typed because the payload emits them and an
+   * undocumented key is one a later reader has to rediscover from a live
+   * response; if the page ever wants to say how much of the exclusion is
+   * coming back, this is the number, and it must not be derived by subtracting
+   * one rule's total from another's.
+   */
+  temporary_excluded?: number;
+  temporary_excluded_markets?: number;
 }
 
 export async function fetchCalibration(): Promise<CalibrationData> {

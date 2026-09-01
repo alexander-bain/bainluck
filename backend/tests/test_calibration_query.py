@@ -102,6 +102,9 @@ def _bucket_row(
         esports_bundle_excluded=0,
         kalshi_prop_threshold_excluded=0,
         weather_wide_spread_excluded=0,
+        # CAL-P168 (#1978) rank 1 — read by attribute off row 0.
+        player_props_placeholder_excluded=0,
+        player_props_placeholder_markets=0,
     )
 
 

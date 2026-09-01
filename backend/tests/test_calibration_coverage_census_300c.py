@@ -85,6 +85,12 @@ _EXISTING_TRANSPARENCY_COLUMNS = (
     "nonexclusive_bundle_candidates", "nonexclusive_bundle_markets",
     "kalshi_prop_threshold_excluded", "weather_wide_spread_excluded",
     "mex_published_markets", "mex_published_outcomes",
+    # CAL-P168 (#1978) rank 1. Listed rather than defaulted: the build reads
+    # these off row 0 by ATTRIBUTE, so a column the statement emits and this
+    # tuple omits raises AttributeError here — loudly — instead of quietly
+    # publishing a zero. That loudness is the point (CAL-P162's per-cell
+    # columns shipped to neither declaration and banked nothing).
+    "player_props_placeholder_excluded", "player_props_placeholder_markets",
 )
 
 

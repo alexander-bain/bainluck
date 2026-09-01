@@ -395,18 +395,34 @@ class TestTheGuards:
         declaration — so the expectation is DERIVED from that tuple read as
         text, not restated. Add a cell and this reds; production does not.
         """
-        cells = [
-            node
-            for node in ast.walk(tree_of(_FROZEN))
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(t, ast.Name) and t.id == "NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS"
-                for t in node.targets
+        # CAL-P168: the mirror now spans TWO allowlists — RULE E's bundle cells
+        # and K''s player-props cells — because one disclosure is rendered from
+        # two rules. Both are read out of the frozen file as text and both are
+        # asserted, so adding a cell to EITHER reds this pin. Deriving from only
+        # one would leave the other half of the map able to drift, which is the
+        # CAL-P162 failure (agreement is not coverage) with a new second tuple.
+        def _frozen_tuple(name: str):
+            found = [
+                node
+                for node in ast.walk(tree_of(_FROZEN))
+                if isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+            ]
+            assert len(found) == 1, f"{name} moved or multiplied"
+            return ast.literal_eval(found[0].value)
+
+        expected = (
+            ("nxb_cell_esports",)
+            + tuple(
+                f"nxb_cell_{idx}"
+                for idx, _ in enumerate(_frozen_tuple("NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS"))
             )
-        ]
-        assert len(cells) == 1, "the excluded-cells tuple moved or multiplied"
-        expected = ("nxb_cell_esports",) + tuple(
-            f"nxb_cell_{idx}" for idx, _ in enumerate(ast.literal_eval(cells[0].value))
+            + tuple(
+                f"pp_cell_{idx}"
+                for idx, _ in enumerate(
+                    _frozen_tuple("PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS")
+                )
+            )
         )
         assert NONEXCLUSIVE_BUNDLE_CELL_COLUMNS == expected
 
