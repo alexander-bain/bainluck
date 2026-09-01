@@ -1,0 +1,61 @@
+====================================================================================
+CAL-P201 — Q10 on the no-production-consumer census (P197 §E / P198)
+root: /Users/bain/bainluck-dev/calibration
+app files: 422   test files: 1094
+====================================================================================
+
+------------------------------------------------------------------------------------
+AXIS 1 — POPULATION: what fraction of the public surface was ENUMERATED?
+------------------------------------------------------------------------------------
+
+  backend/app/utils/calibration_phase_ledger.py
+     enumerated by the census :  50
+     public surface           : 143      COVERAGE  35.0%
+     never in scope           : {'constant': 56, 'class': 5, 'field': 32}
+
+  backend/app/utils/calibration_staged_futures.py
+     enumerated by the census :  35
+     public surface           :  90      COVERAGE  38.9%
+     never in scope           : {'constant': 29, 'class': 4, 'field': 22}
+
+  backend/app/tasks/calibration_main_build.py
+     enumerated by the census :  37
+     public surface           :  56      COVERAGE  66.1%
+     never in scope           : {'constant': 13, 'class': 4, 'field': 2}
+
+  backend/app/utils/calibration_staged_disclosure.py
+     enumerated by the census :   3
+     public surface           :  13      COVERAGE  23.1%
+     never in scope           : {'constant': 10}
+
+  TOTAL  125 enumerated / 302 public names  =  41.4% COVERAGE
+  the 177 names never in scope, by kind: {'constant': 108, 'class': 13, 'field': 56}
+
+------------------------------------------------------------------------------------
+AXIS 1b — the census's OWN detector, run over the bucket it never saw
+------------------------------------------------------------------------------------
+  ORPHANS found in the never-enumerated bucket: 1
+      backend/app/utils/calibration_phase_ledger.py:236   PHASE_DEADLINE_MS
+
+------------------------------------------------------------------------------------
+AXIS 2 — DETECTOR: consumed verdicts resting on PROSE ONLY
+------------------------------------------------------------------------------------
+      calibration_staged_futures.py.decode_staged_cursor (line 1514) — evidence is prose only, e.g. in-module prose
+      calibration_main_build.py.deadline_exceeded (line 498) — evidence is prose only, e.g. backend/app/tasks/board_sentinel.py:1164
+  members the census called CONSUMED : 123 of 125 scanned
+  ...of which the evidence is PROSE ONLY: 2
+
+------------------------------------------------------------------------------------
+CONTROL ARMS (two-sided, both axes)
+------------------------------------------------------------------------------------
+  A1-positive  PASS   PHASE_DEADLINE_MS is in the surface and NOT in the census population
+  A1-negative  PASS   record_gauge is in BOTH (population is not vacuously empty)
+  A2-positive  PASS   failed_phase has no production-CODE consumer (P197 reproduces)
+  A2-negative  PASS   record_gauge DOES have a production-CODE consumer (no false alarm)
+
+====================================================================================
+CONTROLS: ALL PASS
+COVERAGE VERDICT: the census classified 41.4% of the public surface.
+  It enumerated 100%% of callables and 0%% of constants/fields/classes.
+  Running its own detector over the unseen bucket yields 1 orphan(s).
+====================================================================================
