@@ -281,3 +281,185 @@ class TestSourceIsolation:
         k._last_refresh_at[1] = 1000.0
         assert p._due(1, now=1000.1) is True
         assert k.stats is not p.stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Q501 — the fast lane also moves the CHART, not just the number.
+#
+# Alex, 2026-09-01: "our probability graphs don't update" on the US Open. The
+# blend key moving sub-second is only half the ship; `win_prob_snapshots` is the
+# series `GET /api/events/{id}/history` returns as `win_prob_history`, and the
+# 120s poll used to be its only writer. These guard the two ways adding a second
+# writer goes wrong: it writes per-tick and multiplies the table, or it lets a
+# snapshot failure cost the blend stamp that already succeeded.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _SnapSession:
+    """A session that can accept an ORM insert, which `_FakeSession` cannot."""
+
+    def __init__(self):
+        self.added = []
+
+    def add(self, row):
+        self.added.append(row)
+
+
+class _Reading:
+    """Stand-in for the BlendReading the refresher passes to the snapshot."""
+
+    class _Market:
+        id = 77
+        name = "Fritz vs Blanch"
+
+    class _Outcome:
+        name = "Taylor Fritz"
+
+    market = _Market()
+    outcome = _Outcome()
+    yes_probability = 0.99
+
+
+class TestSnapshotThrottle:
+    """The chart point runs on its OWN clock, slower than the blend's."""
+
+    @pytest.mark.asyncio
+    async def test_first_stamp_for_an_event_writes_a_chart_point(self, monkeypatch):
+        r, calls = _snapshot_spy(monkeypatch)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        assert len(calls) == 1
+        assert r.stats["snapshots_written"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_second_stamp_inside_the_interval_writes_no_point(self, monkeypatch):
+        """Q460's stated objection — a snapshot per tick — must stay refused.
+
+        The blend throttle is 5s and the snapshot throttle is 25s, so a
+        continuously-ticking market must NOT produce a chart point per stamp.
+        """
+        r, calls = _snapshot_spy(monkeypatch, snapshot_interval_s=25.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.62, _Reading(), now=110.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.63, _Reading(), now=120.0)
+        assert len(calls) == 1, "the snapshot clock is not the blend clock"
+
+    @pytest.mark.asyncio
+    async def test_the_interval_boundary_writes_again(self, monkeypatch):
+        r, calls = _snapshot_spy(monkeypatch, snapshot_interval_s=25.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.62, _Reading(), now=125.0)
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_interval_clears_inside_a_minute(self, monkeypatch):
+        """Alex's bar is a chart point 'within a minute'. Pin it as a number."""
+        r, _ = _snapshot_spy(monkeypatch)
+        assert r.snapshot_interval_s <= 60.0
+
+    @pytest.mark.asyncio
+    async def test_throttling_one_event_does_not_throttle_its_neighbour(self, monkeypatch):
+        r, calls = _snapshot_spy(monkeypatch, snapshot_interval_s=25.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        await r._maybe_snapshot(_SnapSession(), 2, 0.44, _Reading(), now=101.0)
+        assert len(calls) == 2
+
+
+class TestSnapshotShape:
+    @pytest.mark.asyncio
+    async def test_away_is_the_complement_and_the_writer_is_named(self, monkeypatch):
+        r, calls = _snapshot_spy(monkeypatch)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        kwargs = calls[0]
+        assert kwargs["home_win_probability"] == 0.61
+        assert kwargs["away_win_probability"] == 0.39
+        # Distinguishable from the poll's "live_fast" in the audit trail.
+        assert kwargs["game_state"]["poll_type"] == "ws_fast_lane"
+        assert kwargs["source"] == "kalshi"
+
+    @pytest.mark.asyncio
+    async def test_a_deduped_point_is_counted_separately(self, monkeypatch):
+        """The shared helper returns is_new=False on an unmoved value."""
+        r, _ = _snapshot_spy(monkeypatch, is_new=False)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        assert r.stats["snapshots_written"] == 0
+        assert r.stats["snapshots_deduped"] == 1
+
+
+class TestSnapshotContainment:
+    """The chart is downstream of the number and must never cost it."""
+
+    @pytest.mark.asyncio
+    async def test_a_failing_snapshot_is_counted_not_raised(self, monkeypatch):
+        async def _boom(session, **kwargs):
+            raise RuntimeError("snapshot table went away")
+
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot", _boom
+        )
+        r = LiveBlendRefresher("kalshi")
+        # Must not raise — the blend stamp before it already succeeded.
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        assert r.stats["errors"] == 1
+        assert r.stats["snapshots_written"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_failed_snapshot_still_consumes_its_throttle_slot(self, monkeypatch):
+        """A permanently-failing event must not retry on every single flush."""
+        async def _boom(session, **kwargs):
+            raise RuntimeError("nope")
+
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot", _boom
+        )
+        r = LiveBlendRefresher("kalshi", snapshot_interval_s=25.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=100.0)
+        await r._maybe_snapshot(_SnapSession(), 1, 0.61, _Reading(), now=105.0)
+        assert r.stats["errors"] == 1, "a failing event must not retry every flush"
+
+
+def _snapshot_spy(monkeypatch, *, snapshot_interval_s=25.0, is_new=True):
+    """A refresher whose snapshot helper records its kwargs instead of writing."""
+    calls = []
+
+    async def _fake_create(session, **kwargs):
+        calls.append(kwargs)
+        return object(), is_new
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", _fake_create
+    )
+    return LiveBlendRefresher("kalshi", snapshot_interval_s=snapshot_interval_s), calls
+
+
+class TestTheFastLaneActuallyCallsTheSnapshot:
+    """Without this, every test above passes on a DISCONNECTED feature.
+
+    `_maybe_snapshot` is driven directly by the tests above, so deleting its
+    call site inside `_refresh_batch` would leave them all green while the
+    chart silently went back to the 120s poll's cadence — exactly the bug this
+    queue exists to fix, reintroduced invisibly.
+    """
+
+    def test_refresh_batch_invokes_maybe_snapshot(self):
+        import inspect
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        src = inspect.getsource(LiveBlendRefresher._refresh_batch)
+        assert "_maybe_snapshot" in src, (
+            "the fast lane no longer writes a chart point"
+        )
+
+    def test_the_snapshot_follows_a_successful_stamp(self):
+        """Ordering matters: a chart point must not outrun the number.
+
+        The snapshot shares the blend stamp's transaction deliberately, so the
+        call has to sit after `stats["stamped"]`, inside the same try — not
+        before the write and not outside it.
+        """
+        import inspect
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        src = inspect.getsource(LiveBlendRefresher._refresh_batch)
+        assert src.index('self.stats["stamped"]') < src.index("_maybe_snapshot")
