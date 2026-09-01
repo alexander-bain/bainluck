@@ -241,6 +241,76 @@ class TestTheClockItself:
         assert newest_outcome_stamp([]) is None
         assert newest_outcome_stamp([SimpleNamespace(last_updated=None)]) is None
 
+    def test_it_reads_BOTH_outcome_shapes(self):
+        # The feed carries an outcome as an ORM row AND as the scoring loop's
+        # plain dict, and both reach this helper.
+        stamp = NOW - timedelta(days=3)
+        assert newest_outcome_stamp([SimpleNamespace(last_updated=stamp)]) == stamp
+        assert newest_outcome_stamp([{"last_updated": stamp}]) == stamp
+
+    def test_an_unreadable_shape_is_no_evidence_and_NEVER_raises(self):
+        """🔴 THIS CLAUSE IS THE REVERSE OF WHAT IT SAID AN HOUR AGO.
+
+        The helper first RAISED on a shape it could not read, arguing that a
+        silent ``None`` would disarm the gate. Mutant D came back SURVIVE, so a
+        test was added to pin the raise — and then the full backend suite failed
+        **32 tests across six files** with:
+
+            Feed: skipping futures market 1 — scoring error:
+            cannot read last_updated from _Outcome
+
+        That is the refutation, and it is not about fixtures. `_score_futures`
+        wraps every market in `try/except` (gotcha #42 — one bad item must never
+        wipe a scoring pass), so **a raise in here is not loud. It is caught,
+        logged at WARNING, and the card silently disappears.** The strict version
+        converted a shape mismatch into invisible card loss, which is worse than
+        the parent-clock fallback and is this ship's own failure class.
+
+        The danger was real; the remedy was in a place that swallows it. So the
+        tripwire moved to the test below, where nothing can catch it.
+        """
+        assert newest_outcome_stamp([object()]) is None
+        assert newest_outcome_stamp([{"name": "Yes", "probability": 0.6}]) is None
+        assert newest_outcome_stamp([{"last_updated": None}]) is None
+
+        # A value that is not a datetime is not a stamp. The seeded route
+        # fixtures hand this helper `MagicMock`s, and comparing two of them
+        # raises `TypeError: '>' not supported` — inside the same swallowing
+        # try/except, so it too showed up as vanished cards rather than as a
+        # failure. The column is `DateTime(timezone=True)`; a non-datetime is
+        # never a legitimate stamp.
+        assert newest_outcome_stamp([SimpleNamespace(last_updated="2026-07-04")]) is None
+        assert newest_outcome_stamp([SimpleNamespace(last_updated=object())]) is None
+        # …and two unreadable stamps do not blow up comparing themselves.
+        assert (
+            newest_outcome_stamp(
+                [SimpleNamespace(last_updated=object()), SimpleNamespace(last_updated=object())]
+            )
+            is None
+        )
+
+        # And "no evidence" must fall back to the parent clock rather than
+        # reading as death — otherwise the swallow above becomes a silent
+        # suppression instead of a silent admission.
+        parent = NOW - timedelta(minutes=5)
+        assert freshness_clock(parent, newest_outcome_stamp([object()])) == parent
+
+    def test_the_orm_model_still_carries_the_column(self):
+        """The tripwire, in the one place a `try/except` cannot swallow it.
+
+        If `FuturesOutcome.last_updated` is ever renamed or dropped,
+        `newest_outcome_stamp` starts returning `None` for every market and the
+        whole gate quietly reverts to the parent-row clock. Nothing else in this
+        file would go red. This fails CI instead.
+        """
+        from app.models.models import FuturesOutcome
+
+        assert hasattr(FuturesOutcome, "last_updated"), (
+            "the staleness clock reads FuturesOutcome.last_updated; without it "
+            "newest_outcome_stamp returns None for every market and the feed "
+            "silently goes back to trusting the parent row's touch-stamp"
+        )
+
 
 class TestHealthySiblingsSurvive:
     """Gotcha #43 — assert BOTH directions or the guard only proves half a rule."""

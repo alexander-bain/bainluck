@@ -403,9 +403,20 @@ def expired_ladder_rungs(
     return expired
 
 
-def _as_utc(value: datetime | None) -> datetime | None:
-    """Naive stamps are read as UTC — mixing the two raises at request time."""
-    if value is None:
+def _as_utc(value) -> datetime | None:
+    """A stamp, normalised to UTC — or ``None`` for anything that is not one.
+
+    Naive stamps are read as UTC: comparing a naive and an aware datetime raises
+    ``TypeError``, and it would raise at request time rather than in any test.
+
+    The ``isinstance`` is not defensive noise. This reads a column straight off
+    whatever object the caller has, and the one caller sits inside
+    ``_score_futures``'s per-market ``try/except`` — so a non-datetime here does
+    not surface as an error, it surfaces as a card that silently vanished. The
+    DB column is ``DateTime(timezone=True)``, so a non-datetime is never a
+    legitimate stamp and reading it as "no evidence" is the right answer.
+    """
+    if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -437,31 +448,34 @@ def newest_outcome_stamp(outcomes) -> datetime | None:
     rather than as evidence of death — a writer that never sets the column must
     not take its whole source dark.
 
-    ═══ TWO SHAPES, AND WHY AN UNREADABLE ONE RAISES ═══
+    ═══ TWO SHAPES, AND WHY AN UNREADABLE ONE DOES *NOT* RAISE ═══
 
     The feed carries an outcome in two forms — the ORM row and the plain
     ``outcomes_data`` dict the scoring loop builds from it — and both reach this
-    function. A bare ``getattr(o, "last_updated", None)`` reads the first and
-    silently returns ``None`` for the second, which is a gate that reports "no
-    evidence" and lets the market through. That is the same silent-fallback
-    failure this whole change is about, so an unreadable shape raises instead.
+    function, so both are read.
+
+    🔴 The first version of this helper RAISED on a shape it could not read, on
+    the argument that returning ``None`` would silently disarm the gate. That
+    argument was right about the danger and wrong about the remedy, and the full
+    suite is what showed it: **the only caller is inside ``_score_futures``'s
+    per-market ``try/except``** (gotcha #42, one bad item must never wipe a
+    scoring pass). A raise there is not loud. It is caught, logged at WARNING,
+    and the market is dropped from the feed — so the "strict" version turned a
+    shape mismatch into *invisible card loss*, which is strictly worse than
+    falling back to the parent clock and is the very failure class this ship is
+    about.
+
+    The tripwire belongs somewhere that cannot be swallowed, so it is a test:
+    ``test_the_orm_model_still_carries_the_column`` asserts the real
+    ``FuturesOutcome`` has ``last_updated``. A schema change fails CI instead of
+    quietly emptying Discover.
     """
     newest: datetime | None = None
     for outcome in outcomes or ():
         if isinstance(outcome, Mapping):
-            if "last_updated" not in outcome:
-                raise TypeError(
-                    "outcome mapping has no 'last_updated' key; a missing stamp "
-                    "must be an explicit None, never an absent key"
-                )
-            raw = outcome["last_updated"]
-        elif hasattr(outcome, "last_updated"):
-            raw = outcome.last_updated
+            raw = outcome.get("last_updated")
         else:
-            raise TypeError(
-                f"cannot read last_updated from {type(outcome).__name__}; "
-                "returning None here would silently disarm the staleness gate"
-            )
+            raw = getattr(outcome, "last_updated", None)
         stamp = _as_utc(raw)
         if stamp is not None and (newest is None or stamp > newest):
             newest = stamp
