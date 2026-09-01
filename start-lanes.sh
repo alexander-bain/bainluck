@@ -105,7 +105,16 @@ launch () {
   osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
 }
 
-launch "$R $HOME/bainluck lane1 integrator"
+# ORDER IS LOAD-BEARING, 2026-08-31 (Fable). lane-runner.sh serves LANES in the
+# order given and takes the first inbox with work. With `lane1 integrator`, lane1
+# — which restocks its own inbox instantly — was checked first every cycle and the
+# integrator NEVER got a turn: 11 lane1 sessions today against 1 integrator session,
+# while thirteen certified branches sat unshipped on master for six hours.
+# `integrator` FIRST. It only has work when a merge is actually waiting, so it
+# cannot starve lane1; lane1 gets every cycle the integrator does not need.
+# They still share one runner because they share ~/bainluck and must never run
+# concurrently there.
+launch "$R $HOME/bainluck integrator lane1"
 launch "$R $HOME/bainluck-dev/ux ux"
 launch "$R $HOME/bainluck-dev/latency latency"
 launch "$R $HOME/bainluck-dev/calibration calibration"

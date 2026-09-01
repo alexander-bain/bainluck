@@ -87,6 +87,7 @@ The core magic of Bain Luck is **perfect semantic understanding** of every event
 | `docs/design-system.md` | Visual design system: colors, type, motion, voice, components | When tokens or patterns change |
 | `docs/entity-page-templates.md` | Tier system for auto-generated entity pages + the chrome-earning grammar (ruling 027) | When tiers or contracts change |
 | `DAILY-OPERATIONS.md` (repo root) | Alex's runbook: window launch lines, settings-file cross-root write grants, backup remote, single-writer invariant | When the operating model changes |
+| `lane-runner.sh` · `start-lanes.sh` · `lanes-supervisor.sh` · `lane4-runner.sh` (repo root) | The four launcher scripts, all TRACKED — a runner that lives only on one laptop is lost work, not a local preference. `lane4-runner.sh` is the cert bus; numbered `-vN` variants beside it are scratch and are never the one to run | When a lane's launch or supervision changes |
 
 ---
 
