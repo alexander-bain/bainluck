@@ -86,7 +86,21 @@ nothing** — see §6.
 | `tests/test_startup.py` | **4 passed** |
 | Ruff on changed files | clean (the one hit in `test_calibration_field_completeness_257.py` is **pre-existing on HEAD**, verified by running Ruff against `git show HEAD:` of that file) |
 | sqlglot parse of the rendered population | OK |
-| full backend suite | see §7 |
+| **full backend suite** (landed, 20:15) | **1 failed / 25,057 passed / 146 skipped / 61 xfailed**, EXIT 1 **by value** |
+
+🟢 **The one failure is the inherited economics timebomb, and it is provably not this ship.** It is
+`tests/integration/test_route_economics.py::TestEconomicsSeededInflation::test_cpi_populates_inflation`
+— the `ECONOMICS-CPI-AUGUST-2026-TIMEBOMB` CERT-634 recorded. Three facts, each checked rather than
+asserted:
+
+* **master already fixed it.** `75c5226c` is *"fix(tests): date-robust CPI and jobs seeds in
+  test_route_economics"*, touching that exact file (+20/−8).
+* **my base is behind that fix.** This branch is based at `4d8373c6`, 16 behind master, so it still
+  carries the pre-fix file — `git diff HEAD origin/master -- <that file>` shows the 28 lines.
+* **this ship touches no economics bytes.** `git diff 4d8373c6 HEAD --name-only | grep -i econ` is
+  empty.
+
+It disappears on rebase or merge. **Do not hold the merge on it and do not attribute it here.**
 
 ## 5. 🔴 TWO REAL DEFECTS IN MY OWN CHANGE, CAUGHT BY EXISTING GUARDS BEFORE DEPLOY
 
