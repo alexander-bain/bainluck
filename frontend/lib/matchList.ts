@@ -643,6 +643,88 @@ export function matchesInRound(
 }
 
 /**
+ * ═══ WHAT HAPPENED TO THE REST OF THE ROUND (#2450) ═══
+ *
+ * Alex: *"`ROUND OF 128 · 25 matches` next to `FINISHED · Men's Singles · 71`.
+ * Nothing explains how a 128-draw shows 25 live and 71 finished, or what
+ * happened to the rest."*
+ *
+ * He is doing the only arithmetic available to him and it does not close. Both
+ * numbers are correct and they count DIFFERENT POPULATIONS, which is the one
+ * thing neither of them said:
+ *
+ *   - `25` is the matches of this round still in the list. `build_slate` drops
+ *     a matchup the moment it starts (`ALREADY_PLAYED: 28, DECIDED: 66` on the
+ *     live payload 2026-09-01), so the list holds the unfinished remainder of
+ *     the round and never the whole of it.
+ *   - `71` is every finished match in this DRAW across every round, qualifying
+ *     included — 178 rows platform-side, of which the men's singles held 84 on
+ *     2026-09-01: 41 in the main draw and 43 across three qualifying rounds.
+ *
+ * So the two numbers cannot be added, subtracted or compared, and the page was
+ * inviting a reader to do all three.
+ *
+ * ### The size of a round is definitional, and that is the missing anchor
+ *
+ * A round of 128 is 64 matches. Not a lookup, not a payload field, not an
+ * assumption about the draw — `R128` MEANS 128 players, and 128 players is 64
+ * matches. So the list can state the round's true size beside the count it is
+ * showing, and the reader's arithmetic closes on the spot: 64 in the round, 16
+ * here, the rest have finished.
+ *
+ * `null` for `qualifying`, which is the one key that is not a `RoundName`: it
+ * buckets three rounds of a draw whose size we genuinely do not know, and
+ * inventing a number for it would be exactly the unexplained figure this
+ * function exists to remove.
+ */
+export function matchRoundSize(round: MatchRoundKey): number | null {
+  if (round === "qualifying") return null;
+  const players = ROUND_PLAYER_COUNTS[round];
+  return players === undefined ? null : players / 2;
+}
+
+const ROUND_PLAYER_COUNTS: Record<RoundName, number> = {
+  R128: 128,
+  R64: 64,
+  R32: 32,
+  R16: 16,
+  QF: 8,
+  SF: 4,
+  F: 2,
+};
+
+/**
+ * The sentence that reconciles the two counts, or `null` when there is nothing
+ * to reconcile.
+ *
+ * Deliberately does NOT say how many have finished. We know the round's size
+ * and we know what is in this list; we do NOT know how many of the remainder
+ * our results feed actually holds — 17 of the live payload's 82 Round-1 results
+ * had already lost their register matchup, and 134 finished matches were
+ * dropped for players the register does not carry. Printing `the other 48 have
+ * finished` beside a Finished list showing 41 would replace one arithmetic
+ * anyone can check with another one that also fails.
+ *
+ * So it states the two facts we can stand behind — the round's size, and that
+ * finished matches leave this list — and lets the reader stop looking for the
+ * missing rows.
+ */
+export function matchRoundReconciliation(
+  round: MatchRoundKey,
+  shown: number
+): string | null {
+  const size = matchRoundSize(round);
+  if (size === null) return null;
+  // The whole round is here: nothing is missing, so nothing needs explaining.
+  if (shown >= size) return null;
+  // "This round is 64 matches", not "a round of 128 is 64 matches": the label
+  // reads naturally for the draw-size rounds and not at all for the named ones
+  // ("a quarter-finals is 4 matches"), and the heading directly above already
+  // says which round this is.
+  return `This round is ${size} matches. Finished ones move to Finished, below.`;
+}
+
+/**
  * The muted secondary chip's text (ruling 1).
  *
  * SELF-LABELLING, and that is not decoration. The whole of UX-P137's ruling 2

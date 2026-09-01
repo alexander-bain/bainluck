@@ -14,6 +14,7 @@ import {
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
+  resultsPopulationNote,
   roundHeading,
   sortedResults,
   type TournamentResult,
@@ -329,6 +330,8 @@ export default function TournamentResults({
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
   const prior = prematchCoverage(matches);
+  /* #2450: the total says which population it is over, or says nothing. */
+  const population = resultsPopulationNote(matches);
 
   return (
     <section data-testid="tournament-results" data-draw={draw} data-count={matches.length}>
@@ -338,6 +341,18 @@ export default function TournamentResults({
           · {DRAW_LABELS[draw] ?? draw} · {matches.length}
         </span>
       </h2>
+
+      {/* WHAT THE COUNT COUNTS (#2450). More than half of this total was
+          qualifying on the live payload, and a reader adding up a 128-draw's
+          main-draw matches will never reach it. See `resultsPopulationNote`. */}
+      {population && (
+        <p
+          className="-mt-1 mb-2 text-[11px] leading-snug text-text-muted"
+          data-testid="results-population-note"
+        >
+          {population}
+        </p>
+      )}
       <div className="overflow-hidden rounded-2xl border border-surface-border bg-surface-card">
         {/* ONE grid for the whole list, so a column is a column across every
             row — see `RESULT_GRID`. The round headings are `col-span-3` bands

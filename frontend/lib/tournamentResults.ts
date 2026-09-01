@@ -326,6 +326,33 @@ export const ROUND_HEADINGS: Record<string, string> = {
 };
 
 /**
+ * ═══ WHAT THIS COUNT COUNTS (#2450, the second half) ═══
+ *
+ * `FINISHED · Men's Singles · 71` sat beside `ROUND OF 128 · 25 matches` and
+ * neither number named its population, so Alex tried to reconcile them and
+ * could not. The match list's half is answered by `matchRoundReconciliation`;
+ * this is the other side of the same sentence.
+ *
+ * The number is every finished match in the draw across EVERY round — and on
+ * the live payload 2026-09-01 rather more than half of it was qualifying: the
+ * men's singles held 84 rows, 41 in the main draw and 43 across three
+ * qualifying rounds. A reader counting a 128-draw's main-draw matches will
+ * never reach 84, and the section never told them qualifying was in the total.
+ *
+ * Counted off the RENDERED rows rather than any payload total, for the reason
+ * `prematchCoverage` gives: a note about a different list is worse than no
+ * note. `null` when there is no qualifying in the list, because then the total
+ * already means what a reader assumes it means and a clause saying so is noise.
+ */
+export function resultsPopulationNote(matches: TournamentResult[]): string | null {
+  const qualifying = matches.filter((match) =>
+    /^qual/i.test((match.source_round ?? match.round ?? "").trim())
+  ).length;
+  if (qualifying === 0) return null;
+  return `Includes ${qualifying} qualifying ${qualifying === 1 ? "match" : "matches"}.`;
+}
+
+/**
  * The prior, as a percentage — `0.495` -> `"50%"`, `null` -> `null`.
  *
  * ═══ UX-P146: WHY A FINISHED MATCH PRINTS A NUMBER AT ALL ═══

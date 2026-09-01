@@ -9,6 +9,7 @@ import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   defaultMatchRound,
   matchRoundPills,
+  matchRoundReconciliation,
   matchesInRound,
   titleChipDescription,
   titleChipLabel,
@@ -529,6 +530,7 @@ export default function TournamentMatches({
   const visible = expanded ? inRound : inRound.slice(0, COLLAPSED_LIST_COUNT);
   const activePill = pills.find((pill) => pill.round === active);
   const incoherent = inRound.filter((entry) => !entry.coherent).length;
+  const reconciliation = matchRoundReconciliation(active, inRound.length);
 
   return (
     <section data-testid="tournament-matches" data-round={active}>
@@ -602,6 +604,22 @@ export default function TournamentMatches({
           · {inRound.length} {inRound.length === 1 ? "match" : "matches"}
         </span>
       </h2>
+
+      {/* WHAT HAPPENED TO THE REST OF THE ROUND (#2450). Alex added `ROUND OF
+          128 · 25 matches` to `FINISHED · 71` and got a number a 128-draw
+          cannot produce, because the two headings count different populations
+          and neither said so. The round's size is definitional — a round of 128
+          IS 64 matches — so stating it lets the arithmetic close without the
+          page claiming a finished-count it cannot stand behind. See
+          `matchRoundReconciliation`. */}
+      {reconciliation && (
+        <p
+          className="-mt-1 mb-2 text-[11px] leading-snug text-text-muted"
+          data-testid="match-round-reconciliation"
+        >
+          {reconciliation}
+        </p>
+      )}
 
       {/* Every number says what it means (UX-P137, ruling 2). */}
       <div
