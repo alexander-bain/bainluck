@@ -127,6 +127,9 @@ def _bucket_row(
         # CAL-P168 (#1978) rank 1 — read by attribute off row 0.
         player_props_placeholder_excluded=0,
         player_props_placeholder_markets=0,
+        # CERT-647 (CAL-P170) — the temporary subset, same attribute read.
+        player_props_placeholder_temporary_excluded=0,
+        player_props_placeholder_temporary_markets=0,
     )
 
 

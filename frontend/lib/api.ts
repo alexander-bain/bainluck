@@ -2197,28 +2197,38 @@ export interface CalibrationNonexclusiveBundleFilter {
    * Player-Props legs are excluded because a WRITER produced their published
    * price, uncorrelated with the market's own quote (a leg quoted 0.0355
    * published at 0.5005). Those are real questions with intact market quotes,
-   * so when the writer is repaired the rows return and this exclusion empties
-   * itself.
+   * so when the writer is repaired those rows return.
    *
-   * A cell listed here MUST render its revert condition. The failure this
-   * exists to stop is the page implying a temporary removal is a permanent
-   * one — i.e. quietly writing off ~2.7% of the curve as ineligible when it is
-   * only mis-written.
+   * 🔴 CERT-647: "those rows", NOT "this exclusion". Only the M1/R3 arms end
+   * with the writer repair; the R1/R2 arms are the same defect already written
+   * to the back catalogue and a forward fix does not un-write them. The cell is
+   * present here ONLY while `temporary_excluded > 0`, so when the temporary
+   * cohort empties the key disappears and the sentence leaves the page on its
+   * own — while the historical remainder stays excluded and stays counted in
+   * `excluded_by_cell`.
+   *
+   * A cell listed here MUST render its revert condition AND its count. The
+   * failure this exists to stop is the page implying a temporary removal is a
+   * permanent one; the failure CERT-647 caught is the mirror image — implying a
+   * permanent removal is a temporary one, by rendering one promise over a count
+   * whose majority never comes back.
    */
   temporary_by_cell?: Record<string, string>;
   /**
-   * CAL-P168: rank 1's own counts, so the temporary half of the bullet is
-   * checkable on its own rather than only as part of `excluded` — which is now
-   * the SUM of two different rules (the structural bundle filter and K').
+   * Rank 1's own counts, so the temporary half of the bullet is checkable on
+   * its own rather than only as part of `excluded` — which is the SUM of two
+   * different rules (the structural bundle filter and K').
    *
-   * Not rendered today. They are typed because the payload emits them and an
-   * undocumented key is one a later reader has to rediscover from a live
-   * response; if the page ever wants to say how much of the exclusion is
-   * coming back, this is the number, and it must not be derived by subtracting
-   * one rule's total from another's.
+   * 🔴 CERT-647: `temporary_excluded` counts the M1/R3 cohort ONLY — the rows
+   * that actually re-enter. It previously carried the full R1+R2+R3+M1 union,
+   * which made the field's own name false. `historical_excluded` is the
+   * complement; the two sum to K''s per-cell total in `excluded_by_cell`, so
+   * the bullet still adds up. Neither may be derived by subtracting one rule's
+   * total from another's.
    */
   temporary_excluded?: number;
   temporary_excluded_markets?: number;
+  historical_excluded?: number;
 }
 
 export async function fetchCalibration(): Promise<CalibrationData> {

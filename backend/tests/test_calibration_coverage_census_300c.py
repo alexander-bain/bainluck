@@ -91,6 +91,11 @@ _EXISTING_TRANSPARENCY_COLUMNS = (
     # publishing a zero. That loudness is the point (CAL-P162's per-cell
     # columns shipped to neither declaration and banked nothing).
     "player_props_placeholder_excluded", "player_props_placeholder_markets",
+    # CERT-647 (CAL-P170): the temporary subset of the pair above, read off
+    # row 0 by attribute exactly like its parent and listed here for the same
+    # reason.
+    "player_props_placeholder_temporary_excluded",
+    "player_props_placeholder_temporary_markets",
 )
 
 
