@@ -71,6 +71,68 @@ export function isMarketShape(value: unknown): value is MarketShape {
   return typeof value === "string" && ALL_SHAPES.has(value);
 }
 
+/**
+ * The STORED shape (`FuturesMarket.market_type`) alone — null when the payload
+ * carries no valid one.
+ *
+ * Deliberately NOT `resolveShape`. The fallback heuristic guesses a shape from
+ * outcome-name regexes, which is the same kind of text-derived guess as the
+ * Discover archetype's `suggested_format` hint. Letting one guess overrule
+ * another adds no truth and can only launder a regex miss into a confident
+ * render. Only the field the backend classifier actually wrote gets a vote.
+ */
+export function storedShape(marketType: unknown): MarketShape | null {
+  return isMarketShape(marketType) ? marketType : null;
+}
+
+/**
+ * Kernels a stored shape positively CONTRADICTS.
+ *
+ * Discover picks its card from `discover_card.suggested_format`, which
+ * `discover_card_archetypes.py` derives from outcome-label regexes and a raw
+ * outcome count — it never reads `market_type`. So two channels describe the
+ * same market and they disagree. Measured against the live feed (95 items, 61
+ * futures cards, 2026-08-31): 12 cards drew a kernel that contradicts the
+ * stored shape.
+ *
+ * This table is the tie-break, and it is deliberately NARROW — only the two
+ * contradictions that were observed AND whose correct kernel already exists as
+ * a live render:
+ *
+ *   field    ✗ ladder-strip  A field is a ranked competition between entrants.
+ *                            Drawing it as a threshold ladder invents an
+ *                            ordering between rivals and prints a cumulative
+ *                            "Above 50% through <entrant>" footer over it.
+ *   quantity ✗ top-3         A quantity is ONE continuous question. The
+ *                            leaderboard numbers its rungs "Rank N by
+ *                            probability" and crops to 4, so a 7-rung date
+ *                            ladder loses its three nearest buckets and reads
+ *                            as if the dates were racing each other.
+ *
+ * NOT listed, on purpose:
+ *   duel / container_member — their kernels (split, headliner+count) have no
+ *     live Discover render at all, so a veto could only downgrade a working
+ *     card to the generic hero. 7 live cards are in this state; wiring those
+ *     two kernels is a separate ship, not a tie-break.
+ *   unshaped — by definition has no kernel to defend (SHAPE_TO_KERNEL is null).
+ *
+ * A veto only ever REMOVES a kernel from consideration. It never forces one:
+ * whether the surviving kernel can actually be drawn is still gated on having
+ * the data for it, so a mistyped shape degrades to the generic hero rather
+ * than rendering an empty ladder.
+ */
+const SHAPE_FORBIDS_KERNEL: Partial<Record<MarketShape, ReadonlySet<MarketKernel>>> = {
+  [SHAPE_FIELD]: new Set<MarketKernel>(["ladder-strip"]),
+  [SHAPE_QUANTITY]: new Set<MarketKernel>(["top-3"]),
+};
+
+/** True when the stored shape rules out drawing `kernel` for this market. */
+export function shapeForbidsKernel(marketType: unknown, kernel: MarketKernel): boolean {
+  const shape = storedShape(marketType);
+  if (shape == null) return false;
+  return SHAPE_FORBIDS_KERNEL[shape]?.has(kernel) ?? false;
+}
+
 /** The render kernel for a shape (null when the shape has no native kernel). */
 export function kernelForShape(shape: MarketShape | null | undefined): MarketKernel {
   return shape ? SHAPE_TO_KERNEL[shape] ?? null : null;
