@@ -1,0 +1,13 @@
+str(asyncio.CancelledError()) = ''  falsy=True
+
+CLAIM     CancelledError()                 -> status='cancelled' detail=None emitted=False
+CONTROL+A StagedFuturesIncomplete(msg)     -> status='cancelled' detail='futures generation incomplete — units ba'... emitted=True
+CONTROL+B RuntimeError('a real failure')   -> status='failed' detail='a real failure' emitted=True
+CONTROL-  CancelledError('a reason')       -> status='cancelled' detail='a reason' emitted=True
+
+The two arms that matter are CLAIM and CONTROL+A: both end status
+'cancelled', one is the designed end of a healthy beat and one is an
+external kill, and only one of them says so.
+
+CONFIRMED: status 'cancelled' from a bare CancelledError records no reason,
+and is indistinguishable in the ledger from the healthy staged end.

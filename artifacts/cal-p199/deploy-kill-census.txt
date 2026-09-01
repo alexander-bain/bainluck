@@ -1,0 +1,22 @@
+ring: 168 beats, 2026-08-22T16:45:38.271725+00:00 .. 2026-08-29T16:15:45.186097+00:00
+releases in span: 49 of 400 loaded
+
+CONTROL+ live 18:24:55Z beat: nearest release +17.8s (expected 2026-09-01T18:24:38Z) -> DEPLOY_KILL
+
+ALL beats          : 4/168 = 2.4% end within 120s of a release
+terminal != complete: 3/97 = 3.1%   <-- the claim
+terminal == complete: 1/71 = 1.4%   <-- CONTROL- (must be much lower)
+
+CONTROL- PASS — separation +1.7 pp
+
+window sweep (not-complete% vs complete%):
+  +/-  30s :   1.0%  vs    0.0%   sep   +1.0 pp
+  +/-  60s :   2.1%  vs    1.4%   sep   +0.7 pp
+  +/- 120s :   3.1%  vs    1.4%   sep   +1.7 pp
+  +/- 300s :   7.2%  vs    4.2%   sep   +3.0 pp
+  +/- 600s :  13.4%  vs    8.5%   sep   +5.0 pp
+  +/-1800s :  30.9%  vs   14.1%   sep  +16.8 pp
+
+of the 3 deploy-killed beats: 0 banked ZERO units
+
+releases in span per beat-hour: 0.29
