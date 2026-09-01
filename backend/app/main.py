@@ -141,6 +141,55 @@ allowed_origin_regex = r"https://bainluck.*\.vercel\.app"
 
 
 # ---------------------------------------------------------------------------
+# Response compression (#1636) — registered FIRST so it is the INNERMOST
+# middleware, i.e. closest to the routes.
+#
+# The API shipped no `Content-Encoding` at all: every JSON body went out raw.
+# Measured on production 2026-08-31, `curl --compressed` against api.bainluck.com
+# (the sandbox proxy was ruled out as the cause first — it passes Vercel's
+# `content-encoding: gzip` through unchanged, so the absence was real, not an
+# artefact of the reader):
+#
+#     /api/feed?limit=40       133,722 B  ->  17,965 B   (7.4x)
+#     /api/calibration         449,180 B  ->  67,888 B   (6.6x)
+#     /api/entertainment       101,698 B  ->  23,682 B   (4.3x)
+#     /api/politics             41,463 B  ->   7,505 B   (5.5x)
+#     /api/events/search        27,630 B  ->   4,385 B   (6.3x)
+#
+# INNERMOST is deliberate: LatencyMiddleware and `request_timing` then wrap the
+# compression, so its cost lands in `X-Response-Time` and in the slow-event ring
+# instead of hiding underneath them. CORS stays outermost and only adds headers,
+# so a compressed body is unaffected by it.
+#
+# `compresslevel=6`, NOT Starlette's default of 9. Benchmarked on the real
+# production payloads above rather than assumed — level 9 buys 3.5% smaller
+# bodies for 118% more CPU, and the worst case is the one that matters:
+# /api/calibration costs 3.99 ms at L6 versus 9.73 ms at L9 for 3,325 bytes.
+# On a 2-worker dyno that CPU is contended; the bytes are not worth it.
+#
+# `minimum_size=1000`: below ~1 MTU a saved byte does not save a round trip, and
+# #1636 explicitly asked that the ~844 B scheduled-game payloads stay raw.
+# Starlette's own default (500) would have compressed them.
+#
+# Starlette's GZipMiddleware already excludes `text/event-stream`, skips bodies
+# that arrive with a `Content-Encoding` set, skips `http.response.pathsend`, and
+# adds `Vary: Accept-Encoding` on BOTH the gzip and the identity path. The two
+# StreamingResponse call sites in the tree (`routes/admin_judgments.py`) are CSV
+# attachment downloads, not SSE, and stream through it correctly.
+# ---------------------------------------------------------------------------
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+RESPONSE_GZIP_MINIMUM_SIZE = 1000
+RESPONSE_GZIP_COMPRESSLEVEL = 6
+
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=RESPONSE_GZIP_MINIMUM_SIZE,
+    compresslevel=RESPONSE_GZIP_COMPRESSLEVEL,
+)
+
+
+# ---------------------------------------------------------------------------
 # Rate limiting (limits library + Redis)
 # ---------------------------------------------------------------------------
 from app.utils.rate_limit import RateLimitMiddleware
