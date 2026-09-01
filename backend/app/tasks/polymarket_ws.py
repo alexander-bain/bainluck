@@ -163,6 +163,8 @@ async def _run_polymarket_ws_consumer():
     asset_to_market: dict[str, int] = {}   # asset_id → market_id
     condition_to_market: dict[str, int] = {}  # condition_id → market_id
 
+    tokens_by_market: dict[int, list[str]] = {}
+
     async with get_task_session() as session:
         market_result = await session.execute(
             select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
@@ -185,8 +187,8 @@ async def _run_polymarket_ws_consumer():
             for token in tokens:
                 asset_ids.append(str(token))
                 asset_to_market[str(token)] = mid
+            tokens_by_market[mid] = [str(t) for t in tokens]
 
-        # Map asset_ids to outcomes via order (first token = yes, second = no)
         outcome_result = await session.execute(
             select(FuturesOutcome.id, FuturesOutcome.market_id, FuturesOutcome.external_id)
             .where(FuturesOutcome.market_id.in_(list(market_ids)))
@@ -196,17 +198,46 @@ async def _run_polymarket_ws_consumer():
         for oid, mid, ext in outcome_result.all():
             outcomes_by_market.setdefault(mid, []).append((oid, ext or ""))
 
+    # Q489 — WHICH outcome an asset id belongs to. Both CLOB tokens of a binary
+    # (`clobTokenIds == [yesToken, noToken]`) map to the same FuturesMarket, and
+    # the price handlers used to resolve every tick to `outcomes[0]` — the
+    # Over/Yes leg — because this map was declared and never filled. A No-token
+    # `best_bid_ask` therefore wrote P(No) into the Yes outcome, and since both
+    # legs stream continuously the rendered number would oscillate between p and
+    # 1-p on every tick. That is strictly worse than a stale price: a stale card
+    # is wrong once, an inverted card is wrong at random.
+    #
+    # The pairing is positional and both sides are already ordered the same way:
+    # Gamma serves `[yes, no]`, and the ingest inserts the Over/Yes outcome
+    # before the Under/No one (`polymarket.py`, the sub-market loop), so ordering
+    # by `FuturesOutcome.id` reproduces the token order. `zip` is deliberate — a
+    # market whose outcome count disagrees with its token count maps only the
+    # pairs it can prove and leaves the rest unmapped, so a shape we did not
+    # anticipate drops ticks instead of writing them to the wrong leg.
+    for mid, mtokens in tokens_by_market.items():
+        for token, (oid, _ext) in zip(mtokens, outcomes_by_market.get(mid, [])):
+            asset_to_outcome[token] = oid
+
+    unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
+
     if not asset_ids:
         logger.info("Polymarket WS: no asset IDs found in market_metadata")
         return {"status": "no_asset_ids"}
 
     logger.info(
-        "Polymarket WS: %d asset IDs (%d markets)",
+        "Polymarket WS: %d asset IDs (%d markets), %d mapped to an outcome, "
+        "%d unmapped (ticks dropped rather than mis-attributed)",
         len(asset_ids), len(market_ids),
+        len(asset_to_outcome), len(unmapped_assets),
     )
 
     stats = {
         "assets_subscribed": len(asset_ids),
+        # Q489: the number that says whether a tick can land on the right leg.
+        # `assets_subscribed` counts what we listen to; this counts what we can
+        # actually attribute, and the gap between them is the silent-loss bound.
+        "assets_mapped": len(asset_to_outcome),
+        "assets_unmapped": len(unmapped_assets),
         "price_updates": 0,
         "trade_updates": 0,
         "resolutions": 0,
@@ -294,12 +325,12 @@ async def _run_polymarket_ws_consumer():
         if prob <= 0 or prob >= 1:
             return
 
-        # Find the outcome for this asset_id
-        outcomes = outcomes_by_market.get(market_id, [])
-        if not outcomes:
+        # Q489: the outcome this ASSET is the book for — not "the market's first
+        # outcome". `prob` here is the midpoint of THIS token's own book, so on
+        # the No token it is P(No), which belongs on the No leg and nowhere else.
+        outcome_id = asset_to_outcome.get(asset_id)
+        if outcome_id is None:
             return
-        # First outcome is typically the "Yes" side
-        outcome_id = outcomes[0][0]
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
@@ -321,10 +352,11 @@ async def _run_polymarket_ws_consumer():
         if prob <= 0 or prob >= 1:
             return
 
-        outcomes = outcomes_by_market.get(market_id, [])
-        if not outcomes:
+        # Q489: same contract as `handle_price` — a `last_trade_price` is a trade
+        # in THIS token, so it grades THIS token's leg.
+        outcome_id = asset_to_outcome.get(asset_id)
+        if outcome_id is None:
             return
-        outcome_id = outcomes[0][0]
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
