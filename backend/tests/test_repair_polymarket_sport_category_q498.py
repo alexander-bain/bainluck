@@ -36,24 +36,63 @@ AGAINST.** Q497 r1's lesson was that a bound installed over the channel it
 bounds is not yet a bound; this is one level along again — the bound existed, it
 just was not ours, and no test of ours could see it move.
 
+🔴 ROUND TWO — CERT-674 CAME BACK **BLOCK**, AND IT WAS RIGHT
+=============================================================
+
+Round one drew the obvious conclusion from all of the above and CAPPED the
+invalidate at 0.5s with ``asyncio.wait_for``, arguing the cancellation was safe
+because SQLAlchemy's ``_terminate_handled_exceptions()`` names ``CancelledError``
+and force-closes the driver before re-raising.
+
+The driver half of that argument is true. It is not the half that matters. The
+certifier reproduced the real thing against an actual ``AsyncSession`` and
+``QueuePool``: the helper returned in 1.012s, asyncpg's terminate ran — and
+``pool.checkedout()`` was **1 before, 1 after, and still 1** after a
+dependency-equivalent ``commit()`` + ``close()``. Cancellation unwinds SQLAlchemy
+between the driver terminate and the point where ``_ConnectionRecord`` is cleared
+and ``_ConnectionFairy`` checks back in, and nothing later repairs it. Every
+failure cycle permanently costs one of the 20 app pool slots — pool starvation,
+which is *exactly* the failure CERT-670 widened this rail's bounds to prevent,
+re-entered through the cleanup meant to protect against it.
+
+🆕 **CANCELLING AN AWAIT DOES NOT ROLL BACK THE BOOKKEEPING IT WAS IN THE MIDDLE
+OF.** "The resource is released either way" is a claim about the resource, never
+about the ledger that tracks it.
+
+🆕 **AND: A FAKE THAT IS MORE HOSTILE THAN REALITY ARGUES FOR A FIX THE REAL
+SYSTEM DOES NOT NEED.** Round one's ``_CleanupWedged`` had the invalidate hang
+*forever*, which made a cap look necessary. A real ``session.invalidate()``
+cannot hang forever — the dialect's own ``close(timeout=2)`` bounds it. The fake
+was the argument for the defect.
+
+So the cleanup is now PAID FOR rather than interrupted: ``INVALIDATE_BUDGET_
+SECONDS`` stopped being a timeout and became an accounted bill, sized from
+SQLAlchemy's ceiling, and the reserves that charge it grew to fit.
+
 WHAT EACH GUARD HAS TO BE SHAPED LIKE TO BE WORTH ANYTHING
 ==========================================================
 
 * The cleanup's cost is invisible from a passing run — it only elapses when the
   rollback has ALREADY failed — so the headline guard is BEHAVIOURAL against a
-  session whose rollback and invalidate both hang forever, timed against the
-  reserve that pays for them. Arithmetic alone would pass on a rail that never
-  calls ``wait_for`` at all.
-* Both directions of the cleanup are asserted. "The invalidate is bounded"
+  session whose rollback hangs and whose invalidate is slow but self-limiting,
+  timed against the reserve that pays for it. Arithmetic alone proves nothing
+  about what runs.
+* That guard asserts the invalidate **COMPLETED**, not merely that it was called.
+  Timing alone passed on the round-one code that leaked a slot — cancelling a
+  cleanup early is a very effective way to make it fast. "It finished in time"
+  says nothing about whether it finished. The pool-slot leak itself is invisible
+  to every fake here (it needs a real ``QueuePool``), so completion is the
+  strongest observable this file can carry, and the AST guard covers the shape.
+* Both directions of the cleanup are asserted. "The invalidate is accounted for"
   passes on a rail that deleted the invalidate; "the invalidate happens" passes
-  on a rail that never bounds it. The invalidate is load-bearing (``get_db_rw``
+  on a rail that cancels it. The invalidate is load-bearing (``get_db_rw``
   commits after the handler returns, so a wedged connection turns the paused
-  response back into the bare 500 it replaces) and so is the bound — neither may
-  be traded for the other.
-* The reason the constant is 0.5 lives in SQLAlchemy's source, so the guard that
-  protects it READS SQLAlchemy's source rather than restating ~2.0 as a literal.
-  A dialect upgrade that changed that number would otherwise silently invalidate
-  the arithmetic here with nothing of ours able to notice.
+  response back into the bare 500 it replaces) — neither may be traded away.
+* The reason the constant is 2.0 lives in SQLAlchemy's source, so the guard that
+  protects it READS SQLAlchemy's source rather than restating ~2.0 as a literal —
+  and now asserts our number **covers** that ceiling rather than undercutting it.
+  A dialect upgrade that raised it would otherwise silently make every reserve
+  downstream too small, with nothing of ours able to notice.
 * The module-wide AST form for the invalidate, matching the rollback guard next
   door: the point is to catch the NEXT failure arm someone writes, not to
   re-assert the one line that was fixed.
@@ -127,25 +166,48 @@ def test_the_reserve_covers_the_write_and_the_WHOLE_cleanup_with_room_left():
     )
 
 
-def test_bounding_the_cleanup_did_not_cost_the_working_loop_its_budget():
-    """The fix is paid for by the terminal count, not by the drain.
+def test_paying_for_the_cleanup_did_not_cost_the_working_loop_its_budget():
+    """The drain still drains as much as before, and the wall still fits.
 
-    Raising the non-count slice while leaving ``POST_LOOP_RESERVE_SECONDS`` alone
-    is what keeps that true, so it is asserted rather than described: if a later
-    change pays for a cleanup step out of the total reserve instead, every
-    healthy call quietly drains fewer events and no other guard here notices.
+    🔴 CERT-674 CHANGED THIS GUARD'S PREMISE, so the old version of it would now
+    be a lie. Round one could assert that ``POST_LOOP_RESERVE_SECONDS`` was
+    UNCHANGED, because capping the invalidate kept the whole cost inside the
+    non-count slice. Paying the invalidate's real price does not fit there, so
+    the total reserve had to move too — and a guard still asserting "unchanged"
+    would simply fail, while a guard quietly deleted would hide the trade.
+
+    What actually has to hold is narrower and is what is asserted here:
+
+    * the terminal count keeps a real slice (the non-count reserve has not eaten
+      the whole thing) — it is degradable, not deletable;
+    * ``DEADLINE_SECONDS`` is what decides how many events a healthy call drains,
+      and nothing in this repair touches it;
+    * the worst case still fits under the router wall, which is the invariant
+      separating "a partial answer WITH its cursor" from "H12 with no body".
     """
     assert (
         rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS < rail.POST_LOOP_RESERVE_SECONDS
     ), "the non-count slice has swallowed the whole post-loop reserve"
+
+    count_slice = (
+        rail.POST_LOOP_RESERVE_SECONDS - rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS
+    )
+    assert count_slice >= 1.0, (
+        f"the terminal count is down to {count_slice}s. It is explicitly "
+        "degradable — it reports itself unmeasured rather than reporting zero — "
+        "but squeezing it to nothing means it can never once succeed, which is a "
+        "different thing from degrading"
+    )
+
     assert rail.budget_headroom_seconds() > 0, (
         "the rail's own worst case no longer fits under the router wall: "
-        f"{rail.budget_headroom_seconds()}s of headroom"
+        f"{rail.budget_headroom_seconds()}s of headroom. Paying for the cleanup "
+        "has to come out of the reserve, not out of the wall."
     )
 
 
 # ---------------------------------------------------------------------------
-# Why 0.5 — read off SQLAlchemy, never restated as a literal
+# Why 2.0 — read off SQLAlchemy, never restated as a literal
 # ---------------------------------------------------------------------------
 
 
@@ -181,25 +243,119 @@ def _graceful_close_timeout_in_sqlalchemy() -> float:
     )
 
 
-def test_the_invalidate_bound_is_tighter_than_the_close_it_has_to_interrupt():
-    """A bound looser than the thing it bounds is a decoration.
+def test_the_invalidate_budget_COVERS_the_close_it_must_not_interrupt():
+    """CERT-674 inverted this guard, and the inversion is the whole repair.
 
-    ``session.invalidate()`` reaches a graceful ``close(timeout=N)`` inside
-    SQLAlchemy's dialect. If this rail's own bound were >= N, the wait would
-    always end on SQLAlchemy's terms and the constant here would buy nothing
-    while reading as though it did.
+    Round one asserted ``INVALIDATE_BUDGET_SECONDS < ceiling`` — that the rail's
+    bound was TIGHTER than SQLAlchemy's graceful close, so it would actually fire.
+    It fired, and firing is what broke it: the cancellation unwinds SQLAlchemy
+    between asyncpg's terminate and the pool check-in, so the connection dies with
+    its pool slot still checked out and 20 failures starve the app.
 
-    N is read out of SQLAlchemy's source rather than written here as ~2.0,
-    because the entire point of owning this bound is that N is not ours to
-    depend on — and a version bump that changes it should fail this, loudly,
-    instead of silently re-breaking the reserve arithmetic.
+    So the constant stopped being a bound and became a bill, and the guard has to
+    assert the opposite thing: that the number we CHARGE covers the cost we will
+    actually incur. Under-charging here does not leak a slot — it silently
+    re-opens the reserve over-commitment CERT-673 closed, which arrives as the
+    H12-with-no-body instead.
+
+    N is still read out of SQLAlchemy's source rather than written here as ~2.0,
+    for the same reason as before and one new one: this rail now DEPENDS on that
+    number instead of racing it, so a version bump that raises it must fail here
+    loudly rather than quietly making every reserve downstream too small.
     """
     ceiling = _graceful_close_timeout_in_sqlalchemy()
-    assert rail.INVALIDATE_BUDGET_SECONDS < ceiling, (
-        f"the rail bounds its invalidate at {rail.INVALIDATE_BUDGET_SECONDS}s but "
-        f"SQLAlchemy's graceful close already ends at {ceiling}s, so the rail's "
-        "bound never fires and the cleanup still costs whatever the dialect says"
+    assert rail.INVALIDATE_BUDGET_SECONDS >= ceiling, (
+        f"the rail budgets {rail.INVALIDATE_BUDGET_SECONDS}s for an invalidate whose "
+        f"graceful close alone can take {ceiling}s. Do NOT fix this by bounding the "
+        "invalidate — that is CERT-674's pool-slot leak. Raise this constant and the "
+        "reserves that charge it."
     )
+
+
+def test_the_invalidate_is_never_wrapped_in_a_cancelling_wait():
+    """The defect CERT-674 blocked, guarded at the shape that caused it.
+
+    A pool-slot leak is invisible to every fake session in this file — the
+    certifier needed a real ``AsyncSession``/``QueuePool`` to see
+    ``pool.checkedout()`` stick at 1 — so the guard that can run here has to
+    assert the *cause* rather than the symptom: no ``invalidate()`` call in this
+    rail sits inside an ``asyncio.wait_for``.
+
+    Deliberately an AST walk over the real module and not a substring search: a
+    grep for "wait_for" would go green the moment someone reformatted the call
+    across two lines, and this has to survive being re-broken by a well-meaning
+    edit that "just adds a timeout for safety".
+
+    BOTH cancellation forms are rejected, and the second one is the reason this
+    guard is not just the first one. ``asyncio.wait_for(session.invalidate(), t)``
+    is the shape round one used, but ``async with asyncio.timeout(t):`` cancels
+    the body in exactly the same way and would sail past a guard that only knew
+    about ``wait_for`` — a mutant that evades the guard while reproducing the
+    defect is the one worth writing the guard against.
+    """
+    tree = ast.parse(inspect.getsource(rail))
+
+    # `async with asyncio.timeout(...)` / `asyncio.timeout_at(...)` around an
+    # invalidate cancels it just as `wait_for` does.
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        guards_a_timeout = any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Attribute)
+            and item.context_expr.func.attr in {"timeout", "timeout_at"}
+            for item in node.items
+        )
+        if not guards_a_timeout:
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "invalidate"
+            ):
+                raise AssertionError(
+                    f"`session.invalidate()` at line {inner.lineno} is inside an "
+                    "`asyncio.timeout()` block. That cancels it exactly as "
+                    "`wait_for` does, and CERT-674's pool-slot leak is a property "
+                    "of the CANCELLATION, not of which API delivered it."
+                )
+
+    invalidates = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "invalidate"
+    ]
+    assert invalidates, (
+        "no `invalidate()` call found in the rail at all — the cleanup's second "
+        "step has been removed or renamed, so this guard is no longer reading "
+        "the thing it was written to protect"
+    )
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "wait_for"
+        ):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "invalidate"
+            ):
+                raise AssertionError(
+                    "`session.invalidate()` is wrapped in `asyncio.wait_for` again. "
+                    "CERT-674 reproduced this against a real QueuePool: the driver "
+                    "terminates but `pool.checkedout()` stays at 1 forever, because "
+                    "cancellation unwinds SQLAlchemy before `_ConnectionFairy` checks "
+                    "the record back in. Each failure cycle leaks one of 20 slots. "
+                    "The cost is ACCOUNTED for in POST_LOOP_NON_COUNT_RESERVE_SECONDS; "
+                    "it must not be interrupted."
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -207,17 +363,50 @@ def test_the_invalidate_bound_is_tighter_than_the_close_it_has_to_interrupt():
 # ---------------------------------------------------------------------------
 
 
+#: How long the fake invalidate takes, and the number is load-bearing in a way
+#: that is easy to get wrong — I got it wrong once on the way here.
+#:
+#: It must EXCEED the 0.5s bound Q498 round one put on the invalidate, so that
+#: re-introducing that bound cancels this fake mid-flight and
+#: `invalidate_completed` stays False. At 0.6 it does. **A fake that finishes
+#: faster than the bound under test cannot observe that bound at all** — the
+#: first version of this constant was small enough that the completion assertion
+#: passed against the very defect it was written for, which is the same vacuous
+#: -guard trap this file's round-one battery caught in `hasattr`.
+#:
+#: It is deliberately NOT raised to ~2.0 to also catch a bound set at the
+#: ACCOUNTED cost. That would add two seconds to the suite to cover a case the
+#: AST guard above already rejects outright, and a bound at the accounted cost is
+#: not the historical defect — the tight one is.
+_SLOW_INVALIDATE_SECONDS = 0.6
+
+
 class _CleanupWedged(_Session):
-    """Both halves of the cleanup hang forever.
+    """The rollback hangs forever; the invalidate is SLOW BUT SELF-LIMITING.
 
     The compounded case, deliberately: a rollback that does not land is the ONLY
     way the invalidate is reached, so a fake whose rollback succeeds could never
-    exercise the bound at all.
+    exercise this path at all.
+
+    🔴 CERT-674 CHANGED WHAT THIS FAKE MODELS, and the change is load-bearing.
+    Round one had the invalidate hang forever too, which made a bound look
+    necessary — but a real ``session.invalidate()`` CANNOT hang forever: it
+    reaches SQLAlchemy's graceful ``close(timeout=2)``, so the dialect bounds it
+    for us at ~2.0s. Modelling it as unbounded justified the 0.5s cap, and the cap
+    is what leaked the pool slot. A fake that is more hostile than reality is not
+    a stricter test; it is a test of a different system, and it argues for fixes
+    the real one does not need.
+
+    ``invalidate_completed`` is the observable that matters. It is set at the END,
+    so a cancelled invalidate leaves it False — which is the only way a fake in
+    this file can see CERT-674's defect at all (the pool-slot leak itself needs a
+    real ``QueuePool``).
     """
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.invalidates = 0
+        self.invalidate_completed = False
 
     async def rollback(self):
         self.rollbacks += 1
@@ -225,7 +414,8 @@ class _CleanupWedged(_Session):
 
     async def invalidate(self):
         self.invalidates += 1
-        await asyncio.Event().wait()  # never returns
+        await asyncio.sleep(_SLOW_INVALIDATE_SECONDS)
+        self.invalidate_completed = True
 
 
 class _RollbackFailsFast(_Session):
@@ -275,6 +465,12 @@ async def test_a_cleanup_that_never_lands_still_fits_inside_its_reserve():
     ``cleanup_budget_seconds()`` because the reserve is the thing that must not
     be exceeded; asserting the tighter number would make the guard fail on
     ordinary scheduler jitter while telling us nothing more about the defect.
+
+    🔴 CERT-674 added the second assertion, and it is the one with teeth. The
+    timing assertion alone passed for the 0.5s-capped version that leaked a pool
+    slot on every failure — it would, because cancelling the cleanup early is a
+    very effective way to make it fast. "It finished in time" says nothing about
+    whether it finished.
     """
     s = _CleanupWedged()
 
@@ -283,16 +479,23 @@ async def test_a_cleanup_that_never_lands_still_fits_inside_its_reserve():
         await asyncio.wait_for(rail._safe_rollback(s), timeout=10.0)
     except asyncio.TimeoutError:  # pragma: no cover — the failure this guards
         raise AssertionError(
-            "_safe_rollback never returned while both cleanup steps hung. "
-            "Nothing in the rail can end that wait, so on production the Heroku "
-            "router ends it instead: H12, no body, no cursor."
+            "_safe_rollback never returned while the rollback hung. Nothing in "
+            "the rail can end that wait, so on production the Heroku router ends "
+            "it instead: H12, no body, no cursor."
         ) from None
     elapsed = _time.monotonic() - began
 
     assert s.rollbacks == 1, "the rollback was not even attempted"
     assert s.invalidates == 1, (
         "the invalidate was never reached, so this guard proved nothing about "
-        "the bound on it — the rollback must fail first for it to run at all"
+        "the cleanup — the rollback must fail first for it to run at all"
+    )
+    assert s.invalidate_completed, (
+        "the invalidate was STARTED but never finished, which means something "
+        "cancelled it — CERT-674's pool-slot leak. The connection is discarded "
+        "either way, but SQLAlchemy never checks its record back into the pool, "
+        "so each failure cycle permanently costs one of 20 slots. The invalidate "
+        "must be allowed to complete and PAID FOR in the reserve, not interrupted."
     )
     assert elapsed < rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
         f"the cleanup took {elapsed:.2f}s, which does not fit the "
@@ -370,55 +573,16 @@ async def test_a_rollback_that_lands_never_reaches_the_invalidate():
 # ---------------------------------------------------------------------------
 
 
-def test_every_invalidate_in_this_rail_is_a_bounded_one():
-    """Same shape as the rollback guard next door, for the same reason.
-
-    A bare ``session.invalidate()`` is a graceful network close to a database
-    that is not answering. The next person writing a failure arm will reach for
-    it exactly as this rail did, so the guard is module-wide rather than pinned
-    to the one call that was fixed.
-    """
-    tree = ast.parse(inspect.getsource(rail))
-
-    bare: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Attribute) and node.func.attr == "invalidate"):
-            continue
-        # Bounded == the invalidate is an ARGUMENT to `asyncio.wait_for`, so
-        # walking wait_for's own subtree is what "wrapped" has to mean here.
-        # Checking the enclosing line, or that `wait_for` appears somewhere in
-        # the function, would be satisfied by a sibling call that is bounded
-        # while this one is not.
-        bare.append(f"line {node.lineno}")
-
-    wrapped: set[str] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "wait_for"
-        ):
-            for inner in ast.walk(node):
-                if (
-                    isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Attribute)
-                    and inner.func.attr == "invalidate"
-                ):
-                    wrapped.add(f"line {inner.lineno}")
-
-    assert bare, (
-        "no `invalidate()` call remains in this rail. It is load-bearing — "
-        "without it a wedged connection turns the paused response into a bare "
-        "500 — so its disappearance is a regression, not a simplification"
-    )
-    offenders = [site for site in bare if site not in wrapped]
-    assert not offenders, (
-        "these invalidates are unbounded, and an invalidate is a GRACEFUL close "
-        "under the hood — a network round trip to the database that just stopped "
-        f"answering: {offenders}"
-    )
+# 🔴 REMOVED BY CERT-674: `test_every_invalidate_in_this_rail_is_a_bounded_one`.
+# It asserted that every `invalidate()` in this rail IS wrapped in
+# `asyncio.wait_for` — the precise shape that leaks a pool slot. Its replacement
+# is `test_the_invalidate_is_never_wrapped_in_a_cancelling_wait` above, which
+# asserts the inverse and carries this one's "the invalidate still exists"
+# assertion too, so nothing is lost by deleting rather than weakening it.
+#
+# Recorded rather than silently dropped: a guard that has to be INVERTED is the
+# most interesting artefact a blocked round produces. It is the point where the
+# previous round's model of the system was wrong, written down and executable.
 
 
 def test_the_response_publishes_the_cleanup_budget_it_now_enforces():
