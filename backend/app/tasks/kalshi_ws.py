@@ -29,6 +29,13 @@ SUBSCRIPTION_REFRESH_SECONDS = int(
     os.getenv("WS_SUBSCRIPTION_REFRESH_SECONDS", "600")
 )
 
+#: Q491 — how long buffered prices wait before being written. Both sockets share
+#: it, as they share the recycle timer above, so the two cannot drift to
+#: different write cadences on the same dyno. Named rather than inlined because
+#: it is also the RETRY interval: a flush that fails re-queues its batch, and
+#: this is how long the price waits for the next attempt.
+PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
+
 
 async def _run_kalshi_ws_consumer():
     """Main WebSocket consumer loop.
@@ -127,6 +134,9 @@ async def _run_kalshi_ws_consumer():
         "flushes": 0,
         "settlements": 0,
         "errors": 0,
+        # Q491: prices a failed flush put BACK on the buffer instead of dropping.
+        # `errors` alone cannot distinguish a retried batch from a lost one.
+        "requeued": 0,
     }
 
     # -- Buffered price updates --
@@ -174,7 +184,24 @@ async def _run_kalshi_ws_consumer():
             stats["price_updates"] += len(batch)
         except Exception:
             stats["errors"] += 1
-            logger.exception("Kalshi WS: flush error (%d updates)", len(batch))
+            # Q491 — same defect as the Polymarket socket, same fix. The batch
+            # is drained from `price_buffer` before the write, so a failed write
+            # used to discard those prices; the socket only refills an outcome
+            # when that market ticks again, so one transient error left the card
+            # on its old number with a stale `last_updated` (#2024) until the
+            # next tick. Put the batch back for the next 2s flush.
+            #
+            # `setdefault`, not `update`: `handle_ticker` may have buffered a
+            # FRESHER price for the same outcome while the failed write was in
+            # flight, and that newer value wins. Bounded by construction — one
+            # entry per subscribed outcome, whatever the outage length.
+            async with buffer_lock:
+                for outcome_id, prob in batch.items():
+                    price_buffer.setdefault(outcome_id, prob)
+            stats["requeued"] += len(batch)
+            logger.exception(
+                "Kalshi WS: flush error (%d updates requeued)", len(batch)
+            )
             return
 
         # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
@@ -297,7 +324,7 @@ async def _run_kalshi_ws_consumer():
     # -- Periodic flush task --
     async def flush_loop():
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(PRICE_FLUSH_SECONDS)
             await flush_prices()
 
     # -- Periodic stats logging --

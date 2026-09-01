@@ -14,7 +14,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from app.tasks.kalshi_ws import SUBSCRIPTION_REFRESH_SECONDS
+from app.tasks.kalshi_ws import PRICE_FLUSH_SECONDS, SUBSCRIPTION_REFRESH_SECONDS
 from app.tasks.polymarket import _poly_book_is_untradeable
 
 logger = logging.getLogger(__name__)
@@ -277,6 +277,9 @@ async def _run_polymarket_ws_consumer():
         "trade_updates": 0,
         "resolutions": 0,
         "errors": 0,
+        # Q491: prices a failed flush put BACK on the buffer instead of dropping.
+        # `errors` alone cannot distinguish a retried batch from a lost one.
+        "requeued": 0,
     }
 
     # Buffered price updates
@@ -319,7 +322,25 @@ async def _run_polymarket_ws_consumer():
             stats["price_updates"] += len(batch)
         except Exception:
             stats["errors"] += 1
-            logger.exception("Polymarket WS: flush error")
+            # Q491 — THE SHIP. The batch was drained from `price_buffer` before
+            # the write, so a failed write used to DISCARD those prices outright.
+            # The socket only refills an outcome when that market ticks again,
+            # and 86.7% of open Polymarket markets never tick at all — so one
+            # transient error froze a card at its old number indefinitely, with
+            # no `last_updated` either (#2024). Put the batch back so the next
+            # 2s flush retries it.
+            #
+            # `setdefault`, not `update`: `handle_price` may have buffered a
+            # FRESHER price for the same outcome while the failed write was in
+            # flight, and that newer value is the truth — re-queuing must never
+            # resurrect a stale price over it. Bounded by construction: the
+            # buffer is keyed by outcome_id over a fixed slate, so a long
+            # outage parks at most one entry per subscribed outcome.
+            async with buffer_lock:
+                for outcome_id, prob in batch.items():
+                    price_buffer.setdefault(outcome_id, prob)
+            stats["requeued"] += len(batch)
+            logger.exception("Polymarket WS: flush error (%d requeued)", len(batch))
             return
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
@@ -440,7 +461,7 @@ async def _run_polymarket_ws_consumer():
 
     async def flush_loop():
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(PRICE_FLUSH_SECONDS)
             await flush_prices()
 
     async def stats_loop():
