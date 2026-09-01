@@ -4072,6 +4072,10 @@ def _top_outcomes_for_trace(
                     if outcome.opening_probability is not None
                     else None
                 ),
+                # Q502: the staleness gate measures the age of the price, not the row.
+                # getattr: a duck-typed outcome without the column must not raise into
+                # the per-market try/except and make the card silently vanish.
+                "last_updated": getattr(outcome, "last_updated", None),
             }
         )
 
@@ -4171,7 +4175,22 @@ def _market_runtime_filter_trace(
 
     days_stale = None
     movement_evidence_status = "missing" if not has_any_movement else "unknown"
-    updated_at = _utc(market.updated_at)
+    # Q502: freshness is the age of the PRICES THE CARD PRINTS, not the age of the
+    # market row. The pollers bump `FuturesMarket.updated_at` on every pass — and so
+    # do hook generation, volume refresh and tier writes — so the row certifies
+    # "fresh" for a market whose numbers have not moved in months. The bridesmaids
+    # card was the proof: row written the same afternoon, every price frozen since
+    # 2026-07-04, and not one staleness blocker fired. Prefer the newest outcome
+    # write and fall back to the row only when no outcome carries a timestamp.
+    price_updated_at = max(
+        (
+            _utc(ts)
+            for ts in (o.get("last_updated") for o in outcomes_data)
+            if isinstance(ts, datetime)
+        ),
+        default=None,
+    )
+    updated_at = price_updated_at or _utc(market.updated_at)
     if updated_at:
         days_stale = (now - updated_at).total_seconds() / 86400
         if has_any_movement:
@@ -4279,6 +4298,18 @@ def _market_runtime_filter_trace(
             "movement_evidence_status": movement_evidence_status,
             "movement_evidence_updated_at": (
                 updated_at.isoformat() if updated_at else None
+            ),
+            # Q502: both clocks, so a stale card's diagnosis says WHICH one is old.
+            # `price_updated_at` is what `days_stale` is measured on; `row_updated_at`
+            # is the timestamp that used to be, and a wide gap between them is the
+            # signature of a market the upstream has stopped pricing.
+            "price_updated_at": (
+                price_updated_at.isoformat() if price_updated_at else None
+            ),
+            "row_updated_at": (
+                _utc(market.updated_at).isoformat()
+                if _utc(market.updated_at)
+                else None
             ),
             "max_recent_movement": round(max_recent_movement, 4),
             "soft_settled_binary": soft_settled,
@@ -6397,6 +6428,10 @@ async def _score_sports_mode_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # Q502: the staleness gate measures how old the PRICE is, not how old
+            # the market row is. Same rule as the two lines above — omitting this
+            # lazy-loads per outcome and crashes this async route.
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -6465,6 +6500,8 @@ async def _score_sports_mode_futures(
                     "opening_probability": (
                         float(o.opening_probability) if o.opening_probability else None
                     ),
+                    # Q502: the staleness gate measures the age of the price, not the row.
+                    "last_updated": getattr(o, "last_updated", None),
                 }
             )
 
@@ -7403,6 +7440,10 @@ async def _score_futures(
             # crashes the async route.
             FuturesOutcome.current_yes_bid,
             FuturesOutcome.current_yes_ask,
+            # Q502: the staleness gate measures how old the PRICE is, not how old
+            # the market row is. Same rule as the two lines above — omitting this
+            # lazy-loads per outcome and crashes this async route.
+            FuturesOutcome.last_updated,
         ),
         selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
     ]
@@ -7761,6 +7802,8 @@ async def _score_futures(
                         "opening_probability": (
                             float(o.opening_probability) if o.opening_probability else None
                         ),
+                        # Q502: the staleness gate measures the price age, not the row.
+                        "last_updated": getattr(o, "last_updated", None),
                     }
                 )
 

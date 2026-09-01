@@ -53,6 +53,7 @@ class _Outcome:
         opening=None,
         yes_bid=None,
         yes_ask=None,
+        last_updated=None,
     ):
         self.id = id
         self.name = name
@@ -67,6 +68,11 @@ class _Outcome:
         # = no order book, which is the pass-through case.
         self.current_yes_bid = yes_bid
         self.current_yes_ask = yes_ask
+        # Q502: the staleness gate clocks the PRICE, not the market row. Defaulting
+        # to NOW keeps these fixtures fresh (which is what they assert); leaving the
+        # attribute off entirely would let the gate fall back to `market.updated_at`
+        # and this file would stop exercising the real read.
+        self.last_updated = NOW if last_updated is None else last_updated
 
 
 class _Market:
@@ -120,6 +126,20 @@ class _Market:
             _Outcome(10 + id, "Kamala Harris", top_prob, change=0.12, opening=0.43),
             _Outcome(20 + id, "Donald Trump", 0.45, change=-0.12, opening=0.57),
         ]
+
+
+def age_market(market, delta):
+    """Age a market by ``delta`` on BOTH clocks the staleness gate can read.
+
+    Q502: staleness is measured on the newest price write, falling back to the
+    market row only when no outcome carries a timestamp. A fixture that ages only
+    ``updated_at`` therefore stops being stale — and any guard built on it would
+    quietly start asserting nothing. Age the prices with the row.
+    """
+    market.updated_at = NOW - delta
+    for outcome in market.outcomes:
+        outcome.last_updated = NOW - delta
+    return market
 
 
 class _CountingDB:

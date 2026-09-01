@@ -77,6 +77,7 @@ from tests.test_feed_broaden_pass_reuse import (  # noqa: E402
     _ids,
     _Market,
     _no_redis,
+    age_market,
 )
 
 # The strict windows Discover actually serves under.
@@ -89,7 +90,8 @@ STRICT_CONFIG: dict[str, float | bool] = {
 def _markets_with_a_stale_tail() -> list[_Market]:
     """Four fresh markets and two whose staleness lands BETWEEN the two windows.
 
-    ``updated_at = NOW - 4d`` with real 24h movement trips ``stale_movement_evidence``
+    A 4-day-old PRICE (Q502: the gate clocks the price, not the row) with real 24h
+    movement trips ``stale_movement_evidence``
     at the strict window (2 days) and clears it at the relaxed one (7 days). So the
     strict pool is 4 and the relaxed pool is 6 — the case where the two passes
     genuinely disagree, which is the only case where fusing them can go wrong.
@@ -104,7 +106,7 @@ def _markets_with_a_stale_tail() -> list[_Market]:
         m.name = name
         m.category = category
         m.llm_sport_category = category
-        m.updated_at = NOW - timedelta(days=4)
+        age_market(m, timedelta(days=4))
         stale.append(m)
     return fresh + stale
 
@@ -229,7 +231,7 @@ async def test_identity_holds_when_every_market_is_stale(monkeypatch):
     """Strict pool empty, relaxed pool full — the shape #1090 exists for."""
     markets = _markets_with_a_stale_tail()
     for m in markets:
-        m.updated_at = NOW - timedelta(days=4)
+        age_market(m, timedelta(days=4))
     legacy_primary, legacy_broadened = await _legacy_two_pass(monkeypatch, markets)
     fused_primary, fused_broadened = await _fused_one_pass(monkeypatch, markets)
     assert _ids(legacy_primary) == []
@@ -366,7 +368,7 @@ def test_eligible_strict_is_absent_unless_the_caller_asks():
 
 def test_eligible_strict_splits_a_market_the_two_windows_disagree_on():
     m = _Market(1)
-    m.updated_at = NOW - timedelta(days=4)
+    age_market(m, timedelta(days=4))
     result = _trace(
         m,
         stale_no_movement_days=7,
