@@ -579,3 +579,168 @@ class TestTheLoop:
         # the containment half of CAL-P081.
         assert db.completed == _CHUNKS - 1
         assert STAGED_UNIT_MAX_CANCELLATIONS == 2
+
+
+# =============================================================================
+# 5. THE UPGRADE — CAL-P167 (#1978), repairing CERT-637
+#
+# Everything above proves the fence widens WHEN THE RING IS ALREADY THERE. The
+# ring is never already there. Every durable ledger written before CAL-P163
+# deployed carries ``unit_costs`` and no ``unit_worst_history``, so the first
+# new-code beat reads ``unit_ms_worst = None``, falls back to the mean, and
+# reproduces the pin — and then banks only the cheap units that pin admitted,
+# which is not enough evidence to widen the second beat either.
+#
+# ``test_the_pin_reproduces_without_the_carried_max`` above is that state,
+# labelled "the control". CERT-637's finding is that the control IS the
+# rollout. These tests start from the legacy payload rather than from a
+# pre-seeded ``COMPLETED_WORST_RING``, because that ring cannot exist on the
+# first beat after deploy.
+# =============================================================================
+
+
+#: The durable row as it exists on production right now: a mean measured under
+#: the old bound, the level CAL-P067 carries, and no ring of any kind.
+LEGACY_PAYLOAD = {
+    "schema": cmb.PHASE_LEDGER_SCHEMA,
+    "task": cmb.MAIN_BUILD_TASK,
+    "history": {PHASE_FUTURES: [878_583]},
+    "floors": {},
+    "unit_costs": {
+        PHASE_FUTURES: {"unit_ms": CARRIED_MEAN_MS, "units_total": 10, "units_done": 5}
+    },
+}
+
+
+async def _worst_from_legacy(monkeypatch, payload=None):
+    """What the plan carries on the first beat after deploy."""
+    written = _durable(monkeypatch)
+    written["payload"] = dict(LEGACY_PAYLOAD if payload is None else payload)
+    _h, _f, unit_costs = await cmb.load_phase_measurements()
+    # Read it the way the plan does, so a malformed entry is a ``None`` here
+    # for the same reason it is a ``None`` there rather than a test-only crash.
+    plan = cmb.derive_plan({PHASE_FUTURES: [1000]}, unit_costs=unit_costs)
+    budget = plan.by_name(PHASE_FUTURES)
+    return written, budget.unit_ms_worst if budget else None
+
+
+class TestTheLegacyUpgrade:
+    async def test_the_legacy_row_has_no_ring_at_all(self, monkeypatch):
+        """The premise, asserted rather than assumed: this really is a payload
+        with a measured mean and no ``unit_worst_history`` key."""
+        assert cmb.UNIT_WORST_HISTORY_KEY not in LEGACY_PAYLOAD
+        assert LEGACY_PAYLOAD["unit_costs"][PHASE_FUTURES]["unit_ms"] > 0
+
+    async def test_the_seed_is_the_bound_the_legacy_code_was_running(self, monkeypatch):
+        """Not a chosen number. ``mean * STAGED_UNIT_OVERRUN_FACTOR`` is the
+        admission bound the old fence used, so it is the largest unit the legacy
+        regime could have completed — the honest ceiling on a worst case whose
+        real value that payload cannot recover."""
+        _written, worst = await _worst_from_legacy(monkeypatch)
+        assert worst == int(CARRIED_MEAN_MS * STAGED_UNIT_OVERRUN_FACTOR)
+
+    async def test_a_ledger_with_no_measured_mean_seeds_nothing(self, monkeypatch):
+        """Ruling 075: with nothing measured there is nothing to scale, and the
+        phase bound must stand. A fresh install must not inherit a fence."""
+        for costs in ({}, {PHASE_FUTURES: {"unit_ms": 0}}, {PHASE_FUTURES: "nonsense"}):
+            payload = dict(LEGACY_PAYLOAD, unit_costs=costs)
+            _written, worst = await _worst_from_legacy(monkeypatch, payload)
+            assert worst is None, costs
+
+    async def test_a_real_ring_is_never_overwritten_by_the_seed(self, monkeypatch):
+        """The seed fires on ABSENCE. A ledger that already carries observations
+        — including a collapsed beat's small ones — keeps them, or the upgrade
+        would be a permanent widening rather than a one-time one."""
+        payload = dict(LEGACY_PAYLOAD)
+        payload[cmb.UNIT_WORST_HISTORY_KEY] = {PHASE_FUTURES: [41_000]}
+        _written, worst = await _worst_from_legacy(monkeypatch, payload)
+        assert worst == 41_000
+
+    @pytest.mark.asyncio
+    async def test_beat_one_banks_the_expensive_units_from_the_legacy_payload(
+        self, monkeypatch, loop_env
+    ):
+        """The repair, on the state that actually exists at deploy.
+
+        Same specimen as ``test_the_pinned_beat_banks_its_expensive_units``, but
+        the worst case is not handed to the ledger — it is derived from the
+        legacy durable row by the upgrade path. Revert
+        ``_bootstrap_worst_history`` and this goes red with the production
+        shape: five banked, two cancelled.
+        """
+        _written, worst = await _worst_from_legacy(monkeypatch)
+        runner, db = loop_env(
+            costs=PINNED_COSTS, prior_unit_ms=CARRIED_MEAN_MS,
+            prior_worst_ms=worst, buckets=10,
+        )
+        await _run(runner, db)
+        assert db.cancelled == 0, "the two 300,000 ms units are no longer killed"
+        assert db.completed == _CHUNKS
+        assert not [k for k in runner.ledger.stages if k.startswith("staged:window_stop")]
+
+    @pytest.mark.asyncio
+    async def test_the_seeded_fence_still_refuses_the_runaway(
+        self, monkeypatch, loop_env
+    ):
+        """The containment half. The seed is derived from the legacy bound, so
+        it widens by a bounded factor — CAL-P081's 901,266 ms specimen is still
+        cancelled, and two of them still end the beat."""
+        _written, worst = await _worst_from_legacy(monkeypatch)
+        costs = [50_000, 55_000, RUNAWAY_MS] + [60_000] * 6
+        runner, db = loop_env(
+            costs=costs, prior_unit_ms=CARRIED_MEAN_MS,
+            prior_worst_ms=worst, buckets=10,
+        )
+        await _run(runner, db)
+        assert db.cancelled == 1
+        assert max(runner.armed) < RUNAWAY_MS / 2
+        assert db.completed == _CHUNKS - 1
+
+    async def test_beat_two_reads_a_real_observation_and_the_seed_never_recurs(
+        self, monkeypatch
+    ):
+        """The other half of CERT-637: the second beat must not re-pin, and the
+        seed must not be recomputed from a mean that the widened fence has since
+        raised — that would be a fence feeding itself.
+
+        Beat one banks a 300,000 ms unit. The save writes a ring, so the key
+        exists; beat two therefore reads a MEASURED worst and the upgrade path
+        is inert forever after.
+        """
+        written = _durable(monkeypatch)
+        written["payload"] = dict(LEGACY_PAYLOAD)
+
+        assert await cmb.save_phase_ledger(
+            _save_runner(completed=[60_000, EXPENSIVE_UNIT_MS], cancelled=[], banked=9)
+        ) == "ok"
+
+        ring = written["payload"][cmb.UNIT_WORST_HISTORY_KEY][PHASE_FUTURES]
+        assert ring == [int(CARRIED_MEAN_MS * STAGED_UNIT_OVERRUN_FACTOR), EXPENSIVE_UNIT_MS], (
+            "the seed is banked as an ordinary ring entry beside the real one"
+        )
+
+        _h, _f, unit_costs = await cmb.load_phase_measurements()
+        assert unit_costs[PHASE_FUTURES]["unit_ms_worst"] == EXPENSIVE_UNIT_MS
+
+        # And it is now driven by measurement: a beat whose mean has risen does
+        # not raise the seed, because the seed is never computed again.
+        assert await cmb.save_phase_ledger(
+            _save_runner(completed=[EXPENSIVE_UNIT_MS], cancelled=[], banked=9)
+        ) == "ok"
+        after = written["payload"][cmb.UNIT_WORST_HISTORY_KEY][PHASE_FUTURES]
+        assert after == ring + [EXPENSIVE_UNIT_MS]
+        assert after.count(int(CARRIED_MEAN_MS * STAGED_UNIT_OVERRUN_FACTOR)) == 1
+
+    async def test_the_seed_ages_out_of_the_window(self, monkeypatch):
+        """A floor for one day, not a permanent widening. After a full window of
+        real observations the seed is gone and the fence is measurement-only."""
+        written = _durable(monkeypatch)
+        written["payload"] = dict(LEGACY_PAYLOAD)
+        seed = int(CARRIED_MEAN_MS * STAGED_UNIT_OVERRUN_FACTOR)
+        for _ in range(UNIT_WORST_WINDOW):
+            assert await cmb.save_phase_ledger(
+                _save_runner(completed=[41_000], cancelled=[], banked=9)
+            ) == "ok"
+        ring = written["payload"][cmb.UNIT_WORST_HISTORY_KEY][PHASE_FUTURES]
+        assert len(ring) == UNIT_WORST_WINDOW
+        assert seed not in ring, "the seed ages out like any other entry"
