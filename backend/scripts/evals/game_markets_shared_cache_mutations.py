@@ -164,9 +164,23 @@ MUTANTS: list[tuple[str, str, pathlib.Path, str, str]] = [
         "M14",
         "no loop to refresh behind us, serve stale anyway — fail-OPEN",
         ROUTE,
-        """        # No running loop to refresh behind us — fall through and build, rather
+        # The comment alone is NOT an anchor: the serve-stale-and-refresh shape is
+        # copied verbatim across search_suggestions, game_markets and
+        # related_futures, so those two lines match the route THREE times and this
+        # mutant scored HARNESS rather than a verdict (#2391). The
+        # `_serve_stale_and_refresh` call above it is what names WHICH of the three
+        # tiers this mutant is aimed at, so the anchor starts there.
+        """        if _serve_stale_and_refresh(
+            f"game_markets:{event_id}", lambda: _rebuild_game_markets(event_id)
+        ):
+            return body
+        # No running loop to refresh behind us — fall through and build, rather
         # than serve stale with nothing coming to replace it.""",
-        "        return body",
+        """        if _serve_stale_and_refresh(
+            f"game_markets:{event_id}", lambda: _rebuild_game_markets(event_id)
+        ):
+            return body
+        return body""",
     ),
 ]
 

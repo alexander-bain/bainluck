@@ -500,7 +500,12 @@ def test_the_ambiguity_baseline_matches_the_tree_it_describes():
     """
     baseline = json.loads((EVALS / "ambiguous_needle_baseline.json").read_text())
     known = baseline["known_ambiguous"]
-    assert known, "an empty baseline should be DELETED, not kept as an empty list"
+    # #2391: the file STAYS even when the list is empty. An earlier version of
+    # this test said an empty baseline should be deleted, but the scan returns 2
+    # ("refusing to grade") when it cannot read the file — so deleting it does
+    # not retire the ratchet, it breaks the gate. Empty is the ratchet fully
+    # closed: with nothing excused, ANY ambiguity is new and fails.
+    assert isinstance(known, list), "known_ambiguous must be a list"
     assert len(known) == len(set(known)), "duplicate entries in the baseline"
     assert baseline["_issue"].startswith("#"), "the debt must name its issue"
     for entry in known:
@@ -514,10 +519,109 @@ def test_the_ambiguity_baseline_matches_the_tree_it_describes():
         cwd=str(EVALS.parents[1]),
     )
     assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    assert f"{len(known)} baselined ambiguous needle(s) remain" in result.stdout, (
-        "the scan and the baseline disagree about how many ambiguous needles "
-        f"exist. Baseline says {len(known)}.\n{result.stdout}"
+    remain = "baselined ambiguous needle(s) remain"
+    # Asserted in BOTH directions, so this stays a real check under either arm:
+    # a populated baseline must be echoed back with the SAME count, and an empty
+    # one must produce no remainder line at all. Checking only the populated case
+    # would pass vacuously the moment the list emptied.
+    if known:
+        assert f"{len(known)} {remain}" in result.stdout, (
+            "the scan and the baseline disagree about how many ambiguous needles "
+            f"exist. Baseline says {len(known)}.\n{result.stdout}"
+        )
+    else:
+        assert remain not in result.stdout, (
+            "the baseline is empty but the scan still reports a remainder — the "
+            f"two disagree about the tree.\n{result.stdout}"
+        )
+
+
+def _load_eval_module(stem: str):
+    """Import a harness from `scripts/evals` the way the scanner does.
+
+    Imported lazily inside each test rather than at module scope: a red-first
+    guard for a symbol that does not exist yet must fail on the SYMBOL, not on
+    a collection error that never reaches the assertion.
+    """
+    if str(EVALS) not in sys.path:
+        sys.path.insert(0, str(EVALS))
+    return __import__(stem)
+
+
+def test_a_harness_that_counts_in_one_function_is_graded_in_that_function():
+    """#2391 — the scan's denominator must be the harness's, not the whole file.
+
+    `search_tier_split_mutations` counts its anchors inside
+    `inspect.getsource(_fetch_futures_window)`. The scan counted them across all
+    of `app/routes/events.py`, found `M6-no-rearm` twice, and recorded it as a
+    mutant that could never run. It runs, and it is KILLED (8/8) — the second
+    match is in a function this harness never touches.
+
+    The two counts are asserted separately BECAUSE they differ. If the whole-file
+    count ever drops to 1 this guard has gone vacuous and should be re-pointed at
+    another needle rather than quietly kept.
+    """
+    harness = _load_eval_module("search_tier_split_mutations")
+    scope = harness.anchor_scope_text()
+    whole = (EVALS.parents[1] / "app" / "routes" / "events.py").read_text()
+    needle = next(m["needle"] for m in harness.MUTANTS if m["id"] == "M6-no-rearm")
+
+    assert scope.count(needle) == 1, (
+        "the anchor is not unique inside the function the harness mutates — "
+        "this mutant really would score HARNESS-FAIL"
     )
+    assert whole.count(needle) > 1, (
+        "the whole-file count no longer differs from the function count, so this "
+        "guard can no longer tell a right denominator from a wrong one"
+    )
+
+
+def test_a_declared_repeatable_target_is_not_graded_as_ambiguous():
+    """#2391 — a generated artifact's anchor repeats BY CONSTRUCTION.
+
+    `outcome_evidence_class_mutations` mutates `search_gold_probes.json`, where
+    `"split": "canary"` occurs once per probe. Mutating exactly one occurrence is
+    the edit it reproduces, and that harness has always said so. The scan graded
+    M1/M3/M4 as debt anyway because it asserted a contract instead of reading one.
+    """
+    scan = _load_eval_module("scan_mutation_residue")
+    pairs, _unknown = scan.harvest()
+    registry_pairs = [
+        p
+        for p in pairs
+        if p.harness == "outcome_evidence_class_mutations"
+        and p.mid in {"M1", "M3", "M4"}
+    ]
+    assert len(registry_pairs) == 3, (
+        f"expected the three registry mutants, found {len(registry_pairs)}"
+    )
+    assert all(p.may_repeat for p in registry_pairs), (
+        "the scan did not read ANCHOR_MAY_REPEAT_IN, so it will report these as "
+        "ambiguous debt again"
+    )
+    # The control: the exemption only means something if they DO repeat.
+    probe = registry_pairs[0]
+    assert probe.target.read_text().count(probe.needle) > 1, (
+        "the registry anchor no longer repeats, so this exemption is untested"
+    )
+
+
+def test_every_word_test_anchor_is_unique_in_its_target():
+    """#2391 — `search_word_test_mutations` now enforces a count, so it must pass one.
+
+    This harness had no uniqueness check: it asked `needle not in original` and
+    then `replace(..., 1)`, so an ambiguous anchor mutated whichever match came
+    first. Two of its mutants were in that state and hit the intended line only
+    because that line happened to be leftmost — correct by ORDER, not by contract.
+
+    `== 1` and not `<= 1`: zero matches is the drift case and must fail here too.
+    """
+    harness = _load_eval_module("search_word_test_mutations")
+    for mutant_id, path, needle, *_rest in harness.MUTANTS:
+        assert path.read_text(encoding="utf-8").count(needle) == 1, (
+            f"{mutant_id}: anchor is not present exactly once in {path.name} — "
+            "the harness will score it UNAPPLIED"
+        )
 
 
 def test_an_unresolvable_base_exits_2_not_1():
