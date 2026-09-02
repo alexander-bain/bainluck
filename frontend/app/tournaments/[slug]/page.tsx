@@ -434,6 +434,13 @@ export default function TournamentPage() {
                   results={data.results}
                   draw={draw}
                   roundCount={rounds.length > 0 ? rounds.length : undefined}
+                  /* #2568: the finished half of this page was 89 of its 100
+                     rows and not one of them was a link, while the server had
+                     already resolved the event id for 28 of them and published
+                     it right here. Same map the slate row's `event_id` comes
+                     from — `tournament_event_link` resolves it once, by id, and
+                     both lists read that one answer. */
+                  eventIds={data.event_links?.by_matchup}
                 />
 
                 {board && <TournamentBoard board={board} seriesColors={seriesColors} />}

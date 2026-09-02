@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
@@ -14,6 +15,8 @@ import {
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
+  resultEventHref,
+  resultLinkCoverage,
   resultsPopulationNote,
   roundHeading,
   sortedResults,
@@ -151,7 +154,15 @@ import {
 const RESULT_GRID =
   "grid grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4";
 
-function ResultRow({ result }: { result: TournamentResult }) {
+function ResultRow({
+  result,
+  href,
+}: {
+  result: TournamentResult;
+  /** `/events/{id}` from `resultEventHref`, or `null` when the server did not
+   *  resolve one. Never guessed here — see that function. */
+  href: string | null;
+}) {
   const winner = result.players.find((player) => player.is_winner);
   const loser = result.players.find((player) => !player.is_winner);
   if (!winner || !loser) return null;
@@ -160,16 +171,16 @@ function ResultRow({ result }: { result: TournamentResult }) {
   const percents = prematchPercents(result);
   const line = resultScoreLine(result);
 
-  return (
-    <li
-      className="contents"
-      data-testid="result-row"
-      data-matchup={result.matchup_key}
-      data-winner={result.winner_entity_key}
-      data-has-score={result.score ? "true" : "false"}
-      data-completion={result.completion ?? undefined}
-      data-score-kind={line.kind}
-    >
+  /* THE HOVER HAS TO BE THE ROW, and the row is three cells in the PARENT's
+     grid tracks (see `RESULT_GRID`) — there is no box to paint. So the tint
+     goes on each cell via `group-hover`, which is what makes a row that is
+     three grid items read as one clickable thing. A row with no href gets the
+     class and no group ancestor, so it never lights up: the affordance is a
+     property of being a link, not of being a row. */
+  const cellHover = href ? " transition-colors group-hover:bg-surface-elevated" : "";
+
+  const cells = (
+    <>
       {[winner, loser].map((player, index) => {
         /* THE PRIOR (UX-P146, Alex on the UX-P145 artifact): "a result
            without the prior probability is half the story on a probability
@@ -183,7 +194,7 @@ function ResultRow({ result }: { result: TournamentResult }) {
         return (
           <React.Fragment key={player.entity_key}>
             <span
-              className={`flex min-w-0 items-baseline pl-3.5 ${edge}`}
+              className={`flex min-w-0 items-baseline pl-3.5 ${edge}${cellHover}`}
               data-testid="result-player"
               data-entity={player.entity_key}
               data-outcome={player.is_winner ? "won" : "lost"}
@@ -231,7 +242,7 @@ function ResultRow({ result }: { result: TournamentResult }) {
                 fact and an empty span carrying the name of a number would
                 make every row look like it had one. */}
             <span
-              className={`text-right text-[12px] tabular-nums text-text-secondary ${edge}`}
+              className={`text-right text-[12px] tabular-nums text-text-secondary ${edge}${cellHover}`}
               data-testid={prior ? "result-prematch" : undefined}
             >
               {/* Ruling 2 again: a number names its own question. The column
@@ -259,7 +270,7 @@ function ResultRow({ result }: { result: TournamentResult }) {
                   line.kind === "score" || line.kind === "retired"
                     ? "text-[13px] font-semibold text-text-secondary"
                     : "text-[11px] font-medium text-text-muted"
-                } border-t border-surface-border`}
+                } border-t border-surface-border${cellHover}`}
                 data-testid={line.kind === "absent" ? "result-no-score" : "result-score"}
                 data-kind={line.kind}
                 title={line.explanation}
@@ -271,6 +282,38 @@ function ResultRow({ result }: { result: TournamentResult }) {
           </React.Fragment>
         );
       })}
+    </>
+  );
+
+  return (
+    <li
+      className="contents"
+      data-testid="result-row"
+      data-matchup={result.matchup_key}
+      data-winner={result.winner_entity_key}
+      data-has-score={result.score ? "true" : "false"}
+      data-completion={result.completion ?? undefined}
+      data-score-kind={line.kind}
+      data-event-href={href ?? undefined}
+    >
+      {/* #2568: ONE anchor for the row, `display: contents` so the three cells
+          stay direct children of the `<ul>`'s grid and keep the shared tracks
+          the whole layout is built on. One link and not three — a reader
+          tabbing this list should hear the match once, not once per column. */}
+      {href ? (
+        <Link
+          href={href}
+          className="group contents"
+          data-testid="result-link"
+          aria-label={`${winner.display_name} beat ${loser.display_name}${
+            result.score ? `, ${result.score}` : ""
+          } - open the match page`}
+        >
+          {cells}
+        </Link>
+      ) : (
+        cells
+      )}
     </li>
   );
 }
@@ -279,10 +322,20 @@ export default function TournamentResults({
   results,
   draw,
   roundCount,
+  eventIds,
   initialExpanded = false,
 }: {
   results: ResultsModel | null | undefined;
   draw: string;
+  /**
+   * `event_links.by_matchup` from the hub payload — the server's id-anchored
+   * `matchup_key -> events.id` map (#2568).
+   *
+   * Optional, and absent means every row renders as text: a results section
+   * served by a server that predates the map degrades to what it did before
+   * rather than throwing, and it never invents an address of its own.
+   */
+  eventIds?: Record<string, number> | null;
   /**
    * How many main-draw rounds this tournament plays (#2449).
    *
@@ -332,6 +385,10 @@ export default function TournamentResults({
   const prior = prematchCoverage(matches);
   /* #2450: the total says which population it is over, or says nothing. */
   const population = resultsPopulationNote(matches);
+  /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
+     a list where some rows open a page and some do not has to say which, or the
+     dead ones read as a broken page rather than as the edge of our coverage. */
+  const links = resultLinkCoverage(matches, eventIds);
 
   return (
     <section data-testid="tournament-results" data-draw={draw} data-count={matches.length}>
@@ -368,7 +425,10 @@ export default function TournamentResults({
               >
                 {roundHeading(result, roundCount)}
               </li>
-              <ResultRow result={result} />
+              <ResultRow
+                result={result}
+                href={resultEventHref(result, eventIds)}
+              />
             </React.Fragment>
           ))}
         </ul>
@@ -407,6 +467,25 @@ export default function TournamentResults({
               the space empty than fill it with a number about a different question.
             </>
           )}
+        </p>
+      )}
+      {links.linked > 0 && links.linked < links.total && (
+        <p
+          className="mt-2 text-[11px] leading-snug text-text-muted"
+          data-testid="results-link-note"
+          data-linked={links.linked}
+          data-total={links.total}
+        >
+          <b className="font-semibold text-text-secondary">
+            {links.linked} of {links.total}
+          </b>{" "}
+          {/* Careful with this sentence: the rows that do not link fail for TWO
+              different reasons — most are qualifying matches we hold no market
+              for at all, but some do have a market that is simply not yet tied
+              to an event (#2592). "We hold no market for them" would be false
+              of the second group, so the claim is about the LINK, which is the
+              only thing true of both. */}
+          open a match page. We cannot link the rest to one yet.
         </p>
       )}
       <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="results-provenance">
