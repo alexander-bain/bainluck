@@ -425,43 +425,28 @@ def _clamped(outcomes: Sequence[Any]) -> list[Any]:
     return out
 
 
-def resolve_orientation(
-    markets_with_outcomes: Sequence[Any],
-    home_team_name: str,
-    away_team_name: str,
+def _orient_one_market(
+    entry: Any, home_team_name: str, away_team_name: str
 ) -> Optional[tuple[Any, Any, bool]]:
-    """(primary market, moneyline outcome, yes_is_home) for one (event, source).
-
-    ``markets_with_outcomes`` is a sequence of
-    ``app.utils.live_blend.MarketOutcomes``. Returns ``None`` — never a guess —
-    whenever the live writers would also decline: not a game-winner ticker, an
-    unparseable matchup, or no outcome that resolves to a team.
-    """
-    from app.utils.live_blend import (
-        is_game_winner_market,
-        select_primary_market,
-    )
+    """Orientation from ONE market, or None if this market cannot say."""
+    from app.utils.live_blend import is_game_winner_market
     from app.utils.prediction_market_matching import (
         extract_matchup_with_ticker_fallback,
         find_moneyline_outcome,
     )
 
-    primary = select_primary_market(markets_with_outcomes)
-    if primary is None:
-        return None
-
     # Kalshi props/spreads never feed the blend, whatever they are linked to —
     # the same gate `compute_source_home_probability` applies.
-    if primary.market.source == "kalshi" and not is_game_winner_market(primary.market):
+    if entry.market.source == "kalshi" and not is_game_winner_market(entry.market):
         return None
 
     matchup = extract_matchup_with_ticker_fallback(
-        primary.market.name, external_id=primary.market.external_id
+        entry.market.name, external_id=entry.market.external_id
     )
     if not matchup:
         return None
 
-    ordered = sorted(primary.outcomes, key=lambda o: o.rank or 999)
+    ordered = sorted(entry.outcomes, key=lambda o: o.rank or 999)
     if not ordered:
         return None
 
@@ -482,7 +467,54 @@ def resolve_orientation(
     # `outcome.external_id` into the candlestick request, and a wrapper that
     # leaked would fetch a ticker nobody has.
     real = getattr(outcome, "_wrapped", outcome)
-    return primary.market, real, bool(yes_is_home)
+    return entry.market, real, bool(yes_is_home)
+
+
+def resolve_orientation(
+    markets_with_outcomes: Sequence[Any],
+    home_team_name: str,
+    away_team_name: str,
+) -> Optional[tuple[Any, Any, bool]]:
+    """(market, moneyline outcome, yes_is_home) for one (event, source).
+
+    ``markets_with_outcomes`` is a sequence of
+    ``app.utils.live_blend.MarketOutcomes``. Returns ``None`` — never a guess —
+    whenever the live writers would also decline: not a game-winner ticker, an
+    unparseable matchup, or no outcome that resolves to a team.
+
+    THE PRIMARY IS A PREFERENCE, NOT A VERDICT. ``select_primary_market`` is
+    still asked first, so a group that orients agrees with the live writers
+    exactly. But its tie-break among equals is "lowest market id", and
+    ``is_game_winner_market`` gates only KALSHI — for Polymarket every row scores
+    the same, so "lowest id" means OLDEST, and a Polymarket EVENT-level parent
+    (minted before its children, carrying no usable outcomes) beats the
+    match-winner child that actually has the price series. Measured by CERT-730:
+    parent+child resolves to ``None`` while the child alone resolves, so the
+    Polymarket curve stayed blank on exactly the events this rail exists for.
+
+    So the rest of the group is tried, in the same deterministic order, and the
+    first market that can orient wins. This can only WIDEN what gets drawn: a
+    group that already oriented takes the identical answer, because the primary
+    is still tried first. The shared selector is deliberately NOT changed — its
+    other consumer is the live blend, whose behaviour is not this queue's to move
+    (the same reason ``get_market_candlesticks`` was left alone).
+    """
+    from app.utils.live_blend import select_primary_market
+
+    group = list(markets_with_outcomes or [])
+    if not group:
+        return None
+
+    primary = select_primary_market(group)
+    order = ([primary] if primary is not None else []) + [
+        entry for entry in sorted(group, key=lambda e: e.market.id)
+        if primary is None or entry.market.id != primary.market.id
+    ]
+    for entry in order:
+        oriented = _orient_one_market(entry, home_team_name, away_team_name)
+        if oriented is not None:
+            return oriented
+    return None
 
 
 def orient_points(
@@ -1050,6 +1082,10 @@ class ThinChartPage(NamedTuple):
     #: True when the scan reached the end of the population, so the next run
     #: must WRAP rather than advance. A ring with no wrap is a queue that ends.
     exhausted: bool
+    #: How many candidates were LOOKED AT to fill this page. With `event_ids`
+    #: it gives the thin density, which is what says whether the sweep is
+    #: bounded by work or by budget — see `_note_budget_shortfall`.
+    scanned: int = 0
 
 
 async def select_thin_chart_page(
@@ -1117,6 +1153,7 @@ async def select_thin_chart_page(
         event_ids=thin,
         next_cursor=cursor,
         exhausted=len(rows) < scan_size,
+        scanned=len(rows),
     )
 
 
@@ -1156,6 +1193,46 @@ def _read_sweep_cursor() -> Optional[tuple]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return (parsed, parsed_id)
+
+
+#: Measured on production 2026-09-02, and the reason `_note_budget_shortfall`
+#: exists. `MEASURED_CANDIDATE_POPULATION` is every event inside the retention
+#: floor carrying a Kalshi/Polymarket market; `MEASURED_DAILY_INFLOW` is the mean
+#: over the ten days to 09-02 (range 262..1050). At the nightly `limit=60` the
+#: sweep does not merely drain slowly — it loses ground every single night.
+MEASURED_CANDIDATE_POPULATION = 44_315
+MEASURED_DAILY_INFLOW = 550
+
+
+def _note_budget_shortfall(result: dict, page: "ThinChartPage", limit: int) -> None:
+    """Say out loud when the sweep is bounded by BUDGET rather than by work.
+
+    Gotcha #53 / `task_verdict`: "it returned" is not "it worked". A nightly that
+    repairs its 60 and reports `status: complete` is indistinguishable from one
+    that has finished the job — and this one has not. Against the measured
+    population and inflow, `limit=60` needs ~739 nights for one traversal while
+    ~550 new candidates arrive per day, so the backlog GROWS. That is a scope
+    decision (raise the budget, narrow the population, or backfill on demand),
+    not something this function fixes; what it fixes is the silence.
+    """
+    budget_bound = not page.exhausted and len(page.event_ids) >= limit
+    result["candidates_scanned"] = page.scanned
+    result["thin_seen"] = len(page.event_ids)
+    result["sweep_budget_bound"] = budget_bound
+    if not budget_bound:
+        return
+    nights = MEASURED_CANDIDATE_POPULATION // max(1, limit)
+    result["measured_nights_per_traversal"] = nights
+    result["measured_daily_inflow"] = MEASURED_DAILY_INFLOW
+    result["sweep_keeps_up"] = limit >= MEASURED_DAILY_INFLOW
+    logger.warning(
+        "event chart backfill: sweep is BUDGET-BOUND — filled its limit of %s from "
+        "a scan of %s and did not reach the end. ~%s nights per traversal of the "
+        "measured %s candidates, against ~%s new candidates per day: the backlog "
+        "grows. Raise the budget, narrow the population, or backfill on demand.",
+        limit, page.scanned, nights,
+        MEASURED_CANDIDATE_POPULATION, MEASURED_DAILY_INFLOW,
+    )
 
 
 def _cursor_label(cursor: Optional[tuple]) -> Optional[str]:
@@ -1295,6 +1372,7 @@ async def run_event_chart_backfill(
         result["swept_from"] = _cursor_label(after)
         result["swept_to"] = _cursor_label(page.next_cursor)
         result["ring_wrapped"] = page.exhausted
+        _note_budget_shortfall(result, page, limit)
         if not dry_run:
             _write_sweep_cursor(page.next_cursor, exhausted=page.exhausted)
     return result

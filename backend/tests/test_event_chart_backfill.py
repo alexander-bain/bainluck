@@ -1458,3 +1458,201 @@ async def test_a_tie_that_straddles_a_page_boundary_loses_nobody():
 
     assert sorted(seen) == sorted(r.event_id for r in population)
     assert len(seen) == 13
+
+
+# ---------------------------------------------------------------------------
+# CERT-730: a Polymarket EVENT-level parent must not veto its match-winner child
+# ---------------------------------------------------------------------------
+
+
+def _poly_entry(market_id, name, outcomes):
+    from app.utils.live_blend import MarketOutcomes
+
+    return MarketOutcomes(
+        market=SimpleNamespace(
+            id=market_id,
+            source="polymarket",
+            name=name,
+            external_id=f"poly-{market_id}",
+            market_metadata={},
+            group_id="polymarket:ev-1",
+        ),
+        outcomes=outcomes,
+    )
+
+
+def _poly_child_outcomes():
+    return [
+        _outcome("Adolfo Daniel Vallejo", 0.30, "0xchild_yes", 1),
+        _outcome("Gael Monfils", 0.70, "0xchild_no", 2),
+    ]
+
+
+def test_an_empty_polymarket_parent_does_not_blank_the_childs_curve():
+    """CERT-730's reproduction, and the reason it only bites Polymarket.
+
+    `select_primary_market` prefers a game-winner market and otherwise takes the
+    LOWEST market id — but `is_game_winner_market` gates KALSHI only, so every
+    Polymarket row scores the same and "lowest id" means OLDEST. A Polymarket
+    EVENT-level parent is minted before its children and carries no usable
+    outcomes, so it wins the tie-break and orientation returns None: the whole
+    Polymarket curve stays blank on exactly the settled events this rail exists
+    to draw.
+    """
+    from app.tasks.event_chart_backfill import resolve_orientation
+
+    parent = _poly_entry(100, "US Open: Vallejo vs Monfils", [])
+    child = _poly_entry(200, "Vallejo vs Monfils", _poly_child_outcomes())
+
+    # The child alone has always worked. The pair is what failed.
+    alone = resolve_orientation([child], "Adolfo Daniel Vallejo", "Gael Monfils")
+    assert alone is not None, "control: the child alone must orient"
+
+    both = resolve_orientation(
+        [parent, child], "Adolfo Daniel Vallejo", "Gael Monfils"
+    )
+    assert both is not None, "the empty parent must not veto the child"
+    assert both[0].id == 200, "and the market chosen must be the CHILD"
+    assert both[:2] == alone[:2] and both[2] == alone[2]
+
+
+def test_the_primary_is_still_preferred_when_it_can_orient():
+    """The fallback may only WIDEN. A group that already oriented must not move.
+
+    Without this, "try the others" silently becomes "pick a different market",
+    and the backfill could draw a different series than the live writers blend —
+    the one thing orientation is borrowed to prevent.
+    """
+    from app.tasks.event_chart_backfill import resolve_orientation
+    from app.utils.live_blend import select_primary_market
+
+    low = _poly_entry(100, "Vallejo vs Monfils", _poly_child_outcomes())
+    high = _poly_entry(200, "Vallejo vs Monfils", _poly_child_outcomes())
+
+    assert select_primary_market([low, high]).market.id == 100
+    oriented = resolve_orientation(
+        [high, low], "Adolfo Daniel Vallejo", "Gael Monfils"
+    )
+    assert oriented is not None
+    assert oriented[0].id == 100, "the shared selector's choice still wins"
+
+
+def test_orientation_still_declines_when_no_market_in_the_group_can_say():
+    """The fallback must not turn 'we cannot know' into a guess."""
+    from app.tasks.event_chart_backfill import resolve_orientation
+
+    parent = _poly_entry(100, "US Open: Vallejo vs Monfils", [])
+    sibling = _poly_entry(200, "US Open: Vallejo vs Monfils", [])
+
+    assert resolve_orientation([parent, sibling], "Vallejo", "Monfils") is None
+    assert resolve_orientation([], "Vallejo", "Monfils") is None
+
+
+def test_a_kalshi_prop_in_the_group_is_still_refused_not_fallen_back_onto():
+    """Widening the search must not widen the ADMISSION rule.
+
+    Kalshi props and spreads never feed the blend. If the fallback tried them
+    after a game-winner market declined, the chart would draw a prop as if it
+    were the match — a different question with a plausible-looking line.
+    """
+    from app.tasks.event_chart_backfill import resolve_orientation
+    from app.utils.live_blend import MarketOutcomes
+
+    prop = MarketOutcomes(
+        market=SimpleNamespace(
+            id=100,
+            source="kalshi",
+            name="Total games over 21.5?",
+            external_id="KXATPGAMES-26AUG30VALMON-T21.5",
+            market_metadata={},
+            group_id=None,
+        ),
+        outcomes=_poly_child_outcomes(),
+    )
+
+    assert resolve_orientation([prop], "Adolfo Daniel Vallejo", "Gael Monfils") is None
+
+
+# ---------------------------------------------------------------------------
+# CERT-730: a sweep that can never finish must not report like one that did
+# ---------------------------------------------------------------------------
+
+
+async def _run_sweep_with(page, *, limit):
+    """Drive the real `run_event_chart_backfill` over a fixed page."""
+    import app.tasks.event_chart_backfill as mod
+
+    class _Ctx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(mod, "select_thin_chart_page", lambda *a, **k: _async(page))
+        monkey.setattr(
+            mod, "_run_for_event_ids",
+            lambda ids, *, dry_run=False: _async(
+                {"status": "complete", "points_written": 1, "requested": len(ids)}
+            ),
+        )
+        monkey.setattr(mod, "_read_sweep_cursor", lambda: None)
+        monkey.setattr(mod, "_write_sweep_cursor", lambda *a, **k: None)
+        monkey.setattr("app.tasks.base.get_task_session", lambda *a, **k: _Ctx())
+        return await mod.run_event_chart_backfill(limit=limit)
+    finally:
+        monkey.undo()
+
+
+async def _async(value):
+    return value
+
+
+async def test_a_sweep_that_cannot_finish_says_so_instead_of_reporting_complete():
+    """Gotcha #53: "it returned" is not "it worked".
+
+    CERT-730's second finding, measured: **44,315 candidates** inside the
+    retention floor and **~550 new ones per day**, against a nightly `limit=60`.
+    That is ~739 nights for ONE traversal while the backlog grows every night —
+    so a run that repairs its 60 and reports `status: complete` is
+    indistinguishable from one that finished the job. It has not. The scope
+    decision is not this function's; the SILENCE is.
+    """
+    import app.tasks.event_chart_backfill as mod
+
+    full = mod.ThinChartPage(
+        event_ids=list(range(60)),
+        next_cursor=(datetime(2026, 8, 12, tzinfo=UTC), 7),
+        exhausted=False,
+        scanned=360,
+    )
+
+    result = await _run_sweep_with(full, limit=60)
+
+    assert result["sweep_budget_bound"] is True
+    assert result["candidates_scanned"] == 360
+    assert result["thin_seen"] == 60
+    assert result["measured_nights_per_traversal"] > 700
+    assert result["sweep_keeps_up"] is False, (
+        "60/night against ~550/day arriving is not keeping up"
+    )
+
+
+async def test_a_sweep_that_reached_the_end_is_not_flagged_as_starved():
+    """Control. The flag must mean 'budget-bound', not 'ran at all'."""
+    import app.tasks.event_chart_backfill as mod
+
+    done = mod.ThinChartPage(
+        event_ids=[1, 2],
+        next_cursor=(datetime(2026, 8, 12, tzinfo=UTC), 2),
+        exhausted=True,
+        scanned=17,
+    )
+
+    result = await _run_sweep_with(done, limit=60)
+
+    assert result["sweep_budget_bound"] is False
+    assert "measured_nights_per_traversal" not in result
+    assert result["ring_wrapped"] is True
