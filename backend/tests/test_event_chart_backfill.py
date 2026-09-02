@@ -982,3 +982,350 @@ async def test_the_correctly_oriented_curve_for_the_same_market_is_written():
     assert verdict["sources"]["kalshi"]["status"] == "written"
     assert verdict["points_written"] > 50
     assert session.added[-1].home_win_probability == pytest.approx(0.01, abs=0.02)
+
+
+# ---------------------------------------------------------------------------
+# CERT-726 strike one, defect 2: the Polymarket condition-id suffix strip
+# ---------------------------------------------------------------------------
+
+
+def test_the_leg_suffix_is_stripped_as_a_suffix_and_not_as_a_character_set():
+    """`rstrip` takes a SET OF CHARACTERS. This is the bug it caused.
+
+    `"0xabcde_yes".rstrip("_yes")` eats the trailing `e` of the condition id
+    along with the suffix and answers `"0xabcd"`, which matches no `conditionId`
+    on the Gamma event — so the outcome resolved to no CLOB token and a whole
+    Polymarket curve went missing, reported as `no_token_id` rather than as an
+    error (gotcha #53's shape).
+    """
+    from app.tasks.event_chart_backfill import strip_leg_suffix
+
+    # The exact reproduction the cert named.
+    assert strip_leg_suffix("0xabcde_yes") == "0xabcde"
+    # ...and the proof the old form really was wrong, so this test cannot be
+    # satisfied by re-introducing it.
+    assert "0xabcde_yes".rstrip("_yes") == "0xabcd"
+
+    assert strip_leg_suffix("0xabcde_no") == "0xabcde"
+    # Every character of both suffixes, trailing, with no suffix present.
+    assert strip_leg_suffix("0xdeadbeefnoyes") == "0xdeadbeefnoyes"
+    assert strip_leg_suffix("0xsonoseyn") == "0xsonoseyn"
+    # A bare id is returned untouched, and only ONE suffix comes off.
+    assert strip_leg_suffix("0xabcde") == "0xabcde"
+    assert strip_leg_suffix("0xabcde_no_yes") == "0xabcde_no"
+
+
+async def test_the_suffixed_condition_id_resolves_to_its_clob_token():
+    """End to end through `_polymarket_token_id`, on the shape that failed."""
+    from app.tasks.event_chart_backfill import _polymarket_token_id
+
+    market = SimpleNamespace(
+        market_metadata={"polymarket_event_id": "ev-1"},
+        group_id="polymarket:ev-1",
+        external_id="ev-1",
+    )
+    outcome = SimpleNamespace(external_id="0xabcde_yes", rank=1)
+    service = SimpleNamespace(
+        get_event_by_id=AsyncMock(
+            return_value={
+                "markets": [
+                    {"conditionId": "0xabcd", "clobTokenIds": '["WRONG_TOKEN"]'},
+                    {"conditionId": "0xabcde", "clobTokenIds": '["YES_TOKEN"]'},
+                ]
+            }
+        )
+    )
+
+    assert await _polymarket_token_id(service, market, outcome) == "YES_TOKEN"
+
+
+# ---------------------------------------------------------------------------
+# CERT-726 strike one, defect 1: the nightly sweep must WALK, not re-read
+# ---------------------------------------------------------------------------
+
+
+def _dated_candidate(event_id, *, first_seen, points, lifetime_hours=130):
+    return SimpleNamespace(
+        event_id=event_id,
+        market_first_seen=first_seen,
+        market_last_seen=first_seen + timedelta(hours=lifetime_hours),
+        point_count=points,
+    )
+
+
+class _RingSession:
+    """A candidate population the selection query is actually filtered against.
+
+    Honours the `:after` bind and the `:limit` bind, so "the cursor advanced"
+    and "the cursor was ignored" cannot pass as each other — the failure mode
+    that let the fixed prefix ship in the first place.
+    """
+
+    def __init__(self, population):
+        self.population = sorted(population, key=lambda r: r.market_first_seen)
+        self.calls = []
+
+    async def execute(self, statement, params=None):
+        self.calls.append(dict(params or {}))
+        after = (params or {}).get("after")
+        rows = [
+            r for r in self.population
+            if after is None or r.market_first_seen > after
+        ]
+        return _RowsResult(rows[: (params or {}).get("limit", len(rows))])
+
+
+def _population(n, *, points):
+    base = datetime(2026, 7, 1, tzinfo=UTC)
+    return [
+        _dated_candidate(i, first_seen=base + timedelta(hours=i), points=points)
+        for i in range(n)
+    ]
+
+
+async def test_the_sweep_walks_forward_instead_of_re_reading_the_same_prefix():
+    """The defect CERT-726 named: a bounded scan with no cursor never advances.
+
+    Measured on production 2026-09-02: **44,315** candidates sit inside the
+    retention floor, so a 360-row prefix is 0.8% of the population. Repair it
+    once and every later run selects the same 360 thick charts, yields nothing,
+    and the other 99.2% starves until it expires.
+    """
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RingSession(_population(30, points=1))
+
+    first = await select_thin_chart_page(session, limit=5, scan_multiple=2, after=None)
+    second = await select_thin_chart_page(
+        session, limit=5, scan_multiple=2, after=first.next_cursor
+    )
+
+    assert first.event_ids == [0, 1, 2, 3, 4]
+    assert second.event_ids == [5, 6, 7, 8, 9], "the second page must be NEW work"
+    assert not set(first.event_ids) & set(second.event_ids)
+    assert second.next_cursor > first.next_cursor
+    assert session.calls[1]["after"] == first.next_cursor
+
+
+async def test_the_cursor_advances_over_charts_that_were_judged_and_not_picked():
+    """A thick chart must be stepped over, not re-counted every night.
+
+    The cursor tracks what was LOOKED AT, not what was selected — otherwise a
+    run whose whole scan window is already drawn advances by nothing and the
+    sweep is pinned exactly as before.
+    """
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RingSession(_population(20, points=9999))  # all already drawn
+
+    page = await select_thin_chart_page(session, limit=5, scan_multiple=2, after=None)
+
+    assert page.event_ids == [], "nothing is thin here"
+    assert page.next_cursor is not None, "but the sweep still moved on"
+    assert page.next_cursor == session.population[9].market_first_seen
+
+
+async def test_the_ring_wraps_when_the_population_is_exhausted():
+    """A ring with no wrap is a queue that ends — and then it never re-checks."""
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RingSession(_population(4, points=1))
+
+    page = await select_thin_chart_page(session, limit=5, scan_multiple=2, after=None)
+
+    assert page.event_ids == [0, 1, 2, 3]
+    assert page.exhausted is True
+
+    full = await select_thin_chart_page(
+        _RingSession(_population(40, points=1)), limit=5, scan_multiple=2
+    )
+    assert full.exhausted is False, "a full scan is not an exhausted one"
+
+
+async def test_the_selection_query_binds_the_cursor_and_can_start_from_nothing():
+    from app.tasks.event_chart_backfill import (
+        THIN_CHART_CANDIDATES_SQL,
+        select_thin_chart_events,
+    )
+
+    # The bind must be cast, because a bare NULL parameter has no type to
+    # compare a timestamptz against.
+    assert "CAST(:after AS timestamptz)" in THIN_CHART_CANDIDATES_SQL
+    assert "HAVING" in THIN_CHART_CANDIDATES_SQL
+
+    session = _RecordingSession([_candidate(1, lifetime_hours=130, points=1)])
+    picked = await select_thin_chart_events(session, limit=3)
+
+    assert picked == [1]
+    assert session.params["after"] is None, "the ring starts at the oldest end"
+
+
+async def test_the_nightly_run_persists_where_it_stopped_and_clears_it_on_a_wrap():
+    """The cursor is only worth having if the runner actually carries it."""
+    import app.tasks.event_chart_backfill as mod
+
+    stopped = datetime(2026, 8, 12, tzinfo=UTC)
+    writes = []
+
+    async def _fake_page(session, *, limit, after=None, **kw):
+        return mod.ThinChartPage(event_ids=[7], next_cursor=stopped, exhausted=False)
+
+    async def _fake_run(event_ids, *, dry_run=False):
+        return {"status": "complete", "points_written": 3, "requested": len(event_ids)}
+
+    class _Ctx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(mod, "select_thin_chart_page", _fake_page)
+        monkey.setattr(mod, "_run_for_event_ids", _fake_run)
+        monkey.setattr(mod, "_read_sweep_cursor", lambda: None)
+        monkey.setattr(
+            mod, "_write_sweep_cursor",
+            lambda cursor, *, exhausted: writes.append((cursor, exhausted)),
+        )
+        monkey.setattr("app.tasks.base.get_task_session", lambda *a, **k: _Ctx())
+        result = await mod.run_event_chart_backfill(limit=5)
+    finally:
+        monkey.undo()
+
+    assert result["selection"] == "thin_sweep"
+    assert result["swept_to"] == stopped.isoformat()
+    assert result["ring_wrapped"] is False
+    assert writes == [(stopped, False)]
+
+
+def test_every_deferred_import_in_this_module_actually_resolves():
+    """A function-local import is invisible until the function runs.
+
+    Found while fixing CERT-726: both runners did
+    `from app.services.database import get_task_session`, and that symbol lives
+    in `app.tasks.base`. Nothing at module-import time sees it — not
+    `test_startup`, not the beat-wiring census — so the nightly sweep would have
+    raised `ImportError` for the first time at 08:40 UTC in production, and the
+    admin endpoint on the first call. Deferred imports are used deliberately all
+    over this module (circular-import safety); this walks every one of them.
+    """
+    import ast
+    import importlib
+    import inspect
+
+    import app.tasks.event_chart_backfill as mod
+
+    tree = ast.parse(inspect.getsource(mod))
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.level:
+            continue
+        module = importlib.import_module(node.module)
+        for alias in node.names:
+            assert hasattr(module, alias.name), (
+                f"{node.module}.{alias.name} does not exist "
+                f"(line {node.lineno}) — this import raises only when it runs"
+            )
+            checked += 1
+    assert checked > 10, "the walk found almost nothing; it is not doing its job"
+
+
+async def test_the_cursor_is_bound_as_a_datetime_and_never_as_a_string():
+    """asyncpg type-checks the PYTHON argument, so `CAST(... AS timestamptz)`
+    does not save a string bind.
+
+    The exact failure this class produces, from `create_events_from_truth`'s
+    own docstring (Queue 379, nine calls in a row that wrote nothing):
+
+        asyncpg.exceptions.DataError: invalid input for query argument $7:
+        '2026-06-21T02:10:00+00:00' (expected a datetime.date or
+        datetime.datetime instance, got 'str')
+
+    The cursor round-trips through Redis as ISO text, so the string is exactly
+    what is lying around at the call site. `_read_sweep_cursor` parses it back
+    to an aware datetime and that is what must reach the bind.
+    """
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RecordingSession([_candidate(1, lifetime_hours=130, points=1)])
+    cursor = datetime(2026, 8, 12, 4, 30, tzinfo=UTC)
+
+    await select_thin_chart_page(session, limit=3, after=cursor)
+
+    bound = session.params["after"]
+    assert isinstance(bound, datetime), f"asyncpg will reject {type(bound).__name__}"
+    assert not isinstance(bound, str)
+    assert bound.tzinfo is not None, "a naive stamp compares against the wrong zone"
+    assert bound == cursor
+
+
+def test_a_cursor_read_back_from_redis_text_is_an_aware_datetime():
+    """The round trip Redis actually performs: `set(iso)` then `get()` -> bytes."""
+    import app.tasks.event_chart_backfill as mod
+
+    stored = datetime(2026, 8, 12, 4, 30, tzinfo=UTC)
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(
+            "app.tasks.redis_state.get_redis_client",
+            lambda *a, **k: SimpleNamespace(
+                get=lambda key: stored.isoformat().encode("utf-8")
+            ),
+        )
+        read = mod._read_sweep_cursor()
+    finally:
+        monkey.undo()
+
+    assert isinstance(read, datetime) and read.tzinfo is not None
+    assert read == stored
+
+
+def test_an_unreadable_cursor_restarts_the_ring_instead_of_raising():
+    """Every way of losing the hint must answer None — that is the pre-cursor
+    behaviour, which wastes a scan and never writes a wrong row."""
+    import app.tasks.event_chart_backfill as mod
+
+    def _client_for(value):
+        return SimpleNamespace(get=lambda key: value)
+
+    for value in (None, b"", b"not-a-timestamp", "garbage"):
+        monkey = pytest.MonkeyPatch()
+        try:
+            monkey.setattr(
+                "app.tasks.redis_state.get_redis_client",
+                lambda *a, _v=value, **k: _client_for(_v),
+            )
+            assert mod._read_sweep_cursor() is None, value
+        finally:
+            monkey.undo()
+
+    def _explode(*a, **k):
+        raise RuntimeError("redis is down")
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr("app.tasks.redis_state.get_redis_client", _explode)
+        assert mod._read_sweep_cursor() is None
+        mod._write_sweep_cursor(datetime(2026, 8, 12, tzinfo=UTC), exhausted=False)
+    finally:
+        monkey.undo()
+
+
+def test_the_selection_sql_declares_exactly_the_three_binds_it_is_given():
+    """A colon-word anywhere in the statement — INCLUDING in a `--` comment —
+    is a REQUIRED bind parameter, because `text()` does not strip comments.
+
+    Caught in CI on this branch: a `:func:` Sphinx role written into the SQL
+    comment above the HAVING clause added a phantom `func` bind, and every
+    execution would have raised `InvalidRequestError` before reaching the
+    database. None of the tests above can see it — they all stub the session and
+    only ever stringify the statement. This one compiles it.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.event_chart_backfill import THIN_CHART_CANDIDATES_SQL
+
+    compiled = text(THIN_CHART_CANDIDATES_SQL)
+    assert set(compiled._bindparams) == {"after", "limit", "purge_days"}

@@ -67,7 +67,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, NamedTuple, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +351,29 @@ def home_won_from_outcomes(
     return yes_won if yes_is_home else not yes_won
 
 
+#: The leg suffixes our own outcome ids carry, longest first so a value ending
+#: in the shorter one cannot be matched by a prefix of the longer.
+LEG_SUFFIXES = ("_yes", "_no")
+
+
+def strip_leg_suffix(value: str) -> str:
+    """``"0xabcde_yes"`` -> ``"0xabcde"``. A SUFFIX strip, not a character strip.
+
+    This used to be ``value.rstrip("_yes").rstrip("_no")``, which is not what it
+    reads as: :meth:`str.rstrip` takes a SET OF CHARACTERS, so it eats every
+    trailing ``_``, ``y``, ``e``, ``s``, ``n`` and ``o`` it can find. The real
+    Polymarket shape ``0xabcde_yes`` came back as ``0xabcd`` — the trailing ``e``
+    of the condition id went with the suffix — so the id matched no
+    ``conditionId`` on the Gamma event and the outcome silently resolved to no
+    token at all. That is a whole Polymarket curve missing, reported as
+    ``no_token_id`` rather than as an error (gotcha #53's shape).
+    """
+    for suffix in LEG_SUFFIXES:
+        if value.endswith(suffix):
+            return value[: -len(suffix)]
+    return value
+
+
 def minute_key(value: datetime) -> datetime:
     """Truncate to the minute in UTC — the grain idempotency is judged on."""
     if value.tzinfo is None:
@@ -606,7 +629,7 @@ async def _polymarket_token_id(service: Any, market: Any, outcome: Any) -> Optio
         cid = sub.get("conditionId")
         if not cid:
             continue
-        if cid != condition_id and cid != condition_id.rstrip("_yes").rstrip("_no"):
+        if cid != condition_id and cid != strip_leg_suffix(condition_id):
             continue
         raw = sub.get("clobTokenIds", "[]")
         try:
@@ -956,6 +979,21 @@ THIN_CHART_CANDIDATES_SQL = """
           AND e.commence_time <= NOW()
           AND e.commence_time >= NOW() - make_interval(days => :purge_days)
         GROUP BY e.id
+        -- The SWEEP CURSOR. Without it the LIMIT below pins the sweep to one
+        -- fixed prefix forever: the oldest N are selected, repaired, and then
+        -- selected again every night as a set of thick charts that yield
+        -- nothing, while every thin chart behind them starves until it expires.
+        -- (Measured: 44,315 candidates inside the floor, so the prefix is 0.8%
+        -- of the population and the other 99.2% is unreachable.) See
+        -- `select_thin_chart_page` for the wrap that closes the ring. (No
+        -- Sphinx roles inside SQL. `text()` does not strip comments, so a
+        -- colon-prefixed word in one reads as a REQUIRED bind parameter and
+        -- every execution raises InvalidRequestError before reaching the
+        -- database. There is a repo guard for exactly this, and it caught it
+        -- here — a defect no unit test in this file could have seen, because
+        -- they all stub the session.)
+        HAVING CAST(:after AS timestamptz) IS NULL
+            OR MIN(fm.created_at) > CAST(:after AS timestamptz)
         ORDER BY MIN(fm.created_at) ASC
         LIMIT :limit
     )
@@ -974,31 +1012,72 @@ THIN_CHART_CANDIDATES_SQL = """
 """
 
 
-async def select_thin_chart_events(session, *, limit: int, scan_multiple: int = 6) -> list[int]:
-    """Event ids whose chart holds too few points for the life their market had.
+#: Where the last nightly sweep stopped LOOKING, as an ISO `market_first_seen`.
+#: Redis, not a column: the cursor is an optimisation, not a fact about the data,
+#: and the 100 MB LRU evicting it costs one wasted re-scan of the oldest page —
+#: exactly the behaviour the sweep had before the cursor existed. Never a
+#: migration for a hint.
+SWEEP_CURSOR_KEY = "event_chart_backfill:sweep_cursor"
 
-    Scans a multiple of ``limit`` candidates and applies :func:`is_thin_chart`
-    in Python, so the thinness rule lives in one tested pure function rather
-    than being re-expressed (and drifting) in SQL.
+
+class ThinChartPage(NamedTuple):
+    """One page of the ring the nightly sweep walks."""
+
+    event_ids: list[int]
+    #: `market_first_seen` of the last candidate LOOKED AT (not the last picked)
+    #: — everything at or before it has been judged this pass.
+    next_cursor: Optional[datetime]
+    #: True when the scan reached the end of the population, so the next run
+    #: must WRAP rather than advance. A ring with no wrap is a queue that ends.
+    exhausted: bool
+
+
+async def select_thin_chart_page(
+    session, *, limit: int, scan_multiple: int = 6, after: Optional[datetime] = None
+) -> ThinChartPage:
+    """One page of events whose chart holds too few points for their market's life.
+
+    Scans a multiple of ``limit`` candidates STARTING AFTER ``after`` and applies
+    :func:`is_thin_chart` in Python, so the thinness rule lives in one tested
+    pure function rather than being re-expressed (and drifting) in SQL.
+
+    The cursor is what makes this a sweep rather than a fixed prefix. The scan
+    has to be bounded — counting points for all 44,315 candidates inside the
+    retention floor is the shape that hit ``statement_timeout`` — but a bound
+    with no cursor selects the same oldest page every night, and the night after
+    it is repaired that page yields nothing, forever. The cursor advances past
+    everything JUDGED, thin or thick, and :data:`ThinChartPage.exhausted` tells
+    the caller to wrap.
+
+    Ties on ``MIN(fm.created_at)`` are advanced past with a strict ``>``, so
+    progress is guaranteed; a candidate skipped by a tie is picked up on the
+    next wrap rather than blocking the ring.
     """
     from sqlalchemy import text
 
     from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
+    scan_size = max(1, limit * max(1, scan_multiple))
     rows = (
         await session.execute(
             text(THIN_CHART_CANDIDATES_SQL),
             {
-                "limit": max(1, limit * max(1, scan_multiple)),
+                "limit": scan_size,
                 "purge_days": PROVABLY_PURGED_AGE_DAYS,
+                "after": after,
             },
         )
     ).fetchall()
 
     thin: list[int] = []
+    cursor: Optional[datetime] = None
     for row in rows:
         first = row.market_first_seen
         last = row.market_last_seen
+        # Advance over every row JUDGED, not only over the ones picked. A thick
+        # chart that the cursor did not pass would be re-counted every night.
+        if first is not None:
+            cursor = first
         lifetime = 0.0
         if first is not None and last is not None and last > first:
             lifetime = (last - first).total_seconds()
@@ -1006,7 +1085,57 @@ async def select_thin_chart_events(session, *, limit: int, scan_multiple: int = 
             thin.append(int(row.event_id))
         if len(thin) >= limit:
             break
-    return thin
+    return ThinChartPage(
+        event_ids=thin,
+        next_cursor=cursor,
+        exhausted=len(rows) < scan_size,
+    )
+
+
+async def select_thin_chart_events(session, *, limit: int, scan_multiple: int = 6) -> list[int]:
+    """The ids of :func:`select_thin_chart_page`, from the start of the ring."""
+    page = await select_thin_chart_page(
+        session, limit=limit, scan_multiple=scan_multiple
+    )
+    return page.event_ids
+
+
+def _read_sweep_cursor() -> Optional[datetime]:
+    """The stored cursor, or None to start the ring again from the oldest end.
+
+    Every failure mode — no Redis, an evicted key, an unparseable value —
+    answers None, which restarts the sweep. Restarting is the pre-cursor
+    behaviour: it wastes a scan, it never writes a wrong row.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(SWEEP_CURSOR_KEY)
+    except Exception:  # noqa: BLE001 — a hint that cannot be read is no hint
+        return None
+    if not raw:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "ignore")
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _write_sweep_cursor(cursor: Optional[datetime], *, exhausted: bool) -> None:
+    """Persist the cursor, or CLEAR it when the ring has been walked all the way."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        if exhausted or cursor is None:
+            client.delete(SWEEP_CURSOR_KEY)
+        else:
+            client.set(SWEEP_CURSOR_KEY, cursor.isoformat())
+    except Exception:  # noqa: BLE001 — losing the hint costs a re-scan, not a row
+        logger.warning("event chart backfill: sweep cursor not persisted", exc_info=True)
 
 
 async def _run_for_event_ids(event_ids: Sequence[int], *, dry_run: bool = False) -> dict:
@@ -1019,7 +1148,7 @@ async def _run_for_event_ids(event_ids: Sequence[int], *, dry_run: bool = False)
     from sqlalchemy import select
 
     from app.models.models import Event
-    from app.services.database import get_task_session
+    from app.tasks.base import get_task_session
 
     summary: dict = {
         "requested": len(event_ids),
@@ -1105,13 +1234,27 @@ async def run_event_chart_backfill(
     dry_run: bool = False,
 ) -> dict:
     """Targeted backfill: the named events, or the thinnest charts we can still fix."""
-    from app.services.database import get_task_session
+    from app.tasks.base import get_task_session
 
     ids = list(event_ids or [])
+    page = None
     if not ids:
+        # Walk the ring, do not re-read the head of it. `after` is where the
+        # last sweep stopped LOOKING; `exhausted` wraps it back to the oldest
+        # end so a chart that turns thin later is still reachable.
+        after = _read_sweep_cursor()
         async with get_task_session() as session:
-            ids = await select_thin_chart_events(session, limit=limit)
+            page = await select_thin_chart_page(session, limit=limit, after=after)
+        ids = page.event_ids
     result = await _run_for_event_ids(ids[:limit], dry_run=dry_run)
     result["selection"] = "explicit" if event_ids else "thin_sweep"
+    if page is not None:
+        result["swept_from"] = after.isoformat() if after else None
+        result["swept_to"] = (
+            page.next_cursor.isoformat() if page.next_cursor else None
+        )
+        result["ring_wrapped"] = page.exhausted
+        if not dry_run:
+            _write_sweep_cursor(page.next_cursor, exhausted=page.exhausted)
     return result
 
