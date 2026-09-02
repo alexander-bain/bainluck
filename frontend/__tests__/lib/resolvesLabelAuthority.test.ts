@@ -138,7 +138,7 @@ describe("#1717 — one formatting authority for 'Resolves <date>'", () => {
     // side by side on the landing page.
     const wire = "2026-12-31T15:00:00+00:00";
     const futuresCardLine = resolvesLabel(wire);
-    const tournamentCardLine = formatTournamentTimingLabel(null, wire, NOW);
+    const tournamentCardLine = formatTournamentTimingLabel(null, null, wire, NOW);
 
     expect(futuresCardLine).toBe(tournamentCardLine);
     expect(futuresCardLine).toBe(formatResolvesLabel(wire, NOW));

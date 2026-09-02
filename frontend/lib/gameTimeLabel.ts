@@ -293,24 +293,167 @@ export function formatResolvesLabel(
 }
 
 /**
- * The single timing line a Discover tournament card prints — start date when the
- * wire supports one, otherwise the resolution date.
+ * UX-P267 (#2549) — THE PREMISE THIS MODULE WAS BUILT ON HAS EXPIRED.
+ *
+ * `formatTournamentWhenLabel` above says, in its own docstring: "It does NOT
+ * derive a status — nothing here concludes that a tournament is over, because
+ * the wire does not say so (`start_date`, `end_date` and `schedule_status` were
+ * null on 8 of 8)." That measurement (#1700) is why the entire design is a pair
+ * of TRUST WINDOWS around `commence_time` — a market timestamp being asked to
+ * impersonate a schedule, with staleness as the only available tell.
+ *
+ * The wire says so now. Measured on production 2026-09-02 03:1x PT, `GET
+ * /api/golf` over the whole live slate:
+ *
+ *   omega_european_masters            start_date 2026-09-03  commence 2026-08-31  DIFF -3d
+ *   biltmore_championship_asheville   start_date 2026-09-17  commence 2026-09-17  same day
+ *   ..._pga_tour_major_in_2027        start_date null        commence 2028-01-14
+ *   ..._pga_tour_major_before_2027    start_date null        commence 2026-07-19
+ *
+ * `start_date` is present on 2 of 4, and on the one where it disagrees the card
+ * was printing **"Started Mon, Aug 31"** for a tournament whose own payload
+ * carried `start_date: 2026-09-03`, `schedule_status: "upcoming"` and a backend
+ * `headline: "Tomorrow"`. Every fact needed to say the true thing was on the
+ * card; the reader got the false one. That is #2549's surviving half (its "0%"
+ * half resolved separately), still live on the default landing page.
+ *
+ * WHY THE TRUST WINDOWS COULD NEVER HAVE CAUGHT IT. They bound a timestamp for
+ * being too STALE or too FAR OUT. `commence_time` here is a per-market Kalshi
+ * open time — the seven markets in this tournament's group carry seven different
+ * values spanning 5.5 minutes — so it is always RECENT, which is precisely the
+ * region both windows admit. The one class of wrong start date the design cannot
+ * see is the one it produces.
+ *
+ * So the windows are not widened or retuned; they keep guarding the fallback,
+ * unchanged, for the two cards that still have no `start_date`. The schedule is
+ * simply believed ahead of the market timestamp when the schedule is there.
+ */
+
+/**
+ * The leading calendar day of an ISO value — `2026-09-03T00:00:00+00:00` -> 3
+ * September 2026. Deliberately a STRING parse and not a `Date`: see below.
+ */
+const ISO_DECLARED_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
+
+/**
+ * "Starts Thu, Sep 3" from a scheduled start, or "" when there is not one.
+ *
+ * ── WHY THIS IS ZONE-INDEPENDENT BY CONSTRUCTION, AND WHY THAT MATTERED ──
+ *
+ * `start_date` arrives as `2026-09-03T00:00:00+00:00`: a semantic CALENDAR DATE
+ * serialised as a UTC-midnight instant. That is exactly the shape `format-
+ * ResolvesLabel` documents under C270 P1 — `new Date(...)` then a local
+ * `toLocaleDateString` renders the day BEFORE for every reader west of UTC, so
+ * the obvious "just read start_date" would have printed "Starts Wed, Sep 2" in
+ * Pacific time and swapped a wrong date for a differently wrong one. The
+ * `DATE_ONLY` guard that catches it there does NOT match this value: it is a
+ * full timestamp, not a bare `YYYY-MM-DD`.
+ *
+ * Rather than add a second zone special-case, the declared day is lifted out of
+ * the string as three integers and never round-tripped through a local `Date` at
+ * all. Formatting is pinned to UTC over a UTC-midnight instant built from those
+ * integers, so there is no ambient-timezone path through this function to be
+ * wrong in. This is not merely a fix that measures correct — it is one that has
+ * no failing case to measure.
+ *
+ * That construction is also the only honest option under this harness: jest
+ * pins `process.env.TZ = 'UTC'` for the whole suite (`jest.config.js`, and it
+ * must live there — a test file's realm is built before `setupFiles`), so local
+ * IS UTC inside every test and an assertion about the local-vs-UTC difference
+ * would be green on the fix and green on the bug alike. The guard therefore
+ * pins the CONSTRUCTION (the parse never consults a zone) rather than claiming a
+ * zone-sensitivity it cannot exercise here.
+ *
+ * NO TRUST WINDOW, deliberately. The windows on `formatTournamentWhenLabel`
+ * exist because a market timestamp is not a start date and staleness is the only
+ * tell. `start_date` IS the schedule asserting a start; a tournament that began
+ * nine days ago has honestly "Started Sun, Aug 23", and suppressing that would
+ * re-introduce the silence #1700 set out to remove.
+ *
+ * The relative words compare the declared day against the READER's local
+ * calendar day, which is the frame the reader is standing in: at 8pm Pacific on
+ * Sep 2 a Sep 3 tournament starts "tomorrow", not "today", even though UTC has
+ * already turned over. A calendar date carries no time of day, so a start on
+ * today's date reads "Starts today" — the past/present distinction within the
+ * day is not derivable from the wire and is not guessed.
+ */
+export function formatDeclaredStartLabel(
+  startDate: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (!startDate) return "";
+  const parts = ISO_DECLARED_DAY.exec(startDate.trim());
+  if (!parts) return "";
+
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+
+  const declared = Date.UTC(year, month - 1, day);
+  const probe = new Date(declared);
+  // `Date.UTC` silently rolls a non-calendar date over (2026-02-31 -> Mar 3).
+  // Printing a day the wire did not declare is the defect this function exists
+  // to remove, so an impossible date says nothing and lets the fallback run.
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return "";
+  }
+
+  const nowDate = new Date(now);
+  const readerToday = Date.UTC(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate(),
+  );
+  const deltaDays = Math.round((declared - readerToday) / MS_PER_DAY);
+
+  if (deltaDays === 0) return "Starts today";
+  if (deltaDays === 1) return "Starts tomorrow";
+  if (deltaDays === -1) return "Started yesterday";
+
+  const dateStr = probe.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    // Same reasoning as the fallback: a card whose start lands in another year is
+    // exactly the case a reader most needs the year for.
+    ...(year !== nowDate.getFullYear() ? { year: "numeric" as const } : {}),
+    timeZone: "UTC",
+  });
+  return `${deltaDays > 0 ? "Starts" : "Started"} ${dateStr}`;
+}
+
+/**
+ * The single timing line a Discover tournament card prints — the scheduled start
+ * when the wire declares one, else the start date `commence_time` can be trusted
+ * to imply, else the resolution date.
  *
  * FALLBACK, NOT A SECOND LINE. A card with a good start date does not also get a
  * resolution line: "Starts Thu, Aug 13" already answers the reader's question and
  * "Resolves Aug 30" beside it is noise on the biggest slot of the landing page.
  * The resolution line exists for the cards that today say NOTHING.
  *
- * Composed here rather than in the card so the two rules cannot drift apart — the
+ * Composed here rather than in the card so the rules cannot drift apart — the
  * #1620 shape this lane has now found six times, and the reason `formatTournament-
  * WhenLabel` and this function share a module instead of a component.
+ *
+ * `startDate` has NO DEFAULT, and that is load-bearing rather than pedantic. A
+ * `startDate = null` default would keep all five existing call sites compiling
+ * while letting the next one silently re-acquire #2549 with every test still
+ * green. There is exactly one production call site, so requiring it costs
+ * nothing; a guard asserts the parameter stays required.
  */
 export function formatTournamentTimingLabel(
+  startDate: string | null | undefined,
   commenceTime: string | null | undefined,
   resolutionDate: string | null | undefined,
   now: number = Date.now(),
 ): string {
   return (
+    formatDeclaredStartLabel(startDate, now) ||
     formatTournamentWhenLabel(commenceTime, now) ||
     formatResolvesLabel(resolutionDate, now)
   );

@@ -52,9 +52,19 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // the question is DECIDED. Three of the eight cards on the landing page said
   // nothing at all, two of them season-long markets resolving in Dec 2026 and
   // Jul 2030 — `resolution_date` was on the wire on 8 of 8 and read in no branch.
+  //
+  // UX-P267 (#2549): and `start_date` was on the wire too, unread, while this
+  // card printed "Started Mon, Aug 31" over a payload that said
+  // `start_date: 2026-09-03` and `schedule_status: "upcoming"`. The schedule now
+  // leads; `commence_time` and its trust windows stay exactly as they were, for
+  // the cards that have no schedule. See the module for the expired premise.
   const whenLabel = whatHit
     ? ""
-    : formatTournamentTimingLabel(data.commence_time, data.resolution_date);
+    : formatTournamentTimingLabel(
+        data.start_date,
+        data.commence_time,
+        data.resolution_date,
+      );
   return (
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
