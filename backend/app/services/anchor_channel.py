@@ -94,9 +94,13 @@ from typing import Optional
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.event_completion import TICKER_DERIVED_COMMENCE_SOURCE
 from app.utils.provider_anchor_keys import (
     ANCHOR_KIND_GAME,
+    ANCHOR_KIND_MARKET,
     SCALAR_DERIVED_ID_COLUMNS,
+    SOURCE_KALSHI,
+    SOURCE_POLYMARKET,
     AnchorKey,
     espn_anchor_key,
     kalshi_anchor_key,
@@ -104,6 +108,7 @@ from app.utils.provider_anchor_keys import (
     polymarket_anchor_key,
     statpal_anchor_key,
 )
+from app.utils.sport_keys import get_llm_category_for_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -492,3 +497,263 @@ def _json_or_none(value: Optional[dict]) -> Optional[str]:
     import json
 
     return json.dumps(value, default=str)
+
+
+# ═══ Q050: the drain clause, on the read side ═══════════════════════════════
+#
+#: The `events.commence_time_source` values that mean **this row's start came
+#: out of a prediction market**, i.e. the row was BORN from one. Written at
+#: CREATE by `event_registry` (`identity.commence_time_source or
+#: identity.claim.source`) and safe in both directions:
+#:
+#: * It cannot be acquired later by a real fixture. `_SOURCE_PRIORITY` ranks
+#:   `kalshi` and `polymarket` at 0, below every schedule source, so nothing
+#:   downgrades an `odds_api`/`espn`/`statpal` row into this set.
+#: * It CAN be lost, and losing it is correct. A row a real schedule later
+#:   rescues stops being a stand-in, and stops being drainable here, on the same
+#:   write.
+#:
+#: `None` is deliberately absent. Most of the table predates the column, and
+#: reading a missing provenance as "market-born" would put nearly every historic
+#: row in this class — q076's stated narrowness, from the other side.
+MARKET_BORN_COMMENCE_SOURCES = frozenset(
+    {SOURCE_KALSHI, SOURCE_POLYMARKET, TICKER_DERIVED_COMMENCE_SOURCE}
+)
+
+#: One statement, one round trip: every fact the drain verdict turns on.
+#:
+#: `mkt` resolves each of this event's MARKET anchors back through the market it
+#: names — `(source, external_id)` is `uq_futures_source_external`, a UNIQUE
+#: index, so each anchor yields at most one row and the LEFT JOIN cannot fan out.
+_DRAIN_VERDICT_SQL = """
+WITH anch AS (
+    SELECT source, source_id, id_kind
+      FROM event_provider_anchors
+     WHERE event_id = :event_id
+),
+mkt AS (
+    SELECT fm.event_id AS target
+      FROM anch
+      LEFT JOIN futures_markets fm
+             ON fm.source = anch.source
+            AND fm.external_id = anch.source_id
+     WHERE anch.id_kind = :market_kind
+)
+SELECT
+    e.commence_time_source AS provenance,
+    s.key AS sport_key,
+    (e.home_score IS NOT NULL OR e.away_score IS NOT NULL
+     OR e.completed_at IS NOT NULL) AS carries_truth,
+    (SELECT count(*) FROM anch WHERE id_kind = :game_kind) AS game_anchors,
+    (SELECT count(*) FROM mkt) AS market_anchors,
+    (SELECT count(*) FROM mkt WHERE target IS NULL) AS unresolved,
+    (SELECT count(DISTINCT target) FROM mkt
+      WHERE target IS NOT NULL AND target <> e.id) AS other_targets,
+    (SELECT min(target) FROM mkt
+      WHERE target IS NOT NULL AND target <> e.id) AS candidate_id,
+    EXISTS (SELECT 1 FROM futures_markets WHERE event_id = e.id) AS holds_markets
+  FROM events e
+  LEFT JOIN sports s ON s.id = e.sport_id
+ WHERE e.id = :event_id
+"""
+
+_CANONICAL_SPORT_SQL = (
+    "SELECT s.key FROM events e LEFT JOIN sports s ON s.id = e.sport_id "
+    "WHERE e.id = :event_id"
+)
+
+
+def _sport_family(sport_key: Optional[str]) -> Optional[str]:
+    """The LLM category behind a sport key's prefix, or ``None`` if unreadable.
+
+    `tennis_atp` and `tennis_atp_us_open` are two `sports` rows for one sport,
+    and the ghost/canonical pair is very often exactly that pair — so an
+    equal-`sport_id` check (which `find_event_by_anchor` can afford, because it
+    guards an absorption) would refuse the whole specimen class. The family is
+    the honest granularity: it still refuses tennis→soccer, which is the outcome
+    worth refusing.
+    """
+    if not sport_key:
+        return None
+    return get_llm_category_for_prefix(sport_key.split("_", 1)[0])
+
+
+def is_drain_candidate_row(
+    *,
+    commence_time_source: Optional[str],
+    home_score: Optional[int],
+    away_score: Optional[int],
+    completed_at=None,
+) -> bool:
+    """Cheap, pure gate: could this row POSSIBLY be a market-born duplicate?
+
+    Two of :func:`resolve_market_born_duplicate`'s seven refusals — market-born
+    provenance, and no truth of its own — are answerable from columns the caller
+    is already holding, and together they exclude essentially all event-page
+    traffic. Without this an `odds_api` fixture's page would pay a verdict query
+    it can never pass, on product priority #3.
+
+    **This is an optimisation, and the SQL re-asserts both conditions.** The
+    duplication is deliberate: a gate that drifts can only ever refuse a row the
+    verdict would have drained (a ghost renders, which is today's behaviour),
+    never admit one it would not (a reader served the wrong match). Only one of
+    those two directions is recoverable, and this is the one.
+    """
+    if (
+        home_score is not None
+        or away_score is not None
+        or completed_at is not None
+    ):
+        return False
+    return commence_time_source in MARKET_BORN_COMMENCE_SOURCES
+
+
+async def resolve_market_born_duplicate(
+    session: AsyncSession, event_id: int
+) -> Optional[int]:
+    """The event a market-born duplicate row should be READ AS, or ``None``.
+
+    Q050. Ruling 048's bounding clause — *"id-keyed reconciliation drains the
+    duplicate when an id arrives"* — has two halves, and only the first was ever
+    built. `_reconcile_kalshi_match_segments` (Q435/Q048) moves the markets onto
+    the schedule-derived row and its docstring calls that the drain; it is not.
+    Measured on production 2026-09-02, after Q048 deployed: `KXATPMATCH-
+    26AUG30VALMON` sits correctly on event 15293804, and event 15300759 — the
+    row that market created — still answers `/api/events/15300759` with
+    `status: scheduled, commence_time: 2026-08-30 00:00Z`, for a match ESPN had
+    final at 2026-09-01 23:05Z. Moving the market did not drain the row; it
+    orphaned it.
+
+    ═══ WHERE THE PROOF COMES FROM, AND WHY IT IS NOT A LOOSENING ═══
+
+    `event_provider_anchors` holds `KXATPMATCH-26AUG30VALMON -> 15300759`. The
+    market itself now holds `event_id = 15293804`. **That contradiction is the
+    id-keyed proof**, and neither side of it is a guess:
+
+    * the anchor is a back-pointer written by the registry at the moment the
+      market established the correspondence — one provider id, recorded, not
+      inferred;
+    * the market's current `event_id` was chosen by the segment reconciler out
+      of Kalshi's OWN ticker segment (ruling 048 arm A), or by the matcher off a
+      provider id. No name was compared and no time window was opened at any
+      point in the chain.
+
+    So this does not grant a `market` anchor the authority `may_anchor_absorption`
+    withholds. It never asks "are these the same game?" — the system already
+    answered that when it moved the market. It asks the strictly weaker question
+    **"is this row now the abandoned side of a correspondence that has already
+    been re-decided?"**, and nothing is absorbed, merged, deleted or repointed:
+    the row stays addressable and the resolution is recomputed from live state
+    on every call, so a market that moves back un-drains its row for free.
+
+    ═══ THE SIX REFUSALS, EACH LOAD-BEARING ═══
+
+    Measured over the whole production population on 2026-09-02: 505 events
+    satisfy all of them, 505 of 505 carry `provenance:unanchored` — i.e. the
+    class is exactly the declared, bounded cost ruling 048 said it was paying.
+
+    1. **No `game` anchor.** A game anchor is a real schedule provider naming
+       this row; that row is a fixture, whatever its markets did. (0 of 505.)
+    2. **`commence_time_source` is market-born** — see
+       :data:`MARKET_BORN_COMMENCE_SOURCES`. This is the guard that stops a real
+       Odds API fixture which merely *acquired* a Kalshi market anchor from being
+       read as a ghost: `_record_claim_anchor` fires on the ATTACH path too for
+       the column-less providers, so a market anchor alone is not a birth record.
+    3. **At least one market anchor, and every one of them resolves.** An
+       unresolvable anchor is a market we no longer hold, which is silence, not
+       evidence (gotcha #53).
+    4. **Exactly one distinct destination.** Two destinations is an ambiguity,
+       and picking by row order would be a coin flip dressed as a resolution —
+       `_choose_segment_event`'s refusal, applied here. `DISTINCT` and not a
+       plain count: a segment routinely moves several markets at once, and three
+       anchors agreeing on one destination is the strongest case there is, not
+       an ambiguity.
+    5. **The row holds no markets of its own and carries no score, no
+       `completed_at`.** A row with truth of its own is not an abandoned husk.
+       This clause does two more jobs that are easy to miss:
+
+       * it is why a **CHAIN** is impossible. The destination was found by
+         reading a market's `event_id`, so the destination holds that market —
+         a canonical can therefore never itself be drainable, whatever the data
+         does. That is a proof, not a measurement.
+       * it **subsumes** the "no anchor still names this row" case. A half-moved
+         correspondence leaves a market pointing back here, and a market
+         pointing here is a market this row holds. The battery found that out
+         the hard way: the separate `still_own` clause was unkillable because it
+         was unreachable, so it is gone rather than kept as decoration.
+
+       Under-coverage is the safe failure direction — a missed ghost renders, a
+       wrong resolution serves the wrong match.
+    6. **Same sport family** (:func:`_sport_family`). 505 of 505 today, so it
+       costs nothing and refuses the one outcome that would be unrecoverable.
+
+    Only `market` anchors are read. A `game` anchor is counted (refusal 1) and a
+    `container` anchor — a Polymarket event id — is IGNORED rather than treated
+    as an unresolvable market, which would refuse every Polymarket-born ghost
+    the day containers start being written. The table holds none today; the
+    key module already produces them.
+
+    Returns the canonical event id, or ``None`` for every refusal. ``None`` is
+    the answer on any error as well: this decorates a read, and a read that
+    cannot decide must serve the row it was asked for.
+    """
+    try:
+        row = (
+            await session.execute(
+                text(_DRAIN_VERDICT_SQL),
+                {
+                    "event_id": int(event_id),
+                    "market_kind": ANCHOR_KIND_MARKET,
+                    "game_kind": ANCHOR_KIND_GAME,
+                },
+            )
+        ).first()
+    except Exception:  # pragma: no cover - defensive, see docstring
+        logger.exception(
+            "Drain verdict query failed for event %s — serving the row as asked",
+            event_id,
+        )
+        return None
+
+    if row is None:
+        return None
+
+    verdict = row._mapping
+    candidate = verdict["candidate_id"]
+
+    if (
+        verdict["game_anchors"]
+        or verdict["provenance"] not in MARKET_BORN_COMMENCE_SOURCES
+        or not verdict["market_anchors"]
+        or verdict["unresolved"]
+        or verdict["other_targets"] != 1
+        or verdict["carries_truth"]
+        or verdict["holds_markets"]
+        or candidate is None
+    ):
+        return None
+
+    canonical = (
+        await session.execute(
+            text(_CANONICAL_SPORT_SQL), {"event_id": int(candidate)}
+        )
+    ).first()
+    if canonical is None:
+        return None
+
+    ghost_family = _sport_family(verdict["sport_key"])
+    canonical_family = _sport_family(canonical[0])
+    if ghost_family is None or ghost_family != canonical_family:
+        logger.warning(
+            "Refusing to resolve event %s to %s: sport families %r vs %r "
+            "(Q050) — a cross-sport read is the one outcome worth refusing",
+            event_id, candidate, ghost_family, canonical_family,
+        )
+        return None
+
+    logger.info(
+        "Event %s is a market-born duplicate of %s — reading as the canonical "
+        "row (Q050, ruling 048 drain clause)",
+        event_id, candidate,
+    )
+    return int(candidate)
