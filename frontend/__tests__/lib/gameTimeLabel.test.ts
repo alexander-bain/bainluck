@@ -329,26 +329,26 @@ describe("formatTournamentWhenLabel", () => {
 
   describe("formatTournamentTimingLabel — fallback, never a second line", () => {
     test("a real start date wins; the resolution date stays off the card", () => {
-      const label = formatTournamentTimingLabel(DANISH, "2026-08-30T00:00:00+00:00", NOW_T);
+      const label = formatTournamentTimingLabel(null, DANISH, "2026-08-30T00:00:00+00:00", NOW_T);
       expect(label).toBe("Starts Thu, Aug 13");
       expect(label).not.toContain("Resolves");
     });
 
     test("no trustworthy start date falls back to when the question is decided", () => {
-      expect(formatTournamentTimingLabel(MAJOR_2026, "2026-12-31T15:00:00+00:00", NOW_T)).toBe(
+      expect(formatTournamentTimingLabel(null, MAJOR_2026, "2026-12-31T15:00:00+00:00", NOW_T)).toBe(
         "Resolves Dec 31, 2026",
       );
     });
 
     test("the false 'Starts Fri, Jan 14, 2028' becomes a true 'Resolves'", () => {
-      expect(formatTournamentTimingLabel(MAJOR_2027, "2028-01-14T15:00:00+00:00", NOW_T)).toBe(
+      expect(formatTournamentTimingLabel(null, MAJOR_2027, "2028-01-14T15:00:00+00:00", NOW_T)).toBe(
         "Resolves Jan 14, 2028",
       );
     });
 
     test("neither usable renders nothing rather than a placeholder", () => {
-      expect(formatTournamentTimingLabel(MAJOR_2026, null, NOW_T)).toBe("");
-      expect(formatTournamentTimingLabel(null, "2020-01-01T00:00:00+00:00", NOW_T)).toBe("");
+      expect(formatTournamentTimingLabel(null, MAJOR_2026, null, NOW_T)).toBe("");
+      expect(formatTournamentTimingLabel(null, null, "2020-01-01T00:00:00+00:00", NOW_T)).toBe("");
     });
 
     /**
@@ -356,7 +356,7 @@ describe("formatTournamentWhenLabel", () => {
      * moves one of them has to say which one and why.
      */
     test("the measured slate: 8 of 8 now carry a timing line, 0 of them false", () => {
-      const rendered = SLATE.map((t) => formatTournamentTimingLabel(t.commence, t.resolution, NOW_T));
+      const rendered = SLATE.map((t) => formatTournamentTimingLabel(null, t.commence, t.resolution, NOW_T));
       expect(rendered).toEqual([
         "Starts Thu, Aug 13",   // Danish Golf Championship — unchanged
         "Resolves Jul 7, 2030", // Majors Before 2030        — was ""
@@ -379,7 +379,7 @@ describe("formatTournamentWhenLabel", () => {
         "Indianapolis",
       ]);
       for (const t of unchanged) {
-        expect(formatTournamentTimingLabel(t.commence, t.resolution, NOW_T)).toBe(
+        expect(formatTournamentTimingLabel(null, t.commence, t.resolution, NOW_T)).toBe(
           formatTournamentWhenLabel(t.commence, NOW_T),
         );
       }
