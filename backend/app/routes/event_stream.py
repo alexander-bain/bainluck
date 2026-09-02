@@ -161,10 +161,19 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
                 continue
 
             if loop_now - last_beat >= HEARTBEAT_INTERVAL_S:
-                # An SSE comment. Keeps the Heroku router and any intermediary
-                # from treating the connection as idle, and reaches no handler
-                # on the client.
-                yield ": ping\n\n"
+                # A NAMED event, deliberately not the conventional `: ping`
+                # comment. A comment keeps the router from reaping us but fires
+                # no handler in EventSource, so the client cannot observe it —
+                # and the client's silence watchdog would then be measuring
+                # "is this market moving" instead of "is this server alive".
+                # On a quiet market those differ, and the watchdog would tear
+                # down a perfectly healthy stream. This is observable.
+                yield sse_encode(
+                    json.dumps(
+                        {"t": datetime.now(timezone.utc).isoformat()}
+                    ),
+                    event="heartbeat",
+                )
                 last_beat = loop_now
     except asyncio.CancelledError:
         raise
