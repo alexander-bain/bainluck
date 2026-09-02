@@ -3386,8 +3386,15 @@ async def _poll_live_prediction_market_prices():
                     home_win_probability=round(home_prob, 4),
                     away_win_probability=round(away_prob, 4),
                     game_state={
-                        "market_name": market.name,
-                        "market_id": market.id,
+                        # `reading.market`, NOT the loop's `market`. The loop
+                        # row is only the group's PRIMARY — the row picked to
+                        # iterate once per (event, source). Since the blend
+                        # falls through a group until a market can speak, the
+                        # primary is not always the market the number came
+                        # from, and "why did the blend say that" has to name
+                        # the market that said it.
+                        "market_name": reading.market.name,
+                        "market_id": reading.market.id,
                         "outcome_name": outcome.name,
                         "yes_probability": yes_prob,
                         "yes_bid": float(outcome.current_yes_bid) if outcome.current_yes_bid else None,
