@@ -126,7 +126,16 @@ class LiveBlendRefresher:
             "snapshots_written": 0,
             "snapshots_deduped": 0,
             "errors": 0,
+            # live/034 S1 — SSE fanout. Counted so a publisher that is failing
+            # every time is visible; a push path that dies quietly looks exactly
+            # like a quiet market (gotcha #53).
+            "published": 0,
+            "publish_errors": 0,
         }
+        #: Lazily-built async Redis client, reused for the life of this
+        #: refresher. Built on first publish rather than in __init__ so a
+        #: consumer run that never stamps anything never opens a connection.
+        self._redis = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -181,14 +190,27 @@ class LiveBlendRefresher:
         return self.stats
 
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
         from sqlalchemy import select, update
 
         from app.models.models import Event, FuturesMarket, FuturesOutcome
         from app.tasks.base import get_task_session
-        from app.utils.aggregation import stamp_source_reading
+        from app.utils.aggregation import (
+            compute_aggregate_probability, stamp_source_reading,
+        )
         from app.utils.live_blend import (
             MarketOutcomes, compute_source_home_probability,
         )
+        from app.utils.live_push import build_frame
+
+        # live/034 S1 — frames are COLLECTED here and published after the
+        # session context exits cleanly, never inside the loop. Publishing
+        # mid-transaction would broadcast a number that a later failure in the
+        # same batch could roll back, and an un-take-back-able push of a value
+        # the database never kept is worse than a push that never happened.
+        pending: list[dict] = []
 
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
@@ -259,15 +281,20 @@ class LiveBlendRefresher:
                             )
                         )
                     ).scalar_one_or_none()
+                    # ONE stamp instant, shared by the JSONB write and the frame
+                    # the client reads its "live · Ns ago" from. Letting
+                    # `stamp_source_reading` default its own `now` would put a
+                    # different timestamp in the column than on the wire, and
+                    # the age on screen would be quietly wrong.
+                    stamped_at = datetime.now(timezone.utc)
+                    new_sources = stamp_source_reading(
+                        current, self.source, value, now=stamped_at,
+                    )
                     # Core update, never ORM attribute assignment — gotcha #4.
                     await session.execute(
                         update(Event)
                         .where(Event.id == event_id)
-                        .values(
-                            win_probability_sources=stamp_source_reading(
-                                current, self.source, value,
-                            )
-                        )
+                        .values(win_probability_sources=new_sources)
                     )
                     self._last_write_at[event_id] = now
                     self._last_written_value[event_id] = value
@@ -276,12 +303,93 @@ class LiveBlendRefresher:
                     await self._maybe_snapshot(
                         session, event_id, value, reading, now,
                     )
+
+                    # The AGGREGATE, computed off the sources dict we just
+                    # wrote — the number the hero renders, not this one
+                    # source's price ("the blend is the product"). The shim
+                    # carries the post-write JSONB with the event's own
+                    # fallback fields; `compute_aggregate_probability` reads
+                    # all of them through `getattr`, so a namespace is a
+                    # faithful stand-in for the row without re-reading it.
+                    #
+                    # Attributes are pulled off the ORM object HERE, inside the
+                    # session — after it closes they are expired and touching
+                    # one would emit a lazy load against a dead session
+                    # (gotcha #6).
+                    shim = SimpleNamespace(
+                        win_probability_sources=new_sources,
+                        status=event.status,
+                        espn_win_prob_home=getattr(
+                            event, "espn_win_prob_home", None
+                        ),
+                        opening_home_probability=(
+                            event.opening_home_probability
+                        ),
+                    )
+                    pending.append(
+                        build_frame(
+                            event_id=event_id,
+                            probability=compute_aggregate_probability(
+                                shim, event.status,
+                            ),
+                            source=self.source,
+                            source_value=value,
+                            updated_at=stamped_at.isoformat(),
+                            status=event.status,
+                        )
+                    )
                 except Exception:
                     self.stats["errors"] += 1
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",
                         self.source, event_id,
                     )
+
+        # Session closed and committed — only now is the pushed number a number
+        # the database actually kept.
+        await self._publish(pending)
+
+    async def _publish(self, frames: list[dict]) -> None:
+        """Fan the committed frames out to any SSE subscribers. Never raises.
+
+        Wrapped whole as well as per-frame: `publish_frame` already swallows a
+        failed PUBLISH, but building the client can fail too (no `REDIS_URL`, a
+        refused TLS handshake), and this runs on the dyno whose actual job is
+        streaming prices. Nothing here may interrupt that (gotcha #42).
+        """
+        if not frames:
+            return
+        try:
+            from app.utils.live_push import publish_frame
+
+            if self._redis is None:
+                from app.tasks.redis_state import get_async_redis_client
+
+                self._redis = get_async_redis_client()
+            sent = 0
+            for frame in frames:
+                if await publish_frame(self._redis, frame):
+                    sent += 1
+                    self.stats["published"] += 1
+                else:
+                    self.stats["publish_errors"] += 1
+            if sent == 0:
+                # `publish_frame` swallows its own failure and returns False, so
+                # the `except` below never sees a dead connection — without this
+                # the poisoned client would be reused for the life of the
+                # consumer, publishing nothing and only ticking a counter.
+                # A batch where NOTHING went out is enough to suspect the
+                # client; rebuild it next time rather than retry it forever.
+                self._redis = None
+        except Exception:
+            self.stats["publish_errors"] += len(frames)
+            # Drop the client so the next batch rebuilds it rather than
+            # reusing a connection that has already proven bad.
+            self._redis = None
+            logger.warning(
+                "live_blend_refresh[%s]: publish batch failed for %d frames",
+                self.source, len(frames), exc_info=True,
+            )
 
     async def _maybe_snapshot(
         self, session, event_id: int, value: float, reading, now: float,
