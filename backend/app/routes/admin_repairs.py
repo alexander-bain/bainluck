@@ -24,7 +24,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-espn-id | label-store-converge
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
-             | polymarket-leg-label-census | polymarket-leg-label }
+             | polymarket-leg-label-census | polymarket-leg-label
+             | canonical-key-rekey-census | canonical-key-rekey }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -43,7 +44,9 @@ transactional session and RETURNS its own before/after census in the response bo
      label-defect-routes in the commit that registered it. Re-synced again
      2026-09-01, Q495, adding the two polymarket-sport-category entries in the
      commit that registered them. Re-synced again 2026-09-01, Q499, adding the
-     two polymarket-leg-label entries in the commit that registered them.)
+     two polymarket-leg-label entries in the commit that registered them.
+     Re-synced again 2026-09-01, lane1/046, adding the two canonical-key-rekey
+     entries in the commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -475,6 +478,23 @@ _REPAIRS = {
     # state, not a standing job.
     "polymarket-leg-label": (
         "app.tasks.repair_polymarket_leg_label",
+        "repair",
+    ),
+    # #2622 (lane1/046): append the DISCIPLINE segment to canonical keys already
+    # in the table, so `/sports` Top Markets stops welding the men's and women's
+    # US Open winner boards into one card with Alcaraz leading the women's draw.
+    # The census never writes. The repair appends ONLY — segments 0-3 come from
+    # the stored key verbatim, so it cannot reclassify anything — and its
+    # eligibility test (a key with exactly three colons) is also its idempotence
+    # guarantee. Default population is `status='open'`; `population=all` reaches
+    # the resolved rows the calibration fair-fight pairing joins on and is a
+    # calibration decision, not a lane's. Accepts ?limit=&after_id=&population=.
+    "canonical-key-rekey-census": (
+        "app.tasks.repair_canonical_market_key",
+        "census",
+    ),
+    "canonical-key-rekey": (
+        "app.tasks.repair_canonical_market_key",
         "repair",
     ),
 }

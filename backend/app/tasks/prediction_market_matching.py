@@ -658,6 +658,61 @@ def auto_create_self_refutes(market, commence_time) -> bool:
     return _ticker_date_conflicts_with_event(ticker_time, commence_time, prefix)
 
 
+#: How far into the past an auto-created fixture's start may be. See
+#: :func:`auto_create_is_stale_fixture` for the measurement and the derivation.
+AUTO_CREATE_MAX_PAST_AGE = timedelta(hours=36)
+
+
+def auto_create_is_stale_fixture(commence_time, now) -> bool:
+    """True when the row we are about to write would be BORN FINISHED.
+
+    Pure: no DB. The third member of the family above, and the same shape as
+    :func:`auto_create_self_refutes`: a termination check on the create, not a
+    matching rule.
+
+    #2623. Searching `Sabalenka` returned every WTA match twice — a real
+    odds_api row with the score beside a surname-only Kalshi ghost with none.
+    The specimen says how the ghost is made: event 15300722,
+    `Sabalenka vs Bejlek`, **created 2026-09-01 22:05 for a fixture that started
+    2026-08-20 04:14** — twelve days after the match was played. Kalshi's settled
+    markets stay `status='open'` in our table (gotcha #33), so the matcher keeps
+    finding them, and each pass mints an event for a game that finished nearly a
+    fortnight ago. It is born past, the staleness net closes it, and it renders
+    on `/search` as a FINAL with no score — D26's class exactly.
+
+    ── WHY A ROW BORN FINISHED IS ALWAYS WRONG, MEASURED ──
+
+    Production census 2026-09-01, every event stamped `kalshi` /`kalshi_ticker` /
+    `polymarket` created in the preceding 14 days — **72,796 rows, and 0 of them
+    carry a score.** Not "few": none. A prediction venue is not a scorer, and
+    nothing downstream ever fills one in. Of those, 27,801 were already in the
+    past at the moment of creation, and 18,859 were for fixtures **more than
+    seven days** gone. There is no result waiting to arrive for any of them, so
+    declining to create them cannot cost a single real one.
+
+    ── WHY 36 HOURS, AND NOT 0 ──
+
+    A create for a fixture that started an hour ago is legitimate: the match may
+    still be in play, and the row is how a live Kalshi price reaches the site.
+    The bound also has to clear the MIDNIGHT STAND-IN.
+    :func:`auto_create_commence_time` stamps a ticker's DATE, which has no
+    time-of-day and resolves to midnight UTC, so a match played at 23:00 local
+    on the ticker's own day sits up to ~30 hours after its own stand-in. 36
+    hours is the smallest bound that cannot refuse a fixture which might still
+    be running under such a stand-in — deliberately generous, because the cost
+    of refusing a real fixture is a missing game and the cost of allowing a
+    stale one is a duplicate the display layer already collapses
+    (`app/utils/fixture_twins.py`).
+
+    A `None` commence_time is NOT stale. Absence is not age (gotcha #53), and
+    the caller has already replaced a missing time with `now` before reaching
+    here.
+    """
+    if commence_time is None or now is None:
+        return False
+    return (now - commence_time) > AUTO_CREATE_MAX_PAST_AGE
+
+
 async def _check_duplicate_kalshi_linkage(
     session, event_id: int, market, ticker_game_date,
 ) -> bool:
@@ -2804,6 +2859,22 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             "at commence=%s that _check_duplicate_kalshi_linkage_reason is "
             "guaranteed to refuse — the create cannot converge",
             market.external_id, commence_time.isoformat(),
+        )
+        return None
+
+    # #2623, and it is the same shape as the refusal above: a create whose row
+    # can never become anything a reader wants. See
+    # `auto_create_is_stale_fixture` — 0 of 72,796 venue-created events in 14
+    # days ever carried a score, and this one's fixture finished more than 36
+    # hours ago, so it would be born already-over and render as a FINAL with no
+    # result beside the real row that has one.
+    if auto_create_is_stale_fixture(commence_time, now):
+        logger.warning(
+            "Refusing born-finished auto-create (#2623): %s would create an event "
+            "at commence=%s, %.1fh in the past — a venue never scores it, so the "
+            "row can only ever be an unscored FINAL",
+            market.external_id, commence_time.isoformat(),
+            (now - commence_time).total_seconds() / 3600.0,
         )
         return None
 

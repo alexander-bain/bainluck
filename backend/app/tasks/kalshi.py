@@ -760,6 +760,7 @@ async def _poll_kalshi_markets():
                         league,
                         canon_category,
                         season,
+                        market_name=market_name,
                     )
 
                     # Generate category tags

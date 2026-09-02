@@ -166,11 +166,82 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
 }
 
 /**
- * Group Top Markets items by canonical_market_key.
- * Items sharing a key are bundled into GroupedMarket entries.
- * Items without a key (or unique keys) remain as singles.
+ * The one thing a bundled Top Markets card claims, and therefore the one thing
+ * it has to be able to prove: **these are the same question, priced by
+ * different venues.**
  *
- * Returns { groups, singles } — both sorted by best score descending.
+ * #2622 — on 2026-09-01 `/sports` rendered a card headed "2026 Women's US Open
+ * Winner (Tennis)", badged `1 sources`, with **Carlos Alcaraz #1 at 36%** and
+ * Alexander Zverev third. Both US Open winner boards — men's and women's, two
+ * distinct Polymarket markets with distinct `group_id`s and disjoint outcome
+ * sets — carried the identical `canonical_market_key` `tennis::championship:2026`,
+ * and this function bundled on that key ALONE. `CombinedFeedCard` then unioned
+ * the outcomes and took the title from `items[0]`, so two men were relabelled
+ * into the women's draw and one of them led it.
+ *
+ * The backend's own dedupe (`_dedupe_futures_by_canonical`, `routes/feed.py`)
+ * had already refused to collapse the pair — it checks outcome overlap and
+ * emitted both — but that verdict is never sent to the client, so the client
+ * re-grouped on exactly the key the backend declined to trust.
+ *
+ * Two conditions now gate a bundle, and BOTH are structural rather than
+ * cosmetic:
+ *
+ *  1. **At least two distinct sources.** A "N sources" card exists to compare
+ *     venues. Two markets from ONE venue are two questions that venue chose to
+ *     ask separately — it is the venue itself telling us they are not the same
+ *     question. This alone kills the Alcaraz card (both rows are `polymarket`,
+ *     which is why the badge read the absurd `1 sources`).
+ *  2. **Non-disjoint outcomes.** Two venues pricing one question name at least
+ *     one competitor the same way. Disjoint top-outcome sets mean the shared key
+ *     is wrong, whatever it says.
+ *
+ * A key the discipline axis (#2622, `futures_categorization.py`) has not yet
+ * separated therefore cannot produce a wrong card while the backfill drains —
+ * the group simply falls apart into its members, each rendered under its own
+ * real name.
+ */
+function outcomeNameSet(item: FeedItem): Set<string> {
+  const data = item.data as FeedFuturesData;
+  const names = new Set<string>();
+  for (const outcome of data.top_outcomes ?? []) {
+    const n = outcome?.name?.toLowerCase().trim();
+    if (n) names.add(n);
+  }
+  return names;
+}
+
+export function bundleIsOneQuestion(items: FeedItem[]): boolean {
+  if (items.length < 2) return false;
+
+  const sources = new Set<string>();
+  for (const item of items) {
+    sources.add((item.data as FeedFuturesData).source || "unknown");
+  }
+  if (sources.size < 2) return false;
+
+  // Every member must share at least one outcome with at least one other
+  // member. A member that overlaps nothing is a different question wearing the
+  // same key, and merging it is how a foreign outcome gets `items[0]`'s title.
+  const sets = items.map(outcomeNameSet);
+  return sets.every((set, i) => {
+    if (set.size === 0) return false;
+    return sets.some((other, j) => {
+      if (i === j) return false;
+      for (const name of set) if (other.has(name)) return true;
+      return false;
+    });
+  });
+}
+
+/**
+ * Group Top Markets items by canonical_market_key.
+ * Items sharing a key are bundled into GroupedMarket entries — but only when
+ * `bundleIsOneQuestion` can prove the group is a cross-source comparison.
+ * Items without a key, with unique keys, or in a refused group remain as
+ * singles.
+ *
+ * Returns { ordered } — sorted by best score descending.
  */
 export function groupTopMarkets(marketItems: FeedItem[]): {
   /** Ordered list mixing GroupedMarket and single FeedItem, sorted by score. */
@@ -190,18 +261,19 @@ export function groupTopMarkets(marketItems: FeedItem[]): {
     }
   }
 
-  // Build ordered list: groups (2+ items) get bundled, singles stay flat
+  // Build ordered list: provable cross-source groups get bundled, everything
+  // else stays flat under its own name.
   const ordered: (GroupedMarket | FeedItem)[] = [];
 
   for (const [canonicalKey, items] of byKey) {
-    if (items.length >= 2) {
+    if (bundleIsOneQuestion(items)) {
       ordered.push({
         canonicalKey,
         items,
         bestScore: Math.max(...items.map((i) => i.score)),
       });
     } else {
-      ordered.push(items[0]);
+      for (const item of items) ordered.push(item);
     }
   }
 

@@ -1007,6 +1007,7 @@ async def _process_event_batch(
                         canon_category = discipline
                 canonical_key = compute_canonical_market_key(
                     llm_sport_category, league, canon_category, season,
+                    market_name=event.title,
                 )
 
                 # Generate category tags

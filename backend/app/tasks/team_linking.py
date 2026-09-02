@@ -494,6 +494,7 @@ async def _backfill_canonical_keys(limit: int = 500):
                             league,
                             canon_category,
                             season,
+                            market_name=market.name,
                         )
                         if key:
                             market.canonical_market_key = key
