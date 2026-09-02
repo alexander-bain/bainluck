@@ -7,6 +7,7 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
+import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
@@ -133,6 +134,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
+  // LAT-P191 (#1636, ruling on latency-022 = option b). Pure function of the
+  // url, so SSR and hydration agree; `null` means "no safe ladder", and the
+  // hero then renders exactly as it did before.
+  const heroSrcSet = data.image_url ? buildHeroSrcSet(data.image_url) : null;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
   // L2-65: a winner-field market that IS an event concept (e.g. a tennis
   // tournament winner) links into the richer /event/[key] surface; everything
@@ -521,9 +526,17 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
       }}>
         {/* Decorative — the card's accessible name is on the <article>, and the
             CSS background this replaces carried no accessible name either. */}
+        {/* LAT-P191 (#1636) — `srcset`/`sizes`, capped at the raster we already
+            serve (Alex ruling on `alex-inbox/latency-022`, option (b)). Every
+            rung is a SHRINK of `src`, and the top rung IS `src`, so the four-
+            column desktop slot (300 CSS px) stops downloading a 525–940 px
+            photo while no device gets a byte heavier than today. Sharpness on
+            a retina phone would need rungs ABOVE 940 px and costs mobile bytes
+            — deliberately not taken; the reasoning is in `heroSrcSet.ts`. */}
         {data.image_url && (
           <img
             src={data.image_url}
+            {...(heroSrcSet ? { srcSet: heroSrcSet, sizes: HERO_IMAGE_SIZES } : {})}
             alt=""
             aria-hidden="true"
             loading="lazy"
