@@ -472,16 +472,19 @@ async def test_the_specimens_thin_chart_enqueues_its_own_fill(redis, enqueued):
     Event 15300759 served ONE point for a market that had been live for five
     days. That is the exact response that must now start its own repair.
     """
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=5))
 
-    verdict = await maybe_enqueue_on_demand_fill(session, _event(), served_points=1)
+    verdict = await plan_on_demand_fill(session, _event(), served_points=1)
 
-    assert verdict["enqueued"] is True
-    assert enqueued == [
-        {"kwargs": {"event_ids": [15300759], "limit": 1}, "queue": "background"}
-    ]
+    assert verdict["enqueue"] is True
+    assert verdict["event_id"] == 15300759
+    assert verdict["served_points"] == 1
+    # The PLANNER must not dispatch — see
+    # `test_the_dispatch_is_not_inside_the_tasks_package` for why that is a rule
+    # with a CI guard behind it and not a preference.
+    assert enqueued == []
 
 
 async def test_a_drawn_chart_costs_nothing_at_all(redis, enqueued):
@@ -490,11 +493,11 @@ async def test_a_drawn_chart_costs_nothing_at_all(redis, enqueued):
     Asserting only "did not enqueue" would pass on a version that ran both
     queries first. The point is that a healthy chart reaches NO query.
     """
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=5))
 
-    verdict = await maybe_enqueue_on_demand_fill(
+    verdict = await plan_on_demand_fill(
         session, _event(), served_points=THIN_MAX_EXPECTED_POINTS
     )
 
@@ -519,7 +522,7 @@ async def test_the_cheap_gate_cannot_reject_a_real_candidate(redis, enqueued):
     """
     from app.tasks.event_chart_backfill import (
         is_thin_chart,
-        maybe_enqueue_on_demand_fill,
+        plan_on_demand_fill,
     )
 
     just_under = THIN_MAX_EXPECTED_POINTS - 1
@@ -527,12 +530,12 @@ async def test_the_cheap_gate_cannot_reject_a_real_candidate(redis, enqueued):
     assert is_thin_chart(just_under, long_life), "control: this IS thin"
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=10))
-    verdict = await maybe_enqueue_on_demand_fill(
+    verdict = await plan_on_demand_fill(
         session, _event(), served_points=just_under
     )
 
     assert session.queries == 1, "the gate must not swallow a real candidate"
-    assert verdict["enqueued"] is True
+    assert verdict["enqueue"] is True
 
 
 async def test_a_short_match_that_is_already_drawn_does_not_enqueue(redis, enqueued):
@@ -549,7 +552,7 @@ async def test_a_short_match_that_is_already_drawn_does_not_enqueue(redis, enque
     from app.tasks.event_chart_backfill import (
         THIN_POINTS_PER_HOUR,
         is_thin_chart,
-        maybe_enqueue_on_demand_fill,
+        plan_on_demand_fill,
     )
 
     two_hours = 2 * 3600
@@ -564,7 +567,7 @@ async def test_a_short_match_that_is_already_drawn_does_not_enqueue(redis, enque
         commence_time=datetime.now(UTC) - timedelta(hours=3),
     )
 
-    verdict = await maybe_enqueue_on_demand_fill(
+    verdict = await plan_on_demand_fill(
         session, short_match, served_points=50
     )
 
@@ -574,16 +577,15 @@ async def test_a_short_match_that_is_already_drawn_does_not_enqueue(redis, enque
 
 async def test_a_second_reader_inside_the_ttl_does_not_enqueue_again(redis, enqueued):
     """A page being shared and opened twenty times costs ONE fill."""
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=5))
 
-    first = await maybe_enqueue_on_demand_fill(session, _event(), served_points=1)
-    second = await maybe_enqueue_on_demand_fill(session, _event(), served_points=1)
+    first = await plan_on_demand_fill(session, _event(), served_points=1)
+    second = await plan_on_demand_fill(session, _event(), served_points=1)
 
-    assert first["enqueued"] is True
-    assert second == {"enqueued": False, "reason": "already_claimed"}
-    assert len(enqueued) == 1
+    assert first["enqueue"] is True
+    assert second == {"enqueue": False, "reason": "already_claimed"}
 
 
 async def test_a_crawler_is_stopped_by_the_hourly_cap(redis, enqueued):
@@ -641,15 +643,15 @@ async def test_no_redis_refuses_the_claim_rather_than_failing_open(monkeypatch):
 
 async def test_an_expired_market_is_not_chased(redis, enqueued):
     """Past the retention floor the candles are provably gone (gotcha #35)."""
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
     from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=400))
     old = _event(completed_days_ago=PROVABLY_PURGED_AGE_DAYS + 10)
 
-    verdict = await maybe_enqueue_on_demand_fill(session, old, served_points=1)
+    verdict = await plan_on_demand_fill(session, old, served_points=1)
 
-    assert verdict == {"enqueued": False, "reason": "beyond_retention_floor"}
+    assert verdict == {"enqueue": False, "reason": "beyond_retention_floor"}
     assert enqueued == []
 
 
@@ -658,25 +660,25 @@ async def test_an_event_with_no_venue_market_says_so_rather_than_enqueueing(
 ):
     """Not every thin chart is one this rail can fix, and that is not the same
     as the chart being fine (gotcha #53)."""
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
-    verdict = await maybe_enqueue_on_demand_fill(
+    verdict = await plan_on_demand_fill(
         _OnDemandSession(None), _event(), served_points=1
     )
 
-    assert verdict == {"enqueued": False, "reason": "no_venue_markets"}
+    assert verdict == {"enqueue": False, "reason": "no_venue_markets"}
     assert enqueued == []
 
 
 async def test_a_broken_refill_never_costs_the_reader_their_chart(redis, enqueued):
     """The chart endpoint must survive anything this rail does (gotcha #42)."""
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
     class _Exploding:
         async def execute(self, *a, **k):
             raise RuntimeError("database on fire")
 
-    assert await maybe_enqueue_on_demand_fill(
+    assert await plan_on_demand_fill(
         _Exploding(), _event(), served_points=1
     ) is None
 
@@ -694,7 +696,7 @@ async def test_on_demand_is_not_limited_to_the_nightlys_narrow_population(
     """
     from app.tasks.event_chart_backfill import (
         is_reader_reachable_sport_key,
-        maybe_enqueue_on_demand_fill,
+        plan_on_demand_fill,
     )
 
     assert is_reader_reachable_sport_key("soccer_other") is False
@@ -703,24 +705,24 @@ async def test_on_demand_is_not_limited_to_the_nightlys_narrow_population(
     february_soccer = _event(event_id=999001)
     february_soccer.sport = SimpleNamespace(key="soccer_other")
 
-    verdict = await maybe_enqueue_on_demand_fill(
+    verdict = await plan_on_demand_fill(
         session, february_soccer, served_points=1
     )
 
-    assert verdict["enqueued"] is True
+    assert verdict["enqueue"] is True
 
 
 async def test_an_old_page_view_fills_at_hourly_and_a_recent_one_at_minute(
     redis, enqueued
 ):
-    from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+    from app.tasks.event_chart_backfill import plan_on_demand_fill
 
     session = _OnDemandSession(datetime.now(UTC) - timedelta(days=40))
 
-    recent = await maybe_enqueue_on_demand_fill(
+    recent = await plan_on_demand_fill(
         session, _event(event_id=1, completed_days_ago=2), served_points=1
     )
-    old = await maybe_enqueue_on_demand_fill(
+    old = await plan_on_demand_fill(
         session,
         _event(event_id=2, completed_days_ago=COARSE_GRANULARITY_AGE_DAYS + 5),
         served_points=1,
@@ -728,3 +730,108 @@ async def test_an_old_page_view_fills_at_hourly_and_a_recent_one_at_minute(
 
     assert recent["min_period_minutes"] == 1
     assert old["min_period_minutes"] == 60
+
+
+# ---------------------------------------------------------------------------
+# (c) THE LAYERING — who is allowed to dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_the_dispatch_is_not_inside_the_tasks_package():
+    """🔴 Found by CI shard 4, not by me, and it is a real architectural rule.
+
+    `test_no_task_dispatches_another_task` fails any `.delay(` / `.apply_async(`
+    under `app/tasks/`, because the static scan that derives
+    `RESULT_CONSUMER_TASKS` reads ROUTES. A task that dispatches a task is
+    therefore invisible to it, and can grow a result consumer nobody declared —
+    whose status poll then hangs forever, silently.
+
+    My first cut had the planner dispatching from inside the tasks package. It
+    passed 31 of its own guards and every focused suite; the tree-wide guard
+    caught it. So the planner decides and the route spends the decision, and
+    this asserts that split rather than trusting a comment.
+    """
+    import re
+
+    from app.tasks import event_chart_backfill
+    from tests.test_celery_result_retention import (
+        _lines_with_comments_and_strings_masked,
+    )
+
+    # Reuse the REAL guard's masking rather than reimplementing it. My first
+    # attempt at a local version masked by token text instead of by position and
+    # left the docstring in — so it failed on the comment that explains the rule,
+    # which is the exact "cannot tell code from prose about code" trap that
+    # helper's own docstring was written about.
+    pattern = re.compile(r"\.(?:delay|apply_async)\s*\(|\bsend_task\s*\(")
+    path = event_chart_backfill.__file__
+    offenders = [
+        f"{lineno}: {line.strip()[:80]}"
+        for lineno, line in enumerate(
+            _lines_with_comments_and_strings_masked(path), 1
+        )
+        if pattern.search(line)
+    ]
+
+    assert not offenders, offenders
+
+
+def test_the_route_dispatches_what_the_planner_approves():
+    """The other half of the split: the decision has to be SPENT.
+
+    A planner that decides correctly and a route that ignores it would pass
+    every test above while filling nothing — the two halves are only a ship
+    together.
+    """
+    import inspect
+
+    from app.routes import events as events_route
+
+    source = inspect.getsource(events_route.get_event_odds_history)
+    assert "plan_on_demand_fill" in source
+    assert "backfill_event_chart_history.apply_async" in source
+    # The CALL, not the name. `"release_on_demand_claim" in source` passes on a
+    # route that imports it and never calls it — the mutation battery found
+    # exactly that and the guard shrugged.
+    assert "release_on_demand_claim(event_id)" in source, (
+        "a dispatch that fails must hand the claim back, or one broker hiccup "
+        "costs this chart six hours of eligibility"
+    )
+    # ...and it must be reachable from the dispatch's failure path, not parked
+    # somewhere else in the function.
+    dispatch_at = source.index("backfill_event_chart_history.apply_async")
+    release_at = source.index("release_on_demand_claim(event_id)")
+    assert release_at > dispatch_at, "the release belongs AFTER the dispatch it undoes"
+    assert "except Exception" in source[dispatch_at:release_at], (
+        "the release must sit on the dispatch's own failure path"
+    )
+
+
+def test_a_failed_dispatch_hands_the_claim_back(redis):
+    """So the next reader can try again, rather than waiting out the TTL."""
+    from app.tasks.event_chart_backfill import (
+        ON_DEMAND_CLAIM_KEY,
+        claim_on_demand_fill,
+        release_on_demand_claim,
+    )
+
+    claimed, _ = claim_on_demand_fill(4242)
+    assert claimed is True
+    assert claim_on_demand_fill(4242)[0] is False, "control: the claim is held"
+
+    release_on_demand_claim(4242)
+
+    assert ON_DEMAND_CLAIM_KEY.format(event_id=4242) in redis.deleted
+    assert claim_on_demand_fill(4242)[0] is True, "the next reader can claim it"
+
+
+def test_the_dispatched_task_is_a_declared_result_consumer():
+    """An admin status poll on this task must still resolve.
+
+    It is dispatched from an HTTP route now in two places, so its result cannot
+    be suppressed — `test_result_consumer_set_matches_code` derives this set
+    statically and would fail on drift, but naming it here says WHY it belongs.
+    """
+    from app.tasks.result_retention import RESULT_CONSUMER_TASKS
+
+    assert "app.tasks.backfill_event_chart_history" in RESULT_CONSUMER_TASKS

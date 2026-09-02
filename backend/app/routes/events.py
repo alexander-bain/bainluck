@@ -12114,18 +12114,38 @@ async def get_event_odds_history(
     # chart they were always going to get; the next reader gets the curve. It
     # can neither slow this response meaningfully (one indexed MIN(), and only
     # once the served series is already known to be short) nor fail it.
+    # THE DISPATCH LIVES HERE, NOT IN THE TASK MODULE, and that is not a style
+    # choice: `test_no_task_dispatches_another_task` fails any `.apply_async` under
+    # `app/tasks/`, because the scan that derives `RESULT_CONSUMER_TASKS` only
+    # reads routes — so a task that dispatches a task can grow a result consumer
+    # nobody declared and leave its status poll hanging forever. The planner
+    # decides and wins the claim; this line spends it.
     on_demand_backfill = None
     try:
-        from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+        from app.tasks.event_chart_backfill import plan_on_demand_fill
 
         venue_points = sum(
             len(points)
             for source_key, points in win_prob_history.items()
             if source_key in ("kalshi", "polymarket")
         )
-        on_demand_backfill = await maybe_enqueue_on_demand_fill(
+        on_demand_backfill = await plan_on_demand_fill(
             db, event, served_points=venue_points
         )
+        if on_demand_backfill and on_demand_backfill.get("enqueue"):
+            from app.tasks import backfill_event_chart_history
+            from app.tasks.event_chart_backfill import release_on_demand_claim
+
+            try:
+                backfill_event_chart_history.apply_async(
+                    kwargs={"event_ids": [event_id], "limit": 1},
+                    queue="background",
+                )
+            except Exception:  # noqa: BLE001 — a broker hiccup must not hold the claim
+                # Hand the claim back. Keeping it would make one failed dispatch
+                # cost this chart its next six hours of eligibility.
+                release_on_demand_claim(event_id)
+                raise
     except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
         logger.warning(
             "on-demand chart backfill consideration failed for event %s: %s",

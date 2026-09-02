@@ -1554,10 +1554,36 @@ def claim_on_demand_fill(
         return False, "no_redis"
 
 
-async def maybe_enqueue_on_demand_fill(
+def release_on_demand_claim(event_id: int) -> None:
+    """Hand a won claim back, for a caller whose dispatch then failed.
+
+    Without this, a broker hiccup would hold the event's claim for the full TTL
+    and the chart would wait six hours for a fill that was never enqueued.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().delete(ON_DEMAND_CLAIM_KEY.format(event_id=int(event_id)))
+    except Exception:  # noqa: BLE001 — the claim expires on its own regardless
+        logger.warning(
+            "event chart backfill: on-demand claim for event %s not released",
+            event_id, exc_info=True,
+        )
+
+
+async def plan_on_demand_fill(
     session, event, *, served_points: int
 ) -> Optional[dict]:
-    """A thin chart was just SERVED — start filling it, for the next reader.
+    """A thin chart was just SERVED — decide whether to start filling it.
+
+    🔴 **THIS DECIDES; IT DOES NOT DISPATCH.** The `.apply_async` lives in the
+    ROUTE, and that is a rule with a guard behind it
+    (`test_no_task_dispatches_another_task`): anything under `app/tasks/` that
+    dispatches is invisible to the route scan that derives
+    `RESULT_CONSUMER_TASKS`, so an intra-task dispatch can grow a result
+    consumer nobody declared and leave its status poll hanging forever. The
+    claim is still won HERE, because winning it is part of the decision — see
+    :func:`release_on_demand_claim` for the caller's side of that bargain.
 
     This is the half of live/036 that makes the narrowing honest. The nightly
     now pre-warms only what a reader is likely to reach; this covers what a
@@ -1569,11 +1595,12 @@ async def maybe_enqueue_on_demand_fill(
     response the caller is about to return is unchanged — this reader still sees
     the thin chart. The next one does not.
 
-    Returns a small dict for the caller's logs, or ``None`` when the event was
-    never a candidate.
+    Returns ``{"enqueue": True, ...}`` when the caller should dispatch, a
+    ``{"enqueue": False, "reason": ...}`` verdict when it should not, or
+    ``None`` when the event was never a candidate at all.
     """
     try:
-        return await _maybe_enqueue_on_demand_fill(
+        return await _plan_on_demand_fill(
             session, event, served_points=served_points
         )
     except Exception:  # noqa: BLE001 — a chart endpoint never fails on its own
@@ -1584,7 +1611,7 @@ async def maybe_enqueue_on_demand_fill(
         return None
 
 
-async def _maybe_enqueue_on_demand_fill(
+async def _plan_on_demand_fill(
     session, event, *, served_points: int
 ) -> Optional[dict]:
     from sqlalchemy import func, select
@@ -1608,7 +1635,7 @@ async def _maybe_enqueue_on_demand_fill(
     if age_seconds is not None and age_seconds > PROVABLY_PURGED_AGE_DAYS * 86400:
         # Past the retention floor the venue has provably deleted the candles
         # (gotcha #35). Enqueueing here spends a worker to learn nothing.
-        return {"enqueued": False, "reason": "beyond_retention_floor"}
+        return {"enqueue": False, "reason": "beyond_retention_floor"}
 
     first_seen = (
         await session.execute(
@@ -1621,7 +1648,7 @@ async def _maybe_enqueue_on_demand_fill(
     if first_seen is None:
         # No venue market means no venue history. Not every thin chart is one
         # this rail can fix, and saying so is not the same as saying it is fine.
-        return {"enqueued": False, "reason": "no_venue_markets"}
+        return {"enqueue": False, "reason": "no_venue_markets"}
 
     if first_seen.tzinfo is None:
         first_seen = first_seen.replace(tzinfo=timezone.utc)
@@ -1635,22 +1662,16 @@ async def _maybe_enqueue_on_demand_fill(
 
     claimed, why = claim_on_demand_fill(event_id)
     if not claimed:
-        return {"enqueued": False, "reason": why}
+        return {"enqueue": False, "reason": why}
 
     floor_minutes = granularity_floor_minutes(age_seconds)
-    from app.tasks import backfill_event_chart_history
-
-    backfill_event_chart_history.apply_async(
-        kwargs={"event_ids": [event_id], "limit": 1},
-        queue="background",
-    )
     logger.info(
-        "event chart backfill: on-demand fill enqueued for event %s — served %s "
+        "event chart backfill: on-demand fill planned for event %s — served %s "
         "points for a %.1fh market life, filling at %s-minute granularity",
         event_id, served_points, lifetime / 3600.0, floor_minutes,
     )
     return {
-        "enqueued": True,
+        "enqueue": True,
         "event_id": event_id,
         "served_points": served_points,
         "lifetime_hours": round(lifetime / 3600.0, 2),
