@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
+import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GolfTournament } from "@/lib/types";
+import { flattenFeedBundles } from "@/lib/feedSections";
 import { formatProbability } from "@/lib/api";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 // `servedDuelPercents` for the CURRENT line (LAT-P120: prefer the server's own
@@ -84,6 +85,37 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
 
   if (item.type === "concept") {
     return <ConceptFeedCard item={item} data={item.data as FeedConceptData} />;
+  }
+
+  // #2597 — the arm below is a DEFAULT, not a `futures` branch, so every type
+  // this ladder does not name renders as a futures card. `bundle` reached it and
+  // the futures card read `top_outcomes.length` off data that has none, which
+  // took down `/categories/tennis`, `/categories/soccer` and `/categories/politics`
+  // whole, behind an error boundary, during the US Open.
+  //
+  // `groupFeedIntoSections` now unfolds bundles before they get here, so on
+  // `/categories/*` and `/sports` this branch is the backstop. `/my-stuff` calls
+  // FeedCard directly on raw feed items and has no sectioner, so for that surface
+  // it is the only fix. Both callers get the same answer: the members, as their
+  // real cards. `flattenFeedBundles` is depth-capped, so the recursion below
+  // cannot re-enter this branch.
+  if (item.type === "bundle") {
+    const bundle = item.data as FeedBundleData;
+    const members = flattenFeedBundles([item]);
+    if (members.length === 0) return null;
+    return (
+      <>
+        {members.map((member, i) => (
+          <FeedCard
+            key={`bundle-${bundle.id}-${i}`}
+            item={member}
+            onThumbsUp={onThumbsUp}
+            onThumbsDown={onThumbsDown}
+            category={category}
+          />
+        ))}
+      </>
+    );
   }
 
   return (
@@ -775,7 +807,13 @@ function FuturesFeedCard({
         </div>
 
         {/* Top outcomes with probability bars */}
-        {data.top_outcomes.length > 1 && (
+        {/* #2597: the optional read is the point. `top_outcomes` is REQUIRED on
+            `FeedFuturesData`, so TypeScript could not see that the dispatcher's
+            default arm sends this card data of other shapes — and every other
+            read on this card (`heroOutcome`, `leaderFirstSlice(... ?? [])`,
+            `renderedLeaderPercent`) already tolerates a missing list. This was
+            the one that did not, and it cost three whole browse surfaces. */}
+        {(data.top_outcomes?.length ?? 0) > 1 && (
           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
             {/* #1526: leader-first before truncating — i === 0 is styled as
                 THE favorite below, so an unsorted slice bolds an also-ran. */}
