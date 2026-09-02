@@ -398,6 +398,16 @@ export default function TournamentPage() {
                      standard event page, where the graph, the hero and the
                      match's props all live — so it needs no tournament
                      context to build its own link. */
+                  /* ux/1002: THE SAME MAP THE FINISHED LIST READS, so both
+                     lists resolve "where does this match link to" through one
+                     definition (`lib/tournamentEventLink.ts`) instead of two.
+                     ux/1008 correction: this does NOT add links. The server
+                     stamps a slate row's `event_id` from this same map, so on
+                     real rows the two rules are indistinguishable — measured,
+                     and pinned in `tournamentMatchLink1002`. The shipped fix
+                     for Alex's report is the MUTED treatment on a card that
+                     cannot link, in `EventCardShell`. */
+                  eventIds={data.event_links?.by_matchup}
                   notice={data.slate ? slateNotice(data.slate) : null}
                   /**
                    * UX-P145: this used to end "…and the draw fills them in on

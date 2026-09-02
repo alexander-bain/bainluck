@@ -39,6 +39,7 @@ import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
+import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
 
 export interface ResultPlayer {
   entity_key: string;
@@ -611,20 +612,19 @@ export function resultsEmptyReason(
  *     so a future overlay that starts writing `espn:`-prefixed entries has to
  *     come and delete this line rather than silently start routing rows we
  *     have no register evidence for.
+ *
+ * ux/1002: BOTH RULES NOW LIVE IN `lib/tournamentEventLink.ts`, and the match
+ * list calls the same function. They were written here because this list was
+ * the first to need them; leaving them here made "where does a match link to"
+ * a property of the FINISHED list rather than of the hub, which is how the
+ * live half ended up answering the question differently. This wrapper stays so
+ * the call sites and their guards do not move in the same change.
  */
 export function resultEventHref(
   result: TournamentResult,
-  eventIds: Record<string, number> | null | undefined
+  eventIds: MatchupEventIds
 ): string | null {
-  if (!eventIds) return null;
-  const key = result.matchup_key;
-  if (typeof key !== "string" || key.length === 0) return null;
-  if (key.startsWith("espn:")) return null;
-  const eventId = eventIds[key];
-  if (typeof eventId !== "number" || !Number.isFinite(eventId) || eventId <= 0) {
-    return null;
-  }
-  return `/events/${eventId}`;
+  return matchupEventHref(result.matchup_key, eventIds);
 }
 
 /**

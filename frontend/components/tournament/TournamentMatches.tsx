@@ -9,6 +9,7 @@ import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   defaultMatchRound,
   liveMatchLabel,
+  matchEventHref,
   matchRoundPills,
   matchRoundReconciliation,
   matchesInRound,
@@ -19,6 +20,7 @@ import {
   type MatchRoundKey,
 } from "@/lib/matchList";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { matchupEventHref, type MatchupEventIds } from "@/lib/tournamentEventLink";
 import {
   dayHeading,
   formatMove,
@@ -498,12 +500,25 @@ function formatMatchTime(
 
 export default function TournamentMatches({
   entries,
+  eventIds,
   initialRound,
   initialExpanded = false,
   emptyHint,
   notice,
 }: {
   entries: MatchListEntry[];
+  /**
+   * `event_links.by_matchup` — the payload's own id-anchored map of matchup key
+   * to `events.id` (ux/1002).
+   *
+   * The FINISHED list has read this since #2568 and this one did not, which is
+   * how the hub came to hold two different answers to "where does a match link
+   * to". Optional: a caller that omits it gets exactly the old behaviour, since
+   * a slate row already carries its own `eventId` — and ux/1008 measured that
+   * "exactly the old behaviour" is also exactly the NEW behaviour on every real
+   * row, which is why omitting it is the control arm in the guard.
+   */
+  eventIds?: MatchupEventIds;
   /* UX-P152: the `slug` prop is gone. It existed to build a tournament-private
      match URL; a row now routes to `/events/{id}`, which needs no tournament
      context at all. Callers that still pass it are harmless — TS just ignores
@@ -659,7 +674,13 @@ export default function TournamentMatches({
           <MatchRow
             key={entry.id}
             entry={entry}
-            matchHref={entry.eventId !== null ? `/events/${entry.eventId}` : null}
+            /* ux/1002, corrected by ux/1008. `matchEventHref` prefers the
+               row's own id and falls back to the same published map the
+               FINISHED list reads — ONE rule for both lists, which is the
+               whole value here. It is not a source of new links: on real rows
+               the fallback is provably inert, because the server stamps
+               `event_id` from that same map. See `matchEventHref`. */
+            matchHref={matchEventHref(entry, eventIds)}
           />
         ))}
       </ol>
