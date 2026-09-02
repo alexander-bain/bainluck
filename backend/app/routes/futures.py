@@ -3,7 +3,6 @@
 import logging
 import os
 import re
-import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
@@ -37,14 +36,14 @@ router = APIRouter()
 # e.g., KXPGATOP10-ARPIPBM26 → suffix "ARPIPBM26"
 _KALSHI_TICKER_RE = re.compile(r"^[A-Z0-9]+-([A-Z0-9]{4,})$", re.IGNORECASE)
 
-# Non-decomposable letters that NFD normalization can't handle.
-# Must be transliterated before NFD strip — used in _progression_merge_key().
-_MERGE_KEY_TRANSLITERATIONS = str.maketrans({
-    "ø": "o", "Ø": "O",
-    "đ": "d", "Đ": "D",
-    "ł": "l", "Ł": "L",
-    "æ": "ae", "Æ": "AE",
-})
+# The participant-name normalizer moved to `app.utils.golf_card_snapshot` in
+# UX-P271, because the card receipt is computed over the keys it produces and a
+# receipt whose normalizer could drift from this endpoint's would name a map this
+# endpoint cannot apply. Imported under its original private name so every existing
+# caller, patch target and test reference keeps resolving.
+from app.utils.golf_card_snapshot import (  # noqa: E402
+    progression_name_key as _progression_name_key,
+)
 
 
 def _extract_kalshi_suffix(external_id: str) -> Optional[str]:
@@ -2533,6 +2532,17 @@ async def get_related_events(
 async def get_progression(
     market_id: int,
     top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
+    golf_card_receipt: Optional[str] = Query(
+        None,
+        max_length=64,
+        description=(
+            "Receipt of the GET /api/golf card snapshot the caller is displaying "
+            "(UX-P271). Golf only. Binds the Win column to that exact snapshot "
+            "rather than to whatever the cache holds at request time, which is not "
+            "the same thing once the card has been served from an HTTP cache. The "
+            "receipt actually applied is echoed back as `golf_card_receipt`."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2873,8 +2883,14 @@ async def get_progression(
     # stage, and every golfer the card does not carry, keeps the live blend and is
     # left strictly fresher. See `_golf_card_win_probabilities` for why the card
     # rather than this endpoint is the authority.
+    #
+    # UX-P271 / CERT-746: the page names WHICH card it is holding, because the one
+    # this process would read now is not necessarily the one on the user's screen.
+    applied_card_receipt: Optional[str] = None
     if sport_cat == "golf" and "win" in stage_markets:
-        card_wins = await _golf_card_win_probabilities(source_tournament_name)
+        card_wins, applied_card_receipt = await _golf_card_win_probabilities(
+            source_tournament_name, golf_card_receipt
+        )
         for merge_key, card_prob in card_wins.items():
             p = participants.get(merge_key)
             if p is None:
@@ -2920,13 +2936,25 @@ async def get_progression(
         "tournament_name": source_tournament_name,
         "stages": stages_response,
         "participants": sorted_participants,
+        # The card snapshot the Win column was actually bound to (UX-P271).
+        # Echoed rather than assumed: when this differs from the receipt the page
+        # sent, the page is holding a card this response could not bind to — an
+        # LRU eviction, or a client older than the deploy — and it re-reads the
+        # card past its HTTP cache so the two converge. Silence there would be the
+        # original defect wearing a fix's clothes.
+        "golf_card_receipt": applied_card_receipt,
     }
 
 
 async def _golf_card_win_probabilities(
     tournament_name: Optional[str],
-) -> dict[str, float]:
-    """The win probabilities `GET /api/golf` is currently publishing, by merge key.
+    requested_receipt: Optional[str] = None,
+) -> tuple[dict[str, float], Optional[str]]:
+    """The win probabilities the card is publishing, and the receipt they came from.
+
+    Returns `(win_map, applied_receipt)`. The receipt is echoed to the caller so the
+    page can tell whether the table bound to the card it is actually holding; see
+    the module docstring of `app.utils.golf_card_snapshot` for why that matters.
 
     UX-P270 / CERT-740. The blend above reproduces the card's ARITHMETIC, and that
     is not enough to make the two numbers on `/categories/golf` agree, because they
@@ -2956,11 +2984,38 @@ async def _golf_card_win_probabilities(
     this cache: nothing here changes what the headline reads, and the rows the card
     does not carry keep their live blended value.
 
+    UX-P271 / CERT-746 — WHICH card. "Adopt the card" and "adopt the card the
+    browser is holding" are different, because `/api/golf` ships
+    `public, max-age=300, stale-while-revalidate=60` while this endpoint sends no
+    `Cache-Control` at all. A page can therefore render a card response up to 360 s
+    old out of an HTTP cache while this request reads Redis now, and if the hourly
+    precompute landed in between, adopting "the current card" reintroduces exactly
+    the two numbers #2661 reports. UX-P270's page-side fingerprint cannot catch
+    that: it is computed from the card response alone, so it is perfectly stable
+    while the two clocks disagree.
+
+    So the page names the snapshot it is holding, by a receipt over that snapshot's
+    own contents, and this resolves THAT snapshot. The bind is exact at any card
+    age within the cache window, because a receipt cannot come to mean different
+    numbers — different numbers are a different receipt.
+
     Fails open in every direction — no Redis, no payload, no matching tournament,
-    or a malformed entry all return `{}` and leave the live blend in place.
+    or a malformed entry all return `({}, None)` and leave the live blend in place.
+    A receipt that cannot be resolved (Redis here is an LRU and may evict) does NOT
+    silently fall through to a different snapshot's numbers pretending to be the
+    requested one: the current card is adopted and its OWN receipt is echoed, so
+    the mismatch is visible to the caller instead of being absorbed here.
     """
     if not tournament_name:
-        return {}
+        return {}, None
+
+    from app.utils.golf_card_snapshot import (
+        card_win_map,
+        card_win_receipt,
+        resolve_snapshot,
+        snapshot_key,
+    )
+
     try:
         import json as _json
 
@@ -2969,35 +3024,41 @@ async def _golf_card_win_probabilities(
 
         rc = get_async_redis_client()
         try:
+            # The requested snapshot first: it is what the user is looking at.
+            # Only fall back to the current card when it cannot be resolved.
+            if requested_receipt:
+                pinned_raw = await rc.get(snapshot_key(requested_receipt))
+                pinned = resolve_snapshot(
+                    pinned_raw, requested_receipt, tournament_name
+                )
+                if pinned:
+                    return pinned, requested_receipt
             raw = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         finally:
             await rc.aclose()
         if not raw:
-            return {}
+            return {}, None
         payload = _json.loads(raw)
     except Exception:
         logger.debug("golf card authority unavailable", exc_info=True)
-        return {}
+        return {}, None
 
     if not isinstance(payload, dict):
-        return {}
+        return {}, None
     for entry in payload.get("tournaments") or []:
         if not isinstance(entry, dict):
             continue
         card_name = entry.get("name")
         if not card_name or not tournament_names_match(tournament_name, card_name):
             continue
-        published: dict[str, float] = {}
-        for golfer in entry.get("golfers") or []:
-            if not isinstance(golfer, dict):
-                continue
-            prob = golfer.get("probability")
-            name = golfer.get("name")
-            if not name or not isinstance(prob, (int, float)) or isinstance(prob, bool):
-                continue
-            published[_progression_name_key(name)] = float(prob)
-        return published
-    return {}
+        published = card_win_map(entry)
+        if not published:
+            return {}, None
+        # Recomputed from the map actually being applied rather than read off the
+        # payload's stamped field, so the echoed receipt always describes the
+        # numbers this response carries — even if the stamp were stale or absent.
+        return published, card_win_receipt(published)
+    return {}, None
 
 
 def _progression_merge_key(outcome: FuturesOutcome) -> str:
@@ -3017,38 +3078,8 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     return _progression_name_key(outcome.name or "")
 
 
-def _progression_name_key(raw_name: str) -> str:
-    """The name half of `_progression_merge_key`, callable on a bare string.
-
-    Split out (UX-P270) so a participant row and a `GET /api/golf` card golfer —
-    which is a name in a JSON payload, not a `FuturesOutcome` — can be keyed by
-    the SAME normalizer instead of a second one written to look like it. That is
-    not a theoretical concern: a hand-written normalizer built on NFD + combining
-    marks joins 13 of 15 golfers on the worked tournament and silently drops both
-    Højgaards, because `ø` has no combining-mark decomposition. This one
-    transliterates it (`_MERGE_KEY_TRANSLITERATIONS`) and joins 15 of 15.
-    """
-    name = raw_name or ""
-    # Strip "Yes: " / "No: " prefixes (Kalshi format)
-    name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE)
-    # Strip wrapping quotes (Polymarket NegRisk format)
-    name = re.sub(r'^"(.*)"$', r"\1", name)
-    # Convert "Last, First" to "First Last" (DataGolf format)
-    comma_match = re.match(r"^(\w[\w'-]+),\s+(\w[\w'-]+.*)$", name, flags=re.UNICODE)
-    if comma_match:
-        name = f"{comma_match.group(2)} {comma_match.group(1)}"
-    # Strip diacritics: transliterate non-decomposable letters first (ø→o, đ→d),
-    # then NFD decomposition + remove combining marks for the rest (ü→u, é→e)
-    name = name.translate(_MERGE_KEY_TRANSLITERATIONS)
-    name = unicodedata.normalize("NFD", name)
-    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
-    name = name.lower().strip()
-    # Remove Jr./Sr./III suffixes
-    name = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", name)
-    # Remove non-alphanumeric (keep spaces)
-    name = re.sub(r"[^a-z0-9\s]", "", name).strip()
-    name = re.sub(r"\s+", " ", name)
-    return f"name:{name}"
+# `_progression_name_key` is imported at the top of this module from
+# `app.utils.golf_card_snapshot`, which owns it as of UX-P271.
 
 
 @router.get("/{market_id}/probability-timeline")

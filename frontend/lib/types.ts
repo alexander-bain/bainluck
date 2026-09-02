@@ -1311,6 +1311,18 @@ export interface GolfTournament {
   market_sources?: string[];
   golfers: GolfGolfer[];
   prop_markets?: GolfPropMarket[];
+  /**
+   * Content address of the win probabilities THIS payload publishes for this
+   * tournament (UX-P271). Opaque to the client: it is handed back to
+   * `GET /api/futures/{id}/progression` so the Win column binds to the card the
+   * page is actually holding rather than to whatever the server's cache holds at
+   * request time — which is a different object once this response has been served
+   * out of its `max-age=300, stale-while-revalidate=60` HTTP cache.
+   *
+   * Null when the tournament publishes no golfers, and absent on a payload
+   * written before UX-P271 deployed.
+   */
+  win_receipt?: string | null;
 }
 
 export interface GolfPropMarket {
@@ -1508,6 +1520,15 @@ export interface ProgressionResponse {
   tournament_name: string | null;
   stages: ProgressionStage[];
   participants: ProgressionParticipant[];
+  /**
+   * The golf card snapshot the Win column was bound to (UX-P271), echoed so the
+   * caller can tell whether it is the one it asked for. When this differs from
+   * the receipt sent, the table could not bind to the card on screen — the
+   * snapshot was evicted, or the caller predates the deploy — and the page
+   * re-reads the card past its HTTP cache so the two converge. Null for
+   * non-golf progressions and when no card is available.
+   */
+  golf_card_receipt?: string | null;
 }
 
 /** Playoff grid types (league-wide cross-source progression) */

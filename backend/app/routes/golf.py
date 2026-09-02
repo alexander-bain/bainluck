@@ -2281,20 +2281,54 @@ GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
 ):
-    """Return golf data (Redis-cached to avoid OOM on 512MB dyno)."""
+    """Return golf data (Redis-cached to avoid OOM on 512MB dyno).
+
+    Every payload this route serves is stamped with a per-tournament win receipt
+    (UX-P271 / CERT-746) so the progression table can bind its Win column to the
+    exact snapshot the caller is looking at. This response is HTTP-cacheable for
+    `max-age=300, stale-while-revalidate=60`, so "the card the browser is holding"
+    and "the card Redis holds now" are genuinely different objects, and the receipt
+    is what lets the other endpoint tell them apart.
+
+    Stamping is a pure function of the bytes being served, so it is applied on the
+    cache-hit path too: an unstamped payload left over from a previous deploy still
+    reaches the client with a usable receipt.
+    """
     import json as _json
     from app.tasks.redis_state import get_async_redis_client
+    from app.utils.golf_card_snapshot import SNAPSHOT_TTL_S, stamp_card_payload
 
     try:
         rc = get_async_redis_client()
         cached = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         await rc.aclose()
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            # No re-registration on a hit: the writer registered these bytes, and a
+            # receipt recomputed from the served payload resolves against them.
+            stamp_card_payload(payload)
+            return payload
     except Exception:
         pass
 
-    return await get_golf(db)
+    payload = await get_golf(db)
+
+    # Cache-miss rebuild. These bytes were never written to the card key, so
+    # nothing else will ever register them — but they are about to be served, and
+    # a served card that cannot be bound to is the defect this ships against.
+    try:
+        rc = get_async_redis_client()
+        try:
+            for key, body in stamp_card_payload(payload):
+                await rc.set(key, body, ex=SNAPSHOT_TTL_S)
+        finally:
+            await rc.aclose()
+    except Exception:
+        # Registration is best-effort: an unbindable receipt degrades to the
+        # echo-and-converge path, never to a failed page.
+        logger.debug("golf card snapshot registration failed", exc_info=True)
+
+    return payload
 
 
 async def get_golf(

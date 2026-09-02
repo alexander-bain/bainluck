@@ -831,11 +831,17 @@ export async function fetchFuturesMovers(
  */
 export async function fetchProgression(
   marketId: number,
-  topN?: number
+  topN?: number,
+  golfCardReceipt?: string | null
 ): Promise<ProgressionResponse> {
-  const params = topN ? `?top_n=${topN}` : "";
+  const query = new URLSearchParams();
+  if (topN) query.set("top_n", String(topN));
+  // UX-P271: name the golf card snapshot on screen so the Win column binds to it
+  // rather than to whatever the server's cache holds at request time.
+  if (golfCardReceipt) query.set("golf_card_receipt", golfCardReceipt);
+  const params = query.toString();
   return apiFetch<ProgressionResponse>(
-    `/api/futures/${marketId}/progression${params}`
+    `/api/futures/${marketId}/progression${params ? `?${params}` : ""}`
   );
 }
 
@@ -1442,8 +1448,19 @@ export async function fetchSportHierarchyDetail(sportSlug: string): Promise<Spor
 /**
  * Fetch Golf landing page data — all tournaments with aggregated odds
  */
-export async function fetchGolfData(): Promise<GolfResponse> {
-  return apiFetch<GolfResponse>("/api/golf");
+export async function fetchGolfData(
+  rebindToken?: string | null
+): Promise<GolfResponse> {
+  // UX-P271: this response is served `public, max-age=300,
+  // stale-while-revalidate=60`, so a plain re-request can be answered from the
+  // HTTP cache with the very card the progression endpoint just told us it could
+  // not bind to. Varying the URL varies the cache key, which is what actually
+  // reaches the origin — a request header would not, since the stale entry is
+  // already storable and reusable.
+  const suffix = rebindToken
+    ? `?rebind=${encodeURIComponent(rebindToken)}`
+    : "";
+  return apiFetch<GolfResponse>(`/api/golf${suffix}`);
 }
 
 /**

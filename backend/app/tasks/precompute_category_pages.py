@@ -141,11 +141,27 @@ async def _precompute_golf():
     from app.tasks.redis_state import get_redis_client
     from app.routes.golf import GOLF_CATEGORY_CACHE_KEY, get_golf
     from app.utils.golf_base import build_envelope, publish_envelope_sync
+    from app.utils.golf_card_snapshot import SNAPSHOT_TTL_S, stamp_card_payload
 
     async with get_task_session() as db:
         response = await get_golf(db)
 
     rc = get_redis_client()
+
+    # Stamp each tournament with a receipt over its own published win numbers and
+    # register that snapshot separately (UX-P271 / CERT-746).
+    #
+    # The card key below is overwritten in place every hour, but a browser can be
+    # holding the PREVIOUS response for up to `max-age` + `stale-while-revalidate`
+    # afterwards. Registering the snapshot under a content address keeps those
+    # bytes resolvable across the overwrite, so the progression table can bind to
+    # the card actually on screen instead of the one that just replaced it. Written
+    # BEFORE the card key so no client can ever read a receipt whose snapshot has
+    # not been registered yet.
+    snapshots = stamp_card_payload(response)
+    for key, body in snapshots:
+        rc.set(key, body, ex=SNAPSHOT_TTL_S)
+
     # Written through the same named constant both readers use (UX-P270): the
     # card route and the progression win-column authority.
     rc.set(GOLF_CATEGORY_CACHE_KEY, json.dumps(response, default=str), ex=CACHE_TTL)

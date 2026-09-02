@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   fetchGolfData,
@@ -23,7 +23,11 @@ import {
   TOURNAMENT_VENUES,
   TOURNAMENT_EMOJI,
 } from "@/lib/golfData";
-import { golfCardWinFingerprint } from "@/lib/golfCardFingerprint";
+import {
+  golfCardWinFingerprint,
+  golfCardWinReceipt,
+  shouldRebindGolfCard,
+} from "@/lib/golfCardFingerprint";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
@@ -250,22 +254,65 @@ export default function GolfPage() {
   // honest without paying for it: the progression endpoint is uncached and runs
   // several ILIKE scans, and this string changes only when a number the table
   // actually displays has changed — roughly once an hour, not every 120s.
+  // UX-P271 (#2661 / CERT-746): the fingerprint above is necessary and not
+  // sufficient, and the reason is the whole of CERT-746. It is computed from the
+  // card response ALONE, so it says nothing about which card the table read.
+  // `/api/golf` is served `max-age=300, stale-while-revalidate=60` while the
+  // progression request carries no `Cache-Control` at all, so this page can be
+  // rendering a card up to 360s old against a table that read a newer one — and in
+  // exactly that case the fingerprint is perfectly stable, because a stale card
+  // hashes to the same string every time. A fingerprint over one of two clocks
+  // cannot detect that they disagree.
+  //
+  // So the page names the card it is holding and the endpoint binds to that exact
+  // snapshot. The receipt is server-issued and opaque here: deriving it in the
+  // client would mean reimplementing the participant-name normalizer, which is the
+  // drift UX-P270 already had to correct once.
   const currentMarketId = data?.current_event?.market_ids?.[0] ?? null;
   const cardWinFingerprint = useMemo(() => golfCardWinFingerprint(data), [data]);
+  const cardWinReceipt = useMemo(() => golfCardWinReceipt(data), [data]);
+
+  // Receipts we have already forced a cache-bypassing card re-read for. A
+  // mismatch resolves by fetching a NEWER card, which produces a new receipt and
+  // therefore a new key here, so this both prevents a request loop against an
+  // unresolvable snapshot and still allows a later, genuinely different mismatch
+  // to converge.
+  const rebindAttempted = useRef<Set<string>>(new Set());
 
   // Phase 2c: Fetch progression table for current tournament
   useEffect(() => {
     if (!currentMarketId) return;
     let cancelled = false;
-    fetchProgression(currentMarketId, 40)
+    fetchProgression(currentMarketId, 40, cardWinReceipt)
       .then((p) => {
-        if (!cancelled && p?.stages?.length >= 2) setProgressionData(p);
+        if (cancelled || !(p?.stages?.length >= 2)) return;
+        setProgressionData(p);
+
+        // The table bound to a different card than the one on screen — the
+        // snapshot was evicted from Redis (a shared LRU), or this card predates
+        // the deploy. Adopting it silently is the original defect, so converge on
+        // the newer card instead of leaving two numbers up.
+        const applied = p.golf_card_receipt;
+        if (
+          !cardWinReceipt ||
+          !shouldRebindGolfCard(
+            cardWinReceipt,
+            applied,
+            rebindAttempted.current
+          )
+        ) {
+          return;
+        }
+        rebindAttempted.current.add(cardWinReceipt);
+        fetchGolfData(applied)
+          .then((fresh) => { if (!cancelled) setData(fresh); })
+          .catch(() => {});
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [currentMarketId, cardWinFingerprint]);
+  }, [currentMarketId, cardWinReceipt, cardWinFingerprint]);
 
   // Group tournaments by tour for per-tour sections
   const tourSections = useMemo(() => {
