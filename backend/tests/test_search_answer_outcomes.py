@@ -6,6 +6,7 @@ Covers the shared backend helpers that make search surfaces "answer-first":
 - _build_search_top_outcomes shape (lean typeahead vs full search)
 """
 
+import itertools
 from types import SimpleNamespace
 
 from app.routes.events import (
@@ -28,6 +29,14 @@ def _fmt(m):
     return {"name": m.name}
 
 
+def _all_shipped(markets):
+    """#2646: the `serialized_ids` argument for a page that ships everything the
+    composer read. It is the identity case — `more_count` is then exactly the old
+    `len(rest) - 4` — so every pre-#2646 expectation below is preserved verbatim
+    rather than re-baselined, and the tests that DO exercise a short page say so."""
+    return {m.id for m in markets}
+
+
 class TestFamilyComposition:
     _FED = [("fed", None), ("rate", None)]
     _LEBRON = [("lebron", None), ("james", None)]
@@ -39,7 +48,7 @@ class TestFamilyComposition:
             _mkt("economics", "Fed rate cut before 2027?", vol=300_000),
             _mkt("economics", "What will the Fed rate be at the end of 2026?", vol=6_000_000),
         ]
-        fams = _compose_futures_families(ms, self._FED, _fmt)
+        fams = _compose_futures_families(ms, self._FED, _fmt, _all_shipped(ms))
         assert len(fams) == 1
         assert fams[0]["family_key"] == "story:macro_rates"
         assert fams[0]["headline"]["name"] == "How many Fed rate cuts in 2026?"  # reranked leader
@@ -50,18 +59,18 @@ class TestFamilyComposition:
             _mkt("basketball", "NBA: LeBron James Next Team", vol=12_000_000),
             _mkt("basketball", "Will LeBron James retire", vol=700_000),
         ]
-        fams = _compose_futures_families(ms, self._LEBRON, _fmt)
+        fams = _compose_futures_families(ms, self._LEBRON, _fmt, _all_shipped(ms))
         assert len(fams) == 1
         assert fams[0]["family_key"] == "entity:lebron james"
         assert fams[0]["label"] == "Lebron James"
 
     def test_single_member_no_family(self):
         ms = [_mkt("basketball", "NBA: LeBron James Next Team", vol=1)]
-        assert _compose_futures_families(ms, self._LEBRON, _fmt) == []
+        assert _compose_futures_families(ms, self._LEBRON, _fmt, _all_shipped(ms)) == []
 
     def test_more_count_caps_members_at_4(self):
         ms = [_mkt("economics", f"Fed rate scenario {i}", vol=100 - i) for i in range(7)]
-        fams = _compose_futures_families(ms, self._FED, _fmt)
+        fams = _compose_futures_families(ms, self._FED, _fmt, _all_shipped(ms))
         assert len(fams[0]["members"]) == 4          # headline + 4 shown
         assert fams[0]["more_count"] == 2            # 7 total - headline - 4 = 2
 
@@ -77,11 +86,24 @@ class TestFamilyComposition:
             _mkt("politics", "2028 Democratic presidential nominee", vol=1_000_000),
         ]
         # story:us_2028_election groups them, but none name-match "lebron james"
-        assert _compose_futures_families(ms, self._LEBRON, _fmt) == []
+        assert _compose_futures_families(ms, self._LEBRON, _fmt, _all_shipped(ms)) == []
 
 
-def _mkt(cat, name="m", vol=0):
-    return SimpleNamespace(llm_sport_category=cat, name=name, volume=vol)
+#: #2646: every fixture market now carries an `id`, because
+#: `_compose_futures_families` has to ask whether an overflow member is one of
+#: the rows the response actually ships. Ids are explicit (`mid=`) wherever a
+#: test reasons about them and auto-assigned otherwise, so the ~30 call sites
+#: that only care about ranking are untouched.
+_next_mkt_id = itertools.count(1)
+
+
+def _mkt(cat, name="m", vol=0, mid=None):
+    return SimpleNamespace(
+        id=next(_next_mkt_id) if mid is None else mid,
+        llm_sport_category=cat,
+        name=name,
+        volume=vol,
+    )
 
 
 # expanded-terms shape for _rerank_search_futures: [(term, expansion_or_None)]

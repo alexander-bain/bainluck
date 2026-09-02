@@ -1056,7 +1056,10 @@ def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
 
 
 def _compose_futures_families(
-    markets: list, expanded: list[tuple[str, str | None]], formatter
+    markets: list,
+    expanded: list[tuple[str, str | None]],
+    formatter,
+    serialized_ids: "set[int]",
 ) -> list[dict]:
     """#993 L2-41 search curation. Compose the reranked, deduped, stale-suppressed
     candidate markets into topical FAMILIES (docs/search-curation-spec.md).
@@ -1074,6 +1077,12 @@ def _compose_futures_families(
     <=4 + more_count. Every row is `formatter(market)` → the shared outcome_display
     pipeline (leader-pick, #23, placeholder). Ordered by headline rank (families
     are additive — flat `futures` is unchanged; the frontend interleaves).
+
+    `serialized_ids` is the id set of the flat `futures` bucket the SAME response
+    ships, and it is REQUIRED rather than defaulted: a default would let a future
+    call site re-acquire #2646 silently. `more_count` is rendered as the words
+    "+N more markets below", so it is a promise about this page, and it may only
+    count members the page actually puts below. See the `more_count` comment.
     """
     from collections import OrderedDict
 
@@ -1112,12 +1121,39 @@ def _compose_futures_families(
             label = query_label.title()
         headline = members[0]  # reranked: name-match then volume
         rest = members[1:]
+        shown = rest[:4]
+        # 🔴 #2646: `more_count` renders as "+N more markets below", so it is a
+        # promise about THIS PAGE and may only count rows the page puts below.
+        # It used to be `len(rest) - 4` — the size of the family — and the two
+        # are different because this composer reads the full deduped candidate
+        # set while the response serializes only `deduped_futures[:10]`. For
+        # `Alcaraz` that shipped "+2 more markets below" and "+6 more markets
+        # below" above a page with ONE market below them, and the eight it named
+        # were serialized nowhere in the response at all.
+        #
+        # Composing from the shipped slice instead — #2646's own proposal, and
+        # the obvious fix — was measured over ten live payloads and REJECTED: it
+        # deletes whole family cards. `Djokovic` and `Sabalenka` each head their
+        # Grand Slam Tennis family with a market that is NOT in the shipped ten,
+        # so restricting the input drops those families below the two-member
+        # floor and their markets leave the page entirely. Reading past the flat
+        # slice is what families are FOR; the count is what was broken. So the
+        # input is unchanged and the count is made honest.
+        #
+        # Truthful BY CONSTRUCTION rather than by measurement: the web page hides
+        # exactly `familyShownIds` (headline + `shown`) from the flat list
+        # (`frontend/components/searchFamilyDisplay.ts`), and an overflow member
+        # is in neither, so every id counted here is rendered below the family
+        # cards. A member outside `serialized_ids` is on nobody's page and is not
+        # counted. `member_count` is deliberately left as the true family size:
+        # it describes the family rather than the page, and nothing renders it.
+        more_below = [m for m in rest[4:] if m.id in serialized_ids]
         families.append({
             "family_key": key,
             "label": label,
             "headline": formatter(headline),
-            "members": [formatter(m) for m in rest[:4]],
-            "more_count": max(0, len(rest) - 4),
+            "members": [formatter(m) for m in shown],
+            "more_count": len(more_below),
             "member_count": len(members),
         })
     return families
@@ -3207,11 +3243,23 @@ _suppress_search_log: contextvars.ContextVar[bool] = contextvars.ContextVar(
 #: a section, and nobody would see it happen.
 #:
 #: `futures_families` is deliberately ABSENT and its absence is load-bearing. A
-#: family is a COMPOSITION of markets that are already in `futures` — the web
-#: page's `familyShownIds` filters the family's members back out of the flat
-#: list precisely so nothing double-renders — so counting families too would
-#: count the same markets twice and inflate the very column this fix exists to
-#: make honest.
+#: family is very largely a COMPOSITION of markets that are already in `futures`
+#: — the web page's `familyShownIds` filters the family's members back out of
+#: the flat list precisely so nothing double-renders — so counting families too
+#: would count the same markets twice and inflate the very column this fix
+#: exists to make honest.
+#:
+#: #2646 CORRECTION, because this comment used to claim the composition was
+#: total and it is not. The composer reads the full deduped candidate set while
+#: `futures` ships a ten-row slice, so a family can and does headline a market
+#: the flat list omits (measured 2026-09-02 over ten live queries: 0-4 such rows
+#: each; `Djokovic` and `Sabalenka` both head a family with one). Those rows are
+#: on the page and go uncounted, so this column runs slightly SHORT — the
+#: opposite direction to the double-count above, and far the safer one for a
+#: number whose whole job is to not overstate. The exclusion stands; only the
+#: reason needed correcting. Do not "fix" the shortfall by adding the section:
+#: that reinstates the double-count for every row families and `futures` share,
+#: which is most of them.
 _SEARCH_ANSWER_SECTIONS = ("teams", "event_concepts", "futures")
 
 
@@ -4633,9 +4681,19 @@ async def search_events(
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
     # #993 L2-41: backend-composed topical families (additive; flat `futures`
-    # above is unchanged for compatibility). Composed from the full deduped set.
+    # above is unchanged for compatibility). Composed from the full deduped set,
+    # which is WIDER than the ten rows shipped above and is meant to be — it is
+    # how a family surfaces a market the flat slice had no room for.
+    #
+    # #2646: that width is also why the composer has to be told what the response
+    # actually ships. `futures_markets` is exactly the list serialized as
+    # `futures` (via `formatted_futures`), including any UX-P259 promoted row, so
+    # it is the set `more_count` measures "below" against.
     futures_families = _compose_futures_families(
-        deduped_futures, expanded, lambda m: _formatted_by_id[m.id]
+        deduped_futures,
+        expanded,
+        lambda m: _formatted_by_id[m.id],
+        {m.id for m in futures_markets},
     )
 
     # L2-65 Item 1c: surface EVENT CONCEPTS (tournament pages) as first-class
