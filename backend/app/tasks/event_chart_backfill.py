@@ -728,6 +728,14 @@ async def fetch_kalshi_series(
             collected.append({"t": ts, "yes_price": price})
 
     if not collected:
+        # 🔴 Same rule as the Polymarket side: a window that ERRORED is not a
+        # window that answered nothing. If any window failed and we collected
+        # nothing, we have no standing to call this an absence — the series may
+        # be entirely inside the chunks we never got. `fetch_failed` is
+        # retryable; `purged` and `api_empty` are not.
+        if stats.get("window_errors"):
+            stats["status"] = "fetch_failed"
+            return collected
         market = await service.get_market(ticker)
         if market is None:
             stats["purged"] = stats.get("purged", 0) + 1
@@ -798,20 +806,55 @@ async def fetch_polymarket_series(
     empty, not a granularity preference, and dropping it would turn "this token
     does not serve minute data" back into "this market has no history"
     (gotcha #53).
+
+    🔴 A FETCH FAILURE IS NOT AN ABSENCE. `get_prices_history` used to swallow
+    every transport and HTTP failure into ``[]``, so a venue refusing us was
+    recorded here as ``api_empty`` — the same signal a token with genuinely no
+    series produces — and the 30-day drain then advanced a permanent checkpoint
+    past an event it had never once managed to fetch. It now raises, and this is
+    where the two are told apart: an attempt that ERRORED is counted in
+    ``fetch_errors`` and, if EVERY attempt errored, the source's status is
+    ``fetch_failed`` — a retryable outcome, not a drained one. A fidelity that
+    errors still falls through to the next one, because half the point of the
+    fallback is that one token/fidelity pair can misbehave on its own.
     """
+    from app.services.polymarket_api import PolymarketHistoryUnavailable
+
     token_id = await _polymarket_token_id(service, market, outcome)
     if not token_id:
         stats["no_token_id"] = stats.get("no_token_id", 0) + 1
         return []
 
     fidelities = (1, 60) if min_period_minutes <= 1 else (60,)
+    attempted = 0
+    errored = 0
+    last_error: Optional[str] = None
     for fidelity in fidelities:
-        history = await service.get_prices_history(
-            token_id=token_id, interval="max", fidelity=fidelity
-        )
+        attempted += 1
+        try:
+            history = await service.get_prices_history(
+                token_id=token_id, interval="max", fidelity=fidelity
+            )
+        except PolymarketHistoryUnavailable as exc:
+            errored += 1
+            last_error = str(exc)[:160]
+            stats["fetch_errors"] = stats.get("fetch_errors", 0) + 1
+            logger.warning(
+                "event chart backfill: polymarket history unavailable for "
+                "token %s fidelity %s: %s",
+                token_id, fidelity, last_error,
+            )
+            continue
         stats["clob_requests"] = stats.get("clob_requests", 0) + 1
         if history:
             return [{"t": pt.get("t"), "yes_price": pt.get("p")} for pt in history]
+
+    if errored and errored == attempted:
+        # Never asked and answered. Recording this as an absence is what let the
+        # drain report `drained` over pages it had only failed to reach.
+        stats["status"] = "fetch_failed"
+        stats["fetch_error"] = last_error
+        return []
     stats["api_empty"] = stats.get("api_empty", 0) + 1
     return []
 

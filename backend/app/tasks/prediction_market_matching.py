@@ -3608,12 +3608,21 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 return stats
 
-            # Fetch price history
-            history = await service.get_prices_history(
-                token_id=token_id,
-                interval=interval,
-                fidelity=fidelity,
-            )
+            # Fetch price history. `get_prices_history` raises when the venue
+            # could not be asked at all and returns [] only when it answered and
+            # holds nothing — the two must not land in the same bucket, or an
+            # outage reads as a market with no history (gotcha #53).
+            from app.services.polymarket_api import PolymarketHistoryUnavailable
+
+            try:
+                history = await service.get_prices_history(
+                    token_id=token_id,
+                    interval=interval,
+                    fidelity=fidelity,
+                )
+            except PolymarketHistoryUnavailable as exc:
+                stats["errors"].append(f"price history unavailable: {str(exc)[:120]}")
+                return stats
             if not history:
                 stats["errors"].append("empty price history")
                 return stats

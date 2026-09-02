@@ -664,7 +664,9 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_event_chart_history",
     "app.tasks.backfill_thin_event_charts",
     # live/039 — the one-time 30-day drain. Same family again, and the longest
-    # runner of the three: it is re-triggered until it reports `drained`.
+    # runner of the three: re-triggered until it reports a TERMINAL verdict —
+    # `drained`, or `drained_with_failures` when it gave up on events the venue
+    # would not serve (live/042). Both stop the loop; only the first is clean.
     "app.tasks.backfill_thirty_day_charts",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
@@ -1219,7 +1221,9 @@ def backfill_thirty_day_charts(
     exist — `backfill_thin_event_charts` pre-warms the ±7-day reader window and
     `plan_on_demand_fill` catches what a reader opens — and this is the one-off
     backlog bite those two were told to stop chasing. It checkpoints per tier in
-    Redis and is re-triggered until its verdict reads `drained`.
+    Redis and is re-triggered until its verdict is TERMINAL: `drained` (every
+    event asked and answered) or `drained_with_failures` (it gave up on events
+    the venue would not serve). Anything else means there is more behind it.
     """
     from app.tasks.chart_backfill_thirty_day import run_thirty_day_chart_drain
     return _tracked_run(

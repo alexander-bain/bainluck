@@ -5106,7 +5106,14 @@ async def trigger_backfill_thirty_day_charts(
     only_tier: str = Query(None, description="us_open | reachable | remainder"),
     reset: bool = Query(False, description="Forget every tier checkpoint first"),
 ):
-    """live/039: the one-time 30-day drain. Re-call until it reports `drained`.
+    """live/039: the one-time 30-day drain. Re-call until the verdict is terminal.
+
+    Two verdicts end the loop and they are NOT the same: `drained` means every
+    event in scope was asked and answered, and `drained_with_failures` means it
+    gave up on events the venue would not serve after `MAX_EVENT_RETRIES`
+    attempts each (`gave_up` per tier names how many). Anything else — including
+    `awaiting_retries`, which is a tier that reached the end of its scan while
+    still owing retries — means re-call.
 
     Queued by DEFAULT, the opposite of `/backfill-event-chart` above, and for the
     opposite reason: that one is a named repair whose whole point is reading the

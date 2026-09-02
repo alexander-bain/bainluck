@@ -85,7 +85,52 @@ CHECKPOINT_KEY = "chart_backfill_30d:cursor:{tier}"
 #: Set once a tier's scan has reached the end of its population. Without it a
 #: re-trigger after exhaustion restarts the tier from the top and re-judges
 #: thousands of now-thick charts before it can reach the next tier.
+#:
+#: The VALUE is the marker, not just presence: `drained` (every event in this
+#: tier was asked and answered) or `drained_with_failures` (the retry budget ran
+#: out with events still unreachable). The two must not read the same.
 TIER_DONE_KEY = "chart_backfill_30d:done:{tier}"
+
+#: 🔴 A FAILED EVENT IS RETRIED, NOT MARKED DONE — and the retry is per EVENT,
+#: not per tier. A Redis HASH of `event_id -> attempts so far`. An event whose
+#: venue refused us goes in here; the next trigger drains this hash BEFORE it
+#: scans new ground, so a failure at the tail of a tier costs a handful of
+#: re-fetches rather than a re-walk of 13,591 events (most of which are
+#: genuinely empty, would stay thin, and would be re-asked on every lap).
+#:
+#: The cursor may therefore keep advancing past a failure without stranding it:
+#: the hash is what remembers, and the tier cannot be marked done while it is
+#: non-empty.
+#:
+#: 🔴 KNOWN BOUND, stated rather than hidden. Redis here is one shared 100MB LRU,
+#: so this key CAN be evicted. If it is, the owed retries are forgotten and the
+#: next exhausted scan marks the tier `drained` — the same false-`drained` shape
+#: CERT-753 blocked, arriving by eviction instead of by logic. It is not
+#: defended against with new durable state because the events remain thin and
+#: therefore remain findable: the two steady-state rails still reach them, and
+#: `reset=true` re-scans the window from the top. What is NOT acceptable is
+#: leaving that unsaid, so it is said here and in the report.
+RETRY_KEY = "chart_backfill_30d:retry:{tier}"
+#: How many events in this tier blew their retry budget. Non-zero at the end is
+#: the difference between `drained` and `drained_with_failures`.
+GAVE_UP_KEY = "chart_backfill_30d:gaveup:{tier}"
+
+#: Terminal done-markers. `drained_with_failures` is terminal too — the drain
+#: stopped, and it says so by name rather than by looking finished.
+DONE_CLEAN = "drained"
+DONE_WITH_FAILURES = "drained_with_failures"
+
+#: Attempts per event before the drain gives up on it. Bounded because an event
+#: that can never be fetched — a token the venue has dropped, a market whose
+#: history 500s forever — would otherwise hold its tier open indefinitely. When
+#: the budget runs out the event is dropped from the retry hash and counted in
+#: :data:`GAVE_UP_KEY`, which is what turns the tier's ending into
+#: `drained_with_failures`. Neither strands the failures silently nor spins.
+MAX_EVENT_RETRIES = 3
+
+#: Source statuses that mean "we never got an answer", as opposed to "we got an
+#: answer and it was empty". Only these make an event retryable.
+FAILED_SOURCE_STATUSES = frozenset({"error", "fetch_failed"})
 
 
 class Tier(NamedTuple):
@@ -262,16 +307,30 @@ async def select_thirty_day_page(
 
     fillable: list[int] = []
     cursor: Optional[tuple] = None
+    judged = 0
     for row in rows:
         # Advance over every row JUDGED, not only the ones picked — a thick chart
         # the cursor did not pass would be re-counted on every re-trigger.
+        judged += 1
         if row.commence_time is not None:
             cursor = (row.commence_time, int(row.event_id))
         if int(row.point_count or 0) < THIRTY_DAY_THIN_POINTS:
             fillable.append(int(row.event_id))
         if len(fillable) >= limit:
             break
-    return DrainPage(fillable, cursor, len(rows) < scan, len(rows))
+
+    # 🔴 EXHAUSTED MEANS THE LOOP RAN OUT OF ROWS, NOT THE QUERY.
+    # `len(rows) < scan` alone says only that the SQL had nothing more to give
+    # — it says nothing about whether this Python loop actually LOOKED at what
+    # it was given. The loop stops early the moment `limit` fillable events are
+    # collected, so with 250 thin rows and limit=200 the scan (800) came back
+    # short, `len(rows) < scan` was True, the tier was marked permanently done,
+    # and the 50 rows past the break were never judged and never will be. Both
+    # halves are required: the query ran out AND we consumed everything it
+    # returned.
+    consumed_every_row = judged >= len(rows)
+    exhausted = consumed_every_row and len(rows) < scan
+    return DrainPage(fillable, cursor, exhausted, judged)
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +338,21 @@ async def select_thirty_day_page(
 # ---------------------------------------------------------------------------
 
 
-def _read_checkpoint(tier: str) -> tuple[Optional[tuple], bool]:
-    """`((commence_time, event_id) | None, tier_is_done)`.
+class TierState(NamedTuple):
+    """What Redis remembers about one tier between triggers."""
+
+    cursor: Optional[tuple]
+    #: `None`, :data:`DONE_CLEAN` or :data:`DONE_WITH_FAILURES`.
+    done: Optional[str]
+    #: `event_id -> attempts already spent` for events that FAILED and are owed
+    #: a retry. The tier cannot be marked done while this is non-empty.
+    retry: dict
+    #: How many events this tier has already given up on.
+    gave_up: int
+
+
+def _read_checkpoint(tier: str) -> TierState:
+    """The tier's remembered position, done-marker, retry hash and give-up count.
 
     Every failure mode — no Redis, evicted key, half-written value — answers
     "start this tier from the top", which wastes a scan and never writes a wrong
@@ -291,47 +363,135 @@ def _read_checkpoint(tier: str) -> tuple[Optional[tuple], bool]:
         from app.tasks.redis_state import get_redis_client
 
         client = get_redis_client()
-        done = bool(client.get(TIER_DONE_KEY.format(tier=tier)))
+        done_raw = client.get(TIER_DONE_KEY.format(tier=tier))
+        gave_up_raw = client.get(GAVE_UP_KEY.format(tier=tier))
+        retry_raw = client.hgetall(RETRY_KEY.format(tier=tier))
         raw = client.get(CHECKPOINT_KEY.format(tier=tier))
     except Exception:  # noqa: BLE001 — a hint that cannot be read is no hint
-        return None, False
-    if not raw:
-        return None, done
+        return TierState(None, None, {}, 0)
+
+    done = _decode(done_raw)
+    if done:
+        # An older marker wrote a bare "1". Read it as the clean verdict it meant
+        # at the time; nothing has to be migrated for the new one to work.
+        done = DONE_WITH_FAILURES if done == DONE_WITH_FAILURES else DONE_CLEAN
+    else:
+        done = None
+    try:
+        gave_up = int(_decode(gave_up_raw) or 0)
+    except (TypeError, ValueError):
+        gave_up = 0
+
+    retry: dict = {}
+    for key, value in (retry_raw or {}).items():
+        try:
+            retry[int(_decode(key))] = int(_decode(value) or 0)
+        except (TypeError, ValueError):
+            continue  # a half-written entry is no entry
+
+    cursor: Optional[tuple] = None
+    text_cursor = _decode(raw)
+    if text_cursor:
+        stamp, _, event_id = text_cursor.partition("|")
+        try:
+            parsed = datetime.fromisoformat(stamp)
+            # Half a keyset is not a position — refuse it rather than key on the
+            # timestamp alone and step over a tied cohort.
+            parsed_id = int(event_id)
+        except (TypeError, ValueError):
+            parsed = None  # type: ignore[assignment]
+            parsed_id = 0
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            cursor = (parsed, parsed_id)
+    return TierState(cursor, done, retry, gave_up)
+
+
+def _decode(raw) -> Optional[str]:
+    if raw is None:
+        return None
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", "ignore")
-    stamp, _, event_id = str(raw).partition("|")
-    try:
-        parsed = datetime.fromisoformat(stamp)
-        # Half a keyset is not a position — refuse it rather than key on the
-        # timestamp alone and step over a tied cohort.
-        parsed_id = int(event_id)
-    except (TypeError, ValueError):
-        return None, done
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return (parsed, parsed_id), done
+    return str(raw) or None
 
 
-def _write_checkpoint(tier: str, cursor: Optional[tuple], *, exhausted: bool) -> None:
-    """Persist the position, and mark the tier done when its scan ran out.
+def _write_cursor(tier: str, cursor: Optional[tuple]) -> None:
+    """Persist the position this tier reached. Nothing else."""
+    if cursor is None:
+        return
+    stamp, event_id = cursor
+    _with_redis(
+        tier,
+        lambda client: client.set(
+            CHECKPOINT_KEY.format(tier=tier), f"{stamp.isoformat()}|{int(event_id)}"
+        ),
+    )
 
-    Marking done is what lets a re-trigger reach the NEXT tier instead of
-    restarting this one. It is deliberately not the same thing as clearing the
-    cursor, which live/035's ring sweep does — that sweep wraps forever because it
-    is steady-state, and this one is a drain that must be able to finish.
+
+def _mark_done(tier: str, marker: str) -> None:
+    """Mark the tier terminal. `drained` and `drained_with_failures` are BOTH
+    terminal and are deliberately distinguishable — the second one means the
+    retry budget ran out with events still unreachable, and a reader of the
+    verdict has to be able to tell that from a clean finish (gotcha #53)."""
+    _with_redis(tier, lambda client: client.set(TIER_DONE_KEY.format(tier=tier), marker))
+
+
+def _record_attempts(
+    tier: str, attempted: Sequence[int], failed: Sequence[int], prior: dict,
+) -> dict:
+    """Fold one pass's outcomes into the tier's retry hash. Returns the new hash.
+
+    🔴 THE RETRY ITSELF. An event that FAILED goes in (or has its attempt count
+    bumped); an event that was attempted and did NOT fail comes out, because it
+    has been answered. An event that has spent :data:`MAX_EVENT_RETRIES` comes
+    out too and is counted as given up — that count, not the empty hash, is what
+    makes the tier's ending `drained_with_failures` rather than `drained`.
     """
+    failed_set = set(failed)
+    still_owed: dict = dict(prior)
+    gave_up: list[int] = []
+
+    for event_id in attempted:
+        if event_id not in failed_set:
+            still_owed.pop(event_id, None)
+            continue
+        attempts = still_owed.get(event_id, 0) + 1
+        if attempts >= MAX_EVENT_RETRIES:
+            still_owed.pop(event_id, None)
+            gave_up.append(event_id)
+        else:
+            still_owed[event_id] = attempts
+
+    if gave_up:
+        logger.warning(
+            "30d chart drain: giving up on %d event(s) in tier %s after %d "
+            "attempts each — they stay thin and are counted, not hidden: %s",
+            len(gave_up), tier, MAX_EVENT_RETRIES, gave_up[:10],
+        )
+
+    def _apply(client):
+        key = RETRY_KEY.format(tier=tier)
+        dropped = [e for e in prior if e not in still_owed]
+        if dropped:
+            client.hdel(key, *[str(e) for e in dropped])
+        added = {
+            str(e): str(n) for e, n in still_owed.items() if prior.get(e) != n
+        }
+        if added:
+            client.hset(key, mapping=added)
+        if gave_up:
+            client.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
+
+    _with_redis(tier, _apply)
+    return still_owed
+
+
+def _with_redis(tier: str, apply) -> None:
     try:
         from app.tasks.redis_state import get_redis_client
 
-        client = get_redis_client()
-        if cursor is not None:
-            stamp, event_id = cursor
-            client.set(
-                CHECKPOINT_KEY.format(tier=tier),
-                f"{stamp.isoformat()}|{int(event_id)}",
-            )
-        if exhausted:
-            client.set(TIER_DONE_KEY.format(tier=tier), "1")
+        apply(get_redis_client())
     except Exception:  # noqa: BLE001 — losing the hint costs a re-scan, not a row
         logger.warning(
             "30d chart drain: checkpoint for tier %s not persisted", tier,
@@ -340,7 +500,7 @@ def _write_checkpoint(tier: str, cursor: Optional[tuple], *, exhausted: bool) ->
 
 
 def reset_checkpoints() -> dict:
-    """Forget every tier's position. For a re-run from the top, by hand."""
+    """Forget every tier's position, done-marker, retries and give-ups. By hand."""
     cleared = []
     try:
         from app.tasks.redis_state import get_redis_client
@@ -349,6 +509,8 @@ def reset_checkpoints() -> dict:
         for tier in TIERS:
             client.delete(CHECKPOINT_KEY.format(tier=tier.name))
             client.delete(TIER_DONE_KEY.format(tier=tier.name))
+            client.delete(RETRY_KEY.format(tier=tier.name))
+            client.delete(GAVE_UP_KEY.format(tier=tier.name))
             cleared.append(tier.name)
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "error": str(exc)[:160], "cleared": cleared}
@@ -360,12 +522,29 @@ def reset_checkpoints() -> dict:
 # ---------------------------------------------------------------------------
 
 
+class DrainPass(NamedTuple):
+    """The outcome of one batch of events."""
+
+    #: Why the loop ended: ``page_complete`` or ``consecutive_errors``.
+    stopped: str
+    #: Ids we actually reached (an id whose row is gone is not attempted).
+    attempted: list[int]
+    #: Of those, the ones that FAILED — never asked and answered. These are the
+    #: ids the tier owes a retry, and the reason it cannot be marked done.
+    failed: list[int]
+    #: Ids whose event row no longer exists. Reported SEPARATELY because they are
+    #: neither attempted nor failed, and an owed retry for one of them would sit
+    #: in the retry hash forever holding its tier at `awaiting_retries` — the
+    #: false-`drained` defect wearing its opposite face.
+    missing: list[int]
+
+
 async def _drain_events(
     session, event_ids: Sequence[int], *,
     kalshi_service, polymarket_service,
     min_period_minutes: Optional[int], dry_run: bool, summary: dict,
-) -> str:
-    """Fill each event, committing per event. Returns why the loop ended.
+) -> DrainPass:
+    """Fill each event, committing per event. Reports what it reached and failed.
 
     Per-event commit, not one transaction over the page: a network drain that
     dies on item 40 must keep the 39 curves it already drew (gotcha #13's shape).
@@ -378,13 +557,18 @@ async def _drain_events(
     from app.tasks.event_chart_backfill import backfill_event_chart
 
     consecutive_errors = 0
+    attempted: list[int] = []
+    failed: list[int] = []
+    missing: list[int] = []
     for event_id in event_ids:
         event = (
             await session.execute(select(Event).where(Event.id == event_id))
         ).scalar_one_or_none()
         if event is None:
             summary["not_found"] += 1
+            missing.append(event_id)
             continue
+        attempted.append(event_id)
         try:
             verdict = await backfill_event_chart(
                 session, event,
@@ -395,10 +579,16 @@ async def _drain_events(
             )
         except Exception as exc:  # noqa: BLE001 — one event, not the drain
             consecutive_errors += 1
+            # An event that threw was never asked and answered. It counts as
+            # FAILED, which is what keeps the tier from being marked done over it.
+            summary["failed"] += 1
+            failed.append(event_id)
             summary["errors"].append(f"{event_id}: {str(exc)[:120]}")
             logger.warning("30d chart drain: event %s failed", event_id, exc_info=True)
             if consecutive_errors >= CONSECUTIVE_ERROR_ABORT:
-                return "consecutive_errors"
+                return DrainPass(
+                    "consecutive_errors", attempted, failed, missing,
+                )
             continue
 
         consecutive_errors = 0
@@ -406,7 +596,8 @@ async def _drain_events(
         summary["points_written"] += verdict["points_written"]
         if verdict["points_written"]:
             summary["events_written"] += 1
-        _tally(summary, verdict)
+        if _tally(summary, verdict):
+            failed.append(event_id)
         if verdict["errors"]:
             summary["errors"].extend(verdict["errors"][:2])
 
@@ -414,21 +605,32 @@ async def _drain_events(
             await session.commit()
         if INTER_EVENT_SLEEP_SECONDS:
             await asyncio.sleep(INTER_EVENT_SLEEP_SECONDS)
-    return "page_complete"
+    return DrainPass("page_complete", attempted, failed, missing)
 
 
-def _tally(summary: dict, verdict: dict) -> None:
-    """Fold one event's verdict into the running WHY-IT-DID-NOT-FILL census.
+def _tally(summary: dict, verdict: dict) -> bool:
+    """Fold one event's verdict into the census. Returns whether it FAILED.
 
     This is the half of the report Alex asked for by name — "events still empty
     and WHY". A drain that reports only its successes cannot tell a resolver gap
     from a purged venue from a market we cannot orient, and those three want
     three different owners.
+
+    🔴 THREE OUTCOMES, NOT TWO. Every event lands in exactly one of `filled`,
+    `empty_with_no_history` and `failed`, and the third is the one that used to
+    be missing: an event whose venue refused us was counted alongside an event
+    the venue genuinely holds nothing for, under a single `still_empty`. They are
+    not the same event. The first must be retried; the second is done. Only
+    `failed` keeps a tier from being marked drained.
+
+    The return value is that third bucket, handed back so the caller can owe the
+    event a retry by id rather than re-walking the whole tier to find it again.
     """
     if verdict.get("status") == "no_linked_markets":
         summary["reasons"]["no_linked_markets"] += 1
-        return
+        return False
     filled_any = False
+    failed_any = False
     for source, stats in verdict.get("sources", {}).items():
         status = stats.get("status")
         if status == "written":
@@ -437,13 +639,27 @@ def _tally(summary: dict, verdict: dict) -> None:
                 stats.get("points_written") or 0
             )
             continue
+        if status in FAILED_SOURCE_STATUSES:
+            failed_any = True
         if status:
             summary["reasons"][f"{source}:{status}"] += 1
-        for signal in ("purged", "api_empty", "no_token_id"):
+        for signal in ("purged", "api_empty", "no_token_id", "fetch_errors",
+                       "window_errors"):
             if stats.get(signal):
                 summary["reasons"][f"{source}:{signal}"] += stats[signal]
-    if not filled_any and verdict.get("status") != "no_linked_markets":
+    if filled_any:
+        summary["filled"] += 1
+    if failed_any:
+        # An event whose OTHER source filled is still not done: the failed half
+        # of its chart is missing and is worth another attempt.
+        summary["failed"] += 1
+    elif not filled_any:
+        summary["empty_with_no_history"] += 1
+    if not filled_any:
+        # Kept for continuity with the pre-repair report. It is now strictly the
+        # sum of the two honest buckets and is never the number a decision reads.
         summary["still_empty"] += 1
+    return failed_any
 
 
 def _new_summary() -> dict:
@@ -453,6 +669,12 @@ def _new_summary() -> dict:
         "events_processed": 0,
         "events_written": 0,
         "points_written": 0,
+        # The three honest outcomes. `filled` + `empty_with_no_history` + `failed`
+        # is what "drained" has to be judged against; `still_empty` is the old
+        # combined number, kept only so an existing reader does not break.
+        "filled": 0,
+        "empty_with_no_history": 0,
+        "failed": 0,
         "still_empty": 0,
         "not_found": 0,
         "by_source": {},
@@ -471,11 +693,18 @@ async def run_thirty_day_chart_drain(
 ) -> dict:
     """Drain up to ``limit`` fillable events, highest-priority tier first.
 
-    Resumable and idempotent. Re-trigger until the verdict reports
-    ``status: "drained"`` — that is the only thing that means finished. Anything
-    else, including a clean-looking page that wrote zero points, means there is
-    more behind it (gotcha #53 / `task_verdict`: "it returned" is not
-    "it worked").
+    Resumable and idempotent. Re-trigger until the verdict is TERMINAL, and
+    there are exactly two terminal verdicts:
+
+      ``drained``                 every event in scope was asked and answered.
+      ``drained_with_failures``   it stopped, having given up on events the
+                                  venue would not serve after
+                                  ``MAX_EVENT_RETRIES`` attempts each. Terminal,
+                                  and deliberately not the same word.
+
+    Anything else — ``in_progress``, or a tier at ``awaiting_retries``, or a
+    clean-looking page that wrote zero points — means there is more behind it
+    (gotcha #53 / `task_verdict`: "it returned" is not "it worked").
     """
     from app.services.kalshi_api import KalshiAPIService
     from app.services.polymarket_api import PolymarketAPIService
@@ -498,24 +727,72 @@ async def run_thirty_day_chart_drain(
                     continue
                 if remaining <= 0:
                     break
-                after, done = _read_checkpoint(tier.name)
-                if done:
-                    summary["tiers"][tier.name] = {"status": "already_drained"}
+                stopped = None
+                state = _read_checkpoint(tier.name)
+                if state.done:
+                    summary["tiers"][tier.name] = {
+                        "status": state.done, "already_done": True,
+                        "gave_up": state.gave_up,
+                    }
                     continue
 
-                page = await select_thirty_day_page(
-                    session, sport_ids=buckets[tier.name],
-                    limit=remaining, after=after,
-                )
                 tier_report = {
                     "why": tier.why,
                     "sports": len(buckets[tier.name]),
-                    "scanned": page.scanned,
-                    "fillable": len(page.event_ids),
-                    "resumed_from": _label(after),
+                    "resumed_from": _label(state.cursor),
+                    # The count ENTERING this trigger. `owed_retries` below is
+                    # the count LEAVING it, and they are different numbers the
+                    # moment a retry succeeds.
+                    "retries_owed_on_entry": len(state.retry),
+                    "gave_up": state.gave_up,
                 }
+
+                # 🔴 RETRIES FIRST, before any new ground. These are events a
+                # previous trigger could not reach at all; the point of holding
+                # their ids is that the retry costs a handful of re-fetches
+                # instead of a re-walk of the tier.
+                owed = state.retry
+                retried = sorted(owed)[:remaining]
+                if retried:
+                    result = await _drain_events(
+                        session, retried,
+                        kalshi_service=kalshi_service,
+                        polymarket_service=polymarket_service,
+                        min_period_minutes=min_period_minutes,
+                        dry_run=dry_run, summary=summary,
+                    )
+                    remaining -= len(retried)
+                    tier_report["retried"] = len(retried)
+                    tier_report["retried_still_failing"] = len(result.failed)
+                    if not dry_run:
+                        owed = _record_attempts(
+                            tier.name,
+                            result.attempted + result.missing,
+                            result.failed,
+                            owed,
+                        )
+                    stopped = result.stopped
+                    if stopped == "consecutive_errors":
+                        summary["tiers"][tier.name] = dict(
+                            tier_report, status="in_progress",
+                        )
+                        summary["aborted"] = "consecutive_errors"
+                        break
+
+                if remaining > 0:
+                    page = await select_thirty_day_page(
+                        session, sport_ids=buckets[tier.name],
+                        limit=remaining, after=state.cursor,
+                    )
+                else:
+                    # The retries ate the budget. New ground was not looked at,
+                    # so this tier is emphatically NOT exhausted.
+                    page = DrainPage([], state.cursor, False, 0)
+                tier_report["scanned"] = page.scanned
+                tier_report["fillable"] = len(page.event_ids)
+
                 if page.event_ids:
-                    stopped = await _drain_events(
+                    result = await _drain_events(
                         session, page.event_ids,
                         kalshi_service=kalshi_service,
                         polymarket_service=polymarket_service,
@@ -523,16 +800,21 @@ async def run_thirty_day_chart_drain(
                         dry_run=dry_run, summary=summary,
                     )
                     remaining -= len(page.event_ids)
-                # The cursor is written even when the page filled nothing: those
-                # candidates WERE judged, and not advancing past them is how a
-                # drain re-reads the same head forever.
-                if not dry_run:
-                    _write_checkpoint(
-                        tier.name, page.next_cursor, exhausted=page.exhausted
-                    )
+                    tier_report["failed"] = len(result.failed)
+                    if not dry_run:
+                        owed = _record_attempts(
+                            tier.name,
+                            result.attempted + result.missing,
+                            result.failed,
+                            owed,
+                        )
+                    stopped = result.stopped
                 tier_report["advanced_to"] = _label(page.next_cursor)
                 tier_report["exhausted"] = page.exhausted
-                tier_report["status"] = "drained" if page.exhausted else "in_progress"
+                _settle_tier(
+                    tier.name, page, tier_report,
+                    owed=owed, gave_up=state.gave_up, dry_run=dry_run,
+                )
                 summary["tiers"][tier.name] = tier_report
                 if stopped == "consecutive_errors":
                     summary["aborted"] = "consecutive_errors"
@@ -547,32 +829,107 @@ async def run_thirty_day_chart_drain(
     summary["reasons"] = dict(summary["reasons"])
     summary["errors"] = summary["errors"][:20]
     summary["status"] = _verdict(summary, only_tier=only_tier)
-    if summary["status"] != "drained":
+    if summary["status"] == DONE_WITH_FAILURES:
+        logger.warning(
+            "30d chart drain: STOPPED with failures — %s filled, %s genuinely "
+            "empty, %s FAILED. The failed events are still thin and were not "
+            "reachable inside the retry budget; they need a named owner, not a "
+            "re-trigger.",
+            summary["filled"], summary["empty_with_no_history"], summary["failed"],
+        )
+    elif summary["status"] != DONE_CLEAN:
         logger.info(
-            "30d chart drain: %s events, %s points, %s still empty — RE-TRIGGER, "
-            "the window is not drained yet",
+            "30d chart drain: %s events, %s points, %s filled, %s empty, %s "
+            "FAILED — RE-TRIGGER, the window is not drained yet",
             summary["events_processed"], summary["points_written"],
-            summary["still_empty"],
+            summary["filled"], summary["empty_with_no_history"], summary["failed"],
         )
     return summary
 
 
+def _settle_tier(
+    tier: str, page: DrainPage, tier_report: dict, *,
+    owed: dict, gave_up: int, dry_run: bool,
+) -> None:
+    """Decide, and persist, what this tier's page means for the tier.
+
+    🔴 THE RULE THE CERT BLOCKED ON: reaching the end of the scan is not the same
+    as finishing. A tier is marked done ONLY when its scan ran out AND it owes no
+    retries — `owed` is the per-event retry hash, and an event lands in it
+    precisely when the venue could not be asked. Marking done regardless is what
+    let a permanent checkpoint step past events that had merely been refused,
+    with the verdict reading `drained` and the pages staying blank.
+
+    Bounded by :data:`MAX_EVENT_RETRIES` inside :func:`_record_attempts`, so an
+    event that can never be fetched drains out of `owed` rather than holding the
+    tier open forever — and increments the give-up count, which is what makes the
+    ending `drained_with_failures` instead of `drained`.
+    """
+    # The count LEAVING this trigger, which is the one a settlement turns on.
+    tier_report["owed_retries"] = len(owed)
+
+    if not page.exhausted:
+        # The cursor is written even when the page filled nothing: those
+        # candidates WERE judged, and not advancing past them is how a drain
+        # re-reads the same head forever. Advancing past a FAILED event is safe
+        # here only because its id is held in `owed`.
+        tier_report["status"] = "in_progress"
+        if not dry_run:
+            _write_cursor(tier, page.next_cursor)
+        return
+
+    if owed:
+        tier_report["status"] = "awaiting_retries"
+        logger.info(
+            "30d chart drain: tier %s reached the end of its scan but owes %d "
+            "retry/retries — NOT marking it drained; re-trigger to retry them",
+            tier, len(owed),
+        )
+        if not dry_run:
+            _write_cursor(tier, page.next_cursor)
+        return
+
+    marker = DONE_WITH_FAILURES if gave_up else DONE_CLEAN
+    tier_report["status"] = marker
+    if gave_up:
+        tier_report["gave_up"] = gave_up
+        logger.warning(
+            "30d chart drain: tier %s ends as %s — %d event(s) could not be "
+            "fetched in %d attempts each and remain thin.",
+            tier, DONE_WITH_FAILURES, gave_up, MAX_EVENT_RETRIES,
+        )
+    if not dry_run:
+        _write_cursor(tier, page.next_cursor)
+        _mark_done(tier, marker)
+
+
+#: Tier statuses that mean the tier has STOPPED. `awaiting_retries` and
+#: `in_progress` are not here, by design — both mean re-trigger.
+TERMINAL_TIER_STATUSES = frozenset({DONE_CLEAN, DONE_WITH_FAILURES})
+
+
 def _verdict(summary: dict, *, only_tier: Optional[str]) -> str:
-    """`drained` ONLY when every tier in scope says so.
+    """`drained` ONLY when every tier in scope finished CLEANLY.
 
     A page that returned cleanly having written nothing looks exactly like a
     finished drain unless something asserts the difference, so this asserts it.
+    And a tier that ran out of RETRY budget with events still unreachable is
+    terminal but is NOT `drained` — it reports `drained_with_failures` so the
+    difference reaches whoever reads the verdict (gotcha #53).
     """
     if summary.get("aborted"):
         return "aborted"
     scope = [t.name for t in TIERS if not only_tier or t.name == only_tier]
     seen = summary.get("tiers", {})
-    if all(
-        seen.get(name, {}).get("status") in ("drained", "already_drained")
-        for name in scope
-    ):
-        return "drained"
-    return "in_progress"
+    statuses = [seen.get(name, {}).get("status") for name in scope]
+    # A legacy marker: pre-repair runs recorded a finished tier as
+    # `already_drained`, and a summary carrying one still means the clean thing.
+    statuses = [DONE_CLEAN if s == "already_drained" else s for s in statuses]
+    if not all(s in TERMINAL_TIER_STATUSES for s in statuses):
+        return "in_progress"
+    if any(s == DONE_WITH_FAILURES for s in statuses):
+        return DONE_WITH_FAILURES
+    return DONE_CLEAN
 
 
 def _label(cursor: Optional[tuple]) -> Optional[str]:
