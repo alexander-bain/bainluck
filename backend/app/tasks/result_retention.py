@@ -84,6 +84,10 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.backfill_polymarket_win_prob",
         "app.tasks.backfill_polymarket_winners",
         "app.tasks.backfill_team_identities",
+        # live/039: dispatched from POST /admin/backfill-30d-charts, which queues
+        # by DEFAULT — the one-time 30-day drain cannot fit inside a request — so
+        # the caller always has a task id to poll and the result must be kept.
+        "app.tasks.backfill_thirty_day_charts",
         "app.tasks.backfill_team_links",
         "app.tasks.backfill_team_logos",
         "app.tasks.backfill_winners",
