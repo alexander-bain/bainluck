@@ -515,7 +515,21 @@ final class CalibrationViewModel: ObservableObject {
     // will read q268 as `.incompatible` until their owners update. That is a cost
     // of the bump itself, not of this list, and it is the reason the rollout order
     // is clients-first whenever there is a choice.
-    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q1530"]
+    // CAL-P211 2026-09-01: "q269" added (#1978), and it is NOT a label-only bump
+    // like q268 was. The ruled freeze-lift batch excludes 201,508 outcomes, so a
+    // q269 curve genuinely counts different rows. This build's labels survive it
+    // because they describe how rows are plotted, not which rows qualify; the
+    // only cell that changes identity is crypto, and it LEAVES the board (parked
+    // below the 1,000-row bar) rather than being relabelled underneath a caption.
+    //
+    // The warning immediately above applies with full force here and is worse for
+    // native than for web: builds ALREADY on devices ship the old set and will
+    // read q269 as `.incompatible` until their owners update, and a shipped iOS
+    // build cannot be rolled back. That cost is unavoidable in either deploy
+    // order — it is a cost of the bump, not of the ordering — and it is called
+    // out in `alex-inbox/calibration-021` so it is decided rather than
+    // discovered.
+    static let compatiblePopulationVersions: Set<String> = ["q267", "q268", "q269", "q1530"]
 
     var populationVersion: String? { data?.populationVersion }
 

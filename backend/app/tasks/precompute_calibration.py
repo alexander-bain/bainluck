@@ -604,7 +604,29 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # beats from zero. Fable ruled that spend acceptable and the bank was worth
 # little: 119 of its 125 checkable units were censuses of an older population, so
 # publishing it would have published a sixteen-day smear.
-CALIBRATION_POPULATION_VERSION = "q268"
+#
+# ---------------------------------------------------------------------------
+# q268 -> q269 (CAL-P211, 2026-09-01): THE FREEZE-LIFT BATCH MOVED THE
+# METHODOLOGY, SO THE VERSION HAS TO SAY SO.
+#
+# The batch that is already on master and deployed (D5 dedup, D21, D22, D13
+# per-market, D12 crypto tuple, RULE E) does not count the same rows q268
+# counted. Measured on the completed 128-unit rebuild of 2026-09-01, it removes
+# 201,508 outcomes: 930,149 -> 728,641, i.e. -21.7%, with crypto going 4,625 ->
+# 0 (D12) and economics 43,270 -> 10,501 (RULE E).
+#
+# Under an UNBUMPED q268 the publish gate reads that as unexplained data loss
+# and refuses — ``population_shrink`` at -21.7% against a -5% limit, plus ten
+# ``category_collapse`` codes — and a refusal CLEARS THE CHECKPOINT, so the
+# rebuild that earned the refusal is binned and the next beat starts from zero.
+# That is not a flaky gate to be waited out: the drift is a deterministic
+# property of the deployed predicate, so every future rebuild is refused for the
+# same reason, forever, while burning a full Postgres-saturating build each
+# time. The gate is RIGHT — the only lawful way to publish a deliberate
+# methodology shrink is to declare it, which is what this bump does.
+# ``evaluate_publish`` returns before Rule 2 and Rule 3 when the version is
+# bumped (``calibration_publish_gate.py``, "if verdict.version_bumped").
+CALIBRATION_POPULATION_VERSION = "q269"
 
 #: The predecessor versions whose PUBLISHED artifacts this build declares
 #: comparable with its own — the explicit, bounded rollover window that the
@@ -625,7 +647,52 @@ CALIBRATION_POPULATION_VERSION = "q268"
 #: not overridden. **A bump that DOES move the methodology must ship this list
 #: EMPTY and accept the dark window**, because then the banner really would be
 #: papering over numbers that mean something else.
-COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ("q267",)
+#:
+#: CAL-P211 IS EXACTLY THAT CASE, so the list is now EMPTY and stays empty. The
+#: q268 artifact counts 201,508 outcomes that q269's predicate excludes on
+#: purpose; serving it dated-and-degraded under a q269 label would be the
+#: papering-over this docstring names, not a kindness to the page. The list is
+#: not a dial to be turned down when the dark window is inconvenient — its entry
+#: bar is a proof of methodological identity, and q268 cannot meet it.
+COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
+
+#: The version carried by the artifact /calibration is ACTUALLY serving — the
+#: one a rollover has to keep servable to stay lit. Measured, not assumed:
+#: ``GET /api/calibration`` returned ``population_version: "q268"`` with
+#: ``generated_at 2026-08-31T04:37:36.703361+00:00`` at 2026-09-01 22:51 PT.
+#:
+#: It is separate from :data:`CALIBRATION_POPULATION_VERSION` because the two
+#: genuinely differ during a rollover — that gap IS the dark window — and the
+#: guard that checks the lit path needs to name the outgoing version without
+#: hard-coding a literal that goes stale one bump later.
+PREVIOUS_PUBLISHED_POPULATION_VERSION = "q268"
+
+#: The population version for which an EMPTY
+#: :data:`COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` — and therefore a DELIBERATE,
+#: user-visible dark window on /calibration — was consciously accepted.
+#:
+#: This exists so the dark window can never be inherited. Emptying the
+#: compatibility list is the one edit in this module that takes a live page down,
+#: and the previous guard could not tell "we accepted this cost" from "the list
+#: happens to be empty" — a distinction worth nothing until the NEXT bump, when
+#: an empty list left lying around would take the page dark again with nobody
+#: having decided it. Naming the exact version it was accepted FOR makes the
+#: acceptance expire on its own: bump to q270 without re-declaring and the guard
+#: in ``tests/test_calibration_result_authority_299.py`` fails closed.
+#:
+#: 🔴 STAGED, NOT YET ACCEPTED. As of 2026-09-01 22:5x PT this branch is built
+#: and gated but UNMERGED, and the acceptance it records is Alex's to give (it is
+#: on his desk as ``alex-inbox/calibration-020`` + ``-021``). Do not merge this
+#: branch until he has said go. What the decision buys: the alternative is not
+#: "a lit page" but a page frozen forever at 2026-08-31, because under q268 every
+#: rebuild is refused and binned.
+#:
+#: MEASURED COST (phase ledger ``calibration:main:phase_ledger``, generation
+#: 1788326490717): ``staged:unit_ms_mean`` 91,844 ms over 128 units = ~3.3 h of
+#: build, and the plan's own ``units_per_beat`` 13 puts an UNASSISTED recovery at
+#: ceil(128/13) = 10 hourly beats. The attended one-off drain lands between the
+#: two. It is a window measured in hours, not the ~26 h first estimated.
+POPULATION_VERSION_DARK_WINDOW_ACCEPTED: str | None = "q269"
 
 #: Queue 300D Item 1 — the REPRESENTATIVE TIE AUTHORITY, versioned separately
 #: from the population.

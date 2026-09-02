@@ -93,7 +93,30 @@
 // degraded predecessor while the first q268 build runs (its
 // COMPATIBLE_PREVIOUS_POPULATION_VERSIONS). Dropping q267 from this list would
 // make the client refuse exactly the payload that keeps the page lit.
-export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = ["q267", "q268", "q1530"];
+// CAL-P211 2026-09-01: "q269" added (#1978). UNLIKE q268, THIS BUMP MOVES THE
+// METHODOLOGY — the ruled freeze-lift batch (D5, D21, D22, D13, D12, RULE E)
+// excludes 201,508 outcomes on purpose, so a q269 curve counts different rows
+// than a q268 one. That is precisely why the entry is needed and why the claim
+// it makes had to be checked rather than assumed: this page's labels describe
+// WHICH rows are plotted and how, not how many qualify, and none of them names
+// a population rule. The one label that could have gone stale is the crypto
+// cell, and it does not go stale — it LEAVES the board (parked below the
+// 1,000-row publish bar), so nothing here renders a q269 cell under a q268
+// caption.
+//
+// "q267"/"q268" STAY, and keeping them is what makes the deploy order a
+// non-issue: the list is ADDITIVE, so a client carrying it accepts the old
+// payload and the new one, and neither Vercel-first nor Heroku-first can
+// produce the window this file's header warns about. Dropping them would
+// re-create it. Note the backend's own
+// COMPATIBLE_PREVIOUS_POPULATION_VERSIONS is EMPTY for q269 — it will never
+// SERVE a q268 artifact again — so these two entries are belt, not braces.
+export const COMPATIBLE_POPULATION_VERSIONS: readonly string[] = [
+  "q267",
+  "q268",
+  "q269",
+  "q1530",
+];
 
 /**
  * A version token we are willing to read at all: a short, printable
