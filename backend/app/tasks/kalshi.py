@@ -29,6 +29,9 @@ from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
 from app.utils.kalshi_market_status import all_terminal  # noqa: E402
+from app.utils.kalshi_resolution_window import (  # noqa: E402  # CAL-P989 #2660
+    derive_resolution_window,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 
@@ -682,10 +685,20 @@ async def _poll_kalshi_markets():
                     # For single-market events, use the market directly
                     game_sport = _is_kalshi_game_ticker(event.event_ticker)
 
+                    # CAL-P989 (#2660/#1818): `resolution_date` is max(close_time) —
+                    # when trading actually stops — and the legal backstop
+                    # max(expiration_time) is preserved in its own column. It used to
+                    # be the other way round, which put 0 of 49 venue-finalized
+                    # markets in the past and so hid every one of them from
+                    # `past resolution_date`. Derivation + the measurement that chose
+                    # the field: app/utils/kalshi_resolution_window.py.
+                    _window = derive_resolution_window(event.markets)
+                    resolution_date = _window.resolution_date
+                    expiration_time = _window.expiration_time
+
                     if len(event.markets) == 1:
                         market = event.markets[0]
                         commence_time = market.close_time  # When trading ends
-                        expiration_time = market.expiration_time
 
                         # For game-level events, construct the best possible name
                         # from sub-titles (team names) since event title may be generic
@@ -708,14 +721,6 @@ async def _poll_kalshi_markets():
                             m.close_time for m in event.markets if m.close_time
                         ]
                         commence_time = min(close_times) if close_times else None
-                        expiration_times = [
-                            m.expiration_time
-                            for m in event.markets
-                            if m.expiration_time
-                        ]
-                        expiration_time = (
-                            max(expiration_times) if expiration_times else None
-                        )
 
                     # Compute market tier for relevance ranking
                     from app.utils.market_label_normalization import compute_market_tier
@@ -832,7 +837,8 @@ async def _poll_kalshi_markets():
                         "market_tier": market_tier,
                         "mutually_exclusive": event.mutually_exclusive,
                         "commence_time": commence_time,
-                        "resolution_date": expiration_time,
+                        "resolution_date": resolution_date,
+                        "expiration_time": expiration_time,
                         "status": market_status,
                         "category_tags": tags,
                         "group_id": kalshi_group_id,
@@ -851,7 +857,8 @@ async def _poll_kalshi_markets():
                         "market_tier": market_tier,
                         "status": market_status,
                         "commence_time": commence_time,
-                        "resolution_date": expiration_time,
+                        "resolution_date": resolution_date,
+                        "expiration_time": expiration_time,
                         "category_tags": tags,
                         "group_id": kalshi_group_id,
                         "group_type": kalshi_group_type,
@@ -3709,8 +3716,14 @@ async def _create_settled_market(
         market_name = event.title
 
     commence_time = min(close_times) if close_times else None
-    exp_times = [m.expiration_time for m in event.markets if m.expiration_time]
-    resolution_date = max(exp_times) if exp_times else max_close
+    # CAL-P989 (#2660/#1818): the SECOND writer. This gap-create path had its own
+    # copy of `max(expiration_time)`, so fixing only the poller would have left the
+    # codebase with two derivations — one reading the venue's legal backstop and one
+    # reading when trading stopped — and every row this path creates carrying the
+    # wrong date. Same pure function as the poller, deliberately.
+    _gap_window = derive_resolution_window(event.markets)
+    resolution_date = _gap_window.resolution_date
+    expiration_time = _gap_window.expiration_time
 
     try:
         market_tier = compute_market_tier(
@@ -3736,6 +3749,7 @@ async def _create_settled_market(
             mutually_exclusive=event.mutually_exclusive,
             commence_time=commence_time,
             resolution_date=resolution_date,
+            expiration_time=expiration_time,
             status="resolved",
             group_id=f"kalshi:{event.event_ticker}",
             volume=total_volume,
