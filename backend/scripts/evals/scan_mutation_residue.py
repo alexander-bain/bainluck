@@ -262,9 +262,9 @@ def _load(stem: str):
 
 
 class Pair:
-    __slots__ = ("harness", "mid", "needle", "repl", "target")
+    __slots__ = ("harness", "mid", "needle", "repl", "target", "scope", "may_repeat")
 
-    def __init__(self, harness, mid, needle, repl, target):
+    def __init__(self, harness, mid, needle, repl, target, scope=None, may_repeat=False):
         self.harness, self.mid, self.needle, self.repl, self.target = (
             harness,
             mid,
@@ -272,6 +272,11 @@ class Pair:
             repl,
             target,
         )
+        #: The text the OWNING HARNESS counts this anchor in, when that is not the
+        #: whole target file. `None` means the whole file, which is the common case.
+        self.scope = scope
+        #: Whether the owning harness treats a repeated anchor as legitimate.
+        self.may_repeat = may_repeat
 
     def __str__(self) -> str:
         return f"{self.harness}:{self.mid}"
@@ -298,6 +303,44 @@ def harvest() -> tuple[list[Pair], list[str]]:
         if stem in unknown or stem in DISK_FREE:
             continue
         module = _load(stem)
+
+        # --- #2391: the anchor contract is the HARNESS's, not this scan's -------
+        #
+        # This scan used to count every needle against its whole target file and
+        # call anything matching twice a mutant that cannot run, on the stated
+        # grounds that "every harness in this directory refuses a non-unique
+        # anchor". Three of the four harnesses it flagged do not:
+        #
+        #   * `search_tier_split` counts inside ONE function's source, so the
+        #     whole-file count is the wrong denominator — `M6-no-rearm` was
+        #     reported ambiguous and is in fact KILLED.
+        #   * `outcome_evidence_class` exempts its generated registry, where an
+        #     anchor repeats once per probe BY CONSTRUCTION.
+        #   * `search_word_test` had no uniqueness check at all (it does now).
+        #
+        # Four of the seven baselined entries were therefore this scan being
+        # wrong, not debt. So the contract is now READ from the harness — and,
+        # as with `MUTATES_WORKING_TREE`, read as a live expression rather than
+        # a written-down claim, so the two cannot drift into disagreement.
+        may_repeat_in = getattr(module, "ANCHOR_MAY_REPEAT_IN", frozenset())
+        scope_fn = getattr(module, "anchor_scope_text", None)
+        scope_text = None
+        if scope_fn is not None:
+            try:
+                scope_text = scope_fn()
+            except Exception as exc:  # pragma: no cover - defensive
+                unknown.append(
+                    f"{stem}.anchor_scope_text() raised {exc!r} — refusing to "
+                    "grade its anchors against a scope it cannot produce"
+                )
+                continue
+            if not isinstance(scope_text, str) or not scope_text:
+                unknown.append(
+                    f"{stem}.anchor_scope_text() returned no text — refusing to "
+                    "grade its anchors against an empty scope"
+                )
+                continue
+
         for attr, n_key, r_key, target_spec in SHAPES[stem]:
             table = getattr(module, attr, None)
             if table is None:
@@ -316,7 +359,17 @@ def harvest() -> tuple[list[Pair], list[str]]:
                 if not isinstance(target, Path):
                     unknown.append(f"{stem}.{attr}[{index}] has no resolvable target path")
                     continue
-                pairs.append(Pair(stem, mid, needle, repl, target))
+                pairs.append(
+                    Pair(
+                        stem,
+                        mid,
+                        needle,
+                        repl,
+                        target,
+                        scope=scope_text,
+                        may_repeat=target in may_repeat_in,
+                    )
+                )
 
     return pairs, unknown
 
@@ -426,26 +479,41 @@ def main() -> int:
                 cache[pair.target] = ""
         text = cache[pair.target]
         rel = pair.target.relative_to(REPO) if pair.target.is_relative_to(REPO) else pair.target
-        hits = text.count(pair.needle)
+        # Presence (residue/drift) is always a question about the FILE. Uniqueness
+        # is a question about the scope the owning harness counts in, which is the
+        # file unless that harness published a narrower one (#2391).
+        hits = (pair.scope if pair.scope is not None else text).count(pair.needle)
         if hits == 1:
+            continue
+        if hits > 1 and pair.may_repeat:
+            # Declared repeatable by the harness that owns it — a generated
+            # artifact whose anchor recurs once per record. The harness mutates
+            # exactly one occurrence on purpose, so this is aim, not ambiguity.
             continue
         if hits > 1:
             # 🔴 A NEEDLE THAT MATCHES TWICE IS AS DEAD AS ONE THAT MATCHES NONE
-            # (CERT-563). Every harness in this directory refuses to run a mutant
-            # whose anchor is not unique — it scores HARNESS-FAIL — so an
-            # ambiguous needle is a mutant that never runs, exactly like a
-            # drifted one. This scan could not see it: it asked `in`, which is
-            # true for one match and for five.
+            # (CERT-563) — where the owning harness demands a unique anchor.
             #
             # Measured: adding `QUALITY_FULL` to a SECOND function's import block
             # made `prop_families_cache_mutations:M20`'s anchor match twice. The
             # scan said CLEAN and the 32-minute battery said HARNESS-FAIL. The
             # cheap check has to be the one that knows.
+            #
+            # ⚠️ #2391 — AND IT HAS TO KNOW THE RIGHT THING. This comment used to
+            # read "every harness in this directory refuses a non-unique anchor",
+            # and that was an assumption, not a survey: of the four harnesses it
+            # first flagged, one counted inside a single function, one exempted a
+            # generated registry, and one had no uniqueness check at all. Four of
+            # seven "ambiguous" entries were this scan being wrong. A guard that
+            # states another component's contract instead of READING it is the
+            # same class of defect it exists to catch, so `hits` is now counted
+            # in `pair.scope` and `pair.may_repeat` is honoured above.
             ambiguous.append(
                 (
                     str(pair),
-                    f"{rel}  <-  {pair}  (needle matches {hits}x; the anchor is "
-                    "not unique, so the mutant cannot be applied)",
+                    f"{rel}  <-  {pair}  (needle matches {hits}x in the scope "
+                    f"{pair.harness} counts in; the anchor is not unique, so "
+                    "the mutant is not provably aimed)",
                 )
             )
         elif pair.repl and pair.repl in text:

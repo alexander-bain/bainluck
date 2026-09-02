@@ -62,6 +62,21 @@ REGISTRY = BACKEND / "scripts" / "evals" / "search_gold_probes.json"
 SCORER = BACKEND / "app" / "utils" / "search_match_class.py"
 ROUTE = BACKEND / "app" / "routes" / "events.py"
 
+#: Targets whose anchors legitimately match MORE THAN ONCE.
+#:
+#: The registry is a GENERATED artifact: `"split": "canary"` and
+#: `"difficulty": "discrimination"` appear once per probe by construction, and
+#: the realistic edit this harness reproduces — a hand patch, a bad merge —
+#: changes ONE of them. So a repeated anchor here is the mutant working, not a
+#: mutant that cannot run, and `_apply` below mutates exactly one occurrence.
+#:
+#: #2391: `scan_mutation_residue.py` graded M1/M3/M4 as ambiguous debt because
+#: it assumed every harness in this directory refuses a non-unique anchor. This
+#: one documents the opposite and always has. Published as a constant so the
+#: scan reads the same exemption `_apply` enforces, instead of asserting a
+#: contract this harness does not have.
+ANCHOR_MAY_REPEAT_IN: frozenset[Path] = frozenset({REGISTRY})
+
 BACKUPS = {
     REGISTRY: Path("/tmp/lat_p052_registry_backup.json"),
     SCORER: Path("/tmp/lat_p052_scorer_backup.py"),
@@ -201,9 +216,12 @@ def _main() -> int:
 
         # The registry is a generated artifact: an anchor legitimately repeats
         # once per probe, and mutating ONE of them is the realistic edit (a hand
-        # patch, a bad merge). Source anchors must be unique.
-        replacements = 1 if target is REGISTRY else count
-        if target is not REGISTRY and count != 1:
+        # patch, a bad merge). Source anchors must be unique. The exemption is
+        # read from `ANCHOR_MAY_REPEAT_IN` rather than re-spelled here so this
+        # check and the scan's cannot drift apart (#2391).
+        may_repeat = target in ANCHOR_MAY_REPEAT_IN
+        replacements = 1 if may_repeat else count
+        if not may_repeat and count != 1:
             not_applied.append((mid, f"source anchor matched {count}x, expected 1"))
             print(f"{mid:>4}  NOT-APPLIED  ({count}x anchor)  {desc}")
             continue
