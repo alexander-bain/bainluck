@@ -3249,6 +3249,50 @@ async def get_golf_tournament(
         key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
     )
 
+    # LAT-P192/#2012: market_id -> source, fetched AT MOST ONCE per request.
+    #
+    # (#1107, cited by the notes above and by two cycles of golf-latency work, has
+    # been CLOSED-as-completed since 2026-08-10 on its own production proof. The
+    # open issue for this page's latency is #2012.)
+    #
+    # Three blocks below each used to issue their own
+    # `SELECT id, source FROM futures_markets WHERE id IN (...)` — the placement
+    # grid (#954), the round markets, and the related-futures cards (#956/#957).
+    # Every one of those id sets is drawn from `sorted_groups`, hence a subset of
+    # this tournament's `market_ids`, and two of them genuinely OVERLAP: a
+    # `round_leader` market is claimed by the placement block AND by
+    # `round_market_kinds`, so its source row was read twice.
+    #
+    # Set-equivalent at every read site by construction: all three maps are only
+    # ever consulted as `.get(<mid>)` keyed by an id from that block's own group,
+    # never iterated, sized or `.values()`-ed, so a whole-tournament map cannot
+    # change an answer — only the number of round trips. A guard pins that read
+    # shape so a future edit cannot quietly make the superset observable.
+    #
+    # Sized honestly: `app` dominates `db` on this route (2,076 ms wall /
+    # 1,556 ms app / q=19 on `us-open`, production 2026-09-01, median of 5), so
+    # this is two of nineteen queries, not the headline. It is committed because
+    # it is free, not because it is large.
+    #
+    # Lazy on purpose. Hoisting the query unconditionally would ADD a round trip
+    # to every tournament that has none of the three groups; those requests issue
+    # zero today and must keep doing so.
+    _source_by_market_id: dict[int, str] = {}
+    _source_map_loaded = False
+
+    async def _market_source_map() -> dict[int, str]:
+        nonlocal _source_map_loaded
+        if not _source_map_loaded:
+            _source_map_loaded = True
+            if market_ids:
+                _src_rows = await db.execute(
+                    select(FuturesMarket.id, FuturesMarket.source).where(
+                        FuturesMarket.id.in_(market_ids)
+                    )
+                )
+                _source_by_market_id.update({row[0]: row[1] for row in _src_rows.all()})
+        return _source_by_market_id
+
     # Find the winner market for the evolution chart. The RANKING is policy and
     # lives in `app.utils.golf_evolution_market` (pure, no session — ruling 005);
     # what stays here is fetching the three facts it ranks on.
@@ -3425,12 +3469,10 @@ async def get_golf_tournament(
                 mid_to_type[mid] = type_key
 
         # market_id -> source, so placement probs can prefer DataGolf (#954).
-        src_result = await db.execute(
-            select(FuturesMarket.id, FuturesMarket.source).where(
-                FuturesMarket.id.in_(all_placement_ids)
-            )
-        )
-        mid_to_source: dict[int, str] = {row[0]: row[1] for row in src_result.all()}
+        # Shared with the round-market and related-futures blocks below — see
+        # `_market_source_map` (LAT-P192). Read only by `.get(o.market_id)`,
+        # where `market_id` is one of `all_placement_ids`.
+        mid_to_source: dict[int, str] = await _market_source_map()
 
         # Build match_key -> {type_key: probability} from placement outcomes.
         # DataGolf is the authoritative in-play model; a blind cross-source
@@ -3536,12 +3578,11 @@ async def get_golf_tournament(
         rt_by_market: dict[int, list] = defaultdict(list)
         for o in rt_out_result.scalars().all():
             rt_by_market[o.market_id].append(o)
-        rt_src_result = await db.execute(
-            select(FuturesMarket.id, FuturesMarket.source).where(
-                FuturesMarket.id.in_(rt_ids)
-            )
-        )
-        rt_src = {row[0]: row[1] for row in rt_src_result.all()}
+        # Shared source map (LAT-P192). `rt_ids` overlaps the placement block's
+        # ids — every `round_leader` market is in both — so this was the round
+        # trip that most obviously duplicated another. Read only by `.get(mid)`
+        # for `mid` in `rt_ids`.
+        rt_src = await _market_source_map()
 
         # Which rounds are OVER — derived from the data itself, no live call.
         # The highest graded-leader round is the last completed round; every
@@ -3698,12 +3739,9 @@ async def get_golf_tournament(
             })
 
         # market_id -> source for cross-source dedup + per-card attribution (#956/#957).
-        other_src_result = await db.execute(
-            select(FuturesMarket.id, FuturesMarket.source).where(
-                FuturesMarket.id.in_(other_group["market_ids"])
-            )
-        )
-        other_mid_to_source: dict[int, str] = {r[0]: r[1] for r in other_src_result.all()}
+        # Shared source map (LAT-P192); read only by `.get(mid, "unknown")` for
+        # `mid` in `other_group["market_ids"]`.
+        other_mid_to_source: dict[int, str] = await _market_source_map()
 
         def _lead_prob(outcomes: list) -> float | None:
             """Representative probability for a card — the 'Yes' side of a binary
