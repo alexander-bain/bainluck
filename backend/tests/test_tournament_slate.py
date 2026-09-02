@@ -389,6 +389,10 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # rather than the register. Zero is the healthy state — every one of
         # these is a register row still carrying a player who left the draw.
         "authority_pairings": 0,
+        # lane1/047: and how many of those carry a number. The gap between the
+        # two is the population that reads "nobody is quoting this match" while
+        # we may well hold its market.
+        "authority_priced": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }

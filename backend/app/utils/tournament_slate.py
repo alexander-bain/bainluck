@@ -758,8 +758,10 @@ def authority_match_row(
     listed: dict[str, Any],
     *,
     now: datetime,
+    link: Optional[dict[str, Any]] = None,
+    prices: Optional[dict[int, dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
-    """The fixture as the AUTHORITY names it — unpriced, or ``None``.
+    """The fixture as the AUTHORITY names it, or ``None``.
 
     ═══ Q505: WITHHOLDING THE WRONG MATCH IS HALF THE REPAIR ═══
 
@@ -781,13 +783,36 @@ def authority_match_row(
     So this row is the register's fixture with **the authority's two people
     substituted and the price removed**, not a new fixture invented here.
 
-    THE PRICE IS REMOVED AND THAT IS THE POINT.  Q503 declined to re-label
-    because carrying a 60/40 quoted for a match nobody is playing onto the two
-    who really are "would be the same fabrication wearing better names".  That
-    objection is to the NUMBER, not to the names: ``priced`` is ``False`` and
-    both probabilities are ``None``, so the card prints two people and a clock
-    and claims nothing about who wins.  When the match market for the real
-    pairing is linked, the ordinary priced row takes over.
+    THE REGISTER'S PRICE IS REMOVED AND THAT IS THE POINT.  Q503 declined to
+    re-label because carrying a 60/40 quoted for a match nobody is playing onto
+    the two who really are "would be the same fabrication wearing better names".
+    That objection is to that NUMBER, not to the names, and it is unchanged: the
+    register's pinned outcome ids are never read on this path.
+
+    ═══ lane1/047: AND THE MATCH'S OWN MARKET IS NOT THAT NUMBER ═══
+
+    Q505 finished with *"when the match market for the real pairing is linked,
+    the ordinary priced row takes over"*, and nothing linked it, so no such row
+    ever existed.  Measured on production 2026-09-02, the US Open slate carried
+    one authority row — ``espn:182703``, Rafael Jodar vs Bu Yunchaokete — and it
+    printed *"Nobody is quoting this match yet."*  We were holding
+    ``KXATPMATCH-26SEP01JODYUN`` at that moment, open, both legs named in full,
+    at 0.895 / 0.105.  A probability product telling a reader the market is
+    silent while quoting 90/10 one tab over is the worst version of this bug,
+    and the absence was structural: this function was never passed a price.
+
+    ``link`` is now that price, and it is emphatically NOT a re-label of the
+    withheld one.  It is a block ``resolve_authority_links`` minted on the
+    linker's beat by matching **the two players ESPN names** against the same
+    Kalshi candidate pool, under the same token-set correspondence, the same
+    unique-bijection requirement and the same one-day date window the register
+    path uses.  Its ``sides`` map is keyed by this row's own
+    ``espn:athlete:<id>``, so reading it here is a dict lookup on an id — the
+    request-time work is a hash, not a name comparison, and the page's "no
+    matching on the request path" guarantee is intact.
+
+    Absent, unmatched, or priced on only one side, every field falls back to
+    exactly the constant Q505 wrote and the card prints two people and a clock.
 
     IT ALSO DOES NOT LINK.  ``event_id`` is ``None``, so the card is not
     clickable — ``build_match_detail`` is passed no ``order_of_play`` and would
@@ -827,14 +852,46 @@ def authority_match_row(
 
     comp_id = listed.get("espn_competition_id") or espn_competition_id(matchup)
 
-    sides = [
-        {
-            # NOT a register entity key — there is no register entity for a
-            # player who entered after the ceremony, which is exactly how two
-            # of these four arrived. Namespaced so it can never collide with
-            # one, and so a reader of the payload can see at a glance that this
-            # side came from the scoreboard.
-            "entity_key": f"espn:athlete:{c.get('espn_athlete_id')}",
+    # THE PRICE FOR THE PAIRING THAT IS ACTUALLY ON (lane1/047).
+    #
+    # `link` is a pre-resolved block from `resolve_authority_links`, minted on
+    # the linker's beat and keyed on this row's own `espn:<comp id>`. Its
+    # `sides` map is `espn:athlete:<id> -> {"outcome_id": ...}`, so what happens
+    # here is a dict lookup on an id — the same kind of read the register path
+    # makes, and NOT the request-time name matching this page forbids. `None`
+    # (no link, a link whose sides do not cover both of these two athletes, or
+    # a link whose outcomes we hold no price for) leaves the row exactly as
+    # Q505 built it: two people, a clock, and no number.
+    sides_map: dict[str, Any] = {}
+    if isinstance(link, dict):
+        candidate_sides = link.get("sides")
+        if isinstance(candidate_sides, dict):
+            sides_map = candidate_sides
+    loaded_by_key: dict[str, dict[str, Any]] = {}
+    for c in ordered:
+        entity_key = f"espn:athlete:{c.get('espn_athlete_id')}"
+        outcome_id = (sides_map.get(entity_key) or {}).get("outcome_id")
+        loaded = (prices or {}).get(outcome_id) if isinstance(outcome_id, int) else None
+        if loaded is not None:
+            loaded_by_key[entity_key] = loaded
+    # BOTH SIDES OR NEITHER. One priced side is not half a match — it is a
+    # single independent binary, and normalising a pair against a missing
+    # partner is exactly the fabrication `normalize_pair` exists to refuse.
+    if len(loaded_by_key) != 2:
+        loaded_by_key = {}
+
+    sides = []
+    for c in ordered:
+        # NOT a register entity key — there is no register entity for a player
+        # who entered after the ceremony, which is exactly how two of these
+        # four arrived. Namespaced so it can never collide with one, and so a
+        # reader of the payload can see at a glance that this side came from
+        # the scoreboard.
+        entity_key = f"espn:athlete:{c.get('espn_athlete_id')}"
+        loaded = loaded_by_key.get(entity_key) or {}
+        liquidity = loaded.get("liquidity") or {}
+        sides.append({
+            "entity_key": entity_key,
             "display_name": c.get("name"),
             # The register holds the seed, and the register is what is wrong
             # about this fixture. ESPN's scoreboard competitor carries none.
@@ -850,19 +907,74 @@ def authority_match_row(
             "probability": None,
             "opening_probability": None,
             "move": None,
-            "raw_probability": None,
-            "raw_opening_probability": None,
-            "observed_at": None,
+            "raw_probability": _as_float(loaded.get("probability")),
+            "raw_opening_probability": _as_float(loaded.get("opening_probability")),
+            "observed_at": loaded.get("observed_at"),
             "age_hours": None,
             "price_state": "unpriced",
-            "liquidity": LIQUIDITY_UNKNOWN,
-            "liquidity_reasons": [],
-        }
-        for c in ordered
+            "liquidity": liquidity.get("level") or LIQUIDITY_UNKNOWN,
+            "liquidity_reasons": sorted(liquidity.get("reasons") or []),
+        })
+
+    # Everything below is the ordinary priced-row arithmetic, reached only when
+    # both sides found a price. With `loaded_by_key` empty every `raw_*` above
+    # is None, `normalize_pair` refuses, and each field falls back to exactly
+    # the constant Q505 wrote.
+    side_times: list[Optional[datetime]] = [
+        s["observed_at"] if isinstance(s["observed_at"], datetime) else None
+        for s in sides
     ]
+    a_norm, b_norm, raw_sum, coherent = normalize_pair(
+        sides[0]["raw_probability"], sides[1]["raw_probability"]
+    )
+    a_open, b_open, open_sum, open_coherent = normalize_pair(
+        sides[0]["raw_opening_probability"], sides[1]["raw_opening_probability"]
+    )
+    if coherent:
+        sides[0]["probability"] = a_norm
+        sides[1]["probability"] = b_norm
+    if open_coherent:
+        sides[0]["opening_probability"] = a_open
+        sides[1]["opening_probability"] = b_open
+    if coherent and open_coherent:
+        for side in sides:
+            side["move"] = round(
+                side["probability"] - side["opening_probability"], 6
+            )
+
+    # THE AND (UX-P135): the pair is as old as its older side — the same rule
+    # `build_match_row` holds itself to, so an authority row and a register row
+    # on one card cannot be graded on two different definitions of fresh.
+    age = governing_age_hours(side_times, now)
+    state = price_state(age)
+    newest = freshest_observation(side_times)
+    freshest_age = (now - newest).total_seconds() / 3600.0 if newest else None
+    priced = bool(loaded_by_key)
+    if priced:
+        # ONLY WHEN A PRICE EXISTS. `price_state(None)` is `dark` — "a reading
+        # we have, gone stale" — and an unpriced side has no reading to have
+        # gone stale. Writing it here would turn Q505's honest `unpriced` into a
+        # word that means the opposite, which is the distinction the row-level
+        # field's own comment calls out as not collapsible.
+        for side, observed in zip(sides, side_times):
+            side_age = (
+                (now - observed).total_seconds() / 3600.0
+                if observed is not None
+                else None
+            )
+            side["age_hours"] = round(side_age, 2) if side_age is not None else None
+            side["price_state"] = price_state(side_age)
+    favourite = None
+    if coherent:
+        favourite = (
+            sides[0]["entity_key"]
+            if (sides[0]["probability"] or 0) >= (sides[1]["probability"] or 0)
+            else sides[1]["entity_key"]
+        )
+    moves = [s["move"] for s in sides if s["move"] is not None]
 
     return {
-        "priced": False,
+        "priced": priced,
         # THE COMPETITION IS THE KEY, NOT THE REGISTER'S MATCHUP.
         #
         # Reusing the register's `matchup_key` would file two different
@@ -882,28 +994,51 @@ def authority_match_row(
         "status_detail": listed.get("status_detail"),
         "start_is_tbd": listed.get("start_is_tbd") is True,
         "sides": sides,
-        # `coherent: False` with `priced: False` is the released-draw shape the
-        # card already renders (UX-P142): a full row, faces and names, and no
-        # number. It is NOT the incoherent-pair shape, which collapses the row
-        # to one line — that treatment is for a split we are refusing to show,
-        # and here there is no split to refuse.
-        "coherent": False,
-        "raw_sum": None,
-        "opening_raw_sum": None,
-        "probability_is_live": False,
-        "price_state": "unpriced",
-        "observed_at": None,
-        "age_hours": None,
-        "freshest_observed_at": None,
-        "freshest_age_hours": None,
-        "stale_sides": [],
-        "mixed_freshness": False,
-        "favourite": None,
-        "has_moved": False,
-        # No source priced this pairing. `1` here would be a claim that one did.
-        "source_count": 0,
-        "liquidity": LIQUIDITY_UNKNOWN,
-        "liquidity_reasons": [],
+        # UNPRICED, `coherent: False` with `priced: False` is the released-draw
+        # shape the card already renders (UX-P142): a full row, faces and names,
+        # and no number. It is NOT the incoherent-pair shape, which collapses
+        # the row to one line — that treatment is for a split we are refusing to
+        # show, and there is no split to refuse when nothing quoted the pairing.
+        #
+        # PRICED (lane1/047), every one of these carries the same value the
+        # ordinary register row would: the honesty fields are the reader's, not
+        # the pairing path's, and an authority row that quoted a number while
+        # reporting `price_state: "unpriced"` would be lying in a new place.
+        "coherent": coherent,
+        "raw_sum": raw_sum,
+        "opening_raw_sum": open_sum,
+        "probability_is_live": state == "live" and coherent,
+        "price_state": state if priced else "unpriced",
+        # GOVERNING, not newest — see doctrine 4 in the module docstring.
+        "observed_at": (
+            min(t for t in side_times if t is not None).isoformat()
+            if age is not None
+            else None
+        ),
+        "age_hours": round(age, 2) if age is not None else None,
+        "freshest_observed_at": newest.isoformat() if newest else None,
+        "freshest_age_hours": (
+            round(freshest_age, 2) if freshest_age is not None else None
+        ),
+        "stale_sides": [s["entity_key"] for s in sides if s["price_state"] != "live"]
+        if priced
+        else [],
+        "mixed_freshness": (
+            0 < len([s for s in sides if s["price_state"] != "live"]) < len(sides)
+            if priced
+            else False
+        ),
+        "favourite": favourite,
+        "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
+        # `1` is a claim that a source priced this pairing, so it is only true
+        # once one has. Unpriced it stays `0`, exactly as Q505 wrote it.
+        "source_count": 1 if priced else 0,
+        # THE AND, again: a match row prints one pair, so it is as solid as its
+        # thinner side.
+        "liquidity": thinnest_liquidity([s.get("liquidity") for s in sides]),
+        "liquidity_reasons": sorted(
+            {r for s in sides for r in (s.get("liquidity_reasons") or [])}
+        ),
         # WHO NAMED THESE TWO PEOPLE. Absent on every ordinary row, so a
         # consumer that has never heard of this field cannot mistake one for
         # the other, and a guard can assert the substitution actually happened
@@ -921,6 +1056,7 @@ def build_slate(
     event_ids: Optional[dict[str, int]] = None,
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
     order_of_play_complete: bool = True,
+    authority_links: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -986,8 +1122,18 @@ def build_slate(
                 # carrying no price — see `authority_match_row`. `None` means
                 # the scoreboard did not name two identified people, and then
                 # the plain withhold stands.
+                # lane1/047: and it carries the price for the pairing that is
+                # actually on, when the linker's beat resolved one. Looked up by
+                # the row's own key, so a link for a different competition can
+                # never reach this row.
                 replacement = (
-                    authority_match_row(matchup, listed, now=now)
+                    authority_match_row(
+                        matchup,
+                        listed,
+                        now=now,
+                        link=(authority_links or {}).get(f"espn:{comp_id}|kalshi"),
+                        prices=prices,
+                    )
                     if listed is not None
                     else None
                 )
@@ -1059,6 +1205,16 @@ def build_slate(
         # register row still carrying a player who is not in the draw.
         "authority_pairings": sum(
             1 for r in rows if r.get("pairing_source") == "authority"
+        ),
+        # AND HOW MANY OF THOSE CARRY A NUMBER (lane1/047). The two counts are
+        # different questions and the gap between them is the live one: a
+        # substituted row with no price is a reader being told nobody quotes a
+        # match we may well hold. `authority_pairings - authority_priced` is
+        # that population, on the payload, without a database round trip.
+        "authority_priced": sum(
+            1
+            for r in rows
+            if r.get("pairing_source") == "authority" and r.get("priced")
         ),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
