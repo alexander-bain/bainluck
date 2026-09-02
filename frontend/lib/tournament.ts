@@ -133,34 +133,6 @@ export interface TournamentPayload {
    * cannot hold a finished match; see `build_results`.
    */
   results?: TournamentResults;
-  /**
-   * WHICH `events` ROW EACH FIXTURE IS — the server's own id-anchored
-   * resolution, published so every list on this page can route from the SAME
-   * map instead of each one growing its own idea of where a match lives
-   * (#2568).
-   *
-   * `by_matchup` is the one this page reads: `matchup_key -> events.id`,
-   * resolved in `backend/app/utils/tournament_event_link.py` by dereferencing
-   * the register's pinned match-winner `market_id` through
-   * `futures_markets.event_id`. It is NEVER a name match — a matchup the
-   * server could not resolve is simply absent from the map, and the row that
-   * carries it renders as text rather than as a link to a guess.
-   *
-   * The slate already had this baked onto each row as `event_id`; the FINISHED
-   * list never did, which is the whole of #2568: 89 of the 100 rows on the
-   * Men's tab are results rows, and every one of them was inert while the
-   * server already knew the event id for 28 of them.
-   *
-   * `unresolved` is the reason census (`MARKET_UNLINKED`, `NO_PINNED_MARKET`,
-   * …) — kept on the type because a row with no link has to be a NAMED gap and
-   * not a row that quietly stopped being clickable.
-   */
-  event_links?: {
-    by_matchup?: Record<string, number>;
-    by_event?: Record<string, string>;
-    linked?: number;
-    unresolved?: Record<string, number> | null;
-  };
   /** "Thursday 27 August, 12:00 ET" — Alex's item 1. */
   draw_release_at?: string;
   draw_release_label?: string;

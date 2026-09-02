@@ -111,16 +111,8 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
-    from app.tasks.polymarket_token_topup import (
-        topup_clob_tokens, topup_outcome_clob_tokens,
-    )
-    from app.tasks.ws_liveness import report as _report_liveness
+    from app.tasks.polymarket_token_topup import topup_clob_tokens
     from app.utils.price_change_stamp import price_changed_at_value
-
-    # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
-    # the token top-up or the slate query is visible as an AGE rather than as a
-    # silence indistinguishable from health.
-    _report_liveness("polymarket", "loading_slate")
 
     ws = PolymarketWebSocket()
 
@@ -245,71 +237,6 @@ async def _run_polymarket_ws_consumer():
         for oid, mid, ext in outcome_result.all():
             outcomes_by_market.setdefault(mid, []).append((oid, ext or ""))
 
-        # ── THE MONEYLINE LEG ────────────────────────────────────────────────
-        # Everything above addresses a market by its OWN condition id, which a
-        # parent/field row does not have — its `external_id` is a bare Gamma
-        # event id ("917153"), so `condition_id_of` returns None and the
-        # market-level top-up skips it by design. That row is the three-way
-        # "who wins" market: the ONLY market on the event that
-        # `compute_source_home_probability` can read, and therefore the only one
-        # whose price is the number the hero renders.
-        #
-        # Measured on production 2026-09-01 before this block existed: the
-        # socket was streaming continuously (7 distinct sub-minute flushes in
-        # one minute) into Over/Under and Both-Teams-To-Score props, while
-        # across EVERY live event the `polymarket` and `kalshi` blend stamps sat
-        # at p50 age 122s — the 120s poll's sawtooth — with 0 of 9 fresher than
-        # two minutes, against `betting` at 23s. The fast lane was real and it
-        # was pointed at the markets nobody reads.
-        #
-        # A field market's OUTCOMES each carry a real condition id, so the
-        # tokens were reachable one level down the whole time. Only markets
-        # still missing tokens after the market-level pass are asked about, so
-        # an ordinary binary sub-market costs nothing here.
-        outcome_topup_targets: list[tuple[int, int, str]] = [
-            (mid, oid, ext)
-            for mid in market_ids
-            if mid not in tokens_by_market
-            for oid, ext in outcomes_by_market.get(mid, [])
-        ]
-        outcome_yes_token: dict[int, str] = {}
-        if outcome_topup_targets:
-            try:
-                outcome_yes_token = {
-                    oid: token
-                    for oid, (_mid, token) in (
-                        await topup_outcome_clob_tokens(
-                            session, outcome_topup_targets
-                        )
-                    ).items()
-                }
-            except Exception:
-                # Same posture as the market-level top-up: a Gamma outage must
-                # not take the socket down. The props keep streaming and the
-                # next recycle retries the moneyline.
-                logger.exception(
-                    "Polymarket WS: outcome token top-up failed for %d outcomes; "
-                    "continuing without the moneyline legs",
-                    len(outcome_topup_targets),
-                )
-                outcome_yes_token = {}
-
-        market_by_outcome: dict[int, int] = {
-            oid: mid
-            for mid, pairs in outcomes_by_market.items()
-            for oid, _ext in pairs
-        }
-        for oid, token in outcome_yes_token.items():
-            mid = market_by_outcome.get(oid)
-            if mid is None:
-                continue
-            asset_ids.append(token)
-            asset_to_market[token] = mid
-            # Attributed directly, never positionally: this token IS the book
-            # for "will <this outcome> win", so the pairing is carried by the
-            # condition id rather than reconstructed from ordering.
-            asset_to_outcome[token] = oid
-
     # Q489 — WHICH outcome an asset id belongs to. Both CLOB tokens of a binary
     # (`clobTokenIds == [yesToken, noToken]`) map to the same FuturesMarket, and
     # the price handlers used to resolve every tick to `outcomes[0]` — the
@@ -334,16 +261,13 @@ async def _run_polymarket_ws_consumer():
 
     if not asset_ids:
         logger.info("Polymarket WS: no asset IDs found in market_metadata")
-        _report_liveness("polymarket", "no_asset_ids", legs=0)
         return {"status": "no_asset_ids"}
 
     logger.info(
         "Polymarket WS: %d asset IDs (%d markets), %d mapped to an outcome, "
-        "%d unmapped (ticks dropped rather than mis-attributed), "
-        "%d moneyline legs subscribed via outcome condition ids",
+        "%d unmapped (ticks dropped rather than mis-attributed)",
         len(asset_ids), len(market_ids),
         len(asset_to_outcome), len(unmapped_assets),
-        len(outcome_yes_token),
     )
 
     stats = {
@@ -353,11 +277,6 @@ async def _run_polymarket_ws_consumer():
         # actually attribute, and the gap between them is the silent-loss bound.
         "assets_mapped": len(asset_to_outcome),
         "assets_unmapped": len(unmapped_assets),
-        # The count this queue exists to move off zero. Every other number here
-        # can look healthy while the hero is stale, because props tick loudly
-        # and the moneyline is the only leg the rendered blend reads. A run that
-        # subscribes 0 moneyline legs on a non-empty slate is the bug, restated.
-        "moneyline_legs_subscribed": len(outcome_yes_token),
         "price_updates": 0,
         "trade_updates": 0,
         "resolutions": 0,
@@ -376,17 +295,9 @@ async def _run_polymarket_ws_consumer():
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
-    #
-    # Built from `market_by_outcome` (every outcome of every slate market) and
-    # not, as it first was, from `condition_to_ids` — which is keyed by outcome
-    # `external_id` and so silently omits any outcome whose external_id is NULL
-    # or empty. An omitted outcome still gets its price written by the flush;
-    # it just cannot name its event, so `event_ids_for_outcomes` drops it and
-    # the blend is never re-stamped. That is the Q460 join failing open on
-    # exactly the rows least likely to be noticed.
     event_id_by_outcome: dict[int, int] = {
         outcome_id: event_id_by_market[market_id]
-        for outcome_id, market_id in market_by_outcome.items()
+        for market_id, outcome_id in condition_to_ids.values()
         if market_id in event_id_by_market
     }
     blend_refresher = LiveBlendRefresher("polymarket")
@@ -624,30 +535,15 @@ async def _run_polymarket_ws_consumer():
     async def stats_loop():
         while True:
             await asyncio.sleep(60)
-            # Q504-b: blend counters ride along, same reasoning as the Kalshi arm.
-            blend = blend_refresher.stats
             logger.info(
-                "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
-                "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d",
+                "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, %d msgs",
                 stats["price_updates"], stats["trade_updates"],
                 stats["resolutions"], stats["errors"],
                 ws.stats.get("messages", 0),
-                blend["stamped"], blend["no_reading"],
-                blend["throttled"], blend["errors"],
-            )
-            _report_liveness(
-                "polymarket",
-                "streaming" if getattr(ws, "is_connected", False) else "disconnected",
-                legs=len(asset_ids),
-                msgs=ws.stats.get("messages", 0),
-                stamped=blend["stamped"],
-                no_reading=blend["no_reading"],
             )
 
     flush_task = asyncio.create_task(flush_loop())
     stats_task = asyncio.create_task(stats_loop())
-
-    _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
     try:
         # Q460: recycle on a timer so the slate is re-read — same reasoning as

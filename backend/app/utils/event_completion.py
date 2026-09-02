@@ -29,87 +29,8 @@ estimate of when the game ended.
 
 Shared by both nets and by ``scripts/repair_event_final_scores.py`` so the
 producer and the repair can never drift on what "when did this end" means.
-
-It also answers the question one step earlier in the same chain — *did it
-START?* — because both nets measure elapsed time from ``commence_time`` and
-neither ever asked whether that field held a start anybody reported. See
-``commence_time_is_a_reported_start``.
 """
 from datetime import timedelta
-
-# ── Is this commence_time a START, or a stand-in for one? (q076) ─────────────
-#
-#: The one ``events.commence_time_source`` value that says, in the writer's own
-#: words, that no schedule published a time for this fixture.
-#:
-#: ``prediction_market_matching.auto_create_commence_time`` stamps it when it
-#: falls back to the DATE parsed out of a Kalshi ticker, because Kalshi's own
-#: ``commence_time`` is a close/resolution time (gotcha #14) and disagreed with
-#: it. A ticker date has no time-of-day, so the value it resolves to is
-#: **midnight UTC** — a day, rendered as an instant.
-#:
-#: This is provenance, not a heuristic. q066b established that CLUSTERING is not
-#: a placeholder signature (a Saturday 3pm card genuinely is ten simultaneous
-#: kickoffs, and ESPN's real order of play gives 15:05Z to three US Open matches
-#: at once), so nothing here looks at the hour, the date, or how many rows share
-#: a stamp. It reads the field where the writer already recorded what it did.
-TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
-
-#: Every provenance that means "derived because nothing published one". A set of
-#: one today; named so a future derived source joins the rule instead of
-#: inheriting the clock by omission.
-DERIVED_COMMENCE_SOURCES = frozenset({TICKER_DERIVED_COMMENCE_SOURCE})
-
-
-def commence_time_is_a_reported_start(commence_time_source) -> bool:
-    """May a clock be run from this event's ``commence_time``?
-
-    False ⇒ the field holds a stand-in, and every rule that reads it as an
-    instant is reading something nobody reported. ``scheduled → live`` on
-    ``commence_time <= now`` is such a rule, and it is the first domino: a row
-    promoted off a stand-in then has ``hours_since_start`` measured from it, and
-    the staleness nets settle it at the sport's maximum duration with whatever
-    score it never had.
-
-    MEASURED, production 2026-09-01. Of every event ever stamped
-    ``kalshi_ticker``, **705 are ``closed`` and all 705 carry no score** — 468 of
-    them in the preceding seven days. Not "mostly"; the whole population. This
-    provenance has never once produced a settled row with a result, so declining
-    to start its clock cannot cost a single real one. The 181 still ``scheduled``
-    include 40 US Open matches — Alcaraz, Sabalenka, Swiatek, Osaka, Medvedev,
-    Pegula — stamped ``2026-09-02T00:00:00Z``, i.e. midnight UTC of a ticker
-    date, for matches played in the AFTERNOON of September 2. Each one holds live
-    Kalshi markets and would have gone LIVE at 5:00 pm PT on the 1st and FINAL,
-    unscored, before midnight.
-
-    ── WHY REFUSING IS THE WHOLE FIX, AND NOT HALF OF ONE ──
-
-    The obvious alternative is to promote such a row when some source has
-    captured a post-commence snapshot, mirroring
-    :func:`game_may_still_be_running`. It does not work HERE, and the asymmetry
-    is worth stating because it looks like it should. That guard asks "is a game
-    we know started still going?", where a snapshot after a REAL start is
-    evidence of play. This one would ask "did a game start?", where a snapshot
-    after a MIDNIGHT STAND-IN is evidence of nothing — Kalshi prices tomorrow's
-    match all night, so every row would qualify and the guard would be a no-op
-    that reads as a safeguard.
-
-    So the honest answer is the plain one, and it is ``derive_completed_at``'s
-    own principle one field over: **we do not have a start, so we do not act as
-    if we do.** ``commence_time`` is ``NOT NULL`` and load-bearing for ordering
-    and windowing, so the row keeps its stand-in and simply stops driving state
-    off it. It is not stranded: ``_SOURCE_PRIORITY`` ranks this provenance 0 and
-    "an unknown current source confers no immunity", so the moment odds_api,
-    ESPN or StatPal publishes a real time onto the row, the source changes with
-    it and the clock starts normally.
-
-    A ``None`` source is deliberately NOT derived. Most of the table predates the
-    column, and treating unknown provenance as un-startable would freeze the
-    ordinary promotion path for nearly every event on the site — the opposite
-    error, and a far larger one.
-    """
-    return commence_time_source not in DERIVED_COMMENCE_SOURCES
-
 
 # A source captured something this recently ⇒ the game is still being played, so
 # a wall-clock timeout is NOT evidence that it is over. Deliberately the same 30

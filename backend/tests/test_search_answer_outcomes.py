@@ -300,7 +300,7 @@ class TestFieldOutcome:
 
 def _oc(name, prob, mv=None, oid=1, odds=None, rank=None):
     return SimpleNamespace(
-        id=oid, name=name, current_probability=prob, external_id=None,
+        id=oid, name=name, current_probability=prob,
         current_american_odds=odds, rank=rank, probability_change_24h=mv,
     )
 

@@ -231,55 +231,9 @@ describe("L2-233: the gate cannot report success on nothing", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the timezone pin is installed, and it is live in THIS realm", () => {
-    // #2462. Three suites assert rendered wall-clock copy, so an unpinned zone
-    // makes `npx jest` red for every developer outside UTC while CI stays green
-    // — a suite that is red locally and green in CI trains people to ignore red.
-    //
-    // Both halves are checked because either alone is satisfiable while broken.
-    // The config assignment can be moved into `jest.setup.timezone.js`, where it
-    // reads correctly and does nothing: jest builds the test realm BEFORE
-    // running `setupFiles`, so the realm's `Date` keeps its birth zone and the
-    // assignment is a silent no-op. Only the live check below can see that.
-    // Comments STRIPPED, and this is not fussiness: the first version of this
-    // line was a bare `toContain` and it passed with the setup file removed
-    // from `setupFiles` outright, because the config's own comment block names
-    // the file. This guard's sibling above warns about reading prose AS
-    // configuration; this is the same defect mirrored — prose SATISFYING a
-    // configuration check. The negative control (unwire it, expect red) is the
-    // only thing that finds either.
-    const config = stripJsComments(jestConfig);
-    expect(config).toContain("jest.setup.timezone.js");
-    expect(fs.existsSync(path.join(FRONTEND, "jest.setup.timezone.js"))).toBe(true);
-    // The pin must be at config load, not merely somewhere in the file.
-    expect(config).toMatch(/process\.env\.TZ\s*=\s*['"]UTC['"]/);
-
-    // The half that cannot be faked by configuration: this process is actually
-    // formatting dates in UTC, whatever zone the developer's machine is in.
-    expect(new Date(0).getTimezoneOffset()).toBe(0);
-    expect(new Date(0).toISOString()).toBe("1970-01-01T00:00:00.000Z");
-    // A date the three affected suites' assertions actually depend on: in any
-    // zone west of UTC this renders as the previous calendar day.
-    expect(new Date("2026-08-13T00:30:00Z").getDate()).toBe(13);
-  });
-
-  it("the timezone pin is verified inside the realm, not just assigned", () => {
-    // The pin is only load-bearing because `jest.setup.timezone.js` throws when
-    // it fails to take effect. If that throw is ever softened to a warn, the
-    // suite goes back to silently failing by the developer's UTC offset. This
-    // asserts the verifier still refuses rather than reports.
-    const setup = read(path.join(FRONTEND, "jest.setup.timezone.js"));
-    expect(stripJsComments(setup)).toMatch(/getTimezoneOffset\(\)\s*!==\s*0/);
-    expect(stripJsComments(setup)).toMatch(/throw new Error/);
-  });
-
   it("the network guard is installed", () => {
-    // Comments stripped for the same reason as the timezone check above: a
-    // config comment naming this file would satisfy a bare `toContain` even if
-    // the entry were deleted from `setupFiles`. Hardened when the timezone pin
-    // demonstrated that exact hole one test up.
-    expect(stripJsComments(jestConfig)).toContain("setupFiles");
-    expect(stripJsComments(jestConfig)).toContain("jest.setup.network.js");
+    expect(jestConfig).toContain("setupFiles");
+    expect(jestConfig).toContain("jest.setup.network.js");
     expect(fs.existsSync(path.join(FRONTEND, "jest.setup.network.js"))).toBe(true);
     // And it is live in THIS process — the assertion the config check cannot
     // make. If setupFiles ever silently stops loading, this is what says so.

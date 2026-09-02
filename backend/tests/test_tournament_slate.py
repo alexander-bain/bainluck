@@ -382,13 +382,6 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # read at all, and whether what was read was the whole of it.
         "in_progress": 0, "order_of_play_listed": 0,
         "order_of_play_complete": True,
-        # Q503: empty means the scoreboard contradicted no anchored pairing it
-        # named — not that the question went unasked.
-        "withheld_pairings": [],
-        # Q505: and none of the rows on the card were named by the scoreboard
-        # rather than the register. Zero is the healthy state — every one of
-        # these is a register row still carrying a player who left the draw.
-        "authority_pairings": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
