@@ -174,15 +174,29 @@ describe("UX-P233: the current number gets an as-of when it is not current", () 
   });
 });
 
-describe("UX-P233: the labels are stable regardless of where the reader is", () => {
-  test("the date is formatted in UTC, so a guard's answer never moves with the box", () => {
-    // A label built from the machine's local zone is a test whose answer depends
-    // on where it runs — the trap CERT-534 named one lane over. 2026-08-28T20:50Z
-    // is Aug 29 in Sydney and Aug 28 in Los Angeles; the label must not care.
-    expect(movementWindowLabel("2026-08-28T20:50:07Z", BANKED_AT)).toBe("last move · Aug 28");
-    expect(asOfLabel("2026-08-28T20:50:07Z", BANKED_AT)).toBe("as of Aug 28");
-    // And an instant late enough in UTC to roll the day locally in the other
-    // direction still reads as its UTC day.
-    expect(asOfLabel("2026-08-28T23:59:00Z", BANKED_AT)).toBe("as of Aug 28");
+describe("UX-P233: the labels are stable regardless of where the GUARD runs", () => {
+  /*
+   * ⚠️ AMENDED BY UX-P260 (#2624). This block used to assert the opposite — that
+   * the day was pinned to UTC "so a guard's answer never moves with the box". The
+   * concern was real (a guard whose answer depends on where it runs is the trap
+   * CERT-534 named), but it was paid for with a SHIPPED LABEL that was wrong for
+   * every reader west of Greenwich: `/futures/1` printed "last move · Sep 2" at
+   * 20:12 PT on Sep 1.
+   *
+   * The zone is now a parameter, which buys determinism without lying to the
+   * reader — a guard names its zone, the app passes none and gets the reader's.
+   * The assertions below are unchanged in VALUE and keep doing UX-P233's job of
+   * pinning the label's wording and its refusal of "24h"; they simply no longer
+   * claim that UTC is the right zone to show a person. The reader-facing rule is
+   * asserted in `futuresLastMoveReaderZone.test.ts`.
+   */
+  test("an explicit zone makes the answer independent of the box", () => {
+    // 2026-08-28T20:50Z is Aug 29 in Sydney and Aug 28 in Los Angeles. Naming the
+    // zone is what makes this deterministic — not hiding the reader's zone.
+    expect(movementWindowLabel("2026-08-28T20:50:07Z", BANKED_AT, "UTC")).toBe("last move · Aug 28");
+    expect(asOfLabel("2026-08-28T20:50:07Z", BANKED_AT, "UTC")).toBe("as of Aug 28");
+    expect(asOfLabel("2026-08-28T23:59:00Z", BANKED_AT, "UTC")).toBe("as of Aug 28");
+    // The same instant, named for a reader who was in Sydney: the next day.
+    expect(asOfLabel("2026-08-28T23:59:00Z", BANKED_AT, "Australia/Sydney")).toBe("as of Aug 29");
   });
 });
