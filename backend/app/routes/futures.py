@@ -2865,6 +2865,29 @@ async def get_progression(
                 else [primary_change, *extra_changes]
             )
 
+    # --- One clock: the card is the authority for the number it publishes ---
+    # UX-P270 / CERT-740. Applied AFTER the blend so it overrides it, and BEFORE
+    # the sort below so the table is ordered by the numbers it actually prints
+    # rather than by values the user never sees. Scoped to golf's `win` stage
+    # because that is the only cell `GET /api/golf` also publishes: every other
+    # stage, and every golfer the card does not carry, keeps the live blend and is
+    # left strictly fresher. See `_golf_card_win_probabilities` for why the card
+    # rather than this endpoint is the authority.
+    if sport_cat == "golf" and "win" in stage_markets:
+        card_wins = await _golf_card_win_probabilities(source_tournament_name)
+        for merge_key, card_prob in card_wins.items():
+            p = participants.get(merge_key)
+            if p is None:
+                continue  # on the card, not in this market's field — never a row
+            p["probabilities"]["win"] = card_prob
+            # Terminal state is a claim about the number we publish, so it is
+            # recomputed from the published value rather than left on the blend's.
+            p["status"].pop("win", None)
+            if card_prob >= 0.999:
+                p["status"]["win"] = "clinched"
+            elif card_prob <= 0.001:
+                p["status"]["win"] = "eliminated"
+
     # Sort participants by highest-stage probability (rightmost stage first)
     stage_order = sorted(stage_markets.keys(), key=lambda k: next(
         (s["order"] for s in stages if s["key"] == k), 0
@@ -2900,6 +2923,83 @@ async def get_progression(
     }
 
 
+async def _golf_card_win_probabilities(
+    tournament_name: Optional[str],
+) -> dict[str, float]:
+    """The win probabilities `GET /api/golf` is currently publishing, by merge key.
+
+    UX-P270 / CERT-740. The blend above reproduces the card's ARITHMETIC, and that
+    is not enough to make the two numbers on `/categories/golf` agree, because they
+    are not computed at the same MOMENT. `GET /api/golf` serves
+    `bainluck:category:golf`, written hourly by the category precompute with a
+    7,200 s TTL; this endpoint reads `futures_outcomes.current_probability` live.
+    So the two surfaces read the same rows through different clocks and drift apart
+    whenever a price moves between the snapshot and the request — during play the
+    DataGolf poller rewrites those rows every 90 seconds. Reproducing the
+    arithmetic more exactly cannot close a gap that is made of time.
+
+    Two independently-clocked computations of one quantity cannot be made to agree;
+    only ONE authority can. This returns the card's own published numbers so the
+    win column can adopt them, which makes agreement true by construction rather
+    than true-when-nothing-moved. The card is the authority and not the reverse
+    because the reverse is unaffordable: `get_golf` is a ~1.5 s rebuild behind a
+    45 ms cached read, and `/api/golf` additionally ships
+    `max-age=300, stale-while-revalidate=60`, so even a live origin would be read
+    through a browser cache this endpoint does not share.
+
+    KNOWN AND DELIBERATE: the win column therefore inherits the card's staleness
+    for the golfers the card carries. That is a trade, and it is the right way
+    round — a user reading two different numbers for one golfer on one screen is
+    the reported defect (#2661), whereas both numbers being equally old is the
+    ordinary freshness budget of the page they are already reading. This does NOT
+    re-open CERT-686, which blocked serving the golf tournament HEADLINE field from
+    this cache: nothing here changes what the headline reads, and the rows the card
+    does not carry keep their live blended value.
+
+    Fails open in every direction — no Redis, no payload, no matching tournament,
+    or a malformed entry all return `{}` and leave the live blend in place.
+    """
+    if not tournament_name:
+        return {}
+    try:
+        import json as _json
+
+        from app.routes.golf import GOLF_CATEGORY_CACHE_KEY
+        from app.tasks.redis_state import get_async_redis_client
+
+        rc = get_async_redis_client()
+        try:
+            raw = await rc.get(GOLF_CATEGORY_CACHE_KEY)
+        finally:
+            await rc.aclose()
+        if not raw:
+            return {}
+        payload = _json.loads(raw)
+    except Exception:
+        logger.debug("golf card authority unavailable", exc_info=True)
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+    for entry in payload.get("tournaments") or []:
+        if not isinstance(entry, dict):
+            continue
+        card_name = entry.get("name")
+        if not card_name or not tournament_names_match(tournament_name, card_name):
+            continue
+        published: dict[str, float] = {}
+        for golfer in entry.get("golfers") or []:
+            if not isinstance(golfer, dict):
+                continue
+            prob = golfer.get("probability")
+            name = golfer.get("name")
+            if not name or not isinstance(prob, (int, float)) or isinstance(prob, bool):
+                continue
+            published[_progression_name_key(name)] = float(prob)
+        return published
+    return {}
+
+
 def _progression_merge_key(outcome: FuturesOutcome) -> str:
     """Generate a merge key for cross-market participant matching.
 
@@ -2914,7 +3014,21 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     """
     if outcome.team_id:
         return f"team:{outcome.team_id}"
-    name = outcome.name or ""
+    return _progression_name_key(outcome.name or "")
+
+
+def _progression_name_key(raw_name: str) -> str:
+    """The name half of `_progression_merge_key`, callable on a bare string.
+
+    Split out (UX-P270) so a participant row and a `GET /api/golf` card golfer —
+    which is a name in a JSON payload, not a `FuturesOutcome` — can be keyed by
+    the SAME normalizer instead of a second one written to look like it. That is
+    not a theoretical concern: a hand-written normalizer built on NFD + combining
+    marks joins 13 of 15 golfers on the worked tournament and silently drops both
+    Højgaards, because `ø` has no combining-mark decomposition. This one
+    transliterates it (`_MERGE_KEY_TRANSLITERATIONS`) and joins 15 of 15.
+    """
+    name = raw_name or ""
     # Strip "Yes: " / "No: " prefixes (Kalshi format)
     name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE)
     # Strip wrapping quotes (Polymarket NegRisk format)

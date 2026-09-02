@@ -139,14 +139,16 @@ async def _precompute_golf():
     from datetime import datetime, timezone
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
-    from app.routes.golf import get_golf
+    from app.routes.golf import GOLF_CATEGORY_CACHE_KEY, get_golf
     from app.utils.golf_base import build_envelope, publish_envelope_sync
 
     async with get_task_session() as db:
         response = await get_golf(db)
 
     rc = get_redis_client()
-    rc.set(f"{CACHE_PREFIX}golf", json.dumps(response, default=str), ex=CACHE_TTL)
+    # Written through the same named constant both readers use (UX-P270): the
+    # card route and the progression win-column authority.
+    rc.set(GOLF_CATEGORY_CACHE_KEY, json.dumps(response, default=str), ex=CACHE_TTL)
 
     # Publish the freshness-tagged feed base (fresh + last-good keys).
     envelope = build_envelope(

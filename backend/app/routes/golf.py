@@ -2267,6 +2267,16 @@ def _upcoming_from_schedule(
     return [item for _, item in dated[:limit]]
 
 
+#: The one key `GET /api/golf` serves its card from, written hourly by
+#: `app.tasks.precompute_category_pages._precompute_golf` with a 7,200 s TTL.
+#: Named (UX-P270) because a SECOND reader now exists: the progression table
+#: takes this payload as the authority for the win column, so that the two
+#: numbers a user sees on `/categories/golf` come from the same bytes. A reader
+#: that hardcoded the string could drift from the writer and fail silently open,
+#: which reads as "the fix did nothing" rather than as an error.
+GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
+
+
 @router.get("")
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
@@ -2277,7 +2287,7 @@ async def get_golf_cached(
 
     try:
         rc = get_async_redis_client()
-        cached = await rc.get("bainluck:category:golf")
+        cached = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         await rc.aclose()
         if cached:
             return _json.loads(cached)

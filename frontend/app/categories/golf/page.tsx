@@ -23,6 +23,7 @@ import {
   TOURNAMENT_VENUES,
   TOURNAMENT_EMOJI,
 } from "@/lib/golfData";
+import { golfCardWinFingerprint } from "@/lib/golfCardFingerprint";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionView } from "@/components/EvolutionView";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
@@ -234,17 +235,37 @@ export default function GolfPage() {
       .catch(() => {});
   }, [data?.current_event, currentEventHistory]);
 
+  // The win numbers the CARD is currently publishing for the current tournament.
+  //
+  // UX-P270 (#2661 / CERT-740): the progression endpoint adopts these server-side,
+  // so the table's Win column and the card print the same number. That agreement
+  // is only visible if the two are read from the same round of polling — and they
+  // are not read together. The card refetches every 120s (above) while the
+  // progression fetch below used to be one-shot (`if (progressionData) return`),
+  // so the first hourly precompute to land mid-session moved the card and left the
+  // table quoting the PREVIOUS card. The backend fix would have been correct and
+  // the screen would still have shown two numbers.
+  //
+  // Fingerprinting the adopted values rather than polling on a timer keeps that
+  // honest without paying for it: the progression endpoint is uncached and runs
+  // several ILIKE scans, and this string changes only when a number the table
+  // actually displays has changed — roughly once an hour, not every 120s.
+  const currentMarketId = data?.current_event?.market_ids?.[0] ?? null;
+  const cardWinFingerprint = useMemo(() => golfCardWinFingerprint(data), [data]);
+
   // Phase 2c: Fetch progression table for current tournament
   useEffect(() => {
-    if (!data?.current_event?.market_ids?.length) return;
-    if (progressionData) return;
-    const marketId = data.current_event.market_ids[0];
-    fetchProgression(marketId, 40)
+    if (!currentMarketId) return;
+    let cancelled = false;
+    fetchProgression(currentMarketId, 40)
       .then((p) => {
-        if (p?.stages?.length >= 2) setProgressionData(p);
+        if (!cancelled && p?.stages?.length >= 2) setProgressionData(p);
       })
       .catch(() => {});
-  }, [data?.current_event, progressionData]);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMarketId, cardWinFingerprint]);
 
   // Group tournaments by tour for per-tour sections
   const tourSections = useMemo(() => {
