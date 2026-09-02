@@ -1056,23 +1056,29 @@ def _dated_candidate(event_id, *, first_seen, points, lifetime_hours=130):
 class _RingSession:
     """A candidate population the selection query is actually filtered against.
 
-    Honours the `:after` bind and the `:limit` bind, so "the cursor advanced"
-    and "the cursor was ignored" cannot pass as each other — the failure mode
-    that let the fixed prefix ship in the first place.
+    Reproduces the SQL's KEYSET semantics — `(market_first_seen, event_id) >
+    (:after_ts, :after_id)`, ordered by the same pair — so "the cursor advanced"
+    and "the cursor was ignored" cannot pass as each other, and neither can "the
+    tie-breaker is there" and "the tie-breaker is decoration". Both of those
+    confusions shipped a starving sweep once already.
     """
 
     def __init__(self, population):
-        self.population = sorted(population, key=lambda r: r.market_first_seen)
+        self.population = sorted(
+            population, key=lambda r: (r.market_first_seen, r.event_id)
+        )
         self.calls = []
 
     async def execute(self, statement, params=None):
-        self.calls.append(dict(params or {}))
-        after = (params or {}).get("after")
+        params = dict(params or {})
+        self.calls.append(params)
+        after_ts, after_id = params.get("after_ts"), params.get("after_id")
         rows = [
             r for r in self.population
-            if after is None or r.market_first_seen > after
+            if after_ts is None
+            or (r.market_first_seen, r.event_id) > (after_ts, after_id)
         ]
-        return _RowsResult(rows[: (params or {}).get("limit", len(rows))])
+        return _RowsResult(rows[: params.get("limit", len(rows))])
 
 
 def _population(n, *, points):
@@ -1104,7 +1110,8 @@ async def test_the_sweep_walks_forward_instead_of_re_reading_the_same_prefix():
     assert second.event_ids == [5, 6, 7, 8, 9], "the second page must be NEW work"
     assert not set(first.event_ids) & set(second.event_ids)
     assert second.next_cursor > first.next_cursor
-    assert session.calls[1]["after"] == first.next_cursor
+    assert session.calls[1]["after_ts"] == first.next_cursor[0]
+    assert session.calls[1]["after_id"] == first.next_cursor[1]
 
 
 async def test_the_cursor_advances_over_charts_that_were_judged_and_not_picked():
@@ -1122,7 +1129,8 @@ async def test_the_cursor_advances_over_charts_that_were_judged_and_not_picked()
 
     assert page.event_ids == [], "nothing is thin here"
     assert page.next_cursor is not None, "but the sweep still moved on"
-    assert page.next_cursor == session.population[9].market_first_seen
+    ninth = session.population[9]
+    assert page.next_cursor == (ninth.market_first_seen, ninth.event_id)
 
 
 async def test_the_ring_wraps_when_the_population_is_exhausted():
@@ -1150,21 +1158,26 @@ async def test_the_selection_query_binds_the_cursor_and_can_start_from_nothing()
 
     # The bind must be cast, because a bare NULL parameter has no type to
     # compare a timestamptz against.
-    assert "CAST(:after AS timestamptz)" in THIN_CHART_CANDIDATES_SQL
+    assert "CAST(:after_ts AS timestamptz)" in THIN_CHART_CANDIDATES_SQL
+    assert "CAST(:after_id AS bigint)" in THIN_CHART_CANDIDATES_SQL
     assert "HAVING" in THIN_CHART_CANDIDATES_SQL
+    # The ORDER BY must match the keyset, or the LIMIT cuts a different set than
+    # the cursor resumes from and rows fall between the two.
+    assert "ORDER BY MIN(fm.created_at) ASC, e.id ASC" in THIN_CHART_CANDIDATES_SQL
 
     session = _RecordingSession([_candidate(1, lifetime_hours=130, points=1)])
     picked = await select_thin_chart_events(session, limit=3)
 
     assert picked == [1]
-    assert session.params["after"] is None, "the ring starts at the oldest end"
+    assert session.params["after_ts"] is None, "the ring starts at the oldest end"
+    assert session.params["after_id"] is None
 
 
 async def test_the_nightly_run_persists_where_it_stopped_and_clears_it_on_a_wrap():
     """The cursor is only worth having if the runner actually carries it."""
     import app.tasks.event_chart_backfill as mod
 
-    stopped = datetime(2026, 8, 12, tzinfo=UTC)
+    stopped = (datetime(2026, 8, 12, tzinfo=UTC), 4242)
     writes = []
 
     async def _fake_page(session, *, limit, after=None, **kw):
@@ -1195,7 +1208,7 @@ async def test_the_nightly_run_persists_where_it_stopped_and_clears_it_on_a_wrap
         monkey.undo()
 
     assert result["selection"] == "thin_sweep"
-    assert result["swept_to"] == stopped.isoformat()
+    assert result["swept_to"] == f"{stopped[0].isoformat()}|4242"
     assert result["ring_wrapped"] is False
     assert writes == [(stopped, False)]
 
@@ -1250,35 +1263,37 @@ async def test_the_cursor_is_bound_as_a_datetime_and_never_as_a_string():
     from app.tasks.event_chart_backfill import select_thin_chart_page
 
     session = _RecordingSession([_candidate(1, lifetime_hours=130, points=1)])
-    cursor = datetime(2026, 8, 12, 4, 30, tzinfo=UTC)
+    cursor = (datetime(2026, 8, 12, 4, 30, tzinfo=UTC), 9091)
 
     await select_thin_chart_page(session, limit=3, after=cursor)
 
-    bound = session.params["after"]
+    bound = session.params["after_ts"]
     assert isinstance(bound, datetime), f"asyncpg will reject {type(bound).__name__}"
     assert not isinstance(bound, str)
     assert bound.tzinfo is not None, "a naive stamp compares against the wrong zone"
-    assert bound == cursor
+    assert bound == cursor[0]
+    assert session.params["after_id"] == 9091
+    assert isinstance(session.params["after_id"], int)
 
 
 def test_a_cursor_read_back_from_redis_text_is_an_aware_datetime():
     """The round trip Redis actually performs: `set(iso)` then `get()` -> bytes."""
     import app.tasks.event_chart_backfill as mod
 
-    stored = datetime(2026, 8, 12, 4, 30, tzinfo=UTC)
+    stored = (datetime(2026, 8, 12, 4, 30, tzinfo=UTC), 15300759)
+    wire = f"{stored[0].isoformat()}|{stored[1]}".encode("utf-8")
     monkey = pytest.MonkeyPatch()
     try:
         monkey.setattr(
             "app.tasks.redis_state.get_redis_client",
-            lambda *a, **k: SimpleNamespace(
-                get=lambda key: stored.isoformat().encode("utf-8")
-            ),
+            lambda *a, **k: SimpleNamespace(get=lambda key: wire),
         )
         read = mod._read_sweep_cursor()
     finally:
         monkey.undo()
 
-    assert isinstance(read, datetime) and read.tzinfo is not None
+    assert isinstance(read, tuple) and len(read) == 2
+    assert isinstance(read[0], datetime) and read[0].tzinfo is not None
     assert read == stored
 
 
@@ -1290,7 +1305,15 @@ def test_an_unreadable_cursor_restarts_the_ring_instead_of_raising():
     def _client_for(value):
         return SimpleNamespace(get=lambda key: value)
 
-    for value in (None, b"", b"not-a-timestamp", "garbage"):
+    # The last two are the HALF-WRITTEN forms: a timestamp with no id half is
+    # not a keyset position, and half a position is exactly the bug the pair
+    # exists to fix — so it must restart the ring, not resume from a guess.
+    for value in (
+        None, b"", b"not-a-timestamp", "garbage",
+        b"2026-08-12T04:30:00+00:00",
+        b"2026-08-12T04:30:00+00:00|",
+        b"2026-08-12T04:30:00+00:00|notanint",
+    ):
         monkey = pytest.MonkeyPatch()
         try:
             monkey.setattr(
@@ -1308,12 +1331,12 @@ def test_an_unreadable_cursor_restarts_the_ring_instead_of_raising():
     try:
         monkey.setattr("app.tasks.redis_state.get_redis_client", _explode)
         assert mod._read_sweep_cursor() is None
-        mod._write_sweep_cursor(datetime(2026, 8, 12, tzinfo=UTC), exhausted=False)
+        mod._write_sweep_cursor((datetime(2026, 8, 12, tzinfo=UTC), 1), exhausted=False)
     finally:
         monkey.undo()
 
 
-def test_the_selection_sql_declares_exactly_the_three_binds_it_is_given():
+def test_the_selection_sql_declares_exactly_the_binds_it_is_given():
     """A colon-word anywhere in the statement — INCLUDING in a `--` comment —
     is a REQUIRED bind parameter, because `text()` does not strip comments.
 
@@ -1328,4 +1351,110 @@ def test_the_selection_sql_declares_exactly_the_three_binds_it_is_given():
     from app.tasks.event_chart_backfill import THIN_CHART_CANDIDATES_SQL
 
     compiled = text(THIN_CHART_CANDIDATES_SQL)
-    assert set(compiled._bindparams) == {"after", "limit", "purge_days"}
+    assert set(compiled._bindparams) == {
+        "after_ts", "after_id", "limit", "purge_days",
+    }
+
+
+# ---------------------------------------------------------------------------
+# CERT-728 strike two: the cursor must be a KEYSET, not a timestamp
+# ---------------------------------------------------------------------------
+
+
+def _tied_population(n, *, points, shared_stamp=None):
+    """`n` candidates that all share ONE `market_first_seen`.
+
+    Not a contrived shape. `futures_markets.created_at` is transaction-time
+    `now()`, and the Polymarket poll inserts a whole batch inside one
+    transaction, so every market in that batch carries the same microsecond.
+    """
+    stamp = shared_stamp or datetime(2026, 7, 1, tzinfo=UTC)
+    return [_dated_candidate(i, first_seen=stamp, points=points) for i in range(n)]
+
+
+async def test_a_tied_cohort_bigger_than_the_scan_is_walked_all_the_way_through():
+    """CERT-728's exact reproduction: 400 tied rows, a 240 scan.
+
+    Keyed on the timestamp alone the sweep repairs 240 and then steps over the
+    whole cohort, leaving **160 thin events unreachable forever** — the wrap does
+    not rescue them either, because it restarts at the same head and re-reads the
+    same 240. That is not a guard gap; it is 160 settled matches whose charts
+    stay blank.
+    """
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RingSession(_tied_population(400, points=1))
+
+    seen: list[int] = []
+    cursor = None
+    for _ in range(20):  # a bound, so a non-advancing cursor FAILS instead of hanging
+        page = await select_thin_chart_page(
+            session, limit=240, scan_multiple=1, after=cursor
+        )
+        if not page.event_ids and page.exhausted:
+            break
+        assert page.next_cursor is not None, "a page with rows must move the cursor"
+        assert cursor is None or page.next_cursor > cursor, (
+            "the cursor did not advance — this is the infinite loop"
+        )
+        seen.extend(page.event_ids)
+        cursor = page.next_cursor
+        if page.exhausted:
+            break
+
+    assert len(seen) == 400, f"{400 - len(seen)} events are unreachable"
+    assert sorted(seen) == list(range(400))
+    assert len(seen) == len(set(seen)), "no event may be swept twice in one pass"
+
+
+async def test_the_tie_breaker_is_the_thing_that_makes_it_terminate():
+    """The same cohort, one page at a time, must still reach the last row.
+
+    A page size of 1 over 5 tied rows is the smallest shape in which a
+    timestamp-only cursor is provably wrong: every page after the first would
+    return nothing while four thin charts remain.
+    """
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    session = _RingSession(_tied_population(5, points=1))
+
+    seen, cursor = [], None
+    for _ in range(10):
+        page = await select_thin_chart_page(
+            session, limit=1, scan_multiple=1, after=cursor
+        )
+        if not page.event_ids:
+            break
+        seen.extend(page.event_ids)
+        cursor = page.next_cursor
+
+    assert seen == [0, 1, 2, 3, 4]
+
+
+async def test_a_tie_that_straddles_a_page_boundary_loses_nobody():
+    """The realistic shape: a tied batch in the MIDDLE of ordinary rows."""
+    from app.tasks.event_chart_backfill import select_thin_chart_page
+
+    base = datetime(2026, 7, 1, tzinfo=UTC)
+    population = (
+        [_dated_candidate(i, first_seen=base + timedelta(hours=i), points=1)
+         for i in range(3)]
+        + [_dated_candidate(100 + i, first_seen=base + timedelta(hours=3), points=1)
+           for i in range(7)]
+        + [_dated_candidate(200 + i, first_seen=base + timedelta(hours=4 + i), points=1)
+           for i in range(3)]
+    )
+    session = _RingSession(population)
+
+    seen, cursor = [], None
+    for _ in range(20):
+        page = await select_thin_chart_page(
+            session, limit=4, scan_multiple=1, after=cursor
+        )
+        if not page.event_ids:
+            break
+        seen.extend(page.event_ids)
+        cursor = page.next_cursor
+
+    assert sorted(seen) == sorted(r.event_id for r in population)
+    assert len(seen) == 13

@@ -992,9 +992,23 @@ THIN_CHART_CANDIDATES_SQL = """
         -- database. There is a repo guard for exactly this, and it caught it
         -- here — a defect no unit test in this file could have seen, because
         -- they all stub the session.)
-        HAVING CAST(:after AS timestamptz) IS NULL
-            OR MIN(fm.created_at) > CAST(:after AS timestamptz)
-        ORDER BY MIN(fm.created_at) ASC
+        --
+        -- IT IS A KEYSET ON (timestamp, id), NOT ON THE TIMESTAMP ALONE.
+        -- `futures_markets.created_at` is transaction-time `now()`, and the
+        -- Polymarket poll inserts a whole batch inside ONE transaction, so a
+        -- cohort of hundreds sharing a timestamp to the microsecond is the
+        -- normal case, not a pathology. Keyed on the timestamp alone, a tied
+        -- cohort
+        -- LARGER than the scan loses its tail permanently: the page returns the
+        -- first N of the tie, the cursor lands ON the shared value, and the next
+        -- page's strict `>` steps over the whole cohort including the part never
+        -- looked at. The wrap does not save them either — it restarts at the same
+        -- head and re-reads the same N. Simulated at 400 tied rows against a 240
+        -- scan: 240 repaired, 160 unreachable forever.
+        HAVING CAST(:after_ts AS timestamptz) IS NULL
+            OR (MIN(fm.created_at), e.id)
+                 > (CAST(:after_ts AS timestamptz), CAST(:after_id AS bigint))
+        ORDER BY MIN(fm.created_at) ASC, e.id ASC
         LIMIT :limit
     )
     SELECT
@@ -1008,38 +1022,45 @@ THIN_CHART_CANDIDATES_SQL = """
               AND w.source IN ('kalshi', 'polymarket')
         ) AS point_count
     FROM candidates c
-    ORDER BY c.market_first_seen ASC
+    ORDER BY c.market_first_seen ASC, c.event_id ASC
 """
 
 
-#: Where the last nightly sweep stopped LOOKING, as an ISO `market_first_seen`.
+#: Where the last nightly sweep stopped LOOKING, stored as ``<iso>|<event_id>``.
 #: Redis, not a column: the cursor is an optimisation, not a fact about the data,
 #: and the 100 MB LRU evicting it costs one wasted re-scan of the oldest page —
 #: exactly the behaviour the sweep had before the cursor existed. Never a
 #: migration for a hint.
 SWEEP_CURSOR_KEY = "event_chart_backfill:sweep_cursor"
 
+#: A keyset position: ``(market_first_seen, event_id)``. The id half is not
+#: decoration — see the SQL comment above the HAVING clause.
+SweepCursor = tuple
+
 
 class ThinChartPage(NamedTuple):
     """One page of the ring the nightly sweep walks."""
 
     event_ids: list[int]
-    #: `market_first_seen` of the last candidate LOOKED AT (not the last picked)
-    #: — everything at or before it has been judged this pass.
-    next_cursor: Optional[datetime]
+    #: ``(market_first_seen, event_id)`` of the last candidate LOOKED AT (not the
+    #: last picked) — everything at or before that KEY has been judged this pass.
+    #: A timestamp alone is not a position: `futures_markets.created_at` is
+    #: transaction-time, so hundreds of rows share one.
+    next_cursor: Optional[tuple]
     #: True when the scan reached the end of the population, so the next run
     #: must WRAP rather than advance. A ring with no wrap is a queue that ends.
     exhausted: bool
 
 
 async def select_thin_chart_page(
-    session, *, limit: int, scan_multiple: int = 6, after: Optional[datetime] = None
+    session, *, limit: int, scan_multiple: int = 6, after: Optional[tuple] = None
 ) -> ThinChartPage:
     """One page of events whose chart holds too few points for their market's life.
 
-    Scans a multiple of ``limit`` candidates STARTING AFTER ``after`` and applies
-    :func:`is_thin_chart` in Python, so the thinness rule lives in one tested
-    pure function rather than being re-expressed (and drifting) in SQL.
+    Scans a multiple of ``limit`` candidates STARTING AFTER the keyset position
+    ``after`` and applies :func:`is_thin_chart` in Python, so the thinness rule
+    lives in one tested pure function rather than being re-expressed (and
+    drifting) in SQL.
 
     The cursor is what makes this a sweep rather than a fixed prefix. The scan
     has to be bounded — counting points for all 44,315 candidates inside the
@@ -1049,14 +1070,20 @@ async def select_thin_chart_page(
     everything JUDGED, thin or thick, and :data:`ThinChartPage.exhausted` tells
     the caller to wrap.
 
-    Ties on ``MIN(fm.created_at)`` are advanced past with a strict ``>``, so
-    progress is guaranteed; a candidate skipped by a tie is picked up on the
-    next wrap rather than blocking the ring.
+    ``after`` is a PAIR, ``(timestamp, event_id)``, and the tie-breaker is the
+    load-bearing half. ``futures_markets.created_at`` is transaction-time
+    ``now()`` and the Polymarket poll commits a whole batch at once, so a cohort
+    of hundreds sharing one microsecond is ordinary. Keyed on the timestamp
+    alone, a tied cohort larger than the scan loses its tail forever: the page
+    reads the first N, the cursor lands ON the shared value, and the next page
+    steps over the entire cohort. Same shape as the keyset in
+    ``app/tasks/repair_kalshi_fabricated_loss.py``, which runs in production.
     """
     from sqlalchemy import text
 
     from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
+    after_ts, after_id = (after or (None, None))
     scan_size = max(1, limit * max(1, scan_multiple))
     rows = (
         await session.execute(
@@ -1064,20 +1091,21 @@ async def select_thin_chart_page(
             {
                 "limit": scan_size,
                 "purge_days": PROVABLY_PURGED_AGE_DAYS,
-                "after": after,
+                "after_ts": after_ts,
+                "after_id": after_id,
             },
         )
     ).fetchall()
 
     thin: list[int] = []
-    cursor: Optional[datetime] = None
+    cursor: Optional[tuple] = None
     for row in rows:
         first = row.market_first_seen
         last = row.market_last_seen
         # Advance over every row JUDGED, not only over the ones picked. A thick
         # chart that the cursor did not pass would be re-counted every night.
         if first is not None:
-            cursor = first
+            cursor = (first, int(row.event_id))
         lifetime = 0.0
         if first is not None and last is not None and last > first:
             lifetime = (last - first).total_seconds()
@@ -1093,19 +1121,19 @@ async def select_thin_chart_page(
 
 
 async def select_thin_chart_events(session, *, limit: int, scan_multiple: int = 6) -> list[int]:
-    """The ids of :func:`select_thin_chart_page`, from the start of the ring."""
+    """The ids of one page, from the start of the ring."""
     page = await select_thin_chart_page(
         session, limit=limit, scan_multiple=scan_multiple
     )
     return page.event_ids
 
 
-def _read_sweep_cursor() -> Optional[datetime]:
-    """The stored cursor, or None to start the ring again from the oldest end.
+def _read_sweep_cursor() -> Optional[tuple]:
+    """The stored ``(timestamp, event_id)``, or None to restart the ring.
 
-    Every failure mode — no Redis, an evicted key, an unparseable value —
-    answers None, which restarts the sweep. Restarting is the pre-cursor
-    behaviour: it wastes a scan, it never writes a wrong row.
+    Every failure mode — no Redis, an evicted key, a half-written value, an
+    unparseable one — answers None, which restarts the sweep. Restarting is the
+    pre-cursor behaviour: it wastes a scan, it never writes a wrong row.
     """
     try:
         from app.tasks.redis_state import get_redis_client
@@ -1117,15 +1145,29 @@ def _read_sweep_cursor() -> Optional[datetime]:
         return None
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", "ignore")
+    stamp, _, event_id = str(raw).partition("|")
     try:
-        parsed = datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(stamp)
+        # A cursor with no id half is not usable as a keyset — half a position
+        # is the bug this pair exists to fix, so refuse it and restart.
+        parsed_id = int(event_id)
     except (TypeError, ValueError):
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (parsed, parsed_id)
 
 
-def _write_sweep_cursor(cursor: Optional[datetime], *, exhausted: bool) -> None:
-    """Persist the cursor, or CLEAR it when the ring has been walked all the way."""
+def _cursor_label(cursor: Optional[tuple]) -> Optional[str]:
+    """A keyset position, readable in the task verdict. Both halves or neither."""
+    if not cursor:
+        return None
+    stamp, event_id = cursor
+    return f"{stamp.isoformat()}|{event_id}"
+
+
+def _write_sweep_cursor(cursor: Optional[tuple], *, exhausted: bool) -> None:
+    """Persist ``<iso>|<event_id>``, or CLEAR it when the ring has been walked."""
     try:
         from app.tasks.redis_state import get_redis_client
 
@@ -1133,7 +1175,8 @@ def _write_sweep_cursor(cursor: Optional[datetime], *, exhausted: bool) -> None:
         if exhausted or cursor is None:
             client.delete(SWEEP_CURSOR_KEY)
         else:
-            client.set(SWEEP_CURSOR_KEY, cursor.isoformat())
+            stamp, event_id = cursor
+            client.set(SWEEP_CURSOR_KEY, f"{stamp.isoformat()}|{int(event_id)}")
     except Exception:  # noqa: BLE001 — losing the hint costs a re-scan, not a row
         logger.warning("event chart backfill: sweep cursor not persisted", exc_info=True)
 
@@ -1249,10 +1292,8 @@ async def run_event_chart_backfill(
     result = await _run_for_event_ids(ids[:limit], dry_run=dry_run)
     result["selection"] = "explicit" if event_ids else "thin_sweep"
     if page is not None:
-        result["swept_from"] = after.isoformat() if after else None
-        result["swept_to"] = (
-            page.next_cursor.isoformat() if page.next_cursor else None
-        )
+        result["swept_from"] = _cursor_label(after)
+        result["swept_to"] = _cursor_label(page.next_cursor)
         result["ring_wrapped"] = page.exhausted
         if not dry_run:
             _write_sweep_cursor(page.next_cursor, exhausted=page.exhausted)
