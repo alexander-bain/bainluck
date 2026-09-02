@@ -120,15 +120,32 @@ function leaderboardRowsLoose(html: string): Array<{ full: string; shown: string
   return rows;
 }
 
+const HTML_ENTITIES: Record<string, string> = {
+  "&quot;": '"',
+  "&apos;": "'",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+};
+
+/**
+ * Undo the escaping `renderToStaticMarkup` applies, in ONE pass.
+ *
+ * Chained `.replace()` calls are a double-unescaping bug (CodeQL
+ * `js/double-escaping`, and it flagged the first draft of this helper): once
+ * `&amp;` has become `&`, a later rule turns `&amp;#39;` into `'` rather than
+ * the literal `&#39;` the payload actually contained. A single regex with a
+ * lookup can never re-examine its own output.
+ */
 function decode(s: string): string {
-  return s
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return s.replace(
+    /&(?:quot|apos|lt|gt|amp);|&#x([0-9a-fA-F]+);|&#(\d+);/g,
+    (match, hex: string | undefined, dec: string | undefined) => {
+      if (hex !== undefined) return String.fromCodePoint(parseInt(hex, 16));
+      if (dec !== undefined) return String.fromCodePoint(Number(dec));
+      return HTML_ENTITIES[match] ?? match;
+    },
+  );
 }
 
 function shownFor(html: string, full: string): string | undefined {
