@@ -70,12 +70,25 @@ FIXTURE_PATH = (
 #: readable; the total is always stated, so truncation is never silent.
 MAX_LISTED = 25
 
-#: A market linked this long without a single price snapshot is not "sourced".
+#: A market this old without a single price snapshot is not "sourced".
 #: 90 minutes: two 15-minute matching cycles plus the 2-minute live poll's
 #: worst case, with room for a slow backfill — short enough to satisfy the
-#: brief's one-hour-ish bar, long enough that a market linked seconds ago is
+#: brief's one-hour-ish bar, long enough that a market ingested seconds ago is
 #: not accused.
+#:
+#: MEASURED ON ``created_at``, NOT ``updated_at``, and the first draft had it
+#: wrong. ``updated_at`` moves on every price poll, so it says nothing about how
+#: long a market has been ATTACHED — it let a market linked two minutes ago be
+#: accused while its first snapshot was still in flight. Re-measured 2026-09-02
+#: twenty minutes apart, the count fell 36 → 18 on its own, which is a check
+#: reporting a queue depth and calling it a defect.
 UNSOURCED_AFTER_MINUTES = 90
+
+#: How close to kickoff an event has to be before a missing curve is a defect
+#: rather than a not-yet. ±6h, not +24h: at a day out the 2-minute live poller
+#: has legitimately not reached the event, and counting those is what made the
+#: first draft of this check transient.
+UNSOURCED_WINDOW_HOURS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +263,9 @@ async def check_linked_unsourced(session) -> dict:
         WHERE fm.source IN ('kalshi', 'polymarket')
           AND fm.status = 'open'
           AND e.status IN ('scheduled', 'live')
-          AND e.commence_time BETWEEN NOW() - INTERVAL '6 hours'
-                                  AND NOW() + INTERVAL '24 hours'
-          AND fm.updated_at < NOW() - (:mins * INTERVAL '1 minute')
+          AND e.commence_time BETWEEN NOW() - (:hrs * INTERVAL '1 hour')
+                                  AND NOW() + (:hrs * INTERVAL '1 hour')
+          AND fm.created_at < NOW() - (:mins * INTERVAL '1 minute')
         GROUP BY 1, 2
         HAVING NOT EXISTS (
             SELECT 1 FROM win_prob_snapshots w
@@ -261,7 +274,8 @@ async def check_linked_unsourced(session) -> dict:
         ORDER BY 3 DESC
         LIMIT 200
         """
-    ), {"mins": UNSOURCED_AFTER_MINUTES})).all()
+    ), {"mins": UNSOURCED_AFTER_MINUTES,
+         "hrs": UNSOURCED_WINDOW_HOURS})).all()
     listed = [
         {"event_id": int(r[0]), "source": r[1], "linked_markets": int(r[2]),
          "commence_time": r[3].isoformat() if r[3] else None}

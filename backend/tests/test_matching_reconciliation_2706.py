@@ -494,3 +494,29 @@ def test_a_clean_run_with_no_open_issues_files_nothing_at_all(monkeypatch):
     )
     assert created == [] and comments == [] and closed == []
     assert result["red"] == []
+
+
+def test_the_unsourced_age_guard_reads_created_at_not_updated_at():
+    """The first draft measured `updated_at`, which moves on every price poll.
+
+    It therefore says nothing about how long a market has been ATTACHED, and it
+    let a market linked two minutes ago be accused while its first snapshot was
+    still in flight. Measured 2026-09-02 twenty minutes apart, the count fell
+    36 -> 18 on its own: a check reporting a queue depth and calling it a
+    defect. An alert that heals itself between two runs teaches the reader to
+    ignore it.
+    """
+    import inspect
+
+    src = inspect.getsource(mrec.check_linked_unsourced)
+    assert "fm.created_at <" in src
+    assert "fm.updated_at" not in src
+
+
+def test_the_unsourced_window_is_symmetric_and_near_term():
+    """+24h counted events the 2-minute live poller has legitimately not reached
+    yet. A missing curve is a defect near kickoff, a not-yet a day out."""
+    assert mrec.UNSOURCED_WINDOW_HOURS <= 6
+    src = __import__("inspect").getsource(mrec.check_linked_unsourced)
+    assert ":hrs * INTERVAL '1 hour'" in src
+    assert "INTERVAL '24 hours'" not in src
