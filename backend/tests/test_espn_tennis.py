@@ -15,10 +15,13 @@ from __future__ import annotations
 from app.services.espn_tennis import (
     DRAW_SLUGS,
     completion_of,
+    current_set_label,
     format_score,
     normalize_name,
     pair_key,
     parse_results,
+    play_refutes_upcoming,
+    sets_with_play,
 )
 
 
@@ -33,11 +36,24 @@ def _competitor(name, *, winner, sets, athlete=True):
     return entry
 
 
-def _competition(a, b, *, state="post", comp_id="1", round_name="Qualifying 1st Round"):
+def _competition(
+    a,
+    b,
+    *,
+    state="post",
+    comp_id="1",
+    round_name="Qualifying 1st Round",
+    detail="Final",
+    period=None,
+):
+    status = {"type": {"state": state, "detail": detail}}
+    if period is not None:
+        # ESPN carries the set number BESIDE `type`, not inside it.
+        status["period"] = period
     return {
         "id": comp_id,
         "date": "2026-08-24T15:05Z",
-        "status": {"type": {"state": state, "detail": "Final"}},
+        "status": status,
         "competitors": [a, b],
         "round": {"displayName": round_name},
     }
@@ -534,3 +550,213 @@ class TestTheOrderOfPlay:
             event_name="US Open",
         )
         assert parsed["order_of_play"] == {}
+
+
+# ---------------------------------------------------------------------------
+# lane1/054 — WHEN ESPN'S STATE CONTRADICTS ESPN'S OWN SCOREBOARD
+#
+# Measured on the live US Open scoreboards, 2026-09-02T18:50Z, both tours
+# deduped: 238 `pre` competitions with no games on the board (genuinely
+# upcoming), 5 `pre` competitions with games (all in progress), 10 `in`, 371
+# `post` with games, 2 `post` without (walkovers).
+#
+# The worked case is Carlos Taberner v Zizou Bergs (competition 182685): 6-3,
+# 3-6, 6-2 and into a fourth set, while ESPN still said `STATUS_SCHEDULED`,
+# "Wed, September 2nd at 3:30 PM EDT". The hub printed "12:30 PM" over it.
+# ---------------------------------------------------------------------------
+
+_TABERNER_BERGS_DETAIL = "Wed, September 2nd at 3:30 PM EDT"
+
+
+def _taberner_bergs(*, state="pre", comp_id="182685"):
+    """The refuting shape, exactly as the scoreboard returned it."""
+    return _competition(
+        _competitor("Carlos Taberner", winner=False, sets=[3, 6, 2, 1]),
+        _competitor("Zizou Bergs", winner=False, sets=[6, 3, 6, 2]),
+        state=state,
+        comp_id=comp_id,
+        detail=_TABERNER_BERGS_DETAIL,
+        period=4,
+    )
+
+
+class TestSetsWithPlay:
+    def test_no_linescores_is_no_play(self):
+        assert sets_with_play(
+            _competition(
+                _competitor("A B", winner=False, sets=[]),
+                _competitor("C D", winner=False, sets=[]),
+            )
+        ) == 0
+
+    def test_the_last_set_holding_a_game_is_the_answer(self):
+        assert sets_with_play(_taberner_bergs()) == 4
+
+    def test_a_trailing_love_set_is_a_changeover_and_not_a_set(self):
+        """ESPN writes the next set's line at 0-0 the instant one ends. Counting
+        presence rather than games would call that changeover a played set."""
+        assert sets_with_play(
+            _competition(
+                _competitor("A B", winner=False, sets=[6, 0]),
+                _competitor("C D", winner=False, sets=[4, 0]),
+            )
+        ) == 1
+
+    def test_one_side_holding_the_only_game_still_counts_that_set(self):
+        assert sets_with_play(
+            _competition(
+                _competitor("A B", winner=False, sets=[0, 0, 1]),
+                _competitor("C D", winner=False, sets=[0, 0, 0]),
+            )
+        ) == 3
+
+    def test_an_unreadable_line_is_skipped_rather_than_crashing(self):
+        competition = _competition(
+            _competitor("A B", winner=False, sets=[6]),
+            _competitor("C D", winner=False, sets=[]),
+        )
+        competition["competitors"][1]["linescores"] = [{"value": None}, {}]
+        assert sets_with_play(competition) == 1
+
+
+class TestCurrentSetLabel:
+    def test_every_set_a_grand_slam_can_reach_has_espns_own_words(self):
+        assert [current_set_label(n) for n in range(1, 6)] == [
+            "1st Set", "2nd Set", "3rd Set", "4th Set", "5th Set",
+        ]
+
+    def test_a_period_we_have_no_ordinal_for_is_silence_not_a_guess(self):
+        """Silence falls back to ESPN's detail, and the client to "LIVE" — both
+        better than a sixth set invented to fill the slot."""
+        assert current_set_label(6) is None
+        assert current_set_label(0) is None
+        assert current_set_label(None) is None
+        assert current_set_label("4th") is None
+
+
+class TestPlayRefutesUpcoming:
+    def test_games_on_the_board_refute_upcoming(self):
+        assert play_refutes_upcoming("upcoming", _taberner_bergs()) is True
+
+    def test_an_unplayed_fixture_is_never_refuted(self):
+        """THE CONTROL, and the whole reason the rule is safe: not one of the
+        238 genuinely-upcoming competitions carries a game."""
+        assert play_refutes_upcoming(
+            "upcoming",
+            _competition(
+                _competitor("A B", winner=False, sets=[]),
+                _competitor("C D", winner=False, sets=[]),
+                state="pre",
+            ),
+        ) is False
+
+    def test_a_decided_match_is_not_refutable_although_it_has_games(self):
+        """`post` plus a linescore is the ordinary shape of 371 finished
+        matches, not a contradiction. Only `upcoming` is refutable."""
+        assert play_refutes_upcoming("decided", _taberner_bergs(state="post")) is False
+
+    def test_an_already_live_match_is_not_refutable(self):
+        assert play_refutes_upcoming("in_progress", _taberner_bergs(state="in")) is False
+
+    def test_an_unpublished_state_is_not_refutable(self):
+        assert play_refutes_upcoming(None, _taberner_bergs()) is False
+
+
+class TestAMatchBeingPlayedNeverAdvertisesAStart:
+    def _card(self, competitions):
+        return parse_results([_payload(competitions)], event_name="US Open")
+
+    def test_a_scheduled_competition_with_games_on_the_board_is_in_progress(self):
+        """THE DEFECT. Before this rule the entry said `upcoming` and carried
+        "Wed, September 2nd at 3:30 PM EDT", and the hub rendered 12:30 PM over
+        a match three sets deep."""
+        entry = self._card([_taberner_bergs()])["order_of_play"]["182685"]
+        assert entry["state"] == "in_progress"
+
+    def test_it_says_which_set_rather_than_the_schedule_sentence(self):
+        """The set comes from `period`, because `detail` on a refuted row is
+        still the schedule — and a date inside a live pill is what
+        `liveMatchLabel` refuses on the client."""
+        entry = self._card([_taberner_bergs()])["order_of_play"]["182685"]
+        assert entry["status_detail"] == "4th Set"
+        assert _TABERNER_BERGS_DETAIL not in str(entry["status_detail"])
+
+    def test_the_refutation_is_counted_so_the_source_lagging_is_visible(self):
+        parsed = self._card([_taberner_bergs()])
+        assert parsed["stats"]["upcoming_refuted_by_play"] == 1
+        assert parsed["stats"]["in_progress"] == 1
+        assert parsed["stats"]["upcoming"] == 0
+
+    def test_an_unplayed_fixture_keeps_its_state_its_words_and_its_time(self):
+        """THE CONTROL, through the whole parse. Green before this rule and
+        after it — the 238-row population the rule must not reach."""
+        competition = _competition(
+            _competitor("A B", winner=False, sets=[]),
+            _competitor("C D", winner=False, sets=[]),
+            state="pre",
+            comp_id="182661",
+            detail="Mon, August 31st at 11:00 AM EDT",
+            period=1,
+        )
+        parsed = self._card([competition])
+        entry = parsed["order_of_play"]["182661"]
+        assert entry["state"] == "upcoming"
+        assert entry["status_detail"] == "Mon, August 31st at 11:00 AM EDT"
+        assert entry["start_at"] == "2026-08-24T15:05Z"
+        assert parsed["stats"]["upcoming"] == 1
+        assert parsed["stats"]["upcoming_refuted_by_play"] == 0
+
+    def test_a_finished_match_stays_a_result_and_is_not_dragged_back_live(self):
+        """THE CONTROL that matters most: 371 of the 383 `post` competitions
+        carry games, so a rule that read the linescore without reading the state
+        would empty the results section onto the live board."""
+        parsed = self._card([_taberner_bergs(state="post", comp_id="182684")])
+        assert parsed["order_of_play"]["182684"]["state"] == "decided"
+        assert parsed["stats"]["upcoming_refuted_by_play"] == 0
+        assert parsed["stats"]["decided"] == 1
+
+    def test_an_in_progress_match_keeps_espns_own_words_for_the_set(self):
+        """Untouched: ESPN's `detail` is already "3rd Set" on a row it has
+        caught up with, and the derived label must not displace it."""
+        competition = _competition(
+            _competitor("Ignacio Buse", winner=False, sets=[3, 6, 4]),
+            _competitor("Marcos Giron", winner=False, sets=[6, 3, 3]),
+            state="in", comp_id="182750", detail="3rd Set", period=3,
+        )
+        entry = self._card([competition])["order_of_play"]["182750"]
+        assert entry["state"] == "in_progress"
+        assert entry["status_detail"] == "3rd Set"
+
+    def test_a_refuted_row_with_no_usable_period_falls_back_to_the_detail(self):
+        """`current_set_label` returning None must leave the entry publishable —
+        the client's own guard then prints LIVE rather than the date."""
+        competition = _taberner_bergs(comp_id="182686")
+        competition["status"].pop("period")
+        entry = self._card([competition])["order_of_play"]["182686"]
+        assert entry["state"] == "in_progress"
+        assert entry["status_detail"] == _TABERNER_BERGS_DETAIL
+
+    def test_the_whole_days_card_sorts_the_way_the_scoreboard_measured(self):
+        """The four shapes together, in the proportions production returned."""
+        parsed = self._card([
+            _taberner_bergs(),
+            _competition(
+                _competitor("E F", winner=False, sets=[]),
+                _competitor("G H", winner=False, sets=[]),
+                state="pre", comp_id="900", detail="Wed at 7:00 PM EDT",
+            ),
+            _competition(
+                _competitor("I J", winner=False, sets=[2]),
+                _competitor("K L", winner=False, sets=[3]),
+                state="in", comp_id="901", detail="1st Set", period=1,
+            ),
+            _competition(
+                _competitor("M N", winner=True, sets=[6, 6]),
+                _competitor("O P", winner=False, sets=[1, 2]),
+                state="post", comp_id="902",
+            ),
+        ])
+        assert parsed["stats"]["upcoming"] == 1
+        assert parsed["stats"]["in_progress"] == 2
+        assert parsed["stats"]["decided"] == 1
+        assert parsed["stats"]["upcoming_refuted_by_play"] == 1
