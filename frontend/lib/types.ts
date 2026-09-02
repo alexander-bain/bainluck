@@ -163,7 +163,10 @@ export interface Event {
   espn?: ESPNData;
   home_team_data?: TeamData;
   away_team_data?: TeamData;
-  win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string }>;
+  // `updated_at` is the source's STAMPED write time. The API has always sent it
+  // (it is what drives the hero's recency decay server-side); it was simply
+  // absent from this type, so the live age stamp could not read it. live/034.
+  win_probability_sources?: Record<string, { value: number; display_name: string; type: string; color: string; updated_at?: string }>;
   standings_context?: {
     home?: string;   // e.g. "34-18, 2nd East"
     away?: string;   // e.g. "28-24, 7th West"

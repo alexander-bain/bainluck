@@ -156,8 +156,13 @@ RESOLVER_MUTATIONS: list[dict] = [
 COMPONENT_MUTATIONS: list[dict] = [
     {
         "id": "M5-component-re-rounds-when-percent-missing",
-        "needle": """        {homeProb !== null && homePct !== null ? homePct : "—"}""",
-        "replacement": """        {homeProb !== null ? (homePct ?? Math.round(homeProb * 100)) : "—"}""",
+        # live/034 re-target. The rendered expression now reads `shownHome`,
+        # the output of `shownPair`, because the hero can COUNT to a new value
+        # on a pushed live event. The property under attack is unchanged — the
+        # component must refuse to re-derive a percent it was not given — so
+        # this is a new anchor for the same mutant, not a new mutant.
+        "needle": """        {homeProb !== null && shownHome !== null ? shownHome : "—"}""",
+        "replacement": """        {homeProb !== null ? (shownHome ?? Math.round(homeProb * 100)) : "—"}""",
         "why": "The component quietly re-derives when a caller stops passing the "
         "decided percent. The fix becomes invisible the moment anyone "
         "refactors the page, with no test going red.",
