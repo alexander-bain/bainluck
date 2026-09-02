@@ -368,20 +368,25 @@ class _SeededSession:
     would bury the finding it just made.
     """
 
-    def __init__(self, unattempted=0, anchor_collisions=(), unsourced=()):
-        self._unattempted = unattempted
+    def __init__(self, unattempted=0, anchor_collisions=(), unsourced=(),
+                 links_not_durable=0):
         self._queue = [
-            [],                      # golden: markets, keyed below
+            [],                       # golden: markets, keyed below
             list(anchor_collisions),  # anchor_collision
-            [],                      # market_multi_event
-            list(unsourced),         # linked_unsourced
+            [],                       # market_multi_event
+            list(unsourced),          # linked_unsourced
+            [],                       # receipt_contradicts_link
         ]
+        # Scalars answer in check order, so seeding one subject cannot
+        # accidentally light up another and make "one violation, one issue"
+        # pass for the wrong reason.
+        self._scalars = [unattempted, links_not_durable]
 
     async def execute(self, stmt, params=None):
         return _Result(self._queue.pop(0))
 
     async def scalar(self, stmt):
-        return self._unattempted
+        return self._scalars.pop(0)
 
 
 def _run_with_github(session, monkeypatch, open_issues):
@@ -520,3 +525,49 @@ def test_the_unsourced_window_is_symmetric_and_near_term():
     src = __import__("inspect").getsource(mrec.check_linked_unsourced)
     assert ":hrs * INTERVAL '1 hour'" in src
     assert "INTERVAL '24 hours'" not in src
+
+
+# =============================================================================
+# CERT-772: a link lost to a sibling's rollback must be VISIBLE to this job
+# =============================================================================
+
+
+def test_a_receipt_that_disagrees_with_the_database_is_red():
+    """The exact hole CERT-772 named.
+
+    Before this arm, a market whose link was rolled back was invisible to every
+    other check: `receipt_coverage` counts markets with NO receipt and this one
+    has one, `linked_unsourced` joins through the now-NULL `event_id`, and
+    `golden` only sees its fixed 709 ids. All five could be GREEN while the
+    market sat unattached and its one-query answer said "linked".
+    """
+    out = asyncio.run(mrec.check_receipt_contradicts_link(
+        _Session([[(1, 42, None, "pass2_general", None)]], scalar=0)
+    ))
+    assert out["red"] is True
+    assert out["rows"][0]["receipt_says_event_id"] == 42
+    assert out["rows"][0]["database_says_event_id"] is None
+
+
+def test_the_write_time_downgrades_are_reported_too_not_just_the_lies():
+    """`link_not_durable` is the healthy path — the guard caught it before
+    publication. It must still be reported: nonzero means the matcher IS losing
+    links, even though the receipt no longer misstates it."""
+    out = asyncio.run(mrec.check_receipt_contradicts_link(
+        _Session([[]], scalar=7)
+    ))
+    assert out["red"] is True
+    assert out["count"] == 7
+    assert "link_not_durable" in out["detail"]
+
+
+def test_agreement_between_receipt_and_database_is_green():
+    out = asyncio.run(mrec.check_receipt_contradicts_link(
+        _Session([[]], scalar=0)
+    ))
+    assert out["red"] is False and out["count"] == 0
+
+
+def test_the_contradiction_check_is_wired_into_the_run():
+    """An arm nobody calls closes no hole."""
+    assert mrec.check_receipt_contradicts_link in mrec.CHECKS

@@ -31,6 +31,11 @@ WHAT IT CHECKS, every matching cycle:
 * **linked_unsourced** — attached is not sourced. A market can hold an
   ``event_id`` and still write no price, which is what Bublik and Harris looked
   like on 9/2: linked, outcomes priced, and no polymarket curve on the card.
+* **receipt_contradicts_link** — the receipt and the database disagree about
+  where a market sits. Without this arm a link lost to a sibling market's
+  rollback is invisible to every other check here: coverage counts markets with
+  NO receipt and this one has one, linked_unsourced joins through the now-NULL
+  ``event_id``, and golden only sees its fixed 709 ids. Target 0.
 
 FILING. One deduped issue per SUBJECT via the shared sentinel rail
 (``app/tasks/sentinel_filing.py``), so each check has its own fingerprint, its
@@ -290,12 +295,71 @@ async def check_linked_unsourced(session) -> dict:
     )
 
 
+async def check_receipt_contradicts_link(session) -> dict:
+    """A receipt that disagrees with the database about where a market sits.
+
+    CERT-772'S FINDING, ANSWERED. Receipts are written on their own session, so
+    a market can be claimed as linked and then have its pending ``event_id``
+    rolled back by a sibling market's failure in the same pass. Before this
+    check, such a row was invisible to every other arm here:
+    ``receipt_coverage`` counts markets with NO receipt and this one HAS one;
+    ``linked_unsourced`` joins through an ``event_id`` that is now NULL; and
+    ``golden`` only ever looks at its fixed 709 ids. All five could report GREEN
+    while a market sat unattached and its one-query answer said "linked".
+
+    Two shapes, one subject, because they are the same failure seen from two
+    sides:
+
+    * a published receipt whose ``linked_event_id`` disagrees with the market's
+      actual ``event_id`` — the contradiction itself;
+    * a receipt already downgraded to ``link_not_durable`` by the write-time
+      guard — the contradiction caught before publication.
+
+    The second is the healthy path and should still be reported: nonzero means
+    the matcher IS losing links, even though the receipt no longer lies about it.
+    """
+    rows = (await session.execute(text(
+        """
+        SELECT r.market_id, r.linked_event_id, fm.event_id, r.phase,
+               r.last_attempted_at
+        FROM market_match_receipts r
+        JOIN futures_markets fm ON fm.id = r.market_id
+        WHERE r.outcome = 'linked'
+          AND r.linked_event_id IS DISTINCT FROM fm.event_id
+        LIMIT 200
+        """
+    ))).all()
+    contradictions = [
+        {"market_id": int(r[0]), "receipt_says_event_id": int(r[1]) if r[1] is not None else None,
+         "database_says_event_id": int(r[2]) if r[2] is not None else None,
+         "phase": r[3],
+         "last_attempted_at": r[4].isoformat() if r[4] else None}
+        for r in rows
+    ]
+
+    lost = int(await session.scalar(text(
+        "SELECT count(*) FROM market_match_receipts "
+        "WHERE reject_reason = 'link_not_durable'"
+    )) or 0)
+
+    total = len(contradictions) + lost
+    return _finding(
+        "receipt_contradicts_link", total > 0, total,
+        f"{len(contradictions)} receipt(s) disagree with the database about "
+        f"where their market sits, and {lost} were caught by the write-time "
+        "guard as link_not_durable — either way the matcher is losing links a "
+        "sibling market's failure rolled back",
+        contradictions,
+    )
+
+
 CHECKS = (
     check_golden_pairs,
     check_anchor_collision,
     check_market_multi_event,
     check_receipt_coverage,
     check_linked_unsourced,
+    check_receipt_contradicts_link,
 )
 
 
