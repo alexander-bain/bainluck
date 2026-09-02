@@ -215,6 +215,21 @@ _CATEGORY_PREFIX_RE = re.compile(
     r'|Rugby|Top\s*14|Premiership Rugby'
     r')'
     r'(?:\s*-\s*[^:]{1,30})?'  # Optional suffix like "- Round 24", "- Matchday 25"
+    # THE DRAW QUALIFIER, and it is written AFTER the tournament, not before.
+    # The branch above handles tour-FIRST ("ATP French Open:", "WTA Madrid
+    # Open:"); Polymarket spells the same tournament tour-LAST — "US Open ATP:",
+    # "US Open WTA (Doubles):", "US Open, Qualification ATP:". Without this the
+    # prefix never strips, `_extract_matchup_impl` is handed the whole string,
+    # and it returns None — so the Polymarket MATCH-WINNER market (the only one
+    # carrying the win-prob series) cannot be oriented at all and the event's
+    # Polymarket curve stays blank. Measured 2026-09-02: 188 main-draw US Open
+    # match-winner markets, every one of them unparseable for this reason.
+    # Deliberately anchored to the tournament alternatives above rather than made
+    # free-standing: a prop prefix ("Set 1 Winner:", "Game Handicap:") reaches
+    # none of these branches and must keep failing to parse.
+    r'(?:,?\s+(?:Qualification|Qualifying))?'
+    r'(?:\s+(?:ATP|WTA)\b)?'
+    r'(?:\s*\((?:Doubles|Singles|Mixed(?:\s+Doubles)?)\))?'
     r')\s*:\s*',
     re.IGNORECASE,
 )
