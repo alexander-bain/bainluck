@@ -882,3 +882,138 @@ def test_the_backlog_pass_stops_at_the_reserve_rather_than_running_to_the_floor(
         )
     )
     assert stats["funnel"]["backlog_skipped_budget"] is True
+
+
+# =============================================================================
+# Part 8 — CERT-771: a receipt may never claim a link the database does not hold
+#
+# The banked reproduction, verbatim: market 1 links, market 2 raises, the shared
+# matcher session rolls back once, and market 1 ends at event_id=None while its
+# receipt still says linked_event_id=42. A receipt that reports the OPPOSITE of
+# the state it exists to explain is worse than no receipt, and it also hides the
+# row from every coverage check that reads "has a receipt" as "accounted for".
+#
+# Two guarantees, both tested: the link is committed BEFORE it is claimed, and
+# the claim is re-read against the database before publication.
+# =============================================================================
+
+
+def test_the_link_is_committed_before_the_receipt_claims_it():
+    """The window is closed at the source. Both link paths commit first."""
+    src = inspect.getsource(pmm._try_link_market)
+    matched = src.index('how="matched_existing_event"')
+    auto = src.index('how="auto_created_event"')
+    # A commit must appear between the start of each linking branch and its claim.
+    assert "await session.commit()" in src[:matched], (
+        "the matched-event branch claims a link it has not committed"
+    )
+    assert "await session.commit()" in src[matched:auto], (
+        "the auto-created branch claims a link it has not committed"
+    )
+
+
+class _DurabilitySession:
+    """Answers the durability re-read from a planted event_id map."""
+
+    def __init__(self, durable: dict):
+        self._durable = durable
+
+    async def execute(self, stmt):
+        rows = list(self._durable.items())
+
+        class _R:
+            def all(self_inner):
+                return rows
+
+        return _R()
+
+
+def test_a_receipt_whose_link_did_not_land_is_downgraded_not_published():
+    """The invariant, checked directly."""
+    linked = _receipt(market_id=1)
+    linked.link(42, how="matched_existing_event")
+    other = _receipt(market_id=2)
+    other.link(99, how="matched_existing_event")
+
+    n = asyncio.run(mr.verify_links_are_durable(
+        _DurabilitySession({1: None, 2: 99}), [linked, other]
+    ))
+
+    assert n == 1
+    assert linked.outcome == mr.OUTCOME_REJECTED
+    assert linked.reject_reason == mr.REJECT_LINK_NOT_DURABLE
+    assert linked.linked_event_id is None
+    assert linked.detail["claimed_event_id"] == 42
+    assert linked.detail["observed_event_id"] is None
+    # The market whose link DID land is untouched.
+    assert other.outcome == mr.OUTCOME_LINKED and other.linked_event_id == 99
+
+
+def test_a_link_that_landed_on_a_different_event_is_also_downgraded():
+    """"Committed" is not enough — it has to be committed to the event claimed."""
+    r = _receipt(market_id=1)
+    r.link(15299723)
+    n = asyncio.run(mr.verify_links_are_durable(
+        _DurabilitySession({1: 15299648}), [r]  # the ghost twin
+    ))
+    assert n == 1
+    assert r.reject_reason == mr.REJECT_LINK_NOT_DURABLE
+    assert r.detail["observed_event_id"] == 15299648
+
+
+def test_rejected_receipts_are_not_re_read_at_all():
+    """The guard costs one query for the linked subset and nothing otherwise."""
+    r = _receipt(market_id=1)
+    r.reject(mr.REJECT_NO_CANDIDATE)
+
+    class _Explodes:
+        async def execute(self, stmt):
+            raise AssertionError("queried for a receipt that claims no link")
+
+    assert asyncio.run(mr.verify_links_are_durable(_Explodes(), [r])) == 0
+
+
+def test_the_flush_verifies_before_it_writes_and_counts_the_downgrades():
+    """Composed: the whole publication path, not just the helper."""
+    order = []
+
+    class _Factory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, stmt):
+            sql = str(stmt).lower()
+            order.append("read" if sql.startswith("select") else "write")
+
+            class _R:
+                def all(self_inner):
+                    return [(1, None)]
+
+            return _R()
+
+        async def commit(self):
+            order.append("commit")
+
+    r = _receipt(market_id=1)
+    r.link(42)
+    stats = {"funnel": {}, "errors": []}
+    asyncio.run(pmm._flush_pass_receipts(
+        _CapturingSession(), [r], stats, mr.PHASE_PASS2_GENERAL,
+        session_factory=_Factory(),
+    ))
+
+    assert order[0] == "read", "wrote the receipt before checking the claim"
+    assert "write" in order and order[-1] == "commit"
+    assert stats["funnel"]["receipt_links_not_durable"] == 1
+    assert r.reject_reason == mr.REJECT_LINK_NOT_DURABLE
+
+
+def test_link_not_durable_is_a_registered_countable_reason():
+    """It has to be GROUP BY-able, or the reconciliation job cannot alert on it."""
+    assert mr.REJECT_LINK_NOT_DURABLE in mr.REJECT_REASONS

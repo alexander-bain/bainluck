@@ -55,6 +55,7 @@ from app.utils.match_receipts import (
     CandidateTrace,
     MatchReceipt,
     flush_receipts,
+    verify_links_are_durable,
 )
 
 logger = logging.getLogger(__name__)
@@ -1093,6 +1094,22 @@ async def _try_link_market(
             polymarket_backfill_queue.append(
                 (market.id, matched_event["event_id"])
             )
+        # COMMIT THE LINK BEFORE ANYTHING CLAIMS IT (CERT-771).
+        #
+        # Phase 1 used to hold every pass's `event_id` assignments pending on one
+        # session until after Phase 1.5. The per-market `except` arms below call
+        # `session.rollback()`, which discards the WHOLE pending set — so one bad
+        # market silently erased every link its predecessors had made in the same
+        # pass. That was already a data-loss bug; receipts made it a LYING bug,
+        # because the receipt is written on its own session and would still say
+        # `linked_event_id=42` for a market left at NULL. The reproduction is
+        # exact: market 1 links, market 2 raises, market 1 ends unattached and
+        # its one-query answer reports the opposite of the database.
+        #
+        # Committing here is the same idiom Phase 2 already uses per market for
+        # deadlock avoidance (gotcha #13), and it shrinks transactions rather
+        # than growing them.
+        await session.commit()
         if receipt is not None:
             receipt.link(matched_event["event_id"], how="matched_existing_event")
         return
@@ -1113,6 +1130,8 @@ async def _try_link_market(
                 polymarket_backfill_queue.append(
                     (market.id, auto_event["event_id"])
                 )
+            # Durable before claimed — same reason as the matched branch above.
+            await session.commit()
             if receipt is not None:
                 receipt.link(auto_event["event_id"], how="auto_created_event")
             return
@@ -1248,12 +1267,20 @@ async def _flush_pass_receipts(
 
     IN ITS OWN SESSION, DELIBERATELY. Receipts are a record, not a constraint
     (#2705): nothing downstream reads one to decide a link. Writing them on the
-    matcher's session would put the pass's real work — the ``event_id``
-    assignments still pending on that session — inside the same transaction as
-    a log write, so one bad receipt row would roll back the links. The record
+    matcher's session would put the pass's work inside the same transaction as a
+    log write, so one bad receipt row could roll back real matching. The record
     must never be able to cost the thing it is recording, so it gets its own
-    connection and its own commit boundary, and the matcher's transaction shape
-    is exactly what it was before receipts existed.
+    connection and its own commit boundary.
+
+    THE PRICE OF THAT SEPARATION, and how it is paid. Two sessions means the
+    receipt can be durable while the link is not — CERT-771's exact
+    reproduction: market 1 links, market 2 raises, the shared rollback erases
+    market 1's pending ``event_id``, and the receipt still says
+    ``linked_event_id=42``. Two things answer it, and both are needed. The
+    matcher now commits each link before claiming it, so the window is closed at
+    the source; and every claim is re-read against the database here before
+    publication, so a receipt CANNOT assert a link the database does not hold
+    even if that first guarantee is later changed.
 
     The failure IS counted. A receipts table that quietly stops being written is
     worse than no receipts table at all: every consumer would read the resulting
@@ -1268,6 +1295,17 @@ async def _flush_pass_receipts(
     factory = session_factory or get_task_session
     try:
         async with factory() as receipt_session:
+            # Never publish a claim the database does not hold (CERT-771).
+            downgraded = await verify_links_are_durable(receipt_session, receipts)
+            if downgraded:
+                stats["funnel"].setdefault("receipt_links_not_durable", 0)
+                stats["funnel"]["receipt_links_not_durable"] += downgraded
+                logger.warning(
+                    "%d receipt(s) in %s claimed a link the database does not "
+                    "hold — downgraded to link_not_durable. The matcher is "
+                    "losing links to sibling failures.",
+                    downgraded, phase,
+                )
             written = await flush_receipts(receipt_session, receipts)
             await receipt_session.commit()
         stats["funnel"]["receipts_written"] += written

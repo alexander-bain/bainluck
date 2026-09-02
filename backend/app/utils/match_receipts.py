@@ -118,6 +118,18 @@ REJECT_ATTEMPT_ERROR = "attempt_error"
 #: at low rates (gotcha #13); a spike is its own signal.
 REJECT_DEADLOCK = "deadlock"
 
+#: The attempt CHOSE an event, and the link is not in the database. The matcher
+#: rolled back before the write became durable — a sibling market in the same
+#: pass raised, or the commit itself failed.
+#:
+#: This value exists because the alternative is a receipt that LIES. Publishing
+#: `linked_event_id=42` for a market sitting at NULL would make the one-query
+#: answer report the opposite of the state it is meant to explain, and would
+#: hide the row from every coverage check that treats "has a receipt" as
+#: "accounted for". A nonzero count here is itself the finding: the matcher is
+#: losing links to sibling failures. Target 0.
+REJECT_LINK_NOT_DURABLE = "link_not_durable"
+
 REJECT_REASONS: frozenset[str] = frozenset({
     REJECT_PARENT_ROW,
     REJECT_NOT_GAME_LEVEL,
@@ -133,6 +145,7 @@ REJECT_REASONS: frozenset[str] = frozenset({
     REJECT_AUTO_CREATE_DECLINED,
     REJECT_ATTEMPT_ERROR,
     REJECT_DEADLOCK,
+    REJECT_LINK_NOT_DURABLE,
 })
 
 # ── Phases ──────────────────────────────────────────────────────────────────
@@ -273,6 +286,50 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]
     return value
+
+
+async def verify_links_are_durable(session, receipts: list[MatchReceipt]) -> int:
+    """Downgrade any receipt claiming a link the database does not hold (CERT-771).
+
+    THE INVARIANT: a receipt never asserts a link that is not committed. The
+    matcher now commits each link before claiming it, so in the normal path this
+    finds nothing — but the guarantee must not rest on that, because the failure
+    it prevents is the worst one this table can have. A receipt reading
+    ``linked_event_id=42`` for a market sitting at NULL does not merely lose
+    information: it reports the OPPOSITE of the state it exists to explain, and
+    it hides the row from every coverage check that treats "has a receipt" as
+    "accounted for".
+
+    So the claim is checked against the database, in the receipt session, right
+    before publication. One indexed primary-key read per flush. Returns the
+    number downgraded — nonzero means the matcher is losing links, which is a
+    finding in its own right and is counted as ``link_not_durable``.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import FuturesMarket
+
+    claimed = {r.market_id: r for r in receipts if r.outcome == OUTCOME_LINKED}
+    if not claimed:
+        return 0
+
+    rows = (await session.execute(
+        select(FuturesMarket.id, FuturesMarket.event_id)
+        .where(FuturesMarket.id.in_(list(claimed)))
+    )).all()
+    durable = {int(mid): eid for mid, eid in rows}
+
+    downgraded = 0
+    for market_id, receipt in claimed.items():
+        if durable.get(market_id) == receipt.linked_event_id:
+            continue
+        receipt.reject(
+            REJECT_LINK_NOT_DURABLE,
+            claimed_event_id=receipt.linked_event_id,
+            observed_event_id=durable.get(market_id),
+        )
+        downgraded += 1
+    return downgraded
 
 
 async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500) -> int:
