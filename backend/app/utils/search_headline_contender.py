@@ -260,3 +260,77 @@ def promote_headline_contenders(
     # name matches the window had, never the strongest.
     keep = len(page) - len(promoted)
     return promoted + page[: max(keep, 0)], len(promoted)
+
+
+def reserve_headline_slot(
+    ranked: list,
+    headline_market_ids,
+    *,
+    cap: int = MAX_HEADLINE_SLOTS,
+) -> list:
+    """Move up to `cap` already-earned headline markets to the FRONT of `ranked`.
+
+    WHY A SECOND STEP EXISTS AT ALL (CERT-718, round one of this ship was blocked
+    on exactly this). `promote_headline_contenders` puts the winner market first
+    in the typeahead's *futures* list — and then `typeahead_search` sends every
+    pool through `search_match_class.rank`, whose FIRST and inviolable sort key is
+    the match class. The US Open winner market holds "Alcaraz" only as an OUTCOME,
+    so it is MC4; every "… vs Carlos Alcaraz: Total Games" prop holds him in its
+    own NAME, so each is MC1. The global scorer therefore undid the promotion in
+    full. Measured on the real shape:
+
+        after promote_headline_contenders   [winner, prop0, prop1, prop2, prop3]
+        after search_match_class.rank       [prop0, prop1, prop2, prop3, winner]
+
+    So the answer went to the BOTTOM of the dropdown — #2579's own defect with a
+    smaller number attached, which is the thing `promote_headline_contenders`'
+    docstring says must not happen.
+
+    THE SHAPE OF THE FIX, and why it is a reservation rather than a scorer change.
+    The tempting repair is to teach `search_match_class` that owned-contender
+    evidence beats a name match. That would be wrong: MC1-before-MC4 is the rule
+    that keeps `Chess Candidates 2026: Winner` off the page for `fed`, and it is
+    load-bearing for every query, not just this one. #993 exists because that
+    ordering was once absent. Weakening a universal rule to serve one lane trades
+    a bounded bug for an unbounded one.
+
+    Instead the scorer keeps its rule untouched and runs to completion, and ONE
+    slot — `MAX_HEADLINE_SLOTS`, the same cap the page promotion honours — is
+    reserved after it. The reservation is not a new judgement about relevance: the
+    market has already passed tier 1, the whole-word outcome match, the
+    probability floor and the volume floor before an id can reach here. This
+    function only stops the scorer from discarding a decision that was already
+    made on stricter evidence than the scorer has.
+
+    APPLIED BEFORE THE `[:7]` SLICE, deliberately. The winner does not merely rank
+    low — with five futures and two events all matching "Sabalenka" it lands in
+    the seventh slot and the next candidate pushes it off the dropdown entirely.
+    Reserving after truncation would rescue the visible case and lose the invisible
+    one, and the invisible one is the reported bug.
+
+    Pure and total: unknown ids, an empty list, a `cap` of zero and payloads of
+    any shape are all no-ops that return `ranked` unchanged. Relative order among
+    everything else is preserved, so the scorer's result still governs slots 2..n.
+    """
+    if cap <= 0 or not ranked or not headline_market_ids:
+        return ranked
+    wanted = {mid for mid in headline_market_ids if mid is not None}
+    if not wanted:
+        return ranked
+
+    front: list = []
+    rest: list = []
+    for item in ranked:
+        if (
+            len(front) < cap
+            and isinstance(item, dict)
+            and item.get("type") == "futures"
+            and item.get("market_id") in wanted
+        ):
+            front.append(item)
+        else:
+            rest.append(item)
+
+    if not front:
+        return ranked
+    return front + rest

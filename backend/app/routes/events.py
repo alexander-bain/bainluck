@@ -50,6 +50,7 @@ from app.utils.search_headline_contender import (
     MIN_CONTENDER_VOLUME,
     contender_patterns,
     promote_headline_contenders,
+    reserve_headline_slot,
 )
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
@@ -5834,6 +5835,12 @@ async def typeahead_search(
     # a name match, which is exactly the state in which an outcome-only row
     # cannot have reached it. A query the dropdown already answers well pays
     # nothing.
+    # Ids of the markets the promoter actually chose, carried to the far end of
+    # this function. The global scorer below re-sorts every pool by match class
+    # and would otherwise sink an outcome-only winner market beneath the props
+    # that name the player — see `reserve_headline_slot`, which is where the
+    # decision made here is honoured.
+    _ta_headline_ids: set = set()
     _ta_headline_patterns = contender_patterns(ta_expanded)
     if (
         _ta_headline_patterns
@@ -5885,11 +5892,21 @@ async def typeahead_search(
             )
             await _recover_search_session(db, _ta_deadline)
             _ta_headline_rows = []
-        ta_futures_ranked, _ = promote_headline_contenders(
+        ta_futures_ranked, _ta_headline_promoted = promote_headline_contenders(
             ta_futures_ranked,
             _ta_headline_rows,
             dedup_key=_normalize_futures_dedup_key,
         )
+        # Read off the FRONT of the returned list, which is that function's
+        # documented contract, rather than re-deriving the choice from
+        # `_ta_headline_rows` — a second derivation is a second rule, and two
+        # rules that can disagree is the class of bug the evidence echo below
+        # exists to eliminate one level up.
+        _ta_headline_ids = {
+            getattr(m, "id", None)
+            for m in ta_futures_ranked[:_ta_headline_promoted]
+        }
+        _ta_headline_ids.discard(None)
         _ta_mark("headline_contenders")
 
     futures_pool = []
@@ -6218,7 +6235,14 @@ async def typeahead_search(
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
-    suggestions = _s_rank(q, _ta_candidates)[:7]
+    # The reservation runs BETWEEN the scorer and the slice, never inside either.
+    # Inside the scorer it would weaken MC1-before-MC4 for every query; after the
+    # slice it would rescue a winner that ranked 6th and lose one that ranked 8th,
+    # and the 8th is the reported bug. `reserve_headline_slot` is a no-op on the
+    # empty id set, so a query that earned no contender pays nothing here.
+    suggestions = reserve_headline_slot(
+        _s_rank(q, _ta_candidates), _ta_headline_ids
+    )[:7]
     _ta_mark("rank")
 
     for _s in suggestions:
