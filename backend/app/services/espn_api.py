@@ -24,6 +24,32 @@ ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
 from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
 
 
+def _normalize_win_percentage(value) -> Optional[float]:
+    """ESPN's ``homeWinPercentage`` as a 0–1 probability.
+
+    ESPN is not consistent about the unit across its own surfaces, so this is
+    the one place that decides. The `winprobability` array on `/summary` and the
+    core probabilities feed both return a FRACTION today — MLB 0.499, NFL 0.5853,
+    NBA 0.137, all probed 2026-08-31 — while the scoreboard's
+    `situation.lastPlay.probability` has historically returned a percentage.
+    Reading the fraction as a percentage is not a rounding error: an
+    unconditional ``/100`` had written 118,824 backfilled rows across 989 events
+    with 118,821 of them below 2%, which is a chart line glued to the floor —
+    exactly the "flat ESPN line" this shape was supposed to draw.
+
+    So: divide only what is actually a percentage.
+    """
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if num > 1.0:
+        num = num / 100.0
+    return num
+
+
 @dataclass
 class ESPNTeam:
     """Team data from ESPN."""
@@ -90,6 +116,30 @@ class ESPNEvent:
     season_type: Optional[int] = None  # 1=preseason, 2=regular, 3=postseason
 
 
+@dataclass
+class ESPNLiveWinProbability:
+    """One ESPN win-probability reading pulled from the core probabilities feed.
+
+    ``supported`` is the load-bearing field. ESPN answers 400 —
+    "Probabilities are not supported for sport: soccer, league: eng.1" — for a
+    league that has no win-probability feed at all, and that is a permanent
+    property of the league, not of tonight's game. A caller that cannot tell it
+    apart from "no reading yet" re-asks every 60 s, forever, for every soccer
+    match on the slate.
+    """
+    home_win_probability: Optional[float]
+    play_id: Optional[str] = None
+    last_modified: Optional[str] = None
+    point_count: Optional[int] = None
+    supported: bool = True
+    #: This ONE event id is unknown to ESPN (404 "No event found for eventId").
+    #: Kept apart from `supported` because they are different scopes and CERT-653
+    #: caught them collapsed: a 404 is an event-level miss — a stale or wrong
+    #: `espn_id` on one row — and reading it as "the league has no probabilities"
+    #: retired every MLB game on the worker until it restarted.
+    event_missing: bool = False
+
+
 class ESPNAPIService:
     """Client for ESPN's public API endpoints."""
 
@@ -125,6 +175,23 @@ class ESPNAPIService:
 
     async def _get(self, url: str) -> Optional[dict]:
         """Make a GET request with rate limiting and error handling."""
+        _status, data = await self._get_with_status(url)
+        return data
+
+    async def _get_with_status(self, url: str) -> tuple[Optional[int], Optional[dict]]:
+        """``_get`` that also hands back the HTTP status code.
+
+        ``_get`` collapses "ESPN does not have this" and "ESPN did not answer"
+        into the same ``None`` — gotcha #53, an empty result is a response shape,
+        not an absence. The core probabilities endpoint distinguishes them with a
+        status code (400 = this league has no win-probability feed AT ALL, and
+        will not grow one this evening; anything else = try again next cycle), and
+        the caller that has to decide whether to keep spending requests on a game
+        needs to see which one it got.
+
+        Returns ``(status_code, parsed_json)``. ``status_code`` is ``None`` only
+        when no response was obtained (timeout / transport error).
+        """
         try:
             client = await self._get_client()
             response = await client.get(url)
@@ -136,17 +203,17 @@ class ESPNAPIService:
 
             if response.status_code != 200:
                 logger.warning(f"ESPN API returned {response.status_code} for {url}")
-                return None
+                return response.status_code, None
 
             await asyncio.sleep(self.rate_limit_delay)
-            return response.json()
+            return 200, response.json()
 
         except httpx.TimeoutException:
             logger.warning(f"ESPN API timeout for {url}")
-            return None
+            return None, None
         except Exception as e:
             logger.error(f"ESPN API error: {e}")
-            return None
+            return None, None
 
     def _get_espn_path(self, sport_key: str) -> Optional[tuple[str, str]]:
         """Get ESPN sport/league path from our sport key."""
@@ -371,10 +438,9 @@ class ESPNAPIService:
             home_win_prob = None
             situation = competition.get("situation", {})
             if situation:
-                home_win_prob = situation.get("lastPlay", {}).get("probability", {}).get("homeWinPercentage")
-                # ESPN returns percentage (e.g., 83.1 = 83.1%) — convert to decimal
-                if home_win_prob is not None and home_win_prob > 1.0:
-                    home_win_prob = home_win_prob / 100.0
+                home_win_prob = _normalize_win_percentage(
+                    situation.get("lastPlay", {}).get("probability", {}).get("homeWinPercentage")
+                )
 
             # Parse date
             date_str = event_data.get("date")
@@ -483,10 +549,104 @@ class ESPNAPIService:
             result.append({
                 "play_id": point.get("playId"),
                 "seconds_left": point.get("secondsLeft"),
-                "home_win_probability": point.get("homeWinPercentage", 0) / 100,
+                "home_win_probability": _normalize_win_percentage(
+                    point.get("homeWinPercentage", 0)
+                ),
             })
 
         return result
+
+    async def get_live_win_probability(
+        self,
+        sport_key: str,
+        event_id: str,
+        known_point_count: Optional[int] = None,
+    ) -> Optional[ESPNLiveWinProbability]:
+        """The CURRENT ESPN win probability for one in-progress game.
+
+        The scoreboard carries ``situation.lastPlay.probability`` for NFL and
+        WNBA but NOT for MLB — measured on production over 21 days, an MLB game
+        lands a median of 5 live ESPN points while an NFL game lands 116 — so for
+        baseball the scoreboard pass is simply blind and there is nothing to
+        parse. The core probabilities feed has the reading the scoreboard is
+        missing, and it costs ~1 KB instead of the summary endpoint's ~800 KB.
+
+        Three small requests, because the feed is append-ordered with no ``sort``
+        support (probed: ``sort=sequenceNumber:desc`` is silently ignored) — an
+        index call for the point count, the last page for its ``$ref``, then the
+        point itself. ``known_point_count`` collapses that to ONE request on the
+        cycles where nothing new has landed: ESPN adds a point about every two
+        minutes (p50 122 s, measured over a full game) and we ask every 60 s, so
+        roughly half of all cycles are a single request.
+
+        Returns ``None`` when ESPN did not answer or has no point yet, and an
+        ``ESPNLiveWinProbability`` otherwise — with ``supported=False`` when the
+        league has no win-probability feed at all (soccer answers 400; ESPN
+        publishes no soccer win probability anywhere, verified against both the
+        core feed and the summary endpoint).
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return None
+
+        sport, league = path
+        base = (
+            f"{ESPN_CORE_API}/{sport}/leagues/{league}"
+            f"/events/{event_id}/competitions/{event_id}/probabilities"
+        )
+
+        status, index = await self._get_with_status(f"{base}?limit=1")
+        # 400 is the LEAGUE speaking: "Probabilities are not supported for sport:
+        # soccer, league: eng.1". 404 is one event id speaking: "No event found
+        # for eventId". Same falsy body, different blast radius — gotcha #53.
+        if status == 400:
+            return ESPNLiveWinProbability(None, supported=False)
+        if status == 404:
+            return ESPNLiveWinProbability(None, event_missing=True)
+        if not index:
+            return None
+
+        # With limit=1 the page count IS the point count, and the last page holds
+        # the newest point.
+        point_count = index.get("pageCount") or 0
+        if not point_count:
+            return None  # supported, but the feed has not opened yet
+
+        if known_point_count is not None and point_count == known_point_count:
+            # Nothing new since the caller last read this game. Say so without
+            # spending the other two requests; the caller re-affirms its cached
+            # value rather than letting the reading age out of the blend.
+            return ESPNLiveWinProbability(None, point_count=point_count)
+
+        status, last_page = await self._get_with_status(f"{base}?limit=1&page={point_count}")
+        if not last_page:
+            return None
+        items = last_page.get("items") or []
+        if not items:
+            return None
+
+        ref = items[0].get("$ref")
+        if not ref:
+            return None
+        # ESPN self-links over plain http and our client does not follow
+        # redirects, so the raw $ref reads as a 126-byte non-answer.
+        if ref.startswith("http://"):
+            ref = "https://" + ref[len("http://"):]
+
+        status, point = await self._get_with_status(ref)
+        if not point:
+            return None
+
+        home = point.get("homeWinPercentage")
+        if home is None:
+            return None
+
+        return ESPNLiveWinProbability(
+            home_win_probability=_normalize_win_percentage(home),
+            play_id=ref.rsplit("/", 1)[-1].split("?")[0] or None,
+            last_modified=point.get("lastModified"),
+            point_count=point_count,
+        )
 
     async def get_event_context(
         self, sport_key: str, event_id: str

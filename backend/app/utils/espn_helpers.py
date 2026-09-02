@@ -107,6 +107,50 @@ def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) ->
 # started yet" grace on the event's OWN commence_time.
 
 
+#: ESPN statuses that mean the game has NOT started, is over, or is not going to
+#: be played today. A game outside `in` and outside this set — `status_delayed`,
+#: `status_rain_delay` — is a game in progress whose clock has stopped.
+#: `status_suspended` is deliberately on the STOP side: a suspended game resumes
+#: on another date, so our own record can sit at `live` for many hours and the
+#: model would keep re-affirming a reading for a game nobody is playing.
+_ESPN_STATUSES_NOT_IN_PLAY = frozenset({
+    "scheduled", "pre", "post",
+    "status_scheduled", "status_pre", "status_final", "status_full_time",
+    "status_postponed", "status_canceled", "status_cancelled",
+    "status_suspended", "status_forfeit", "status_abandoned",
+})
+
+
+def espn_game_is_in_play(espn_status, our_status) -> bool:
+    """Should the statistical model keep running on this game?
+
+    ESPN reports a rain delay as neither ``in`` nor final, and the old gate
+    (``ee.status != "in"`` → return) read that as "stop". Measured on COL–BAL
+    2026-08-31: ESPN's own play-by-play wallclock shows a 97.5-minute stoppage
+    between End 5th (02:01:21Z) and Top 6th (03:38:54Z), and across that whole
+    window `stat_model` was never recomputed, so its `updated_at` aged to 93
+    minutes while Kalshi and the betting line kept moving. The hero's
+    relative-age decay then did its job and demoted OUR OWN model to the 0.1
+    weight floor — on a game whose state had not changed at all.
+
+    The model's inputs during a delay are the same inputs; recomputing yields the
+    same number, `_create_or_update_win_prob_snapshot` dedups it to a
+    reading-count bump so no fake chart point is appended, and the stamp refreshes
+    so the blend keeps counting the reading. That is the whole fix.
+
+    Our own `status` is required as corroboration rather than trusting ESPN's
+    status vocabulary alone: `event.status == 'live'` is the authority this
+    module already leans on elsewhere (#922), and it is what stops an unfamiliar
+    ESPN status string from keeping the model running on a dead game.
+    """
+    status = (espn_status or "").strip().lower()
+    if status == "in":
+        return True
+    if not status or status in _ESPN_STATUSES_NOT_IN_PLAY:
+        return False
+    return our_status == "live"
+
+
 # ---------------------------------------------------------------------------
 # Team upsert
 # ---------------------------------------------------------------------------
@@ -617,10 +661,14 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     from app.models.models import Event
     from app.tasks.espn_sync import _sanitize_period
 
+    in_play = espn_game_is_in_play(ee.status, getattr(event, "status", None))
+    if in_play and ee.status != "in":
+        stats["stat_model_clock_stopped"] = stats.get("stat_model_clock_stopped", 0) + 1
+
     has_game_progress = ee.clock or sport_key.startswith("baseball_")
-    if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
+    if not in_play or ee.home_score is None or ee.away_score is None or not has_game_progress:
         # Track missing data for live games
-        if ee.status == "in":
+        if in_play:
             if ee.home_score is None or ee.away_score is None:
                 stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
             elif not ee.clock:
@@ -646,15 +694,27 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
         if ee.period and not period_str:
             period_str = str(ee.period)
 
-        stat_wp = compute_statistical_win_prob(
-            home_score=ee.home_score,
-            away_score=ee.away_score,
-            clock=ee.clock,
-            period=period_str,
-            sport_key=sport_key,
-            pregame_spread=pregame_spread,
-            opening_home_probability=opening_prob,
-        )
+        def _compute(period):
+            return compute_statistical_win_prob(
+                home_score=ee.home_score,
+                away_score=ee.away_score,
+                clock=ee.clock,
+                period=period,
+                sport_key=sport_key,
+                pregame_spread=pregame_spread,
+                opening_home_probability=opening_prob,
+            )
+
+        stat_wp = _compute(period_str)
+        if stat_wp is None and ee.period and period_str != str(ee.period):
+            # When the clock stops, ESPN replaces the period text with the
+            # STOPPAGE text — `status_detail` reads "Delayed", not "Top 6th" —
+            # and no period parser can read that, so the model returned None and
+            # went silent for the length of the delay. The numeric period is
+            # still describing where the game actually is. Normal play never
+            # reaches this line: the first call already parsed.
+            period_str = str(ee.period)
+            stat_wp = _compute(period_str)
         if stat_wp is not None:
             # #1829: `stat_model` has TWO writers — this one and
             # odds_polling.py's. Both stamp, or the source's age depends on

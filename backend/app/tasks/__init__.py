@@ -603,6 +603,7 @@ celery_app.conf.task_routes = {
     "app.tasks.poll_datagolf_inplay": {"queue": "realtime"},
     "app.tasks.poll_sport_odds": {"queue": "realtime"},
     "app.tasks.sync_espn_live_events": {"queue": "realtime"},
+    "app.tasks.sync_espn_live_win_probability": {"queue": "realtime"},
     "app.tasks.poll_live_prediction_markets": {"queue": "realtime"},
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
     "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
@@ -1462,6 +1463,30 @@ def sync_espn_live_events(self):
     """Sync live event data from ESPN for all sports with active games."""
     from app.tasks.espn_sync import _sync_espn_live_events
     return _tracked_run("espn_sync", _sync_espn_live_events())
+
+
+@celery_app.task(bind=True, soft_time_limit=50, time_limit=55,
+                 name="app.tasks.sync_espn_live_win_probability")
+def sync_espn_live_win_probability(self, budget: int = None):
+    """Refresh ESPN win probability on live games the scoreboard cannot serve.
+
+    Separate from `sync_espn_live_events` on purpose. That task is a five-pass
+    12-second sweep; this one is a bounded network loop whose whole job is
+    cadence, and folding it in would have hidden its cost inside another task's
+    duration and put its budget at the mercy of the box-score passes. The time
+    limits are set under the 60 s beat so a slow ESPN night can never queue two
+    copies of it against each other.
+    """
+    from app.tasks.espn_live_win_prob import (
+        DEFAULT_EVENT_BUDGET,
+        _sync_espn_live_win_probability,
+    )
+    return _tracked_run(
+        "espn_live_win_prob",
+        _sync_espn_live_win_probability(
+            budget=DEFAULT_EVENT_BUDGET if budget is None else budget
+        ),
+    )
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_logos")
@@ -3817,6 +3842,13 @@ celery_app.conf.beat_schedule = {
     },
     "sync-espn-live": {
         "task": "app.tasks.sync_espn_live_events",
+        "schedule": 60.0,
+    },
+    # The scoreboard `sync-espn-live` reads has no win probability for MLB, so
+    # for baseball this is the ONLY thing keeping the ESPN source alive during a
+    # live game (measured: p50 5 live ESPN points per MLB game, vs 116 for NFL).
+    "sync-espn-live-win-prob": {
+        "task": "app.tasks.sync_espn_live_win_probability",
         "schedule": 60.0,
     },
     "backfill-team-logos": {

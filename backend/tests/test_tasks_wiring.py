@@ -190,6 +190,11 @@ class TestBeatScheduleCompleteness:
         "refresh-stale-futures-prices-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
+        # Queue 067 — ESPN's scoreboard carries no win probability for MLB, so
+        # this is the only thing keeping the ESPN source alive on a live baseball
+        # game. Gotcha #12: this allowlist is the reason a new beat entry cannot
+        # land silently.
+        "sync-espn-live-win-prob",
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
