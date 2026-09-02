@@ -6,17 +6,22 @@ import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/An
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
-import dynamic from "next/dynamic";
 import UserMenu from "@/components/UserMenu";
-const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 import SWRProvider from "@/components/SWRProvider";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { Suspense } from "react";
-const NavigationProgress = dynamic(() => import("@/components/NavigationProgress"), { ssr: false });
-const MobileSearchTrigger = dynamic(() => import("@/components/MobileSearchTrigger"), { ssr: false });
+// LAT-P200: these three were `dynamic(..., { ssr: false })` right here, and
+// because this file is a Server Component that split never happened — see the
+// header of DeferredChrome.tsx. The `dynamic()` calls now live behind a client
+// boundary, which is where `import()` is an actual split point.
+import {
+  DeferredNavigationProgress as NavigationProgress,
+  DeferredSearchBar as SearchBar,
+  DeferredMobileSearchTrigger as MobileSearchTrigger,
+} from "@/components/layout/DeferredChrome";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
