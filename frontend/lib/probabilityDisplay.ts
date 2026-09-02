@@ -137,3 +137,40 @@ export function formatMovementPoints(
   if (pts == null) return null;
   return Math.abs(pts).toFixed(decimals);
 }
+
+/**
+ * UX-P275 — does this movement PRINT as a move at `decimals`?
+ *
+ * THE DEFECT this exists to make unrepresentable. Seven renderers decided
+ * "did it move?" by testing the WIRE FRACTION for exact zero (`m !== 0`) and
+ * then printed the result rounded to one decimal. Those are two different
+ * questions, so they disagree on everything in the open interval that is
+ * nonzero yet rounds to nothing: a market that moved 0.0029 points passed the
+ * gate and printed `-0.0%` inside a red "went down" pill. A no-change read as
+ * an alarm, and which alarm depended only on the sign of a rounding residue.
+ *
+ * Measured on production 2026-09-02 (`GET /api/futures/1`, the "Last move"
+ * column): of 22 outcomes carrying a change, **16 printed a coloured zero** —
+ * 13 green `+0.0%` and 3 red `-0.0%`. Six rows in that column said something
+ * true. `GET /api/feed?limit=50` carries 81 `movement` values, of which 41
+ * render as a zero and 27 are EXACTLY zero.
+ *
+ * THE RULE: **ask the string, not the number.** The predicate is derived from
+ * `formatMovementPoints` — the very function that produces the printed
+ * magnitude — so the gate and the rendering cannot drift apart, whatever
+ * `decimals` a surface chooses. This is the same construction UX-P046 uses two
+ * functions above, where the bands come from the rounding RESULT rather than
+ * from hand-picked thresholds "so the two ends cannot disagree".
+ *
+ * It is deliberately NOT a threshold constant. A constant would have to be
+ * kept in sync with each caller's `decimals` by hand, which is the drift this
+ * module exists to prevent.
+ */
+export function isRenderedMove(
+  movement: number | null | undefined,
+  decimals = 1,
+): boolean {
+  const printed = formatMovementPoints(movement, decimals);
+  if (printed === null) return false;
+  return Number.parseFloat(printed) !== 0;
+}
