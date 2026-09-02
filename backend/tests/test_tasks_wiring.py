@@ -194,6 +194,7 @@ class TestBeatScheduleCompleteness:
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
+        "matching-reconciliation",
         "poll-live-prediction-markets",  # restored: WS not yet deployed, REST polling needed for pre-game snapshots
         "heartbeat",
         "collapse-odds-snapshots-daily",

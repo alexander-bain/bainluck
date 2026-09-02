@@ -4844,3 +4844,41 @@ async def match_receipts(
         ],
         "valid_reasons": sorted(REJECT_REASONS),
     }
+
+
+@router.post("/matching-reconciliation/run")
+async def trigger_matching_reconciliation(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(
+        True, description="File/close GitHub issues (False = detect-only)"
+    ),
+    inline: bool = Query(
+        False, description="Run in-request and return the findings"
+    ),
+):
+    """#2706: on-demand run of the matching reconciliation job.
+
+    Re-checks the 709-pair golden set and the three INVARIANTS-2026-09-02
+    queries against production, and files ONE deduped `matching-drift` issue per
+    subject on regression — closing it again on recovery. Read-only against
+    market data.
+
+    `?inline=true&file_issues=false` is the verification form: it returns the
+    findings without touching GitHub, which is how the bus re-derives the
+    baselines without a beat run.
+    """
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.matching_reconciliation import _run_matching_reconciliation
+
+        return await _run_matching_reconciliation(file_issues=file_issues)
+
+    from app.routes.admin import _safe_send_task
+
+    result = _safe_send_task(
+        "app.tasks.matching_reconciliation",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
