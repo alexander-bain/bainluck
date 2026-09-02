@@ -250,7 +250,23 @@ class _FakeRedis:
 
 
 def _poly_harness(monkeypatch, events_pages, rec, open_count=5):
+    """Drive the real sync against a fake Gamma and a recording session.
+
+    #2637 changed how the task reaches Gamma — it no longer pages
+    ``closed=true`` by offset, it selects event ids out of our own rows and
+    addresses them with ``get_events_by_ids``. So the harness now answers a
+    candidate-id query and stubs the id-addressed fetch, and the specimens carry
+    the ``closed`` flag Gamma actually sends. Both changes are semantic, not
+    cosmetic: under direct addressing a payload with no ``closed`` on a leg IS a
+    live market, and treating it as settled is the defect the rewrite exists to
+    make impossible.
+    """
     monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **k: _FakeRedis())
+
+    pages = [list(p) for p in events_pages]
+    #: The ids the task will be handed as its population, in order.
+    candidate_ids = [str(e["id"]) for page in pages for e in page]
+    by_id = {str(e["id"]): e for page in pages for e in page}
 
     class _Scalar:
         def __init__(self, v):
@@ -259,9 +275,18 @@ def _poly_harness(monkeypatch, events_pages, rec, open_count=5):
         def scalar(self):
             return self._v
 
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
     async def _execute(stmt, params=None):
         sql = str(getattr(stmt, "text", stmt))
-        if "COUNT(*)" in sql:
+        if "ORDER BY eid::bigint" in sql:
+            return _Rows([(eid,) for eid in candidate_ids])
+        if "COUNT(*)" in sql or "count(*)" in sql:
             return _Scalar(open_count)
         rec.record(sql, params)
         return MagicMock(rowcount=1)
@@ -279,14 +304,12 @@ def _poly_harness(monkeypatch, events_pages, rec, open_count=5):
 
     monkeypatch.setattr(poly_mod, "get_task_session", lambda: _CM())
 
-    pages = list(events_pages)
-
     class _Service:
         def __init__(self, *a, **k):
             pass
 
-        async def get_events(self, **kw):
-            return pages.pop(0) if pages else []
+        async def get_events_by_ids(self, event_ids):
+            return [by_id[str(i)] for i in event_ids if str(i) in by_id]
 
         async def close(self):
             return None
@@ -297,18 +320,28 @@ def _poly_harness(monkeypatch, events_pages, rec, open_count=5):
 
 NONTERMINAL_EVENT = [
     {
-        "id": "ev1",
+        "id": "1",
+        "closed": True,
         "markets": [
-            {"conditionId": "0xdeadbeef", "outcomePrices": '["0.60", "0.40"]'}
+            {
+                "conditionId": "0xdeadbeef",
+                "closed": True,
+                "outcomePrices": '["0.60", "0.40"]',
+            }
         ],
     }
 ]
 
 TERMINAL_EVENT = [
     {
-        "id": "ev2",
+        "id": "2",
+        "closed": True,
         "markets": [
-            {"conditionId": "0xfeedface", "outcomePrices": '["0.99", "0.01"]'}
+            {
+                "conditionId": "0xfeedface",
+                "closed": True,
+                "outcomePrices": '["0.99", "0.01"]',
+            }
         ],
     }
 ]

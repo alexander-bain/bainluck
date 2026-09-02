@@ -17,6 +17,8 @@ from typing import Optional
 import httpx
 from pydantic import BaseModel
 
+from app.utils.polymarket_settlement_scan import GAMMA_MAX_IDS_PER_REQUEST
+
 logger = logging.getLogger(__name__)
 
 
@@ -214,10 +216,32 @@ class PolymarketAPIService:
         Returns the events Gamma knows about. Ids it does not recognise are
         simply absent from the response — callers must key by id rather than
         assuming the list lines up with the request.
+
+        **The explicit ``limit`` is load-bearing (#2637, measured 2026-09-02).**
+        Gamma's default page size is 20, and it applies to an id-addressed
+        request too: asking for 100 ids without ``limit`` returned **20** events
+        with a 200 and no warning. Under the contract above, a truncated page is
+        indistinguishable from 80 unrecognised ids — the caller would record
+        them as "Gamma does not have these" and move on (gotcha #53: an empty
+        200 is a response shape, not an absence). This request was safe only
+        because its one caller happened to batch at exactly 20; raising that
+        constant would have silently dropped most of every batch.
+
+        Over ``GAMMA_MAX_IDS_PER_REQUEST`` raises rather than truncating: Gamma
+        answers 101 ids with HTTP 422 ``expected array length <= 100``, so
+        chunking is the caller's decision to make visibly, not this method's to
+        paper over.
         """
         if not event_ids:
             return []
+        if len(event_ids) > GAMMA_MAX_IDS_PER_REQUEST:
+            raise ValueError(
+                f"get_events_by_ids: {len(event_ids)} ids exceeds Gamma's limit "
+                f"of {GAMMA_MAX_IDS_PER_REQUEST} per request (it answers 422); "
+                f"chunk the batch at the call site"
+            )
         params = [("id", str(eid)) for eid in event_ids]
+        params.append(("limit", str(len(event_ids))))
         response = await self.gamma_client.get("/events", params=params)
         response.raise_for_status()
         payload = response.json()

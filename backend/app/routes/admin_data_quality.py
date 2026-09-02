@@ -1266,6 +1266,82 @@ async def get_data_quality_report(
         return {"status": "error", "message": str(e)}
 
 
+@router.get("/polymarket/stale-open")
+async def polymarket_stale_open(
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """The #2637 needle: finished-looking Polymarket markets still carried open.
+
+    The resolved-status sync could only ever reach 2021 — Gamma caps ``offset``
+    at 2000 and serves closed events oldest-first — so 32,090 markets across
+    22,092 events sat ``open`` while finished, some since 2020, and nothing in
+    the product could say so. This endpoint is the instrument that stops the
+    class hiding again: one number, readable on demand, in the same units the
+    bug was filed in.
+
+    ``stale_open`` is #2637's verbatim predicate, kept verbatim so the series
+    stays comparable to the 31,462 it was filed against. It carries no "but
+    these ones are fine" subtraction, and the first attempt at one is why: of
+    the stuck rows behind events **Gamma itself reports closed**, 71% carry a
+    future ``resolution_date`` (265 of 371, measured 2026-09-02), so excusing
+    those would have hidden most of the defect. Only the venue can tell an open
+    market from a finished one, and that answer costs an HTTP call — so it comes
+    from ``last_sync``, the sync's own last run, rather than from a SQL census
+    pretending to derive it.
+
+    Read the two together: ``stale_open`` should fall and keep falling, and
+    ``last_sync`` says whether the most recent sweep saw a population that was
+    genuinely still trading or simply failed to reach it.
+    """
+    _check_admin_secret(secret, request=request)
+
+    import json as _json
+
+    from app.tasks.redis_state import get_redis_client
+    from app.utils.polymarket_settlement_scan import (
+        STALE_OPEN_AGE_HOURS,
+        STALE_OPEN_CENSUS_SQL,
+        SYNC_SUMMARY_KEY,
+        StaleOpenCensus,
+    )
+
+    row = (
+        await db.execute(
+            text(STALE_OPEN_CENSUS_SQL), {"stale_hours": STALE_OPEN_AGE_HOURS}
+        )
+    ).one()
+
+    census = StaleOpenCensus(
+        stale_open=row[0] or 0,
+        distinct_events=row[1] or 0,
+        unaddressable=row[2] or 0,
+        oldest_commence=row[3],
+    )
+
+    # A missing summary is reported as such, never as an empty run — "the sync
+    # has not reported" and "the sync reported nothing to do" are different
+    # facts (gotcha #53).
+    last_sync = None
+    try:
+        raw = get_redis_client().get(SYNC_SUMMARY_KEY)
+        if raw:
+            last_sync = _json.loads(raw)
+    except Exception as exc:  # a dead cache must not take the census with it
+        last_sync = {"error": str(exc)[:120]}
+
+    return {
+        "stale_open": census.stale_open,
+        "distinct_events": census.distinct_events,
+        "unaddressable": census.unaddressable,
+        "oldest_commence": census.oldest_commence,
+        "stale_after_hours": STALE_OPEN_AGE_HOURS,
+        "last_sync": last_sync,
+        "issue": 2637,
+    }
+
+
 @router.post("/data-quality/check")
 async def trigger_data_quality_check(
     request: Request, secret: str = Query(None),
