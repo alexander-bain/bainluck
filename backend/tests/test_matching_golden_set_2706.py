@@ -393,6 +393,153 @@ def test_the_adjudicated_event_is_always_present_for_a_positive_pair():
 
 
 # =============================================================================
+# The truncation proof (LANE1B-002-FIXTURE-CANDIDATE-PARITY)
+#
+# The 2026-09-02 capture is NOT production's candidate set. It differs in three
+# measurable ways, and each one makes some green in this file mean less than it
+# looks. A ratchet whose fixture is optimistic in ways nobody has written down
+# is a ratchet that quietly stops guarding, so the three gaps are COMPUTED from
+# the fixture here, PINNED, and allowed to move in one direction only.
+#
+#   1. THE CAP. `capture_matching_golden_fixture.py` keeps 10 candidates per
+#      market; production's own candidate query takes `LIMIT 20`
+#      (`_find_matching_event`). 327/709 pairs came back at the cap.
+#   2. THE WIDENING. The capture widens the matcher's window by ±4 days so a
+#      failure-class-(c) answer — one that sits OUTSIDE the window, which is
+#      the whole point of that class — is in the file at all. But the cap is
+#      applied as "earliest 10 in the WIDENED window", so for a market with
+#      more than 10 rows in that span the eviction lands on the LATE end, which
+#      overlaps the matcher's real window. 235 pairs are in that state: their
+#      last captured candidate starts BEFORE the matcher's own window closes,
+#      so real in-window rivals may be missing. Fewer rivals is an EASIER test
+#      in both directions — a positive chooses against less competition, a
+#      negative refuses less temptation.
+#   3. THE APPENDED ANSWER. When the capture's own search did not surface the
+#      adjudicated event, the capture appends it (`search_surfaced_the_answer`
+#      is false for 88 pairs). Such a pair can still test the SCORER — does it
+#      prefer the adjudicated event over the decoys it did see — but it says
+#      nothing about whether production would ever put that event on the board.
+#      60 of the 105 passing positives are in this bucket, so the positive arm
+#      is asserted separately WITHOUT them below.
+#
+# THE FIX, when someone re-captures: use production's own window and its own
+# `ORDER BY commence_time LIMIT 20` for the primary block, and keep the
+# appended answer flagged. Every number below then falls, and these tests say
+# so out loud rather than going quietly green.
+# =============================================================================
+
+#: Candidates kept per market by the capture that produced this fixture.
+CAPTURE_CANDIDATE_CAP = 10
+
+#: Measured 2026-09-02 on `matching_golden_inputs.json`. Each may only FALL.
+POSITIVES_WITH_AN_APPENDED_ANSWER = 88
+PAIRS_AT_THE_CAPTURE_CAP = 327
+TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS = 235
+
+_WINDOW_RE = re.compile(r"commence_time BETWEEN '([^']+)' AND '([^']+)'")
+
+
+def _searched_candidates(pair: dict) -> list[dict]:
+    """The candidates the capture's SEARCH returned, without an appended answer."""
+    if pair["search_surfaced_the_answer"]:
+        return pair["events"]
+    return [e for e in pair["events"] if e["id"] != pair["correct_event_id"]]
+
+
+def _matcher_window_end(pair: dict, now: datetime):
+    """When the matcher's OWN candidate window closes, read off its OWN SQL.
+
+    Not recomputed here. Re-deriving the window arithmetic in a test is how
+    ``match-trace`` came to explain a matcher it no longer agreed with; the
+    bounds are parsed out of the statement ``_find_matching_event`` issued.
+    """
+    market = _Market(pair["market"])
+    matchup = extract_matchup_with_ticker_fallback(
+        market.name, external_id=market.external_id
+    )
+    if not matchup:
+        return None
+    game_date = (
+        extract_game_date_from_ticker(market.external_id)
+        if market.source == "kalshi" else None
+    )
+    session = _CapturingSession()
+    asyncio.run(
+        _find_matching_event(
+            session, matchup, market, now, game_date_override=game_date
+        )
+    )
+    if not session.statements:
+        return None
+    sql = session.statements[0].compile(
+        dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}
+    ).string
+    found = _WINDOW_RE.search(sql)
+    return _parse_dt(found.group(2)) if found else None
+
+
+def capture_fidelity() -> dict[str, int]:
+    """The three gaps, counted off the fixture and the matcher's own window."""
+    pairs = load_inputs()["pairs"]
+    ledger = {"appended_answers": 0, "at_cap": 0, "window_outlasts_capture": 0}
+    for pair in pairs:
+        if pair["correct_event_id"] is not None and not pair["search_surfaced_the_answer"]:
+            ledger["appended_answers"] += 1
+        searched = _searched_candidates(pair)
+        if len(searched) < CAPTURE_CANDIDATE_CAP:
+            continue                       # the search returned everything it had
+        ledger["at_cap"] += 1
+        end = _matcher_window_end(pair, pair_as_of(pair))
+        if end is None:
+            continue
+        starts = [
+            _parse_dt(e["commence_time"]) for e in searched if e["commence_time"]
+        ]
+        if starts and max(starts) < end:
+            # The capture stopped before the matcher's window did, so rows the
+            # matcher WOULD have scored may not be in the file.
+            ledger["window_outlasts_capture"] += 1
+    return ledger
+
+
+def test_every_pair_records_whether_its_answer_was_searched_for_or_supplied():
+    """Without this flag the two kinds of green are indistinguishable."""
+    for p in load_inputs()["pairs"]:
+        assert "search_surfaced_the_answer" in p, f"market {p['market_id']}"
+
+
+def test_the_fixtures_known_truncation_is_banked_and_may_only_improve():
+    """The proof itself. These are the ways this fixture is EASIER than
+    production; a re-capture may lower them and may not raise them."""
+    led = capture_fidelity()
+    fix = (
+        " — re-capture with production's own window and its own "
+        "ORDER BY commence_time LIMIT 20 (LANE1B-002-FIXTURE-CANDIDATE-PARITY)"
+    )
+    assert led["appended_answers"] <= POSITIVES_WITH_AN_APPENDED_ANSWER, (
+        f"{led['appended_answers']} positive pairs are handed an answer their "
+        f"own search never surfaced, up from "
+        f"{POSITIVES_WITH_AN_APPENDED_ANSWER}{fix}"
+    )
+    assert led["at_cap"] <= PAIRS_AT_THE_CAPTURE_CAP, (
+        f"{led['at_cap']} pairs hit the {CAPTURE_CANDIDATE_CAP}-candidate "
+        f"capture cap, up from {PAIRS_AT_THE_CAPTURE_CAP}{fix}"
+    )
+    assert led["window_outlasts_capture"] <= TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS, (
+        f"{led['window_outlasts_capture']} truncated pairs stop before the "
+        f"matcher's window closes, up from "
+        f"{TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS}{fix}"
+    )
+    # And the other direction: an improvement has to be recorded, or the next
+    # regression back to today's number passes unnoticed (gotcha #10).
+    assert led == {
+        "appended_answers": POSITIVES_WITH_AN_APPENDED_ANSWER,
+        "at_cap": PAIRS_AT_THE_CAPTURE_CAP,
+        "window_outlasts_capture": TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS,
+    }, f"the fixture's fidelity changed to {led} — update the pinned constants"
+
+
+# =============================================================================
 # The ratchet
 # =============================================================================
 
@@ -470,6 +617,35 @@ def test_the_positive_arm_of_the_baseline_has_teeth():
     assert passing >= 60, (
         f"only {passing}/{len(positives)} POSITIVE pairs pass — the arm that "
         "tests choosing (rather than refusing) has stopped guarding anything"
+    )
+
+
+#: Passing positives whose answer the capture's own SEARCH surfaced — the
+#: subset where a green means the matcher both FOUND and CHOSE the adjudicated
+#: event. Measured 2026-09-02: 45 of the 105 passing positives.
+END_TO_END_POSITIVE_FLOOR = 45
+
+
+def test_the_positive_floor_holds_without_the_pairs_that_were_handed_an_answer():
+    """60 of the 105 passing positives were handed their answer by the capture
+    (see the truncation proof above). Those greens test the SCORER only.
+
+    So the floor is asserted a second time over the pairs where the matcher's
+    own search really surfaced the event it then chose. Without this split, the
+    end-to-end arm could rot to nothing while the headline positive count sat
+    still, carried entirely by pairs whose answer the fixture supplied.
+    """
+    baseline = json.loads(BASELINE_PATH.read_text())["pairs"]
+    end_to_end = [
+        p for p in load_inputs()["pairs"]
+        if p["correct_event_id"] is not None and p["search_surfaced_the_answer"]
+    ]
+    passing = sum(1 for p in end_to_end if baseline[str(p["market_id"])])
+    assert passing >= END_TO_END_POSITIVE_FLOOR, (
+        f"only {passing}/{len(end_to_end)} positive pairs pass on a candidate "
+        f"set their own search produced (floor {END_TO_END_POSITIVE_FLOOR}) — "
+        "the end-to-end half of the positive arm has regressed even if the "
+        "headline positive count has not"
     )
 
 
