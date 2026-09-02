@@ -447,6 +447,20 @@ slots. Convergence is real. It is just slower than the deadline.
 
 ### THE SECOND BLOCKER, LATENT BEHIND THE FIRST: the publish gate refuses a completed build
 
+> 🔴 **CORRECTION 2026-09-02 (CAL-P213) — THE −10.5% IS NO LONGER CAUSE-UNESTABLISHED, AND BOTH
+> PRECONDITIONS THIS SECTION SETS ARE NOW MET.** The 97,277 is exactly the `odds_api_bookmaker`
+> source (`930,149 − 97,277 = 832,872`, to the unit): its 6-hourly writer died on
+> `SoftTimeLimitExceeded` nine runs running, its 24 h Redis key expired between the 04:37Z publish
+> and this 05:37Z build, and the pre-D21 reader (v3955 = `1f0cf419` does not contain `2472b7e8`;
+> D21 first ships 27 minutes later in v3957) turned the absence into zero rows. Writer repaired
+> (CAL-P134) and green on nine consecutive runs since 2026-08-31 07:14Z; Postgres is now
+> **Standard 3**, so the "still standard-0, the upgrade has not been run" paragraph below is also
+> out of date. The section's own conditions — *"throughput is fixed AND a completed build's
+> population has been read and understood"* — are discharged, so **"Do not bump the version"
+> no longer applies.** Full evidence and the per-category proof:
+> `artifacts/cal-p213/ROOT-CAUSE-97277.md`. Nothing below is rewritten; this note is appended in
+> place per the repo's amend-don't-rewrite rule.
+
 The last time a build actually COMPLETED — 05:37Z, one hour after the last publish — the publish
 gate **rejected** it (Sentry `7677836808`):
 
