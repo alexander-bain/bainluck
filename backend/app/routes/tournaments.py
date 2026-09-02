@@ -701,8 +701,19 @@ async def _hub_payload(
     # stood before this existed — a linker outage costs numbers on some cards,
     # never the tournament page.
     linked = 0
+    # THE AUTHORITY HALF OF THE SAME OVERLAY (lane1/047). One Redis read serves
+    # both: `links` fills register blocks the census marked `missing`, and
+    # `authority_links` prices the rows Q505 substitutes for a register pairing
+    # the scoreboard contradicts. They are kept apart because
+    # `apply_resolved_links` may only ever touch a register block, and an
+    # authority link belongs to no register matchup.
+    authority_links: dict[str, Any] = {}
     try:
-        links = (await read_links(slug)).get("links") or {}
+        overlay = await read_links(slug)
+        links = overlay.get("links") or {}
+        raw_authority = overlay.get("authority_links")
+        if isinstance(raw_authority, dict):
+            authority_links = raw_authority
         register, linked = apply_resolved_links(register, links)
     except Exception as exc:  # noqa: BLE001
         logger.warning("tournament link overlay failed for %s: %s", slug, exc)
@@ -721,6 +732,22 @@ async def _hub_payload(
     # sets are bounded by the register, so this stays two id-list lookups rather
     # than becoming a scan.
     slate_outcome_ids = reg.matchup_outcome_ids()
+    # The outcome ids an AUTHORITY row will read (lane1/047). Not in the
+    # register by construction — that is what makes the row an authority row —
+    # so without this the resolved link would name a price the request never
+    # loaded and the card would stay blank for a second, subtler reason.
+    # Bounded by the overlay, which is bounded by the scoreboard.
+    authority_outcome_ids = sorted(
+        {
+            outcome_id
+            for block in authority_links.values()
+            if isinstance(block, dict)
+            for side in (block.get("sides") or {}).values()
+            if isinstance(side, dict)
+            for outcome_id in [side.get("outcome_id")]
+            if isinstance(outcome_id, int) and not isinstance(outcome_id, bool)
+        }
+    )
     prop_outcome_ids = reg.prop_outcome_ids()
     # The playoff grid's 336 pinned reach identities (UX-P139). Bounded by the
     # register like every other set here, so adding a whole grid to this page
@@ -735,6 +762,7 @@ async def _hub_payload(
             | set(slate_outcome_ids)
             | set(prop_outcome_ids)
             | set(reach_outcome_ids)
+            | set(authority_outcome_ids)
         ),
         now=now,
     )
@@ -788,6 +816,7 @@ async def _hub_payload(
         # side, since an unknown-completeness map is exactly the case where
         # absence must not be trusted.
         order_of_play_complete=espn.get("order_of_play_complete") is True,
+        authority_links=authority_links,
     )
     payload["props"] = build_props(register, prices=prices, now=now)
     # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the

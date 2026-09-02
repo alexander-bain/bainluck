@@ -40,6 +40,7 @@ from sqlalchemy import select
 from app.utils.tournament_link_resolver import (
     REFUSAL_CODES,
     apply_resolved_links,
+    resolve_authority_links,
     resolve_matchup_links,
 )
 from app.utils.tournament_register import load_register
@@ -180,6 +181,83 @@ async def _load_candidates(
     return list(by_id.values())
 
 
+#: Where ``sync_tournament_results`` publishes the ESPN scoreboard and where
+#: ``routes/tournaments.py`` reads it. Read here too, and by the same key: the
+#: authority pairing this resolves against must be the SAME one the slate
+#: withheld the register's pairing on. Deriving it from a second fetch would
+#: let the two disagree, and a link minted against a pairing the page is not
+#: rendering is worse than no link at all.
+RESULTS_PREFIX = "bainluck:tournament-results:"
+
+
+async def _read_order_of_play(slug: str) -> dict[str, Any]:
+    """ESPN's competition map for this tournament, or ``{}``.
+
+    Read-only, from the cache another beat already fills. A cold or unreadable
+    cache yields no authority competitions and therefore no authority links,
+    which returns the page to exactly the unpriced row it renders today — the
+    honest state, not a stale one.
+    """
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(f"{RESULTS_PREFIX}{slug}")
+        if raw:
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                listed = payload.get("order_of_play")
+                if isinstance(listed, dict):
+                    return listed
+    except Exception as exc:  # noqa: BLE001 — an overlay is never a gate
+        logger.warning("order-of-play read failed for %s: %s", slug, exc)
+    return {}
+
+
+def _authority_competitions(
+    order_of_play: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """The scoreboard's competitions as resolver input, identity-gated.
+
+    ``determined`` is the gate, and it is the same one ``authority_match_row``
+    uses to decide whether it may draw the row at all. Two competitors, both
+    with a positive athlete id and a name, or the competition is skipped —
+    a doubles competition names a team and no athlete, and a qualifier slot
+    names "TBD". Resolving either would be guessing at who a market is for.
+
+    Keying on ``espn:athlete:<id>`` matches ``authority_match_row``'s own
+    ``entity_key``, so the sides map this produces is looked up by the exact
+    string the slate row carries.
+    """
+    out: list[dict[str, Any]] = []
+    for comp_id, listed in (order_of_play or {}).items():
+        if not isinstance(listed, dict):
+            continue
+        competitors = listed.get("competitors")
+        if not isinstance(competitors, list) or len(competitors) != 2:
+            continue
+        if not all(
+            isinstance(c, dict) and c.get("determined") and c.get("name")
+            for c in competitors
+        ):
+            continue
+        out.append({
+            "espn_competition_id": listed.get("espn_competition_id") or comp_id,
+            # ESPN's own scheduled start. `_as_date` in the resolver turns this
+            # into the calendar date its one-day window compares; a midnight
+            # placeholder start (`start_is_tbd`) is still the right DATE, which
+            # is all the window reads.
+            "scheduled_date": listed.get("start_at"),
+            "players": [
+                {
+                    "entity_key": f"espn:athlete:{c.get('espn_athlete_id')}",
+                    "display_name": c.get("name"),
+                }
+                for c in competitors
+            ],
+        })
+    return out
+
+
 async def _write_links(slug: str, payload: dict[str, Any]) -> bool:
     try:
         from app.tasks.redis_state import get_async_redis_client
@@ -208,6 +286,13 @@ async def _link_tournament_matchups(
         "needy": 0,
         "resolved": 0,
         "published": 0,
+        # The authority half, counted separately (lane1/047). Rolled into the
+        # register counters these would be unreadable: `resolved` would mix
+        # "filled a blank the census left" with "priced a row the register
+        # names wrong", and only the second one is a repair backlog.
+        "authority_competitions": 0,
+        "authority_resolved": 0,
+        "authority_published": 0,
         "written": 0,
         "deadline_hit": False,
         "by_tournament": {},
@@ -244,6 +329,18 @@ async def _link_tournament_matchups(
             counters = outcome["counters"]
             links = outcome["links"]
 
+            # THE FIXTURES THE REGISTER NAMES WRONG (lane1/047). Q503 withholds
+            # those pairings and Q505 renders the scoreboard's instead; without
+            # this, that substituted row can never carry a number, however
+            # cleanly we hold its market. Resolved from the SAME candidate pool
+            # by the SAME rule — the only difference is who named the two
+            # people. Keyed `espn:<comp id>`, which is the row's own key.
+            competitions = _authority_competitions(
+                await _read_order_of_play(slug)
+            )
+            authority = resolve_authority_links(competitions, candidates, now=now)
+            authority_links = authority["links"]
+
             # A resolver that resolved nothing must not read like one that had
             # nothing to do (gotcha #53). Both numbers are always reported.
             published = await _write_links(
@@ -255,6 +352,14 @@ async def _link_tournament_matchups(
                     "candidates": len(candidates),
                     "counters": counters,
                     "links": links,
+                    # A SEPARATE KEY, NOT MERGED INTO `links`. `apply_resolved_
+                    # links` may only ever replace a register block the register
+                    # itself marked `missing`, and an authority link belongs to
+                    # no register matchup — merging the two would hand a reader
+                    # of `links` a key that path cannot mean anything by.
+                    "authority_competitions": len(competitions),
+                    "authority_counters": authority["counters"],
+                    "authority_links": authority_links,
                 },
             )
 
@@ -262,12 +367,17 @@ async def _link_tournament_matchups(
             stats["needy"] += counters.get("needy", 0)
             stats["resolved"] += counters.get("resolved", 0)
             stats["published"] += len(links)
+            stats["authority_competitions"] += len(competitions)
+            stats["authority_resolved"] += authority["counters"].get("resolved", 0)
+            stats["authority_published"] += len(authority_links)
             stats["written"] += 1 if published else 0
             for code in REFUSAL_CODES:
                 stats[code] += counters.get(code, 0)
             stats["by_tournament"][slug] = {
                 "candidates": len(candidates),
                 "written": published,
+                "authority_competitions": len(competitions),
+                "authority": authority["counters"],
                 **counters,
             }
 

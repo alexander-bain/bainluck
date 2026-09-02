@@ -115,6 +115,15 @@ EVIDENCE_KIND = "auto-linked-match-market"
 #: changes, old links say which rule minted them.
 RULE = "kalshi-outcome-name-pair/v1"
 
+#: The same two facts for a link minted against the SCOREBOARD's pairing rather
+#: than the register's (lane1/047).  Distinct strings, deliberately: an
+#: authority link prices a fixture whose register pairing was withheld as
+#: contradicted, and a reader auditing one of these must be able to tell at a
+#: glance which question was asked.  The rule is versioned separately for the
+#: same reason — it can move without moving the register path's.
+AUTHORITY_EVIDENCE_KIND = "auto-linked-authority-match-market"
+AUTHORITY_RULE = "espn-authority-outcome-name-pair/v1"
+
 #: Sources this resolver is allowed to bind.  See the module docstring for why
 #: this is one entry and not two.
 RESOLVABLE_SOURCES = ("kalshi",)
@@ -314,6 +323,62 @@ def _within_window(candidate_date: Any, fixture_date: Optional[date]) -> bool:
     return abs((observed - fixture_date).days) <= MATCH_DATE_TOLERANCE_DAYS
 
 
+def _match_fixture(
+    candidates: Iterable[dict[str, Any]],
+    player_tokens: dict[str, frozenset[str]],
+    fixture_date: Optional[date],
+) -> tuple[Optional[tuple[dict[str, Any], dict[str, Any]]], Optional[str]]:
+    """Which of ``candidates`` is this fixture's market.
+
+    Returns ``((candidate, sides), None)`` on a unique clean bind, or
+    ``(None, <refusal code>)``.
+
+    ONE RULE, TWO CALLERS, AND THAT IS THE POINT.  ``resolve_matchup_links``
+    asks this for a fixture the register names; ``resolve_authority_links``
+    asks it for a fixture the ESPN scoreboard names.  Those two differ only in
+    *who named the two people* — the question "given these two players and this
+    date, which market is theirs" is identical, and a second copy of it would
+    be free to rot away from this one while both kept passing their own tests.
+    """
+    matched: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    saw_partial = False
+    saw_out_of_window = False
+    for candidate in candidates:
+        sides = _candidate_sides(candidate, player_tokens)
+        if sides is not None:
+            if _within_window(candidate.get("match_date"), fixture_date):
+                matched.append((candidate, sides))
+            else:
+                # The right two players, the wrong meeting. Named separately
+                # because it is gotcha #33's exact shape and reads nothing like
+                # an absence.
+                saw_out_of_window = True
+            continue
+        # A candidate that names ONE of our two players but could not be
+        # resolved into a clean pair is worth distinguishing from one that has
+        # nothing to do with this fixture: it is the shape a near-miss takes,
+        # and reporting it as NO_CANDIDATE would hide a real linkage defect
+        # behind an ordinary absence.
+        for outcome in candidate.get("outcomes") or []:
+            if not isinstance(outcome, dict):
+                continue
+            tokens = name_tokens(outcome.get("name"))
+            if any(
+                names_correspond(tokens, ptokens)
+                for ptokens in player_tokens.values()
+            ):
+                saw_partial = True
+                break
+
+    if len(matched) > 1:
+        return None, AMBIGUOUS_CANDIDATES
+    if not matched:
+        if saw_out_of_window:
+            return None, STALE_REMATCH
+        return None, (AMBIGUOUS_SIDES if saw_partial else NO_CANDIDATE)
+    return matched[0], None
+
+
 def _needy_blocks(matchup: dict[str, Any], sources: Iterable[str]) -> list[dict[str, Any]]:
     """The ``missing`` source blocks on this matchup that we may try to fill."""
     allowed = set(sources)
@@ -407,47 +472,14 @@ def resolve_matchup_links(
                 refuse(PLAYER_NOT_REGISTERED)
                 continue
 
-            matched: list[tuple[dict[str, Any], dict[str, Any]]] = []
-            saw_partial = False
-            saw_out_of_window = False
-            for candidate in by_source.get(source, []):
-                sides = _candidate_sides(candidate, player_tokens)
-                if sides is not None:
-                    if _within_window(candidate.get("match_date"), fixture_date):
-                        matched.append((candidate, sides))
-                    else:
-                        # The right two players, the wrong meeting. Named
-                        # separately because it is gotcha #33's exact shape and
-                        # reads nothing like an absence.
-                        saw_out_of_window = True
-                    continue
-                # A candidate that names ONE of our two players but could not be
-                # resolved into a clean pair is worth distinguishing from one
-                # that has nothing to do with this fixture: it is the shape a
-                # near-miss takes, and reporting it as NO_CANDIDATE would hide a
-                # real linkage defect behind an ordinary absence.
-                for outcome in candidate.get("outcomes") or []:
-                    if not isinstance(outcome, dict):
-                        continue
-                    tokens = name_tokens(outcome.get("name"))
-                    if any(
-                        names_correspond(tokens, ptokens)
-                        for ptokens in player_tokens.values()
-                    ):
-                        saw_partial = True
-                        break
-
-            if len(matched) > 1:
-                refuse(AMBIGUOUS_CANDIDATES)
-                continue
-            if not matched:
-                if saw_out_of_window:
-                    refuse(STALE_REMATCH)
-                else:
-                    refuse(AMBIGUOUS_SIDES if saw_partial else NO_CANDIDATE)
+            hit, refusal = _match_fixture(
+                by_source.get(source, []), player_tokens, fixture_date
+            )
+            if hit is None:
+                refuse(refusal or NO_CANDIDATE)
                 continue
 
-            candidate, sides = matched[0]
+            candidate, sides = hit
             # The block-level `outcome_id` follows the committed register's own
             # convention: the first-listed player's side. `matchup_outcome_ids`
             # reads `sides`, not this, but `validate_source_entry` requires a
@@ -471,6 +503,156 @@ def resolve_matchup_links(
                         "resolved from the source's own outcome labels; the "
                         "register recorded no market for this fixture at "
                         "ingest and one exists now"
+                    ),
+                },
+                "sides": sides,
+            }
+            counters["resolved"] += 1
+
+    return {"links": links, "refusals": refusals, "counters": counters}
+
+
+def resolve_authority_links(
+    competitions: Iterable[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    now: datetime,
+    sources: Iterable[str] = RESOLVABLE_SOURCES,
+) -> dict[str, Any]:
+    """Resolve match markets for fixtures the SCOREBOARD names (lane1/047).
+
+    ═══ THE CARD THAT SAID NOBODY WAS QUOTING A MATCH WE HELD A PRICE FOR ═══
+
+    Q503 withholds a register pairing the ESPN scoreboard contradicts, and Q505
+    puts the fixture back under the authority's own two names.  That row is
+    correct and it is unpriceable: ``authority_match_row`` is handed no prices,
+    because the only identities this page will read a price through are the
+    ``(market_id, outcome_id)`` pairs the register pins — and the register, by
+    construction here, names the wrong people.
+
+    Measured on production 2026-09-02: the US Open slate carried exactly one
+    authority row, ``espn:182703`` — Rafael Jodar vs Bu Yunchaokete — and it
+    read *"Nobody is quoting this match yet. It is in the draw with no
+    probability against it."*  We held ``KXATPMATCH-26SEP01JODYUN`` at the
+    time, open, with both legs named in full (``Rafael Jodar`` 0.895 /
+    ``Yunchaokete Bu`` 0.105).  The sentence was false, and it was false in the
+    most expensive direction a probability product has: it told a reader the
+    market was silent while quoting 90/10 one tab over.
+
+    Q505's own docstring wrote the fix down — *"when the match market for the
+    real pairing is linked, the ordinary priced row takes over"*.  This is that
+    link.  Nothing here relaxes Q503's refusal: the number that was withheld
+    was the one quoted for the WRONG pairing, and this one is quoted for the
+    two people ESPN says are on court, by the same rule, from the same pool.
+
+    ``competitions`` are plain dicts, one per ESPN competition::
+
+        {"espn_competition_id": "182703",
+         "scheduled_date": "2026-09-02T17:00:00+00:00",
+         "players": [{"entity_key": "espn:athlete:12657",
+                      "display_name": "Rafael Jodar"}, ...]}
+
+    Returns the same shape ``resolve_matchup_links`` does, keyed
+    ``"espn:<competition id>|<source>"`` — which is exactly
+    ``authority_match_row``'s ``matchup_key``, so the slate's lookup is a dict
+    hit on an id and never a name comparison at request time.
+
+    THE RULE IS NOT A SECOND RULE.  ``_match_fixture`` is shared with the
+    register path: same token-set correspondence, same unique bijection across
+    both sides, same one-day match-date window, same five refusal codes.  What
+    differs is only who named the two people, and an ESPN competitor is a
+    STRONGER anchor than a register entry here, not a weaker one — it is the
+    authority we already trust enough to withhold the register's pairing on.
+
+    Pure.  No I/O and no clock of its own.
+    """
+    observed_at = now.isoformat()
+
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            by_source.setdefault(candidate.get("source"), []).append(candidate)
+
+    links: dict[str, dict[str, Any]] = {}
+    refusals: list[dict[str, Any]] = []
+    counters: dict[str, int] = {
+        "needy": 0,
+        "resolved": 0,
+        **{code: 0 for code in REFUSAL_CODES},
+    }
+
+    for competition in competitions:
+        if not isinstance(competition, dict):
+            continue
+        comp_id = competition.get("espn_competition_id")
+        if not comp_id:
+            continue
+        players = competition.get("players")
+        if not isinstance(players, list) or len(players) != 2:
+            continue
+
+        fixture_date = _as_date(competition.get("scheduled_date"))
+
+        player_tokens: dict[str, frozenset[str]] = {}
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            key = player.get("entity_key")
+            tokens = name_tokens(player.get("display_name"))
+            if key and tokens:
+                player_tokens[key] = tokens
+
+        for source in sources:
+            counters["needy"] += 1
+
+            if len(player_tokens) != 2:
+                # The scoreboard named a competition we cannot key on two
+                # distinct identified people. Not a linkage question — and the
+                # slate does not build an authority row for it either.
+                counters[PLAYER_NOT_REGISTERED] += 1
+                refusals.append({
+                    "matchup_key": f"espn:{comp_id}",
+                    "source": source,
+                    "reason": PLAYER_NOT_REGISTERED,
+                })
+                continue
+
+            hit, refusal = _match_fixture(
+                by_source.get(source, []), player_tokens, fixture_date
+            )
+            if hit is None:
+                code = refusal or NO_CANDIDATE
+                counters[code] += 1
+                refusals.append({
+                    "matchup_key": f"espn:{comp_id}",
+                    "source": source,
+                    "reason": code,
+                })
+                continue
+
+            candidate, sides = hit
+            lead_key = str(players[0].get("entity_key"))
+            if lead_key not in sides:
+                lead_key = next(iter(sides))
+            links[f"espn:{comp_id}|{source}"] = {
+                "source": source,
+                "kind": "match",
+                "market_id": candidate.get("market_id"),
+                "outcome_id": sides[lead_key]["outcome_id"],
+                "market_external_id": candidate.get("external_id"),
+                "status": "live",
+                "terminal_result": None,
+                "evidence": {
+                    "kind": AUTHORITY_EVIDENCE_KIND,
+                    "observed_at": observed_at,
+                    "rule": AUTHORITY_RULE,
+                    "market_name": candidate.get("name"),
+                    "espn_competition_id": str(comp_id),
+                    "note": (
+                        "resolved from the source's own outcome labels against "
+                        "the two players the ESPN scoreboard names for this "
+                        "competition; the register's pairing for it was "
+                        "withheld as contradicted"
                     ),
                 },
                 "sides": sides,
