@@ -16,7 +16,7 @@ cleanup in step 2 will delete markets, and it must not leave orphan receipts
 behind for the reconciliation job to count.
 
 Revision ID: match_receipts
-Revises: add_image_dimensions
+Revises: kalshi_expiration_backstop
 Create Date: 2026-09-02
 """
 
@@ -26,7 +26,11 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "match_receipts"
-down_revision = "add_image_dimensions"
+# Re-parented on rebase: a sibling lane landed `kalshi_expiration_backstop`
+# off the same `add_image_dimensions` parent while this branch was open, and
+# two heads fail the Heroku release phase outright — the site does not deploy
+# at all. Re-read from `alembic heads` against origin/master 24400986.
+down_revision = "kalshi_expiration_backstop"
 branch_labels = None
 depends_on = None
 
