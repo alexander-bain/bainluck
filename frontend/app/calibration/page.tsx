@@ -71,6 +71,7 @@ import {
   decideCalibrationStaleness,
   stalenessDriftClause,
   stalenessHeadline,
+  stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
 // UX-P075 item (e): the category vocabulary moved to its own module so the
@@ -548,6 +549,7 @@ export default function CalibrationPage() {
   // the banner. `null` when there is nothing honest to say about drift — which
   // is not the same as "no drift", and is why this returns null rather than "0".
   const driftClause = staleness ? stalenessDriftClause(staleness) : null;
+  const scheduleClause = staleness ? stalenessScheduleClause(staleness) : null;
 
   const topCats = categories.slice(0, 3).map(c =>
     `${categoryLabel(c)} (${normalized.filter(b => b.category === c).reduce((s, b) => s + b.n, 0).toLocaleString()})`
@@ -715,6 +717,16 @@ export default function CalibrationPage() {
             staleness.unitsBanked === null ? "" : String(staleness.unitsBanked)
           }
           data-availability={data.availability ?? ""}
+          /* #2649: the producer verdict as DATA, so a rail can assert "the
+             promise is absent when the beat is stalled" without parsing the
+             sentence. Empty string means the payload did not state it — which
+             is deliberately distinguishable from "false". */
+          data-producer-stalled={
+            staleness.producerStalled === null ? "" : String(staleness.producerStalled)
+          }
+          data-beats-missed={
+            staleness.beatsMissed === null ? "" : String(staleness.beatsMissed)
+          }
           className="rounded-lg border border-surface-border bg-surface-card px-4 py-3 text-sm text-text-secondary"
         >
           <strong className="text-text-primary">{stalenessHeadline(staleness)}</strong>{" "}
@@ -727,7 +739,16 @@ export default function CalibrationPage() {
                   })
                 : "earlier"}
               {staleness.ageS !== null && ` (${formatAge(staleness.ageS)} ago)`}
-              {" "}and are not being refreshed right now. The curve rebuilds hourly.
+              {" "}and are not being refreshed right now.
+              {/* #2649: this used to end "The curve rebuilds hourly." full stop,
+                  and on 2026-09-02 it said that over `producer.stalled: true,
+                  beats_missed: 51` in the same payload. The cadence is worth
+                  telling a reader when it is real; the clause now comes from
+                  `stalenessScheduleClause`, which will only assert it when the
+                  server says the beat is landing. See that function for why
+                  an ABSENT producer block prints nothing rather than the
+                  reassuring sentence. */}
+              {scheduleClause ? ` ${scheduleClause}` : ""}
             </>
           )}
           {/* #2007 item 1b, Fable ruling (c). The old sentence — "not being
@@ -771,9 +792,15 @@ export default function CalibrationPage() {
           )}
           {staleness.kind === "undisclosed" && (
             <>
-              The curve rebuilds hourly, but we couldn&rsquo;t read when the market data
-              behind it was last staged. We&rsquo;d rather say so than call these numbers
-              current.
+              {/* #2649: same defect, same fix. The old lead was "The curve
+                  rebuilds hourly, but …" — an unconditional schedule claim in
+                  the one banner state whose entire subject is that we could
+                  NOT read how current this is. Asserting the beat is fine
+                  while admitting we cannot see the inputs is the reassuring
+                  default gotcha #53 exists to forbid. */}
+              {scheduleClause ? `${scheduleClause} ` : ""}
+              We couldn&rsquo;t read when the market data behind it was last staged.
+              We&rsquo;d rather say so than call these numbers current.
             </>
           )}
         </div>

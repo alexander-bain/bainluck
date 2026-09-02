@@ -53,6 +53,27 @@ nonisolated struct CalibrationCacheState: Decodable, Sendable {
     var isStale: Bool { status == "stale" }
 }
 
+/// #2649: the hourly producer's own verdict on whether it is still running.
+///
+/// Web and native both used to close the stale banner with an unconditional
+/// "The curve rebuilds hourly." On 2026-09-02 production served that over
+/// `producer: { stalled: true, beats_missed: 51 }` — 51 hours of telling a
+/// reader to come back in an hour. The cadence is worth stating when it is
+/// real, so this carries the server's verdict rather than dropping the copy.
+///
+/// `stalled` is pessimistic server-side by construction: an UNKNOWN artifact
+/// age publishes as `true`, never as healthy. `Bool?` here preserves the third
+/// state — an older payload that carries no block at all — which is NOT the
+/// same as a healthy beat and must never be read as one.
+nonisolated struct CalibrationProducerState: Decodable, Sendable {
+    let stalled: Bool?
+    let beatsMissed: Int?
+
+    /// True only when the server AFFIRMATIVELY said the beat is landing.
+    /// Absence is not health, so it answers `false` here.
+    var beatIsLanding: Bool { stalled == false }
+}
+
 /// One entry in the data-corrections trust log (payload v2 `corrections[]`).
 nonisolated struct CalibrationCorrection: Decodable, Sendable, Identifiable {
     let date: String
@@ -156,6 +177,8 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     // UNVERIFIED rather than assumed compatible (see `CalibrationViewModel`).
     let cache: CalibrationCacheState?
     let populationVersion: String?
+    /// #2649. Optional: an older payload predates it, and absent is not healthy.
+    let producer: CalibrationProducerState?
 
     // MARK: - Partial-decode provenance (L2-231 Item 1)
 
@@ -173,7 +196,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         case buckets, totalMarkets, totalOutcomes, totalWinners
         case mceCiLower, mceCiUpper, mceClosingLine, mceOpeningPrice
         case generatedAt, minCategoryOutcomes, smallSampleCategories
-        case corrections, dateRange, cache, populationVersion
+        case corrections, dateRange, cache, populationVersion, producer
     }
 
     init(from decoder: Decoder) throws {
@@ -200,5 +223,6 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         dateRange = try? c.decodeIfPresent(CalibrationDateRange.self, forKey: .dateRange)
         cache = try? c.decodeIfPresent(CalibrationCacheState.self, forKey: .cache)
         populationVersion = try? c.decodeIfPresent(String.self, forKey: .populationVersion)
+        producer = try? c.decodeIfPresent(CalibrationProducerState.self, forKey: .producer)
     }
 }
