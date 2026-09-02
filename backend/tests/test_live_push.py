@@ -71,9 +71,10 @@ class TestChannelAgreement:
         stream silently stops delivering. Assert the symbol is imported by both
         modules rather than that some string appears in them.
         """
-        import app.routes.event_stream as route
-        import app.tasks.live_blend_refresh as refresher
         import inspect
+
+        from app.routes import event_stream as route
+        from app.tasks import live_blend_refresh as refresher
 
         assert route.event_channel is event_channel
         # The refresher imports it indirectly via `build_frame`/`publish_frame`,

@@ -178,8 +178,14 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
     except asyncio.CancelledError:
         raise
     except Exception:
+        # `%d` with an explicit int, not `%s`: `event_id` reaches this module
+        # from the URL, and formatting it as a string would put caller-supplied
+        # text into the log line. FastAPI already coerces the path param to int,
+        # so this is belt-and-braces — but it is the kind of belt that costs
+        # nothing and makes the safety local instead of inherited.
         logger.warning(
-            "event_stream: stream for event %s failed", event_id, exc_info=True
+            "event_stream: stream for event %d failed", int(event_id),
+            exc_info=True,
         )
     finally:
         _open_connections -= 1
@@ -189,10 +195,15 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
             await pubsub.unsubscribe(event_channel(event_id))
             await pubsub.close()
         except Exception:
+            # Deliberately swallowed: the subscription is being abandoned either
+            # way, and the client has already gone. Re-raising here would turn a
+            # routine disconnect into a 500 on a response that is already sent.
             pass
         try:
             await redis_client.aclose()
         except Exception:
+            # Same: the connection is being discarded. A failure to close one
+            # that is already broken is not information anyone can act on.
             pass
 
 
