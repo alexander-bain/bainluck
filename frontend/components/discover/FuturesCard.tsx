@@ -7,14 +7,12 @@ import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
-import { forYouCue } from "@/lib/discover/forYouCue";
+import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars } from "./shared";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
@@ -134,10 +132,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
-  // LAT-P191 (#1636, ruling on latency-022 = option b). Pure function of the
-  // url, so SSR and hydration agree; `null` means "no safe ladder", and the
-  // hero then renders exactly as it did before.
-  const heroSrcSet = data.image_url ? buildHeroSrcSet(data.image_url) : null;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
   // L2-65: a winner-field market that IS an event concept (e.g. a tennis
   // tournament winner) links into the richer /event/[key] surface; everything
@@ -150,16 +144,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
   const heatmapRows = buildHeatmapRows(data);
-  // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
-  // the fork is the defect. The first version of this ship read `forYouCue(item)`
-  // inline at the single place it remembered to render, and this component has
-  // FOUR `<article>` roots: threshold heatmap, outcome-distribution leaderboard,
-  // Variant B and Variant A. Three of them returned before the call site was
-  // reached, so the same reader saw the cue or did not depending on which shape
-  // the feed picked for the market. Hoisting it does not by itself fix that —
-  // `forYouCueRenderPaths.test.tsx` does, by asserting every article root prints
-  // it — but it removes the reason the omission was easy to make.
-  const cue = forYouCue(item);
   // Queue 309 Item 4 — no dollar volume on a feed card. Standing rule,
   // docs/design-system.md: "Dollar volume as social proof is banned too"
   // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
@@ -181,15 +165,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
           </div>
           <Link href={detailHref} onClick={onDetailClick} className="block group">
-            <h3 className={`text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors ${cue ? "mb-1.5" : "mb-4"}`}>{data.name}</h3>
+            <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-4">{data.name}</h3>
           </Link>
-
-          {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
-              CERT-678: this branch is a separate `<article>` from Variant A and
-              returned before Variant A's chip was ever reached. The heading owns
-              the gap when there is no cue, the chip's wrapper when there is, so
-              the cue never changes the card's rhythm by appearing. */}
-          {cue && <div className="mb-4"><ForYouChip cue={cue} /></div>}
 
           {/* #1102/L2-119: the "by WHEN" Quantity kernel. The old horizontal
               cell grid used equal flex-1 columns, so long date labels ("2029 or
@@ -254,13 +231,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     const shownRows = leaderFirstSlice(distributionRows, 4);
     const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, distributionRows.length - shownRows.length);
 
-    // `data-card-format` added by the CERT-678 repair: this was the only one of
-    // the four `<article>` roots with no marker, so a render-path test could not
-    // prove it had reached the leaderboard rather than falling through to
-    // Variant A — the exact way a guard passes while the path it claims to
-    // cover stays dark.
     return (
-      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`} data-card-format="leaderboard">
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.name}`}>
         <DismissBtn onDismiss={onDismiss} />
         {trending && <TrendBadge />}
 
@@ -278,13 +250,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </span>
           </div>
           <h3 className="text-base font-bold leading-tight text-text-primary line-clamp-2">{data.name}</h3>
-
-          {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
-              CERT-678: the leaderboard is its own `<article>` and was one of the
-              four paths that stayed silent. No margin juggling here — this
-              header block already spaces its children with `mt-*` on whatever
-              follows the heading. */}
-          {cue && <div className="mt-1.5"><ForYouChip cue={cue} /></div>}
 
           {contextSnippet && (
             <ExpandableContextText
@@ -469,12 +434,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
           </Link>
 
-          {/* UX-P248 / Alex D-D — why this card is in front of THIS reader.
-              CERT-678: Variant B is the no-image half of the A/B split, so which
-              of the two a reader got was a coin flip on a hash of their session
-              id and the market id — and only one of them said anything. */}
-          <ForYouChip cue={cue} />
-
           {contextSnippet && (
             <ExpandableContextText
               text={contextSnippet}
@@ -526,17 +485,9 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
       }}>
         {/* Decorative — the card's accessible name is on the <article>, and the
             CSS background this replaces carried no accessible name either. */}
-        {/* LAT-P191 (#1636) — `srcset`/`sizes`, capped at the raster we already
-            serve (Alex ruling on `alex-inbox/latency-022`, option (b)). Every
-            rung is a SHRINK of `src`, and the top rung IS `src`, so the four-
-            column desktop slot (300 CSS px) stops downloading a 525–940 px
-            photo while no device gets a byte heavier than today. Sharpness on
-            a retina phone would need rungs ABOVE 940 px and costs mobile bytes
-            — deliberately not taken; the reasoning is in `heroSrcSet.ts`. */}
         {data.image_url && (
           <img
             src={data.image_url}
-            {...(heroSrcSet ? { srcSet: heroSrcSet, sizes: HERO_IMAGE_SIZES } : {})}
             alt=""
             aria-hidden="true"
             loading="lazy"
@@ -586,11 +537,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         <Link href={detailHref} onClick={onDetailClick} className="block group">
           <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors mb-1.5">{data.name}</h3>
         </Link>
-
-        {/* UX-P248 / Alex D-D — why this card is in front of THIS reader. Below
-            the question, not over the hero photo: the hero already carries the
-            category pill, the probability and the movement delta. */}
-        <ForYouChip cue={cue} />
 
         {contextSnippet && (
           <ExpandableContextText
@@ -707,24 +653,13 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // disagreement one component sideways instead of removing it.
   const compactPercent = renderedLeaderPercent(data.top_outcomes, leader);
   const context = feedContextSnippet(item);
-  const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
   return (
     <Link href={detailHref} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
         <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
-        {/* UX-P248 / CERT-678 repair — a path the BLOCK did not name and this
-            queue found anyway. `_public_member_item` (backend/app/utils/
-            discover_bundles.py) strips only underscore-prefixed keys, so a
-            bundle member keeps `personalized`, `multiplier` and
-            `personalization_reasons` all the way to here. `ThemeBundleCard`
-            renders its members as full `FuturesCard`s, which now carry the cue
-            on all four variants; leaving this row silent would have put the
-            same boosted market's explanation on or off depending on whether
-            the feed grouped it as a theme bundle or a plain group. */}
         {context && <div className="text-xs text-text-muted mt-0.5 line-clamp-2">{context}</div>}
-        {rowCue && <div className="mt-1"><ForYouChip cue={rowCue} /></div>}
       </div>
       {leader && (
         <div className="flex items-center gap-2 shrink-0">

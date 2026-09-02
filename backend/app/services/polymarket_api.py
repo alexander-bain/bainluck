@@ -292,11 +292,7 @@ class PolymarketAPIService:
             raise
 
     async def get_markets_by_conditions(
-        self,
-        condition_ids: list[str],
-        *,
-        batch_size: int = 40,
-        include_closed: bool = False,
+        self, condition_ids: list[str], *, batch_size: int = 40
     ) -> list["PolymarketMarket"]:
         """Fetch specific markets by condition id, in batches (UX-P139).
 
@@ -318,63 +314,35 @@ class PolymarketAPIService:
         waiting; 40 keeps each request comfortably short.  Rate-limit and
         server errors re-raise (gotcha #36) — a throttled fetch that returned
         an empty list would read as "these markets are gone".
-
-        🔴 ``include_closed`` EXISTS BECAUSE THE DEFAULT READ IS NOT A READ OF
-        THE MARKETS YOU NAMED.  Measured against production Gamma 2026-09-01
-        (Q499): ``/markets?condition_ids=…`` applies a ``closed=false`` filter
-        the caller never asked for, so a named market whose venue event has
-        closed comes back as an EMPTY list — indistinguishable from "that id
-        does not exist".  On a 40-id sample drawn from the Q499 cohort the
-        default call returned **7 of 40**; the same 40 ids with
-        ``closed=true`` returned the other **33**, and the union covered all
-        40 with nothing missing.  ``closed`` is a strict filter, not an
-        include-toggle — asking with ``closed=true`` DROPS the open markets —
-        so covering a mixed cohort costs two requests per batch, which is what
-        this flag buys.
-
-        Default ``False`` keeps every existing caller byte-identical: the
-        register (UX-P139) and the token top-up pin markets a live page is
-        rendering, and neither has evidence about closed rows.  Whether they
-        should also pass it is a real question and a separate one — see
-        `PARKED-MEASUREMENTS.md`, "the register cannot see a venue-closed
-        market".
         """
         import httpx
 
         out: list[PolymarketMarket] = []
-        # Two query shapes per batch when closed markets are wanted, because
-        # `closed` filters rather than widens. Ordered open-first so that in the
-        # ordinary case the first response is the one that usually answers.
-        filters: list[list[tuple[str, str]]] = [[]]
-        if include_closed:
-            filters.append([("closed", "true")])
         for start in range(0, len(condition_ids), batch_size):
             batch = condition_ids[start : start + batch_size]
             if not batch:
                 continue
-            for extra in filters:
-                try:
-                    # `limit` is REQUIRED, not decorative: Gamma's default page
-                    # size for `/markets` is 20, so a 40-id batch silently
-                    # returns the first 20 and the other half reads as "these
-                    # markets are gone". Measured 2026-08-26 — the first version
-                    # of this method lost half of every batch to exactly that.
-                    response = await self.gamma_client.get(
-                        "/markets",
-                        params=[("condition_ids", cid) for cid in batch]
-                        + [("limit", str(len(batch)))]
-                        + extra,
-                    )
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        continue
-                    raise
-                payload = response.json()
-                for market_data in payload if isinstance(payload, list) else []:
-                    parsed = self._parse_market(market_data)
-                    if parsed is not None:
-                        out.append(parsed)
+            try:
+                # `limit` is REQUIRED, not decorative: Gamma's default page size
+                # for `/markets` is 20, so a 40-id batch silently returns the
+                # first 20 and the other half reads as "these markets are gone".
+                # Measured 2026-08-26 — the first version of this method lost
+                # half of every batch to exactly that.
+                response = await self.gamma_client.get(
+                    "/markets",
+                    params=[("condition_ids", cid) for cid in batch]
+                    + [("limit", str(len(batch)))],
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue
+                raise
+            payload = response.json()
+            for market_data in payload if isinstance(payload, list) else []:
+                parsed = self._parse_market(market_data)
+                if parsed is not None:
+                    out.append(parsed)
         return out
 
     async def get_clob_market_by_condition(self, condition_id: str) -> Optional[dict]:

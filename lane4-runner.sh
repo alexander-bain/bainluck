@@ -95,7 +95,35 @@ Bank a CERT-BUS-STATUS "DRAINED" row ONLY when the drained state is NEW — if t
 # pending, so the 10 superseded/withdrawn/running blocks kept it firing forever.
 # The fix is to exclude the FULL terminal set, which is what v1 was missing.
 TERMINAL="done superseded withdrawn withdrawn-by-author"
+# STALE-CLAIM RESET (Fable-5, 2026-09-01): a bus session that dies mid-grade leaves its block at
+# `status: running` forever, and every later poll walks past it (CERT-629/630/631 sat a day).
+# Any block still `running` whose claim is older than 3h with no verdict row gets reset to staged.
+reset_stale () {
+  python3 - "$Q" "$(pwd)/.claude/handoff/CODEX-CERT-LOG.md" <<'PY'
+import re,sys,os,time,json
+q,log=sys.argv[1],sys.argv[2]
+s=open(q).read(); verdicts=open(log).read() if os.path.exists(log) else ""
+# v2 (Fable-5): v1 keyed on the queue FILE's mtime, which lanes touch constantly, so the reset
+# never fired (CERT-621 sat 23h). Now track each cert's first-seen-running time in a sidecar.
+state_p=q+".claims.json"
+try: state=json.load(open(state_p))
+except Exception: state={}
+now=time.time(); running=set()
+def fix(m):
+    cid=m.group(1); running.add(cid)
+    first=state.setdefault(cid,now)
+    if now-first<3*3600: return m.group(0)
+    if re.search(r"\| %s "%re.escape(cid), verdicts): return m.group(0)
+    return m.group(0).replace("status: running","status: staged   # stale claim reset by lane4-runner")
+s2=re.sub(r"queue_id: (CERT-\d+)\n(?:.*\n){0,12}?status: running", fix, s)
+for cid in list(state):
+    if cid not in running: del state[cid]
+json.dump(state,open(state_p,"w"))
+if s2!=s: open(q,"w").write(s2); print("[lane4] reset stale running claims")
+PY
+}
 pending () {
+  reset_stale
   awk -v terminal="$TERMINAL" '
     BEGIN { n=split(terminal,t," "); for(i=1;i<=n;i++) TERM[t[i]]=1; TERM["running"]=1 }
 

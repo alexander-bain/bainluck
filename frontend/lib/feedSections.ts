@@ -1,4 +1,4 @@
-import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData } from "@/lib/types";
 
 export interface FeedSection {
   key: string;
@@ -16,67 +16,6 @@ export interface GroupedMarket {
   bestScore: number;
 }
 
-/** Recursion backstop, matching `feedItemSuppressionReason`'s own depth cap. */
-const MAX_BUNDLE_DEPTH = 3;
-
-/**
- * Replace every `bundle` item with its member items, recursively.
- *
- * #2597 — a bundle is a DISCOVER packaging device: one swipe-deck slot holding N
- * same-theme markets, so the deck spends one card on a story instead of five.
- * The grid surfaces that share this sectioner (`/categories/*`, `/sports`,
- * `/my-stuff`) have no slot pressure, so a bundle has nothing to buy there and
- * two things to break:
- *
- *  1. it has no `status`, so it fell through the sectioning ladder's events
- *     `else` arm below and filed a cluster of open markets under "Upcoming";
- *  2. it then reached `FeedCard`, whose default arm is the futures card, which
- *     read `data.top_outcomes.length` off a bundle that has no `top_outcomes`.
- *
- * (2) is why `/categories/tennis`, `/categories/soccer` and `/categories/politics`
- * all rendered "Something went wrong" on the second day of the US Open —
- * measured 2026-09-01, and `/categories/golf`, whose feed carried no bundle that
- * day, rendered normally in the same run. Unfolding makes the members visible as
- * their real market cards: on tennis the folded members were the two US Open
- * winner markets, the most-wanted questions on the site that week, invisible
- * behind an error boundary.
- *
- * Members are NOT also present at the top level — the serializer folds them out
- * — so this restores them rather than duplicating them.
- *
- * 🔴 WHERE THIS IS CALLED FROM IS A DELIBERATE CHOICE, NOT AN OVERSIGHT.
- * `FeedCard` calls it at the leaf. `groupFeedIntoSections` deliberately does NOT
- * — it routes a bundle to Top Markets whole and lets the leaf unfold it — because
- * flattening before `groupTopMarkets` feeds the members into the cross-source
- * grouping pass, and `canonical_market_key` does not currently mean what that
- * pass assumes. Measured on the committed 2026-09-01 tennis payload: THREE
- * unrelated markets share the key `tennis::championship:2026` — 114159 (men's US
- * Open winner), 114160 (women's US Open winner) and 59712997 ("Nikola Bartunkova
- * vs Elise Mertens: Set 1 Winner"). Only one of them is top-level today, so no
- * group forms; flattening would have made three, and `CombinedFeedCard` merges a
- * group's outcomes BY NAME across sources on the premise that they are one
- * question. The rendered card put Alcaraz and Elise Mertens in one outcome list.
- * Fixing a dead page by shipping that would be a bad trade. The key collision is
- * filed separately as a matching-layer defect; until it is fixed, unfolding stays
- * downstream of the grouping pass.
- */
-export function flattenFeedBundles(
-  items: FeedItem[],
-  depth = 0,
-): FeedItem[] {
-  const out: FeedItem[] = [];
-  for (const item of items) {
-    if (item.type !== "bundle") {
-      out.push(item);
-      continue;
-    }
-    if (depth >= MAX_BUNDLE_DEPTH) continue;
-    const members = (item.data as FeedBundleData).items ?? [];
-    out.push(...flattenFeedBundles(members, depth + 1));
-  }
-  return out;
-}
-
 /**
  * Group feed items into visual sections: Live Now, Just Happened, Upcoming, Top Markets.
  * Shared between homepage and category pages.
@@ -91,14 +30,6 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
 
   for (const item of items) {
     if (item.type === "futures") {
-      topMarkets.push(item);
-    } else if (item.type === "bundle") {
-      // #2597 — a bundle of markets belongs with the markets. Without this arm it
-      // fell through to the events `else` at the bottom, where a missing `status`
-      // reads as "not live, not completed" and filed a cluster of OPEN markets
-      // under "Upcoming". It stays folded here on purpose (see
-      // `flattenFeedBundles`); `FeedCard` unfolds it at the leaf, AFTER
-      // `groupTopMarkets` has run, so the members never join a cross-source group.
       topMarkets.push(item);
     } else if (item.type === "tournament") {
       // Tournaments sort into live or upcoming based on schedule_status

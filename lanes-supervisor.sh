@@ -6,15 +6,16 @@
 # (lanes keep running). Duplicates are harmless: runners take queues atomically.
 set -u
 R="$HOME/bainluck/lane-runner.sh"
-declare -A DIR=( [integrator]="$HOME/bainluck" [ux]="$HOME/bainluck-dev/ux" [latency]="$HOME/bainluck-dev/latency" [calibration]="$HOME/bainluck-dev/calibration" [live]="$HOME/bainluck-dev/live" )
-declare -A ARGS=( [integrator]="integrator lane1" [ux]="ux" [latency]="latency" [calibration]="calibration" [live]="live" )
+# bash-3.2 safe (macOS /bin/bash has no associative arrays): lane -> dir / args via case.
+lane_dir () { case "$1" in integrator) echo "$HOME/bainluck";; *) echo "$HOME/bainluck-dev/$1";; esac; }
+lane_args () { case "$1" in integrator) echo "integrator lane1";; *) echo "$1";; esac; }
 launch () { osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null; }
 while true; do
   for L in integrator ux latency calibration live; do
-    D="${DIR[$L]}"; [ -d "$D" ] || continue
-    if ! pgrep -f "lane-runner.sh $D ${ARGS[$L]}" >/dev/null 2>&1; then
+    D="$(lane_dir "$L")"; A="$(lane_args "$L")"; [ -d "$D" ] || continue
+    if ! pgrep -f "lane-runner.sh $D $A" >/dev/null 2>&1; then
       echo "[supervisor] $(date '+%H:%M:%S') lane '$L' has no runner — relaunching"
-      launch "$R $D ${ARGS[$L]}"
+      launch "$R $D $A"
     fi
   done
   # lane4 cert bus. The pattern is a REGEX and `.` matches any character, so the

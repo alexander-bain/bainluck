@@ -175,19 +175,6 @@ REASON_UNIT_KEY = "unit_key_mismatch"
 REASON_POPULATION_VERSION = "population_version_changed"
 #: A deploy touching any SQL function hashed by ``_main_input_fingerprint``.
 REASON_INPUT_FINGERPRINT = "input_fingerprint_changed"
-#: CAL-P205 (#2052), layer 1. A cursor stamped with the LEGACY wide digest,
-#: resumed against the narrow ``staged_unit_fingerprint``. Its own token, and it
-#: is the ONE expected non-``resumable`` reason for one generation after layer 1
-#: ships — the same courtesy :data:`REASON_UNENCODED_UNITS` and
-#: :data:`REASON_UNFOLDED_UNITS` are given, and for the same reason: an expected
-#: transition that cannot be told from a real one is not observable.
-#:
-#: It is a RESUME, not an invalidation. The cursor is re-stamped with the narrow
-#: digest on the next ``save_staged_cursor``, so the branch is self-draining and
-#: can be deleted one generation later. Seeing it ONCE and then never again is
-#: the cutover working; seeing :data:`REASON_INPUT_FINGERPRINT` on the beat after
-#: the layer-1 deploy is the design's pre-registered falsifier #2 firing.
-REASON_LEGACY_FINGERPRINT_ACCEPTED = "legacy_fingerprint_accepted"
 REASON_MALFORMED_UNITS = "malformed_units"
 #: CAL-P033. The banked rows are not the encoded envelope :func:`encode_unit_rows`
 #: writes — i.e. a cursor written before rows were encoded, whose rows came back
@@ -1533,7 +1520,6 @@ def decode_staged_cursor(
     owner: str,
     generation: int,
     now: float,
-    legacy_input_fingerprint: Optional[str] = None,
 ) -> tuple[StagedFuturesCursor, str]:
     """``(cursor, action)`` — :func:`decode_staged_cursor_detailed` without the reason.
 
@@ -1550,7 +1536,6 @@ def decode_staged_cursor(
         owner=owner,
         generation=generation,
         now=now,
-        legacy_input_fingerprint=legacy_input_fingerprint,
     )
     return cursor, action
 
@@ -1564,7 +1549,6 @@ def decode_staged_cursor_detailed(
     owner: str,
     generation: int,
     now: float,
-    legacy_input_fingerprint: Optional[str] = None,
 ) -> tuple[StagedFuturesCursor, str, str]:
     """Load a persisted cursor, refusing anything not provably resumable.
 
@@ -1647,28 +1631,10 @@ def decode_staged_cursor_detailed(
         return blank, INVALIDATE, REASON_UNIT_KEY
     if raw.get("population_version") != expected_population_version:
         return blank, INVALIDATE, REASON_POPULATION_VERSION
-    legacy_accepted = False
     if raw.get("input_fingerprint") != expected_input_fingerprint:
-        if (
-            legacy_input_fingerprint is not None
-            and raw.get("input_fingerprint") == legacy_input_fingerprint
-        ):
-            # CAL-P205 layer 1's cutover, and the whole reason it costs zero
-            # banked units. The cursor on disk was stamped by code that keyed on
-            # the WIDE digest; this process keys on the narrow one. Refusing it
-            # would throw away the bank on the deploy that ships the fix for
-            # throwing away the bank.
-            #
-            # Self-draining: the cursor returned below carries
-            # ``expected_input_fingerprint`` (the narrow digest), so the next
-            # ``save_staged_cursor`` re-stamps it and this branch never fires
-            # again for that cursor.
-            legacy_accepted = True
-        else:
-            # THE one that fires in practice. A deploy touching any SQL function
-            # in ``_main_input_fingerprint`` lands here and costs every banked
-            # unit.
-            return blank, INVALIDATE, REASON_INPUT_FINGERPRINT
+        # THE one that fires in practice. A deploy touching any SQL function in
+        # ``_main_input_fingerprint`` lands here and costs every banked unit.
+        return blank, INVALIDATE, REASON_INPUT_FINGERPRINT
     # NOTE: generation_fingerprint is deliberately NOT checked here (CAL-P016).
     # It is still carried and still written, because it names which roster a
     # cursor was last advanced against and that is worth having in the payload —
@@ -1811,17 +1777,7 @@ def decode_staged_cursor_detailed(
         # has nothing to resume — and calling it RESUME would tell an operator
         # the rebuild is further along than it is. The serving bank's own state
         # is reported by its own gauges, not smuggled into this word.
-        #
-        # CAL-P205: the legacy-digest acceptance overrides only the REASON, never
-        # the action. Whether there is anything to resume is a fact about the
-        # bank; which digest stamped it is a fact about the deploy that wrote it.
-        # Conflating them is how ``staged:cursor_invalidate`` came to stand for
-        # five different causes in the first place.
-        (
-            REASON_LEGACY_FINGERPRINT_ACCEPTED
-            if legacy_accepted
-            else (REASON_RESUMABLE if resumable else REASON_NOTHING_BANKED)
-        ),
+        REASON_RESUMABLE if resumable else REASON_NOTHING_BANKED,
     )
 
 

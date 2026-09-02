@@ -4565,23 +4565,10 @@ async def _run_staged_futures(db, runner, sql_builder):
 
     cursor, action, reason = await load_staged_cursor(
         population_version=runner.population_version,
-        # CAL-P205 (#2052), layer 1. The STAGED CURSOR keys off the statement its
-        # units actually ran, not off four functions' source text. A banked unit
-        # is rows produced by one statement, so an edit to the renderer — which
-        # moves ``runner.fingerprint`` and today discards a ~26-hour rebuild —
-        # cannot change what those rows ARE and must not discard them.
-        #
-        # ``runner.fingerprint`` (the wide digest) is UNCHANGED and still governs
-        # the carried PHASE outputs via ``decode_main_checkpoint``; the two
-        # digests answer different questions and are deliberately not merged.
-        input_fingerprint=staged_unit_fingerprint(),
+        input_fingerprint=runner.fingerprint,
         generation_fingerprint=gen_digest,
         owner=runner.owner,
         generation=runner.generation,
-        # The cutover, and it must cost ZERO banked units — this change exists to
-        # stop the bank being thrown away, so paying one wipe to install it would
-        # be self-defeating. The cursor on disk right now is stamped wide.
-        legacy_input_fingerprint=runner.fingerprint,
     )
     if action == REFUSE:
         # Another beat holds an unexpired lease on this generation. Two workers
@@ -6641,65 +6628,6 @@ def _main_input_fingerprint() -> str:
         f"player_props_band={PLAYER_PROPS_MIDPOINT_BAND_LO},{PLAYER_PROPS_MIDPOINT_BAND_HI}",
         f"player_props_forced_drift={PLAYER_PROPS_FORCED_DRIFT_MIN}",
         source,
-    )
-
-
-def staged_unit_fingerprint() -> str:
-    """The BYTES the staged units actually ran, in one digest.
-
-    CAL-P205 (#2052), layer 1 of
-    ``artifacts/cal-p190/DESIGN-THE-REBUILD-SURVIVES-A-DEPLOY.md``.
-
-    Not a proxy for the statement — the statement. ``inspect.getsource`` covers
-    a function and never its callees, which is the hole
-    :func:`_main_input_fingerprint`'s own docstring keeps re-teaching: SIX
-    separate incidents have each been closed by bolting one more interpolated
-    value onto that digest by hand, after the fact. A digest of the emitted text
-    cannot have a seventh, because an interpolated value that changes the
-    published rows necessarily changes the bytes.
-
-    DELIBERATELY NOT MERGED with the other two digests, for the same reason
-    :func:`population_predicate_fingerprint` gives for staying narrower: the
-    three answer different questions.
-
-    * :func:`_main_input_fingerprint` answers "may a carried PHASE OUTPUT be
-      resumed", so it hashes the source of everything the output depends on,
-      including ``compute_calibration_payload`` (metrics, rendering, bucket
-      shaping). :func:`~app.utils.calibration_staged_futures.decode_main_checkpoint`
-      keeps it. An edit to the renderer must still discard a carried phase.
-    * THIS one answers "may a banked staged UNIT be resumed". A staged unit is
-      rows produced by one statement. Nothing outside that statement can change
-      what those rows ARE — so an edit to the renderer, which today throws away
-      a 26-hour rebuild, correctly does not.
-
-    The two values below are hashed separately because they are the only two of
-    the twelve that do NOT reach the statement text — measured by mutation, not
-    assumed, and pinned in both directions by
-    ``test_which_fingerprint_inputs_the_emitted_statement_actually_covers``:
-
-    * :data:`CALIBRATION_POPULATION_VERSION` — already its own branch in
-      ``decode_staged_cursor`` (``REASON_POPULATION_VERSION``). Hashed here too
-      so this digest is self-contained rather than relying on a sibling check;
-    * :data:`REPRESENTATIVE_TIE_AUTHORITY` — stamped on the published artifact,
-      so it is a DISCLOSURE input rather than a row input. Named here instead of
-      being smuggled in beside the row-shaping ones.
-    """
-    import hashlib
-
-    from app.utils.calibration_phase_ledger import input_fingerprint
-
-    try:
-        statement = _main_futures_sql(frozen=True)
-    except Exception:  # noqa: BLE001 — no statement => never claim a match
-        # Same discipline as ``population_predicate_fingerprint``: a digest
-        # nothing can equal, so an unbuildable statement invalidates rather than
-        # silently resuming units it could not describe.
-        return f"unavailable:{time.time()}"
-    return input_fingerprint(
-        "staged-unit/v1",
-        CALIBRATION_POPULATION_VERSION,
-        REPRESENTATIVE_TIE_AUTHORITY,
-        hashlib.md5(statement.encode()).hexdigest(),
     )
 
 

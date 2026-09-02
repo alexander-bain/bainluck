@@ -150,10 +150,7 @@ class TestGolfTournamentDetail:
         async def _mock_get_golf(db):
             return {"tournaments": [], "biggest_movers": []}
 
-        # `golf_data` is the listing the route already holds and now hands down, so
-        # the completed-tournament path stops rebuilding it a second time per
-        # request (LAT-P186). Accepted here so this stub matches the real signature.
-        async def _mock_completed_tournament(slug, db, golf_data=None):
+        async def _mock_completed_tournament(slug, db):
             return None
 
         monkeypatch.setattr(golf, "get_golf", _mock_get_golf)

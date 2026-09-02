@@ -118,7 +118,9 @@ launch "$R $HOME/bainluck integrator lane1"
 launch "$R $HOME/bainluck-dev/ux ux"
 launch "$R $HOME/bainluck-dev/latency latency"
 launch "$R $HOME/bainluck-dev/calibration calibration"
+launch "$R $HOME/bainluck-dev/live live"          # dedicated live-prices lane (Fable, 2026-09-01)
+launch "$HOME/bainluck/lane4-runner.sh"                   # the cert bus, headless (Fable, 2026-09-01)
 
-echo "Four Terminal windows opened — one per lane, streaming live."
+echo "Six Terminal windows opened — one per lane, streaming live."
 echo "If a lane is already running in another window, close the duplicate:"
 echo "the runners take queues atomically, so duplicates waste nothing but a window."

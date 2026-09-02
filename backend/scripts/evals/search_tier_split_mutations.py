@@ -111,29 +111,11 @@ MUTANTS: list[dict[str, str]] = [
 ]
 
 
-def anchor_scope_text() -> str:
-    """The text this harness counts its anchors in — ONE function, not the file.
-
-    #2391. `scan_mutation_residue.py` graded these needles against the whole of
-    `app/routes/events.py` and reported `M6-no-rearm` as matching twice, i.e. as
-    a mutant that could never run. It runs and it is KILLED: the second match is
-    in a different function, and this harness never looks there. The scan was
-    right about the substring and wrong about the DENOMINATOR.
-
-    So the scope is published rather than described. The scan calls this and
-    `_mutate` uses it, which makes the two counts the same expression — they
-    cannot drift into disagreeing again the way a written-down claim can.
-    """
-    import app.routes.events as E
-
-    return inspect.getsource(E._fetch_futures_window)
-
-
 def _mutate(mutant: dict) -> object:
     """Build the mutated `_fetch_futures_window`, in memory."""
     import app.routes.events as E
 
-    src = anchor_scope_text()
+    src = inspect.getsource(E._fetch_futures_window)
     if src.count(mutant["needle"]) != 1:
         raise SystemExit(
             f"HARNESS: needle for {mutant['id']} matched "
