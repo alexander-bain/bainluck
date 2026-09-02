@@ -39,6 +39,11 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "soccer_germany_bundesliga": ("soccer", "ger.1"),
     "soccer_italy_serie_a": ("soccer", "ita.1"),
     "soccer_france_ligue_one": ("soccer", "fra.1"),
+    # Brazil Série A — ESPN carries `soccer/bra.1` (measured 2026-09-01: 21
+    # fixtures in a ±1w window). The 281 `soccer_brazil_campeonato` events we
+    # already ingest from the Odds API had 0 espn_id purely because this key
+    # was absent from the two ESPN maps.
+    "soccer_brazil_campeonato": ("soccer", "bra.1"),
     # Golf
     "golf_pga": ("golf", "pga"),
     "golf_lpga": ("golf", "lpga"),
@@ -95,6 +100,7 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
     "soccer_france_ligue_one": 2,
+    "soccer_brazil_campeonato": 2,
     # Lacrosse — 4 quarters
     "lacrosse_ncaa": 4,
     "lacrosse_pll": 4,
@@ -142,6 +148,11 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "soccer_germany_bundesliga": "soccer/ger.1",
     "soccer_italy_serie_a": "soccer/ita.1",
     "soccer_france_ligue_one": "soccer/fra.1",
+    # Brazil Série A. MUST stay in lockstep with SPORT_LEAGUE_MAP above:
+    # `_sync_espn_live_events` GATES on this dict, while `get_scoreboard`
+    # resolves the URL from SPORT_LEAGUE_MAP. A key in only one of the two is
+    # silently never synced — see test_espn_sport_maps_agree.
+    "soccer_brazil_campeonato": "soccer/bra.1",
     # Lacrosse
     "lacrosse_ncaa": "lacrosse/mens-college-lacrosse",
     "lacrosse_pll": "lacrosse/pll",
