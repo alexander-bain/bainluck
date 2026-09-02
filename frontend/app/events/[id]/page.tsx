@@ -9,6 +9,7 @@ import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, 
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
+import LiveSparkline from "@/components/event/LiveSparkline";
 import {
   eventTournamentKey,
   isTournamentSportKey,
@@ -369,6 +370,23 @@ export default function EventPage({ params }: EventPageProps) {
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
+  // The sparkline's series: the served blend line, plus any frames that have
+  // arrived by push since the last fetch. Appending the pushed points matters —
+  // while the stream is delivering, polling is OFF, so `aggregate_line` stops
+  // advancing and a sparkline built from it alone would freeze exactly when the
+  // number is most alive.
+  const sparklinePoints = useMemo(() => {
+    const served = (historyData?.aggregate_line ?? []).map((p) => ({
+      timestamp: p.timestamp,
+      value: p.home_probability,
+    }));
+    if (liveFrame?.p === null || liveFrame?.p === undefined) return served;
+    const last = served[served.length - 1];
+    // Don't double-draw a point the fetch already carried.
+    if (last && last.timestamp === liveFrame.updated_at) return served;
+    return [...served, { timestamp: liveFrame.updated_at, value: liveFrame.p }];
+  }, [historyData?.aggregate_line, liveFrame]);
+
   // #2443 — the container the event belongs to, which for a registered
   // tournament carries the decided result the hero needs to name a winner.
   //
@@ -601,6 +619,7 @@ export default function EventPage({ params }: EventPageProps) {
             The countdown stays for every event still on the poll. */}
         {!isFinished && streamConnected && (
           <div className="flex items-center gap-3">
+            <LiveSparkline points={sparklinePoints} />
             <LiveAgeStamp updatedAt={freshestSourceStamp} connected={streamConnected} />
           </div>
         )}
