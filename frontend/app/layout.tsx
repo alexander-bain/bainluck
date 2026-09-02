@@ -6,7 +6,6 @@ import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/An
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
-import UserMenu from "@/components/UserMenu";
 import SWRProvider from "@/components/SWRProvider";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
@@ -17,10 +16,15 @@ import { Suspense } from "react";
 // because this file is a Server Component that split never happened — see the
 // header of DeferredChrome.tsx. The `dynamic()` calls now live behind a client
 // boundary, which is where `import()` is an actual split point.
+//
+// LAT-P207 adds `UserMenu` to the same boundary for the same bundling reason,
+// but keeps it server-rendered: it is the only one of the four whose SSR output
+// a cold reader actually sees. Details at its `dynamic()` call.
 import {
   DeferredNavigationProgress as NavigationProgress,
   DeferredSearchBar as SearchBar,
   DeferredMobileSearchTrigger as MobileSearchTrigger,
+  DeferredUserMenu as UserMenu,
 } from "@/components/layout/DeferredChrome";
 
 // LAT-P202: `preload: false` is the whole fix, and it is deliberate.

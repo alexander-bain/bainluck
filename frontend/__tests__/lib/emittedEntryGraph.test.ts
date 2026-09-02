@@ -172,6 +172,25 @@ const DEFERRED = [
     marker: "Come back tomorrow for a new set",
     source: join("components", "discover", "DailyChallengeCard.tsx"),
   },
+  // ─── LAT-P207: the account menu ───────────────────────────────────────────
+  //
+  // The first entry on this list that is still SERVER-RENDERED. Everything
+  // above is `ssr: false`, so "not in the entry graph" and "not in the HTML"
+  // coincide; `UserMenu` renders its signed-out button into the HTML of every
+  // route and only its CLIENT chunk is deferred. That is exactly why the guard
+  // reads the `<script src>` set rather than the markup — the markup is
+  // supposed to still contain this component, and a guard that looked for the
+  // string in the HTML would red on the correct state.
+  //
+  // Not the visible "Sign in" copy, which `app/my-stuff/page.tsx` also ships
+  // (it carries its own provider buttons), and not "Continue with Google" for
+  // the same reason — control 5 refuses both. This dropdown's aria-label is
+  // UserMenu's alone.
+  {
+    what: "UserMenu (the header account menu and its provider dropdown)",
+    marker: "Sign in options",
+    source: join("components", "UserMenu.tsx"),
+  },
 ] as const;
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);
