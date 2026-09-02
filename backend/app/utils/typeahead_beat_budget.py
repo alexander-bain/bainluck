@@ -1125,7 +1125,24 @@ def free_background_slots(
 #: below was RUN over the assembled `beat_schedule` on the MERGED tree and its
 #: printed value — `explicit 64 implicit 45 total 109` — is what stands here — it was not obtained by adding 1 + 1
 #: (#1910). Both lanes' cost declarations above remain accurate as written.
-BACKGROUND_BEAT_COUNT = 109
+#:
+#: 🔴 RE-DERIVED at LAT-P193 (2026-09-01, #2614): 109 -> **110**, explicit
+#: 64 -> **65**, fall-through UNMOVED at **45**. This lane added
+#: `backfill-image-dimensions` (`crontab(minute=5, hour="*/6")`) with an
+#: EXPLICIT `options={"queue": "background"}` — the benign direction this
+#: constant reserves. RE-DERIVED by running the census over the assembled
+#: `beat_schedule` and printing all three numbers, never by adding one to the
+#: old value (#1910).
+#:
+#: Cost declaration: each pass fetches at most 150 distinct image URLs, reading
+#: a ~4 KB prefix of each and closing the stream, with a 0.2 s pace between
+#: them — so a full pass is bounded near 150 x (0.2 s + one small request) and
+#: is dominated by deliberate idling, not work. It runs 4x/day against a
+#: population of 6,034 distinct un-sized photos, so it DRAINS in ~10 days and
+#: then returns `no_work` forever, costing one indexed query per fire. It is on
+#: `background` rather than `heavy` because it holds no DB work of consequence:
+#: the only statement per URL is a narrow indexed UPDATE.
+BACKGROUND_BEAT_COUNT = 110
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
