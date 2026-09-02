@@ -373,6 +373,19 @@ ENFORCED_TASKS = frozenset({
     # before and the pass reads `failed`, never `complete`.
     "warm_prop_families",              # terminal + selected + dispatched
     "refresh_prop_families",           # terminal + rebuilt + degraded
+    # LAT-P193: the image-dimension backfill. Enrolled AT BIRTH per #1884, in the
+    # same change that gives it a terminal, because it is a bounded sweep over a
+    # finite population and therefore has this module's founding shape: a run
+    # that sized every URL it selected and a run whose image host was
+    # unreachable both return a tidy counter dict and mean opposite things. Its
+    # terminal separates them — `no_work` when the population is drained (the
+    # steady state, and honestly not GREEN), `complete` when every selected URL
+    # was measured, `partial` on a mixed pass, and `failed` when it selected
+    # work and measured none of it. The last one is the one that would rot:
+    # every consumer treats a NULL dimension as "fall back to the old
+    # behaviour", so a permanently failing backfill breaks nothing visible and
+    # would simply never finish, quietly, forever.
+    "backfill_image_dims",             # terminal + urls + measured + failed
 })
 
 

@@ -810,6 +810,18 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     default (bad, and this is the only test that would notice). It is
     deliberately asserted as a SPLIT and not just a total, because a total
     holds constant while 45 becomes 60 and 57 becomes 42.
+
+    🔴 **RE-DERIVED at LAT-P193 (2026-09-01, #2614): 109 → 110, explicit
+    64 → 65.** This lane added `backfill-image-dimensions`
+    (`crontab(minute=5, hour="*/6")`, the true-pixel-dimension backfill) with an
+    explicit `options={"queue": "background"}`. RE-DERIVED by running the census
+    below over the assembled schedule and printing all three numbers, never by
+    adding one to the old number (#1910). The fall-through half is UNMOVED at
+    **45** — the new beat named its queue rather than defaulting into it, which
+    is the benign direction this docstring reserves. The cost declaration (a
+    bounded 150-URL pass that drains in ~10 days and then returns `no_work`
+    forever, and why `background` rather than `heavy`) is on
+    `BACKGROUND_BEAT_COUNT`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -826,9 +838,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 64, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 65, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 109
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 110
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

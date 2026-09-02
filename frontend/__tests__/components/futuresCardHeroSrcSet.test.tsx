@@ -155,3 +155,75 @@ describe("the ladder is not applied where it cannot be trusted", () => {
     expect(html).not.toContain('srcSet=');
   });
 });
+
+// ---------------------------------------------------------------------------
+// LAT-P195 (#2614) — the MEASURED width reaches the rendered hero.
+//
+// `heroSrcSet.test.ts` proves the ladder is built correctly from a true raster
+// width. That is worth nothing if `FuturesCard` never hands the width over —
+// which is precisely the shape CERT-709 blocked: a fact stored, backfilled, and
+// consumed by nobody. So this asserts on the RENDERED tag, and it distinguishes
+// the two arms by a value only the measured path can produce.
+function renderWithWidth(imageUrl: string | null, imageWidth: number | null): string {
+  const data = {
+    ...futuresData(imageUrl),
+    image_width: imageWidth,
+    image_height: imageWidth === null ? null : 650,
+  } as unknown as FeedFuturesData;
+  return renderToStaticMarkup(
+    <FuturesCard
+      item={{ type: "futures", score: 90, reason: "", headline: "", data } as unknown as FeedItem}
+      data={data}
+      liked={false}
+      setLiked={() => {}}
+      trending={false}
+    />,
+  );
+}
+
+function topDescriptor(html: string): number {
+  const srcSet = /srcset="([^"]*)"/i.exec(heroTag(html))?.[1] ?? "";
+  expect(srcSet).not.toBe("");
+  const rungs = srcSet.split(", ");
+  return Number(/(\d+)w$/.exec(rungs[rungs.length - 1])?.[1] ?? 0);
+}
+
+describe("LAT-P195 — the measured raster width reaches the rendered ladder", () => {
+  it("CONTROL — an unmeasured hero still renders the conservative ladder", () => {
+    // Green in BOTH arms (P190b): this is today's behaviour and the state of
+    // the entire population until the backfill drains. A red here means the
+    // fallback broke, which would be a regression, not a missing ship.
+    expect(topDescriptor(renderWithWidth(HERO_URL, null))).toBe(650);
+  });
+
+  it("DETECTOR — a measured hero advertises the pixels it really has", () => {
+    // 867 is only reachable via `image_width`; the url alone floors at 650. So
+    // this number cannot be produced by the fallback path, which is what makes
+    // it a detector rather than a restatement of the control.
+    expect(topDescriptor(renderWithWidth(HERO_URL, 867))).toBe(867);
+  });
+
+  it("DETECTOR — the measured ladder offers strictly more rungs to choose from", () => {
+    const rungCount = (html: string) =>
+      (/srcset="([^"]*)"/i.exec(heroTag(html))?.[1] ?? "").split(", ").length;
+    expect(rungCount(renderWithWidth(HERO_URL, 867))).toBeGreaterThan(
+      rungCount(renderWithWidth(HERO_URL, null)),
+    );
+  });
+
+  it("a measured width never changes the `src` — the fetched url is untouched", () => {
+    // The "never heavier" guarantee, checked on the render rather than argued
+    // from the helper: whatever the ladder says, a browser that ignores srcset
+    // downloads exactly the byte-identical url it downloads today.
+    // `&` is entity-escaped in serialized markup; the browser un-escapes it
+    // back to the exact url, so the comparison is made in the same encoding.
+    const escaped = HERO_URL.replace(/&/g, "&amp;");
+    expect(heroTag(renderWithWidth(HERO_URL, 867))).toContain(`src="${escaped}"`);
+  });
+
+  it("a measured width on a non-Pexels hero still buys nothing", () => {
+    // The refusal survives the new input: we do not know another CDN's scaling
+    // parameters, and knowing the raster size does not tell us them.
+    expect(heroTag(renderWithWidth(FOREIGN_URL, 1200))).not.toMatch(/srcset=/i);
+  });
+});

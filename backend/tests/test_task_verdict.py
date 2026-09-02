@@ -396,6 +396,15 @@ class TestEnforcementScope:
             # `complete` over a payload nobody stored.
             "warm_prop_families",
             "refresh_prop_families",
+            # LAT-P193 (#2614): the image-dimension backfill, enrolled at BIRTH
+            # in the same change that gives it a terminal. A bounded sweep over
+            # a finite population has this module's founding shape — a pass that
+            # sized every URL and a pass whose image host was unreachable both
+            # return a tidy counter dict. What makes it worth enrolling rather
+            # than paperwork: every consumer treats a NULL dimension as "use the
+            # old behaviour", so a permanently failing backfill breaks nothing
+            # visible and would simply never finish, quietly, forever.
+            "backfill_image_dims",
         }
 
     def test_enforced_task_partial_blocks_success(self):

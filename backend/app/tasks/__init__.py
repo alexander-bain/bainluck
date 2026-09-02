@@ -1655,6 +1655,20 @@ def enrich_tmdb_images(self, limit: int = 50):
 
 @celery_app.task(
     bind=True,
+    name="app.tasks.backfill_image_dimensions",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def backfill_image_dimensions(self, limit: int = 150):
+    """True pixel size for artwork enriched before those columns existed."""
+    from app.tasks.image_dimensions_backfill import (
+        backfill_image_dimensions as _backfill,
+    )
+    return _tracked_run("backfill_image_dims", _backfill(limit))
+
+
+@celery_app.task(
+    bind=True,
     name="app.tasks.enrich_market_hooks",
     soft_time_limit=600,
     time_limit=660,
@@ -4051,6 +4065,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.enrich_tmdb_images",
         "schedule": crontab(minute=35, hour="*/6"),  # #882: real TMDB art for quoted-title entertainment
         "kwargs": {"limit": 50},
+        "options": {"queue": "background"},
+    },
+    "backfill-image-dimensions": {
+        "task": "app.tasks.backfill_image_dimensions",
+        # Every 6h at :05. THE CADENCE IS DERIVED FROM THE POPULATION, not
+        # chosen: 6,034 distinct un-sized photos back the open markets, so at
+        # 150 per pass this drains in ~10 days and then idles at zero work
+        # forever — it only wakes up again for newly-enriched artwork.
+        "schedule": crontab(minute=5, hour="*/6"),
+        "kwargs": {"limit": 150},
         "options": {"queue": "background"},
     },
     "precompute-interestingness": {
