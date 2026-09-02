@@ -45,14 +45,23 @@ independently. It ALREADY has a process-global cache — which the hot path neve
 populates, because the keyed branch returns before the store. 683-702ms paid on
 every miss for a cache that exists.
 
-## What is deliberately NOT shared
+## What was deliberately NOT shared, and what changed
 
 `futures.market_load` (567-617ms) hydrates live ORM rows. Sharing those across
 requests is the #2107 hazard verbatim, and #2107's seven-day watch opened at T0
-= 2026-08-24T17:23:50Z and has banked zero days. A latency lane does not widen
+= 2026-08-24T17:23:50Z and had banked zero days. A latency lane does not widen
 a live P0's blast radius to buy 600ms. The structural guard below
 (`assert_plain_data`) is what makes that refusal mechanical rather than a
 promise: an ORM instance CANNOT enter the shared cache.
+
+**LAT-P174 (2026-08-31) shared it anyway — by changing the carrier, not the
+rule.** The refusal above still holds exactly as written and is still gated
+here; what the artifact now contains is a plain table of the loaded COLUMN
+VALUES, with the objects the scoring loop reads rebuilt per request as inert
+snapshots. The gates for that live in
+`test_feed_market_load_shared_lat_p174.py` and
+`test_futures_market_snapshot_lat_p174.py`; nothing in THIS file changed, and
+the `assert_plain_data` guard it relies on is the reason that design was forced.
 """
 
 from __future__ import annotations

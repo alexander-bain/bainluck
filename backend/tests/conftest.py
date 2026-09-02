@@ -26,9 +26,20 @@ def _reset_request_cache_state():
     as-of, it decides whether ``/api/calibration`` may say ``fresh``, and its TTL
     outlives a test. Leaked, one test's healthy bank makes the next test's frozen
     one invisible — and that direction is the reassuring one.
+
+    LAT-P174 adds ``principal_independent_cache``'s process-local store, for the
+    same reason as the candidate base one paragraph up and now with teeth: since
+    the hydrated candidate ROWS are shared there, and its key is a digest of the
+    candidate ID set, two tests that seed markets with the same IDs and different
+    CONTENT are one cache entry. ``test_feed_fused_broaden_pass.py`` reuses IDs
+    1-6 across tests with different ``updated_at`` and went red on exactly that.
+    In production the TTL bounds this (the IDs really do identify the rows, and
+    60s is tighter than the response cache above it); in a test suite nothing
+    bounds it, because nothing takes 60 seconds.
     """
     from app.utils import request_cache as _rc
     from app.utils import candidate_base as _cb
+    from app.utils.principal_independent_cache import clear_shared_builds
 
     def _reset_staged():
         from app.routes import calibration as _cal
@@ -40,12 +51,14 @@ def _reset_request_cache_state():
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
+    clear_shared_builds()
     _reset_staged()
     yield
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _rc._reset_shared_client_for_tests()
     _cb._reset_l0_for_tests()
+    clear_shared_builds()
     _reset_staged()
 
 

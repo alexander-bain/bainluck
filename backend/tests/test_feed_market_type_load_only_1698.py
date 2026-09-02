@@ -62,11 +62,26 @@ def test_an_unloaded_column_raises_on_access_rather_than_returning_none():
 
 
 def _load_only_blocks() -> list[str]:
-    """The `load_only(...)` argument lists in the feed serializer queries."""
+    """The `load_only(...)` argument lists behind the feed serializer queries.
+
+    Both homes, deliberately. LAT-P174 moved the one shared projection's COLUMNS
+    out of `feed.py` and into `futures_market_snapshot.MARKET_COLUMNS`, which is
+    simultaneously the query's load surface (`market_load_options()` builds the
+    `load_only` from it) and the wire format of the shared hydration artifact.
+    The derived tuple is rendered here in the same `FuturesMarket.<column>` form
+    as any literal block so this guard keeps covering the projection wherever it
+    lives — a source scan that only knew the old home would go quietly blind,
+    which is the exact species of failure #1698 was. Scanning both homes is also
+    what keeps `_the_shared_market_block`'s `== 1` a real count: an inlined
+    second copy in `feed.py` still shows up here and still fails it.
+    """
     from app.routes import feed
+    from app.utils import futures_market_snapshot as fms
 
     src = inspect.getsource(feed)
-    return re.findall(r"load_only\(\s*\n(.*?)\n\s*\)", src, flags=re.S)
+    literal = re.findall(r"load_only\(\s*\n(.*?)\n\s*\)", src, flags=re.S)
+    derived = "\n".join(f"FuturesMarket.{column}," for column in fms.MARKET_COLUMNS)
+    return literal + [derived]
 
 
 def _the_shared_market_block() -> str:
