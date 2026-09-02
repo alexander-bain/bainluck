@@ -318,6 +318,10 @@ class TestBeatScheduleCompleteness:
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",
+        # C-ROLLCALL-BUILD-1 — the daily ground-truth roll call, 08:00 UTC after
+        # every other sentinel. Gotcha #12: this allowlist is the reason a new
+        # beat entry cannot land silently.
+        "rollcall-daily",
         "sentry-snapshot-15min",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",

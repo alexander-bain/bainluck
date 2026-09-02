@@ -1398,6 +1398,81 @@ async def get_mlb_schedule_coverage(
     return await run_mlb_schedule_coverage(date=date)
 
 
+@router.get("/rollcall")
+async def get_rollcall(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    date: str = Query(None, description="YYYY-MM-DD (default today UTC)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """C-ROLLCALL-BUILD-1: the day's ground-truth roll call scorecard.
+
+    Reads the durable ``rollcall_scores`` rows for the date — one per league,
+    with the named offending fixtures, not a bare percentage. Returns
+    ``found: false`` when the roll call has not run for that date; that is a
+    distinct answer from a clean slate and is never dressed up as one.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.utils.rollcall import coverage_percent
+
+    day = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = (await db.execute(
+        text("""
+            SELECT league, axiom, events_external, graded, ambiguous,
+                   matched_1, dupes, missing,
+                   mis_stamped, clean, per_source, verdict, offenders,
+                   justification, generated_at
+            FROM rollcall_scores
+            WHERE score_date = :d
+            ORDER BY axiom DESC, league
+        """),
+        {"d": day},
+    )).mappings().all()
+
+    leagues = [dict(r) for r in rows]
+    # Renamed off `graded` since that is now a COLUMN meaning something else
+    # (fixtures graded within a league, vs leagues observed at all).
+    observed = [
+        lg for lg in leagues
+        if lg["axiom"] and lg["verdict"] not in ("truth_unavailable",)
+    ]
+    return {
+        "date": day,
+        "found": bool(leagues),
+        "coverage_pct": coverage_percent(observed),
+        "leagues_red": [lg["league"] for lg in leagues if lg["verdict"] == "red"],
+        "leagues": leagues,
+    }
+
+
+@router.post("/rollcall/run")
+async def trigger_rollcall(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    date: str = Query(None, description="YYYY-MM-DD (default today UTC)"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard"),
+):
+    """On-demand run of the daily roll call.
+
+    ``?inline=true&file_issues=false`` is the verification shape: it grades the
+    slate and returns the scorecard without touching the board.
+    """
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.rollcall import _run_rollcall
+
+        return await _run_rollcall(date=date, file_issues=file_issues)
+
+    result = _safe_send_task(
+        "app.tasks.rollcall_daily",
+        kwargs={"date": date, "file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
 @router.post("/grid-sentinel/run")
 async def trigger_grid_sentinel(
     request: Request,

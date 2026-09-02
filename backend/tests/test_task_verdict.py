@@ -396,6 +396,20 @@ class TestEnforcementScope:
             # `complete` over a payload nobody stored.
             "warm_prop_families",
             "refresh_prop_families",
+            # C-ROLLCALL-BUILD-1: the daily ground-truth roll call, enrolled at
+            # BIRTH in the same change that gives it a terminal
+            # (`app/utils/rollcall.py: rollcall_terminal`). It is the clearest
+            # instance of this set's founding shape yet, because a roll call's
+            # only way to lie is to observe nothing: ESPN answers `[]` for an
+            # off-day AND for a broken league path, Datagolf answers with an
+            # empty schedule between tour weeks AND when the key expires — so a
+            # totally blind run is outwardly identical to a perfect night, and
+            # would stay identical every morning for as long as the outage
+            # lasted. `complete` therefore requires every axiom league graded
+            # AND the scorecard mirrored; a failed truth read is `partial`;
+            # grading nothing is `failed`. Finding gaps is `complete` —
+            # noticing is the job.
+            "rollcall_daily",
         }
 
     def test_enforced_task_partial_blocks_success(self):

@@ -137,6 +137,12 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         # 24h mirror, the same shape as the three above.
         "app.tasks.refresh_prop_families",
         "app.tasks.regenerate_tags",
+        # C-ROLLCALL-BUILD-1: triggerable from ``POST /admin/rollcall/run`` so a
+        # repair can be verified the same hour instead of waiting for the next
+        # 08:00 UTC fire. Declared here because the enqueue path returns a
+        # ``task_id`` an operator then polls — suppressing the result would make
+        # that poll hang forever rather than fail.
+        "app.tasks.rollcall_daily",
         "app.tasks.regrade_polymarket_under_signflip",
         "app.tasks.seed_entity_registry",
         "app.tasks.send_bug_fixed_email",
