@@ -347,3 +347,8 @@ When fixing ANY data quality, matching, or display issue: (1) audit BEFORE: `pyt
 | **Query plan** | same endpoint, `{"sql":"SELECT ...","explain":true}` → `EXPLAIN (FORMAT JSON)`; supply a plain SELECT (the server composes the EXPLAIN). Plan-only does not execute. `"analyze":true` DOES execute (SELECT-only, no leading `WITH`, pure-function allowlist in `app/utils/sql_read_guard.py`, unlisted names refused BY NAME). `"timeout_ms"` 500ms–25s, default 10s |
 | **db-query refuses operational functions** | on BOTH the row path and `analyze`: `pg_cancel_backend`, `pg_terminate_backend`, advisory locks, `nextval`/`setval`, `pg_sleep`, `dblink`, `pg_read_file`. `SET TRANSACTION READ ONLY` does not make these safe (#1641). Errors return `{reason, correlation_id}` |
 | **Production query timings** | `pg_stat_statements` installed. Caveats (measured): near its 5,000-entry cap so ad-hoc probes get evicted, and errored statements are never recorded — a timing-out query is invisible |
+
+## If you are the ORCHESTRATOR thread (Fable-5)
+Read `.claude/handoff/ORCHESTRATOR-HANDOFF.md` first — it lists the files to read, the mechanics,
+and the open threads. Heartbeats are scheduled fresh sessions that run its checklist. Lanes:
+this section is not for you.
