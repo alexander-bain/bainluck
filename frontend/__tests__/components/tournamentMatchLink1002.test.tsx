@@ -33,20 +33,54 @@
  * those two facts, and it is asserted here on the real rows rather than on a
  * hand-built one, because a hand-built row cannot go stale into a wrong link.
  *
- * ═══ THE FIVE ARMS ═══
+ * ═══ WHAT THE SHIP IS, AFTER ux/1008 RE-MEASURED IT (CERT-724) ═══
+ *
+ * Round one of this change claimed two ships and only one of them was real.
+ * CERT-724 blocked it for the second, and re-measuring proved the block
+ * understated the problem. Both corrections are pinned below, because a claim
+ * that was disproved once will be re-made by the next reader of the directive.
+ *
+ * **THE SHIP IS THE MUTED CARD, AND ONLY THE MUTED CARD.** Alex's second
+ * sentence — *"when none exists, render it visibly non-linked (muted) so
+ * nobody clicks a dead card"* — is a real, reachable, currently-broken thing:
+ * two of the twelve cards on this very payload cannot link, and on `main` they
+ * render pixel-identical to the ten that can.
+ *
+ * **THE LINK RESOLUTION IS A NO-OP, AND THAT IS ASSERTED, NOT ASSUMED.** The
+ * claim was that reading `event_links.by_matchup` links cards that the row's
+ * own `event_id` could not. It does not, and it cannot, because the server
+ * builds one from the other — `tournament_slate.py:692`:
+ *
+ *     "event_id": matchup.get("event_id") or (event_ids or {}).get(...)
+ *
+ * where `event_ids` **is** `by_matchup`. A slate row's own id is therefore a
+ * SUPERSET of the map, and the fallback can never fire productively. Measured
+ * on this fixture, rendered through the real component: the two rules produce
+ * the identical set of ten hrefs, and the live Zverev–Sonego row is an anchor
+ * under BOTH. `noOp` below pins that so the claim cannot come back unmeasured.
+ *
+ * **AND THE BRACKET PATH IS UNREACHABLE BY DESIGN.** CERT-724's finding, kept
+ * as a guard rather than papered over: `matchListFromBracket` nulls `eventId`
+ * and `matchupKey` together, so a bracket row with no joined slate row has no
+ * key for the map either. Round one's guard hid this by calling
+ * `matchListFromSlate` on rows with only `event_id` removed and labelling them
+ * "asBracketRows" — which preserves the very key the real adapter discards.
+ * The honest arm goes through `buildMatchList`, and it asserts the card is
+ * DEAD. Fixing it is not queued, because there is no ship behind it:
+ * `ingest_espn_draw.py` deliberately never writes `draw_slot`, so
+ * `build_bracket` returns `[]` and production has no bracket rows at all.
+ *
+ * ═══ THE ARMS ═══
  *
  *  1. **The cohort is still the cohort.** If the fixture is edited or replaced,
  *     everything below is measuring a population it was not written for.
- *  2. **The live card is an anchor** to `/events/15293811` — the ship.
- *  3. **RED-FIRST on the bracket path.** A bracket-sourced row carries no
- *     `event_id` of its own; before this change it could only inherit one from
- *     a slate row joined BY NAME PAIR, and the slate holds only fixtures still
- *     to come. Resolved through the map it links; through the old rule it does
- *     not. This is the arm that fails on `main`.
+ *  2. **The link rule is a no-op** — map and no-map render the same hrefs.
+ *  3. **A bracket row cannot use the map** — CERT-724's finding, pinned.
  *  4. **The `espn:` row never links** — the trap above.
- *  5. **An unlinked card is visibly unlinked** — Alex's second sentence. Not
- *     `data-linked="false"`, which is a hook for a harness; a treatment a
- *     person can see without hovering, on a phone that has no hover.
+ *  5. **An unlinked card is visibly unlinked** — Alex's second sentence, and
+ *     THE SHIP. Not `data-linked="false"`, which is a hook for a harness; a
+ *     treatment a person can see without hovering, on a phone that has no
+ *     hover.
  *
  * ═══ WHY THE NEW SYMBOLS ARE REQUIRED LAZILY ═══
  *
@@ -65,7 +99,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import TournamentMatches from "@/components/tournament/TournamentMatches";
-import { matchListFromSlate } from "@/lib/matchList";
+import { buildBracket } from "@/lib/bracket";
+import { buildMatchList, matchListFromSlate } from "@/lib/matchList";
 import type { MatchListEntry } from "@/lib/matchList";
 import type { SlateMatch } from "@/lib/slate";
 
@@ -151,7 +186,13 @@ describe("ux/1002 — the cohort this guard was written for", () => {
   });
 });
 
-describe("ux/1002 — the live card opens its match page", () => {
+/**
+ * REGRESSION, NOT THE SHIP. Every arm in here is green on `main` as well —
+ * deliberately, and it is labelled so no future reader mistakes it for
+ * evidence that this change did something. It pins that the live half of the
+ * hub routes to its match pages AT ALL, which is worth keeping nailed down.
+ */
+describe("ux/1002 — the live card opens its match page (green on main too)", () => {
   it("renders the live row as an anchor to /events/15293811", () => {
     const entries = matchListFromSlate(MATCHES);
     const html = renderToStaticMarkup(
@@ -184,40 +225,138 @@ describe("ux/1002 — the live card opens its match page", () => {
   });
 });
 
-describe("ux/1002 — a bracket-sourced row resolves off the published map", () => {
-  /**
-   * ═══ THE RED-FIRST ARM, AND IT IS ASSERTED ON MARKUP ═══
-   *
-   * A bracket row's `eventId` is `null` by construction: `matchListFromBracket`
-   * inherits one only from a slate row joined by unordered NAME PAIR, and the
-   * slate drops every fixture already played or decided (28 + 84 on this very
-   * payload). The matchup key survives that join failure; the name pair does
-   * not. So the population is simulated exactly — the real rows with the one
-   * field a bracket row lacks removed — and rendered through the real
-   * component. Under the old rule every card here is dead; under the new one
-   * the ten resolvable ones link.
-   */
-  const asBracketRows = () =>
-    matchListFromSlate(MATCHES.map((m) => ({ ...m, event_id: null })));
+/**
+ * ═══ THE MEASUREMENT THAT RETIRES ROUND ONE'S CLAIM ═══
+ *
+ * Round one said reading the map links cards the row's own `event_id` cannot,
+ * and measured "0 of 12 -> 10 of 12" to prove it. That measurement was taken
+ * on rows it had itself stripped of `event_id`; on the unedited payload the
+ * two rules are indistinguishable, because the server derives one from the
+ * other (see the header). This is the arm that says so, and it is written to
+ * FAIL if anyone ever makes the map matter — at which point the claim becomes
+ * true and this guard, correctly, becomes the thing that has to change.
+ */
+describe("ux/1002 — reading the published map changes nothing on real rows", () => {
+  const hrefsOf = (html: string) => (html.match(/href="\/events\/\d+"/g) ?? []).sort();
 
-  it("links rows that have a matchup key and no event_id of their own", () => {
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={asBracketRows()} eventIds={BY_MATCHUP} initialExpanded />
+  it("renders the identical link set with the map and without it", () => {
+    const entries = matchListFromSlate(MATCHES);
+
+    // The rule this branch ships.
+    const withMap = renderToStaticMarkup(
+      <TournamentMatches entries={entries} eventIds={BY_MATCHUP} initialExpanded />
     );
-    expect(html.match(/href="\/events\/\d+"/g) ?? []).toHaveLength(10);
+    // `eventIds` omitted IS `main`'s rule: the row's own `eventId`, nothing else.
+    const withoutMap = renderToStaticMarkup(
+      <TournamentMatches entries={entries} initialExpanded />
+    );
+
+    expect(hrefsOf(withMap)).toEqual(hrefsOf(withoutMap));
+    expect(hrefsOf(withoutMap)).toHaveLength(10);
+    // Including Alex's card, which `main` already linked.
+    expect(withoutMap).toContain(`href="/events/${LIVE_EVENT}"`);
+    expect(withoutMap.match(/data-linked="false"/g) ?? []).toHaveLength(2);
+  });
+
+  it("holds because every mapped key is already stamped on its row", () => {
+    // The structural reason, asserted on the DATA so it cannot be satisfied by
+    // the code under test. `build_slate` fills `event_id` from `by_matchup`
+    // when the register does not pin one, so "in the map" implies "on the row".
+    const mappedButUnstamped = MATCHES.filter(
+      (m) =>
+        !m.event_id &&
+        typeof m.matchup_key === "string" &&
+        !m.matchup_key.startsWith("espn:") &&
+        typeof BY_MATCHUP[m.matchup_key] === "number"
+    );
+    expect(mappedButUnstamped).toHaveLength(0);
+  });
+});
+
+/**
+ * ═══ CERT-724's FINDING, KEPT AS A GUARD RATHER THAN FIXED ═══
+ *
+ * The cert was right: `matchListFromBracket` sets `eventId` and `matchupKey`
+ * from the same joined slate row, so a bracket fixture the slate has dropped
+ * has NEITHER, and the map it could otherwise consult is keyed on the key it
+ * just threw away. Round one's guard could not see this because it built its
+ * "bracket" rows with `matchListFromSlate`, which keeps the key.
+ *
+ * This goes through `buildMatchList` — the function the page actually calls —
+ * and asserts the card is dead, because it is. It is NOT queued as a fix:
+ * `ingest_espn_draw.py` deliberately leaves `draw_slot` null, `build_bracket`
+ * returns `[]`, and production ships `{"mens-singles": [], "womens-singles": []}`
+ * today. There is no user behind this path to ship to, and building an
+ * id-anchored bracket key with no reachable reader would be architecture for
+ * its own sake. When draw slots are populated, THIS is the guard that will go
+ * red first and name the work.
+ */
+describe("ux/1002 — a bracket row with no slate row cannot use the map (CERT-724)", () => {
+  const slot = (entity_key: string, display_name: string) => ({
+    entity_key,
+    display_name,
+    seed: null,
+    probability: null,
+  });
+
+  /** A 4-slot draw: two semi-finals feeding a final. */
+  const SLOTS = [
+    slot("alexander-zverev", "Alexander Zverev"),
+    slot("lorenzo-sonego", "Lorenzo Sonego"),
+    slot("carlos-alcaraz", "Carlos Alcaraz"),
+    slot("jaume-munar", "Jaume Munar"),
+  ];
+
+  it("renders the card dead even though the map holds its answer", () => {
+    const rounds = buildBracket(SLOTS);
+    // The slate is EMPTY — exactly the case the map was supposed to cover: a
+    // fixture already played or decided, dropped from the slate, still in
+    // `by_matchup`. 28 ALREADY_PLAYED + 85 DECIDED on today's live payload.
+    const entries = buildMatchList({ rounds, slate: [] });
+
+    const zverev = entries.find((e) => e.sides.some((s) => s.entityKey === "alexander-zverev"));
+    expect(zverev).toBeDefined();
+    expect(zverev!.source).toBe("bracket");
+    // BOTH null — this is the finding. The key the map needs is discarded with
+    // the id, so the fallback has nothing to look up.
+    expect(zverev!.eventId).toBeNull();
+    expect(zverev!.matchupKey).toBeNull();
+
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={entries} eventIds={BY_MATCHUP} initialExpanded />
+    );
+    expect(html.match(/href="\/events\/\d+"/g) ?? []).toHaveLength(0);
+    // …and the map really did hold an answer for this pair, so the arm above
+    // is a refusal to reach it and not an empty map.
+    expect(BY_MATCHUP[LIVE_KEY]).toBe(LIVE_EVENT);
+  });
+
+  it("CONTROL: the same bracket links when the slate row survives", () => {
+    // Proves the deadness above is caused by the DROPPED SLATE ROW and not by
+    // something structural about bracket rendering. Same draw, same map, one
+    // slate row restored — the card links.
+    const rounds = buildBracket(SLOTS);
+    const liveRow = MATCHES.find((m) => m.matchup_key === LIVE_KEY)!;
+    const entries = buildMatchList({ rounds, slate: [liveRow] });
+
+    const zverev = entries.find((e) => e.sides.some((s) => s.entityKey === "alexander-zverev"));
+    expect(zverev!.matchupKey).toBe(LIVE_KEY);
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={entries} eventIds={BY_MATCHUP} initialExpanded />
+    );
     expect(html).toContain(`href="/events/${LIVE_EVENT}"`);
   });
 
-  it("CONTROL: the same rows with no map stay dead", () => {
-    // Without this the arm above passes just as well against a change that
-    // linked every card from something other than the map.
-    const html = renderToStaticMarkup(
-      <TournamentMatches entries={asBracketRows()} initialExpanded />
-    );
-    expect(html.match(/href="\/events\/\d+"/g) ?? []).toHaveLength(0);
-    expect(html.match(/data-linked="false"/g) ?? []).toHaveLength(12);
+  it("and production has no bracket rows to be wrong about", () => {
+    // The reason this is a guard and not a queued fix. `build_bracket` refuses
+    // anything that is not a power of two, and an all-null draw yields rounds
+    // whose every slot is undetermined — which `roundIsUnreached` then drops.
+    expect(buildBracket([])).toEqual([]);
+    expect(buildMatchList({ rounds: buildBracket([]), slate: [] })).toEqual([]);
   });
+});
 
+describe("ux/1002 — the resolver prefers the row's own id and never invents", () => {
   it("prefers the row's own id when it has one, and never invents", () => {
     const { matchEventHref } = lazy;
     expect(matchEventHref({ eventId: 42, matchupKey: LIVE_KEY }, BY_MATCHUP)).toBe(

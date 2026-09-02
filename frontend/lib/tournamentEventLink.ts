@@ -19,20 +19,33 @@
  * split so easy to miss and so bad to keep. They stop agreeing exactly where it
  * costs a reader a click:
  *
- *   - **A bracket-sourced row has no `event_id` of its own.** Once the draw is
- *     ingested, `matchListFromBracket` builds every card, and it inherits the
- *     event id from a slate row it joins BY UNORDERED NAME PAIR. A slate row
- *     exists only for a fixture that is still to come — the current payload
- *     drops 28 `ALREADY_PLAYED` and 84 `DECIDED` matchups before the slate is
- *     built — so on a populated bracket the join has nothing to find for most
- *     of the draw and the card goes dead. `by_matchup` holds all 91 answers the
- *     whole time.
  *   - **A name-pair join is the join this product does not do.** Gotcha #32 /
  *     ruling 048 is written against exactly this: identity travels by id. The
  *     matchup key is the id both halves of the payload already agree on.
  *
  * So the resolution moves here, both lists call it, and the rule about where a
  * match links has one definition instead of two implementations.
+ *
+ * ═══ WHAT THIS MODULE DOES **NOT** BUY, MEASURED (ux/1008, CERT-724) ═══
+ *
+ * Round one also claimed it links cards that were dead. It does not, and the
+ * correction belongs here rather than in a report, because the directive that
+ * produced the claim is still on file and reads persuasively:
+ *
+ *   - **For a SLATE row the fallback is unreachable.** `build_slate` already
+ *     fills `event_id` from this very map when the register pins nothing
+ *     (`tournament_slate.py:692`), so "in `by_matchup`" implies "stamped on the
+ *     row". Measured on the captured payload, rendered through the real
+ *     component: map and no-map produce the identical set of ten hrefs, and the
+ *     live card Alex reported as dead is an anchor under BOTH rules.
+ *   - **For a BRACKET row it is unreachable too, and for a different reason.**
+ *     `matchListFromBracket` nulls `matchupKey` and `eventId` together, so the
+ *     row has no key to look up. Left unfixed deliberately:
+ *     `ingest_espn_draw.py` never writes `draw_slot`, `build_bracket` returns
+ *     `[]`, and production ships no bracket rows at all.
+ *
+ * The module earns its place as the ONE definition of the rule, not as a
+ * source of new links. The `espn:` refusal below is the part with real teeth.
  *
  * ═══ WHAT IT REFUSES, AND WHY EACH REFUSAL IS LOAD-BEARING ═══
  *

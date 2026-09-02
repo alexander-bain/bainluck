@@ -262,12 +262,27 @@ function pairKey(a: string, b: string): string {
  *     the FINISHED list has read since #2568 and what Alex named as already
  *     holding the answer the live card was missing.
  *
- * The second is not redundancy. `matchListFromBracket` has no `event_id` of its
- * own and inherits one only from a slate row it joins by unordered NAME PAIR —
- * and the slate only carries fixtures still to come, so on a populated bracket
- * that join finds nothing for most of the draw. The map is keyed by matchup and
- * covers all of it. See `lib/tournamentEventLink.ts` for the full argument and
- * for the `espn:` refusal, which must survive both paths.
+ * ═══ THE SECOND SOURCE IS INERT TODAY, AND SAYING SO IS THE POINT (ux/1008) ═══
+ *
+ * Round one of this change claimed the map links cards the row's own id cannot.
+ * CERT-724 blocked it, and re-measuring showed the claim is false for a
+ * structural reason: `build_slate` fills a row's `event_id` FROM this same map
+ * when the register does not pin one (`tournament_slate.py:692`), so a slate
+ * row's own id is a superset of the map and step 2 can never fire productively.
+ * Rendered through the real component on the captured payload, the two rules
+ * produce the identical ten hrefs — pinned by `tournamentMatchLink1002`.
+ *
+ * It is kept, not deleted, for one narrow reason: it makes both lists on the
+ * hub resolve through ONE rule instead of two implementations, which is the
+ * condition that let them drift apart in the first place. It is a fail-safe,
+ * not a feature, and it must not be described as a feature again.
+ *
+ * The one population it could ever serve — a bracket row whose slate row was
+ * dropped — it does NOT serve, because `matchListFromBracket` discards
+ * `matchupKey` alongside `eventId` (CERT-724). That is unfixed on purpose:
+ * `ingest_espn_draw.py` never writes `draw_slot`, so `build_bracket` returns
+ * `[]` and production has no bracket rows. See `lib/tournamentEventLink.ts`
+ * for the `espn:` refusal, which is load-bearing on both paths.
  *
  * NEVER a third source. There is no name join here and there must not be one:
  * a reader who taps a card and lands on somebody else's match has been lied to

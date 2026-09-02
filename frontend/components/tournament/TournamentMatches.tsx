@@ -514,7 +514,9 @@ export default function TournamentMatches({
    * The FINISHED list has read this since #2568 and this one did not, which is
    * how the hub came to hold two different answers to "where does a match link
    * to". Optional: a caller that omits it gets exactly the old behaviour, since
-   * a slate row already carries its own `eventId`.
+   * a slate row already carries its own `eventId` — and ux/1008 measured that
+   * "exactly the old behaviour" is also exactly the NEW behaviour on every real
+   * row, which is why omitting it is the control arm in the guard.
    */
   eventIds?: MatchupEventIds;
   /* UX-P152: the `slug` prop is gone. It existed to build a tournament-private
@@ -672,11 +674,12 @@ export default function TournamentMatches({
           <MatchRow
             key={entry.id}
             entry={entry}
-            /* ux/1002. Was `entry.eventId` alone, which is stamped on SLATE
-               rows only — so a live card whose address the payload had already
-               published could still render dead. `matchEventHref` prefers the
+            /* ux/1002, corrected by ux/1008. `matchEventHref` prefers the
                row's own id and falls back to the same published map the
-               FINISHED list reads. One rule, both lists. */
+               FINISHED list reads — ONE rule for both lists, which is the
+               whole value here. It is not a source of new links: on real rows
+               the fallback is provably inert, because the server stamps
+               `event_id` from that same map. See `matchEventHref`. */
             matchHref={matchEventHref(entry, eventIds)}
           />
         ))}
