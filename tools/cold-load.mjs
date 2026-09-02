@@ -47,7 +47,17 @@ const PACE_MS = parseInt(process.env.COLD_PACE_MS || '3000', 10);
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const baseArgs = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
-if (proxy) baseArgs.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
+// 🔴 `<-loopback>` REMOVES Chrome's implicit loopback bypass — it sends 127.0.0.1 THROUGH the
+// proxy, which is the opposite of what the name reads like. Correct for a production URL (the
+// sandbox proxy is the only egress) and fatal for a local `next start`: the proxy cannot reach this
+// machine's ports, so every run 200s on 687 bytes and renders nothing. Measured exactly that way —
+// ten runs, all INVALID, all "faster" than production. Keep the implicit bypass when either arm is
+// local, so localhost is served directly and api.bainluck.com still goes out through the proxy.
+const isLoopback = (u) => { try { const h = new URL(u).hostname; return h === 'localhost' || h === '127.0.0.1' || h === '[::1]'; } catch { return false; } };
+if (proxy) {
+  baseArgs.push(`--proxy-server=${proxy}`);
+  if (!isLoopback(url) && !isLoopback(process.env.COLD_ALT_URL || '')) baseArgs.push('--proxy-bypass-list=<-loopback>');
+}
 
 // Collected inside the page. Buffered observers so nothing that fired before we attach is lost.
 const COLLECT = `(() => {
@@ -280,6 +290,38 @@ const delay = ablateName ? DELAYS[ablateName] : null;
 const ablate = ablateName ? ABLATIONS[ablateName] : null;
 if (ablateName && !ablate && !rewrite && !delay) { console.error(`unknown COLD_ABLATE=${ablateName}; known: ${[...Object.keys(ABLATIONS), ...Object.keys(REWRITES), ...Object.keys(DELAYS)]}`); process.exit(2); }
 
+// TWO-BUILD A/B — grade a cut that is BUILT but not DEPLOYED.
+//
+// The ablation arms above simulate a cut by editing the live page. That is the right instrument
+// while the cut is still a proposal, and the wrong one once the code exists: an ablation answers
+// "what would removing these requests be worth", never "is this diff worth it". This lane cannot
+// push, so without this arm every shipped cut is graded in BYTES and its milliseconds are somebody
+// else's post-deploy problem — which is how eight cuts came to be certified on byte counts alone.
+//
+// COLD_ALT_URL points at a second origin, normally `next start` on two ports over two builds of
+// two trees. Control loads `url`, treatment loads COLD_ALT_URL, interleaved A,B,A,B in ONE
+// invocation on ONE machine, so machine load and API drift hit both arms equally. Two sequential
+// invocations would not: a build is minutes of full-core compile, and the arm that runs after it
+// inherits a hotter machine and a warmer server-side cache.
+//
+// ⚠️ The two origins MUST differ only by the diff under test. Same throttle, same viewport, same
+// backing API — everything here is per-run, so that holds by construction; what it cannot check is
+// that you built the right two trees.
+// COLD_ARM_FILE is the SAME-ORIGIN form of the same A/B, and it exists because the two-origin form
+// cannot always be used: the API's CORS allowlist names one local port, so two `next start`s on two
+// ports produce two pages that fetch no feed, render no card, and are correctly thrown out by the
+// validity guard. Instead both builds sit behind one switchable reverse proxy on the allowed port;
+// the rig writes `control` / `treatment` into COLD_ARM_FILE before each navigation and the proxy
+// reads it. Origin, CORS, port and document URL are then identical between arms by construction,
+// and the only difference left is which build answered.
+const altUrl = process.env.COLD_ALT_URL || null;
+const armFile = process.env.COLD_ARM_FILE || null;
+if ((altUrl || armFile) && (ablate || rewrite || delay)) {
+  console.error('COLD_ALT_URL / COLD_ARM_FILE cannot be combined with COLD_ABLATE: both claim the treatment arm');
+  process.exit(2);
+}
+if (altUrl && armFile) { console.error('COLD_ALT_URL and COLD_ARM_FILE are two spellings of one arm; pick one'); process.exit(2); }
+
 // Fetch the document ONCE via curl (which has the session's egress, unlike Node) and derive both
 // arms from those exact bytes, so the only difference between them is the rewrite itself.
 let DOC_BEFORE = null, DOC_AFTER = null;
@@ -294,10 +336,15 @@ if (rewrite) {
 }
 
 const results = [];
-const TOTAL = (ablate || rewrite || delay) ? RUNS * 2 : RUNS;
+const TOTAL = (ablate || rewrite || delay || altUrl || armFile) ? RUNS * 2 : RUNS;
 for (let i = 0; i < TOTAL; i++) {
   // Interleave: even = control, odd = treatment. Never all-of-one-then-all-of-the-other.
-  const treated = (ablate || rewrite || delay) ? (i % 2 === 1) : false;
+  const treated = (ablate || rewrite || delay || altUrl || armFile) ? (i % 2 === 1) : false;
+  const target = treated && altUrl ? altUrl : url;
+  // Flip the upstream BEFORE the browser launches, so the very first byte of the run is the
+  // arm's own build. Written every run, including the control, so a stale file from a killed
+  // run cannot silently make both arms the same build.
+  if (armFile) writeFileSync(armFile, treated ? 'treatment' : 'control');
   if (i > 0 && PACE_MS > 0) await new Promise((r) => setTimeout(r, PACE_MS));
   const browser = await chromium.launch({ args: baseArgs });
   try {
@@ -388,7 +435,7 @@ for (let i = 0; i < TOTAL; i++) {
     });
 
     const t0 = Date.now();
-    await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    await page.goto(target, { waitUntil: 'load', timeout: 120000 });
     const tLoad = Date.now() - t0;
     // "finish" = the network goes quiet. This is the number a reader experiences as "done".
     let quiet = null;
@@ -417,7 +464,8 @@ for (let i = 0; i < TOTAL; i++) {
       m.wireAfterScroll = JSON.parse(JSON.stringify(wire));
     }
     m.run = i + 1;
-    m.arm = (ablate || rewrite || delay) ? (treated ? 'treatment' : 'control') : 'single';
+    m.arm = (ablate || rewrite || delay || altUrl || armFile) ? (treated ? 'treatment' : 'control') : 'single';
+    m.url = target;
     m.blocked = blocked;
     m.delayed = delayed;
     // 🔴 A PAGE THAT RENDERED NOTHING STILL EMITS A PERFECTLY PLAUSIBLE FCP. Measured here: eight
@@ -470,9 +518,11 @@ const summary = {
   url, runs: RUNS, ok: ok.length,
   throttle: process.env.COLD_THROTTLE || 'none', cpuThrottle: process.env.COLD_CPU || '1',
   ablate: ablateName || 'none',
+  altUrl: altUrl || null,
+  armFile: armFile || null,
   median: stats(ok),
 };
-if (ablate || rewrite || delay) {
+if (ablate || rewrite || delay || altUrl || armFile) {
   const c = stats(ok.filter(r => r.arm === 'control'));
   const t = stats(ok.filter(r => r.arm === 'treatment'));
   // A treatment arm that touched nothing is the same silent vacuous arm the REWRITE guard above
