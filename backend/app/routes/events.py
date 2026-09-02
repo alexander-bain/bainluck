@@ -50,6 +50,7 @@ from app.utils.search_cache import (
     search_response_cache_enabled,
     search_response_cache_key,
 )
+from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
 from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
@@ -3855,6 +3856,27 @@ async def search_events(
         degraded.append("events")
     _mark("event_page")
 
+    # #2623: collapse the duplicate-fixture twins BEFORE anything downstream
+    # spends on them. A search for "Sabalenka" was returning every WTA match
+    # twice — the tournament row (full names, score) and a scoreless
+    # surname-only ghost from the generic `tennis_wta` bucket, start times up
+    # to 23h apart. Rationale, the measured population and why the rule is
+    # conjunctive: `app/utils/search_fixture_dedup.py`.
+    #
+    # Placed here rather than in the query because the pairing is a naming and
+    # scoring judgement, not a predicate — and because it must run before the
+    # odds LATERAL, the GEI load and the team lookup, all of which are per-row.
+    # Dropping a ghost therefore makes this endpoint slightly CHEAPER.
+    _fixture_duplicates_dropped = 0
+    if len(events) > 1:
+        events, _fixture_duplicates_dropped = collapse_duplicate_fixtures(events)
+        if _fixture_duplicates_dropped:
+            logger.info(
+                "search collapsed %d duplicate-fixture row(s) for %r",
+                _fixture_duplicates_dropped, q,
+            )
+    _mark("event_fixture_dedup")
+
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
@@ -4009,6 +4031,15 @@ async def search_events(
 
     # Calculate pagination metadata
     total_count = total_count or 0
+    # #2623: `total_results` is what the page prints as "· 16 games", so a count
+    # that still includes the collapsed twins contradicts the rows beside it.
+    # This is an adjustment on the page we actually looked at, not a re-count of
+    # the corpus — the count query cannot see the pairing without doing the join
+    # for every candidate row. It is therefore an UNDER-count of the collapse on
+    # later pages, never an over-count, and it is floored at what is rendered so
+    # the number can never claim fewer games than the user can see.
+    if _fixture_duplicates_dropped:
+        total_count = max(len(formatted_results), total_count - _fixture_duplicates_dropped)
     total_pages = (total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome name.
@@ -5017,6 +5048,14 @@ _TYPEAHEAD_MAX_QUERY_CHARS = 200
 _TEAM_POOL_SIZE = 3
 _TEAM_POOL_FETCH_LIMIT = 8
 
+# #2623/#2580: the dropdown still SHOWS 4 events; only the FETCH widened, so a
+# duplicate-fixture twin is absorbed before it can eat a slot instead of after.
+# This is the `_TEAM_POOL_FETCH_LIMIT` shape and it is here for the same reason:
+# dedup applied after a tight LIMIT is a bucket-collapse waiting to happen
+# (LAT-P038/#1769, the futures window above).
+_EVENT_POOL_SIZE = 4
+_EVENT_POOL_FETCH_LIMIT = 8
+
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
 #: and the pool would then order by a definition of "prominent" the scorer no
@@ -5497,13 +5536,17 @@ async def typeahead_search(
             case((Event.status == "live", 0), else_=1),
             Event.commence_time.asc(),
         )
-        .limit(4)
+        .limit(_EVENT_POOL_FETCH_LIMIT)
     )
     _ta_mark("teams_assemble")
     event_result = await db.execute(event_query)
     _ta_mark("events_query")
     event_pool = []
-    for event in event_result.scalars().all():
+    # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
+    # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
+    # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
+    _ta_events, _ = collapse_duplicate_fixtures(event_result.scalars().all())
+    for event in _ta_events[:_EVENT_POOL_SIZE]:
         home = event.home_team
         away = event.away_team
         event_pool.append({
