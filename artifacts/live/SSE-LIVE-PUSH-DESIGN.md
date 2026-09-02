@@ -127,13 +127,35 @@ green, per WIP 2.
 | R4 | `worker-ws` is a single dyno — if it dies, no ticks at all | client 60s-silence → poll fallback; publisher stats surface a dead publisher |
 | R5 | A stream open on an event that goes final | `status` transition publishes a terminal frame; client closes and refetches once |
 
-## 4. Ship order (WIP 2)
+## 4. Ship order — BUILT 2026-09-01, PR #2617, cert owed
 
-1. **S1** publisher + `/api/events/{id}/stream` + guards. Cert: a live event id, `curl -N`, frames
-   arrive, heartbeat present, non-live closes, cap refuses.
-2. **S2** web client + the three UI pieces. Cert: LOOK on a live match — number moves unattended,
-   age stamp counts, sparkline populated.
-3. **S3** iOS.
+| | what | state |
+|---|---|---|
+| **S1** | publisher + `/api/events/{id}/stream` + 49 guards | **built**, `88b0e2a2` |
+| **S2** | web client, poll suspension, "live · Ns ago" | **built**, `2c88a094` |
+| **S2b** | animated number | **built**, `afab053f` |
+| **S3** | iOS `AsyncStream` client | **built**, `1211ceb5` — compile NOT verified, see below |
+| **S2c** | last-10-min sparkline | **NOT BUILT** — the one piece of ruling 2 still owed |
+
+**Two design flaws the build caught, both fixed:**
+
+1. `publish_frame` swallows its own failure and returns `False`, so the batch-level `except` never
+   saw a dead client. The poisoned connection would have been reused for the life of the consumer,
+   publishing nothing while only ticking a counter. A batch where nothing goes out now drops the
+   client.
+2. The heartbeat was a conventional `: ping` SSE comment — which fires **no handler** in
+   `EventSource`. The client's silence watchdog would then have been measuring "is this market
+   moving" rather than "is this server alive", and on a quiet market it would have torn down a
+   perfectly healthy stream. The heartbeat is now a named, observable event, guarded by a test.
+
+**Verification owed.** `xcodebuild` cannot resolve the Firebase SPM binaries in this sandbox (exit
+74, proxy-blind), so S3 was never compiled. All three Swift files parse clean and
+`LiveEventStream.swift` typechecks clean in isolation including under
+`-strict-concurrency=complete`, but the two files importing app types could not be typechecked
+alone. A real Xcode build is owed before S3 is certed. S1/S2 are fully gated.
+
+**Deploy is blocked regardless:** `NOTICE-2026-09-01-HARD-DEPLOY-FREEZE` is active — `/api/calibration`
+`generated_at` was still 2026-08-31 (44.4 h stale) at 18:15 PT.
 
 ## 5. Assumption stated, not asked
 
