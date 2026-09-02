@@ -507,21 +507,41 @@ def test_a_dry_run_persists_nothing():
 # ---------------------------------------------------------------------------
 
 
-def _record(drain, attempted, failed, prior):
-    """Run `_record_attempts` against a recording fake client."""
+def _record(drain, attempted, failed, prior, prior_gave_up=0):
+    """Run `_record_attempts` against a recording fake client.
+
+    Returns `(owed, calls)`. `_record_attempts` returns an `AttemptOutcome`
+    since CERT-764 — the post-attempt give-up total travels with the hash —
+    and the give-up half is exercised by `_record_outcome` below.
+    """
+    outcome, calls = _record_outcome(drain, attempted, failed, prior, prior_gave_up)
+    return outcome.owed, calls
+
+
+def _record_outcome(drain, attempted, failed, prior, prior_gave_up=0):
+    """As `_record`, but hands back the whole `AttemptOutcome`."""
     calls: list[tuple] = []
     client = MagicMock()
     client.hdel = lambda key, *ids: calls.append(("hdel", key, ids))
     client.hset = lambda key, mapping=None: calls.append(("hset", key, mapping))
-    client.incrby = lambda key, n: calls.append(("incrby", key, n))
+
+    def _incrby(key, n):
+        calls.append(("incrby", key, n))
+        # A real INCRBY answers with the value it just stored. Returning it is
+        # the whole point of the CERT-764 repair, so the fake must too.
+        return prior_gave_up + n
+
+    client.incrby = _incrby
 
     original = drain._with_redis
     drain._with_redis = lambda tier, apply: apply(client)
     try:
-        result = drain._record_attempts("us_open", attempted, failed, prior)
+        outcome = drain._record_attempts(
+            "us_open", attempted, failed, prior, prior_gave_up,
+        )
     finally:
         drain._with_redis = original
-    return result, calls
+    return outcome, calls
 
 
 def test_a_failed_event_is_remembered_by_id():

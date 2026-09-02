@@ -437,16 +437,39 @@ def _mark_done(tier: str, marker: str) -> None:
     _with_redis(tier, lambda client: client.set(TIER_DONE_KEY.format(tier=tier), marker))
 
 
+class AttemptOutcome(NamedTuple):
+    """What one pass did to the tier's retry state.
+
+    Both fields are the POST-attempt values. `_settle_tier` turns on them, and
+    handing it either one from before the pass is the CERT-764 defect: the
+    third failure empties `owed` and increments the give-up counter in the same
+    breath, so a settlement reading the entering count sees "no retries owed,
+    nobody given up" and writes a permanent clean `drained` over a tier that
+    just abandoned an event.
+    """
+
+    #: `event_id -> attempts spent`, after this pass.
+    owed: dict
+    #: The tier's TOTAL give-up count after this pass — the persisted value
+    #: `INCRBY` returned, so it is what a later trigger will read back.
+    gave_up_total: int
+
+
 def _record_attempts(
     tier: str, attempted: Sequence[int], failed: Sequence[int], prior: dict,
-) -> dict:
-    """Fold one pass's outcomes into the tier's retry hash. Returns the new hash.
+    prior_gave_up: int = 0,
+) -> AttemptOutcome:
+    """Fold one pass's outcomes into the tier's retry hash and give-up count.
 
     🔴 THE RETRY ITSELF. An event that FAILED goes in (or has its attempt count
     bumped); an event that was attempted and did NOT fail comes out, because it
     has been answered. An event that has spent :data:`MAX_EVENT_RETRIES` comes
     out too and is counted as given up — that count, not the empty hash, is what
     makes the tier's ending `drained_with_failures` rather than `drained`.
+
+    That count is RETURNED, not just written. It is written to Redis and read
+    back at the top of the NEXT trigger, which is one trigger too late for the
+    settlement that happens seconds later in this one.
     """
     failed_set = set(failed)
     still_owed: dict = dict(prior)
@@ -470,6 +493,13 @@ def _record_attempts(
             len(gave_up), tier, MAX_EVENT_RETRIES, gave_up[:10],
         )
 
+    # The arithmetic answer, used when Redis cannot be reached or answers with
+    # something unreadable. Never fewer than the events this pass abandoned:
+    # under-reporting here is the exact shape of the defect, so the fallback
+    # errs toward `drained_with_failures`.
+    computed_total = int(prior_gave_up) + len(gave_up)
+    persisted: list = []
+
     def _apply(client):
         key = RETRY_KEY.format(tier=tier)
         dropped = [e for e in prior if e not in still_owed]
@@ -481,10 +511,21 @@ def _record_attempts(
         if added:
             client.hset(key, mapping=added)
         if gave_up:
-            client.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
+            # INCRBY returns the value it just stored, so the settlement below
+            # turns on the same number the next trigger will read back.
+            persisted.append(
+                client.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
+            )
 
     _with_redis(tier, _apply)
-    return still_owed
+
+    gave_up_total = computed_total
+    if persisted:
+        try:
+            gave_up_total = max(computed_total, int(persisted[0]))
+        except (TypeError, ValueError):
+            gave_up_total = computed_total
+    return AttemptOutcome(still_owed, gave_up_total)
 
 
 def _with_redis(tier: str, apply) -> None:
@@ -752,6 +793,11 @@ async def run_thirty_day_chart_drain(
                 # their ids is that the retry costs a handful of re-fetches
                 # instead of a re-walk of the tier.
                 owed = state.retry
+                # The give-up total this tier will SETTLE on. It starts at what
+                # Redis remembers and is replaced by the post-attempt total
+                # every time a pass records attempts — never read back from
+                # `state`, which is a snapshot taken before any of that.
+                gave_up_total = state.gave_up
                 retried = sorted(owed)[:remaining]
                 if retried:
                     result = await _drain_events(
@@ -765,12 +811,14 @@ async def run_thirty_day_chart_drain(
                     tier_report["retried"] = len(retried)
                     tier_report["retried_still_failing"] = len(result.failed)
                     if not dry_run:
-                        owed = _record_attempts(
+                        outcome = _record_attempts(
                             tier.name,
                             result.attempted + result.missing,
                             result.failed,
                             owed,
+                            gave_up_total,
                         )
+                        owed, gave_up_total = outcome.owed, outcome.gave_up_total
                     stopped = result.stopped
                     if stopped == "consecutive_errors":
                         summary["tiers"][tier.name] = dict(
@@ -802,19 +850,27 @@ async def run_thirty_day_chart_drain(
                     remaining -= len(page.event_ids)
                     tier_report["failed"] = len(result.failed)
                     if not dry_run:
-                        owed = _record_attempts(
+                        outcome = _record_attempts(
                             tier.name,
                             result.attempted + result.missing,
                             result.failed,
                             owed,
+                            gave_up_total,
                         )
+                        owed, gave_up_total = outcome.owed, outcome.gave_up_total
                     stopped = result.stopped
                 tier_report["advanced_to"] = _label(page.next_cursor)
                 tier_report["exhausted"] = page.exhausted
-                _settle_tier(
+                settled = _settle_tier(
                     tier.name, page, tier_report,
-                    owed=owed, gave_up=state.gave_up, dry_run=dry_run,
+                    owed=owed, gave_up=gave_up_total, dry_run=dry_run,
                 )
+                # The verdict this trigger PERSISTED, carried on the report
+                # rather than re-derived. `_verdict` and the next trigger's
+                # `_read_checkpoint` must agree with it, and the only way to be
+                # sure they do is for all three to come from one decision.
+                if settled is not None:
+                    tier_report["persisted_done_marker"] = settled
                 summary["tiers"][tier.name] = tier_report
                 if stopped == "consecutive_errors":
                     summary["aborted"] = "consecutive_errors"
@@ -850,8 +906,12 @@ async def run_thirty_day_chart_drain(
 def _settle_tier(
     tier: str, page: DrainPage, tier_report: dict, *,
     owed: dict, gave_up: int, dry_run: bool,
-) -> None:
+) -> Optional[str]:
     """Decide, and persist, what this tier's page means for the tier.
+
+    Returns the terminal marker it persisted, or `None` if the tier is not
+    terminal — so the caller holds the same verdict that went to Redis instead
+    of inferring it a second way.
 
     🔴 THE RULE THE CERT BLOCKED ON: reaching the end of the scan is not the same
     as finishing. A tier is marked done ONLY when its scan ran out AND it owes no
@@ -864,9 +924,22 @@ def _settle_tier(
     event that can never be fetched drains out of `owed` rather than holding the
     tier open forever — and increments the give-up count, which is what makes the
     ending `drained_with_failures` instead of `drained`.
+
+    🔴 CERT-764, AND IT IS THE SAME MISTAKE ONE LAYER DOWN. `gave_up` must be the
+    count LEAVING the trigger. The third failure is the one that both empties
+    `owed` and increments the counter, so a settlement handed the ENTERING count
+    sees "no retries owed, nobody given up" on precisely the pass that abandoned
+    an event, and writes a permanent clean `drained` over it. The caller now
+    threads `_record_attempts`' returned post-attempt total here; nothing in this
+    function may read the counter back from Redis, because the retry hash and
+    the counter are only consistent as a pair at the moment the pass produced
+    them.
     """
-    # The count LEAVING this trigger, which is the one a settlement turns on.
+    # Both counts LEAVING this trigger. `gave_up` is stamped unconditionally —
+    # reporting it only when non-zero is what let a stale zero look like an
+    # answer rather than an absence.
     tier_report["owed_retries"] = len(owed)
+    tier_report["gave_up"] = gave_up
 
     if not page.exhausted:
         # The cursor is written even when the page filled nothing: those
@@ -876,7 +949,7 @@ def _settle_tier(
         tier_report["status"] = "in_progress"
         if not dry_run:
             _write_cursor(tier, page.next_cursor)
-        return
+        return None
 
     if owed:
         tier_report["status"] = "awaiting_retries"
@@ -887,12 +960,11 @@ def _settle_tier(
         )
         if not dry_run:
             _write_cursor(tier, page.next_cursor)
-        return
+        return None
 
     marker = DONE_WITH_FAILURES if gave_up else DONE_CLEAN
     tier_report["status"] = marker
     if gave_up:
-        tier_report["gave_up"] = gave_up
         logger.warning(
             "30d chart drain: tier %s ends as %s — %d event(s) could not be "
             "fetched in %d attempts each and remain thin.",
@@ -901,6 +973,7 @@ def _settle_tier(
     if not dry_run:
         _write_cursor(tier, page.next_cursor)
         _mark_done(tier, marker)
+    return marker
 
 
 #: Tier statuses that mean the tier has STOPPED. `awaiting_retries` and
