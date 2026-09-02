@@ -26,6 +26,10 @@ from app.utils.cross_source_matching import (
     is_resolved as _is_resolved,
     source as _source,
 )
+from app.utils.economics_headline import (
+    RecessionCandidate,
+    select_recession_headline,
+)
 from app.utils.market_staleness import should_exclude_from_featured
 
 logger = logging.getLogger(__name__)
@@ -558,22 +562,38 @@ async def get_economics(db: AsyncSession):
     jobs_side = [r for m in jobs_markets if (r := _market_row(m))]
 
     # --- Recession/GDP section ---
-    rec_main_prob = None
-    rec_side = []
+    # The headline market is CHOSEN, and it ships its own question with it
+    # (UX-P273 / #2674). It used to be "whichever binary recession market this
+    # loop happened to see last", printed under a hardcoded "Recession by end
+    # of 2026" label — on a query that carries no ORDER BY, so the pairing was
+    # undefined rather than merely wrong. Measured on production 2026-09-02 it
+    # was resolving to "Will the IMF declare a global recession before 2027?".
+    rec_candidates: list[RecessionCandidate] = []
+    rec_rows: list[tuple[int, dict]] = []
     gdp_quarters = []
     for m in recession_markets:
         name_lower = (m.name or "").lower()
         outcomes = _outcomes_sorted(m)
         if "recession" in name_lower and len(outcomes) <= 2:
+            # Per-market, NOT accumulated. The old code tested the running
+            # `rec_main_prob` here, so the `outcomes[0]` fallback could only
+            # ever fire for the first candidate in the pool.
+            prob_pct = None
             for o in outcomes:
                 if (o.name or "").lower() in ("yes", ""):
-                    rec_main_prob = round(float(o.current_probability or 0) * 100, 1)
+                    prob_pct = round(float(o.current_probability or 0) * 100, 1)
                     break
-            if rec_main_prob is None:
-                rec_main_prob = round(float(outcomes[0].current_probability or 0) * 100, 1)
+            if prob_pct is None and outcomes:
+                prob_pct = round(float(outcomes[0].current_probability or 0) * 100, 1)
+            if prob_pct is not None:
+                rec_candidates.append(
+                    RecessionCandidate(
+                        market_id=m.id, name=m.name or "", prob_pct=prob_pct,
+                    )
+                )
             _row = _market_row(m)
             if _row:
-                rec_side.append(_row)
+                rec_rows.append((m.id, _row))
         elif "gdp" in name_lower and len(outcomes) >= 3:
             has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
             if has_cumulative:
@@ -589,7 +609,16 @@ async def get_economics(db: AsyncSession):
         else:
             _row = _market_row(m)
             if _row:
-                rec_side.append(_row)
+                rec_rows.append((m.id, _row))
+
+    rec_headline = select_recession_headline(rec_candidates, current_year=now.year)
+    rec_main_prob = rec_headline.prob_pct if rec_headline else None
+    rec_main_q = rec_headline.name if rec_headline else None
+    rec_main_market_id = rec_headline.market_id if rec_headline else None
+    # The headline market is not ALSO printed as a row beneath itself. That
+    # duplication is what let #2674's card show 13% above a contradicting 7%:
+    # the headline was one arbitrary member of the list underneath it.
+    rec_side = [row for mid, row in rec_rows if mid != rec_main_market_id]
 
     # --- Markets/indices section ---
     today_indices = []
@@ -724,6 +753,10 @@ async def get_economics(db: AsyncSession):
             "recession": {
                 "count": len(recession_markets),
                 "main_prob": rec_main_prob,
+                # The question the headline number actually answers. The page
+                # renders THIS, not a literal (UX-P273 / #2674).
+                "main_q": rec_main_q,
+                "main_market_id": rec_main_market_id,
                 "gdp_quarters": gdp_quarters[:4],
                 "side_markets": rec_side[:6],
             },
