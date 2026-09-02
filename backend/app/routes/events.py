@@ -12100,6 +12100,38 @@ async def get_event_odds_history(
     except Exception as exc:  # noqa: BLE001 — moments are additive, never break history
         logger.warning("moments load failed for event %s: %s", event_id, exc)
 
+    # live/036 ruling (c) — THE CHART FILLS FOR THE PAGES PEOPLE ACTUALLY OPEN.
+    #
+    # The nightly sweep was narrowed (ruling (b)) to what a reader is LIKELY to
+    # reach, because the unnarrowed population — 44,315 events against a nightly
+    # budget of 60 and ~550 new a day — was a race it lost every night. This is
+    # the other half of that trade, and it is the half that makes the narrowing
+    # safe: whatever the nightly skipped, one person opening the page starts its
+    # fill. Likely-reached is pre-warmed; actually-reached is guaranteed.
+    #
+    # It is deliberately AFTER everything the response needs and deliberately
+    # additive: it enqueues a task and returns. This reader still gets the thin
+    # chart they were always going to get; the next reader gets the curve. It
+    # can neither slow this response meaningfully (one indexed MIN(), and only
+    # once the served series is already known to be short) nor fail it.
+    on_demand_backfill = None
+    try:
+        from app.tasks.event_chart_backfill import maybe_enqueue_on_demand_fill
+
+        venue_points = sum(
+            len(points)
+            for source_key, points in win_prob_history.items()
+            if source_key in ("kalshi", "polymarket")
+        )
+        on_demand_backfill = await maybe_enqueue_on_demand_fill(
+            db, event, served_points=venue_points
+        )
+    except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
+        logger.warning(
+            "on-demand chart backfill consideration failed for event %s: %s",
+            event_id, exc,
+        )
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -12132,6 +12164,12 @@ async def get_event_odds_history(
         # or the merge dropped it. Retained as a diagnostic — "no UI reads it" is
         # the point, not a reason to strip it.
         "espn_snapshot_count": len(espn_history),
+        # live/036 (c): what the refill decided, or None when the chart was
+        # never a candidate. A diagnostic, like `espn_snapshot_count` above it —
+        # no client reads it, and the reason it is here is that "the chart is
+        # still thin" and "the refill declined and said why" are the two things
+        # you need side by side when this rail looks idle (gotcha #53).
+        "on_demand_backfill": on_demand_backfill,
     }
 
 

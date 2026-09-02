@@ -122,6 +122,23 @@ WINDOW_SLACK = timedelta(hours=2)
 #: sits and far tighter than the 0.00/1.00 book a settled one leaves behind.
 WIDE_SPREAD_DOLLARS = 0.10
 
+#: THE READER WINDOW (live/036, Fable ruling (b)). How far either side of NOW an
+#: event is still something a person can arrive at: a card on the slate, a hub
+#: row, a Discover placement, a result page still being read. Backwards AND
+#: forwards, because a prediction-market-native market prices for days before
+#: first serve — the specimen's own curve had five days of drift before the
+#: `events` row existed, and that drift is the most interesting part of an
+#: UPCOMING match's chart, not only a settled one's.
+READER_REACH_LOOKBACK_DAYS = 7
+READER_REACH_LOOKAHEAD_DAYS = 7
+
+#: Past this age an event fills at HOURLY granularity instead of 1-minute
+#: (Fable ruling (c)). Nobody scrubs a three-week-old chart for the minute the
+#: break happened; they look at the shape. Hourly is ~1 request per ticker
+#: instead of 2-5 and ~1/60th the candles to normalize, which is what makes an
+#: on-demand fill cheap enough to run inside a page view's shadow.
+COARSE_GRANULARITY_AGE_DAYS = 7
+
 
 @dataclass(frozen=True)
 class SeriesPoint:
@@ -223,18 +240,29 @@ def choose_period_interval(
     *,
     max_requests: int = MAX_CANDLE_REQUESTS_PER_OUTCOME,
     max_periods: int = KALSHI_MAX_PERIODS_PER_REQUEST,
+    min_interval: int = 1,
 ) -> int:
     """Finest Kalshi interval that covers this lifetime inside the request budget.
 
     Only values in :data:`KALSHI_PERIOD_INTERVALS` are ever returned — the
     unsupported ones do not error, they answer with nonsense.
+
+    ``min_interval`` is a FLOOR from :func:`granularity_floor_minutes`, not a
+    choice: it says "do not pay for finer than this", and the budget rule can
+    still push COARSER. A floor that is not itself a supported interval is
+    rounded UP to one, never silently honoured — asking Kalshi for
+    ``period_interval=5`` returns four candles for a window that yields 1,134 at
+    1-minute, which is an answer shaped like data.
     """
     budget_periods = max_requests * max_periods
     lifetime_minutes = max(1.0, lifetime_seconds / 60.0)
-    for interval in KALSHI_PERIOD_INTERVALS:
+    allowed = [i for i in KALSHI_PERIOD_INTERVALS if i >= max(1, min_interval)]
+    if not allowed:
+        allowed = [KALSHI_PERIOD_INTERVALS[-1]]
+    for interval in allowed:
         if lifetime_minutes / interval <= budget_periods:
             return interval
-    return KALSHI_PERIOD_INTERVALS[-1]
+    return allowed[-1]
 
 
 def is_thin_chart(point_count: int, lifetime_seconds: float) -> bool:
@@ -244,6 +272,85 @@ def is_thin_chart(point_count: int, lifetime_seconds: float) -> bool:
     hours = lifetime_seconds / 3600.0
     expected = min(THIN_MAX_EXPECTED_POINTS, max(2.0, hours * THIN_POINTS_PER_HOUR))
     return point_count < expected
+
+
+def is_reader_reachable_sport_key(sport_key: Optional[str]) -> bool:
+    """Whether a reader can plausibly arrive at this sport's pages at all.
+
+    **This is the narrowing Fable ruled (live/036 (b)), and it is a narrowing of
+    the NIGHTLY only.** The sweep used to nominate every event inside Kalshi's
+    retention floor — 44,315 of them, against a nightly budget of 60 and ~550
+    new candidates a day. That is not a slow drain, it is a losing race: ~739
+    nights for one traversal of a population that grows every night. No budget
+    this task can be given fixes an arithmetic that is the wrong shape.
+
+    So the nightly stops trying to own the backlog and pre-warms what a reader
+    can reach. What it now skips is not abandoned — :func:`claim_on_demand_fill`
+    catches anything a person actually opens. Nightly = likely-reached;
+    on-demand = actually-reached. That pairing is why this predicate is allowed
+    to be aggressive.
+
+    MEASURED against the real population, 2026-09-02, over the ±7-day reader
+    window (4,542 events carrying a Kalshi/Polymarket market):
+
+        KEPT     1,152 across 28 sport keys
+        DROPPED  3,390 across 40 — `soccer_other` 2,409, `esports` 463,
+                 `tennis_other` 115, `americanfootball_other` 76, …
+
+    Alex's words for the dropped half are *"February soccer"*, and for the kept
+    half *"the US Open is the ship"*: the whole US Open cohort survives —
+    `tennis_atp` 307, `tennis_atp_us_open` 90, `tennis_wta_us_open` 74,
+    `tennis_wta` 111 — beside MLB 170, NCAAF 80, EPL/La Liga/Bundesliga/MLS.
+
+    🔴 **THE TRAP, and the reason this is not one lookup.** The obvious
+    authority, ``LEAGUE_CLASS``, spells the US Open ``tennis_us_open``. The
+    events carry ``tennis_atp`` and ``tennis_atp_us_open`` — and the SPECIMEN
+    itself, event 15300759 (Vallejo v Monfils), is plain ``tennis_atp``. A
+    classifier built on ``LEAGUE_CLASS`` alone excludes the exact event this
+    queue exists to fix, and it does it silently. ``SPORT_LEAGUE_MAP`` is the
+    authority that holds the tour keys (it imports nothing, gotcha #3), and
+    tournament-specific keys are its members plus a suffix.
+    """
+    if not sport_key:
+        return False
+    from app.tasks.config import SPORT_POLLING_TIERS
+    from app.utils.league_classification import LEAGUE_CLASS
+    from app.utils.sport_keys import SPORT_LEAGUE_MAP
+
+    if sport_key in SPORT_LEAGUE_MAP:
+        return True
+    if sport_key in LEAGUE_CLASS:
+        return True
+    if SPORT_POLLING_TIERS.get(sport_key):
+        return True
+    # `tennis_atp_us_open`, `tennis_wta_cincinnati_open`,
+    # `americanfootball_ncaaf_fcs` — a named tour or league plus a tournament or
+    # division segment. The trailing underscore matters: without it
+    # `soccer_x` would be matched by a base key `soccer_xy`'s prefix.
+    return any(sport_key.startswith(base + "_") for base in SPORT_LEAGUE_MAP)
+
+
+def granularity_floor_minutes(
+    age_seconds: Optional[float],
+    *,
+    coarse_after_days: int = COARSE_GRANULARITY_AGE_DAYS,
+) -> int:
+    """Finest candle interval this event's AGE justifies paying for (ruling (c)).
+
+    Returns a FLOOR handed to :func:`choose_period_interval`, never the interval
+    itself — the lifetime-vs-request-budget rule still applies on top, so a
+    months-old futures market cannot be dragged back down to hourly paging by
+    this. A live or just-finished match keeps 1-minute; anything older than
+    :data:`COARSE_GRANULARITY_AGE_DAYS` fills hourly.
+
+    ``None`` — an event with no usable start — reads as RECENT, not as old. The
+    safe direction for an unknown is the finer curve: paying too much for one
+    event costs a few seconds, drawing a five-day match as 120 hourly dots
+    costs the shape of the story.
+    """
+    if age_seconds is None:
+        return 1
+    return 60 if age_seconds > coarse_after_days * 86400 else 1
 
 
 def _dollars(container: Any, *keys: str) -> Optional[float]:
@@ -571,6 +678,7 @@ async def fetch_kalshi_series(
     start: datetime,
     end: datetime,
     stats: dict,
+    min_period_minutes: int = 1,
 ) -> list[dict]:
     """Every candle for one Kalshi market ticker across [start, end], chunked.
 
@@ -585,7 +693,7 @@ async def fetch_kalshi_series(
     that is recorded as ``purged`` rather than as "no data".
     """
     lifetime = (end - start).total_seconds()
-    interval = choose_period_interval(lifetime)
+    interval = choose_period_interval(lifetime, min_interval=min_period_minutes)
     windows = candle_windows(
         int(start.timestamp()), int(end.timestamp()), period_minutes=interval
     )
@@ -674,7 +782,8 @@ async def _polymarket_token_id(service: Any, market: Any, outcome: Any) -> Optio
 
 
 async def fetch_polymarket_series(
-    service: Any, market: Any, outcome: Any, *, stats: dict
+    service: Any, market: Any, outcome: Any, *, stats: dict,
+    min_period_minutes: int = 1,
 ) -> list[dict]:
     """The CLOB price history for one outcome, finest granularity first.
 
@@ -682,13 +791,21 @@ async def fetch_polymarket_series(
     points cannot draw it. Polymarket silently returns nothing for some
     token/fidelity pairs, so an empty answer retries hourly before it counts as
     an absence.
+
+    ``min_period_minutes`` (ruling (c)) skips straight to hourly for an event old
+    enough that nobody is scrubbing its chart. **The 1→60 fallback is kept
+    either way** — it is a fallback for a token/fidelity pair that answers
+    empty, not a granularity preference, and dropping it would turn "this token
+    does not serve minute data" back into "this market has no history"
+    (gotcha #53).
     """
     token_id = await _polymarket_token_id(service, market, outcome)
     if not token_id:
         stats["no_token_id"] = stats.get("no_token_id", 0) + 1
         return []
 
-    for fidelity in (1, 60):
+    fidelities = (1, 60) if min_period_minutes <= 1 else (60,)
+    for fidelity in fidelities:
         history = await service.get_prices_history(
             token_id=token_id, interval="max", fidelity=fidelity
         )
@@ -791,11 +908,17 @@ async def backfill_event_chart(
     kalshi_service: Any = None,
     polymarket_service: Any = None,
     dry_run: bool = False,
+    min_period_minutes: Optional[int] = None,
 ) -> dict:
     """Draw one event's whole win-prob lifetime from its venues' price history.
 
     Returns a per-source verdict dict. Never raises for one bad source — a
     Polymarket outage must not cost the Kalshi curve (gotcha #42).
+
+    ``min_period_minutes`` is the granularity floor (ruling (c)). Left ``None``
+    it is DERIVED from the event's own age, so every caller — nightly, targeted,
+    admin, on-demand — pays the same cheap price for an old event without having
+    to remember to ask for it.
     """
     verdict: dict = {
         "event_id": event.id,
@@ -809,6 +932,10 @@ async def backfill_event_chart(
         verdict["status"] = "no_linked_markets"
         return verdict
 
+    if min_period_minutes is None:
+        min_period_minutes = granularity_floor_minutes(_event_age_seconds(event))
+    verdict["min_period_minutes"] = min_period_minutes
+
     # Clients this call built itself, which it therefore has to close. The sweep
     # passes its own long-lived pair and they are not in here — closing a
     # caller's client mid-sweep would poison every event after this one.
@@ -820,6 +947,7 @@ async def backfill_event_chart(
             polymarket_service=polymarket_service,
             dry_run=dry_run,
             owned=owned,
+            min_period_minutes=min_period_minutes,
         )
     finally:
         for service in owned:
@@ -829,9 +957,26 @@ async def backfill_event_chart(
                 pass
 
 
+def _event_age_seconds(event: Any) -> Optional[float]:
+    """How long ago this event happened, by the best clock it carries.
+
+    ``completed_at`` first, then ``commence_time``. An event that has NOT
+    started yet answers 0.0, not a negative — it is as recent as an event gets,
+    and a negative age would read as "older than the coarse threshold" the
+    moment anyone compared it with ``>`` on an absolute value.
+    """
+    stamp = getattr(event, "completed_at", None) or getattr(event, "commence_time", None)
+    if stamp is None:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds())
+
+
 async def _backfill_sources(
     session, event, groups, verdict, *,
     kalshi_service, polymarket_service, dry_run, owned,
+    min_period_minutes: int = 1,
 ) -> dict:
     from app.models.models import WinProbSnapshot
 
@@ -863,7 +1008,8 @@ async def _backfill_sources(
                     continue
                 start, end = await _kalshi_window(service, market, ticker)
                 raw = await fetch_kalshi_series(
-                    service, ticker, start=start, end=end, stats=stats
+                    service, ticker, start=start, end=end, stats=stats,
+                    min_period_minutes=min_period_minutes,
                 )
             else:
                 service = polymarket_service
@@ -873,7 +1019,8 @@ async def _backfill_sources(
                     service = PolymarketAPIService()
                     owned.append(service)
                 raw = await fetch_polymarket_series(
-                    service, market, outcome, stats=stats
+                    service, market, outcome, stats=stats,
+                    min_period_minutes=min_period_minutes,
                 )
 
             points = orient_points(raw, yes_is_home=yes_is_home)
@@ -1007,9 +1154,18 @@ THIN_CHART_CANDIDATES_SQL = """
          -- would starve exactly the rows that die.
          AND COALESCE(e.completed_at, fm.updated_at)
              >= NOW() - make_interval(days => :purge_days)
+        -- THE READER WINDOW + THE READER'S SURFACES (live/036 ruling (b)).
+        -- Both halves are the narrowing, and neither works alone: the window
+        -- alone leaves 4,542 events of which 2,409 are `soccer_other`, and the
+        -- surface test alone re-admits the whole 86-day backlog. Together they
+        -- measured 1,152. NOTE the window now reaches FORWARDS as well —
+        -- `commence_time <= NOW()` used to be here, and it excluded exactly the
+        -- upcoming matches whose five days of pre-match drift is the most
+        -- interesting curve we can draw.
         WHERE e.commence_time IS NOT NULL
-          AND e.commence_time <= NOW()
-          AND e.commence_time >= NOW() - make_interval(days => :purge_days)
+          AND e.commence_time >= NOW() - make_interval(days => :lookback_days)
+          AND e.commence_time <= NOW() + make_interval(days => :lookahead_days)
+          AND e.sport_id IN :sport_ids
         GROUP BY e.id
         -- The SWEEP CURSOR. Without it the LIMIT below pins the sweep to one
         -- fixed prefix forever: the oldest N are selected, repaired, and then
@@ -1088,6 +1244,22 @@ class ThinChartPage(NamedTuple):
     scanned: int = 0
 
 
+async def reachable_sport_ids(session) -> list[int]:
+    """``sports.id`` for every sport a reader can reach, classified in Python.
+
+    The whole table is 176 rows, so this is one trivial scan and the rule stays
+    in :func:`is_reader_reachable_sport_key` — one tested pure function — rather
+    than being re-expressed as a `LIKE` ladder in SQL that would drift away from
+    it. Same discipline as :func:`is_thin_chart`, and the same reason.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Sport
+
+    rows = (await session.execute(select(Sport.id, Sport.key))).all()
+    return [int(sid) for sid, key in rows if is_reader_reachable_sport_key(key)]
+
+
 async def select_thin_chart_page(
     session, *, limit: int, scan_multiple: int = 6, after: Optional[tuple] = None
 ) -> ThinChartPage:
@@ -1115,20 +1287,43 @@ async def select_thin_chart_page(
     steps over the entire cohort. Same shape as the keyset in
     ``app/tasks/repair_kalshi_fabricated_loss.py``, which runs in production.
     """
-    from sqlalchemy import text
+    from sqlalchemy import bindparam, text
 
     from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
+    sport_ids = await reachable_sport_ids(session)
+    if not sport_ids:
+        # Not "nothing is thin" — "the classifier matched no sport we track",
+        # which is a broken map, not an empty night. Say so and select nothing
+        # rather than falling through to an unfiltered `IN ()` (gotcha #53).
+        logger.error(
+            "event chart backfill: NO reachable sports resolved — the sweep "
+            "selected nothing. Check is_reader_reachable_sport_key against the "
+            "sports table; this is a classifier failure, not an idle night."
+        )
+        return ThinChartPage(event_ids=[], next_cursor=after, exhausted=True, scanned=0)
+
     after_ts, after_id = (after or (None, None))
     scan_size = max(1, limit * max(1, scan_multiple))
+    # `expanding=True`, not `= ANY(:ids)`. An expanding bind renders as a literal
+    # IN list at execution time, so it works on every dialect the guards can
+    # actually run the REAL statement against — which is the whole point after a
+    # `:func:` Sphinx role in this same SQL became a phantom required bind that
+    # no stubbed-session test could see.
+    statement = text(THIN_CHART_CANDIDATES_SQL).bindparams(
+        bindparam("sport_ids", expanding=True)
+    )
     rows = (
         await session.execute(
-            text(THIN_CHART_CANDIDATES_SQL),
+            statement,
             {
                 "limit": scan_size,
                 "purge_days": PROVABLY_PURGED_AGE_DAYS,
                 "after_ts": after_ts,
                 "after_id": after_id,
+                "lookback_days": READER_REACH_LOOKBACK_DAYS,
+                "lookahead_days": READER_REACH_LOOKAHEAD_DAYS,
+                "sport_ids": sport_ids,
             },
         )
     ).fetchall()
@@ -1195,13 +1390,34 @@ def _read_sweep_cursor() -> Optional[tuple]:
     return (parsed, parsed_id)
 
 
-#: Measured on production 2026-09-02, and the reason `_note_budget_shortfall`
-#: exists. `MEASURED_CANDIDATE_POPULATION` is every event inside the retention
-#: floor carrying a Kalshi/Polymarket market; `MEASURED_DAILY_INFLOW` is the mean
-#: over the ten days to 09-02 (range 262..1050). At the nightly `limit=60` the
-#: sweep does not merely drain slowly — it loses ground every single night.
-MEASURED_CANDIDATE_POPULATION = 44_315
-MEASURED_DAILY_INFLOW = 550
+#: 🔴 HISTORICAL, and kept only so nobody re-derives the number that caused the
+#: redesign. This was the UNNARROWED population — every event inside the 86-day
+#: retention floor carrying a Kalshi/Polymarket market — against ~550 new
+#: candidates a day. At `limit=60` that is ~739 nights for one traversal of a
+#: set that grows every night. **It is no longer the sweep's population and must
+#: never be used as its denominator again** (live/036 ruling (b) dropped the
+#: backlog as a goal); `_note_budget_shortfall` measures the NARROWED set.
+HISTORICAL_UNNARROWED_POPULATION = 44_315
+HISTORICAL_UNNARROWED_DAILY_INFLOW = 550
+
+#: Measured on production 2026-09-02 AFTER the narrowing, and these are the
+#: numbers the shortfall arithmetic actually uses. `REACHABLE_POPULATION` is
+#: events inside the ±7-day reader window on a reader-reachable sport;
+#: `REACHABLE_DAILY_INFLOW` is that population divided by the window's own width
+#: — an event enters at `commence - 7d` and leaves at `commence + 7d`, so in the
+#: steady state the set turns over once every `lookback + lookahead` days. That
+#: is a DERIVED rate, not a second observation, which is why it is computed from
+#: the two numbers beside it rather than quoted.
+MEASURED_REACHABLE_POPULATION = 1_152
+
+
+def _reachable_daily_inflow(
+    population: int = MEASURED_REACHABLE_POPULATION,
+    *,
+    window_days: int = READER_REACH_LOOKBACK_DAYS + READER_REACH_LOOKAHEAD_DAYS,
+) -> int:
+    """Events per day entering the reader window, derived from its own width."""
+    return max(1, round(population / max(1, window_days)))
 
 
 def _note_budget_shortfall(result: dict, page: "ThinChartPage", limit: int) -> None:
@@ -1209,29 +1425,39 @@ def _note_budget_shortfall(result: dict, page: "ThinChartPage", limit: int) -> N
 
     Gotcha #53 / `task_verdict`: "it returned" is not "it worked". A nightly that
     repairs its 60 and reports `status: complete` is indistinguishable from one
-    that has finished the job — and this one has not. Against the measured
-    population and inflow, `limit=60` needs ~739 nights for one traversal while
-    ~550 new candidates arrive per day, so the backlog GROWS. That is a scope
-    decision (raise the budget, narrow the population, or backfill on demand),
-    not something this function fixes; what it fixes is the silence.
+    that has finished the job.
+
+    What changed in live/036: the denominator. This used to compare the budget
+    against 44,315 candidates and ~550/day of inflow and correctly conclude that
+    the sweep could never win. It is now measured against the population the
+    sweep actually has — the ±7-day reader window on reachable sports, 1,152
+    events turning over roughly every 14 days — because comparing a narrowed
+    sweep to the backlog it was explicitly told to stop chasing would report
+    failure on a ship that works.
+
+    It still tells the truth in the other direction: if the narrowed set ALSO
+    outruns the budget, this says so, in the terminal, with the arithmetic.
     """
     budget_bound = not page.exhausted and len(page.event_ids) >= limit
+    inflow = _reachable_daily_inflow()
     result["candidates_scanned"] = page.scanned
     result["thin_seen"] = len(page.event_ids)
     result["sweep_budget_bound"] = budget_bound
+    result["sweep_population"] = "reader_reachable"
+    result["measured_reachable_population"] = MEASURED_REACHABLE_POPULATION
+    result["measured_daily_inflow"] = inflow
+    result["sweep_keeps_up"] = limit >= inflow
     if not budget_bound:
         return
-    nights = MEASURED_CANDIDATE_POPULATION // max(1, limit)
+    nights = max(1, MEASURED_REACHABLE_POPULATION // max(1, limit))
     result["measured_nights_per_traversal"] = nights
-    result["measured_daily_inflow"] = MEASURED_DAILY_INFLOW
-    result["sweep_keeps_up"] = limit >= MEASURED_DAILY_INFLOW
     logger.warning(
         "event chart backfill: sweep is BUDGET-BOUND — filled its limit of %s from "
         "a scan of %s and did not reach the end. ~%s nights per traversal of the "
-        "measured %s candidates, against ~%s new candidates per day: the backlog "
-        "grows. Raise the budget, narrow the population, or backfill on demand.",
+        "%s reader-reachable candidates, against ~%s entering the window per day. "
+        "Keeps up: %s. On-demand fills cover what this misses.",
         limit, page.scanned, nights,
-        MEASURED_CANDIDATE_POPULATION, MEASURED_DAILY_INFLOW,
+        MEASURED_REACHABLE_POPULATION, inflow, limit >= inflow,
     )
 
 
@@ -1256,6 +1482,180 @@ def _write_sweep_cursor(cursor: Optional[tuple], *, exhausted: bool) -> None:
             client.set(SWEEP_CURSOR_KEY, f"{stamp.isoformat()}|{int(event_id)}")
     except Exception:  # noqa: BLE001 — losing the hint costs a re-scan, not a row
         logger.warning("event chart backfill: sweep cursor not persisted", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# On demand — the half the nightly is allowed to miss (live/036 ruling (c))
+# ---------------------------------------------------------------------------
+
+#: How long one event stays claimed after an on-demand fill is enqueued. Long
+#: enough that a page being refreshed, or shared and opened by twenty people,
+#: costs ONE fill; short enough that a live match whose chart is still filling in
+#: gets another pass the same day.
+ON_DEMAND_CLAIM_TTL_SECONDS = 6 * 3600
+
+#: Ceiling on on-demand fills started in any one clock hour, across the whole
+#: site. This is the crawler bound: `/api/events/{id}/history` is a public,
+#: cacheable GET, and a bot walking every event id must not be able to convert
+#: page views into unbounded outbound venue traffic. Sized above any plausible
+#: human hour on this cohort and far below the venues' rate limits.
+ON_DEMAND_HOURLY_CAP = 120
+
+ON_DEMAND_CLAIM_KEY = "event_chart_backfill:ondemand:{event_id}"
+ON_DEMAND_BUDGET_KEY = "event_chart_backfill:ondemand:budget:{hour}"
+
+
+def claim_on_demand_fill(
+    event_id: int, *, now: Optional[datetime] = None, cap: int = ON_DEMAND_HOURLY_CAP
+) -> tuple[bool, str]:
+    """Reserve the right to enqueue ONE fill for this event. ``(claimed, why)``.
+
+    Two bounds, and they are checked in this order for a reason. The per-event
+    claim goes first so a popular page cannot spend the hourly budget on itself;
+    the hourly budget is only charged once a claim has actually been won.
+
+    🔴 **A Redis failure REFUSES the claim.** Every other Redis touch in this
+    module treats a miss as "no hint, do the work anyway" — this one must not.
+    Without Redis there is no dedupe, and the caller is a public GET: failing
+    open would turn one crawler into one enqueued task per request, forever. The
+    cost of failing closed is that charts fill on the nightly instead of on the
+    click. Routed through ``get_redis_client()`` so it cannot hang the event loop
+    on a socket with no timeout (gotcha #39).
+    """
+    stamp = now or datetime.now(timezone.utc)
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        claim_key = ON_DEMAND_CLAIM_KEY.format(event_id=int(event_id))
+        if not client.set(claim_key, "1", nx=True, ex=ON_DEMAND_CLAIM_TTL_SECONDS):
+            return False, "already_claimed"
+
+        budget_key = ON_DEMAND_BUDGET_KEY.format(hour=stamp.strftime("%Y%m%d%H"))
+        spent = client.incr(budget_key)
+        # Expire generously past the hour so a counter minted at :59 cannot be
+        # read as a fresh hour at :00 — and set every time, because a key that
+        # was INCR'd without an EXPIRE (a crash between the two) would otherwise
+        # cap that hour forever.
+        client.expire(budget_key, 7200)
+        if spent > max(1, cap):
+            # Hand the claim back. The next hour's budget should be able to fill
+            # this chart; a six-hour claim on an event we refused would make one
+            # busy hour suppress it for the rest of the day.
+            client.delete(claim_key)
+            return False, "hourly_cap"
+        return True, "claimed"
+    except Exception:  # noqa: BLE001 — see the docstring: no Redis, no claim
+        logger.warning(
+            "event chart backfill: on-demand claim refused for event %s — Redis "
+            "unavailable, so there is no dedupe to enqueue behind",
+            event_id, exc_info=True,
+        )
+        return False, "no_redis"
+
+
+async def maybe_enqueue_on_demand_fill(
+    session, event, *, served_points: int
+) -> Optional[dict]:
+    """A thin chart was just SERVED — start filling it, for the next reader.
+
+    This is the half of live/036 that makes the narrowing honest. The nightly
+    now pre-warms only what a reader is likely to reach; this covers what a
+    reader DID reach, which is the only population that was ever really owed a
+    curve. A February soccer match nobody opens stays thin forever and that is
+    the ruling, not a gap — the same match, opened once, fills itself.
+
+    Never raises and never blocks: it enqueues, it does not backfill. The
+    response the caller is about to return is unchanged — this reader still sees
+    the thin chart. The next one does not.
+
+    Returns a small dict for the caller's logs, or ``None`` when the event was
+    never a candidate.
+    """
+    try:
+        return await _maybe_enqueue_on_demand_fill(
+            session, event, served_points=served_points
+        )
+    except Exception:  # noqa: BLE001 — a chart endpoint never fails on its own
+        logger.warning(
+            "event chart backfill: on-demand consideration failed for event %s",
+            getattr(event, "id", None), exc_info=True,
+        )
+        return None
+
+
+async def _maybe_enqueue_on_demand_fill(
+    session, event, *, served_points: int
+) -> Optional[dict]:
+    from sqlalchemy import func, select
+
+    from app.models.models import FuturesMarket
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    event_id = int(getattr(event, "id", 0) or 0)
+    if not event_id:
+        return None
+
+    # CHEAP GATE FIRST, and it is load-bearing. Everything below costs a query;
+    # a chart that already holds a full life of points must reach none of it.
+    # `THIN_MAX_EXPECTED_POINTS` is the cap inside `is_thin_chart`, so no series
+    # at or above it can be thin under any lifetime — this cannot reject a
+    # candidate the real predicate would have accepted.
+    if served_points >= THIN_MAX_EXPECTED_POINTS:
+        return None
+
+    age_seconds = _event_age_seconds(event)
+    if age_seconds is not None and age_seconds > PROVABLY_PURGED_AGE_DAYS * 86400:
+        # Past the retention floor the venue has provably deleted the candles
+        # (gotcha #35). Enqueueing here spends a worker to learn nothing.
+        return {"enqueued": False, "reason": "beyond_retention_floor"}
+
+    first_seen = (
+        await session.execute(
+            select(func.min(FuturesMarket.created_at)).where(
+                FuturesMarket.event_id == event_id,
+                FuturesMarket.source.in_(("kalshi", "polymarket")),
+            )
+        )
+    ).scalar_one_or_none()
+    if first_seen is None:
+        # No venue market means no venue history. Not every thin chart is one
+        # this rail can fix, and saying so is not the same as saying it is fine.
+        return {"enqueued": False, "reason": "no_venue_markets"}
+
+    if first_seen.tzinfo is None:
+        first_seen = first_seen.replace(tzinfo=timezone.utc)
+    end = getattr(event, "completed_at", None) or datetime.now(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    lifetime = max(0.0, (end - first_seen).total_seconds())
+
+    if not is_thin_chart(served_points, lifetime):
+        return None
+
+    claimed, why = claim_on_demand_fill(event_id)
+    if not claimed:
+        return {"enqueued": False, "reason": why}
+
+    floor_minutes = granularity_floor_minutes(age_seconds)
+    from app.tasks import backfill_event_chart_history
+
+    backfill_event_chart_history.apply_async(
+        kwargs={"event_ids": [event_id], "limit": 1},
+        queue="background",
+    )
+    logger.info(
+        "event chart backfill: on-demand fill enqueued for event %s — served %s "
+        "points for a %.1fh market life, filling at %s-minute granularity",
+        event_id, served_points, lifetime / 3600.0, floor_minutes,
+    )
+    return {
+        "enqueued": True,
+        "event_id": event_id,
+        "served_points": served_points,
+        "lifetime_hours": round(lifetime / 3600.0, 2),
+        "min_period_minutes": floor_minutes,
+    }
 
 
 async def _run_for_event_ids(event_ids: Sequence[int], *, dry_run: bool = False) -> dict:

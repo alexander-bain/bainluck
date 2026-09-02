@@ -1183,12 +1183,18 @@ def backfill_event_chart_history(self, event_ids=None, limit: int = 40, dry_run:
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thin_event_charts")
-def backfill_thin_event_charts(self, limit: int = 60):
-    """Nightly: fill in every event chart holding fewer points than its life earned.
+def backfill_thin_event_charts(self, limit: int = 90):
+    """Nightly: pre-warm the thin charts a reader is likely to reach.
 
     Bounded at both ends (gotcha #41): the floor keeps it off markets Kalshi has
     provably purged, and inside that floor it works oldest-first so the at-risk
     edge is reached before it expires rather than after.
+
+    live/036 (b): its population is no longer "every event we could fix". It is
+    the ±7-day reader window on reader-reachable sports — 1,152 events measured,
+    down from 44,315 — because the wide version lost ground every night and no
+    budget fixed that. Anything outside it fills on demand when someone opens
+    the page.
     """
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
@@ -4637,10 +4643,18 @@ celery_app.conf.beat_schedule = {
     # the population it drains is created by yesterday's finished events, not
     # continuously; the cliff-drain one line up is the hourly rail for the
     # genuinely expiring cohort.
+    # live/036 (b): `limit` raised 60 -> 90 when the population was narrowed to
+    # the reader window. It is sized against INFLOW, not against a backlog: the
+    # narrowed set measured 1,152 events turning over across its own 14-day
+    # window, so ~82 enter per day and 90 covers that with a little room. It is
+    # NOT sized higher, because the 900s soft limit at ~10s/event is the real
+    # bound (~90) and a nightly killed mid-event is worse than a nightly that
+    # leaves eight charts for tomorrow. What this misses, the on-demand fill on
+    # `/api/events/{id}/history` catches the moment someone opens the page.
     "backfill-thin-event-charts": {
         "task": "app.tasks.backfill_thin_event_charts",
         "schedule": crontab(minute=40, hour=8),
-        "kwargs": {"limit": 60},
+        "kwargs": {"limit": 90},
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------

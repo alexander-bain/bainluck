@@ -672,14 +672,29 @@ class _RowsResult:
     def fetchall(self):
         return list(self._rows)
 
+    def all(self):
+        return list(self._rows)
+
+
+#: The sports the stubs answer `reachable_sport_ids` with. `tennis_atp` on
+#: purpose: it is the SPECIMEN's own sport key, and the one a `LEAGUE_CLASS`-only
+#: classifier drops (live/036).
+_STUB_SPORTS = [(1, "tennis_atp"), (2, "baseball_mlb"), (3, "soccer_other")]
+
 
 class _RecordingSession:
-    def __init__(self, rows):
+    def __init__(self, rows, sports=None):
         self.rows = rows
+        self.sports = _STUB_SPORTS if sports is None else sports
         self.sql = None
         self.params = None
 
     async def execute(self, statement, params=None):
+        if params is None:
+            # `reachable_sport_ids` (live/036 (b)) — the reachability lookup the
+            # sweep now runs BEFORE its candidate scan. It is an ORM select with
+            # no param dict, which is what tells it apart from the scan.
+            return _RowsResult(self.sports)
         self.sql = str(statement)
         self.params = params
         return _RowsResult(self.rows)
@@ -1070,6 +1085,8 @@ class _RingSession:
         self.calls = []
 
     async def execute(self, statement, params=None):
+        if params is None:
+            return _RowsResult(_STUB_SPORTS)  # `reachable_sport_ids`, live/036
         params = dict(params or {})
         self.calls.append(params)
         after_ts, after_id = params.get("after_ts"), params.get("after_id")
@@ -1353,6 +1370,8 @@ def test_the_selection_sql_declares_exactly_the_binds_it_is_given():
     compiled = text(THIN_CHART_CANDIDATES_SQL)
     assert set(compiled._bindparams) == {
         "after_ts", "after_id", "limit", "purge_days",
+        # live/036 (b) — the reader window and the reachable-sport filter.
+        "lookback_days", "lookahead_days", "sport_ids",
     }
 
 
@@ -1613,31 +1632,77 @@ async def _async(value):
 async def test_a_sweep_that_cannot_finish_says_so_instead_of_reporting_complete():
     """Gotcha #53: "it returned" is not "it worked".
 
-    CERT-730's second finding, measured: **44,315 candidates** inside the
-    retention floor and **~550 new ones per day**, against a nightly `limit=60`.
-    That is ~739 nights for ONE traversal while the backlog grows every night —
-    so a run that repairs its 60 and reports `status: complete` is
-    indistinguishable from one that finished the job. It has not. The scope
-    decision is not this function's; the SILENCE is.
+    CERT-730's second finding was that a full page and `status: complete` looked
+    identical to a finished job. That reporting stays. What changed in live/036
+    is the DENOMINATOR it reports against: the sweep was told to stop chasing
+    the 44,315-event backlog, so measuring it against that backlog would print
+    failure forever on a ship that works.
+
+    Here the budget is deliberately set BELOW the narrowed window's own inflow,
+    which is the one case that is still a real shortfall — and it must still say
+    so out loud.
     """
     import app.tasks.event_chart_backfill as mod
 
+    starved = mod._reachable_daily_inflow() - 10
     full = mod.ThinChartPage(
-        event_ids=list(range(60)),
+        event_ids=list(range(starved)),
         next_cursor=(datetime(2026, 8, 12, tzinfo=UTC), 7),
         exhausted=False,
         scanned=360,
     )
 
-    result = await _run_sweep_with(full, limit=60)
+    result = await _run_sweep_with(full, limit=starved)
 
     assert result["sweep_budget_bound"] is True
     assert result["candidates_scanned"] == 360
-    assert result["thin_seen"] == 60
-    assert result["measured_nights_per_traversal"] > 700
+    assert result["thin_seen"] == starved
     assert result["sweep_keeps_up"] is False, (
-        "60/night against ~550/day arriving is not keeping up"
+        "a budget below the reader window's own daily inflow is not keeping up"
     )
+    # The arithmetic is reported against the NARROWED population, and the
+    # backlog number that caused the redesign must not reappear as a
+    # denominator — that is the ruling, not a preference.
+    assert result["sweep_population"] == "reader_reachable"
+    assert (
+        result["measured_reachable_population"]
+        == mod.MEASURED_REACHABLE_POPULATION
+        != mod.HISTORICAL_UNNARROWED_POPULATION
+    )
+    assert result["measured_daily_inflow"] < mod.HISTORICAL_UNNARROWED_DAILY_INFLOW
+
+
+async def test_the_nightly_budget_covers_the_reader_windows_inflow():
+    """THE SHIP'S ARITHMETIC, and the reason the narrowing was worth doing.
+
+    Before: 60/night against 44,315 candidates and ~550/day arriving — ~739
+    nights per traversal of a set that GREW every night. After: the ±7-day
+    reader window on reachable sports measured 1,152 events, and because an
+    event enters at `commence - 7d` and leaves at `commence + 7d` the set turns
+    over across its own 14-day width, so ~82 enter per day.
+
+    The scheduled `limit` must cover that. If it does not, the narrowed sweep
+    loses the same race the wide one did, just more slowly.
+    """
+    import app.tasks.event_chart_backfill as mod
+    from app.tasks import celery_app
+
+    entry = celery_app.conf.beat_schedule["backfill-thin-event-charts"]
+    scheduled_limit = entry["kwargs"]["limit"]
+
+    assert scheduled_limit >= mod._reachable_daily_inflow(), (
+        f"nightly limit {scheduled_limit} is below the ~"
+        f"{mod._reachable_daily_inflow()}/day entering the reader window"
+    )
+
+    page = mod.ThinChartPage(
+        event_ids=list(range(scheduled_limit)),
+        next_cursor=(datetime(2026, 8, 12, tzinfo=UTC), 7),
+        exhausted=False,
+        scanned=540,
+    )
+    result = await _run_sweep_with(page, limit=scheduled_limit)
+    assert result["sweep_keeps_up"] is True
 
 
 async def test_a_sweep_that_reached_the_end_is_not_flagged_as_starved():
