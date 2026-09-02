@@ -498,11 +498,17 @@ _REPAIRS = {
     # Every write is a compare-and-set on the whole population predicate, so a
     # row that acquires a score between the census and the write is counted
     # `raced`, never clobbered (gotcha #21). `futures_markets` is not touched.
-    # Paging is a DATE cursor: `?since=` from `next_since`, because this repair
-    # removes rows from its own population and an offset would skip (CAL-P058).
-    # Bounded by MAX_AUTHORITY_CALLS as well as by dates — three scoreboard calls
-    # per adjudicable (sport, date), and `limit` bounding rows rather than calls
-    # is the CAL-P002B H12. Accepts ?limit=&sport=&since=.
+    # Paging is a KEYSET cursor `(since, after_id)` from `next_since` +
+    # `next_after_id`, because this repair removes rows from its own population
+    # and an offset would skip (CAL-P058). The id half is not decoration: the
+    # biggest single date carries 193 venue rows, more than any one call's
+    # budget, and without a within-date position the rail would re-read the same
+    # leading rows forever and never reach the tail — the rows at the front
+    # being disproportionately the HELD ones, which by design never drain.
+    # Bounded by MAX_AUTHORITY_CALLS and MAX_VENUE_CALLS as well as by dates —
+    # three ESPN scoreboard calls per adjudicable (sport, date) and one Kalshi
+    # call per venue row — because `limit` bounding rows rather than calls is
+    # the CAL-P002B H12. Accepts ?limit=&sport=&since=&after_id=.
     "fabricated-finals": (
         "scripts.repair_fabricated_finals",
         "repair",

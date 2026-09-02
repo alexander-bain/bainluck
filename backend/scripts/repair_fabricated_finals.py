@@ -22,39 +22,57 @@ back from ``disposition_for``, which takes no session and no network.
 Heroku one-off (gotcha #48 — a non-detached run does not execute in the sandbox;
 PROJECT_PATH=backend puts scripts at /app, so NO `cd backend`). Prefer the endpoint.
 
-── PAGING: WHY THE CURSOR IS A DATE AND NOT AN OFFSET ───────────────────────────
+── THE TWO AUTHORITIES ──────────────────────────────────────────────────────────
+
+Which authority speaks is decided by the sport, not by convenience:
+
+* **ESPN scoreboard** for the head-to-head leagues it has an endpoint for.
+* **The venue (Kalshi) as authority of last resort** for the rest —
+  ``EVENT-GRAPH-DOCTRINE`` rule 8, and 547 of the 705 rows. CERT-708 blocked the
+  first cut of this rail for skipping this: it read "ESPN has no endpoint" as
+  "the match never happened" and quarantined all 547 on that. One Kalshi call
+  per row, ``/events/{ticker}?with_nested_markets=true``, which is permanent
+  where market data purges (gotcha #35) and answered 200 on 69 of 69 sampled.
+
+── PAGING: WHY THE CURSOR IS A KEYSET AND NOT AN OFFSET ─────────────────────────
 
 This repair REMOVES ROWS FROM ITS OWN POPULATION — a quarantined row leaves
 ``status IN ('closed','completed')`` the moment it is written. CAL-P058 is the
 banked lesson: an offset cursor over such a population skips as many untouched
 rows as the last page repaired, and it does it silently, because the response
-looks perfectly busy. So the unit of work is a DATE and the cursor is ``since``,
-which only ever moves forward and is therefore stable under the rail's own
-writes.
+looks perfectly busy. So the cursor is ``(since, after_id)``, both halves of
+which only ever move forward and are therefore stable under the rail's writes.
 
 ``held`` rows do not drain (that is what held means), so a re-run from the
 beginning re-visits them and reaches the same verdict — idempotent, and the
 right behaviour: an ESPN outage that held 40 rows on Tuesday should hold or
 resolve them on Wednesday, not be forgotten.
 
-── THE ESPN BUDGET, AND WHY IT BOUNDS THE PAGE ──────────────────────────────────
+**The id half is what makes that safe.** A date is no longer all-or-nothing: the
+biggest one carries 193 venue rows against a 50-call budget, so it takes four
+calls to walk. With a date-only cursor those four calls would each re-adjudicate
+the same leading 50 rows and never reach row 51 — and since HELD rows never
+drain, a date whose front is held would spin forever. The keyset closes that.
+
+── THE CALL BUDGETS, AND WHY THEY BOUND THE PAGE ────────────────────────────────
 
 Adjudicating one (sport, date) costs THREE scoreboard calls — the stand-in is
 midnight UTC of a ticker date and ESPN's scoreboard day boundary is not UTC
 midnight, so the real fixture legitimately lands on either side of it
-(``AUTHORITY_DAY_OFFSETS``). The client sleeps ``rate_limit_delay`` between
-requests, so the page has to be bounded by CALLS, not by rows: the CAL-P002B
+(``AUTHORITY_DAY_OFFSETS``). Adjudicating one venue row costs ONE Kalshi call.
+Either way the page has to be bounded by CALLS, not by rows: the CAL-P002B
 defect on the sibling rail was exactly this — ``limit`` bounded the ESPN calls
 but not the scan, and every unscoped invocation H12'd at the 30s router wall.
 
-Dates whose sports have no schedule of record cost ZERO calls, and they are the
-bulk of this population (547 of 705), so a page can be large or small depending
-on what is in it. The rail stops selecting dates when the next one would exceed
-``MAX_AUTHORITY_CALLS`` and hands back ``next_since``.
+The two budgets are separate because the two calls cost different amounts of
+wall clock (a scoreboard is a whole day's slate; a Kalshi event is one object),
+and both are checked BEFORE a row is adjudicated rather than after — a row
+adjudicated against an authority we could not afford to ask gets the
+empty-answer verdict, and on this rail that is a void.
 
 ── WHAT IT WRITES, AND THE COMPARE-AND-SET ON EVERY WRITE ───────────────────────
 
-Three statements, one per writing disposition, and **every one of them re-states
+Five statements, one per writing disposition, and **every one of them re-states
 the whole population predicate in its own WHERE clause**. A row that acquires a
 score, or is settled differently, or has its provenance corrected between the
 census and the write is counted ``raced`` and left exactly as it is. Gotcha #21
@@ -90,6 +108,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.utils.event_completion import (  # noqa: E402
     LAST_POST_COMMENCE_SNAPSHOT_SQL as _LAST_SNAPSHOT_SQL,
+    TICKER_DERIVED_COMMENCE_SOURCE,
     derive_completed_at,
 )
 from app.utils.fabricated_final import (  # noqa: E402
@@ -98,17 +117,22 @@ from app.utils.fabricated_final import (  # noqa: E402
     DISPOSITIONS,
     FABRICATED_FINAL_PREDICATE,
     FINAL_STATUS,
-    NO_SCHEDULE_OF_RECORD,
     NOT_ON_THE_AUTHORITY_SLATE,
     QUARANTINED,
     REPAIRED_FINAL,
     UNSETTLED,
     UNSETTLED_STATUS,
+    VENUE_COMMENCE_SOURCE,
+    VENUE_CONFIRMED,
+    VENUE_HAS_NO_RECORD,
+    VENUE_SETTLED_WITHOUT_A_RESULT,
     VOID_STATUS,
     AuthorityVerdict,
+    VenueVerdict,
     adapter_can_speak_for,
     disposition_for,
     has_schedule_of_record,
+    venue_verdict_from_event,
 )
 from app.utils.name_normalization import names_match  # noqa: E402
 
@@ -136,19 +160,36 @@ _DATES_SQL = f"""
 """
 
 # STEP 2 — candidate rows for the SELECTED dates only.
+#
+# `venue_ticker` is the KALSHI EVENT TICKER, and it is the whole venue-authority
+# channel. `futures_markets.external_id` holds the EVENT ticker, not a market
+# ticker — measured 2026-09-01, `/markets/{external_id}` 404s on every row of
+# this cohort while `/events/{external_id}` returns 200 on 69 of 69. MIN() picks
+# one deterministically: an event's markets all belong to the same Kalshi event,
+# so any of them names the same venue record.
+#
+# ORDER BY e.id, not `s.key, e.id`: the id is the within-date cursor
+# (`after_id`), so the scan order has to BE the cursor order or a resumed
+# page would skip rows. Sport grouping is unaffected — it is done in Python.
 _CANDIDATE_SQL = f"""
     SELECT e.id AS event_id,
            s.key AS sport_key,
            e.status AS ev_status,
            e.home_team_name, e.away_team_name,
            e.commence_time, e.completed_at, e.espn_id,
-           {_TICKER_DATE_EXPR} AS ticker_date
+           {_TICKER_DATE_EXPR} AS ticker_date,
+           (SELECT MIN(fm.external_id)
+              FROM futures_markets fm
+             WHERE fm.event_id = e.id
+               AND fm.source = 'kalshi'
+               AND fm.external_id IS NOT NULL) AS venue_ticker
     FROM events e
     LEFT JOIN sports s ON s.id = e.sport_id
     WHERE {FABRICATED_FINAL_PREDICATE}
       AND {_TICKER_DATE_EXPR} = ANY(CAST(:dates AS date[]))
       AND (:sport IS NULL OR s.key = :sport)
-    ORDER BY s.key, e.id
+      AND (:after_id IS NULL OR e.id > CAST(:after_id AS bigint))
+    ORDER BY e.id
 """
 
 _POPULATION_SQL = f"""
@@ -211,11 +252,68 @@ _WRITE_VOID_SQL = f"""
      {_PRECONDITION}
 """
 
+# ── The two venue writes ─────────────────────────────────────────────────────
+#
+# Both take their start from the venue's own `occurrence_datetime` and stamp
+# `commence_time_source = 'kalshi_event'`, which is NOT in
+# `DERIVED_COMMENCE_SOURCES`. That is load-bearing three times over: it records
+# a REPORTED start where a stand-in was, it lets CERT-690's producer doors run a
+# clock from the row again, and it DRAINS the row out of this rail's own
+# population so a re-run does not re-read it from Kalshi forever.
+#
+# Neither writes a score. The venue names a WINNER, not a score, and the
+# directive's floor is that we do not invent one.
+
+#: The venue settled on a real result: the match was played and is over. The
+#: row's `closed` status was right; only its start was fabricated. Status is
+#: deliberately UNTOUCHED — a `completed` flip would promise a result the row
+#: still has no score for, and Alex's settled-language ruling is that a settled
+#: surface shows the result.
+_WRITE_VENUE_CONFIRM_SQL = f"""
+    UPDATE events
+       SET commence_time = :commence_time,
+           commence_time_source = '{VENUE_COMMENCE_SOURCE}',
+           completed_at = :completed_at
+     WHERE id = :event_id
+     {_PRECONDITION}
+"""
+
+#: The venue is still taking bets, so the match is NOT over. Clear the
+#: settlement exactly as the ESPN path does, and take the venue's real start.
+#:
+#: The SOURCE is bound rather than inlined here, and only here. Clearing a FINAL
+#: the venue contradicts is worth doing whether or not we also learned a real
+#: start, so on the rare event that carries no unambiguous `occurrence_datetime`
+#: this still runs — keeping the row's existing start and its existing
+#: `kalshi_ticker` provenance, which is honest: we did not learn a start, so we
+#: must not stamp one as reported. The row drains anyway, on the status.
+_WRITE_VENUE_UNSETTLE_SQL = f"""
+    UPDATE events
+       SET status = '{UNSETTLED_STATUS}',
+           completed_at = NULL,
+           commence_time = :commence_time,
+           commence_time_source = :commence_time_source
+     WHERE id = :event_id
+     {_PRECONDITION}
+"""
+
 #: Scoreboard calls one invocation may spend. 30 x (one request + the client's
 #: 0.5s courtesy sleep) is ~20s, inside the 30s Heroku router wall with room for
 #: the queries either side. Three calls per adjudicable (sport, date), so ten
 #: such groups per page.
 MAX_AUTHORITY_CALLS = 30
+
+#: VENUE calls one invocation may spend, budgeted separately from the ESPN one
+#: because the two cost wildly different amounts of wall clock: an ESPN
+#: scoreboard is a whole day's slate (the US Open payload is 625 competitions),
+#: a Kalshi event is one small object. Sized so the worst case — both budgets
+#: fully spent in one request — stays inside the 30s Heroku router wall:
+#: 30 x ~0.6s + 50 x ~0.08s ≈ 22s.
+#:
+#: This bounds the page; it does NOT bound the drain, and it must not be raised
+#: to try to. The biggest single date carries 193 venue rows, so that date takes
+#: four calls to walk — which is exactly what `next_after_id` is for.
+MAX_VENUE_CALLS = 50
 
 #: Max DATES per invocation, independent of the call budget — a page of pure
 #: no-schedule-of-record dates costs no ESPN calls at all and would otherwise
@@ -302,6 +400,21 @@ async def _fetch_slate(espn, sport_key: str, ticker_date: _date) -> tuple[bool, 
     return (reachable, fixtures)
 
 
+async def _fetch_venue(kalshi, venue_ticker: str) -> VenueVerdict:
+    """The venue authority of last resort for ONE event (doctrine rule 8).
+
+    One call per EVENT, not per market: ``with_nested_markets=true`` brings back
+    every market's status, result and ``occurrence_datetime`` in the same
+    payload, so an event with twelve side-markets still costs one request.
+
+    ``get_event_reachable``, never ``get_event``: the latter returns ``None``
+    for a 404 AND for a failed request, and the whole reason this rail exists in
+    its current form is that reading a failure as an absence voids real events.
+    """
+    reachable, event = await kalshi.get_event_reachable(venue_ticker)
+    return venue_verdict_from_event(event, reachable=reachable)
+
+
 async def _derive_completions(session, event_ids: list[int], rows_by_id: dict) -> dict:
     """``{event_id: completed_at or None}`` from the last real post-commence
     snapshot, batched. Shares ``LAST_POST_COMMENCE_SNAPSHOT_SQL`` with both
@@ -333,15 +446,34 @@ async def repair(
     limit: int = None,
     sport: str = None,
     since: str = None,
+    after_id: int = None,
 ) -> dict:
     """Session-taking core, shared by the CLI and
     ``POST /api/admin/repairs/fabricated-finals`` so the two cannot drift.
 
     Commits per DATE, so a router timeout leaves consistent, resumable progress.
+
+    ── THE CURSOR IS ``(since, after_id)``, AND THE SECOND HALF IS NEW ────
+
+    A date used to be all-or-nothing. That was survivable while the only
+    per-row cost was free (a sport with no ESPN endpoint was decided from the
+    sport key alone), and the venue authority ended it: **the biggest single
+    date in this population carries 193 venue rows**, measured 2026-09-01, and
+    each one is a Kalshi request.
+
+    A date bigger than the call budget therefore has to be resumable IN THE
+    MIDDLE, and "resume where the budget ran out" cannot be spelled with a date
+    alone. Without the row half of the cursor the rail would re-adjudicate the
+    same leading rows every call and never reach the tail — and the rows most
+    likely to sit at the front are exactly the ones that do not drain (a HELD
+    row stays in the population by design). That is the starvation CERT-708
+    filed as ``Q506-MIDDATE-CURSOR-PROGRESS``; the keyset cursor closes it
+    instead of leaving it owed.
     """
     from sqlalchemy import text
 
     from app.services.espn_api import get_espn_service
+    from app.services.kalshi_api import KalshiAPIService
 
     date_limit = int(limit) if limit else DEFAULT_DATE_LIMIT
     bind = {"derived_sources": DERIVED_SOURCE_PARAM, "sport": sport}
@@ -370,9 +502,15 @@ async def repair(
     ledger: list[dict] = []
     counts = {d: 0 for d in DISPOSITIONS}
     reasons: dict[str, int] = {}
-    written = {REPAIRED_FINAL: 0, UNSETTLED: 0, QUARANTINED: 0}
+    written = {REPAIRED_FINAL: 0, UNSETTLED: 0, QUARANTINED: 0, VENUE_CONFIRMED: 0}
     raced = 0
     authority_calls = 0
+    venue_calls = 0
+    #: The keyset watermark. Seeded from the incoming cursor so that a page
+    #: which spends its budget before adjudicating ANYTHING hands back the
+    #: position it started from, rather than `None` — which would silently
+    #: restart the date and re-read every row ahead of the cursor.
+    last_id = after_id
     #: Doctrine rule 8: a league with no schedule of record gets NAMED, so the
     #: decision to chase a source is a rule and not a judgement. Counted here
     #: because this rail is the only thing that walks the whole cohort.
@@ -392,54 +530,83 @@ async def repair(
     absent_from_slate: list[dict] = []
 
     espn = get_espn_service() if selected else None
+    kalshi = KalshiAPIService() if selected else None
     budget_spent = False
+    #: Row half of the cursor. Consumed on the FIRST selected date only — it is
+    #: a position within that date, and carrying it onto the next one would skip
+    #: every lower-id row there.
+    cursor_after = after_id
+    next_after_id = None
 
-    for ticker_date in selected:
-        if budget_spent:
-            # The call budget ran out inside an earlier date. Stop rather than
-            # walk on: `next_since` already points at the unfinished date, and
-            # adjudicating the rest against slates we cannot afford to fetch is
-            # how a hold becomes a void.
-            break
-        rows = (
-            await session.execute(
-                text(_CANDIDATE_SQL), {**bind, "dates": [ticker_date]}
+    try:
+        for ticker_date in selected:
+            if budget_spent:
+                # The call budget ran out inside an earlier date. Stop rather
+                # than walk on: the cursor already points at the unfinished
+                # position, and adjudicating the rest against authorities we
+                # cannot afford to ask is how a hold becomes a void.
+                break
+            rows = (
+                await session.execute(
+                    text(_CANDIDATE_SQL),
+                    {**bind, "dates": [ticker_date], "after_id": cursor_after},
+                )
+            ).all()
+            cursor_after = None  # position applies to the resumed date only
+            if not rows:
+                continue
+
+            rows_by_id = {r.event_id: r for r in rows}
+            completions = await _derive_completions(
+                session, [r.event_id for r in rows], rows_by_id
             )
-        ).all()
-        if not rows:
-            continue
 
-        by_sport: dict[str, list] = {}
-        for r in rows:
-            by_sport.setdefault(r.sport_key, []).append(r)
+            # One slate per (sport, date), fetched lazily and cached, so strict
+            # id ordering costs nothing: eight EPL rows interleaved with eighty
+            # esports rows still buy the EPL slate exactly once.
+            slates: dict[str, tuple[bool, list[dict]]] = {}
+            date_ledger: list[tuple] = []
 
-        rows_by_id = {r.event_id: r for r in rows}
-        completions = await _derive_completions(
-            session, [r.event_id for r in rows], rows_by_id
-        )
+            for r in rows:
+                sport_key = r.sport_key
+                espn_sport = (
+                    has_schedule_of_record(sport_key)
+                    and adapter_can_speak_for(sport_key)
+                )
+                needs_venue = not has_schedule_of_record(sport_key) and r.venue_ticker
 
-        date_ledger: list[tuple] = []
-        for sport_key, sport_rows in by_sport.items():
-            # Only pay for the slate when a verdict could possibly need it. A
-            # sport with no schedule of record, or one this adapter cannot read,
-            # is decided by `disposition_for` from the sport key alone.
-            slate: list[dict] = []
-            reachable = False
-            if has_schedule_of_record(sport_key) and adapter_can_speak_for(sport_key):
-                if authority_calls + len(AUTHORITY_DAY_OFFSETS) > MAX_AUTHORITY_CALLS:
-                    # Budget spent mid-date. Stop cleanly rather than adjudicate
-                    # this sport against an empty slate — the difference between
-                    # a hold and a void. `next_since` returns to THIS date, so
-                    # the sports already decided here are re-decided on the next
-                    # call (idempotent: their rows have left the population) and
-                    # the ones not reached are reached.
-                    next_since = ticker_date
-                    budget_spent = True
-                    break
-                reachable, slate = await _fetch_slate(espn, sport_key, ticker_date)
-                authority_calls += len(AUTHORITY_DAY_OFFSETS)
+                # ── Budget, checked BEFORE the row is adjudicated ────────────
+                # Stopping here rather than after is the whole point: a row
+                # adjudicated against an authority we could not afford to ask
+                # gets the empty-slate verdict, and on this rail that is a void.
+                if espn_sport and sport_key not in slates:
+                    if authority_calls + len(AUTHORITY_DAY_OFFSETS) > MAX_AUTHORITY_CALLS:
+                        next_since, next_after_id = ticker_date, last_id
+                        budget_spent = True
+                        break
+                elif needs_venue:
+                    if venue_calls + 1 > MAX_VENUE_CALLS:
+                        next_since, next_after_id = ticker_date, last_id
+                        budget_spent = True
+                        break
 
-            for r in sport_rows:
+                slate: list[dict] = []
+                reachable = False
+                if espn_sport:
+                    if sport_key not in slates:
+                        slates[sport_key] = await _fetch_slate(
+                            espn, sport_key, ticker_date
+                        )
+                        authority_calls += len(AUTHORITY_DAY_OFFSETS)
+                    reachable, slate = slates[sport_key]
+
+                venue: VenueVerdict = None
+                if not has_schedule_of_record(sport_key):
+                    if r.venue_ticker:
+                        venue = await _fetch_venue(kalshi, r.venue_ticker)
+                        venue_calls += 1
+                    # else: venue stays None -> HELD, `no_venue_record_channel`.
+
                 fixture, swapped, any_side = (
                     _match_fixture(r, slate) if slate else (None, False, False)
                 )
@@ -450,22 +617,39 @@ async def repair(
                     orientation_swapped=swapped,
                     any_side_on_slate=any_side,
                 )
-                disposition, reason = disposition_for(sport_key, verdict)
+                disposition, reason = disposition_for(sport_key, verdict, venue)
                 counts[disposition] += 1
                 reasons[reason] = reasons.get(reason, 0) + 1
-                if reason == NO_SCHEDULE_OF_RECORD:
+                last_id = r.event_id
+
+                if not has_schedule_of_record(sport_key):
+                    # Doctrine rule 8's trigger fires on the LEAGUE, not on the
+                    # verdict: the league has no schedule of record whether the
+                    # venue then confirmed the match or not, and that is exactly
+                    # the fact rule 8 wants named.
                     no_authority_leagues[sport_key or "<unknown>"] = (
                         no_authority_leagues.get(sport_key or "<unknown>", 0) + 1
                     )
-                elif reason == NOT_ON_THE_AUTHORITY_SLATE:
+                if reason in (
+                    NOT_ON_THE_AUTHORITY_SLATE,
+                    VENUE_HAS_NO_RECORD,
+                    VENUE_SETTLED_WITHOUT_A_RESULT,
+                ):
+                    # Every quarantine, named individually. These are the only
+                    # rows this rail removes from the site, so they are the ones
+                    # an operator must be able to check by hand — a bare count
+                    # is exactly what would hide a matcher or vocabulary
+                    # regression here.
                     absent_from_slate.append({
                         "event_id": r.event_id,
                         "sport_key": sport_key,
                         "ticker_date": str(r.ticker_date),
                         "matchup": f"{r.home_team_name} v {r.away_team_name}",
+                        "reason": reason,
                         "slate_size": len(slate),
+                        "venue_ticker": r.venue_ticker,
                     })
-                date_ledger.append((r, disposition, reason, fixture))
+                date_ledger.append((r, disposition, reason, fixture, venue))
                 if len(ledger) < 500:
                     ledger.append({
                         "event_id": r.event_id,
@@ -482,35 +666,60 @@ async def repair(
                         ),
                     })
 
-        if apply:
-            for r, disposition, _reason, fixture in date_ledger:
-                params = {
-                    "event_id": r.event_id,
-                    "derived_sources": DERIVED_SOURCE_PARAM,
-                }
-                if disposition == REPAIRED_FINAL:
-                    res = await session.execute(text(_WRITE_FINAL_SQL), {
-                        **params,
-                        "home_score": fixture["home_score"],
-                        "away_score": fixture["away_score"],
-                        "completed_at": completions.get(r.event_id),
-                        "commence_time": fixture["start"] or r.commence_time,
-                    })
-                elif disposition == UNSETTLED:
-                    res = await session.execute(text(_WRITE_UNSETTLE_SQL), {
-                        **params,
-                        "commence_time": fixture["start"] or r.commence_time,
-                    })
-                elif disposition == QUARANTINED:
-                    res = await session.execute(text(_WRITE_VOID_SQL), params)
-                else:
-                    continue
-                n = res.rowcount or 0
-                if n:
-                    written[disposition] += n
-                else:
-                    raced += 1
-            await session.commit()
+            if apply:
+                for r, disposition, _reason, fixture, venue in date_ledger:
+                    params = {
+                        "event_id": r.event_id,
+                        "derived_sources": DERIVED_SOURCE_PARAM,
+                    }
+                    if disposition == REPAIRED_FINAL:
+                        res = await session.execute(text(_WRITE_FINAL_SQL), {
+                            **params,
+                            "home_score": fixture["home_score"],
+                            "away_score": fixture["away_score"],
+                            "completed_at": completions.get(r.event_id),
+                            "commence_time": fixture["start"] or r.commence_time,
+                        })
+                    elif disposition == VENUE_CONFIRMED:
+                        res = await session.execute(text(_WRITE_VENUE_CONFIRM_SQL), {
+                            **params,
+                            "completed_at": completions.get(r.event_id),
+                            "commence_time": venue.occurrence_time,
+                        })
+                    elif disposition == UNSETTLED and fixture is None:
+                        # The VENUE unsettled it. Take its start when it gave an
+                        # unambiguous one and leave the provenance alone when it
+                        # did not — a `kalshi_event` stamp over a start we never
+                        # learned would be the same lie this rail exists to undo.
+                        occurrence = venue.occurrence_time if venue else None
+                        res = await session.execute(text(_WRITE_VENUE_UNSETTLE_SQL), {
+                            **params,
+                            "commence_time": occurrence or r.commence_time,
+                            "commence_time_source": (
+                                VENUE_COMMENCE_SOURCE if occurrence
+                                else TICKER_DERIVED_COMMENCE_SOURCE
+                            ),
+                        })
+                    elif disposition == UNSETTLED:
+                        res = await session.execute(text(_WRITE_UNSETTLE_SQL), {
+                            **params,
+                            "commence_time": fixture["start"] or r.commence_time,
+                        })
+                    elif disposition == QUARANTINED:
+                        res = await session.execute(text(_WRITE_VOID_SQL), params)
+                    else:
+                        continue
+                    n = res.rowcount or 0
+                    if n:
+                        written[disposition] += n
+                    else:
+                        raced += 1
+                await session.commit()
+    finally:
+        # The Kalshi client owns an httpx.AsyncClient. The ESPN service is a
+        # process-wide singleton and is deliberately NOT closed here.
+        if kalshi is not None:
+            await kalshi.close()
 
     after = (await session.execute(text(_POPULATION_SQL), bind)).scalar() or 0
 
@@ -520,7 +729,12 @@ async def repair(
         "dates_selected": [str(d) for d in selected],
         "dates_remaining": max(0, len(date_rows) - len(selected)),
         "next_since": str(next_since) if next_since else None,
+        # The row half of the keyset cursor. Non-null ONLY when a date was cut
+        # in the middle, and it must be passed back WITH `next_since` — the pair
+        # is the position, and `since` alone would re-read the whole date.
+        "next_after_id": next_after_id,
         "authority_calls": authority_calls,
+        "venue_calls": venue_calls,
         "dispositions": counts,
         "reasons": reasons,
         "written": written if apply else {k: 0 for k in written},
@@ -529,10 +743,10 @@ async def repair(
         "no_schedule_of_record_leagues": dict(
             sorted(no_authority_leagues.items(), key=lambda kv: -kv[1])
         ),
-        # Named, never a bare count: this is the only quarantine class an
-        # operator can check by hand, and it is where a matcher regression would
-        # show up first.
-        "absent_from_a_populated_slate": absent_from_slate,
+        # Every row this rail takes off the site, named individually — never a
+        # bare count. This is where a matcher regression, a venue-vocabulary
+        # drift, or a sport misclassification shows up first.
+        "quarantined_rows": absent_from_slate,
         "ledger": ledger,
         "applied": apply,
     }
@@ -546,11 +760,16 @@ async def _main():
     ap.add_argument("--limit", type=int, default=None, help="max DATES this call")
     ap.add_argument("--sport", default=None, help="sport-key filter")
     ap.add_argument("--since", default=None, help="cursor: YYYY-MM-DD, inclusive")
+    ap.add_argument(
+        "--after-event-id", type=int, default=None,
+        help="cursor: row position WITHIN --since's date (from next_after_id)",
+    )
     args = ap.parse_args()
 
     async with get_task_session() as session:
         out = await repair(
-            session, args.apply, limit=args.limit, sport=args.sport, since=args.since
+            session, args.apply, limit=args.limit, sport=args.sport,
+            since=args.since, after_id=args.after_id,
         )
 
     import json

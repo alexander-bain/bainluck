@@ -79,11 +79,86 @@ def _final(home=2, away=1, status="post", completed=None, state=None):
 # ---------------------------------------------------------------------------
 
 
-def test_a_sport_with_no_schedule_of_record_quarantines():
-    """Rung 1 — 547 of the 705. esports has no ESPN endpoint and never will,
-    so nothing can ever adjudicate the FINAL this row is wearing."""
+def test_a_sport_with_no_espn_endpoint_is_NEVER_voided_on_that_alone():
+    """🔴 CERT-708's block, as a guard. THE MOST IMPORTANT TEST IN THIS FILE.
+
+    The first cut of this rail read "ESPN has no endpoint for esports" as "the
+    match never happened" and QUARANTINED the row. On the real population that
+    voided 547 of 705 — 308 esports and 194 `soccer_other` — on no evidence at
+    all beyond our own missing adapter. The doctrine had already ruled the
+    opposite: rule 8 gives these categories the VENUE as authority of last
+    resort, and it has to be asked.
+
+    Passing no venue verdict is the strongest form of the case: with nothing
+    asked, the only honest answer is HOLD. A regression to the old behaviour
+    turns this into QUARANTINED and this assertion catches it.
+    """
     d, reason = ff.disposition_for("esports", _verdict(slate_size=0))
-    assert (d, reason) == (ff.QUARANTINED, ff.NO_SCHEDULE_OF_RECORD)
+    assert d == ff.HELD, (
+        "a sport ESPN cannot speak for was voided without consulting the venue "
+        "authority of last resort — this is CERT-708's block reappearing"
+    )
+    assert reason == ff.NO_VENUE_CHANNEL
+    assert d != ff.QUARANTINED
+
+
+def test_the_venue_is_asked_and_its_ANSWERS_decide(sport="esports"):
+    """Rung 1's sub-ladder, every rung, with the venue supplying the evidence.
+
+    This is the positive half: the block was not "never quarantine esports", it
+    was "quarantine only on evidence". Each of these rows reaches its verdict
+    because the VENUE said so.
+    """
+    cases = [
+        # (venue verdict, expected disposition, expected reason)
+        (None, ff.HELD, ff.NO_VENUE_CHANNEL),
+        (ff.VenueVerdict(reachable=False), ff.HELD, ff.VENUE_UNREACHABLE),
+        (ff.VenueVerdict(reachable=True, has_record=False),
+         ff.QUARANTINED, ff.VENUE_HAS_NO_RECORD),
+        (ff.VenueVerdict(reachable=True, has_record=True, trading_open=True),
+         ff.UNSETTLED, ff.VENUE_STILL_TRADING),
+        (ff.VenueVerdict(reachable=True, has_record=True,
+                         settled_without_result=True),
+         ff.QUARANTINED, ff.VENUE_SETTLED_WITHOUT_A_RESULT),
+        (ff.VenueVerdict(reachable=True, has_record=True, settled_decisively=True,
+                         occurrence_time="2026-08-30T18:00:00Z"),
+         ff.VENUE_CONFIRMED, ff.VENUE_SETTLED_THE_MARKET),
+        (ff.VenueVerdict(reachable=True, has_record=True, settled_decisively=True),
+         ff.HELD, ff.VENUE_START_AMBIGUOUS),
+        (ff.VenueVerdict(reachable=True, has_record=True),
+         ff.HELD, ff.VENUE_STATE_INCONCLUSIVE),
+    ]
+    for venue, expected_d, expected_reason in cases:
+        d, reason = ff.disposition_for(sport, _verdict(slate_size=0), venue)
+        assert (d, reason) == (expected_d, expected_reason), (
+            f"venue={venue and vars_of(venue)} -> {(d, reason)}, "
+            f"expected {(expected_d, expected_reason)}"
+        )
+
+
+def vars_of(v):
+    return {s: getattr(v, s) for s in v.__slots__}
+
+
+def test_an_unreachable_venue_HOLDS_and_never_voids():
+    """🔴 gotcha #53, one layer below the ESPN case, and the same trap.
+
+    `KalshiAPIService.get_event` returns `None` for a 404 AND for a request that
+    failed three times. A rail that called it would void every venue row in the
+    cohort during a Kalshi outage — 531 real events off the site because of a
+    network blip. Only `get_event_reachable` can tell the two apart, and only
+    the 404 may be read as absence.
+    """
+    unreachable = ff.venue_verdict_from_event(None, reachable=False)
+    d, reason = ff.disposition_for("esports", _verdict(), unreachable)
+    assert (d, reason) == (ff.HELD, ff.VENUE_UNREACHABLE)
+
+    a_real_404 = ff.venue_verdict_from_event(None, reachable=True)
+    d2, reason2 = ff.disposition_for("esports", _verdict(), a_real_404)
+    assert (d2, reason2) == (ff.QUARANTINED, ff.VENUE_HAS_NO_RECORD), (
+        "a REAL 404 is the one venue signal that may be read as absence; if "
+        "this arm stops quarantining, the repair has stopped repairing"
+    )
 
 
 def test_a_tournament_shaped_sport_is_HELD_and_never_voided():
@@ -283,19 +358,26 @@ def test_every_rung_reaches_a_named_disposition():
     """Ruling 054 — no unnamed bucket. Exercises the ladder end to end and
     asserts the return is always one of the four, never None or a bare string
     nobody counts."""
+    _decisive = ff.VenueVerdict(
+        reachable=True, has_record=True, settled_decisively=True,
+        occurrence_time="2026-08-30T18:00:00Z",
+    )
+    _absent = ff.VenueVerdict(reachable=True, has_record=False)
     cases = [
-        ("esports", _verdict()),
-        ("tennis_atp", _verdict()),
-        ("soccer_epl", _verdict(reachable=False)),
-        ("soccer_epl", _verdict(slate_size=0)),
-        ("soccer_epl", _verdict(slate_size=9)),
-        ("soccer_epl", _verdict(slate_size=9, fixture=_final())),
-        ("soccer_epl", _verdict(slate_size=9, fixture=_final(status="in"))),
-        (None, _verdict()),
+        ("esports", _verdict(), None),
+        ("esports", _verdict(), _decisive),
+        ("esports", _verdict(), _absent),
+        ("tennis_atp", _verdict(), None),
+        ("soccer_epl", _verdict(reachable=False), None),
+        ("soccer_epl", _verdict(slate_size=0), None),
+        ("soccer_epl", _verdict(slate_size=9), None),
+        ("soccer_epl", _verdict(slate_size=9, fixture=_final()), None),
+        ("soccer_epl", _verdict(slate_size=9, fixture=_final(status="in")), None),
+        (None, _verdict(), None),
     ]
     seen = set()
-    for sport, v in cases:
-        d, reason = ff.disposition_for(sport, v)
+    for sport, v, venue in cases:
+        d, reason = ff.disposition_for(sport, v, venue)
         assert d in ff.DISPOSITIONS, (sport, d)
         assert reason and isinstance(reason, str)
         seen.add(d)
@@ -305,12 +387,162 @@ def test_every_rung_reaches_a_named_disposition():
     )
 
 
-def test_an_unknown_sport_key_quarantines_rather_than_crashing():
+def test_an_unknown_sport_key_reaches_a_verdict_rather_than_crashing():
     """A NULL `sport_id` on an event is possible (the candidate query LEFT JOINs
-    `sports`). It must reach a verdict, and the right one: a row we cannot even
-    name the sport of has no schedule of record by definition."""
+    `sports`). It must reach a verdict, and with no sport there is no ESPN
+    endpoint — so it goes to the venue like every other such row, and HOLDS when
+    the venue was never asked. It is emphatically NOT voided for being unnamed.
+    """
     d, reason = ff.disposition_for(None, _verdict(slate_size=9))
-    assert (d, reason) == (ff.QUARANTINED, ff.NO_SCHEDULE_OF_RECORD)
+    assert (d, reason) == (ff.HELD, ff.NO_VENUE_CHANNEL)
+
+    named_by_the_venue = ff.VenueVerdict(reachable=True, has_record=False)
+    d2, reason2 = ff.disposition_for(None, _verdict(slate_size=9), named_by_the_venue)
+    assert (d2, reason2) == (ff.QUARANTINED, ff.VENUE_HAS_NO_RECORD)
+
+
+# ---------------------------------------------------------------------------
+# THE VENUE VOCABULARY — measured, and guarded against the same drift that
+# broke the ESPN side. `KalshiMarket` ANNOTATES status as 'active'/'closed'/
+# 'settled' and result as 'yes'/'no'/None. Kalshi actually sends `finalized`
+# and `scalar`. Reading the annotation instead of the wire is precisely how
+# `STATUS_FULL_TIME` slipped through and nearly un-settled 66 real matches.
+# ---------------------------------------------------------------------------
+
+
+def test_the_status_kalshi_actually_sends_is_the_one_that_counts():
+    """🔴 `finalized` is NOT in `KalshiMarket`'s annotated status set, and it is
+    what 358 of the 373 measured markets carried. A vocabulary built from the
+    annotation would read every settled venue market as inconclusive and HOLD
+    the entire cohort — the repair would silently do nothing at all."""
+    assert "finalized" in ff.VENUE_RESOLVED_STATUSES
+    v = ff.venue_verdict_from_event(_venue_event(status="finalized", result="no"),
+                                    reachable=True)
+    assert v.settled_decisively is True
+
+
+def test_a_scalar_settlement_is_kalshis_own_cancelled_clause():
+    """`result: 'scalar'` = settled to the FAIR MARKET PRICE, which Kalshi's own
+    rules text reaches only when the match was postponed >48h, cancelled before
+    play, or forfeited before play. All three mean no match was completed, so
+    this is affirmative evidence of a non-event — the one venue signal besides
+    a 404 that may quarantine."""
+    v = ff.venue_verdict_from_event(_venue_event(result="scalar"), reachable=True)
+    assert v.settled_without_result is True
+    assert v.settled_decisively is False
+    d, reason = ff.disposition_for("esports", _verdict(), v)
+    assert (d, reason) == (ff.QUARANTINED, ff.VENUE_SETTLED_WITHOUT_A_RESULT)
+
+
+@pytest.mark.parametrize("result", ["yes", "no"])
+def test_a_decisive_result_confirms_the_match_was_played(result):
+    """The venue settled on a real winner: the match happened and is over. The
+    row's `closed` was right; only its stand-in start was wrong."""
+    v = ff.venue_verdict_from_event(_venue_event(result=result), reachable=True)
+    assert v.settled_decisively is True
+    assert v.settled_without_result is False
+    d, _ = ff.disposition_for("esports", _verdict(), v)
+    assert d == ff.VENUE_CONFIRMED
+
+
+def test_one_open_market_outvotes_every_resolved_sibling():
+    """🔴 A venue still taking bets does not think the match is over, and one
+    resolved side-market cannot outvote that. Getting this backwards would read
+    a live match as concluded and CONFIRM a FINAL that has not happened —
+    writing the fabrication in rather than out."""
+    payload = _venue_event(status="finalized", result="yes", extra=[
+        {"ticker": "X-B", "status": "active", "result": "",
+         "occurrence_datetime": "2026-08-30T18:00:00Z"},
+    ])
+    v = ff.venue_verdict_from_event(payload, reachable=True)
+    assert v.trading_open is True
+    assert v.settled_decisively is False and v.settled_without_result is False
+    d, reason = ff.disposition_for("esports", _verdict(), v)
+    assert (d, reason) == (ff.UNSETTLED, ff.VENUE_STILL_TRADING)
+
+
+def test_a_decided_match_with_one_voided_side_market_is_still_decided():
+    """The mirror of the rung above, and the reason `settled_without_result`
+    requires that NOT ONE market named a winner. A 3-way event where the TIE leg
+    settles scalar and the winner leg settles yes is a match that was PLAYED —
+    voiding it off the site would be the destructive direction."""
+    payload = _venue_event(status="finalized", result="yes", extra=[
+        {"ticker": "X-TIE", "status": "finalized", "result": "scalar",
+         "occurrence_datetime": "2026-08-30T18:00:00Z"},
+    ])
+    v = ff.venue_verdict_from_event(payload, reachable=True)
+    assert v.settled_decisively is True
+    assert v.settled_without_result is False
+
+
+def test_two_different_occurrence_times_refuse_to_name_a_start():
+    """The start is only taken when the event names ONE. Two means we do not
+    know which fixture this row is, and writing either would be a guess wearing
+    an authority's provenance."""
+    payload = _venue_event(occurrence="2026-08-30T18:00:00Z", extra=[
+        {"ticker": "X-B", "status": "finalized", "result": "no",
+         "occurrence_datetime": "2026-08-31T20:00:00Z"},
+    ])
+    v = ff.venue_verdict_from_event(payload, reachable=True)
+    assert v.occurrence_time is None
+    d, reason = ff.disposition_for("esports", _verdict(), v)
+    assert (d, reason) == (ff.HELD, ff.VENUE_START_AMBIGUOUS), (
+        "with no unambiguous start there is nothing for VENUE_CONFIRMED to "
+        "write, and a confirmed row that writes nothing never drains"
+    )
+
+
+def test_the_venue_verdict_cannot_perturb_the_ESPN_PATH():
+    """🔴 The blast-radius guard for CERT-708's fix.
+
+    `disposition_for` gained a third argument, and the previous cut of this rail
+    was already GREEN on 61 guards and CERT-approved on everything except rung
+    1. So the fix must be provably confined to rung 1: for any sport ESPN can
+    speak for, the verdict must be byte-identical with and without a venue
+    verdict — including an aggressive one that would quarantine if consulted.
+
+    Without this, a later refactor could start consulting the venue for EPL and
+    silently overrule a real ESPN score with a market's opinion, which is the
+    "blend is the product" ruling read backwards.
+    """
+    hostile = ff.VenueVerdict(reachable=True, has_record=False)
+    friendly = ff.VenueVerdict(reachable=True, has_record=True,
+                               settled_decisively=True, occurrence_time="X")
+    cases = [
+        _verdict(reachable=False),
+        _verdict(slate_size=0),
+        _verdict(slate_size=9),
+        _verdict(slate_size=9, fixture=_final()),
+        _verdict(slate_size=9, fixture=_final(status="in")),
+        _verdict(slate_size=9, fixture=_final(), orientation_swapped=True),
+    ]
+    for sport in sorted(ff.SCOREBOARD_ADJUDICABLE_SPORTS):
+        for v in cases:
+            base = ff.disposition_for(sport, v)
+            assert ff.disposition_for(sport, v, hostile) == base, (
+                f"{sport}: a venue verdict changed an ESPN-adjudicated row"
+            )
+            assert ff.disposition_for(sport, v, friendly) == base, (
+                f"{sport}: a venue verdict changed an ESPN-adjudicated row"
+            )
+    # ...and the same for the tournament-shaped sports, which must keep HOLDING.
+    for sport in sorted(ff.TOURNAMENT_SHAPED_SPORTS):
+        for venue in (None, hostile, friendly):
+            d, reason = ff.disposition_for(sport, _verdict(slate_size=625), venue)
+            assert (d, reason) == (ff.HELD, ff.ADAPTER_CANNOT_SPEAK), (
+                f"{sport} stopped holding — the 74 US Open rows are what this "
+                f"protects, and voiding them takes real matches off the site"
+            )
+
+
+def test_the_venue_start_source_is_not_a_derived_one():
+    """🔴 The drain invariant. `VENUE_CONFIRMED`'s only write is the start, and
+    the row leaves this rail's population ONLY because the new provenance is not
+    in `DERIVED_COMMENCE_SOURCES`. Put `kalshi_event` in that set and every
+    confirmed row is re-read from Kalshi on every run, forever."""
+    from app.utils.event_completion import DERIVED_COMMENCE_SOURCES
+    assert ff.VENUE_COMMENCE_SOURCE not in DERIVED_COMMENCE_SOURCES
+    assert ff.VENUE_COMMENCE_SOURCE not in ff.DERIVED_SOURCE_PARAM
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +621,33 @@ def test_the_population_predicate_carries_all_four_conjuncts():
     assert "home_score IS NULL" in p and "away_score IS NULL" in p
 
 
-@pytest.mark.parametrize(
-    "sql_name",
-    ["_WRITE_FINAL_SQL", "_WRITE_UNSETTLE_SQL", "_WRITE_VOID_SQL"],
-)
+#: Written out, NOT derived from the module. `test_every_espn_sport_is_
+#: classified` was vacuous for exactly this reason and the mutation battery's
+#: M14 walked through it: a list computed from the thing it is checking is
+#: satisfied by construction. The completeness of THIS list is asserted
+#: separately, by the guard directly below it.
+_WRITE_STATEMENTS = [
+    "_WRITE_FINAL_SQL",
+    "_WRITE_UNSETTLE_SQL",
+    "_WRITE_VOID_SQL",
+    "_WRITE_VENUE_CONFIRM_SQL",
+    "_WRITE_VENUE_UNSETTLE_SQL",
+]
+
+
+def test_the_write_list_names_every_write_in_the_rail():
+    """🔴 The guard on the guard. A new UPDATE added without a line in
+    `_WRITE_STATEMENTS` would ship with no compare-and-set check at all, and the
+    parametrized test above would still be green — it would simply never see it.
+    """
+    in_module = {n for n in dir(rail) if n.startswith("_WRITE_") and n.endswith("_SQL")}
+    assert in_module == set(_WRITE_STATEMENTS), (
+        f"unchecked write statement(s): {in_module - set(_WRITE_STATEMENTS)}; "
+        f"stale entries: {set(_WRITE_STATEMENTS) - in_module}"
+    )
+
+
+@pytest.mark.parametrize("sql_name", _WRITE_STATEMENTS)
 def test_every_write_is_compare_and_set_on_the_population(sql_name):
     """🔴 gotcha #21 in the form that bites here.
 
@@ -531,7 +786,8 @@ async def test_an_unmapped_sport_is_unreachable_not_empty():
 
 class _Row:
     def __init__(self, event_id, sport_key, home, away, ticker_date,
-                 status="closed", commence=None, espn_id=None):
+                 status="closed", commence=None, espn_id=None,
+                 venue_ticker="KXTEST-26AUG30AAABBB"):
         self.event_id = event_id
         self.sport_key = sport_key
         self.ev_status = status
@@ -541,6 +797,10 @@ class _Row:
         self.completed_at = datetime(2026, 8, 30, 6, 0, tzinfo=_UTC)
         self.espn_id = espn_id
         self.ticker_date = ticker_date
+        #: The Kalshi EVENT ticker off `futures_markets.external_id`. Defaulted
+        #: to a present one because 531 of the 547 venue rows carry one; the 16
+        #: that do not are exercised by passing `venue_ticker=None`.
+        self.venue_ticker = venue_ticker
 
 
 class _DateRow:
@@ -640,9 +900,62 @@ class _FakeESPN:
         )
 
 
-async def _run(monkeypatch, session, espn, **kw):
+def _venue_event(status="finalized", result="no",
+                 occurrence="2026-08-30T18:00:00Z", extra=()):
+    """A `/events/{ticker}?with_nested_markets=true` payload, in the shape and
+    the VOCABULARY measured on 2026-09-01 — `finalized`, not `settled`; a
+    `result` of `yes`/`no`/`scalar`; an `occurrence_datetime` per market."""
+    markets = [{
+        "ticker": "KXTEST-26AUG30AAABBB-AAA",
+        "status": status,
+        "result": result,
+        "occurrence_datetime": occurrence,
+    }]
+    markets.extend(extra)
+    return {"event_ticker": "KXTEST-26AUG30AAABBB", "markets": markets}
+
+
+class _FakeKalshi:
+    """Records every venue call, so the venue BUDGET is observable.
+
+    Refuses `get_event` the same way `_FakeESPN` refuses `get_scoreboard`: it
+    returns `None` for a 404 AND for a failed request, and reading the second
+    as the first is what voids real events.
+    """
+
+    def __init__(self, by_ticker=None, reachable=True, default=None):
+        self.by_ticker = by_ticker or {}
+        self.reachable = reachable
+        self.default = default if default is not None else _venue_event()
+        self.calls: list[str] = []
+        self.closed = False
+
+    async def get_event_reachable(self, event_ticker, with_nested_markets=True):
+        self.calls.append(event_ticker)
+        if not self.reachable:
+            return (False, None)
+        if event_ticker in self.by_ticker:
+            return (True, self.by_ticker[event_ticker])
+        return (True, self.default)
+
+    async def get_event(self, *a, **kw):  # pragma: no cover
+        raise AssertionError(
+            "the rail called get_event, which cannot tell a 404 from a failed "
+            "request — it must use get_event_reachable"
+        )
+
+    async def close(self):
+        self.closed = True
+
+
+async def _run(monkeypatch, session, espn, kalshi=None, **kw):
     monkeypatch.setattr(
         "app.services.espn_api.get_espn_service", lambda: espn, raising=True
+    )
+    monkeypatch.setattr(
+        "app.services.kalshi_api.KalshiAPIService",
+        lambda *a, **k: (kalshi if kalshi is not None else _FakeKalshi()),
+        raising=True,
     )
     return await rail.repair(session, kw.pop("apply", False), **kw)
 
@@ -665,46 +978,160 @@ async def test_a_dry_run_issues_no_update_and_never_commits(monkeypatch):
 
     assert not [sql for sql, _ in s.statements if sql.strip().upper().startswith("UPDATE")]
     assert s.commits == 0
-    assert out["dispositions"][ff.QUARANTINED] == 2
-    assert out["written"] == {ff.REPAIRED_FINAL: 0, ff.UNSETTLED: 0, ff.QUARANTINED: 0}
+    assert out["dispositions"][ff.VENUE_CONFIRMED] == 2
+    assert out["written"] == {
+        ff.REPAIRED_FINAL: 0, ff.UNSETTLED: 0, ff.QUARANTINED: 0,
+        ff.VENUE_CONFIRMED: 0,
+    }
     assert out["applied"] is False
 
 
 @pytest.mark.asyncio
-async def test_a_no_authority_sport_costs_zero_espn_calls(monkeypatch):
-    """547 of the 705 are decided from the sport key alone. Spending three
-    scoreboard calls per esports date would burn the whole budget adjudicating
-    rows no adapter can adjudicate, and the page would never advance."""
-    espn = _FakeESPN()
+async def test_a_no_espn_sport_costs_zero_espn_calls_and_one_venue_call(monkeypatch):
+    """547 of the 705 are adjudicated by the VENUE, not by ESPN. Spending three
+    scoreboard calls on an esports date would burn the ESPN budget on rows no
+    scoreboard can speak for; spending more than one Kalshi call per row would
+    burn the venue budget. Both halves are asserted, because the cheap half
+    passing is what made the expensive half easy to get wrong."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
     s = _RecordingSession(
         dates=[_DateRow(_D, 1, 1)],
         candidates=[_Row(1, "esports", "Team A", "Team B", _D)],
     )
-    out = await _run(monkeypatch, s, espn, apply=False)
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
     assert espn.calls == []
     assert out["authority_calls"] == 0
+    assert kalshi.calls == ["KXTEST-26AUG30AAABBB"]
+    assert out["venue_calls"] == 1
 
 
 @pytest.mark.asyncio
-async def test_apply_voids_a_no_authority_row_and_commits(monkeypatch):
-    espn = _FakeESPN()
+async def test_a_row_with_no_venue_ticker_is_held_and_costs_nothing(monkeypatch):
+    """The 16 of 547 with no attached Kalshi market. There is nothing to ask, so
+    they HOLD — and they must not consume venue budget doing it, or a date whose
+    front is full of them would never reach the rows that can be adjudicated."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
     s = _RecordingSession(
         dates=[_DateRow(_D, 1, 1)],
-        candidates=[_Row(7, "soccer_other", "Team A", "Team B", _D)],
-        population=1,
+        candidates=[_Row(1, "esports", "A", "B", _D, venue_ticker=None)],
     )
-    out = await _run(monkeypatch, s, espn, apply=True)
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
+    assert kalshi.calls == []
+    assert out["venue_calls"] == 0
+    assert out["dispositions"][ff.HELD] == 1
+    assert out["reasons"][ff.NO_VENUE_CHANNEL] == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_voids_only_when_the_VENUE_has_no_record(monkeypatch):
+    """🔴 CERT-708's block, end to end through the real write path.
+
+    Two identical `soccer_other` rows. The only difference is what the venue
+    says. The one the venue has no record of is voided; the one the venue
+    settled on a result is NOT — it is confirmed, and the only thing written for
+    it is the venue's real start.
+    """
+    espn = _FakeESPN()
+    kalshi = _FakeKalshi(by_ticker={
+        "ABSENT": None,                                   # a real 404
+        "PLAYED": _venue_event(result="yes"),
+    })
+    s = _RecordingSession(
+        dates=[_DateRow(_D, 2, 1)],
+        candidates=[
+            _Row(7, "soccer_other", "A", "B", _D, venue_ticker="ABSENT"),
+            _Row(8, "soccer_other", "C", "D", _D, venue_ticker="PLAYED"),
+        ],
+        population=2,
+    )
+    out = await _run(monkeypatch, s, espn, kalshi, apply=True)
 
     updates = [(sql, p) for sql, p in s.statements
                if sql.strip().upper().startswith("UPDATE")]
-    assert len(updates) == 1
-    sql, params = updates[0]
-    assert f"status = '{ff.VOID_STATUS}'" in sql
-    assert params["event_id"] == 7
-    assert params["derived_sources"] == ["kalshi_ticker"]
+    assert len(updates) == 2
+    by_id = {p["event_id"]: (sql, p) for sql, p in updates}
+
+    void_sql, void_params = by_id[7]
+    assert f"status = '{ff.VOID_STATUS}'" in void_sql
+    assert void_params["derived_sources"] == ["kalshi_ticker"]
+
+    confirm_sql, confirm_params = by_id[8]
+    assert f"status = '{ff.VOID_STATUS}'" not in confirm_sql, (
+        "the venue settled this match on a real result — voiding it is exactly "
+        "the 547-row destruction CERT-708 blocked"
+    )
+    assert f"commence_time_source = '{ff.VENUE_COMMENCE_SOURCE}'" in confirm_sql
+    assert confirm_params["commence_time"] == "2026-08-30T18:00:00Z"
+
     assert s.commits == 1
-    assert out["written"][ff.QUARANTINED] == 1
+    assert out["written"] == {
+        ff.REPAIRED_FINAL: 0, ff.UNSETTLED: 0,
+        ff.QUARANTINED: 1, ff.VENUE_CONFIRMED: 1,
+    }
     assert out["raced"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_venue_still_trading_unsettles_and_takes_the_real_start(monkeypatch):
+    """The clearest fabrication in the cohort: the venue is still taking bets on
+    a match our row calls finished."""
+    espn = _FakeESPN()
+    kalshi = _FakeKalshi(default=_venue_event(status="active", result=""))
+    s = _RecordingSession(
+        dates=[_DateRow(_D, 1, 1)],
+        candidates=[_Row(11, "esports", "A", "B", _D)],
+        population=1,
+    )
+    out = await _run(monkeypatch, s, espn, kalshi, apply=True)
+
+    sql, params = [(q, p) for q, p in s.statements
+                   if q.strip().upper().startswith("UPDATE")][0]
+    assert f"status = '{ff.UNSETTLED_STATUS}'" in sql
+    assert "completed_at = NULL" in sql
+    assert params["commence_time"] == "2026-08-30T18:00:00Z"
+    assert params["commence_time_source"] == ff.VENUE_COMMENCE_SOURCE
+    assert out["written"][ff.UNSETTLED] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unsettle_with_no_venue_start_keeps_the_old_provenance(monkeypatch):
+    """🔴 Clearing a FINAL the venue contradicts is worth doing even when we
+    learned no start — but stamping `kalshi_event` on a start we never learned
+    would be the same lie this rail exists to undo, and it would also tell
+    CERT-690's doors to run a clock from a stand-in."""
+    espn = _FakeESPN()
+    kalshi = _FakeKalshi(
+        default=_venue_event(status="active", result="", occurrence=None)
+    )
+    row = _Row(12, "esports", "A", "B", _D)
+    s = _RecordingSession(
+        dates=[_DateRow(_D, 1, 1)], candidates=[row], population=1,
+    )
+    await _run(monkeypatch, s, espn, kalshi, apply=True)
+
+    _, params = [(q, p) for q, p in s.statements
+                 if q.strip().upper().startswith("UPDATE")][0]
+    assert params["commence_time"] == row.commence_time
+    assert params["commence_time_source"] == "kalshi_ticker"
+
+
+@pytest.mark.asyncio
+async def test_the_venue_client_is_closed_even_when_a_page_raises(monkeypatch):
+    """The Kalshi client owns an httpx.AsyncClient. A repair that leaked one per
+    invocation would exhaust the dyno's sockets over a multi-page drain."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+
+    class _Boom(_RecordingSession):
+        async def execute(self, stmt, params=None):
+            if "AS event_id" in str(stmt):
+                raise RuntimeError("candidate query blew up")
+            return await super().execute(stmt, params)
+
+    s = _Boom(dates=[_DateRow(_D, 1, 1)],
+              candidates=[_Row(1, "esports", "A", "B", _D)])
+    with pytest.raises(RuntimeError):
+        await _run(monkeypatch, s, espn, kalshi, apply=False)
+    assert kalshi.closed is True
 
 
 @pytest.mark.asyncio
@@ -1032,10 +1459,11 @@ async def test_every_candidate_row_is_accounted_for_in_the_counts(monkeypatch):
     assert sum(out["reasons"].values()) == len(cands)
     assert len(out["ledger"]) == len(cands)
     assert out["dispositions"] == {
-        ff.REPAIRED_FINAL: 1,   # Everton v Fulham, final
+        ff.REPAIRED_FINAL: 1,   # Everton v Fulham, final per ESPN
         ff.UNSETTLED: 0,
-        ff.QUARANTINED: 2,      # esports (no authority) + Arsenal (absent)
-        ff.HELD: 1,             # tennis
+        ff.QUARANTINED: 1,      # Arsenal v Chelsea, absent from a real slate
+        ff.HELD: 1,             # tennis — the adapter cannot read a draw
+        ff.VENUE_CONFIRMED: 1,  # esports — the VENUE settled it on a result
     }
 
 
@@ -1071,19 +1499,309 @@ async def test_a_quarantine_against_a_real_slate_is_listed_by_name(monkeypatch):
     })
     s = _RecordingSession(
         dates=[_DateRow(_D, 2, 2)],
-        candidates=[_Row(1, "esports", "A", "B", _D),
+        candidates=[_Row(1, "esports", "A", "B", _D, venue_ticker="MISSING"),
                     _Row(2, "soccer_italy_serie_a", "Spurs", "Raptors", _D)],
     )
-    out = await _run(monkeypatch, s, espn, apply=False)
+    kalshi = _FakeKalshi(by_ticker={"MISSING": None})
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
 
     assert out["dispositions"][ff.QUARANTINED] == 2
-    listed = out["absent_from_a_populated_slate"]
-    assert [e["event_id"] for e in listed] == [2], (
-        "the no-schedule-of-record void was folded into the absent list, or the "
-        "genuine absence was not named"
+    listed = out["quarantined_rows"]
+    assert sorted(e["event_id"] for e in listed) == [1, 2], (
+        "every row this rail takes off the site must be named individually — a "
+        "quarantine that appears only in a count is one nobody can check"
     )
-    assert listed[0]["matchup"] == "Spurs v Raptors"
-    assert listed[0]["slate_size"] == 1
+    by_id = {e["event_id"]: e for e in listed}
+    assert by_id[2]["matchup"] == "Spurs v Raptors"
+    assert by_id[2]["reason"] == ff.NOT_ON_THE_AUTHORITY_SLATE
+    assert by_id[2]["slate_size"] == 1
+    # ...and the venue-sourced void carries the ticker that proves it was asked.
+    assert by_id[1]["reason"] == ff.VENUE_HAS_NO_RECORD
+    assert by_id[1]["venue_ticker"] == "MISSING"
+
+
+# ---------------------------------------------------------------------------
+# THE VENUE CLIENT — a 404 is evidence, a failure is not
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeHTTP:
+    def __init__(self, *responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def get(self, url, params=None):
+        self.calls += 1
+        r = self._responses[min(self.calls - 1, len(self._responses) - 1)]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def _kalshi_with(*responses):
+    from app.services.kalshi_api import KalshiAPIService
+    svc = KalshiAPIService.__new__(KalshiAPIService)
+    svc.client = _FakeHTTP(*responses)
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_a_venue_404_reports_REACHABLE_with_no_event():
+    """The only shape that may be read as absence, and therefore the only one
+    that may take an event off the site."""
+    svc = _kalshi_with(_FakeResponse(404))
+    assert await svc.get_event_reachable("KX-NOPE") == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_a_venue_transport_failure_reports_UNREACHABLE():
+    """🔴 The one that matters. `get_event` returns `None` here too, which is
+    byte-identical to the 404 above — so a rail built on it would void all 531
+    venue rows during a Kalshi outage. Only the flag separates them."""
+    svc = _kalshi_with(RuntimeError("connection reset"))
+    assert await svc.get_event_reachable("KX-BOOM") == (False, None)
+
+
+@pytest.mark.asyncio
+async def test_a_venue_500_is_unreachable_and_not_an_absence():
+    svc = _kalshi_with(_FakeResponse(500))
+    reachable, event = await svc.get_event_reachable("KX-500")
+    assert reachable is False and event is None
+
+
+@pytest.mark.asyncio
+async def test_get_event_still_collapses_both_and_says_so():
+    """The old method keeps its behaviour for its poller callers — but it now
+    delegates, so the two cannot drift into different parses, and its docstring
+    no longer claims the `None` means only 404."""
+    from app.services.kalshi_api import KalshiAPIService
+    assert await _kalshi_with(_FakeResponse(404)).get_event("x") is None
+    assert await _kalshi_with(RuntimeError("boom")).get_event("x") is None
+    doc = KalshiAPIService.get_event.__doc__ or ""
+    assert "get_event_reachable" in doc, (
+        "the collapsing method must point at the one that does not"
+    )
+
+
+# ---------------------------------------------------------------------------
+# THE KEYSET CURSOR — a date bigger than the budget must still finish
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_date_bigger_than_the_venue_budget_hands_back_a_ROW_position(
+    monkeypatch,
+):
+    """🔴 The starvation guard. The biggest real date carries 193 venue rows
+    against a 50-call budget, so it CANNOT be walked in one call.
+
+    A date-only cursor would point back at the same date, the next call would
+    re-read the same leading rows, and the tail would never be reached. The
+    cursor therefore has to carry a row position too, and it has to be the id of
+    the last row actually adjudicated — not the last row fetched.
+    """
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    n = rail.MAX_VENUE_CALLS + 10
+    cands = [_Row(100 + i, "esports", f"A{i}", f"B{i}", _D) for i in range(n)]
+    s = _RecordingSession(dates=[_DateRow(_D, n, 1)], candidates=cands)
+
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
+
+    assert out["venue_calls"] == rail.MAX_VENUE_CALLS, (
+        f"spent {out['venue_calls']} venue calls against a budget of "
+        f"{rail.MAX_VENUE_CALLS}"
+    )
+    assert out["next_since"] == str(_D)
+    assert out["next_after_id"] is not None, (
+        "the page stopped mid-date with only a DATE cursor — the next call "
+        "re-reads the rows it already did and never reaches the tail"
+    )
+    adjudicated = sum(out["dispositions"].values())
+    assert adjudicated == rail.MAX_VENUE_CALLS
+    assert out["next_after_id"] == cands[adjudicated - 1].event_id, (
+        "the cursor names a row that was never adjudicated — the rows between "
+        "it and the real watermark are skipped forever"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_row_cursor_resumes_and_covers_the_tail_exactly_once(
+    monkeypatch,
+):
+    """The other half: fed back, the cursor picks up where it stopped. Asserted
+    on the SQL bind, because that is the only place the skip could go wrong."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    cands = [_Row(100 + i, "esports", f"A{i}", f"B{i}", _D) for i in range(3)]
+    s = _RecordingSession(dates=[_DateRow(_D, 3, 1)], candidates=cands)
+
+    await _run(monkeypatch, s, espn, kalshi, apply=False, after_id=101)
+
+    candidate_binds = [p for q, p in s.statements if "AS event_id" in q]
+    assert candidate_binds and candidate_binds[0]["after_id"] == 101
+    assert "e.id > CAST(:after_id AS bigint)" in rail._CANDIDATE_SQL
+    assert "ORDER BY e.id" in rail._CANDIDATE_SQL, (
+        "the cursor is an id, so the scan order must BE id order — any other "
+        "ORDER BY and a resumed page silently skips rows"
+    )
+    # ⚠️ HONEST LIMIT OF THIS GUARD. The fake session applies the cursor from
+    # the BIND, so it cannot observe the SQL predicate actually filtering —
+    # only a real Postgres could. This assertion therefore covers the realistic
+    # regression (the clause is deleted) and the one neutering shape a mutation
+    # battery reaches (a tautology ORed onto it); it does not prove the
+    # predicate executes. `_CANDIDATE_SQL` running at all is covered live by the
+    # production replay, which is where this rail's population lives.
+    where = rail._CANDIDATE_SQL.upper()
+    assert "OR TRUE" not in where and "OR 1=1" not in where, (
+        "the cursor predicate has been neutered by a tautology — it is still "
+        "in the text and no longer bounds anything"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_row_position_applies_to_the_resumed_date_only(monkeypatch):
+    """🔴 The off-by-one-date trap. `after_id` is a position WITHIN `since`'s
+    date. Carried onto the next date it would skip every lower-id row there —
+    and ids do not restart per date, so on a backlog written in time order that
+    is most of the next day."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    d2 = date(2026, 8, 31)
+    s = _RecordingSession(
+        dates=[_DateRow(_D, 1, 1), _DateRow(d2, 1, 1)],
+        candidates=[_Row(500, "esports", "A", "B", _D),
+                    _Row(200, "esports", "C", "D", d2)],
+    )
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False, after_id=100)
+
+    binds = [p for q, p in s.statements if "AS event_id" in q]
+    assert len(binds) == 2
+    assert binds[0]["after_id"] == 100, "the resumed date lost its position"
+    assert binds[1]["after_id"] is None, (
+        "the row position leaked onto the next date — every row there with a "
+        "lower id is now skipped forever"
+    )
+    assert sum(out["dispositions"].values()) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_ESPN_budget_also_hands_back_a_ROW_position(monkeypatch):
+    """🔴 A mutation-battery survivor made this guard exist.
+
+    There are TWO budget-exhaustion branches — ESPN's and the venue's — and the
+    venue one already had a cursor guard. The ESPN one did not, so a mutant that
+    dropped its row position survived: a date whose ESPN half outruns the
+    scoreboard budget would resume from the top of the date forever.
+    """
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    monkeypatch.setattr(rail, "MAX_AUTHORITY_CALLS", 3, raising=True)
+    # Two ESPN sports on one date: the first buys a slate, the second cannot.
+    cands = [
+        _Row(300, "soccer_epl", "Everton", "Fulham", _D),
+        _Row(301, "basketball_nba", "Knicks", "Heat", _D),
+    ]
+    s = _RecordingSession(dates=[_DateRow(_D, 2, 2)], candidates=cands)
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
+
+    assert out["authority_calls"] == 3
+    assert out["next_since"] == str(_D)
+    assert out["next_after_id"] == 300, (
+        "the ESPN budget ran out mid-date and threw away the row position — "
+        "the next call re-reads row 300 and never reaches 301"
+    )
+    assert sum(out["dispositions"].values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_free_row_is_still_adjudicated_after_the_budget_is_gone(
+    monkeypatch,
+):
+    """🔴 The second battery survivor. A row with no venue ticker costs NOTHING
+    to adjudicate — there is nothing to ask. Gating it behind the venue budget
+    would stall a page on rows that were free, and since those rows HOLD (and so
+    never drain) the drain would make no progress at all on that date."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    monkeypatch.setattr(rail, "MAX_VENUE_CALLS", 1, raising=True)
+    cands = [
+        _Row(400, "esports", "A", "B", _D),                      # costs 1 call
+        _Row(401, "esports", "C", "D", _D, venue_ticker=None),   # costs nothing
+        _Row(402, "esports", "E", "F", _D, venue_ticker=None),   # costs nothing
+    ]
+    s = _RecordingSession(dates=[_DateRow(_D, 3, 1)], candidates=cands)
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False)
+
+    assert out["venue_calls"] == 1
+    assert sum(out["dispositions"].values()) == 3, (
+        "a ticketless row was deferred by a budget it does not spend"
+    )
+    assert out["reasons"][ff.NO_VENUE_CHANNEL] == 2
+    assert out["next_after_id"] is None, (
+        "the page finished the date, so there is no row position to resume from"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_can_afford_nothing_returns_the_cursor_it_was_given(
+    monkeypatch,
+):
+    """The degenerate case, and the one that hangs if it is wrong: a call whose
+    budget is gone before it adjudicates anything must hand back the position it
+    STARTED from. Handing back `None` would restart the date and re-read every
+    row ahead of the cursor, forever."""
+    espn, kalshi = _FakeESPN(), _FakeKalshi()
+    monkeypatch.setattr(rail, "MAX_VENUE_CALLS", 0, raising=True)
+    s = _RecordingSession(
+        dates=[_DateRow(_D, 1, 1)],
+        candidates=[_Row(900, "esports", "A", "B", _D)],
+    )
+    out = await _run(monkeypatch, s, espn, kalshi, apply=False, after_id=850)
+
+    assert out["venue_calls"] == 0
+    assert out["next_since"] == str(_D)
+    assert out["next_after_id"] == 850, (
+        "a call that adjudicated nothing threw away its own cursor — the drain "
+        "would loop on this date and never advance"
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_slate_serves_every_row_of_its_sport_in_id_order(monkeypatch):
+    """Strict id ordering must not cost repeated slate fetches. Interleaving an
+    ESPN sport with venue rows is the shape that would break a naive
+    fetch-per-row, and it is the shape the real 2026-08-29 date has."""
+    start = datetime(2026, 8, 30, 14, 0, tzinfo=_UTC)
+    espn = _FakeESPN(by_date={_DSTR: [
+        _FakeEvent("401", "post", "Everton", "Fulham", 3, 1, start,
+                   completed=True, state="post"),
+        _FakeEvent("402", "post", "Arsenal", "Chelsea", 2, 0, start,
+                   completed=True, state="post"),
+    ]})
+    s = _RecordingSession(dates=[_DateRow(_D, 4, 2)], candidates=[
+        _Row(1, "soccer_epl", "Everton", "Fulham", _D),
+        _Row(2, "esports", "A", "B", _D),
+        _Row(3, "soccer_epl", "Arsenal", "Chelsea", _D),
+        _Row(4, "esports", "C", "D", _D),
+    ])
+    out = await _run(monkeypatch, s, _FakeESPN() if False else espn,
+                     _FakeKalshi(), apply=False)
+
+    assert len(espn.calls) == len(ff.AUTHORITY_DAY_OFFSETS), (
+        f"fetched the EPL slate {len(espn.calls) // 3} times — id ordering must "
+        f"not defeat the per-(sport, date) cache"
+    )
+    assert out["dispositions"][ff.REPAIRED_FINAL] == 2
+    assert out["dispositions"][ff.VENUE_CONFIRMED] == 2
 
 
 # ---------------------------------------------------------------------------
