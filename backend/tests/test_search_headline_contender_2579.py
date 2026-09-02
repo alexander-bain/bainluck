@@ -303,14 +303,32 @@ class TestPromotionMechanics:
         assert promoted == MAX_HEADLINE_SLOTS
         assert len(rows) == 10
 
-    def test_a_row_already_on_the_page_does_not_spend_a_slot(self):
+    def test_a_row_already_on_the_page_is_hoisted_not_skipped(self):
+        """UX-P272/#2668 REVERSES THIS TEST'S OLD ASSERTION, deliberately.
+
+        It used to assert `promoted == 0` and `rows == page` — "a row the page
+        already holds needs no promotion". That reading is only sound when
+        `page` is what the caller SHIPS, which is true of `/search` and false of
+        the typeahead, whose page is a 20-row window behind a 5-row cut. Under
+        the old rule the US Open winner market sat at window position 10 for
+        `Alcaraz`, was skipped as "already present", and was never seen.
+
+        What the old test was really protecting is the no-duplicate guarantee,
+        and that is asserted here explicitly rather than as a side effect of
+        doing nothing.
+        """
         from app.utils.search_headline_contender import promote_headline_contenders
 
         already = _StubMarket(7, name="US Open Men's Singles Winner")
         page = [_StubMarket(i) for i in range(5)] + [already]
         rows, promoted = promote_headline_contenders(page, [already])
-        assert promoted == 0
-        assert rows == page
+
+        assert promoted == 1
+        assert rows[0] is already, "the contender must reach the FRONT"
+        ids = [m.id for m in rows]
+        assert len(ids) == len(set(ids)), "hoisting must never duplicate a row"
+        assert len(rows) == len(page), "a hoist is a reorder, never a growth"
+        assert set(ids) == {m.id for m in page}, "no row may be lost to a hoist"
 
     def test_the_two_source_pair_never_lands_on_the_page_twice(self):
         """Alex's standing ruling: the blend is the product — one number per
