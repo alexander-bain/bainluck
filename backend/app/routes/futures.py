@@ -2649,6 +2649,63 @@ async def get_progression(
             if tournament_names_match(source_tournament_name, candidate_name):
                 sibling_markets.append(candidate)
 
+    # Method 4: Cross-source sibling discovery (UX-P268 / #2661)
+    # Methods 1-3 stop as soon as they have found A sibling, which answers "does
+    # this tournament have other STAGES" but never asks "does it have other
+    # SOURCES". Omega European Masters is the worked case: the DataGolf prefix scan
+    # returns the four other DataGolf stages, so `len(sibling_markets) >= 2` and the
+    # Kalshi "Omega European Masters Winner" — priced, open, and blended into the
+    # /api/golf card the user is reading two lists above — is never looked for at
+    # all. Without this pass the blend below has nothing to blend and the table
+    # keeps publishing one source's raw price.
+    #
+    # Scoped so it only costs a query when it can pay: it runs solely when every
+    # market found so far shares the primary's source, it asks for the other
+    # sources by name, and it makes Postgres do the tournament-name narrowing
+    # instead of shipping 100 unrelated markets and their outcomes to Python.
+    # Measured on this tournament: 1 market / 162 outcomes in 13ms, against
+    # Method 3's unfiltered 47 / 3,266.
+    if (
+        len(sibling_markets) >= 2
+        and source_tournament_name
+        and len({m.source for m in sibling_markets}) < 2
+    ):
+        # `source_tournament_name` is data, so neutralize LIKE metacharacters —
+        # a tournament called "50_50 Open" must not match every 5-char prefix.
+        name_needle = (
+            source_tournament_name.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        cross_filters = [
+            FuturesMarket.llm_sport_category == sport_cat,
+            FuturesMarket.id != market_id,
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),  # Not game-level
+            FuturesMarket.source != market.source,
+            FuturesMarket.name.ilike(f"%{name_needle}%", escape="\\"),
+        ]
+        if market.resolution_date:
+            window = timedelta(days=30)
+            cross_filters.append(
+                FuturesMarket.resolution_date.between(
+                    market.resolution_date - window,
+                    market.resolution_date + window,
+                )
+            )
+        cross_result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(*cross_filters)
+            .limit(100)
+        )
+        for candidate in cross_result.scalars().unique().all():
+            if is_game_level_market(candidate.name):
+                continue
+            candidate_name = extract_tournament_name(candidate.name)
+            if tournament_names_match(source_tournament_name, candidate_name):
+                sibling_markets.append(candidate)
+
     # Deduplicate by market ID
     seen_ids: set[int] = set()
     unique_markets: list[FuturesMarket] = []
@@ -2663,12 +2720,30 @@ async def get_progression(
         unique_markets = [m for m in unique_markets if _is_golf_market(m)]
 
     # --- Classify each market into a stage ---
+    # The first market classified into a stage is that stage's PRIMARY: it alone
+    # decides which participants the stage has a row for. A further market at the
+    # same stage is SECONDARY — it contributes a price to participants that already
+    # merge, but never introduces a participant of its own.
+    #
+    # UX-P268 (#2661): a tournament can carry one stage from two sources (Omega
+    # European Masters has a Kalshi "Winner" and a DataGolf "- Winner"). Keeping only
+    # the first meant publishing one source's raw price while the /api/golf card
+    # published the blend, so one golfer read 5.8% on the card and 4.5% in the table.
+    # Letting the secondary market define rows too is NOT the fix: 15 of its 162
+    # outcomes do not merge and 7 of those outrank the display cut, so "Eugenio
+    # Chacarra" and "Eugenio Lopez-Chacarra" would both render, as would "Angel
+    # Ayora" and "Angel Ayora Fanegas".
     stage_markets: dict[str, FuturesMarket] = {}
+    stage_secondary_markets: dict[str, list[FuturesMarket]] = defaultdict(list)
     for m in unique_markets:
         stage_key = classify_market_stage(
             m.name, m.external_id, m.market_tier, stages
         )
-        if stage_key and stage_key not in stage_markets:
+        if not stage_key:
+            continue
+        if stage_key in stage_markets:
+            stage_secondary_markets[stage_key].append(m)
+        else:
             stage_markets[stage_key] = m
 
     if len(stage_markets) < 1:
@@ -2734,6 +2809,61 @@ async def get_progression(
                     p["primary_color"] = t_info["primary_color"]
                     p["conference"] = t_info["conference"]
                     p["record"] = t_info["record"]
+
+    # --- Blend same-stage sources into one number per participant ---
+    # "The blend is the product": where two sources price the same stage, a
+    # participant's number is the unweighted mean of the sources that name them —
+    # the same rule GET /api/golf uses for its card, so the two surfaces agree.
+    # A participant absent from the primary market is skipped, which is what keeps
+    # the row set identical to the single-source response. The mean is taken over
+    # every contributing source at once, so the published number does not depend on
+    # which market happened to be primary.
+    for stage_key, extra_markets in stage_secondary_markets.items():
+        prob_contrib: dict[str, list[float]] = defaultdict(list)
+        change_contrib: dict[str, list[float]] = defaultdict(list)
+        for m in extra_markets:
+            for o in m.outcomes:
+                merge_key = _progression_merge_key(o)
+                if merge_key not in participants:
+                    continue  # secondary-only participant: never becomes a row
+                if o.current_probability is not None:
+                    prob_contrib[merge_key].append(float(o.current_probability))
+                if o.probability_change_24h is not None:
+                    change_contrib[merge_key].append(float(o.probability_change_24h))
+
+        for merge_key, extra_probs in prob_contrib.items():
+            p = participants[merge_key]
+            primary_prob = p["probabilities"].get(stage_key)
+            sources = (
+                extra_probs if primary_prob is None
+                else [primary_prob, *extra_probs]
+            )
+            # Quantize each source to 3dp before averaging, then quantize the mean.
+            # This is not cosmetic: it is GET /api/golf's own arithmetic
+            # (`golf.py` rounds every per-source price to 3dp, means them, and
+            # rounds again), and reproducing it is the difference between the two
+            # surfaces agreeing and merely getting closer. Averaging the raw prices
+            # instead still left 4 of 15 golfers printing two different numbers —
+            # Wallace 5.7% against the card's 5.8% — because a 0.0002 gap survives
+            # into the first decimal the page renders. Single-source stages never
+            # reach this line, so their raw values are untouched.
+            blended = round(mean([round(v, 3) for v in sources]), 3)
+            p["probabilities"][stage_key] = blended
+            # Clinched/eliminated is a claim about the number we publish, so it is
+            # recomputed from the blend rather than left on the primary's verdict.
+            p["status"].pop(stage_key, None)
+            if blended >= 0.999:
+                p["status"][stage_key] = "clinched"
+            elif blended <= 0.001:
+                p["status"][stage_key] = "eliminated"
+
+        for merge_key, extra_changes in change_contrib.items():
+            p = participants[merge_key]
+            primary_change = p["changes_24h"].get(stage_key)
+            p["changes_24h"][stage_key] = mean(
+                extra_changes if primary_change is None
+                else [primary_change, *extra_changes]
+            )
 
     # Sort participants by highest-stage probability (rightmost stage first)
     stage_order = sorted(stage_markets.keys(), key=lambda k: next(
