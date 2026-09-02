@@ -97,11 +97,64 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
 }
 
 /**
- * Group Top Markets items by canonical_market_key.
- * Items sharing a key are bundled into GroupedMarket entries.
- * Items without a key (or unique keys) remain as singles.
+ * Outcome names of a futures item, lowercased and trimmed.
+ * Empty set means "this item makes no claim about its outcomes".
+ */
+function outcomeNames(item: FeedItem): Set<string> {
+  const data = item.data as FeedFuturesData;
+  const names = new Set<string>();
+  for (const outcome of data.top_outcomes ?? []) {
+    const name = outcome?.name?.toLowerCase().trim();
+    if (name) names.add(name);
+  }
+  return names;
+}
+
+/**
+ * Do two futures items name at least one outcome in common?
  *
- * Returns { groups, singles } — both sorted by best score descending.
+ * Mirrors the backend's `_outcomes_overlap` (`routes/feed.py`), including its
+ * benefit-of-the-doubt rule: an item with no outcomes cannot be disproved, so
+ * it is treated as overlapping. Binary Yes/No pairs overlap by construction,
+ * which keeps the legitimate cross-source binary card intact.
+ */
+function outcomesOverlap(a: FeedItem, b: FeedItem): boolean {
+  const namesA = outcomeNames(a);
+  const namesB = outcomeNames(b);
+  if (namesA.size === 0 || namesB.size === 0) return true;
+  for (const name of namesA) {
+    if (namesB.has(name)) return true;
+  }
+  return false;
+}
+
+/**
+ * May these two items appear inside one CombinedFeedCard?
+ *
+ * A combined card is a CROSS-SOURCE comparison of one question — it prints an
+ * "N sources" badge and takes its title and link from `items[0]`. So a pair
+ * qualifies only when it is genuinely (a) two different sources and (b) the
+ * same question. A shared `canonical_market_key` proves neither: the key has no
+ * gender or discipline axis, so the 2026 Men's and Women's US Open winner
+ * markets both key to `tennis::championship:2026` (#2622) — and 1,341 open
+ * markets share that one key. Bundling them relabelled Carlos Alcaraz as the
+ * favourite to win the women's draw.
+ */
+function canCombine(a: FeedItem, b: FeedItem): boolean {
+  const sourceA = (a.data as FeedFuturesData).source ?? "unknown";
+  const sourceB = (b.data as FeedFuturesData).source ?? "unknown";
+  if (sourceA === sourceB) return false;
+  return outcomesOverlap(a, b);
+}
+
+/**
+ * Group Top Markets items by canonical_market_key.
+ * Items sharing a key are bundled into GroupedMarket entries — but only when
+ * they pass `canCombine`, i.e. they are the same question seen from different
+ * sources. Items without a key, with a unique key, or that share a key with
+ * nothing they may combine with, remain as singles.
+ *
+ * Returns { ordered } — sorted by best score descending.
  */
 export function groupTopMarkets(marketItems: FeedItem[]): {
   /** Ordered list mixing GroupedMarket and single FeedItem, sorted by score. */
@@ -121,18 +174,31 @@ export function groupTopMarkets(marketItems: FeedItem[]): {
     }
   }
 
-  // Build ordered list: groups (2+ items) get bundled, singles stay flat
+  // Build ordered list: compatible clusters (2+ items) get bundled, the rest
+  // stay flat. Highest-scoring item first so the strongest market seeds its
+  // cluster and supplies the card's title and link.
   const ordered: (GroupedMarket | FeedItem)[] = [];
 
   for (const [canonicalKey, items] of byKey) {
-    if (items.length >= 2) {
-      ordered.push({
-        canonicalKey,
-        items,
-        bestScore: Math.max(...items.map((i) => i.score)),
-      });
-    } else {
-      ordered.push(items[0]);
+    const clusters: FeedItem[][] = [];
+    for (const item of [...items].sort((a, b) => b.score - a.score)) {
+      const home = clusters.find((cluster) =>
+        cluster.every((member) => canCombine(member, item))
+      );
+      if (home) home.push(item);
+      else clusters.push([item]);
+    }
+
+    for (const cluster of clusters) {
+      if (cluster.length >= 2) {
+        ordered.push({
+          canonicalKey,
+          items: cluster,
+          bestScore: Math.max(...cluster.map((i) => i.score)),
+        });
+      } else {
+        ordered.push(cluster[0]);
+      }
     }
   }
 
