@@ -1085,6 +1085,7 @@ _SPORT_KEY_TO_ABBREV_SUFFIX: dict[str, str] = {
     "soccer_italy_serie_a": "_soc",
     "soccer_france_ligue_one": "_soc",
     "soccer_uefa_champs_league": "_soc",
+    "soccer_brazil_campeonato": "_soc",
     "soccer_other": "_soc",
     "soccer_olympics": "_soc",
     # WNBA

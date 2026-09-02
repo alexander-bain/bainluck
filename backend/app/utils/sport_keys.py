@@ -621,6 +621,70 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
 
 
 # =============================================================================
+# 7b. Soccer fixture-prop series — the per-fixture slices of an ESPN league
+#
+# Every entry below names a market about ONE fixture (Second Half BTTS, Correct
+# Score, First Team to Score, Total Corners, ...). They belong on the same
+# event as that league's moneyline.
+#
+# Why they need to be listed at all — measured on production `c1397139`
+# 2026-09-01: for the SAME MLS fixture, `KXMLSGAME`/`BTTS`/`SPREAD`/`TOTAL`
+# attached at ~78% while `KXMLS1HSPREAD`, `KXMLS1HTOTAL`, `KXMLS1HBTTS`,
+# `KXMLS1H`, `KXMLSFTTS`, `KXMLSSCORE` and `KXMLSTEAMTOTAL` sat at 0 — 476
+# markets, 1 attached. The cause is prefix precedence, not naming: `kxmls` is
+# a FUTURES prefix, so any MLS series not explicitly listed as game-level fell
+# through to the futures map and was read as a season-long market. The matcher
+# never saw it: its SQL candidate set is built from
+# `KALSHI_GAME_TICKER_PREFIXES` (`_KALSHI_TICKER_LIKE_PATTERNS`).
+#
+# Generated as stem x suffix so that adding a newly-listed prop family is one
+# line that covers every league, and so no league silently gets a shorter list
+# than its neighbour. Longest-prefix-wins (`is_kalshi_game_level_ticker`,
+# CERT-409) keeps these ahead of the bare futures stems they extend.
+#
+# Division discipline (verified against real market names, not inferred):
+#   * `2h*` is SECOND HALF and stays  — `kxlaliga2h` = "Alaves vs Getafe:
+#     Second Half Winner", `kxbundesliga2h` = "Augsburg vs Schalke: Second
+#     Half Winner".
+#   * `2game/2total/2spread/2btts` is a SECOND DIVISION and is excluded —
+#     `kxlaliga2game` = "Albacete vs Almeria" (Segunda), `kxbundesliga2game` =
+#     "Bielefeld vs Bochum" (2. Bundesliga).
+#   * `kxbrasileirob*` / `kxbrasileiroc*` are Serie B / Serie C, and
+#     `kxuclw*` is the Women's Champions League — all excluded; they are
+#     different competitions with their own fixtures, not props on these.
+# Those leagues get their own stems when their events are ESPN-mapped.
+# =============================================================================
+
+# Stems whose league resolves to an ESPN fixture via SPORT_LEAGUE_MAP.
+_SOCCER_ESPN_LEAGUE_STEMS: dict[str, str] = {
+    "kxepl": "soccer_epl",
+    "kxmls": "soccer_usa_mls",
+    "kxlaliga": "soccer_spain_la_liga",
+    "kxbundesliga": "soccer_germany_bundesliga",
+    "kxseriea": "soccer_italy_serie_a",
+    "kxligue1": "soccer_france_ligue_one",
+    "kxucl": "soccer_uefa_champs_league",
+    "kxbrasileiro": "soccer_brazil_campeonato",
+}
+
+# Suffixes that denote a slice of ONE fixture. Deliberately an exact-match set:
+# an unrecognised remainder (`2game`, `bgame`, `wtotal`) is a DIFFERENT
+# competition and must not inherit the top-flight sport key.
+_SOCCER_FIXTURE_PROP_SUFFIXES: tuple[str, ...] = (
+    "game", "total", "spread", "btts", "teamtotal", "score", "ftts",
+    "corners", "tcorners", "goal", "firstgoal", "advance",
+    "1h", "1hspread", "1htotal", "1hbtts", "1hscore", "1hftts",
+    "2h", "2hspread", "2htotal", "2hbtts", "2hscore",
+)
+
+KALSHI_TICKER_TO_SPORT_KEY.update({
+    f"{stem}{suffix}": sport_key
+    for stem, sport_key in _SOCCER_ESPN_LEAGUE_STEMS.items()
+    for suffix in _SOCCER_FIXTURE_PROP_SUFFIXES
+})
+
+
+# =============================================================================
 # 8. KALSHI_GAME_TICKER_PREFIXES — tuple of Kalshi game ticker prefixes
 # =============================================================================
 
