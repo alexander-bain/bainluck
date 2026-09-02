@@ -219,12 +219,12 @@ describe('the Preferences status sentence cannot overclaim', () => {
   });
 
   it('a durable denial may say OFF flatly', () => {
-    expect(telemetryStatusText('none', durable)).toBe('Analytics is OFF. None of those load.');
+    expect(telemetryStatusText('none', durable)).toBe('Analytics is OFF. Neither of those loads.');
   });
 
   it('a NON-durable denial must not say a bare "OFF"', () => {
     const text = telemetryStatusText('none', fragile);
-    expect(text).not.toBe('Analytics is OFF. None of those load.');
+    expect(text).not.toBe('Analytics is OFF. Neither of those loads.');
     expect(text).toContain('would not save');
     expect(text).toContain('reload');
   });
@@ -246,5 +246,25 @@ describe('the Preferences status sentence cannot overclaim', () => {
         expect(text).not.toContain('marketing');
       }
     }
+  });
+
+  /**
+   * LAT-P197 (Alex D30). The status sentence enumerates what this switch
+   * governs, and Speed Insights is no longer one of those things — it runs on
+   * a declined visit. Naming it in a sentence whose subject is "Analytics is
+   * ON/OFF" would tell a reader their choice controls it, which is the C90 P1
+   * defect pointed the other way: copy overstating the reach of the choice.
+   * The honest disclosure lives in its own paragraph in the component, not in
+   * this sentence.
+   */
+  it('the ON/OFF sentence never names Speed Insights — this switch does not govern it', () => {
+    for (const level of [null, 'none', 'analytics', 'all'] as ConsentLevel[]) {
+      for (const opts of [durable, fragile]) {
+        expect(telemetryStatusText(level, opts).toLowerCase()).not.toContain('speed insights');
+      }
+    }
+    // Control: the sentence DOES still enumerate the providers it governs, so
+    // the assertion above is not passing on an empty string.
+    expect(telemetryStatusText('analytics', durable)).toContain('Vercel Analytics');
   });
 });

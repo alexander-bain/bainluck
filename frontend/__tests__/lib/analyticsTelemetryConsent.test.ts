@@ -3,8 +3,14 @@
  *
  * Covers the three C90 defects this queue closes:
  *   P1 — Vercel Analytics / Speed Insights ignored the consent choice entirely.
- *        Now every provider reads `decideTelemetry`, so "Decline" really is
- *        zero non-essential telemetry.
+ *        Now every consent-gated provider reads `decideTelemetry`, so "Decline"
+ *        really is zero consent-gated telemetry. LAT-P197 (Alex D30) later took
+ *        Speed Insights back OUT of that set — deliberately, because it is
+ *        strictly-necessary performance telemetry with no cookie, no storage
+ *        read and no identifier, and gating it meant the site's speed was only
+ *        ever measured on visitors who had answered a banner. It has no key in
+ *        `TelemetryDecision` at all; the fixed-mount claim is pinned in
+ *        `speedInsightsPreConsent.test.ts`, not here.
  *   P3 — the first-time visitor's LANDING page view was dropped (emitted before
  *        the grant, discarded by the consent gate). It is now withheld and
  *        released exactly once on the grant — the current route, never a replay.
@@ -97,18 +103,34 @@ describe('decideTelemetry', () => {
     expect(h.consent.decideTelemetry(null, { gaConfigured: true })).toEqual({
       googleAnalytics: false,
       vercelAnalytics: false,
-      speedInsights: false,
       webVitals: false,
     });
   });
 
-  it('enables NOTHING on an explicit decline — including the Vercel providers (C90 P1)', () => {
+  it('enables NOTHING on an explicit decline — including Vercel Analytics (C90 P1)', () => {
     const h = setup();
     const decision = h.consent.decideTelemetry('none', { gaConfigured: true });
     expect(decision.vercelAnalytics).toBe(false);
-    expect(decision.speedInsights).toBe(false);
     expect(decision.googleAnalytics).toBe(false);
     expect(decision.webVitals).toBe(false);
+  });
+
+  /**
+   * LAT-P197 (Alex D30). Written as a LOOP over the returned keys rather than
+   * as three named assertions, so it is the denial rule itself that is pinned:
+   * a provider added to `TelemetryDecision` later and defaulted to `true` reds
+   * here without anyone remembering to extend this file. That is the exact
+   * shape of the C90 P1 defect — a provider that never asked the authority.
+   */
+  it('a decline leaves NO key of the decision true, whatever keys exist', () => {
+    const h = setup();
+    const decision = h.consent.decideTelemetry('none', { gaConfigured: true });
+    const keys = Object.keys(decision);
+    // Control: an empty decision object would make the loop below vacuous.
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect([key, decision[key as keyof typeof decision]]).toEqual([key, false]);
+    }
   });
 
   it('enables every provider on a grant', () => {
@@ -117,7 +139,6 @@ describe('decideTelemetry', () => {
       expect(h.consent.decideTelemetry(level, { gaConfigured: true })).toEqual({
         googleAnalytics: true,
         vercelAnalytics: true,
-        speedInsights: true,
         webVitals: true,
       });
     }
@@ -137,7 +158,6 @@ describe('decideTelemetry', () => {
     expect(decision.webVitals).toBe(false);
     // Vercel needs no id — a missing GA id must not silently turn it off either.
     expect(decision.vercelAnalytics).toBe(true);
-    expect(decision.speedInsights).toBe(true);
   });
 });
 
@@ -158,7 +178,7 @@ describe('consent store lifecycle', () => {
     expect(h.consent.initTelemetryConsent()).toBe('analytics');
     const decision = h.consent.getTelemetryDecision();
     expect(decision.vercelAnalytics).toBe(true);
-    expect(decision.speedInsights).toBe(true);
+    expect(decision.googleAnalytics).toBe(true);
     expect(h.core.isConsentGranted()).toBe(true);
   });
 
@@ -168,7 +188,6 @@ describe('consent store lifecycle', () => {
     expect(h.consent.getTelemetryDecision()).toEqual({
       googleAnalytics: false,
       vercelAnalytics: false,
-      speedInsights: false,
       webVitals: false,
     });
     expect(h.core.isConsentGranted()).toBe(false);
@@ -197,7 +216,6 @@ describe('consent store lifecycle', () => {
     expect(h.consent.getServerTelemetryDecision()).toEqual({
       googleAnalytics: false,
       vercelAnalytics: false,
-      speedInsights: false,
       webVitals: false,
     });
   });
@@ -227,7 +245,7 @@ describe('consent store lifecycle', () => {
 
     h.consent.setTelemetryConsent('none');
     expect(h.consent.getTelemetryDecision().vercelAnalytics).toBe(false);
-    expect(h.consent.getTelemetryDecision().speedInsights).toBe(false);
+    expect(h.consent.getTelemetryDecision().googleAnalytics).toBe(false);
     expect(h.core.isConsentGranted()).toBe(false);
   });
 

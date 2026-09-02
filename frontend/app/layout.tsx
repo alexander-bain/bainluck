@@ -3,6 +3,7 @@ import Link from "next/link";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AnalyticsProvider, ConsentBanner, TelemetryGate } from "@/components/Analytics";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { AuthProvider } from "@/components/AuthProvider";
 import PinSyncEffect from "@/components/PinSyncEffect";
 import dynamic from "next/dynamic";
@@ -111,10 +112,25 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <NavigationProgress />
         </Suspense>
-        {/* Every non-essential telemetry provider (GA/gtag.js, Vercel
-            Analytics, Speed Insights, Web Vitals) mounts ONLY through the
-            consent gate — see components/analytics/TelemetryGate.tsx. */}
+        {/* Every CONSENT-GATED telemetry provider (GA/gtag.js, Vercel
+            Analytics, Web Vitals) mounts ONLY through the consent gate — see
+            components/Analytics/TelemetryGate.tsx. */}
         <TelemetryGate />
+        {/* Speed Insights is mounted OUTSIDE the gate, and that is the ruling
+            (LAT-P197, Alex D30 / 2026-09-01), not an oversight.
+
+            It is strictly-necessary performance telemetry: no cookie, no
+            storage read, no identifier — it reports how fast this page
+            rendered for the visitor whose page it was. Behind the gate it only
+            ever measured visitors who had already answered the banner, which
+            is the slowest-page population least likely to be represented: the
+            number we tune the site on was sampled on consent, not on traffic.
+
+            Consequence, stated plainly because it is a real one: a visitor who
+            declines still sends speed beacons. `/privacy` and the banner both
+            say so — the C90 P1 lesson runs in both directions, and copy that
+            claims a decline stops everything would now be the false half. */}
+        <SpeedInsights />
         <SWRProvider>
         <AnalyticsProvider>
           <AuthProvider>

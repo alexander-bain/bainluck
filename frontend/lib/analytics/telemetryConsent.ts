@@ -6,11 +6,20 @@
  * unconditionally in the root layout, so "Decline" could not stop them and the
  * banner overstated what the choice did (C90 P1).
  *
- * NOW: every non-essential web telemetry provider — GA, Vercel Analytics,
- * Vercel Speed Insights, and the custom Web Vitals rail — reads its enablement
- * from THIS module, and only this module writes the persisted choice. There is
- * one decision function (`decideTelemetry`) and one store; a provider cannot
- * drift from the banner because there is nowhere else to ask.
+ * NOW: every non-essential web telemetry provider — GA, Vercel Analytics, and
+ * the custom Web Vitals rail — reads its enablement from THIS module, and only
+ * this module writes the persisted choice. There is one decision function
+ * (`decideTelemetry`) and one store; a provider cannot drift from the banner
+ * because there is nowhere else to ask.
+ *
+ * SPEED INSIGHTS IS NOT IN THIS MODULE, AND THAT IS THE POINT (LAT-055, Alex
+ * D30). `@vercel/speed-insights` is strictly-necessary performance telemetry:
+ * it sets no cookie, reads no storage and carries no identifier — it reports
+ * how fast the page rendered, for the visitor whose page it was. It therefore
+ * needs no consent, and gating it produced a measurement that could only ever
+ * describe the subset of visitors who had already answered a banner. It is
+ * mounted unconditionally in `app/layout.tsx`. Nothing here decides about it;
+ * an entry in `TelemetryDecision` would imply a choice that does not exist.
  *
  * Design notes:
  *  - The store is framework-free and synchronously readable so it can back
@@ -46,17 +55,17 @@ export type ConsentLevel = 'all' | 'analytics' | 'none' | null;
 export type ConsentPersistence = 'unknown' | ConsentPersistResult;
 
 /**
- * Which non-essential telemetry providers may run. `essential` behavior (the
- * consent choice itself, auth, app functionality) is not represented here — it
- * is never gated and never sends telemetry.
+ * Which non-essential telemetry providers may run. Strictly-necessary behavior
+ * (the consent choice itself, auth, app functionality) is not represented here
+ * — it is never gated. Neither is `@vercel/speed-insights`, which is
+ * strictly-necessary performance telemetry and mounts unconditionally; see the
+ * module comment.
  */
 export interface TelemetryDecision {
   /** Custom GA4 rail (gtag.js + `trackEvent`). */
   googleAnalytics: boolean;
   /** `@vercel/analytics` — page/visitor counts sent to Vercel. */
   vercelAnalytics: boolean;
-  /** `@vercel/speed-insights` — RUM performance beacons sent to Vercel. */
-  speedInsights: boolean;
   /** Custom Core Web Vitals events (ride the GA rail). */
   webVitals: boolean;
 }
@@ -64,7 +73,6 @@ export interface TelemetryDecision {
 const NOTHING: TelemetryDecision = {
   googleAnalytics: false,
   vercelAnalytics: false,
-  speedInsights: false,
   webVitals: false,
 };
 
@@ -93,7 +101,6 @@ export function decideTelemetry(
   return {
     googleAnalytics: gaConfigured,
     vercelAnalytics: true,
-    speedInsights: true,
     webVitals: gaConfigured,
   };
 }
@@ -262,10 +269,8 @@ export function handleExternalConsentChange(
   notify();
 
   const after = decideTelemetry(newValue, { gaConfigured });
-  const wasLive =
-    before.googleAnalytics || before.vercelAnalytics || before.speedInsights || before.webVitals;
-  const nowLive =
-    after.googleAnalytics || after.vercelAnalytics || after.speedInsights || after.webVitals;
+  const wasLive = before.googleAnalytics || before.vercelAnalytics || before.webVitals;
+  const nowLive = after.googleAnalytics || after.vercelAnalytics || after.webVitals;
   if (!(wasLive && !nowLive)) return 'applied';
 
   // Verify the denial is really what is stored before reloading on it.

@@ -94,6 +94,12 @@ export default function PrivacyPage() {
               Google. Analytics data is used in aggregate to guide product
               decisions, not to build individual user profiles.
             </p>
+            <p className="mt-2 text-sm text-text-secondary leading-relaxed">
+              Everything described in this section is covered by your analytics
+              choice — decline it and none of it loads. Page-speed timings are
+              the one exception, because they identify nobody; see Vercel Speed
+              Insights in the third-party list below.
+            </p>
           </div>
 
           {/* Device Info */}
@@ -274,6 +280,21 @@ export default function PrivacyPage() {
               <li>
                 <strong>Vercel</strong> — hosts the web application. Processes
                 standard HTTP requests.
+              </li>
+              <li>
+                <strong>Vercel Speed Insights</strong> — receives how fast each
+                page rendered (load and responsiveness timings, page path,
+                device type). It sets no cookie, reads nothing from your
+                browser and carries no identifier, so it is not tied to you or
+                to a session. Because it identifies nobody, it runs on every
+                visit and is <em>not</em> covered by the analytics choice — a
+                declined visit still sends these timings. Without that, we
+                would only know how fast the site is for people who opted in.
+              </li>
+              <li>
+                <strong>Vercel Analytics</strong> — receives anonymous page and
+                visitor counts. This one <em>is</em> covered by the analytics
+                choice: decline and it never loads.
               </li>
               <li>
                 <strong>Heroku</strong> (Salesforce) — hosts the API server and

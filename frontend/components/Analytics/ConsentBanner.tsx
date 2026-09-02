@@ -84,7 +84,9 @@ export function ConsentBanner() {
                   </div>
                   <p className="text-xs text-text-secondary">
                     Required for the site to function. Includes your consent preferences
-                    and basic functionality.
+                    and basic functionality, plus Vercel Speed Insights — how fast
+                    each page rendered, with no cookie and no identifier. It runs
+                    whatever you choose here.
                   </p>
                 </div>
 
@@ -96,8 +98,8 @@ export function ConsentBanner() {
                   </div>
                   <p className="text-xs text-text-secondary">
                     Helps us understand how you use the site so we can improve it.
-                    We use Google Analytics, Vercel Analytics, and Vercel Speed
-                    Insights with anonymized data. Decline and none of them load.
+                    We use Google Analytics and Vercel Analytics with anonymized
+                    data. Decline and neither of them loads.
                   </p>
                 </div>
 
