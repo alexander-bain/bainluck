@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { fetchTypeahead, fetchTrendingSearches } from "@/lib/api";
-import type { TypeaheadSuggestion } from "@/lib/api";
+import { fetchTypeahead, fetchTrendingSearches } from "@/lib/apiCore";
+import type { TypeaheadSuggestion } from "@/lib/apiCore";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";

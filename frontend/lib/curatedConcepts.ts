@@ -11,7 +11,7 @@
 // Keep this list SHORT and high-confidence. Each alias is matched against the
 // normalized query; over-broad aliases would inject noise into every search.
 
-import type { TypeaheadSuggestion } from "@/lib/api";
+import type { TypeaheadSuggestion } from "@/lib/apiCore";
 
 interface CuratedConcept {
   /** Lowercased phrases that should surface this concept. */

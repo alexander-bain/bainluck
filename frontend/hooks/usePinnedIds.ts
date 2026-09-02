@@ -26,7 +26,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
-import { fetchUserPins, addPin, removePin } from "@/lib/api";
+import { fetchUserPins, addPin, removePin } from "@/lib/apiCore";
 import { resolveScope, type ClientScope } from "@/lib/clientPrincipal";
 import {
   bucketKeyFor,

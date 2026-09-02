@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { fetchTypeahead } from "@/lib/api";
-import type { TypeaheadSuggestion } from "@/lib/api";
+import { fetchTypeahead } from "@/lib/apiCore";
+import type { TypeaheadSuggestion } from "@/lib/apiCore";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { matchCuratedConcepts } from "@/lib/curatedConcepts";

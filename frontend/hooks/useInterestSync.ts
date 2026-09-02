@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { useAuthContext } from "@/components/AuthProvider";
-import { fetchUserPreferences, updateSportAffinities } from "@/lib/api";
+import { fetchUserPreferences, updateSportAffinities } from "@/lib/apiCore";
 import { resolveScope, type ClientScope } from "@/lib/clientPrincipal";
 import {
   reconcileLegacyBucket,

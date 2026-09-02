@@ -191,6 +191,31 @@ const DEFERRED = [
     marker: "Sign in options",
     source: join("components", "UserMenu.tsx"),
   },
+  // ─── LAT-P208: the wider API client ───────────────────────────────────────
+  //
+  // The first entry that is SUPPOSED to be eager — on 17 routes. Everything
+  // above is deferred app-wide, so "absent from every route" is the right
+  // claim. `lib/api.ts` is not deferred at all: `/categories/golf` needs the
+  // golf wrappers on its first load and should have them. The claim is
+  // narrower and is about ONE page: the wider client must not be on the entry
+  // graph of the LANDING page, whose own endpoints now live in `lib/apiCore.ts`.
+  //
+  // Hence `onlyRoutes` rather than `exceptRoutes`. Inverting the existing
+  // mechanism would have meant listing 17 exemptions that grow with the app and
+  // silently swallow the 18th; naming the two routes the claim covers keeps the
+  // gate honest as routes are added. Control 6 below is what stops the scoping
+  // from being a way to assert nothing.
+  //
+  // Not a function name — those are minified. Not `/api/sports/hierarchy`
+  // either, which control 5 refuses: `app/sport/[sport]/[league]/page.tsx`
+  // builds that path itself. This one is `lib/api.ts`'s alone and survives
+  // minification verbatim.
+  {
+    what: "lib/api.ts (the wider API client — golf, admin, onboarding, the themed dashboards)",
+    marker: "/api/golf/leaderboard",
+    source: join("lib", "api.ts"),
+    onlyRoutes: ["index.html", "discover.html", "discover/stats.html"],
+  },
 ] as const;
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);
@@ -411,6 +436,11 @@ describeBuild("LAT-P201 deferred chrome is off the first load of every route", (
           const exempt: readonly string[] =
             "exceptRoutes" in entry ? entry.exceptRoutes : [];
           if (exempt.includes(route)) continue;
+          // A scoped entry (LAT-P208) makes its claim about the named routes
+          // only; elsewhere the module is legitimately eager.
+          const scoped: readonly string[] | null =
+            "onlyRoutes" in entry ? entry.onlyRoutes : null;
+          if (scoped && !scoped.includes(route)) continue;
           if (text.includes(entry.marker)) {
             offenders.push(`${route}: ${basename(file)} carries ${entry.what}`);
           }
@@ -437,6 +467,60 @@ describeBuild("LAT-P201 deferred chrome is off the first load of every route", (
               `route exists. Drop the exemption or fix the path.`,
           );
         }
+      }
+    }
+
+    // Control 4b (LAT-P208) — the same requirement for a scoped entry, which
+    // fails the OTHER way round: a misspelt `onlyRoutes` entry checks nothing
+    // at all, rather than checking one route too many.
+    for (const entry of DEFERRED) {
+      if (!("onlyRoutes" in entry)) continue;
+      for (const route of entry.onlyRoutes) {
+        if (!known.has(route)) {
+          throw new Error(
+            `${entry.what} is scoped TO ${route}, but no such prerendered ` +
+              `route exists, so that part of the claim covers nothing. ` +
+              `Fix the path.`,
+          );
+        }
+      }
+    }
+  });
+
+  /**
+   * Control 6 (LAT-P208) — a scoped claim must be about a module that is
+   * genuinely eager somewhere else.
+   *
+   * `onlyRoutes` narrows an assertion, and a narrowed assertion is a new way to
+   * be vacuous that none of controls 1–5 can see. Control 2 only proves the
+   * marker is in SOME emitted chunk — an async one counts. So if `lib/api.ts`
+   * were one day deferred app-wide, or deleted, or its golf wrappers moved into
+   * a lazily-loaded module, the `/`-scoped assertion would keep passing while
+   * having stopped meaning anything: "not eager on `/`" is trivially true of a
+   * module that is not eager anywhere.
+   *
+   * The claim only has content while some OTHER route still carries the module
+   * on its first load. That is the state this cut deliberately left in place —
+   * 17 routes did at the time of writing — and if it ever stops being true, the
+   * right response is to delete this entry, not to keep a green tick.
+   */
+  test("control 6 — a route-scoped module is still eager on some route outside the scope", () => {
+    const routes = prerenderedRoutes();
+
+    for (const entry of DEFERRED) {
+      if (!("onlyRoutes" in entry)) continue;
+      const outside = routes.filter((r) => !entry.onlyRoutes.includes(r));
+      const carriers = outside.filter((route) =>
+        entryScripts(route).some((file) => chunkText(file).includes(entry.marker)),
+      );
+      if (carriers.length === 0) {
+        throw new Error(
+          `${entry.what} is scoped to ${entry.onlyRoutes.join(", ")}, but no ` +
+            `route OUTSIDE that scope carries it eagerly. The module is no ` +
+            `longer eager anywhere, so "absent from the scoped routes" is ` +
+            `trivially true and this entry now guards nothing. Delete it, or ` +
+            `widen it into an app-wide entry if the module really was deferred.`,
+        );
       }
     }
   });

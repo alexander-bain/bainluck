@@ -11,7 +11,7 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useAuth, type AuthUser } from "@/hooks/useAuth";
 import { useAnalyticsContext } from "@/components/Analytics/AnalyticsProvider";
-import { setAuthTokenGetter } from "@/lib/api";
+import { setAuthTokenGetter } from "@/lib/apiCore";
 
 interface AuthContextValue {
   user: AuthUser | null;

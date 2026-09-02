@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { formatProbability } from "@/lib/api";
+import { formatProbability } from "@/lib/apiCore";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";

@@ -13,7 +13,7 @@
  * PURE: no I/O, no React, no DB. `formatEventTime` takes an injectable clock so
  * tests never seed relative to `Date.now()` (gotcha #44).
  */
-import type { TypeaheadSuggestion, TypeaheadOutcome } from "@/lib/api";
+import type { TypeaheadSuggestion, TypeaheadOutcome } from "@/lib/apiCore";
 
 /**
  * A movement arrow is only worth the pixels at >= 2 percentage points. Matches

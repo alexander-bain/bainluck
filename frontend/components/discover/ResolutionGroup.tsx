@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ResolutionItem } from "@/lib/api";
+import type { ResolutionItem } from "@/lib/apiCore";
 
 interface ResolutionGroupProps {
   resolutions: ResolutionItem[];

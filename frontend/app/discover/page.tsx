@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
-import { fetchFeed, fetchResolutions } from "@/lib/api";
+import { fetchFeed, fetchResolutions } from "@/lib/apiCore";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem } from "@/components/DiscoverCard";
