@@ -7,6 +7,7 @@ import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTour
 import { flattenFeedBundles } from "@/lib/feedSections";
 import { formatProbability } from "@/lib/api";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 // `servedDuelPercents` for the CURRENT line (LAT-P120: prefer the server's own
 // rendered pair when it publishes one); `renderedDuelPercents` for the OPENING
 // line, where there is no served value to prefer — the three `opening_odds`
@@ -795,11 +796,15 @@ function FuturesFeedCard({
                 )}
                 {leader.name}
               </div>
-              {leader.movement !== null && leader.movement !== undefined && leader.movement !== 0 && (
-                <div className={`text-[11px] font-medium ${
+              {/* UX-P275: gate on whether the move PRINTS, not on the wire
+                  fraction being nonzero — see `isRenderedMove`. */}
+              {leader.movement !== null && leader.movement !== undefined && isRenderedMove(leader.movement) && (
+                <div
+                  data-testid="feedcard-leader-movement"
+                  className={`text-[11px] font-medium ${
                   leader.movement > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}>
-                  {leader.movement > 0 ? "+" : ""}{(leader.movement * 100).toFixed(1)}%
+                  {leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)}%
                 </div>
               )}
             </div>

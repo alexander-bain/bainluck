@@ -15,6 +15,7 @@ import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import type { GroupedMarket } from "@/lib/feedSections";
 import { sourceHex } from "@/lib/sourceColors";
 import { countOf } from "@/lib/plural";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
 // Source display helpers
@@ -227,18 +228,23 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
                 })}
               </div>
 
-              {/* Movement indicator */}
+              {/* Movement indicator. UX-P275: the gate asks whether the move
+                  PRINTS, not whether the wire fraction is nonzero — those
+                  disagreed on everything rounding to zero, so a market that did
+                  not move was coloured as having risen or fallen on the sign of
+                  a rounding residue. */}
               {outcome.bestMovement !== null &&
-                outcome.bestMovement !== 0 && (
+                isRenderedMove(outcome.bestMovement) && (
                   <span
+                    data-testid="combined-outcome-movement"
                     className={`text-[10px] font-medium flex-shrink-0 ${
                       outcome.bestMovement > 0
                         ? "text-accent-live"
                         : "text-accent-danger"
                     }`}
                   >
-                    {outcome.bestMovement > 0 ? "+" : ""}
-                    {(outcome.bestMovement * 100).toFixed(1)}%
+                    {outcome.bestMovement > 0 ? "+" : "-"}
+                    {formatMovementPoints(outcome.bestMovement)}%
                   </span>
                 )}
             </div>
