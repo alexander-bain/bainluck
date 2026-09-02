@@ -71,21 +71,80 @@ when the index lands. A `count(*)` control was rejected for the teams gate and i
 rejected here for the same reason: it is dominated by fixed overhead, so it
 cancels none of the noise it is supposed to cancel.
 
+⚠️ AMENDED 2026-09-02 (#2394): THE GRADED FORM IS THE UNION, NOT THE OR FOLD.
+------------------------------------------------------------------------------
+This gate spent its whole life compiling its probe from `_build_futures_name_filter`,
+the `FTS(name) OR name ILIKE '%q%'` fold. **No route runs that expression.** It
+has ZERO callers in `backend/app/` — only this gate and
+`tests/test_typeahead_name_arms_union.py`, which pins it as a definition rather
+than executing it:
+
+    /typeahead   ->  `_futures_name_arms`, the two halves as SEPARATE UNION arms
+                     (`events.py:5384` -> `ta_futures_where` -> `union(*_ta_arm_selects)`)
+    /search      ->  `_futures_name_match_term`, the LAT-P035 AND-form word test
+
+So the first `--label after` run (LAT-P168) reported RED on `winner` against an
+index that works, and the RED was an artefact of grading a dead fold. Measured
+on production while diagnosing it (#2394), `winner`:
+
+    FTS half alone         36 ms      uses ix_futures_name_fts_open
+    ILIKE half alone       91 ms      uses ix_futures_name_trgm
+    the OR of them  1,434-2,232 ms    uses NEITHER — falls back to a status scan
+    the UNION of them     102 ms      uses BOTH
+
+`_arm()` now compiles the UNION. The OR fold is still measured every run as a
+labelled CONTRAST (see below) so the ~21.9x is visible and a regression back to
+the fold cannot be silent.
+
+⚠️ WHAT THIS GATE DOES **NOT** GRADE, stated plainly so the next reader does not
+inherit the same defect one surface over. It grades `/typeahead`'s name arm,
+which is the surface `ix_futures_name_fts_open` was specced for. It does NOT
+grade `/search`: `_futures_name_match_term` is `ILIKE AND (no_lexemes OR FTS)`,
+and because the ILIKE is a mandatory CONJUNCT there it already binds
+`ix_futures_name_trgm` and the FTS half is a post-filter over an already-narrow
+row set. That predicate cannot exhibit the defect this index was built to cure,
+so it is out of scope by structure rather than by omission.
+
 THE PRIMARY CRITERION IS THE PLAN SHAPE
 ---------------------------------------
 A ratio is a budget; it is not proof the planner USES the index. Criterion 1
-requires a `BitmapOr` over BOTH `ix_futures_name_fts_open` AND
-`ix_futures_name_trgm`. Requiring both is deliberate and load-bearing: the whole
-thesis is that the OR currently defeats the trigram index, so an "after" plan
-that uses only the new FTS index has taken half the win and left the ILIKE half
-still scanning. That is a RED, and it should be, because it is a different
-outcome than the one the spec predicts — see the spec's "if this happens" note.
+requires that BOTH `ix_futures_name_fts_open` AND `ix_futures_name_trgm` appear
+in the plan. Requiring both is deliberate and load-bearing, and it survives the
+move to the UNION unchanged: under the split, arm 1 must be served by the FTS
+GIN and arm 2 by the trigram GIN, so a plan missing either name has abandoned
+one half to a scan. That is exactly the failure the DDL exists to remove.
 
-The SQL is COMPILED FROM THE LIVE ORM via `_build_futures_name_filter`, never
+⚠️ `BitmapOr` IS NO LONGER REQUIRED, AND REQUIRING IT WOULD NOW BE A BUG. It was
+the right criterion for the OR fold — one predicate, so the only way to use two
+indexes was to bitmap-union them. A UNION has no such node: each branch carries
+ONE predicate and gets its own index scan, joined by an Append. Carrying the old
+requirement over would fail every correct plan. It is still RECORDED per run as
+context (and it is still expected on the OR-fold contrast, when the planner
+deigns to produce it), but it is not graded.
+
+THE OR FOLD IS MEASURED AS A CONTRAST, AND IS NEVER GRADED
+-----------------------------------------------------------
+⚠️ There are now TWO comparands in this file and they do different jobs. Do not
+confuse them:
+
+  * the CPU-MATCHED CONTROL (`_control_sql`) — an unindexed tsvector on the same
+    table, whose only purpose is to absorb host contention so criterion 2 can be
+    a ratio. It is part of the verdict.
+  * the OR-FOLD CONTRAST (`_or_fold_sql`) — the dead `_build_futures_name_filter`
+    expression, measured so the run SHOWS what the split bought. Reported only.
+    It is never part of the verdict, because grading a form no route runs is the
+    entire defect #2394 filed.
+
+The contrast runs `--orfold-rounds` times (default 1, against the graded arm's
+3). One round is enough for a number nobody grades, and this is the slow form —
+up to 2,232 ms per probe against a Postgres already at its plan limit.
+
+The SQL is COMPILED FROM THE LIVE ORM via `_futures_name_arms`, never
 hand-copied. If the route's predicate changes, this gate's SQL changes with it
 and the shape check fails honestly. A hand-pasted predicate would keep passing
 against an index the route no longer matches — the exact failure LAT-P086 caught
-in the teams DDL (`::text` vs `CAST(... AS VARCHAR)`).
+in the teams DDL (`::text` vs `CAST(... AS VARCHAR)`). Compiling from the ORM was
+never the weak link; compiling from the WRONG ORM HELPER was.
 
 SEMANTICS ARE CHECKED BY SERVER-SIDE SIGNATURE, NOT BY ROW EXTRACTION
 ----------------------------------------------------------------------
@@ -116,7 +175,7 @@ GREEN on shape/budget for 9 of 10 terms, and the win is large: `werder`
 4,722 -> 5.7 ms, `mvp` 6,527 -> 4.1 ms, all under a BitmapOr over both GINs.
 Cold typeahead p50 on the charter instrument fell 3,251 -> 674.5 ms.
 
-RED on `winner`, and it is a REAL finding rather than noise: the planner used
+RED on `winner`, and at the time it was read as a REAL finding: the planner used
 NEITHER GIN, taking `ix_futures_markets_status` and scanning all 55,102 open
 rows. The rule, established across twelve terms, is that the flat status scan
 has a FIXED cost (37,715) which a broad BitmapOr's union exceeds — so the
@@ -124,12 +183,16 @@ planner abandons both indexes whenever EITHER half of the OR is estimated
 non-selective. Row count is not the trigger: `chicago` (220 rows) falls back
 while `yan` (311 rows) does not.
 
-That residual is a CODE fix and it shipped as LAT-P140: the two halves now enter
+That residual was a CODE fix and it shipped as LAT-P140: the two halves now enter
 `/typeahead`'s existing UNION as separate arms, so each is costed on its own
-selectivity (`chi` 1,250 -> 22.9 ms, identical rows). This gate still grades the
-OR form, which is correct — the OR remains the definition of the arm and other
-callers use it. A RED on a high-frequency term here means "the OR still cannot
-be trusted on the hot path", which is true and is why the UNION split exists.
+selectivity (`chi` 1,250 -> 22.9 ms, identical rows).
+
+⚠️ AND THAT IS WHY THE `winner` RED WAS RETIRED RATHER THAN CHASED (#2394). This
+file used to close by arguing the OR form was still worth grading because "other
+callers use it". **They do not** — that sentence was true when it was written and
+LAT-P140 falsified it, which is how a gate ends up reporting RED on a working
+index for two cycles. The finding about the OR fold remains true and is still
+measured, as the contrast; it is simply not a verdict about production any more.
 """
 
 from __future__ import annotations
@@ -145,7 +208,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import Text, and_, cast, func, literal_column, or_, select
+from sqlalchemy import Text, and_, cast, func, literal_column, or_, select, union
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 
@@ -154,13 +217,19 @@ from app.routes.events import (
     _SEARCH_TS_CONFIG_SQL,
     _build_expanded_ilike,
     _build_futures_name_filter,
+    _futures_name_arms,
 )
 
 API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 
-#: Both must appear under a BitmapOr. See "THE PRIMARY CRITERION" above for why
-#: the pre-existing trigram index is required and not merely tolerated.
+#: Both must appear in the plan — one per UNION branch. See "THE PRIMARY
+#: CRITERION" above for why the pre-existing trigram index is required and not
+#: merely tolerated, and why `BitmapOr` is no longer part of this check.
 EXPECTED_INDEXES = ("ix_futures_name_fts_open", "ix_futures_name_trgm")
+
+#: Rounds for the ungraded OR-fold contrast. One, deliberately: nobody grades it,
+#: and it is the 1,434-2,232 ms form on a database already at its plan limit.
+OR_FOLD_ROUNDS = 1
 
 #: Ratio of arm exec time to the CPU-matched control.
 #:
@@ -279,6 +348,19 @@ def _has_bitmap_or(payload: dict) -> bool:
     return '"Node Type": "BitmapOr"' in json.dumps(payload.get("plan"))
 
 
+def _shape_verdict(indexes) -> tuple[bool, list[str]]:
+    """Criterion 1, as a function so a guard can CALL it instead of restating it.
+
+    Both `EXPECTED_INDEXES` must appear — one per UNION branch. Deliberately
+    takes NO `bitmap_or` argument: under the split there is no BitmapOr node to
+    find, and a criterion that cannot be satisfied by a correct plan is the
+    failure #2394 filed. Passing one in would be the only way to reintroduce it,
+    so the signature refuses it.
+    """
+    missing = [name for name in EXPECTED_INDEXES if name not in indexes]
+    return (not missing), missing
+
+
 def _literal(stmt) -> str:
     """Compile to literal SQL for the raw `/api/admin/db-query` text channel.
 
@@ -308,15 +390,57 @@ def _open_now():
     )
 
 
+def _name_arms(term: str) -> list:
+    """The two halves of the futures NAME arm, from the helper the ROUTE calls.
+
+    `_futures_name_arms` — not `_build_futures_name_filter`. See the "#2394"
+    section of the module docstring: the fold has no callers in `backend/app/`,
+    and grading it is what produced a RED on a working index.
+    """
+    ilike = _build_expanded_ilike(FuturesMarket.name, term, None)
+    return _futures_name_arms(ilike, term)
+
+
 def _arm(term: str):
-    """The REAL route predicate, compiled from the ORM — never hand-copied."""
+    """The REAL route shape: the two halves UNION'd, as `/typeahead` emits them.
+
+    Returns a SUBQUERY, not a predicate, because the shape under test IS the
+    union — `union(*[select(id).where(arm, open_now) for arm in arms])`, which is
+    `events.py`'s `_ta_arm_selects` fold restricted to the two name arms. The
+    other arms `/typeahead` unions in (league ticker, alias, the held-back
+    outcome arm) are separate levers with their own measurements; this gate is
+    the NAME arm's, and widening it would make the ratio unattributable.
+
+    The `AND _open_now()` sits INSIDE each branch exactly as the route puts it
+    there — `select(FuturesMarket.id).where(arm, *_ta_open_now)`. Hoisting it out
+    would change the plan the planner is asked for, which is the whole subject.
+    """
+    return union(
+        *[select(FuturesMarket.id).where(arm, _open_now()) for arm in _name_arms(term)]
+    ).subquery()
+
+
+def _arm_sql(term: str) -> str:
+    return _literal(select(func.count()).select_from(_arm(term)))
+
+
+def _or_fold_predicate(term: str):
+    """The DEAD `FTS OR ILIKE` fold. Measured as a contrast, NEVER graded.
+
+    Kept live rather than deleted so that the run prints what the UNION split
+    bought, and so a regression back to the fold shows up as a number instead of
+    as silence. `test_futures_name_fts_gate_grades_the_live_form.py` pins that
+    this stays the CONTRAST and never becomes the graded probe.
+    """
     ilike = _build_expanded_ilike(FuturesMarket.name, term, None)
     return _build_futures_name_filter(ilike, term)
 
 
-def _arm_sql(term: str) -> str:
+def _or_fold_sql(term: str) -> str:
     return _literal(
-        select(func.count()).select_from(FuturesMarket).where(_arm(term), _open_now())
+        select(func.count())
+        .select_from(FuturesMarket)
+        .where(_or_fold_predicate(term), _open_now())
     )
 
 
@@ -341,6 +465,36 @@ def _signature_sql(term: str) -> str:
     # argument. Attaching it to the first compiles to
     # `string_agg(expr ORDER BY id, ',')`, which Postgres rejects as
     # `undefined_function` rather than reordering it for you.
+    return _digest_over(_arm(term))
+
+
+def _digest_over(subquery) -> str:
+    """count + md5 of the ORDER-BY-id id set over a UNION subquery."""
+    delimiter = aggregate_order_by(literal_column("','"), subquery.c.id.asc())
+    return _literal(
+        select(
+            func.count().label("n"),
+            func.md5(func.string_agg(cast(subquery.c.id, Text), delimiter)).label("sig"),
+        ).select_from(subquery)
+    )
+
+
+def _or_fold_signature_sql(term: str) -> str:
+    """The same digest by the DEAD OR fold. Reported, never graded.
+
+    LAT-P140's banked claim is that the OR and the UNION are set-identical ("all
+    ten terms byte-identical"). The gate measures both forms anyway, so it costs
+    one extra read to keep that claim continuously checked instead of frozen in a
+    docstring.
+
+    ⚠️ This is a SEPARATE round trip from the UNION digest, so the two see the
+    open-market population a fraction of a second apart and `_open_now()`
+    contains `now()`. A one-off mismatch here is churn, not a defect; it means
+    something only if a second run repeats it. That is precisely why it is
+    reported and not graded — unlike criterion 3, which compares two reads of the
+    same logical set and would need the same caveat if it were not already the
+    strictly-harder indexed-vs-forced-scan comparison.
+    """
     delimiter = aggregate_order_by(literal_column("','"), FuturesMarket.id.asc())
     return _literal(
         select(
@@ -350,7 +504,7 @@ def _signature_sql(term: str) -> str:
             ).label("sig"),
         )
         .select_from(FuturesMarket)
-        .where(_arm(term), _open_now())
+        .where(_or_fold_predicate(term), _open_now())
     )
 
 
@@ -368,15 +522,35 @@ def _ground_truth_sql(term: str) -> str:
     purpose: the point is to produce SQL the planner treats as DIFFERENT while a
     reader can see it is logically THE SAME. Going through `_arm()` again would
     just rebuild the indexable form.
+
+    ⚠️ THE SURGERY IS ASSERTED, NOT ASSUMED (added #2394). `str.replace` returns
+    the string unchanged when it matches nothing, so if either compiled form ever
+    drifts — a different ts config, a parenthesisation change, `coalesce` spelled
+    another way — this function silently returns the INDEXED sql, criterion 3
+    compares that query against ITSELF, and it passes forever. A criterion that
+    cannot fail is worth exactly as much as one that always fails, and this file
+    already carries the scar of the second kind (see `_signature`). So each
+    replacement must actually change the string, and both targets must appear
+    once per UNION branch.
     """
     sql = _signature_sql(term)
-    sql = sql.replace(
-        "to_tsvector('english', coalesce(futures_markets.name, ''))",
-        "to_tsvector('english', coalesce(futures_markets.name, '') || '')",
-    )
-    sql = sql.replace(
-        "futures_markets.name ILIKE", "(futures_markets.name || '') ILIKE"
-    )
+    for target, patched in (
+        (
+            "to_tsvector('english', coalesce(futures_markets.name, ''))",
+            "to_tsvector('english', coalesce(futures_markets.name, '') || '')",
+        ),
+        ("futures_markets.name ILIKE", "(futures_markets.name || '') ILIKE"),
+    ):
+        if target not in sql:
+            print(
+                f"ERROR: ground-truth surgery found no {target!r} in the compiled "
+                f"arm for {term!r}. The ORM rendering has drifted, so the forced "
+                f"scan would silently be the INDEXED query and criterion 3 would "
+                f"compare it against itself. Refusing to run.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        sql = sql.replace(target, patched)
     return sql
 
 
@@ -416,12 +590,21 @@ def _signature(term: str) -> dict:
     if not truth:
         print(f"ERROR: ground-truth read returned no rows for {term!r}", file=sys.stderr)
         sys.exit(2)
+    fold = _post(_or_fold_signature_sql(term), analyze=False).get("rows") or []
+    if not fold:
+        print(f"ERROR: OR-fold signature read returned no rows for {term!r}", file=sys.stderr)
+        sys.exit(2)
     return {
         "n": rows[0][0],
         "sig": rows[0][1],
         "ground_truth_n": truth[0][0],
         "ground_truth_sig": truth[0][1],
         "agrees_with_forced_scan": (rows[0][0] == truth[0][0] and rows[0][1] == truth[0][1]),
+        # Reported, never graded — LAT-P140's set-identity claim, kept live. See
+        # `_or_fold_signature_sql` for why a single mismatch is churn.
+        "or_fold_n": fold[0][0],
+        "or_fold_sig": fold[0][1],
+        "agrees_with_or_fold": (rows[0][0] == fold[0][0] and rows[0][1] == fold[0][1]),
     }
 
 
@@ -438,6 +621,17 @@ def main() -> int:
     parser.add_argument(
         "--skip-semantics", action="store_true", help="timing/shape only"
     )
+    parser.add_argument(
+        "--orfold-rounds",
+        type=int,
+        default=OR_FOLD_ROUNDS,
+        help="rounds for the ungraded OR-fold contrast (default 1)",
+    )
+    parser.add_argument(
+        "--skip-or-fold",
+        action="store_true",
+        help="do not measure the OR-fold contrast at all (it is the slow form)",
+    )
     args = parser.parse_args()
 
     # The baseline is no longer REQUIRED — criterion 3 grades against a
@@ -453,6 +647,11 @@ def main() -> int:
 
     print(f"gate_futures_name_fts_index  label={args.label}  terms={len(TERMS)}  rounds={args.rounds}")
     print(f"  ratio threshold <= {RATIO_THRESHOLD}   expected indexes: {', '.join(EXPECTED_INDEXES)}")
+    print("  GRADED FORM: the UNION of `_futures_name_arms` — the shape /typeahead emits (#2394).")
+    print(
+        "  `orfold` is the dead `_build_futures_name_filter` OR, measured as a "
+        "CONTRAST and NEVER graded."
+    )
     print()
 
     results: dict[str, dict] = {}
@@ -477,12 +676,31 @@ def main() -> int:
             ctrl_ms.append(_exec_ms(_post(ctrl_sql, analyze=True)))
             time.sleep(0.5)
 
+        # The OR-fold CONTRAST. Ungraded, and it is not interleaved with the
+        # graded pair on purpose: it must not be able to perturb the arm/control
+        # ratio it exists to give context to.
+        fold_ms: list[float] = []
+        fold_indexes: set[str] = set()
+        fold_bitmap_or = False
+        if not args.skip_or_fold:
+            fold_sql = _or_fold_sql(term)
+            for _ in range(args.orfold_rounds):
+                plan = _post(fold_sql, analyze=True)
+                fold_ms.append(_exec_ms(plan))
+                fold_indexes |= _index_scans(plan)
+                fold_bitmap_or = fold_bitmap_or or _has_bitmap_or(plan)
+                time.sleep(0.5)
+
         arm_med = sorted(arm_ms)[len(arm_ms) // 2]
         ctrl_med = sorted(ctrl_ms)[len(ctrl_ms) // 2]
         ratio = arm_med / ctrl_med if ctrl_med else float("inf")
+        fold_med = sorted(fold_ms)[len(fold_ms) // 2] if fold_ms else None
+        fold_speedup = round(fold_med / arm_med, 1) if (fold_med and arm_med) else None
 
-        missing = [name for name in EXPECTED_INDEXES if name not in indexes]
-        shape_ok = bitmap_or and not missing
+        # `bitmap_or` is RECORDED but NOT graded — under the UNION each branch
+        # gets its own index scan and there is no BitmapOr node to find. See the
+        # module docstring; requiring it here would fail every correct plan.
+        shape_ok, missing = _shape_verdict(indexes)
         budget_ok = ratio <= RATIO_THRESHOLD
 
         semantics_ok = True
@@ -504,6 +722,7 @@ def main() -> int:
 
         results[term] = {
             "class": klass,
+            "graded_form": "union",
             "arm_ms": arm_ms,
             "ctrl_ms": ctrl_ms,
             "arm_median_ms": round(arm_med, 1),
@@ -516,20 +735,38 @@ def main() -> int:
             "budget_ok": budget_ok,
             "semantics_ok": semantics_ok,
             "signature": signature,
+            # CONTRAST ONLY — the dead `_build_futures_name_filter` fold. Never
+            # enters the verdict; see the module docstring.
+            "or_fold": {
+                "ms": fold_ms,
+                "median_ms": round(fold_med, 1) if fold_med is not None else None,
+                "speedup_vs_union": fold_speedup,
+                "bitmap_or": fold_bitmap_or,
+                "indexes_used": sorted(fold_indexes),
+            },
         }
 
         flag = "PASS" if (shape_ok and budget_ok and semantics_ok) else "FAIL"
-        shape_note = "ok" if shape_ok else ("MISSING:" + ",".join(missing) if missing else "no BitmapOr")
+        shape_note = "ok" if shape_ok else "MISSING:" + ",".join(missing)
         # Population drift is REPORTED, never graded — it is context for reading
         # the row, not a verdict about the index.
         drift = ""
         if signature and term in baseline:
             delta = signature["n"] - baseline[term]["signature"]["n"]
             drift = f" pop{delta:+d}" if delta else " pop=0"
+        # The OR fold is printed in its own column, explicitly labelled, so no
+        # reader can mistake the contrast for the graded number.
+        if fold_med is None:
+            fold_note = "orfold=skipped"
+        else:
+            fold_note = f"orfold={fold_med:8.1f}ms({fold_speedup}x)"
+        fold_sem = ""
+        if signature and "agrees_with_or_fold" in signature:
+            fold_sem = "" if signature["agrees_with_or_fold"] else " ORFOLD-ROWS-DIFFER"
         print(
             f"  {term:<12} {klass:<16} arm={arm_med:8.1f}ms ctrl={ctrl_med:8.1f}ms "
-            f"ratio={ratio:6.2f}  shape={shape_note:<34} "
-            f"sem={'ok' if semantics_ok else 'ROWS CHANGED'}{drift}  {flag}"
+            f"ratio={ratio:6.2f}  {fold_note:<26} shape={shape_note:<34} "
+            f"sem={'ok' if semantics_ok else 'ROWS CHANGED'}{drift}{fold_sem}  {flag}"
         )
 
     if args.write_baseline:
@@ -555,8 +792,15 @@ def main() -> int:
                 {
                     "label": args.label,
                     "verdict": "GREEN" if green else "RED",
+                    # Which expression was GRADED. #2394: runs before 2026-09-02
+                    # graded `_build_futures_name_filter`, an OR fold no route
+                    # runs, so their verdicts are not comparable with this one.
+                    "graded_form": "union(_futures_name_arms)",
+                    "or_fold_is_contrast_only": True,
                     "ratio_threshold": RATIO_THRESHOLD,
                     "expected_indexes": list(EXPECTED_INDEXES),
+                    "rounds": args.rounds,
+                    "orfold_rounds": 0 if args.skip_or_fold else args.orfold_rounds,
                     "terms": results,
                 },
                 handle,
