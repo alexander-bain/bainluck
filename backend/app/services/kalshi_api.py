@@ -428,7 +428,48 @@ class KalshiAPIService(BaseAPIClient):
         event_ticker: str,
         with_nested_markets: bool = True,
     ) -> Optional[dict]:
-        """Get a single event by ticker. Returns None only for 404."""
+        """Get a single event by ticker.
+
+        ⚠️ ``None`` here means EITHER "Kalshi has no such event" (404) OR "the
+        request failed three times" — the two are indistinguishable, and the
+        docstring that used to say "Returns None only for 404" was wrong about
+        its own ``except Exception: return None`` (gotcha #36, gotcha #53).
+        That is fine for a poller, which skips either way. Any caller that reads
+        absence as EVIDENCE must use :meth:`get_event_reachable`.
+        """
+        _, event = await self.get_event_reachable(
+            event_ticker, with_nested_markets=with_nested_markets
+        )
+        return event
+
+    async def get_event_reachable(
+        self,
+        event_ticker: str,
+        with_nested_markets: bool = True,
+    ) -> tuple[bool, Optional[dict]]:
+        """``(reachable, event)`` — the same fetch, with the ``None`` disambiguated.
+
+        Q506. The fabricated-final repair uses Kalshi as the VENUE AUTHORITY OF
+        LAST RESORT (``EVENT-GRAPH-DOCTRINE`` rule 8) for the sports ESPN has no
+        endpoint for, and it QUARANTINES a row when the authority has no record
+        of the event. Collapsing a network failure into that same ``None`` would
+        void real events every time Kalshi blipped — the exact defect CERT-708
+        blocked this rail for, one layer down.
+
+        * ``(True, {...})``  — 200. Kalshi has the event.
+        * ``(True, None)``   — 404. Kalshi affirmatively does NOT have it. This
+          is the only shape that may be read as absence.
+        * ``(False, None)``  — the request failed, was rate-limited past its
+          retries, or returned a non-200/non-404. We know nothing.
+
+        Kalshi EVENT data is permanent while MARKET data purges at ≥74/<86 days
+        (gotcha #35, ``app/utils/kalshi_retention.py``), so this endpoint — not
+        ``/markets/{ticker}`` — is the one that can still answer for a backlog.
+        Measured 2026-09-01 over 69 events sampled across the whole Q506 venue
+        cohort: ``/events/{ticker}`` returned 200 on 69 of 69, while
+        ``/markets/{ticker}`` returned 404 on every one of them, because
+        ``futures_markets.external_id`` holds the EVENT ticker.
+        """
         import asyncio as _asyncio
         params = {"with_nested_markets": str(with_nested_markets).lower()}
         for _attempt in range(3):
@@ -438,18 +479,18 @@ class KalshiAPIService(BaseAPIClient):
                     params=params,
                 )
                 if response.status_code == 404:
-                    return None
+                    return (True, None)
                 if response.status_code == 429:
                     await _asyncio.sleep(3 * (_attempt + 1))
                     continue
                 response.raise_for_status()
-                return response.json().get("event")
+                return (True, response.json().get("event"))
             except Exception:
                 if _attempt < 2:
                     await _asyncio.sleep(1)
                     continue
-                return None
-        return None
+                return (False, None)
+        return (False, None)
 
     async def get_series(
         self,

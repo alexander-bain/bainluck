@@ -88,6 +88,19 @@ class ESPNEvent:
     broadcasts: list[str]
     home_win_probability: Optional[float]
     season_type: Optional[int] = None  # 1=preseason, 2=regular, 3=postseason
+    # Q506: ESPN's OWN answer to "is this over", carried alongside the mapped
+    # `status` because the mapping is sport-specific and open-ended.
+    # `status.type.name` is `STATUS_FINAL` for US leagues but `STATUS_FULL_TIME`
+    # for soccer (and `STATUS_FINAL_PEN` / `STATUS_FINAL_AET` for knockouts),
+    # and `_parse_event`'s ladder only knows three of them — everything else
+    # falls through as the raw lowercased name. Measured 2026-09-01 over the
+    # five big-league scoreboards for Aug 29-31: 42 of 42 finished matches
+    # carried `STATUS_FULL_TIME`, i.e. NOT the string `"post"`, while
+    # `type.completed` was True and `type.state` was "post" on every one.
+    # A repair that keyed on the mapped `status` therefore read every finished
+    # soccer match as unfinished; these two fields are what it keys on instead.
+    completed: Optional[bool] = None   # status.type.completed
+    state: Optional[str] = None        # status.type.state — pre | in | post
 
 
 class ESPNAPIService:
@@ -290,10 +303,39 @@ class ESPNAPIService:
 
         Returns:
             List of ESPNEvent objects
+
+        ⚠️ An empty list here means EITHER "no games" OR "the request failed" —
+        the two are indistinguishable (gotcha #53). Any caller that would treat
+        emptiness as EVIDENCE (a repair asserting a fixture is absent, an audit
+        counting a zero) must use :meth:`get_scoreboard_reachable` instead.
+        """
+        _, events = await self.get_scoreboard_reachable(sport_key, date)
+        return events
+
+    async def get_scoreboard_reachable(
+        self, sport_key: str, date: Optional[str] = None
+    ) -> tuple[bool, list[ESPNEvent]]:
+        """``(reachable, events)`` — the same fetch, with the zero disambiguated.
+
+        Q506. ``get_scoreboard`` collapses three different outcomes into ``[]``:
+        no ESPN path for the sport, a failed/non-200/timed-out request, and a
+        genuine empty slate. That is fine for a poller (all three mean "nothing
+        to ingest this tick") and it is the gotcha-#53 trap for anything that
+        reads absence as a FACT — the fabricated-final repair asserts "the
+        authority has no record of this fixture" and VOIDS the row on it, so an
+        ESPN 500 read as an empty slate would delete real games.
+
+        ``reachable`` is True only when a payload actually arrived. ``events``
+        may still be empty on a reachable read: that is a real empty slate, and
+        it is the caller's job to decide whether an empty slate proves anything
+        (the repair's answer is no — an off-season league returns one every day).
+
+        ``get_scoreboard`` delegates here so the two cannot drift into different
+        parses of the same payload.
         """
         path = self._get_espn_path(sport_key)
         if not path:
-            return []
+            return (False, [])
 
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/scoreboard"
@@ -301,8 +343,8 @@ class ESPNAPIService:
             url += f"?dates={date}"
 
         data = await self._get(url)
-        if not data:
-            return []
+        if data is None:
+            return (False, [])
 
         events = []
         for event_data in data.get("events", []):
@@ -311,7 +353,7 @@ class ESPNAPIService:
                 events.append(event)
 
         logger.info(f"Fetched {len(events)} events for {sport_key}")
-        return events
+        return (True, events)
 
     def _parse_event(self, event_data: dict) -> Optional[ESPNEvent]:
         """Parse ESPN event data into ESPNEvent object."""
@@ -403,6 +445,12 @@ class ESPNAPIService:
                 broadcasts=broadcasts,
                 home_win_probability=home_win_prob,
                 season_type=season_type_val,
+                completed=(
+                    status_type.get("completed")
+                    if isinstance(status_type.get("completed"), bool)
+                    else None
+                ),
+                state=status_type.get("state"),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
