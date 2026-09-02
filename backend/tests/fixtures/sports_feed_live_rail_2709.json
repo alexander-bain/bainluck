@@ -1,0 +1,6665 @@
+{
+ "_source": "VERBATIM production GET /api/feed?mode=sports&limit=200&offset=0, captured 2026-09-02 ~22:5xZ against api.bainluck.com, nine US Open matches in play. Not hand-written and not trimmed. This is the payload UX-1035 / #2709 was measured on: 83 ranked items, 14 of them live, and only 6 of those 14 inside the 20-item first page the /sports rail is built from. The count printed beside 'Live Now' was therefore 6 while 14 games were in progress, and exactly one of the nine live US Open matches (Wang vs Kalinskaya, rank 16) was above the cut.",
+ "_page_limit": 20,
+ "payload": {
+  "items": [
+   {
+    "type": "concept",
+    "score": 80,
+    "reason": "18 race markets",
+    "headline": "Live",
+    "data": {
+     "key": "event:cycling:vuelta-2026",
+     "name": "Vuelta a Espa\u00f1a 2026",
+     "domain": "cycling",
+     "status": "live",
+     "start_date": "2026-09-15T15:18:00+00:00",
+     "is_major": true,
+     "fight_count": 0,
+     "entry_count": 18,
+     "is_marquee": true,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Tadej Pogacar",
+      "probability": 0.751,
+      "movement_24h": null,
+      "field_size": 30
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 95,
+    "reason": "Los Angeles Rams (14%) leads NFL Super Bowl Winner",
+    "headline": "Los Angeles Rams leads at 14%",
+    "context_summary": "Los Angeles Rams leads at 14%",
+    "data": {
+     "id": 86832,
+     "name": "NFL Super Bowl Winner",
+     "sport": "americanfootball_nfl",
+     "sport_name": "NFL",
+     "llm_sport_category": "football",
+     "source": "odds_api",
+     "source_count": 1,
+     "sources": [
+      "odds_api"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 1309485,
+       "name": "Los Angeles Rams",
+       "probability": 0.1384,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 14
+      },
+      {
+       "id": 1309486,
+       "name": "Buffalo Bills",
+       "probability": 0.076117,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 8
+      },
+      {
+       "id": 1309484,
+       "name": "Seattle Seahawks",
+       "probability": 0.067537,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 7
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 32,
+     "canonical_market_key": "football:NFL:championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Los Angeles Rams",
+        "probability": 0.1384,
+        "movement": 0.0
+       },
+       {
+        "label": "Buffalo Bills",
+        "probability": 0.076117,
+        "movement": 0.0
+       },
+       {
+        "label": "Seattle Seahawks",
+        "probability": 0.067537,
+        "movement": 0.0
+       },
+       {
+        "label": "Baltimore Ravens",
+        "probability": 0.064454,
+        "movement": 0.0
+       },
+       {
+        "label": "Kansas City Chiefs",
+        "probability": 0.050832,
+        "movement": 1e-06
+       },
+       {
+        "label": "Philadelphia Eagles",
+        "probability": 0.043791,
+        "movement": 0.000346
+       },
+       {
+        "label": "Los Angeles Chargers",
+        "probability": 0.043666,
+        "movement": -0.000386
+       },
+       {
+        "label": "Houston Texans",
+        "probability": 0.043112,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 24,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005497/pexels-photo-7005497.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 525,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nfl",
+      "market_status:open",
+      "source:odds_api",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 98,
+    "reason": "Won as 40% underdog",
+    "headline": "Recent upset",
+    "data": {
+     "id": 15300436,
+     "external_id": "fbeefe8aa3a2d5aefc1dccf34b4f3a13",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Cincinnati Reds",
+     "away_team": "San Diego Padres",
+     "commence_time": "2026-09-02T16:40:00+00:00",
+     "status": "completed",
+     "home_score": 7,
+     "away_score": 3,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.994,
+       "updated_at": "2026-09-02T19:31:41.736628+00:00"
+      },
+      "espn": {
+       "value": 1.0,
+       "updated_at": "2026-09-02T19:34:50.949368+00:00"
+      },
+      "stat_model": {
+       "value": 0.999,
+       "updated_at": "2026-09-02T19:34:50.959722+00:00"
+      },
+      "betting_book_count": 2
+     },
+     "current_odds": {
+      "home_probability": 0.999,
+      "away_probability": 0.001,
+      "home_rendered_percent": 100,
+      "away_rendered_percent": 0
+     },
+     "opening_odds": {
+      "home_probability": 0.4018,
+      "away_probability": 0.5981,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Recent upset"
+     },
+     "ei": {
+      "score": 86,
+      "label": "Must-Watch"
+     },
+     "pulse": {
+      "score": 86,
+      "label": "Must-Watch"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:must_watch",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "signal:upset",
+      "sport:baseball",
+      "status:completed",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 98,
+    "reason": "Won as 45% underdog",
+    "headline": "Recent upset",
+    "data": {
+     "id": 15300932,
+     "external_id": "a09e4cef3ad772a51e4f166de8ac96b8",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Arizona Diamondbacks",
+     "away_team": "Philadelphia Phillies",
+     "commence_time": "2026-09-02T19:40:00+00:00",
+     "status": "completed",
+     "home_score": 1,
+     "away_score": 0,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.908,
+       "updated_at": "2026-09-02T21:41:36.696818+00:00"
+      },
+      "espn": {
+       "value": 0.833,
+       "updated_at": "2026-09-02T21:35:46.035818+00:00"
+      },
+      "betting": {
+       "value": 0.9141,
+       "updated_at": "2026-09-02T21:51:38.780496+00:00"
+      },
+      "stat_model": {
+       "value": 0.9052,
+       "updated_at": "2026-09-02T21:44:45.932155+00:00"
+      },
+      "betting_book_count": 14
+     },
+     "current_odds": {
+      "home_probability": 0.908,
+      "away_probability": 0.092,
+      "home_rendered_percent": 91,
+      "away_rendered_percent": 9
+     },
+     "opening_odds": {
+      "home_probability": 0.4544,
+      "away_probability": 0.5456,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Recent upset"
+     },
+     "ei": {
+      "score": 94,
+      "label": "Incredible"
+     },
+     "pulse": {
+      "score": 94,
+      "label": "Incredible"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:incredible",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "signal:upset",
+      "sport:baseball",
+      "status:completed",
+      "tier:1",
+      "timing:national_tv"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 98,
+    "reason": "Won as 40% underdog",
+    "headline": "Recent upset",
+    "data": {
+     "id": 15300437,
+     "external_id": "a5c57f0a71bfbec1df5c314f86bb79cd",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Texas Rangers",
+     "away_team": "Athletics",
+     "commence_time": "2026-09-02T18:35:00+00:00",
+     "status": "completed",
+     "home_score": 2,
+     "away_score": 9,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.001,
+       "updated_at": "2026-09-02T21:29:36.659371+00:00"
+      },
+      "espn": {
+       "value": 0.126,
+       "updated_at": "2026-09-02T20:08:51.373247+00:00"
+      },
+      "stat_model": {
+       "value": 0.001,
+       "updated_at": "2026-09-02T21:29:46.001352+00:00"
+      },
+      "betting_book_count": 1
+     },
+     "current_odds": {
+      "home_probability": 0.001,
+      "away_probability": 0.999,
+      "home_rendered_percent": 0,
+      "away_rendered_percent": 100
+     },
+     "opening_odds": {
+      "home_probability": 0.5963,
+      "away_probability": 0.4036,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Recent upset"
+     },
+     "ei": {
+      "score": 79,
+      "label": "Exciting"
+     },
+     "pulse": {
+      "score": 79,
+      "label": "Exciting"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:exciting",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "signal:upset",
+      "sport:baseball",
+      "status:completed",
+      "tier:1",
+      "timing:national_tv"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 98,
+    "reason": "Colorado Rockies leading as underdog",
+    "headline": "Upset brewing",
+    "data": {
+     "id": 15300438,
+     "external_id": "2d7536dbc5a92a909f419ec55b9c6fb1",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Colorado Rockies",
+     "away_team": "Baltimore Orioles",
+     "commence_time": "2026-09-02T19:10:00+00:00",
+     "status": "live",
+     "home_score": 3,
+     "away_score": 3,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.61,
+       "updated_at": "2026-09-02T21:51:36.647590+00:00"
+      },
+      "espn": {
+       "value": 0.393,
+       "updated_at": "2026-09-02T21:07:47.115524+00:00"
+      },
+      "betting": {
+       "value": 0.5785,
+       "updated_at": "2026-09-02T21:51:38.721481+00:00"
+      },
+      "stat_model": {
+       "value": 0.6642,
+       "updated_at": "2026-09-02T21:51:45.947596+00:00"
+      },
+      "betting_book_count": 13
+     },
+     "espn": {
+      "period": "Bottom 9th",
+      "broadcast": "MLB.TV, Rockies.TV, MASN"
+     },
+     "current_odds": {
+      "home_probability": 0.61,
+      "away_probability": 0.39,
+      "home_rendered_percent": 61,
+      "away_rendered_percent": 39
+     },
+     "opening_odds": {
+      "home_probability": 0.3808,
+      "away_probability": 0.6192,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Upset brewing"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:incredible",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "sport:baseball",
+      "status:live",
+      "tier:1"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 98,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300439,
+     "external_id": "5552db2bbb6ea8db5548a0b2bd77cc77",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Cleveland Guardians",
+     "away_team": "Toronto Blue Jays",
+     "commence_time": "2026-09-02T22:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.4527,
+       "updated_at": "2026-09-02T21:51:38.918698+00:00"
+      },
+      "polymarket": {
+       "value": 0.44,
+       "updated_at": "2026-09-02T21:51:50.396281+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.4527,
+      "away_probability": 0.5473,
+      "home_rendered_percent": 45,
+      "away_rendered_percent": 55
+     },
+     "opening_odds": {
+      "home_probability": 0.4527,
+      "away_probability": 0.5473,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "signal:very_close",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 93,
+    "reason": "Florida Panthers (11%) leads 2026-27 Stanley Cup\u00ae Finals Winner across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Florida Panthers leads at 11% across 2 sources",
+    "data": {
+     "id": 52755659,
+     "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "hockey",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2029-06-30T14:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 198632536,
+       "name": "Florida Panthers",
+       "probability": 0.107,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 198632538,
+       "name": "Carolina Hurricanes",
+       "probability": 0.093,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 198632537,
+       "name": "Colorado Avalanche",
+       "probability": 0.093,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 9
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 32,
+     "canonical_market_key": "hockey:NHL:championship:2026-27",
+     "group_id": "kalshi:KXNHL-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Florida Panthers",
+        "probability": 0.107,
+        "movement": null
+       },
+       {
+        "label": "Carolina Hurricanes",
+        "probability": 0.093,
+        "movement": null
+       },
+       {
+        "label": "Colorado Avalanche",
+        "probability": 0.093,
+        "movement": null
+       },
+       {
+        "label": "Edmonton Oilers",
+        "probability": 0.0698,
+        "movement": null
+       },
+       {
+        "label": "Tampa Bay Lightning",
+        "probability": 0.0605,
+        "movement": null
+       },
+       {
+        "label": "Vegas Golden Knights",
+        "probability": 0.0558,
+        "movement": null
+       },
+       {
+        "label": "Dallas Stars",
+        "probability": 0.0512,
+        "movement": null
+       },
+       {
+        "label": "Minnesota Wild",
+        "probability": 0.0419,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 24,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/19909823/pexels-photo-19909823.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nhl",
+      "market_status:open",
+      "source:kalshi",
+      "sport:hockey",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 93,
+    "reason": "Seattle Mariners leading as underdog",
+    "headline": "Upset brewing",
+    "data": {
+     "id": 15300576,
+     "external_id": "0b0373954f04c35c2aaee9aed8171c17",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Boston Red Sox",
+     "away_team": "Seattle Mariners",
+     "commence_time": "2026-09-02T20:10:00+00:00",
+     "status": "live",
+     "home_score": 1,
+     "away_score": 4,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.121,
+       "updated_at": "2026-09-02T21:51:36.665690+00:00"
+      },
+      "espn": {
+       "value": 0.47,
+       "updated_at": "2026-09-02T20:48:45.948037+00:00"
+      },
+      "betting": {
+       "value": 0.1799,
+       "updated_at": "2026-09-02T21:51:38.847468+00:00"
+      },
+      "stat_model": {
+       "value": 0.1425,
+       "updated_at": "2026-09-02T21:51:45.922775+00:00"
+      },
+      "betting_book_count": 14
+     },
+     "espn": {
+      "period": "Top 6th",
+      "broadcast": "MLB.TV, Mariners.TV, NESN"
+     },
+     "current_odds": {
+      "home_probability": 0.1425,
+      "away_probability": 0.8575,
+      "home_rendered_percent": 14,
+      "away_rendered_percent": 86
+     },
+     "opening_odds": {
+      "home_probability": 0.574,
+      "away_probability": 0.426,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Upset brewing"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:incredible",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "sport:baseball",
+      "status:live",
+      "tier:1"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 85,
+    "reason": "Won as 11% underdog",
+    "headline": "Recent upset",
+    "data": {
+     "id": 15300190,
+     "external_id": "5f0f1edcc78791a180a4150137af2b07",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Rafael Jodar",
+     "away_team": "Bu Yunchaokete",
+     "commence_time": "2026-09-02T17:16:00+00:00",
+     "status": "completed",
+     "home_score": 0,
+     "away_score": 3,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.0288,
+       "updated_at": "2026-09-02T21:10:12.784083+00:00"
+      },
+      "polymarket": {
+       "value": 0.001,
+       "updated_at": "2026-09-02T21:46:13.936855+00:00"
+      },
+      "betting_book_count": 5
+     },
+     "current_odds": {
+      "home_probability": 0.0288,
+      "away_probability": 0.9712,
+      "home_rendered_percent": 3,
+      "away_rendered_percent": 97
+     },
+     "opening_odds": {
+      "home_probability": 0.8879,
+      "away_probability": 0.1121,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Recent upset"
+     },
+     "ei": {
+      "score": 40,
+      "label": "Steady"
+     },
+     "pulse": {
+      "score": 40,
+      "label": "Steady"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:average",
+      "gender:mixed",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "signal:upset",
+      "sport:tennis",
+      "status:completed",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 83,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300469,
+     "external_id": "865b5161840c3b0f959eaa526c8ac629",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Kansas City Royals",
+     "away_team": "Miami Marlins",
+     "commence_time": "2026-09-02T23:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.5104,
+       "updated_at": "2026-09-02T21:51:39.468864+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.5104,
+      "away_probability": 0.4896,
+      "home_rendered_percent": 51,
+      "away_rendered_percent": 49
+     },
+     "opening_odds": {
+      "home_probability": 0.5104,
+      "away_probability": 0.4896,
+      "favorite": "even"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "signal:very_close",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 83,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300441,
+     "external_id": "af7b25a4d0428e7f04b74c6c3a75c59d",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Minnesota Twins",
+     "away_team": "Detroit Tigers",
+     "commence_time": "2026-09-02T23:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.5153,
+       "updated_at": "2026-09-02T21:51:39.356642+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.5153,
+      "away_probability": 0.4847,
+      "home_rendered_percent": 52,
+      "away_rendered_percent": 48
+     },
+     "opening_odds": {
+      "home_probability": 0.5153,
+      "away_probability": 0.4847,
+      "favorite": "even"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "signal:very_close",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 83,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300440,
+     "external_id": "a081961893797b7b0bda834791610d56",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Pittsburgh Pirates",
+     "away_team": "San Francisco Giants",
+     "commence_time": "2026-09-02T22:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.5837,
+       "updated_at": "2026-09-02T21:51:39.110298+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.5837,
+      "away_probability": 0.4163,
+      "home_rendered_percent": 58,
+      "away_rendered_percent": 42
+     },
+     "opening_odds": {
+      "home_probability": 0.5837,
+      "away_probability": 0.4163,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1",
+      "timing:national_tv"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 80,
+    "reason": "Aryna Sabalenka shifted down 15.5 points from opening in 2026 Women\u2019s US Open Winner (Tennis)",
+    "headline": "Aryna Sabalenka down 15.5 points from opening",
+    "context_summary": "Aryna Sabalenka down 15.5 points from opening",
+    "data": {
+     "id": 114160,
+     "name": "2026 Women\u2019s US Open Winner (Tennis)",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "tennis",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-09-13T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1632749,
+       "name": "Aryna Sabalenka",
+       "probability": 0.235,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 24
+      },
+      {
+       "id": 1632754,
+       "name": "Coco Gauff",
+       "probability": 0.184,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 18
+      },
+      {
+       "id": 1632750,
+       "name": "Iga Swiatek",
+       "probability": 0.145,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 14
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 41,
+     "canonical_market_key": "tennis::championship:2026",
+     "group_id": "polymarket:139255",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Aryna Sabalenka",
+        "probability": 0.235,
+        "movement": 0.0
+       },
+       {
+        "label": "Coco Gauff",
+        "probability": 0.184,
+        "movement": 0.0
+       },
+       {
+        "label": "Iga Swiatek",
+        "probability": 0.145,
+        "movement": 0.0
+       },
+       {
+        "label": "Jessica Pegula",
+        "probability": 0.0945,
+        "movement": 0.0
+       },
+       {
+        "label": "Elena Rybakina",
+        "probability": 0.055,
+        "movement": 0.0
+       },
+       {
+        "label": "Mirra Andreeva",
+        "probability": 0.0535,
+        "movement": 0.0
+       },
+       {
+        "label": "Naomi Osaka",
+        "probability": 0.051,
+        "movement": 0.0
+       },
+       {
+        "label": "Karolina Muchova",
+        "probability": 0.0385,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 33,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/37112809/pexels-photo-37112809.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:polymarket",
+      "sport:tennis",
+      "tier:1"
+     ],
+     "story_key": "story:grand_slam_tennis"
+    }
+   },
+   {
+    "type": "futures",
+    "score": 80,
+    "reason": "Alexander Zverev shifted up 17.6 points from opening in 2026 Men\u2019s US Open Winner (Tennis)",
+    "headline": "Alexander Zverev up 17.6 points from opening",
+    "context_summary": "Alexander Zverev up 17.6 points from opening; Carlos Alcaraz leads at 38%",
+    "data": {
+     "id": 114159,
+     "name": "2026 Men\u2019s US Open Winner (Tennis)",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "tennis",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-09-13T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1632728,
+       "name": "Carlos Alcaraz",
+       "probability": 0.375,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 38
+      },
+      {
+       "id": 1632731,
+       "name": "Alexander Zverev",
+       "probability": 0.2205,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 22
+      },
+      {
+       "id": 1632735,
+       "name": "Taylor Fritz",
+       "probability": 0.0935,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 9
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 23,
+     "canonical_market_key": "tennis::championship:2026",
+     "group_id": "polymarket:139236",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Carlos Alcaraz",
+        "probability": 0.375,
+        "movement": 0.0
+       },
+       {
+        "label": "Alexander Zverev",
+        "probability": 0.2205,
+        "movement": 0.0
+       },
+       {
+        "label": "Taylor Fritz",
+        "probability": 0.0935,
+        "movement": 0.0
+       },
+       {
+        "label": "Ben Shelton",
+        "probability": 0.092,
+        "movement": 0.0
+       },
+       {
+        "label": "Daniil Medvedev",
+        "probability": 0.0595,
+        "movement": 0.0
+       },
+       {
+        "label": "Felix Auger Aliassime",
+        "probability": 0.0355,
+        "movement": 0.0
+       },
+       {
+        "label": "Jakub Mensik",
+        "probability": 0.023,
+        "movement": 0.0
+       },
+       {
+        "label": "Frances Tiafoe",
+        "probability": 0.021,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 15,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/13602337/pexels-photo-13602337.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 513,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:polymarket",
+      "sport:tennis",
+      "tier:1"
+     ],
+     "story_key": "story:grand_slam_tennis"
+    }
+   },
+   {
+    "type": "futures",
+    "score": 79,
+    "reason": "Los Angeles Dodgers (28%) leads MLB World Series Champion 2026 across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Los Angeles Dodgers leads at 28% across 2 sources",
+    "data": {
+     "id": 114584,
+     "name": "MLB World Series Champion 2026",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "baseball",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-10-31T23:55:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1634465,
+       "name": "Los Angeles Dodgers",
+       "probability": 0.285,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 28
+      },
+      {
+       "id": 1634478,
+       "name": "Milwaukee Brewers",
+       "probability": 0.1205,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 12
+      },
+      {
+       "id": 1634467,
+       "name": "New York Yankees",
+       "probability": 0.095,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 10
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 31,
+     "canonical_market_key": "baseball:MLB:championship:2026",
+     "group_id": "polymarket:179312",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Los Angeles Dodgers",
+        "probability": 0.285,
+        "movement": 0.0
+       },
+       {
+        "label": "Milwaukee Brewers",
+        "probability": 0.1205,
+        "movement": 0.0
+       },
+       {
+        "label": "New York Yankees",
+        "probability": 0.095,
+        "movement": 0.0
+       },
+       {
+        "label": "Tampa Bay Rays",
+        "probability": 0.082,
+        "movement": 0.0
+       },
+       {
+        "label": "Philadelphia Phillies",
+        "probability": 0.062,
+        "movement": 0.0
+       },
+       {
+        "label": "Atlanta Braves",
+        "probability": 0.0615,
+        "movement": 0.0
+       },
+       {
+        "label": "Boston Red Sox",
+        "probability": 0.0585,
+        "movement": 0.0
+       },
+       {
+        "label": "Chicago Cubs",
+        "probability": 0.0535,
+        "movement": -0.0005
+       }
+      ],
+      "remaining_outcome_count": 23,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/20316377/pexels-photo-20316377.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 450,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:mlb",
+      "market_status:open",
+      "source:polymarket",
+      "sport:baseball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 78,
+    "reason": "Virtually even",
+    "headline": "Coin flip",
+    "data": {
+     "id": 15299609,
+     "external_id": "fbec424c3540172206f3eb0220ba482a",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Xinyu Wang",
+     "away_team": "Anna Kalinskaya",
+     "commence_time": "2026-09-02T21:31:03+00:00",
+     "status": "live",
+     "home_score": 0,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.4848,
+       "updated_at": "2026-09-02T21:51:42.615468+00:00"
+      },
+      "betting_book_count": 8
+     },
+     "current_odds": {
+      "home_probability": 0.4848,
+      "away_probability": 0.5152,
+      "home_rendered_percent": 48,
+      "away_rendered_percent": 52
+     },
+     "opening_odds": {
+      "home_probability": 0.3453,
+      "away_probability": 0.6547,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Coin flip"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:average",
+      "gender:women",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:very_close",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 75,
+    "reason": "3 weekend markets",
+    "headline": "Live",
+    "data": {
+     "key": "event:f1:freedom-250-grand-prix-of-washington-winner",
+     "name": "Freedom 250 Grand Prix of Washington Winner",
+     "domain": "f1",
+     "status": "live",
+     "start_date": "2026-09-06T21:30:00+00:00",
+     "is_major": false,
+     "fight_count": 0,
+     "entry_count": 3,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Alex Palou",
+      "probability": 0.325,
+      "movement_24h": null,
+      "field_size": 25
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 75,
+    "reason": "6 weekend markets",
+    "headline": "Live",
+    "data": {
+     "key": "event:f1:dutch-grand-prix-winner",
+     "name": "Dutch Grand Prix Winner",
+     "domain": "f1",
+     "status": "live",
+     "start_date": "2026-09-06T15:00:00+00:00",
+     "is_major": false,
+     "fight_count": 0,
+     "entry_count": 6,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Lando Norris",
+      "probability": 0.824,
+      "movement_24h": null,
+      "field_size": 22
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 74,
+    "reason": "New favorite: New York Y vs Los Angeles D (10%) now leads Pro Baseball Championship Series Matchup",
+    "headline": "New favorite: New York Y vs Los Angeles D (10%)",
+    "context_summary": "New favorite: New York Y vs Los Angeles D (10%)",
+    "data": {
+     "id": 2417016,
+     "name": "Pro Baseball Championship Series Matchup",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "baseball",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-11-08T04:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 13986731,
+       "name": "New York Y vs Los Angeles D",
+       "probability": 0.0975,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 10
+      },
+      {
+       "id": 13986765,
+       "name": "Tampa Bay vs Los Angeles D",
+       "probability": 0.0915,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 13986845,
+       "name": "Boston vs Los Angeles D",
+       "probability": 0.0675,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 7
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 225,
+     "canonical_market_key": "baseball::championship:2026",
+     "group_id": "kalshi:KXTEAMSINWS-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "New York Y vs Los Angeles D",
+        "probability": 0.0975,
+        "movement": null
+       },
+       {
+        "label": "Tampa Bay vs Los Angeles D",
+        "probability": 0.0915,
+        "movement": null
+       },
+       {
+        "label": "Boston vs Los Angeles D",
+        "probability": 0.0675,
+        "movement": null
+       },
+       {
+        "label": "New York Y vs Milwaukee",
+        "probability": 0.048,
+        "movement": null
+       },
+       {
+        "label": "Tampa Bay vs Milwaukee",
+        "probability": 0.047,
+        "movement": null
+       },
+       {
+        "label": "Tampa Bay vs Atlanta",
+        "probability": 0.046,
+        "movement": null
+       },
+       {
+        "label": "Chicago WS vs Milwaukee",
+        "probability": 0.0415,
+        "movement": null
+       },
+       {
+        "label": "Boston vs Philadelphia",
+        "probability": 0.0385,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 217,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/33492033/pexels-photo-33492033.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 525,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:baseball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 73,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300577,
+     "external_id": "5315049742364f1f962411a129153260",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Houston Astros",
+     "away_team": "Chicago White Sox",
+     "commence_time": "2026-09-03T00:10:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.562,
+       "updated_at": "2026-09-02T21:51:39.620261+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.562,
+      "away_probability": 0.438,
+      "home_rendered_percent": 56,
+      "away_rendered_percent": 44
+     },
+     "opening_odds": {
+      "home_probability": 0.562,
+      "away_probability": 0.438,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1",
+      "timing:primetime"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 73,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15300468,
+     "external_id": "e5573b0492ef2f689b729412d3bde508",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Chicago Cubs",
+     "away_team": "Milwaukee Brewers",
+     "commence_time": "2026-09-02T23:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.4234,
+       "updated_at": "2026-09-02T21:51:39.234869+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.4234,
+      "away_probability": 0.5766,
+      "home_rendered_percent": 42,
+      "away_rendered_percent": 58
+     },
+     "opening_odds": {
+      "home_probability": 0.4234,
+      "away_probability": 0.5766,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 70,
+    "reason": "Multiple ranking changes in Champions League Winner",
+    "headline": "Multiple ranking changes",
+    "context_summary": "Multiple ranking changes; Barcelona leads at 15%",
+    "data": {
+     "id": 31834253,
+     "name": "Champions League Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "soccer",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-06-19T21:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 149462867,
+       "name": "Barcelona",
+       "probability": 0.149,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 15
+      },
+      {
+       "id": 149462894,
+       "name": "Bayern Munich",
+       "probability": 0.1137,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 149462866,
+       "name": "PSG",
+       "probability": 0.1137,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 11
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 36,
+     "canonical_market_key": "soccer:UCL:championship:2026-27",
+     "group_id": "kalshi:KXUCL-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": false,
+      "comparison_theme": null,
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Barcelona",
+        "probability": 0.149,
+        "movement": null
+       },
+       {
+        "label": "Bayern Munich",
+        "probability": 0.1137,
+        "movement": null
+       },
+       {
+        "label": "PSG",
+        "probability": 0.1137,
+        "movement": null
+       },
+       {
+        "label": "Arsenal",
+        "probability": 0.1137,
+        "movement": null
+       },
+       {
+        "label": "Real Madrid",
+        "probability": 0.1137,
+        "movement": null
+       },
+       {
+        "label": "Manchester City",
+        "probability": 0.0667,
+        "movement": null
+       },
+       {
+        "label": "Liverpool",
+        "probability": 0.0431,
+        "movement": null
+       },
+       {
+        "label": "Manchester United",
+        "probability": 0.0353,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 28,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/24524187/pexels-photo-24524187.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:soccer",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 70,
+    "reason": "",
+    "headline": null,
+    "data": {
+     "id": 15299604,
+     "external_id": "18a705b41a7729da73b06dc384a48869",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Daniel Merida Aguilar",
+     "away_team": "Andrey Rublev",
+     "commence_time": "2026-09-02T15:04:03+00:00",
+     "status": "completed",
+     "home_score": 3,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting_book_count": 2
+     },
+     "current_odds": {
+      "home_probability": 0.4055,
+      "away_probability": 0.5945,
+      "home_rendered_percent": 41,
+      "away_rendered_percent": 59
+     },
+     "opening_odds": {
+      "home_probability": 0.4055,
+      "away_probability": 0.5945,
+      "favorite": "away"
+     },
+     "ei": {
+      "score": 63,
+      "label": "Engaging"
+     },
+     "pulse": {
+      "score": 63,
+      "label": "Engaging"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:engaging",
+      "gender:men",
+      "level:professional",
+      "signal:close_matchup",
+      "sport:tennis",
+      "status:completed",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.1765,
+     "confidence_signals": {
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 65,
+    "reason": "Multiple ranking changes in Omega European Masters Winner",
+    "headline": "Multiple ranking changes",
+    "context_summary": "Multiple ranking changes; Ryan Gerard leads at 6%",
+    "data": {
+     "id": 59759220,
+     "name": "Omega European Masters Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "golf",
+     "source": "kalshi",
+     "source_count": 3,
+     "sources": [
+      "datagolf",
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-09-20T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 223107737,
+       "name": "Ryan Gerard",
+       "probability": 0.0602,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 6
+      },
+      {
+       "id": 223107865,
+       "name": "Matt Wallace",
+       "probability": 0.0524,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 5
+      },
+      {
+       "id": 223107878,
+       "name": "Rasmus H\u00f8jgaard",
+       "probability": 0.04,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 4
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 162,
+     "canonical_market_key": "golf:PGA:championship:2026",
+     "group_id": "kalshi:KXDPWORLDTOUR-OMEM26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": false,
+      "comparison_theme": null,
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Ryan Gerard",
+        "probability": 0.0602,
+        "movement": null
+       },
+       {
+        "label": "Matt Wallace",
+        "probability": 0.0524,
+        "movement": null
+       },
+       {
+        "label": "Rasmus H\u00f8jgaard",
+        "probability": 0.04,
+        "movement": null
+       },
+       {
+        "label": "Marco Penge",
+        "probability": 0.0354,
+        "movement": null
+       },
+       {
+        "label": "Nicolai H\u00f8jgaard",
+        "probability": 0.0322,
+        "movement": null
+       },
+       {
+        "label": "Patrick Reed",
+        "probability": 0.0295,
+        "movement": null
+       },
+       {
+        "label": "Keita Nakajima",
+        "probability": 0.0245,
+        "movement": null
+       },
+       {
+        "label": "Anton Mostrom",
+        "probability": 0.0233,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 154,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/28578405/pexels-photo-28578405.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": 940,
+     "image_height": 627,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "high",
+     "confidence_score": 0.7059,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:pga",
+      "market_status:open",
+      "source:kalshi",
+      "sport:golf",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 64,
+    "reason": "New favorite: Oklahoma City (21%) now leads 2027 Pro Basketball Champion",
+    "headline": "New favorite: Oklahoma City (21%)",
+    "context_summary": "New favorite: Oklahoma City (21%)",
+    "data": {
+     "id": 52755651,
+     "name": "2027 Pro Basketball Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "basketball",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2029-07-30T14:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 198632414,
+       "name": "Oklahoma City",
+       "probability": 0.2083,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 21
+      },
+      {
+       "id": 198632415,
+       "name": "San Antonio",
+       "probability": 0.2083,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 21
+      },
+      {
+       "id": 198632416,
+       "name": "Philadelphia",
+       "probability": 0.088,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 9
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 30,
+     "canonical_market_key": "basketball::championship:2027",
+     "group_id": "kalshi:KXNBA-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Oklahoma City",
+        "probability": 0.2083,
+        "movement": null
+       },
+       {
+        "label": "San Antonio",
+        "probability": 0.2083,
+        "movement": null
+       },
+       {
+        "label": "Philadelphia",
+        "probability": 0.088,
+        "movement": null
+       },
+       {
+        "label": "New York",
+        "probability": 0.0787,
+        "movement": null
+       },
+       {
+        "label": "Boston",
+        "probability": 0.0417,
+        "movement": null
+       },
+       {
+        "label": "Denver",
+        "probability": 0.0324,
+        "movement": null
+       },
+       {
+        "label": "Miami",
+        "probability": 0.0324,
+        "movement": null
+       },
+       {
+        "label": "Minnesota",
+        "probability": 0.0324,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 22,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": 940,
+     "image_height": 627,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 63,
+    "reason": "Starting in under an hour",
+    "headline": null,
+    "data": {
+     "id": 15300668,
+     "external_id": "0f008463e07ac89253cf7559eae28606",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Tampa Bay Rays",
+     "away_team": "New York Mets",
+     "commence_time": "2026-09-02T22:40:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.6204,
+       "updated_at": "2026-09-02T21:51:38.991557+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.6204,
+      "away_probability": 0.3796,
+      "home_rendered_percent": 62,
+      "away_rendered_percent": 38
+     },
+     "opening_odds": {
+      "home_probability": 0.6204,
+      "away_probability": 0.3796,
+      "favorite": "home"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:starting_soon",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 60,
+    "reason": "Denis Shapovalov odds shifted 20%",
+    "headline": "Momentum shift",
+    "data": {
+     "id": 15298556,
+     "external_id": "b1c232f3649d4155d1c89c5ddd40512b",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Denis Shapovalov",
+     "away_team": "Luca Van Assche",
+     "commence_time": "2026-09-02T20:45:23+00:00",
+     "status": "live",
+     "home_score": 1,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.7839,
+       "updated_at": "2026-09-02T21:51:41.167384+00:00"
+      },
+      "betting_book_count": 7
+     },
+     "current_odds": {
+      "home_probability": 0.7839,
+      "away_probability": 0.2161,
+      "home_rendered_percent": 78,
+      "away_rendered_percent": 22
+     },
+     "opening_odds": {
+      "home_probability": 0.583,
+      "away_probability": 0.417,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Momentum shift"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:competitive",
+      "gender:men",
+      "level:professional",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 60,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15299464,
+     "external_id": "eca482b730f8239626cb8551d239ac1a",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Valentin Vacherot",
+     "away_team": "Kamil Majchrzak",
+     "commence_time": "2026-09-02T23:00:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.5408,
+       "updated_at": "2026-09-02T21:51:41.605530+00:00"
+      },
+      "betting_book_count": 11
+     },
+     "current_odds": {
+      "home_probability": 0.5408,
+      "away_probability": 0.4592,
+      "home_rendered_percent": 54,
+      "away_rendered_percent": 46
+     },
+     "opening_odds": {
+      "home_probability": 0.5408,
+      "away_probability": 0.4592,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:other",
+      "gender:men",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "signal:very_close",
+      "sport:tennis",
+      "status:scheduled",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 60,
+    "reason": "Starting soon \u2014 close matchup",
+    "headline": "Close matchup",
+    "data": {
+     "id": 15299723,
+     "external_id": "618b994c9bbf2aa02be60161ecb684a6",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Ann Li",
+     "away_team": "Donna Vekic",
+     "commence_time": "2026-09-02T22:25:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.5972,
+       "updated_at": "2026-09-02T21:51:42.760896+00:00"
+      },
+      "betting_book_count": 11
+     },
+     "current_odds": {
+      "home_probability": 0.5972,
+      "away_probability": 0.4028,
+      "home_rendered_percent": 60,
+      "away_rendered_percent": 40
+     },
+     "opening_odds": {
+      "home_probability": 0.5972,
+      "away_probability": 0.4028,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Close matchup"
+     },
+     "event_tags": [
+      "class:other",
+      "gender:women",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:starting_soon",
+      "sport:tennis",
+      "status:scheduled",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 60,
+    "reason": "Won as 32% underdog",
+    "headline": "Recent upset",
+    "data": {
+     "id": 15299603,
+     "external_id": "a96687034c2f95459e9df7c231e89c88",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Brandon Nakashima",
+     "away_team": "Alex Michelsen",
+     "commence_time": "2026-09-02T15:04:44+00:00",
+     "status": "completed",
+     "home_score": 0,
+     "away_score": 3,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.0484,
+       "updated_at": "2026-09-02T17:19:07.476699+00:00"
+      },
+      "betting_book_count": 4
+     },
+     "current_odds": {
+      "home_probability": 0.0484,
+      "away_probability": 0.9516,
+      "home_rendered_percent": 5,
+      "away_rendered_percent": 95
+     },
+     "opening_odds": {
+      "home_probability": 0.6792,
+      "away_probability": 0.3208,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Recent upset"
+     },
+     "ei": {
+      "score": 56,
+      "label": "Competitive"
+     },
+     "pulse": {
+      "score": 56,
+      "label": "Competitive"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:competitive",
+      "gender:men",
+      "level:professional",
+      "signal:blowout",
+      "signal:favorite_switched",
+      "signal:line_moving",
+      "signal:upset",
+      "sport:tennis",
+      "status:completed",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 59,
+    "reason": "Dallas moved down 49.0 points from opening in Women's Pro Basketball Champion",
+    "headline": "Dallas down 49.0 points from opening",
+    "context_summary": "Dallas down 49.0 points from opening; Minnesota leads at 42%",
+    "data": {
+     "id": 12046267,
+     "name": "Women's Pro Basketball Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "basketball",
+     "source": "kalshi",
+     "source_count": 1,
+     "sources": [
+      "kalshi"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2028-11-30T15:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 68804167,
+       "name": "Minnesota",
+       "probability": 0.4194,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 42
+      },
+      {
+       "id": 68804163,
+       "name": "Las Vegas",
+       "probability": 0.1198,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 12
+      },
+      {
+       "id": 68804166,
+       "name": "Atlanta",
+       "probability": 0.106,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 11
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 15,
+     "canonical_market_key": "basketball::championship:2028",
+     "group_id": "kalshi:KXWNBA-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Minnesota",
+        "probability": 0.4194,
+        "movement": null
+       },
+       {
+        "label": "Las Vegas",
+        "probability": 0.1198,
+        "movement": null
+       },
+       {
+        "label": "Atlanta",
+        "probability": 0.106,
+        "movement": null
+       },
+       {
+        "label": "Indiana",
+        "probability": 0.1014,
+        "movement": null
+       },
+       {
+        "label": "Golden State",
+        "probability": 0.1014,
+        "movement": null
+       },
+       {
+        "label": "New York",
+        "probability": 0.0599,
+        "movement": null
+       },
+       {
+        "label": "Washington",
+        "probability": 0.0138,
+        "movement": null
+       },
+       {
+        "label": "Dallas",
+        "probability": 0.0138,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 7,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 59,
+    "reason": "Minnesota Lynx moved up 24.5 points from opening in WNBA: 2026 Champion",
+    "headline": "Minnesota Lynx up 24.5 points from opening",
+    "context_summary": "Minnesota Lynx up 24.5 points from opening",
+    "data": {
+     "id": 9413479,
+     "name": "WNBA: 2026 Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "basketball",
+     "source": "polymarket",
+     "source_count": 1,
+     "sources": [
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-10-31T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 51753353,
+       "name": "Minnesota Lynx",
+       "probability": 0.465,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 47
+      },
+      {
+       "id": 51753354,
+       "name": "Indiana Fever",
+       "probability": 0.115,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 12
+      },
+      {
+       "id": 51753355,
+       "name": "Las Vegas Aces",
+       "probability": 0.105,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 11
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 16,
+     "canonical_market_key": "basketball:WNBA:championship:2025-26",
+     "group_id": "polymarket:350828",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Minnesota Lynx",
+        "probability": 0.465,
+        "movement": 0.0
+       },
+       {
+        "label": "Indiana Fever",
+        "probability": 0.115,
+        "movement": 0.0
+       },
+       {
+        "label": "Las Vegas Aces",
+        "probability": 0.105,
+        "movement": 0.0
+       },
+       {
+        "label": "Atlanta Dream",
+        "probability": 0.105,
+        "movement": 0.0
+       },
+       {
+        "label": "Golden State Valkyries",
+        "probability": 0.0955,
+        "movement": -0.0015
+       },
+       {
+        "label": "New York Liberty",
+        "probability": 0.085,
+        "movement": 0.0
+       },
+       {
+        "label": "Washington Mystics",
+        "probability": 0.022,
+        "movement": -0.001
+       },
+       {
+        "label": "Dallas Wings",
+        "probability": 0.021,
+        "movement": -0.0005
+       }
+      ],
+      "remaining_outcome_count": 8,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:wnba",
+      "market_status:open",
+      "source:polymarket",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 55,
+    "reason": "Manchester United moved down 22.0 points from opening in English Premier League Champion",
+    "headline": "Manchester United down 22.0 points from opening",
+    "context_summary": "Manchester United down 22.0 points from opening; Arsenal leads at 45%",
+    "data": {
+     "id": 31834301,
+     "name": "English Premier League Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "soccer",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-06-13T21:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 144904356,
+       "name": "Arsenal",
+       "probability": 0.4469,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 45
+      },
+      {
+       "id": 144904363,
+       "name": "Manchester City",
+       "probability": 0.1991,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 20
+      },
+      {
+       "id": 144904364,
+       "name": "Chelsea",
+       "probability": 0.1372,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 14
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 20,
+     "canonical_market_key": "soccer:EPL:championship:2026-27",
+     "group_id": "kalshi:KXPREMIERLEAGUE-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Arsenal",
+        "probability": 0.4469,
+        "movement": null
+       },
+       {
+        "label": "Manchester City",
+        "probability": 0.1991,
+        "movement": null
+       },
+       {
+        "label": "Chelsea",
+        "probability": 0.1372,
+        "movement": null
+       },
+       {
+        "label": "Liverpool",
+        "probability": 0.0398,
+        "movement": null
+       },
+       {
+        "label": "Manchester United",
+        "probability": 0.0398,
+        "movement": null
+       },
+       {
+        "label": "Tottenham",
+        "probability": 0.0133,
+        "movement": null
+       },
+       {
+        "label": "Aston Villa",
+        "probability": 0.0088,
+        "movement": null
+       },
+       {
+        "label": "Brentford",
+        "probability": 0.0088,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 12,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/24524187/pexels-photo-24524187.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:epl",
+      "market_status:open",
+      "source:kalshi",
+      "sport:soccer",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 55,
+    "reason": "Tomas Martin Etcheverry odds shifted 19%",
+    "headline": "Momentum shift",
+    "data": {
+     "id": 15299720,
+     "external_id": "bc41dd439054452e36d98c8bef91e38c",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Tomas Martin Etcheverry",
+     "away_team": "Jacob Fearnley",
+     "commence_time": "2026-09-02T17:16:00+00:00",
+     "status": "live",
+     "home_score": 2,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.7619,
+       "updated_at": "2026-09-02T21:50:40.567404+00:00"
+      },
+      "polymarket": {
+       "value": 0.735,
+       "updated_at": "2026-09-02T21:51:50.380654+00:00"
+      },
+      "betting_book_count": 5
+     },
+     "current_odds": {
+      "home_probability": 0.7619,
+      "away_probability": 0.2381,
+      "home_rendered_percent": 76,
+      "away_rendered_percent": 24
+     },
+     "opening_odds": {
+      "home_probability": 0.5745,
+      "away_probability": 0.4255,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Momentum shift"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:quiet",
+      "gender:men",
+      "level:professional",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 54,
+    "reason": "Denver Nuggets shifted down 14.3 points from opening in NBA: 2027 Champion",
+    "headline": "Denver Nuggets down 14.3 points from opening",
+    "context_summary": "Denver Nuggets down 14.3 points from opening; Oklahoma City Thunder leads at 22%",
+    "data": {
+     "id": 20569230,
+     "name": "NBA: 2027 Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "basketball",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-07-01T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 109193626,
+       "name": "Oklahoma City Thunder",
+       "probability": 0.215,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 22
+      },
+      {
+       "id": 109193627,
+       "name": "San Antonio Spurs",
+       "probability": 0.205,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 21
+      },
+      {
+       "id": 109193636,
+       "name": "Philadelphia 76ers",
+       "probability": 0.1265,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 13
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 30,
+     "canonical_market_key": "basketball:NBA:championship:2026-27",
+     "group_id": "polymarket:478277",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Oklahoma City Thunder",
+        "probability": 0.215,
+        "movement": 0.0
+       },
+       {
+        "label": "San Antonio Spurs",
+        "probability": 0.205,
+        "movement": 0.0
+       },
+       {
+        "label": "Philadelphia 76ers",
+        "probability": 0.1265,
+        "movement": 0.0
+       },
+       {
+        "label": "New York Knicks",
+        "probability": 0.115,
+        "movement": 0.0
+       },
+       {
+        "label": "Boston Celtics",
+        "probability": 0.045,
+        "movement": 0.0
+       },
+       {
+        "label": "Minnesota Timberwolves",
+        "probability": 0.0425,
+        "movement": 0.0
+       },
+       {
+        "label": "Denver Nuggets",
+        "probability": 0.0315,
+        "movement": -0.0035
+       },
+       {
+        "label": "Miami Heat",
+        "probability": 0.0315,
+        "movement": 0.002
+       }
+      ],
+      "remaining_outcome_count": 22,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nba",
+      "market_status:open",
+      "source:polymarket",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 54,
+    "reason": "San Antonio Spurs shifted up 16.5 points from opening in NBA Championship Winner",
+    "headline": "San Antonio Spurs up 16.5 points from opening",
+    "context_summary": "San Antonio Spurs up 16.5 points from opening; Oklahoma City Thunder leads at 23%",
+    "data": {
+     "id": 2,
+     "name": "NBA Championship Winner",
+     "sport": "basketball_nba",
+     "sport_name": "NBA",
+     "llm_sport_category": "basketball",
+     "source": "odds_api",
+     "source_count": 2,
+     "sources": [
+      "odds_api",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 31,
+       "name": "Oklahoma City Thunder",
+       "probability": 0.234694,
+       "rank": 1,
+       "movement": 0.00024,
+       "rendered_percent": 23
+      },
+      {
+       "id": 33,
+       "name": "San Antonio Spurs",
+       "probability": 0.228675,
+       "rank": 2,
+       "movement": 0.000208,
+       "rendered_percent": 23
+      },
+      {
+       "id": 41,
+       "name": "Philadelphia 76ers",
+       "probability": 0.082452,
+       "rank": 3,
+       "movement": 7.2e-05,
+       "rendered_percent": 8
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 30,
+     "canonical_market_key": "basketball:NBA:championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Oklahoma City Thunder",
+        "probability": 0.234694,
+        "movement": 0.00024
+       },
+       {
+        "label": "San Antonio Spurs",
+        "probability": 0.228675,
+        "movement": 0.000208
+       },
+       {
+        "label": "Philadelphia 76ers",
+        "probability": 0.082452,
+        "movement": 7.2e-05
+       },
+       {
+        "label": "New York Knicks",
+        "probability": 0.080372,
+        "movement": -0.000817
+       },
+       {
+        "label": "Boston Celtics",
+        "probability": 0.052171,
+        "movement": -0.000806
+       },
+       {
+        "label": "Denver Nuggets",
+        "probability": 0.031856,
+        "movement": 0.000738
+       },
+       {
+        "label": "Minnesota Timberwolves",
+        "probability": 0.031856,
+        "movement": 2.8e-05
+       },
+       {
+        "label": "Toronto Raptors",
+        "probability": 0.031258,
+        "movement": 0.001064
+       }
+      ],
+      "remaining_outcome_count": 22,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/25561929/pexels-photo-25561929.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nba",
+      "market_status:open",
+      "source:odds_api",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 54,
+    "reason": "Colorado Avalanche shifted down 15.1 points from opening in NHL Championship Winner",
+    "headline": "Colorado Avalanche down 15.1 points from opening",
+    "context_summary": "Colorado Avalanche down 15.1 points from opening; Florida Panthers leads at 12%",
+    "data": {
+     "id": 8,
+     "name": "NHL Championship Winner",
+     "sport": "icehockey_nhl",
+     "sport_name": "NHL",
+     "llm_sport_category": "hockey",
+     "source": "odds_api",
+     "source_count": 2,
+     "sources": [
+      "odds_api",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 674,
+       "name": "Florida Panthers",
+       "probability": 0.115232,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 12
+      },
+      {
+       "id": 669,
+       "name": "Colorado Avalanche",
+       "probability": 0.093254,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 671,
+       "name": "Carolina Hurricanes",
+       "probability": 0.091304,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 9
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 32,
+     "canonical_market_key": "hockey:NHL:championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Florida Panthers",
+        "probability": 0.115232,
+        "movement": 0.0
+       },
+       {
+        "label": "Colorado Avalanche",
+        "probability": 0.093254,
+        "movement": 0.0
+       },
+       {
+        "label": "Carolina Hurricanes",
+        "probability": 0.091304,
+        "movement": 0.0
+       },
+       {
+        "label": "Edmonton Oilers",
+        "probability": 0.078387,
+        "movement": 0.0
+       },
+       {
+        "label": "Vegas Golden Knights",
+        "probability": 0.076662,
+        "movement": 0.0
+       },
+       {
+        "label": "Tampa Bay Lightning",
+        "probability": 0.064982,
+        "movement": 0.0
+       },
+       {
+        "label": "Washington Capitals",
+        "probability": 0.055758,
+        "movement": 0.0
+       },
+       {
+        "label": "Minnesota Wild",
+        "probability": 0.053631,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 24,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/13978862/pexels-photo-13978862.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nhl",
+      "market_status:open",
+      "source:odds_api",
+      "sport:hockey",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "concept",
+    "score": 53,
+    "reason": "14 fights on the card",
+    "headline": "This week",
+    "data": {
+     "key": "event:ufc:26sep05",
+     "name": "Fight Night: Hooker vs Parnasse",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-05T23:20:00+00:00",
+     "is_major": false,
+     "fight_count": 14,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Salahdine Parnasse",
+      "probability": 0.805,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 53,
+    "reason": "Atlanta Braves odds shifted 44% during the game",
+    "headline": "Line moving",
+    "data": {
+     "id": 15300467,
+     "external_id": "174a988fce36a476af3e712057a97ebe",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Washington Nationals",
+     "away_team": "Atlanta Braves",
+     "commence_time": "2026-09-02T17:05:00+00:00",
+     "status": "completed",
+     "home_score": 0,
+     "away_score": 9,
+     "win_probability_sources": {
+      "mlb": {
+       "value": 0.001,
+       "updated_at": "2026-09-02T20:53:36.729916+00:00"
+      },
+      "espn": {
+       "value": 0.014,
+       "updated_at": "2026-09-02T20:15:50.963101+00:00"
+      },
+      "stat_model": {
+       "value": 0.001,
+       "updated_at": "2026-09-02T21:04:46.715748+00:00"
+      },
+      "betting_book_count": 1
+     },
+     "current_odds": {
+      "home_probability": 0.001,
+      "away_probability": 0.999,
+      "home_rendered_percent": 0,
+      "away_rendered_percent": 100
+     },
+     "opening_odds": {
+      "home_probability": 0.4395,
+      "away_probability": 0.5605,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Line moving"
+     },
+     "ei": {
+      "score": 65,
+      "label": "Engaging"
+     },
+     "pulse": {
+      "score": 65,
+      "label": "Engaging"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "ei:engaging",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:baseball",
+      "status:completed",
+      "tier:1"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 51,
+    "reason": "Texas moved down 94.7 points from opening in Men's 2027 College Basketball Champion",
+    "headline": "Texas down 94.7 points from opening",
+    "context_summary": "Texas down 94.7 points from opening; Florida leads at 12%",
+    "data": {
+     "id": 9459614,
+     "name": "Men's 2027 College Basketball Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "basketball",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-04-27T14:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 52047494,
+       "name": "Florida",
+       "probability": 0.1221,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 12
+      },
+      {
+       "id": 52047490,
+       "name": "Duke",
+       "probability": 0.104,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 10
+      },
+      {
+       "id": 52047504,
+       "name": "Illinois",
+       "probability": 0.0638,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 6
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 73,
+     "canonical_market_key": "basketball::championship:2027",
+     "group_id": "kalshi:KXMARMAD-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Florida",
+        "probability": 0.1221,
+        "movement": null
+       },
+       {
+        "label": "Duke",
+        "probability": 0.104,
+        "movement": null
+       },
+       {
+        "label": "Illinois",
+        "probability": 0.0638,
+        "movement": null
+       },
+       {
+        "label": "UConn",
+        "probability": 0.0565,
+        "movement": null
+       },
+       {
+        "label": "Texas Tech",
+        "probability": 0.0511,
+        "movement": null
+       },
+       {
+        "label": "Texas",
+        "probability": 0.038,
+        "movement": null
+       },
+       {
+        "label": "North Carolina",
+        "probability": 0.0366,
+        "movement": null
+       },
+       {
+        "label": "Michigan St.",
+        "probability": 0.0357,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 65,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/11211232/pexels-photo-11211232.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 508,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:basketball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 51,
+    "reason": "Los Angeles C moved down 47.0 points from opening in 2027 Pro Football Champion",
+    "headline": "Los Angeles C down 47.0 points from opening",
+    "context_summary": "Los Angeles C down 47.0 points from opening; Los Angeles R leads at 14%",
+    "data": {
+     "id": 40533,
+     "name": "2027 Pro Football Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2029-02-13T23:30:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 643828,
+       "name": "Los Angeles R",
+       "probability": 0.1448,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 14
+      },
+      {
+       "id": 643833,
+       "name": "Buffalo",
+       "probability": 0.0679,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 7
+      },
+      {
+       "id": 643827,
+       "name": "Seattle",
+       "probability": 0.0679,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 7
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 32,
+     "canonical_market_key": "football::championship:2027",
+     "group_id": "kalshi:KXSB-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Los Angeles R",
+        "probability": 0.1448,
+        "movement": null
+       },
+       {
+        "label": "Buffalo",
+        "probability": 0.0679,
+        "movement": null
+       },
+       {
+        "label": "Seattle",
+        "probability": 0.0679,
+        "movement": null
+       },
+       {
+        "label": "Baltimore",
+        "probability": 0.0588,
+        "movement": null
+       },
+       {
+        "label": "Kansas City",
+        "probability": 0.0498,
+        "movement": null
+       },
+       {
+        "label": "Cincinnati",
+        "probability": 0.0407,
+        "movement": null
+       },
+       {
+        "label": "Dallas",
+        "probability": 0.0407,
+        "movement": null
+       },
+       {
+        "label": "Denver",
+        "probability": 0.0407,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 24,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005497/pexels-photo-7005497.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 525,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 51,
+    "reason": "Miami (FL) moved up 26.5 points from opening in College Football ACC Championship Winner",
+    "headline": "Miami (FL) up 26.5 points from opening",
+    "context_summary": "Miami (FL) up 26.5 points from opening",
+    "data": {
+     "id": 231,
+     "name": "College Football ACC Championship Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "kalshi",
+     "source_count": 1,
+     "sources": [
+      "kalshi"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-01-03T15:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1937,
+       "name": "Miami (FL)",
+       "probability": 0.5022,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 50
+      },
+      {
+       "id": 1934,
+       "name": "SMU",
+       "probability": 0.1092,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 1938,
+       "name": "Louisville",
+       "probability": 0.0742,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 7
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 17,
+     "canonical_market_key": "football:NCAAF:championship:2027",
+     "group_id": "kalshi:KXNCAAFACC-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Miami (FL)",
+        "probability": 0.5022,
+        "movement": null
+       },
+       {
+        "label": "SMU",
+        "probability": 0.1092,
+        "movement": null
+       },
+       {
+        "label": "Louisville",
+        "probability": 0.0742,
+        "movement": null
+       },
+       {
+        "label": "Virginia",
+        "probability": 0.0655,
+        "movement": null
+       },
+       {
+        "label": "Clemson",
+        "probability": 0.0568,
+        "movement": null
+       },
+       {
+        "label": "Virginia Tech",
+        "probability": 0.0306,
+        "movement": null
+       },
+       {
+        "label": "Pittsburgh",
+        "probability": 0.0306,
+        "movement": null
+       },
+       {
+        "label": "California",
+        "probability": 0.0306,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 9,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/2190139/pexels-photo-2190139.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 516,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:ncaaf",
+      "market_status:open",
+      "source:kalshi",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "tournament",
+    "score": 50,
+    "reason": "DP World Tour: Ryan Gerard leads at 8.3%",
+    "headline": "Tomorrow",
+    "data": {
+     "key": "omega_european_masters",
+     "name": "Omega European Masters",
+     "slug": "omega-european-masters",
+     "tour": "dp_world",
+     "tour_label": "DP World Tour",
+     "is_major": false,
+     "venue": "Crans-sur-Sierre GC",
+     "location": "Crans-Montana, Switzerland",
+     "start_date": "2026-09-03T00:00:00+00:00",
+     "end_date": "2026-09-06T00:00:00+00:00",
+     "schedule_status": "upcoming",
+     "commence_time": "2026-08-31T15:11:13+00:00",
+     "resolution_date": "2026-09-06T00:00:00+00:00",
+     "golfers": [
+      {
+       "name": "Ryan Gerard",
+       "probability": 0.083,
+       "rank": 1,
+       "movement_24h": null
+      },
+      {
+       "name": "Matt Wallace",
+       "probability": 0.057,
+       "rank": 2,
+       "movement_24h": null
+      },
+      {
+       "name": "Nicolai Hojgaard",
+       "probability": 0.043,
+       "rank": 3,
+       "movement_24h": null
+      },
+      {
+       "name": "Rasmus Hojgaard",
+       "probability": 0.042,
+       "rank": 4,
+       "movement_24h": null
+      },
+      {
+       "name": "Marco Penge",
+       "probability": 0.041,
+       "rank": 5,
+       "movement_24h": null
+      },
+      {
+       "name": "Eugenio Chacarra",
+       "probability": 0.033,
+       "rank": 6,
+       "movement_24h": null
+      },
+      {
+       "name": "Patrick Reed",
+       "probability": 0.033,
+       "rank": 7,
+       "movement_24h": null
+      },
+      {
+       "name": "Keita Nakajima",
+       "probability": 0.03,
+       "rank": 8,
+       "movement_24h": null
+      },
+      {
+       "name": "Harry Hall",
+       "probability": 0.03,
+       "rank": 9,
+       "movement_24h": null
+      },
+      {
+       "name": "Thomas Detry",
+       "probability": 0.025,
+       "rank": 10,
+       "movement_24h": null
+      }
+     ],
+     "market_ids": [
+      59925969,
+      59925967,
+      59863414,
+      59863411,
+      59925964,
+      59925965,
+      59925966,
+      59863413,
+      59925968,
+      59925970,
+      59863412,
+      59863415,
+      59759220
+     ],
+     "source_count": 3,
+     "is_marquee": false,
+     "marquee_whathit": false
+    }
+   },
+   {
+    "type": "futures",
+    "score": 49,
+    "reason": "Los Angeles Rams (18%) leads NFL Champion 2027 across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Los Angeles Rams leads at 18% across 2 sources",
+    "data": {
+     "id": 129037,
+     "name": "NFL Champion 2027",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-02-14T23:55:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1709100,
+       "name": "Los Angeles Rams",
+       "probability": 0.175,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 18
+      },
+      {
+       "id": 1709101,
+       "name": "Buffalo Bills",
+       "probability": 0.085,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 1709099,
+       "name": "Seattle Seahawks",
+       "probability": 0.075,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 8
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 33,
+     "canonical_market_key": "football:NFL:championship:2027",
+     "group_id": "polymarket:202857",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Los Angeles Rams",
+        "probability": 0.175,
+        "movement": 0.0
+       },
+       {
+        "label": "Buffalo Bills",
+        "probability": 0.085,
+        "movement": 0.0
+       },
+       {
+        "label": "Seattle Seahawks",
+        "probability": 0.075,
+        "movement": 0.0
+       },
+       {
+        "label": "Baltimore Ravens",
+        "probability": 0.069,
+        "movement": 0.0
+       },
+       {
+        "label": "Kansas City Chiefs",
+        "probability": 0.0615,
+        "movement": 0.0
+       },
+       {
+        "label": "Denver Broncos",
+        "probability": 0.0485,
+        "movement": 0.0
+       },
+       {
+        "label": "Dallas Cowboys",
+        "probability": 0.0485,
+        "movement": 0.0005
+       },
+       {
+        "label": "Los Angeles Chargers",
+        "probability": 0.0445,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 25,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005503/pexels-photo-7005503.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 525,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:nfl",
+      "market_status:open",
+      "source:polymarket",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 48,
+    "reason": "",
+    "headline": "Live",
+    "data": {
+     "id": 15299482,
+     "external_id": "5e239329c56a5ca4bea8769b7e5f2a85",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Lloyd Harris",
+     "away_team": "Stefanos Tsitsipas",
+     "commence_time": "2026-09-02T21:19:35+00:00",
+     "status": "live",
+     "home_score": 0,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.3528,
+       "updated_at": "2026-09-02T21:51:41.203979+00:00"
+      },
+      "betting_book_count": 7
+     },
+     "current_odds": {
+      "home_probability": 0.3528,
+      "away_probability": 0.6472,
+      "home_rendered_percent": 35,
+      "away_rendered_percent": 65
+     },
+     "opening_odds": {
+      "home_probability": 0.3232,
+      "away_probability": 0.6768,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Live"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:average",
+      "gender:men",
+      "level:professional",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 46,
+    "reason": "Los Angeles C vs Los Angeles R shifted down 15.5 points from opening in Pro Football Championship Game Matchup",
+    "headline": "Los Angeles C vs Los Angeles R down 15.5 points from opening",
+    "context_summary": "Los Angeles C vs Los Angeles R down 15.5 points from opening; Buffalo vs Los Angeles R leads at 6%",
+    "data": {
+     "id": 56775566,
+     "name": "Pro Football Championship Game Matchup",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-02-21T23:30:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 210850933,
+       "name": "Buffalo vs Los Angeles R",
+       "probability": 0.055,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 6
+      },
+      {
+       "id": 215418009,
+       "name": "Baltimore vs Los Angeles R",
+       "probability": 0.035,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 4
+      },
+      {
+       "id": 215418013,
+       "name": "Denver vs Los Angeles R",
+       "probability": 0.035,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 4
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 256,
+     "canonical_market_key": "football::championship:2027",
+     "group_id": "kalshi:KXNFLMATCHUP-27SB",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Buffalo vs Los Angeles R",
+        "probability": 0.055,
+        "movement": null
+       },
+       {
+        "label": "Baltimore vs Los Angeles R",
+        "probability": 0.035,
+        "movement": null
+       },
+       {
+        "label": "Denver vs Los Angeles R",
+        "probability": 0.035,
+        "movement": null
+       },
+       {
+        "label": "Houston vs Los Angeles R",
+        "probability": 0.025,
+        "movement": null
+       },
+       {
+        "label": "Los Angeles C vs Los Angeles R",
+        "probability": 0.025,
+        "movement": null
+       },
+       {
+        "label": "New England vs Los Angeles R",
+        "probability": 0.025,
+        "movement": null
+       },
+       {
+        "label": "Cincinnati vs Los Angeles R",
+        "probability": 0.025,
+        "movement": null
+       },
+       {
+        "label": "Kansas City vs Los Angeles R",
+        "probability": 0.025,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 248,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/32190690/pexels-photo-32190690.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 46,
+    "reason": "Texas Tech shifted up 19.5 points from opening in College Football Big 12 Championship Winner",
+    "headline": "Texas Tech up 19.5 points from opening",
+    "context_summary": "Texas Tech up 19.5 points from opening",
+    "data": {
+     "id": 234,
+     "name": "College Football Big 12 Championship Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "kalshi",
+     "source_count": 1,
+     "sources": [
+      "kalshi"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-01-02T15:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1982,
+       "name": "Texas Tech",
+       "probability": 0.4817,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 48
+      },
+      {
+       "id": 1991,
+       "name": "BYU",
+       "probability": 0.1147,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 1980,
+       "name": "Utah",
+       "probability": 0.1055,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 11
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 16,
+     "canonical_market_key": "football:NCAAF:championship:2027",
+     "group_id": "kalshi:KXNCAAFB12-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Texas Tech",
+        "probability": 0.4817,
+        "movement": null
+       },
+       {
+        "label": "BYU",
+        "probability": 0.1147,
+        "movement": null
+       },
+       {
+        "label": "Utah",
+        "probability": 0.1055,
+        "movement": null
+       },
+       {
+        "label": "Oklahoma St.",
+        "probability": 0.0413,
+        "movement": null
+       },
+       {
+        "label": "Houston",
+        "probability": 0.0413,
+        "movement": null
+       },
+       {
+        "label": "Arizona",
+        "probability": 0.0413,
+        "movement": null
+       },
+       {
+        "label": "Kansas St.",
+        "probability": 0.0413,
+        "movement": null
+       },
+       {
+        "label": "Arizona St.",
+        "probability": 0.0321,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 8,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/2190139/pexels-photo-2190139.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 516,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:ncaaf",
+      "market_status:open",
+      "source:kalshi",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 46,
+    "reason": "Milwaukee shifted up 10.6 points from opening in Pro Baseball Champion",
+    "headline": "Milwaukee up 10.6 points from opening",
+    "context_summary": "Milwaukee up 10.6 points from opening; Los Angeles D leads at 29%",
+    "data": {
+     "id": 275,
+     "name": "Pro Baseball Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "baseball",
+     "source": "kalshi",
+     "source_count": 1,
+     "sources": [
+      "kalshi"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2028-10-31T04:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 2330,
+       "name": "Los Angeles D",
+       "probability": 0.2885,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 29
+      },
+      {
+       "id": 2328,
+       "name": "Milwaukee",
+       "probability": 0.1305,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 13
+      },
+      {
+       "id": 2325,
+       "name": "New York Y",
+       "probability": 0.0985,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 10
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 30,
+     "canonical_market_key": "baseball::championship:2028",
+     "group_id": "kalshi:KXMLB-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Los Angeles D",
+        "probability": 0.2885,
+        "movement": null
+       },
+       {
+        "label": "Milwaukee",
+        "probability": 0.1305,
+        "movement": null
+       },
+       {
+        "label": "New York Y",
+        "probability": 0.0985,
+        "movement": null
+       },
+       {
+        "label": "Tampa Bay",
+        "probability": 0.0795,
+        "movement": null
+       },
+       {
+        "label": "Philadelphia",
+        "probability": 0.0645,
+        "movement": null
+       },
+       {
+        "label": "Atlanta",
+        "probability": 0.064,
+        "movement": null
+       },
+       {
+        "label": "Boston",
+        "probability": 0.0565,
+        "movement": null
+       },
+       {
+        "label": "Chicago C",
+        "probability": 0.0565,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 22,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/17724036/pexels-photo-17724036.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 526,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:baseball",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 46,
+    "reason": "Ignacio Buse odds shifted 25%",
+    "headline": "Momentum shift",
+    "data": {
+     "id": 15293837,
+     "external_id": "cb9527ab21c9f598c3d915005df17833",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Marcos Giron",
+     "away_team": "Ignacio Buse",
+     "commence_time": "2026-09-02T16:44:00+00:00",
+     "status": "live",
+     "home_score": 1,
+     "away_score": 2,
+     "win_probability_sources": {
+      "kalshi": {
+       "value": 0.15,
+       "updated_at": "2026-09-02T21:51:45.929003+00:00"
+      },
+      "betting": {
+       "value": 0.2112,
+       "updated_at": "2026-09-02T21:51:41.052395+00:00"
+      },
+      "polymarket": {
+       "value": 0.135,
+       "updated_at": "2026-09-02T21:51:38.190093+00:00"
+      },
+      "betting_book_count": 6
+     },
+     "current_odds": {
+      "home_probability": 0.15,
+      "away_probability": 0.85,
+      "home_rendered_percent": 15,
+      "away_rendered_percent": 85
+     },
+     "opening_odds": {
+      "home_probability": 0.3987,
+      "away_probability": 0.6013,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Momentum shift"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:competitive",
+      "gender:men",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 45,
+    "reason": "Emma Navarro odds shifted 38%",
+    "headline": "Momentum shift",
+    "data": {
+     "id": 15299610,
+     "external_id": "9e30948c157623afa7bd240fddbd895b",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Emma Navarro",
+     "away_team": "Caty McNally",
+     "commence_time": "2026-09-02T17:18:50+00:00",
+     "status": "live",
+     "home_score": 1,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.9163,
+       "updated_at": "2026-09-02T21:51:42.535693+00:00"
+      },
+      "betting_book_count": 6
+     },
+     "current_odds": {
+      "home_probability": 0.9163,
+      "away_probability": 0.0837,
+      "home_rendered_percent": 92,
+      "away_rendered_percent": 8
+     },
+     "opening_odds": {
+      "home_probability": 0.5392,
+      "away_probability": 0.4608,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Momentum shift"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:competitive",
+      "gender:women",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 45,
+    "reason": "National interest",
+    "headline": null,
+    "data": {
+     "id": 15300843,
+     "external_id": "8cc27a7b0c6903978e605ba541bed625",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Los Angeles Dodgers",
+     "away_team": "St. Louis Cardinals",
+     "commence_time": "2026-09-03T02:10:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.6908,
+       "updated_at": "2026-09-02T21:51:39.797112+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.6908,
+      "away_probability": 0.3092,
+      "home_rendered_percent": 69,
+      "away_rendered_percent": 31
+     },
+     "opening_odds": {
+      "home_probability": 0.6908,
+      "away_probability": 0.3092,
+      "favorite": "home"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1",
+      "timing:primetime"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 45,
+    "reason": "National interest",
+    "headline": null,
+    "data": {
+     "id": 15293348,
+     "external_id": null,
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Los Angeles Dodgers",
+     "away_team": "St.Louis Cardinals",
+     "commence_time": "2026-09-03T02:10:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "kalshi": {
+       "value": 0.71,
+       "updated_at": "2026-09-02T21:50:57.777439+00:00"
+      }
+     },
+     "current_odds": {
+      "home_probability": 0.71,
+      "away_probability": 0.29,
+      "home_rendered_percent": 71,
+      "away_rendered_percent": 29,
+      "source": "aggregate"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1",
+      "timing:primetime"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.1765,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "away_team_data": {
+      "team_id": 13437,
+      "slug": "stlouis-cardinals",
+      "primary_color": "#be0a14",
+      "secondary_color": "#001541",
+      "logo_small": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/stl.png",
+      "logo_large": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/stl.png",
+      "record": "69-70",
+      "abbreviation": "STL"
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 43,
+    "reason": "Kimi Antonelli moved up 64.3 points from opening in F1 Drivers' Champion",
+    "headline": "Kimi Antonelli up 64.3 points from opening",
+    "context_summary": "Kimi Antonelli up 64.3 points from opening",
+    "data": {
+     "id": 113705,
+     "name": "F1 Drivers' Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "motorsports",
+     "source": "polymarket",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-12-06T00:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 1630751,
+       "name": "Kimi Antonelli",
+       "probability": 0.7385,
+       "rank": 1,
+       "movement": -0.002,
+       "rendered_percent": 74
+      },
+      {
+       "id": 1630752,
+       "name": "Lando Norris",
+       "probability": 0.0785,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 8
+      },
+      {
+       "id": 1630748,
+       "name": "George Russell",
+       "probability": 0.0695,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 7
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 32,
+     "canonical_market_key": "motorsports:F1:championship:2026",
+     "group_id": "polymarket:100371",
+     "group_type": "negrisk",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Kimi Antonelli",
+        "probability": 0.7385,
+        "movement": -0.002
+       },
+       {
+        "label": "Lando Norris",
+        "probability": 0.0785,
+        "movement": 0.0
+       },
+       {
+        "label": "George Russell",
+        "probability": 0.0695,
+        "movement": 0.0
+       },
+       {
+        "label": "Lewis Hamilton",
+        "probability": 0.0615,
+        "movement": 0.0
+       },
+       {
+        "label": "Charles Leclerc",
+        "probability": 0.0195,
+        "movement": -0.0005
+       },
+       {
+        "label": "Max Verstappen",
+        "probability": 0.0055,
+        "movement": 0.0
+       },
+       {
+        "label": "Oscar Piastri",
+        "probability": 0.004,
+        "movement": 0.0
+       },
+       {
+        "label": "Sergio P\u00e9rez",
+        "probability": 0.0005,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 24,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/17836040/pexels-photo-17836040.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:polymarket",
+      "sport:motorsports",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 43,
+    "reason": "Michael Zheng odds shifted 27%",
+    "headline": "Momentum shift",
+    "data": {
+     "id": 15293830,
+     "external_id": "c6da187f326b576700b5221075714dc4",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Fabian Marozsan",
+     "away_team": "Michael Zheng",
+     "commence_time": "2026-09-02T18:27:00+00:00",
+     "status": "live",
+     "home_score": 0,
+     "away_score": 2,
+     "win_probability_sources": {
+      "kalshi": {
+       "value": 0.13,
+       "updated_at": "2026-09-02T21:51:32.388751+00:00"
+      },
+      "betting": {
+       "value": 0.1283,
+       "updated_at": "2026-09-02T21:51:41.123324+00:00"
+      },
+      "polymarket": {
+       "value": 0.115,
+       "updated_at": "2026-09-02T21:51:16.340515+00:00"
+      },
+      "betting_book_count": 6
+     },
+     "current_odds": {
+      "home_probability": 0.1283,
+      "away_probability": 0.8717,
+      "home_rendered_percent": 13,
+      "away_rendered_percent": 87
+     },
+     "opening_odds": {
+      "home_probability": 0.3998,
+      "away_probability": 0.6002,
+      "favorite": "away"
+     },
+     "highlight": {
+      "label": "Momentum shift"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:quiet",
+      "gender:men",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 41,
+    "reason": "Ohio St. (9%) leads College Football National Championship Winner",
+    "headline": "Ohio St. leads at 9%",
+    "context_summary": "Ohio St. leads at 9%",
+    "data": {
+     "id": 181,
+     "name": "College Football National Championship Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "football",
+     "source": "kalshi",
+     "source_count": 1,
+     "sources": [
+      "kalshi"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-02-23T04:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 984,
+       "name": "Ohio St.",
+       "probability": 0.0919,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 988,
+       "name": "Notre Dame",
+       "probability": 0.0919,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 9
+      },
+      {
+       "id": 985,
+       "name": "Oregon",
+       "probability": 0.0846,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 8
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 50,
+     "canonical_market_key": "football:NCAAF:championship:2027",
+     "group_id": "kalshi:KXNCAAF-27",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Ohio St.",
+        "probability": 0.0919,
+        "movement": null
+       },
+       {
+        "label": "Notre Dame",
+        "probability": 0.0919,
+        "movement": null
+       },
+       {
+        "label": "Oregon",
+        "probability": 0.0846,
+        "movement": null
+       },
+       {
+        "label": "Texas",
+        "probability": 0.0846,
+        "movement": null
+       },
+       {
+        "label": "Indiana",
+        "probability": 0.0699,
+        "movement": null
+       },
+       {
+        "label": "Georgia",
+        "probability": 0.0699,
+        "movement": null
+       },
+       {
+        "label": "Miami (FL)",
+        "probability": 0.0551,
+        "movement": null
+       },
+       {
+        "label": "LSU",
+        "probability": 0.0404,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 42,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/2190139/pexels-photo-2190139.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 516,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:ncaaf",
+      "market_status:open",
+      "source:kalshi",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 41,
+    "reason": "Ohio State Buckeyes (10%) leads NCAAF Championship Winner across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Ohio State Buckeyes leads at 10% across 2 sources",
+    "data": {
+     "id": 6601311,
+     "name": "NCAAF Championship Winner",
+     "sport": "americanfootball_ncaaf",
+     "sport_name": "NCAAF",
+     "llm_sport_category": "football",
+     "source": "odds_api",
+     "source_count": 2,
+     "sources": [
+      "odds_api",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 34312729,
+       "name": "Ohio State Buckeyes",
+       "probability": 0.101768,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 10
+      },
+      {
+       "id": 34312730,
+       "name": "Notre Dame Fighting Irish",
+       "probability": 0.101039,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 10
+      },
+      {
+       "id": 34312733,
+       "name": "Oregon Ducks",
+       "probability": 0.088668,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 9
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 138,
+     "canonical_market_key": "football:NCAAF:championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Ohio State Buckeyes",
+        "probability": 0.101768,
+        "movement": 0.0
+       },
+       {
+        "label": "Notre Dame Fighting Irish",
+        "probability": 0.101039,
+        "movement": 0.0
+       },
+       {
+        "label": "Oregon Ducks",
+        "probability": 0.088668,
+        "movement": 0.0
+       },
+       {
+        "label": "Texas Longhorns",
+        "probability": 0.087812,
+        "movement": 0.0
+       },
+       {
+        "label": "Georgia Bulldogs",
+        "probability": 0.076253,
+        "movement": 0.0
+       },
+       {
+        "label": "Indiana Hoosiers",
+        "probability": 0.074061,
+        "movement": 0.0
+       },
+       {
+        "label": "Miami Hurricanes",
+        "probability": 0.05795,
+        "movement": 0.0
+       },
+       {
+        "label": "LSU Tigers",
+        "probability": 0.037727,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 130,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005497/pexels-photo-7005497.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 525,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:ncaaf",
+      "market_status:open",
+      "source:odds_api",
+      "sport:football",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "concept",
+    "score": 40,
+    "reason": "1 fight on the card",
+    "headline": "This week",
+    "data": {
+     "key": "event:ufc:26sep09",
+     "name": "Mir vs Apodaca",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-09T00:20:00+00:00",
+     "is_major": false,
+     "fight_count": 1,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Apodaca",
+      "probability": 0.99,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 40,
+    "reason": "1 fight on the card",
+    "headline": "This week",
+    "data": {
+     "key": "event:ufc:26sep06",
+     "name": "Spivac vs Petrino",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-06T00:40:00+00:00",
+     "is_major": false,
+     "fight_count": 1,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Petrino",
+      "probability": 0.99,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 40,
+    "reason": "Tight game",
+    "headline": null,
+    "data": {
+     "id": 15299721,
+     "external_id": "392454bf9eb7dc5bc3c8e756dccc8616",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Matteo Berrettini",
+     "away_team": "Mariano Navone",
+     "commence_time": "2026-09-02T22:20:00+00:00",
+     "status": "live",
+     "home_score": 0,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.594,
+       "updated_at": "2026-09-02T21:51:41.319479+00:00"
+      },
+      "polymarket": {
+       "value": 0.59,
+       "updated_at": "2026-09-02T21:50:47.385134+00:00"
+      },
+      "betting_book_count": 11
+     },
+     "current_odds": {
+      "home_probability": 0.594,
+      "away_probability": 0.406,
+      "home_rendered_percent": 59,
+      "away_rendered_percent": 41
+     },
+     "opening_odds": {
+      "home_probability": 0.6092,
+      "away_probability": 0.3908,
+      "favorite": "home"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:flat",
+      "gender:men",
+      "level:professional",
+      "signal:close_matchup",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "high",
+     "confidence_score": 0.8235,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 40,
+    "reason": "",
+    "headline": null,
+    "data": {
+     "id": 15300470,
+     "external_id": "6467c41d2b7da8c9e8efcda4c5d5f7b8",
+     "sport": "baseball_mlb",
+     "sport_name": "MLB",
+     "home_team": "Los Angeles Angels",
+     "away_team": "New York Yankees",
+     "commence_time": "2026-09-03T01:38:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.3988,
+       "updated_at": "2026-09-02T21:51:39.703536+00:00"
+      },
+      "betting_book_count": 18
+     },
+     "current_odds": {
+      "home_probability": 0.3988,
+      "away_probability": 0.6012,
+      "home_rendered_percent": 40,
+      "away_rendered_percent": 60
+     },
+     "opening_odds": {
+      "home_probability": 0.3988,
+      "away_probability": 0.6012,
+      "favorite": "away"
+     },
+     "event_tags": [
+      "class:pro_major",
+      "gender:men",
+      "importance:regular_season",
+      "league:mlb",
+      "level:professional",
+      "sport:baseball",
+      "status:scheduled",
+      "tier:1",
+      "timing:primetime"
+     ],
+     "temporal_badge": null,
+     "sport_label": "MLB",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 40,
+    "reason": "Starting in under an hour",
+    "headline": null,
+    "data": {
+     "id": 15299463,
+     "external_id": "28fd88ad06c19dc8639738c812594226",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "Alexander Bublik",
+     "away_team": "Adrian Mannarino",
+     "commence_time": "2026-09-02T22:45:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.7532,
+       "updated_at": "2026-09-02T21:51:41.437924+00:00"
+      },
+      "betting_book_count": 10
+     },
+     "current_odds": {
+      "home_probability": 0.7532,
+      "away_probability": 0.2468,
+      "home_rendered_percent": 75,
+      "away_rendered_percent": 25
+     },
+     "opening_odds": {
+      "home_probability": 0.7532,
+      "away_probability": 0.2468,
+      "favorite": "home"
+     },
+     "event_tags": [
+      "class:other",
+      "gender:men",
+      "level:professional",
+      "signal:starting_soon",
+      "sport:tennis",
+      "status:scheduled",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 40,
+    "reason": "Barnsley odds shifted 41% during the game",
+    "headline": "Line moving",
+    "data": {
+     "id": 15297201,
+     "external_id": "3f4a5c0fba68ed0cd39fe47b1793b91e",
+     "sport": "soccer_england_league1",
+     "sport_name": "League 1",
+     "home_team": "Barnsley",
+     "away_team": "Blackpool",
+     "commence_time": "2026-09-02T18:45:00+00:00",
+     "status": "completed",
+     "home_score": 2,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.9907,
+       "updated_at": "2026-09-02T20:50:40.713174+00:00"
+      },
+      "betting_book_count": 4
+     },
+     "current_odds": {
+      "home_probability": 0.9907,
+      "away_probability": 0.0093,
+      "home_rendered_percent": 99,
+      "away_rendered_percent": 1
+     },
+     "opening_odds": {
+      "home_probability": 0.5851,
+      "away_probability": 0.415,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Line moving"
+     },
+     "ei": {
+      "score": 68,
+      "label": "Engaging"
+     },
+     "pulse": {
+      "score": 68,
+      "label": "Engaging"
+     },
+     "event_tags": [
+      "class:pro_minor",
+      "ei:engaging",
+      "gender:men",
+      "importance:regular_season",
+      "league:league1",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:soccer",
+      "status:completed",
+      "tier:4"
+     ],
+     "temporal_badge": null,
+     "sport_label": "LEAGUE1",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 38,
+    "reason": "11 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep20",
+     "name": "Joshua Van vs Alexandre Pantoja",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-20T04:00:00+00:00",
+     "is_major": false,
+     "fight_count": 11,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Joshua Van",
+      "probability": 0.5,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 38,
+    "reason": "14 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep13",
+     "name": "Jean Silva vs Jose Delgado",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-13T04:00:00+00:00",
+     "is_major": false,
+     "fight_count": 14,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Jean Silva",
+      "probability": 0.7715,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 38,
+    "reason": "10 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep10",
+     "name": "Edmen Shahbazyan vs Brunno Ferreira",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-10T00:00:00+00:00",
+     "is_major": false,
+     "fight_count": 10,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Joanderson Brito",
+      "probability": 0.7429,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 38,
+    "reason": "Starting in under an hour",
+    "headline": null,
+    "data": {
+     "id": 15299478,
+     "external_id": "3ef7277923a1263c6cd8da763372ae1f",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Kimberly Birrell",
+     "away_team": "Ekaterina Alexandrova",
+     "commence_time": "2026-09-02T21:55:00+00:00",
+     "status": "scheduled",
+     "home_score": null,
+     "away_score": null,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.226,
+       "updated_at": "2026-09-02T21:51:42.671885+00:00"
+      },
+      "betting_book_count": 11
+     },
+     "current_odds": {
+      "home_probability": 0.226,
+      "away_probability": 0.774,
+      "home_rendered_percent": 23,
+      "away_rendered_percent": 77
+     },
+     "opening_odds": {
+      "home_probability": 0.226,
+      "away_probability": 0.774,
+      "favorite": "away"
+     },
+     "event_tags": [
+      "class:other",
+      "gender:women",
+      "level:professional",
+      "signal:starting_soon",
+      "sport:tennis",
+      "status:scheduled",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 38,
+    "reason": "",
+    "headline": null,
+    "data": {
+     "id": 15296088,
+     "external_id": "6c968fe4325c9b7e75078abfc572560d",
+     "sport": "soccer_efl_champ",
+     "sport_name": "Championship",
+     "home_team": "Burnley",
+     "away_team": "Middlesbrough",
+     "commence_time": "2026-09-02T19:00:00+00:00",
+     "status": "completed",
+     "home_score": 1,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.4595,
+       "updated_at": "2026-09-02T21:03:10.892711+00:00"
+      },
+      "betting_book_count": 5
+     },
+     "current_odds": {
+      "home_probability": 0.4595,
+      "away_probability": 0.5405,
+      "home_rendered_percent": 46,
+      "away_rendered_percent": 54
+     },
+     "opening_odds": {
+      "home_probability": 0.3962,
+      "away_probability": 0.6038,
+      "favorite": "away"
+     },
+     "ei": {
+      "score": 51,
+      "label": "Competitive"
+     },
+     "pulse": {
+      "score": 51,
+      "label": "Competitive"
+     },
+     "event_tags": [
+      "class:international",
+      "ei:competitive",
+      "gender:men",
+      "importance:regular_season",
+      "league:efl_champ",
+      "level:professional",
+      "signal:close_matchup",
+      "signal:very_close",
+      "sport:soccer",
+      "status:completed",
+      "tier:3"
+     ],
+     "temporal_badge": null,
+     "sport_label": "CHAMP",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     },
+     "home_team_data": {
+      "team_id": 139,
+      "slug": "burnley",
+      "primary_color": "#6C1D45",
+      "secondary_color": "#00FFFF",
+      "logo_small": "https://a.espncdn.com/i/teamlogos/soccer/500/379.png",
+      "logo_large": "https://a.espncdn.com/i/teamlogos/soccer/500/379.png",
+      "record": "4-10-24",
+      "abbreviation": "BUR"
+     }
+    }
+   },
+   {
+    "type": "futures",
+    "score": 37,
+    "reason": "Scottie Scheffler (11%) leads PGA Championship Winner across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Scottie Scheffler leads at 11% across 2 sources",
+    "data": {
+     "id": 5,
+     "name": "PGA Championship Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "golf",
+     "source": "odds_api",
+     "source_count": 2,
+     "sources": [
+      "odds_api",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 271,
+       "name": "Scottie Scheffler",
+       "probability": 0.1143,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 272,
+       "name": "Rory McIlroy",
+       "probability": 0.0669,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 7
+      },
+      {
+       "id": 274,
+       "name": "Jon Rahm",
+       "probability": 0.0459,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 5
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 197,
+     "canonical_market_key": "golf:PGA:championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Scottie Scheffler",
+        "probability": 0.1143,
+        "movement": 0.0
+       },
+       {
+        "label": "Rory McIlroy",
+        "probability": 0.0669,
+        "movement": 0.0
+       },
+       {
+        "label": "Jon Rahm",
+        "probability": 0.0459,
+        "movement": 0.0
+       },
+       {
+        "label": "Xander Schauffele",
+        "probability": 0.0372,
+        "movement": 0.0
+       },
+       {
+        "label": "Ludvig Aberg",
+        "probability": 0.0351,
+        "movement": 0.0
+       },
+       {
+        "label": "Cameron Young",
+        "probability": 0.0344,
+        "movement": 0.0
+       },
+       {
+        "label": "Bryson DeChambeau",
+        "probability": 0.0251,
+        "movement": 0.0
+       },
+       {
+        "label": "Matthew Fitzpatrick",
+        "probability": 0.023,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 189,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/4468056/pexels-photo-4468056.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "league:pga",
+      "market_status:open",
+      "source:odds_api",
+      "sport:golf",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 37,
+    "reason": "Scottie Scheffler (11%) leads The Open Winner across 2 sources",
+    "headline": "Tracked by 2 sources",
+    "context_summary": "Scottie Scheffler leads at 11% across 2 sources",
+    "data": {
+     "id": 6,
+     "name": "The Open Winner",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "golf",
+     "source": "odds_api",
+     "source_count": 2,
+     "sources": [
+      "odds_api",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": null,
+     "top_outcomes": [
+      {
+       "id": 402,
+       "name": "Scottie Scheffler",
+       "probability": 0.109,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 403,
+       "name": "Rory McIlroy",
+       "probability": 0.0722,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 7
+      },
+      {
+       "id": 404,
+       "name": "Jon Rahm",
+       "probability": 0.0379,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 4
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 205,
+     "canonical_market_key": "golf::championship:",
+     "group_id": null,
+     "group_type": null,
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": false,
+      "comparison_theme": null,
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Scottie Scheffler",
+        "probability": 0.109,
+        "movement": 0.0
+       },
+       {
+        "label": "Rory McIlroy",
+        "probability": 0.0722,
+        "movement": 0.0
+       },
+       {
+        "label": "Jon Rahm",
+        "probability": 0.0379,
+        "movement": 0.0
+       },
+       {
+        "label": "Tommy Fleetwood",
+        "probability": 0.0355,
+        "movement": 0.0
+       },
+       {
+        "label": "Xander Schauffele",
+        "probability": 0.0307,
+        "movement": 0.0
+       },
+       {
+        "label": "Matthew Fitzpatrick",
+        "probability": 0.0298,
+        "movement": 0.0
+       },
+       {
+        "label": "Cameron Young",
+        "probability": 0.0287,
+        "movement": 0.0
+       },
+       {
+        "label": "Ludvig Aberg",
+        "probability": 0.0287,
+        "movement": 0.0
+       }
+      ],
+      "remaining_outcome_count": 197,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/14685268/pexels-photo-14685268.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": null,
+     "image_height": null,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:odds_api",
+      "sport:golf",
+      "tier:1"
+     ]
+    }
+   },
+   {
+    "type": "event",
+    "score": 35,
+    "reason": "Tight game",
+    "headline": null,
+    "data": {
+     "id": 15299607,
+     "external_id": "bea843e2751e6a827b058f16dfa5a902",
+     "sport": "tennis_atp_us_open",
+     "sport_name": "ATP US Open",
+     "home_team": "James Duckworth",
+     "away_team": "Wu Yibing",
+     "commence_time": "2026-09-02T22:00:00+00:00",
+     "status": "live",
+     "home_score": 0,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.4322,
+       "updated_at": "2026-09-02T21:51:41.264417+00:00"
+      },
+      "betting_book_count": 10
+     },
+     "current_odds": {
+      "home_probability": 0.4322,
+      "away_probability": 0.5678,
+      "home_rendered_percent": 43,
+      "away_rendered_percent": 57
+     },
+     "opening_odds": {
+      "home_probability": 0.4299,
+      "away_probability": 0.5701,
+      "favorite": "away"
+     },
+     "event_tags": [
+      "class:other",
+      "gender:mixed",
+      "level:professional",
+      "signal:close_matchup",
+      "sport:tennis",
+      "status:live",
+      "tier:2"
+     ],
+     "temporal_badge": "Live",
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 35,
+    "reason": "",
+    "headline": null,
+    "data": {
+     "id": 15297202,
+     "external_id": "5d3e9a0006c158e1dcee2d1142c453aa",
+     "sport": "soccer_england_league1",
+     "sport_name": "League 1",
+     "home_team": "Burton Albion",
+     "away_team": "Wimbledon",
+     "commence_time": "2026-09-02T18:45:00+00:00",
+     "status": "completed",
+     "home_score": 4,
+     "away_score": 1,
+     "win_probability_sources": {
+      "betting_book_count": 1
+     },
+     "current_odds": {
+      "home_probability": 0.5508,
+      "away_probability": 0.4492,
+      "home_rendered_percent": 55,
+      "away_rendered_percent": 45
+     },
+     "opening_odds": {
+      "home_probability": 0.5508,
+      "away_probability": 0.4492,
+      "favorite": "home"
+     },
+     "ei": {
+      "score": 61,
+      "label": "Engaging"
+     },
+     "pulse": {
+      "score": 61,
+      "label": "Engaging"
+     },
+     "event_tags": [
+      "class:pro_minor",
+      "ei:engaging",
+      "gender:men",
+      "importance:regular_season",
+      "league:league1",
+      "level:professional",
+      "signal:close_matchup",
+      "sport:soccer",
+      "status:completed",
+      "tier:4"
+     ],
+     "temporal_badge": null,
+     "sport_label": "LEAGUE1",
+     "confidence_tier": "low",
+     "confidence_score": 0.1765,
+     "confidence_signals": {
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "tournament",
+    "score": 30,
+    "reason": "PGA Tour: Scottie Scheffler leads at 5.9%",
+    "headline": null,
+    "data": {
+     "key": "golfers_to_win_a_pga_tour_major_in_2027",
+     "name": "Golfers To Win A Pga Tour Major In 2027",
+     "slug": "golfers-to-win-a-pga-tour-major-in-2027",
+     "tour": "pga",
+     "tour_label": "PGA Tour",
+     "is_major": false,
+     "venue": null,
+     "location": null,
+     "start_date": null,
+     "end_date": null,
+     "schedule_status": null,
+     "commence_time": "2028-01-14T15:00:00+00:00",
+     "resolution_date": "2028-01-14T15:00:00+00:00",
+     "golfers": [
+      {
+       "name": "Scottie Scheffler",
+       "probability": 0.059,
+       "rank": 1,
+       "movement_24h": null
+      },
+      {
+       "name": "Rory McIlroy",
+       "probability": 0.044,
+       "rank": 2,
+       "movement_24h": null
+      },
+      {
+       "name": "Jon Rahm",
+       "probability": 0.029,
+       "rank": 3,
+       "movement_24h": null
+      },
+      {
+       "name": "Ludvig Aberg",
+       "probability": 0.024,
+       "rank": 4,
+       "movement_24h": null
+      },
+      {
+       "name": "Xander Schauffele",
+       "probability": 0.024,
+       "rank": 5,
+       "movement_24h": null
+      },
+      {
+       "name": "Bryson DeChambeau",
+       "probability": 0.023,
+       "rank": 6,
+       "movement_24h": null
+      },
+      {
+       "name": "Cameron Young",
+       "probability": 0.023,
+       "rank": 7,
+       "movement_24h": null
+      },
+      {
+       "name": "Jackson Koivun",
+       "probability": 0.021,
+       "rank": 8,
+       "movement_24h": null
+      },
+      {
+       "name": "Matt Fitzpatrick",
+       "probability": 0.019,
+       "rank": 9,
+       "movement_24h": null
+      },
+      {
+       "name": "Collin Morikawa",
+       "probability": 0.017,
+       "rank": 10,
+       "movement_24h": null
+      }
+     ],
+     "market_ids": [
+      56775495
+     ],
+     "source_count": 1,
+     "is_marquee": false,
+     "marquee_whathit": false
+    }
+   },
+   {
+    "type": "concept",
+    "score": 30,
+    "reason": "14 weekend markets",
+    "headline": null,
+    "data": {
+     "key": "event:f1:spanish-grand-prix-driver-winner",
+     "name": "Spanish Grand Prix: Driver Winner",
+     "domain": "f1",
+     "status": "upcoming",
+     "start_date": "2026-09-20T13:00:00+00:00",
+     "is_major": false,
+     "fight_count": 0,
+     "entry_count": 14,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Nico Hulkenberg",
+      "probability": 0.475,
+      "movement_24h": null,
+      "field_size": 1
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 30,
+    "reason": "2 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep19",
+     "name": "Sy vs Bukauskas",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-19T17:40:00+00:00",
+     "is_major": false,
+     "fight_count": 2,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Sy",
+      "probability": 0.665,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 30,
+    "reason": "2 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep17",
+     "name": "Rivera vs Darby",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-17T00:20:00+00:00",
+     "is_major": false,
+     "fight_count": 2,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Darby",
+      "probability": 0.99,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "tournament",
+    "score": 30,
+    "reason": "PGA Tour: Scottie Scheffler leads at 18.2%",
+    "headline": null,
+    "data": {
+     "key": "biltmore_championship_asheville",
+     "name": "Biltmore Championship Asheville",
+     "slug": "biltmore-championship-asheville",
+     "tour": "pga",
+     "tour_label": "PGA Tour",
+     "is_major": false,
+     "venue": "The Cliffs at Walnut Cove",
+     "location": "Arden, NC",
+     "start_date": "2026-09-17T00:00:00+00:00",
+     "end_date": "2026-09-20T00:00:00+00:00",
+     "schedule_status": "upcoming",
+     "commence_time": "2026-09-17T00:00:00+00:00",
+     "resolution_date": "2026-09-20T00:00:00+00:00",
+     "golfers": [
+      {
+       "name": "Scottie Scheffler",
+       "probability": 0.182,
+       "rank": 1,
+       "movement_24h": null
+      },
+      {
+       "name": "Rory McIlroy",
+       "probability": 0.087,
+       "rank": 2,
+       "movement_24h": null
+      },
+      {
+       "name": "Xander Schauffele",
+       "probability": 0.084,
+       "rank": 3,
+       "movement_24h": null
+      },
+      {
+       "name": "Ludvig Aberg",
+       "probability": 0.047,
+       "rank": 4,
+       "movement_24h": null
+      },
+      {
+       "name": "Patrick Cantlay",
+       "probability": 0.044,
+       "rank": 5,
+       "movement_24h": null
+      },
+      {
+       "name": "Cameron Young",
+       "probability": 0.04,
+       "rank": 6,
+       "movement_24h": null
+      },
+      {
+       "name": "Collin Morikawa",
+       "probability": 0.04,
+       "rank": 7,
+       "movement_24h": null
+      },
+      {
+       "name": "Tommy Fleetwood",
+       "probability": 0.038,
+       "rank": 8,
+       "movement_24h": null
+      },
+      {
+       "name": "Sam Burns",
+       "probability": 0.038,
+       "rank": 9,
+       "movement_24h": null
+      },
+      {
+       "name": "Wyndham Clark",
+       "probability": 0.036,
+       "rank": 10,
+       "movement_24h": null
+      }
+     ],
+     "market_ids": [
+      59863408,
+      59863406,
+      59863407,
+      59863410,
+      59863409
+     ],
+     "source_count": 1,
+     "is_marquee": false,
+     "marquee_whathit": false
+    }
+   },
+   {
+    "type": "concept",
+    "score": 30,
+    "reason": "3 fights on the card",
+    "headline": null,
+    "data": {
+     "key": "event:ufc:26sep15",
+     "name": "McCracken vs Sanchez",
+     "domain": "ufc",
+     "status": "upcoming",
+     "start_date": "2026-09-15T23:40:00+00:00",
+     "is_major": false,
+     "fight_count": 3,
+     "entry_count": 0,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Sanchez",
+      "probability": 0.99,
+      "movement_24h": null,
+      "field_size": 2
+     }
+    }
+   },
+   {
+    "type": "concept",
+    "score": 30,
+    "reason": "20 weekend markets",
+    "headline": null,
+    "data": {
+     "key": "event:f1:italian-grand-prix-winner",
+     "name": "Italian Grand Prix Winner",
+     "domain": "f1",
+     "status": "upcoming",
+     "start_date": "2026-09-13T13:00:00+00:00",
+     "is_major": false,
+     "fight_count": 0,
+     "entry_count": 20,
+     "is_marquee": false,
+     "marquee_whathit": false,
+     "leader": {
+      "name": "Lando Norris",
+      "probability": 0.277,
+      "movement_24h": null,
+      "field_size": 22
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 30,
+    "reason": "Jasmine Paolini odds shifted 30% during the game",
+    "headline": "Line moving",
+    "data": {
+     "id": 15298728,
+     "external_id": "fb6637e0cf941527bc62a2fe98f131b4",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Jasmine Paolini",
+     "away_team": "Lucrezia Stefanini",
+     "commence_time": "2026-09-02T15:02:51+00:00",
+     "status": "completed",
+     "home_score": 2,
+     "away_score": 0,
+     "win_probability_sources": {
+      "betting": {
+       "value": 0.9737,
+       "updated_at": "2026-09-02T16:38:37.627215+00:00"
+      },
+      "betting_book_count": 4
+     },
+     "current_odds": {
+      "home_probability": 0.9737,
+      "away_probability": 0.0263,
+      "home_rendered_percent": 97,
+      "away_rendered_percent": 3
+     },
+     "opening_odds": {
+      "home_probability": 0.6714,
+      "away_probability": 0.3286,
+      "favorite": "home"
+     },
+     "highlight": {
+      "label": "Line moving"
+     },
+     "ei": {
+      "score": 72,
+      "label": "Exciting"
+     },
+     "pulse": {
+      "score": 72,
+      "label": "Exciting"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:exciting",
+      "gender:women",
+      "level:professional",
+      "signal:blowout",
+      "signal:line_moving",
+      "sport:tennis",
+      "status:completed",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "sources_agree": false,
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "event",
+    "score": 30,
+    "reason": "",
+    "headline": null,
+    "data": {
+     "id": 15299611,
+     "external_id": "1b92d447c008fe63c572b44cbd065521",
+     "sport": "tennis_wta_us_open",
+     "sport_name": "WTA US Open",
+     "home_team": "Karolina Pliskova",
+     "away_team": "Diana Shnaider",
+     "commence_time": "2026-09-02T15:00:00+00:00",
+     "status": "completed",
+     "home_score": 0,
+     "away_score": 2,
+     "win_probability_sources": {
+      "betting_book_count": 1
+     },
+     "current_odds": {
+      "home_probability": 0.2381,
+      "away_probability": 0.7619,
+      "home_rendered_percent": 24,
+      "away_rendered_percent": 76
+     },
+     "opening_odds": {
+      "home_probability": 0.2381,
+      "away_probability": 0.7619,
+      "favorite": "away"
+     },
+     "ei": {
+      "score": 62,
+      "label": "Engaging"
+     },
+     "pulse": {
+      "score": 62,
+      "label": "Engaging"
+     },
+     "event_tags": [
+      "class:other",
+      "ei:engaging",
+      "gender:women",
+      "level:professional",
+      "sport:tennis",
+      "status:completed",
+      "tier:2"
+     ],
+     "temporal_badge": null,
+     "sport_label": "OPEN",
+     "confidence_tier": "low",
+     "confidence_score": 0.1765,
+     "confidence_signals": {
+      "has_closing_line": false
+     }
+    }
+   },
+   {
+    "type": "tournament",
+    "score": 30,
+    "reason": "PGA Tour: Miles Russell leads at 3.2%",
+    "headline": null,
+    "data": {
+     "key": "golfers_to_win_a_pga_tour_major_before_2030",
+     "name": "Golfers To Win A Pga Tour Major Before 2030",
+     "slug": "golfers-to-win-a-pga-tour-major-before-2030",
+     "tour": "pga",
+     "tour_label": "PGA Tour",
+     "is_major": false,
+     "venue": null,
+     "location": null,
+     "start_date": null,
+     "end_date": null,
+     "schedule_status": null,
+     "commence_time": "2026-07-19T18:17:17+00:00",
+     "resolution_date": "2030-07-07T14:00:00+00:00",
+     "golfers": [
+      {
+       "name": "Miles Russell",
+       "probability": 0.032,
+       "rank": 1,
+       "movement_24h": null
+      },
+      {
+       "name": "Jackson Koivun",
+       "probability": 0.032,
+       "rank": 2,
+       "movement_24h": null
+      },
+      {
+       "name": "Blades Brown",
+       "probability": 0.02,
+       "rank": 3,
+       "movement_24h": null
+      },
+      {
+       "name": "Bud Cauley",
+       "probability": 0.02,
+       "rank": 4,
+       "movement_24h": null
+      },
+      {
+       "name": "Andrew Novak",
+       "probability": 0.02,
+       "rank": 5,
+       "movement_24h": null
+      },
+      {
+       "name": "Aldrich Potgieter",
+       "probability": 0.02,
+       "rank": 6,
+       "movement_24h": null
+      },
+      {
+       "name": "Alex Smalley",
+       "probability": 0.02,
+       "rank": 7,
+       "movement_24h": null
+      },
+      {
+       "name": "Daniel Berger",
+       "probability": 0.016,
+       "rank": 8,
+       "movement_24h": null
+      },
+      {
+       "name": "Akshay Bhatia",
+       "probability": 0.016,
+       "rank": 9,
+       "movement_24h": null
+      },
+      {
+       "name": "Michael Brennan",
+       "probability": 0.016,
+       "rank": 10,
+       "movement_24h": null
+      }
+     ],
+     "market_ids": [
+      52755548
+     ],
+     "source_count": 1,
+     "is_marquee": false,
+     "marquee_whathit": false
+    }
+   },
+   {
+    "type": "futures",
+    "score": 23,
+    "reason": "Seattle moved down 98.0 points from opening in Leagues Cup Champion",
+    "headline": "Seattle down 98.0 points from opening",
+    "context_summary": "Seattle down 98.0 points from opening; Toluca leads at 26%",
+    "data": {
+     "id": 58728527,
+     "name": "Leagues Cup Champion",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "soccer",
+     "source": "kalshi",
+     "source_count": 2,
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "market_tier": 1,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-09-21T02:00:00+00:00",
+     "top_outcomes": [
+      {
+       "id": 218009555,
+       "name": "Toluca",
+       "probability": 0.2566,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 26
+      },
+      {
+       "id": 218009554,
+       "name": "America",
+       "probability": 0.2528,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 25
+      },
+      {
+       "id": 218009569,
+       "name": "Monterrey",
+       "probability": 0.1434,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 14
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 36,
+     "canonical_market_key": "soccer::championship:2026",
+     "group_id": "kalshi:KXLEAGUESCUP-26",
+     "group_type": "kalshi_event",
+     "discover_card": {
+      "suggested_format": "outcome_distribution",
+      "bundle_candidate": true,
+      "comparison_theme": "sports_paths",
+      "threshold_points": [],
+      "distribution_outcomes": [
+       {
+        "label": "Toluca",
+        "probability": 0.2566,
+        "movement": null
+       },
+       {
+        "label": "America",
+        "probability": 0.2528,
+        "movement": null
+       },
+       {
+        "label": "Monterrey",
+        "probability": 0.1434,
+        "movement": null
+       },
+       {
+        "label": "Leon",
+        "probability": 0.1057,
+        "movement": null
+       },
+       {
+        "label": "Cruz Azul",
+        "probability": 0.0075,
+        "movement": null
+       },
+       {
+        "label": "Juarez",
+        "probability": 0.0075,
+        "movement": null
+       },
+       {
+        "label": "Necaxa",
+        "probability": 0.0075,
+        "movement": null
+       },
+       {
+        "label": "Seattle",
+        "probability": 0.0075,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 28,
+      "qa_signals": [
+       "multi_source_consistency_check"
+      ],
+      "public_source_disagreement": false,
+      "reasons": [
+       "multi_outcome_distribution",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/7005497/pexels-photo-7005497.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": 940,
+     "image_height": 627,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.5294,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:championship",
+      "market_status:open",
+      "source:kalshi",
+      "sport:soccer",
+      "tier:1"
+     ],
+     "story_key": "story:minor_soccer_leagues"
+    }
+   }
+  ],
+  "total": 83,
+  "limit": 200,
+  "offset": 0,
+  "has_more": false,
+  "cache": {
+   "status": "miss",
+   "built_at": 1788385911.3764944,
+   "ttl_seconds": 30,
+   "stale_ttl_seconds": 60,
+   "live": true
+  }
+ }
+}

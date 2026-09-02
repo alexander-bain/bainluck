@@ -22,7 +22,14 @@ import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/comp
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
-import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
+import {
+  sportsFeedKey,
+  groupedFeedKey,
+  sportsFeedIdentity,
+  sportsLiveRailKey,
+} from "@/lib/sports/feedKey";
+import { LIVE_RAIL_LIMIT, mergeLiveRail } from "@/lib/sports/liveRail";
+import { getSportsItemId } from "@/lib/sports/feedItemId";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -36,16 +43,6 @@ import {
 // ---------------------------------------------------------------------------
 // Sports feed
 // ---------------------------------------------------------------------------
-
-// Stable per-item id for cross-page dedup (mirrors app/discover/page.tsx). The
-// paginated Sports feed can overlap a card across page boundaries; dedup keeps
-// any single question from rendering twice.
-function getSportsItemId(item: FeedItem): string {
-  if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
-  if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
-  if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
-  return `tournament-${(item.data as FeedTournamentData).key}`;
-}
 
 export default function SportsPage() {
   usePageTracking({ pageType: 'sports', pageTitle: 'Sports' });
@@ -95,6 +92,27 @@ export default function SportsPage() {
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
       );
     },
+    { refreshInterval: 30000, keepPreviousData: true }
+  );
+
+  // The LIVE projection (#2709). A second, small, bounded request for the live
+  // sub-list of the SAME ranked build the page-1 request above reads — see
+  // lib/sports/liveRail.ts for why the rail could not be sourced from page 1
+  // and why this is not simply a bigger page. It fires in parallel with page 1
+  // (no `keepPreviousData` gate, no auth gate) and its failure is inert: SWR
+  // returns undefined, `mergeLiveRail` contributes nothing, and the rail falls
+  // back to exactly the page-1-derived section it showed before this fix.
+  //
+  // Refreshed on the same 30s interval as the feed: a rail whose whole purpose
+  // is "what is happening right now" must not age differently from the list it
+  // sits above.
+  const { data: liveRailData } = useSWR(
+    sportsLiveRailKey(user?.uid),
+    () =>
+      fetchFeed(
+        { limit: LIVE_RAIL_LIMIT, offset: 0, mode: "sports", live_only: true },
+        { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
+      ),
     { refreshInterval: 30000, keepPreviousData: true }
   );
 
@@ -224,9 +242,26 @@ export default function SportsPage() {
   // The accumulated, de-duplicated feed across all loaded pages. Everything
   // downstream (sections, stats) reads this, so pagination is invisible to the
   // rest of the page.
-  const mergedItems = useMemo(
+  // #2709: the live projection joins the pool FIRST, so "Live Now" comes out in
+  // the build's own score order and holds every live match rather than the ones
+  // that fit in page 1. `dedupeById` keeps the first occurrence, so a live card
+  // that is also on page 1 appears once, from the rail — same card, same id.
+  // Nothing else on the page moves: a live item is in no other section.
+  //
+  // 🔴 THE RANKED POOL STAYS ITS OWN NAME. Pagination offsets and the L2-241
+  // loading terminal are both statements about the PAGINATED FEED REQUEST — how
+  // far through the ranked list we are, and whether its initial page has landed
+  // — and the live rail is a different request that answers neither. Folding it
+  // in would make the offset skip items and would let a resolved rail report
+  // the feed's own first page as no longer pending. Only what RENDERS reads the
+  // merged pool.
+  const rankedItems = useMemo(
     () => dedupeById([...page1Items, ...pagedItems], getSportsItemId),
     [page1Items, pagedItems]
+  );
+  const mergedItems = useMemo(
+    () => dedupeById(mergeLiveRail(liveRailData?.items, rankedItems), getSportsItemId),
+    [liveRailData, rankedItems]
   );
 
   // =========================================================================
@@ -246,7 +281,9 @@ export default function SportsPage() {
   // skeleton exactly as before; setting it to an approved value activates the
   // terminal with no other code change. The decision logic + its C132
   // conformance live in lib/discover/foregroundTerminal.ts.
-  const initialPending = feedLoading && !feedData && mergedItems.length === 0;
+  // `rankedItems`, not `mergedItems` (#2709): a resolved live rail is not
+  // evidence that the feed's own initial page has landed.
+  const initialPending = feedLoading && !feedData && rankedItems.length === 0;
   const [foregroundBudgetExpired, setForegroundBudgetExpired] = useState(false);
 
   // Reset the budget clock whenever a new request begins (identity change).

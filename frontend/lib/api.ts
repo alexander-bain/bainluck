@@ -1085,6 +1085,14 @@ export async function fetchFeed(
     tags?: string[];
     mode?: string;
     category?: string;
+    /**
+     * Ask for only the IN-PROGRESS items of this feed, in the same ranked
+     * order (#2709). A projection of the same server-side build — it costs no
+     * extra build and does not re-rank — so a "Live Now" rail can be sourced
+     * from every live match instead of from the live matches that happen to
+     * land inside the bounded first page.
+     */
+    live_only?: boolean;
   },
   // L2-242 / C133 — for the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor, omit `x-session-id` so the backend serves the
@@ -1109,6 +1117,10 @@ export async function fetchFeed(
   if (params?.tags?.length) searchParams.set("tags", JSON.stringify(params.tags));
   if (params?.mode) searchParams.set("mode", params.mode);
   if (params?.category) searchParams.set("category", params.category);
+  // Set only when TRUE, matching every other boolean above. A `live_only=false`
+  // on the wire would be a different URL for the identical page, which would
+  // miss the in-flight claim below and split the server's response cache in two.
+  if (params?.live_only) searchParams.set("live_only", "true");
 
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the

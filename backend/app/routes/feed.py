@@ -152,6 +152,7 @@ from app.utils.feed_cache import (
     payload_contains_live_event,
     render_feed_page_from_base,
 )
+from app.utils.feed_live_section import filter_live_items
 from app.utils.polymarket_email_ground_truth import (
     load_polymarket_email_ground_truth_report_from_env,
     summarize_polymarket_email_ground_truth,
@@ -1793,6 +1794,16 @@ async def get_feed(
         None,
         description='Filter by taxonomy tags (JSON array, e.g., ["sport:basketball"])',
     ),
+    live_only: bool = Query(
+        False,
+        description=(
+            "Return only the IN-PROGRESS items of this ranked feed, in the same "
+            "order. A projection of the same build, like `offset` — it does not "
+            "re-rank and does not change what is built. Exists so a 'Live Now' "
+            "rail can be sourced from every live match rather than from the "
+            "live matches that happen to fall inside the first page (#2709)."
+        ),
+    ),
     event_pct: Optional[float] = Query(
         None,
         description="Override event percentage floor (0.0-1.0). Discover uses 0.15.",
@@ -2062,6 +2073,7 @@ async def get_feed(
             my_teams_only=my_teams_only,
             mode=mode,
             category=category,
+            live_only=live_only,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
         # SAME function, so a warmed key can never drift from the read key.
@@ -2568,8 +2580,20 @@ async def get_feed(
             # key too; re-typing the list would mean the next new field keys the
             # pages but not the base, and page 2 would come off the wrong list —
             # a wrong answer that no latency measurement would notice.
+            #
+            # 🔴 THE EXCLUSION LIST IS TWO NAMES NOW, AND THE SECOND ONE IS A
+            # CLAIM. `offset` is excluded because it is a window onto the built
+            # list; `live_only` (UX-1035) is excluded because it is a FILTER on
+            # the same built list — both select, neither builds. Keying the base
+            # on it would fork one base into two identical builds and halve the
+            # warmer's coverage for nothing. This is only sound while the filter
+            # stays downstream of the build, which is why it lives at the
+            # `paginated` slice and `test_feed_page_base_p141.py` pins the
+            # exclusion set rather than letting it be re-typed here.
             _page_base_shape = {
-                k: v for k, v in _cache_shape.items() if k != "offset"
+                k: v
+                for k, v in _cache_shape.items()
+                if k not in ("offset", "live_only")
             }
             _page_base_key = feed_page_base_cache_key(**_page_base_shape)
             _base_raw, _base_status = (
@@ -2581,7 +2605,9 @@ async def get_feed(
                 _safe_cache_payload(_base_raw) if _base_raw is not None else None
             )
             _base_page = (
-                render_feed_page_from_base(_base_body, limit=limit, offset=offset)
+                render_feed_page_from_base(
+                    _base_body, limit=limit, offset=offset, live_only=live_only
+                )
                 if _base_body is not None
                 else None
             )
@@ -3123,7 +3149,27 @@ async def get_feed(
             }
 
         total = len(feed_items)
-        paginated = feed_items[offset : offset + limit]
+
+        # --- UX-1035 / #2709: the live projection ---------------------------
+        #
+        # ``live_only`` selects from the built list; it does not change what was
+        # built. So it lands HERE, beside the ``offset`` slice it is a sibling
+        # of, and NOT upstream in the pools — the "Live Now" rail must be the
+        # live part of the same ranking the page below it shows, or the rail
+        # and the list become two opinions about one feed.
+        #
+        # 🔴 ``feed_items`` AND ``total`` ARE DELIBERATELY LEFT WHOLE. The
+        # LAT-P141 page base is published from both, several hundred lines
+        # below, under a key that has no ``live_only`` in it because one base
+        # serves the rail and the scroll. Filtering in place would store the
+        # live sub-list as the anonymous base and hand every subsequent reader
+        # a 14-item feed — and because the base's integrity check is
+        # ``len(items) == total``, a filter that moved only one of the two
+        # would fail closed and silently disable the base site-wide instead.
+        # The projected page therefore gets its own two names.
+        _page_items = filter_live_items(feed_items) if live_only else feed_items
+        _page_total = len(_page_items) if live_only else total
+        paginated = _page_items[offset : offset + limit]
 
         debug_payload = None
         if debug:
@@ -3282,10 +3328,10 @@ async def get_feed(
 
         payload = {
             "items": paginated,
-            "total": total,
+            "total": _page_total,
             "limit": limit,
             "offset": offset,
-            "has_more": (offset + limit) < total,
+            "has_more": (offset + limit) < _page_total,
         }
 
         if my_teams_only:

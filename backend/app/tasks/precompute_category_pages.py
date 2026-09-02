@@ -955,6 +955,18 @@ async def _prewarm_feed_shape(
                     my_teams_only=False,
                     mode=shape["mode"],
                     tags=None,
+                    # UX-1035 / #2709. The warmer warms the SCROLL's key, not the
+                    # live rail's — the rail is served off the page base this
+                    # build publishes, so it is already warm and has no key of
+                    # its own to fill. Explicit for the reason stated above
+                    # `category`, and here the omission would have been worse
+                    # than a poisoned key: `Query(False)` is TRUTHY, so an
+                    # omitted `live_only` would make the warmer build the
+                    # 14-item live list and publish it under the ordinary feed
+                    # key. Every warm first paint on the site would have been
+                    # live games only. Caught by
+                    # `test_prewarm_passes_every_get_feed_parameter_explicitly`.
+                    live_only=False,
                     event_pct=shape["event_pct"],
                     debug=False,
                     debug_ground_truth=False,

@@ -7,6 +7,8 @@ import logging
 import os
 from typing import Any, Optional
 
+from app.utils.feed_live_section import filter_live_items
+
 logger = logging.getLogger(__name__)
 
 FEED_RESPONSE_CACHE_PREFIX = "feed_cache"
@@ -236,7 +238,7 @@ def feed_page_base_cache_key(
 
 
 def render_feed_page_from_base(
-    base: Any, *, limit: int, offset: int
+    base: Any, *, limit: int, offset: int, live_only: bool = False
 ) -> Optional[dict]:
     """Slice a stored page base into the payload ``get_feed`` would have built.
 
@@ -264,6 +266,14 @@ def render_feed_page_from_base(
     served page's ``cache`` metadata and nowhere else, and a stray top-level
     key would change the public response shape. The caller reads it off the
     base — ``feed_page_base_built_at`` — and stamps it there.
+
+    ``live_only`` (UX-1035 / #2709) is a PROJECTION of the same base, in exactly
+    the sense ``offset`` is: it selects from the built list and never changes
+    what was built. That is why it is not in the base key — one base still
+    serves the rail and the scroll — and why the ``len(items) == total``
+    integrity check above runs against the WHOLE base, before the filter. After
+    it, ``total`` is the live count, so ``has_more`` describes the live list the
+    caller is paging, not the ranked list it came from.
     """
     if not isinstance(base, dict):
         return None
@@ -273,6 +283,9 @@ def render_feed_page_from_base(
     total = base.get("total")
     if not isinstance(total, int) or total != len(items):
         return None
+    if live_only:
+        items = filter_live_items(items)
+        total = len(items)
     out = dict(base)
     out["items"] = items[offset : offset + limit]
     out["total"] = total
@@ -320,6 +333,7 @@ def feed_response_cache_key(
     my_teams_only: bool = False,
     mode: Optional[str] = None,
     category: Optional[str] = None,
+    live_only: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -358,6 +372,14 @@ def feed_response_cache_key(
         # in `parts`, so a bare separator is forgeable. `cat=<len>:<value>` is
         # not: two different categories cannot produce the same prefix.
         parts = f"cat={len(category)}:{category}|{parts}"
+    if live_only:
+        # PREPENDED AND ONLY WHEN TRUE, for the same reason `category` is: a
+        # request that does not ask for the live projection must hash the
+        # byte-identical string it hashed before UX-1035, or shipping this
+        # would cold-start every warm feed key on the site at once. The two
+        # prefixes compose in a fixed order, so a category live-rail gets its
+        # own key rather than colliding with either single-prefix form.
+        parts = f"live=1|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 

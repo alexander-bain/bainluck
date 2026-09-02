@@ -48,6 +48,21 @@ export function groupedFeedKey(userId: string | null | undefined): SportsFeedKey
 }
 
 /**
+ * The LIVE-projection SWR key for the current identity (#2709).
+ *
+ * A separate key from `sportsFeedKey`, not a variant of it, for the reason the
+ * anon/user split exists two functions up: SWR races and caches per key, and
+ * these two requests return different bodies from the same build. Sharing a key
+ * would let the 14-item live list overwrite the 20-item first page in the cache
+ * — the page would render the rail and nothing else.
+ */
+export function sportsLiveRailKey(
+  userId: string | null | undefined,
+): SportsFeedKey {
+  return userId ? ["feed-sports-live", userId] : ["feed-sports-live-anon"];
+}
+
+/**
  * A stable identity token for the current key, used to detect a genuine
  * identity change (anon → user, user → different user, user → logout). When this
  * changes the page must drop paginated tail state accumulated under the previous

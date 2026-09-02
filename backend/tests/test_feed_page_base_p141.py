@@ -218,15 +218,32 @@ def _cache_shape_params() -> set[str]:
     }
 
 
+# The response-key inputs that are NOT build inputs, and so are deliberately
+# absent from the base key. Every name here is a claim that the field SELECTS
+# from the built list and never changes it:
+#
+#   offset     — a window onto the list (LAT-P141).
+#   live_only  — a filter on the list (UX-1035 / #2709): the "Live Now" rail is
+#                the live part of the SAME ranking the page below it shows.
+#
+# Adding a third name is a real decision, not a formality: it says one stored
+# base may serve two different responses, and it is only true while the field is
+# applied downstream of the build. `test_the_live_projection_is_applied_at_the_
+# slice_not_in_the_pools` and its sibling below pin that for `live_only`.
+_PROJECTIONS_NOT_BUILD_INPUTS = {"offset", "live_only"}
+
+
 def test_the_base_key_covers_every_build_input_the_response_key_covers():
     """🔴 THE DRIFT GUARD. Add a build input to ``_cache_shape`` and forget it
     here and page 2 comes off a list built under different inputs. That is a
     WRONG page, served fast, with nothing measuring it."""
     shape = _cache_shape_params()
     keyed = set(inspect.signature(feed_page_base_cache_key).parameters)
-    assert shape - {"offset"} == keyed, (
-        "feed_page_base_cache_key must key on exactly _cache_shape minus offset; "
-        f"missing={shape - {'offset'} - keyed} extra={keyed - (shape - {'offset'})}"
+    expected = shape - _PROJECTIONS_NOT_BUILD_INPUTS
+    assert expected == keyed, (
+        "feed_page_base_cache_key must key on exactly _cache_shape minus "
+        f"{sorted(_PROJECTIONS_NOT_BUILD_INPUTS)}; "
+        f"missing={expected - keyed} extra={keyed - expected}"
     )
 
 
@@ -387,7 +404,76 @@ def test_the_base_shape_is_derived_from_the_cache_shape_by_exclusion():
     ``test_the_base_key_covers_every_build_input...`` would be introduced. This
     pins the mechanism, not just the outcome."""
     src = inspect.getsource(get_feed)
-    assert 'k: v for k, v in _cache_shape.items() if k != "offset"' in src
+    assert (
+        'k: v\n                for k, v in _cache_shape.items()\n'
+        '                if k not in ("offset", "live_only")'
+    ) in src
+
+
+def test_the_live_projection_never_rebinds_the_list_the_base_is_published_from():
+    """🔴 THE TRAP UX-1035 HAD TO STEP AROUND, PINNED.
+
+    The page base is published hundreds of lines below the filter, from
+    ``feed_items`` and ``total``. Filtering either one IN PLACE would store a
+    ``live_only`` request's 14-item sub-list as the ANONYMOUS base — every
+    subsequent reader on the site served a feed of live games only. Worse, the
+    near-miss is silent in the other direction: the base's integrity check is
+    ``len(items) == total``, so rebinding one name and not the other makes
+    ``render_feed_page_from_base`` fail closed and disables the page base
+    site-wide, which reads as a latency regression with no wrong answer to
+    trace it back to.
+
+    So the projection must land in NEW names. This asserts the mechanism,
+    because the outcome — a poisoned shared cache under a rare query param —
+    is exactly the kind no unit test naturally reaches.
+    """
+    src = inspect.getsource(get_feed)
+    assert (
+        "_page_items = filter_live_items(feed_items) if live_only else feed_items"
+        in src
+    )
+    assert "feed_items = filter_live_items" not in src
+    assert "total = len(filter_live_items" not in src
+    # And the base still publishes the WHOLE list under the WHOLE count.
+    publish = src[src.index("if _page_base_key:") :]
+    publish = publish[: publish.index("schedule_background")]
+    assert '_page_base_body["items"] = feed_items' in publish
+    assert '_page_base_body["total"] = total' in publish
+
+
+def test_the_live_projection_is_applied_at_the_slice_not_in_the_pools():
+    """``live_only`` is licensed to skip the base key ONLY because it selects
+    from the built list. If it ever reaches the pools or the display chain it
+    becomes a build input, one base would serve two different lists, and the
+    exclusion in ``_PROJECTIONS_NOT_BUILD_INPUTS`` becomes a wrong answer."""
+    src = inspect.getsource(get_feed)
+    chain_at = src.index("feed_items, _chain_meta = apply_discover_display_chain(")
+    slice_at = src.index("_page_items = filter_live_items(")
+    assert slice_at > chain_at, "the live filter must run AFTER the display chain"
+    # Nothing between the route signature and the chain may branch on it: the
+    # only earlier mentions allowed are the parameter itself and the two cache
+    # shapes, none of which change what gets built.
+    head = src[:chain_at]
+    # An EXACT allow-list, not a substring sniff. Every line above the build
+    # that names `live_only` is here, and each one is either the parameter, a
+    # cache key, or the base-hit SERVE — which is the projection applied to a
+    # list that was already built, the very thing being licensed. A new line
+    # has to be added here consciously, and adding one is the moment to ask
+    # whether it is still a projection.
+    allowed = {
+        "live_only: bool = Query(",
+        "live_only=live_only,",
+        'if k not in ("offset", "live_only")',
+        "_base_body, limit=limit, offset=offset, live_only=live_only",
+    }
+    for raw in head.splitlines():
+        # Comments and the docstring cannot reach the build path; only code can.
+        line = raw.split("#", 1)[0].strip()
+        if "live_only" not in line:
+            continue
+        assert line in allowed, (
+            "live_only reached the build path at: " + line
+        )
 
 
 def test_the_base_is_stored_with_the_anonymous_ttl_not_the_builders():
