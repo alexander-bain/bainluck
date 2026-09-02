@@ -327,12 +327,28 @@ export default function EconomicsPage() {
             />
             <div className="grid md:grid-cols-[1fr_1.4fr] gap-3.5">
               <Card>
-                <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3">
-                  Recession by end of 2026
-                </div>
-                <div className="mb-4">
-                  <ProbNum value={t.recession.main_prob || 0} size={64} />
-                </div>
+                {/*
+                  The question comes from the market that supplies the number
+                  (UX-P273 / #2674). It was a hardcoded "Recession by end of
+                  2026" over a number picked by query order, so the card asked
+                  one question and answered another. Render both or neither —
+                  a number with no question is the same defect with the label
+                  missing. Not truncated: clipping a question can change what
+                  it asks, which is the one thing this card must not do.
+                */}
+                {t.recession.main_q && t.recession.main_prob != null && (
+                  <>
+                    <div
+                      className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-3"
+                      data-testid="recession-headline-q"
+                    >
+                      {t.recession.main_q}
+                    </div>
+                    <div className="mb-4">
+                      <ProbNum value={t.recession.main_prob} size={64} />
+                    </div>
+                  </>
+                )}
                 {t.recession.side_markets?.map((m: any, i: number) => (
                   <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} />
                 ))}

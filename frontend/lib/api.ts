@@ -1798,6 +1798,13 @@ export interface EconThemeInflation {
 export interface EconThemeRecession {
   count: number;
   main_prob: number | null;
+  /**
+   * The question `main_prob` answers, straight off the selected market
+   * (UX-P273 / #2674). The card renders this rather than a hardcoded label,
+   * so the question and the number cannot describe different markets.
+   */
+  main_q: string | null;
+  main_market_id: number | null;
   gdp_quarters: { q: string; dist: number[][]; market_id: number }[];
   side_markets: EconMarketRow[];
 }
