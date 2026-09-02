@@ -444,8 +444,6 @@ class TestStreamOutput:
     async def test_a_published_frame_is_forwarded_as_a_probability_event(
         self, monkeypatch
     ):
-        from app.routes import event_stream as mod
-
         fresh = _frame(
             event_id=3,
             updated_at=datetime.now(timezone.utc).isoformat(),
@@ -539,3 +537,102 @@ class TestStreamOutput:
         before = mod._open_connections
         await _collect(1, ExplodingPubSub(), monkeypatch)
         assert mod._open_connections == before
+
+
+class TrackingSessionMaker:
+    """Records how many connect-time sessions were opened and closed.
+
+    Deliberately a context-manager tracker rather than a mock assertion: the
+    property under test is not "was a session used" but "was it *given back*
+    before the stream started".
+    """
+
+    def __init__(self):
+        self.opened = 0
+        self.closed = 0
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        self.opened += 1
+        return object()
+
+    async def __aexit__(self, *exc):
+        self.closed += 1
+        return False
+
+
+class TestConnectLookupDoesNotPinAConnection:
+    """THE bug this guards, and it is a capacity bug, not a correctness one.
+
+    FastAPI finalises a `yield` dependency only after the response is FULLY
+    SENT. This response is a stream that lives up to `MAX_CONNECTION_S` (900 s),
+    so a `db: AsyncSession = Depends(get_db)` on the handler does not hold a
+    session for the microsecond of the live-gate lookup — it pins one, and its
+    pooled connection, for the entire life of every open stream. At
+    `MAX_CONNECTIONS` (200) per uvicorn worker times `WEB_CONCURRENCY` (2) that
+    is up to 400 connections held against a Postgres already at plan-limit
+    contention, and the failure would appear as unrelated timeouts everywhere
+    else on the app rather than as anything wrong with SSE.
+
+    Measured on fastapi 0.136.3, the teardown order for a StreamingResponse is
+    `dep_open -> every frame -> dep_close`, which is why this cannot be left to
+    the framework.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_lookup_session_is_returned_before_the_first_frame(
+        self, monkeypatch
+    ):
+        from app.routes import event_stream as mod
+
+        maker = TrackingSessionMaker()
+        monkeypatch.setattr(mod, "async_session_maker", maker)
+
+        async def _live(_session, _event_id):
+            return "live"
+
+        monkeypatch.setattr(mod, "_event_status", _live)
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_async_redis_client",
+            lambda: FakeRedisConn(FakePubSub()),
+        )
+
+        response = await mod.stream_event(1, FakeRequest(3))
+
+        # The handler has returned and NOT ONE byte has been streamed yet. If
+        # the session is still open here, it stays open for the whole stream.
+        assert maker.opened == 1
+        assert maker.closed == 1, (
+            "the connect-time session is still open before streaming has "
+            "begun — it will be pinned for the life of the stream"
+        )
+
+        chunks = [chunk async for chunk in response.body_iterator]
+        assert chunks, "the stream produced nothing, so it proved nothing"
+        # Still exactly one, still closed: the stream itself touches no session.
+        assert (maker.opened, maker.closed) == (1, 1)
+
+    def test_the_handler_takes_no_request_scoped_db_dependency(self):
+        """Guards the reintroduction, not just the current state.
+
+        The behavioural test above would also go red if someone put
+        `Depends(get_db)` back — but only because the hand-rolled maker stopped
+        being called, which reads like a broken test rather than a capacity
+        regression. This names the actual forbidden construct.
+        """
+        import inspect
+
+        from fastapi.params import Depends as DependsParam
+
+        from app.routes import event_stream as mod
+
+        for name, param in inspect.signature(
+            mod.stream_event
+        ).parameters.items():
+            assert not isinstance(param.default, DependsParam), (
+                f"`{name}` is a FastAPI dependency on a streaming endpoint; a "
+                "yield-dependency is finalised only after the whole stream "
+                "ends, so this pins its resource for up to MAX_CONNECTION_S"
+            )

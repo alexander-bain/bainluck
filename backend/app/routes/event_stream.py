@@ -32,13 +32,13 @@ import os
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event
-from app.services import get_db
+from app.services.database import async_session_maker
 from app.utils.live_push import (
     MAX_FRAME_AGE_S, event_channel, parse_frame, sse_encode,
 )
@@ -197,17 +197,28 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
 
 
 @router.get("/{event_id}/stream")
-async def stream_event(
-    event_id: int, request: Request, db: AsyncSession = Depends(get_db)
-):
+async def stream_event(event_id: int, request: Request):
     """SSE stream of live blend updates for one event.
 
     Non-live events are refused rather than served an empty stream: a client
     holding an open connection on a scheduled match would sit silent for hours
     and look identical to a live match nobody is trading. The 409 tells the
     client to poll, which is the ruling's stated behaviour for non-live.
+
+    THE SESSION IS OPENED BY HAND, AND THAT IS THE WHOLE POINT — do not put this
+    lookup back on `Depends(get_db)`. FastAPI finalises a yield-dependency only
+    after the response has been *fully sent*, and this response is a stream that
+    lives up to `MAX_CONNECTION_S`. A `Depends(get_db)` here therefore does not
+    hold a session for the microsecond of the status lookup; it pins one, and its
+    pooled connection, for the entire life of every open stream — up to
+    `MAX_CONNECTIONS` per uvicorn worker, times `WEB_CONCURRENCY` workers, against
+    a Postgres that already runs at plan-limit contention. Measured on
+    fastapi 0.136.3: teardown ordering is `open -> ...every frame... -> close`.
+    Opening the session explicitly bounds it to the lookup and returns the
+    connection to the pool before the first byte of the stream is written.
     """
-    status = await _event_status(db, event_id)
+    async with async_session_maker() as session:
+        status = await _event_status(session, event_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Event not found")
     if status not in LIVE_STATUSES:
