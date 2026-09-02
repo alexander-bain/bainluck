@@ -852,6 +852,11 @@ export default function EventPage({ params }: EventPageProps) {
                 homeColor={event.home_team_data?.primary_color}
                 awayColor={event.away_team_data?.primary_color}
                 probSourceLabel={probSourceLabel}
+                // live/034 S2 — count to the new value only when it is arriving
+                // by push. On the 32s poll a jump IS the honest rendering of
+                // what happened; animating it would imply a continuity between
+                // two readings half a minute apart that the data does not have.
+                animate={streamConnected}
               />
               )}
 
