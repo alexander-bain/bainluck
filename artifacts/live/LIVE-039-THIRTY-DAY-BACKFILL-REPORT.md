@@ -241,12 +241,23 @@ all seven real prop shapes, and it is the test to watch:
 [OK] orient  US Open ATP: Ben Shelton vs Hubert Hurkacz -> Yes, yes_is_home=True
 ```
 
-**Gates.** `test_us_open_draw_qualifier_prefix.py` 28 passed ·
-`test_chart_backfill_thirty_day.py` 27 passed · matching/matchup slice 610 passed ·
-`test_startup.py` 4 passed · `test_tasks_wiring.py` + `test_celery_queue_census.py`
-46 passed · SQL binds compile clean against the postgresql dialect with zero phantom
-binds · selection query measured 0.47s over the US Open tier on production.
-No frontend change, so no build/typecheck delta.
+**Gates.** **Full backend suite: 26,134 passed, 158 skipped, 61 xfailed, 0 failed
+(20:46).** SQL binds compile clean against the postgresql dialect with zero phantom
+binds. Selection query measured 0.47s over the US Open tier on production. No
+frontend change, so no build/typecheck delta.
+
+The first full run ended **1 failed / 26,133 passed**, and the failure was a guard
+doing its job:
+
+```
+these tasks are dispatched from an HTTP route but are not declared as result
+consumers — their status polls would hang: ['app.tasks.backfill_thirty_day_charts']
+```
+
+`POST /admin/backfill-30d-charts` queues by *default* — the drain cannot fit inside
+a request — so the caller always holds a task id to poll, and without the
+`RESULT_CONSUMER_TASKS` entry the result is reaped and the poll never resolves.
+Fixed in `797a0ab2`; the 26,134-pass run above is the re-run after that fix.
 
 **A tier-predicate bug caught and fixed in flight.** `"us_open" in key` matches
 `tennis_atp_aus_open_singles` — `us_open` is a substring of `aus_open` — and
