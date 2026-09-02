@@ -224,26 +224,73 @@ def promote_headline_contenders(
     "Roman Safiullin vs Carlos Alcaraz: Total Games" would be the same defect
     with a smaller number attached to it.
 
-    Rows already on the page are skipped by identity and, when `dedup_key` is
-    given, by the route's own futures dedup key — so a promoted row can never
-    restate something the page already holds. Note that today's key does NOT
-    merge the Kalshi/Polymarket pair for one tournament (see MAX_HEADLINE_SLOTS);
-    the cap, not the key, is what keeps that question off the page twice.
+    A contender ALREADY ON THE PAGE is HOISTED to the front, not skipped, and
+    still counts as promoted. UX-P272/#2668 is what that sentence is for. The
+    older rule skipped it, on the reasoning that a row the page already holds
+    needs no promotion — which is true only when `page` is what the caller
+    SHIPS. `/search` slices to its shipped ten before calling here
+    (`events.py`, `futures_markets = deduped_futures[:_SEARCH_FUTURES_PAGE]`),
+    so for that caller the two readings agree. The typeahead passes its whole
+    20-row window and ships the first five of it, so "already on the page"
+    silently meant "already in a list the user may never see". Measured live
+    2026-09-02: for `Alcaraz` the US Open winner market is row 1 of the raw
+    window, `_rerank_search_futures` sinks it below nine name-matching props,
+    the lane fired (27 ms stage mark), the promoter skipped it as already
+    present, and the dropdown shipped five props and no answer.
+
+    Hoisting rather than inserting is what keeps the no-duplicate guarantee
+    exact: the row is RELOCATED, never added, so the returned length is
+    unchanged and no question can appear twice. The guarantee the old comment
+    claimed ("a promoted row can never restate something the page already
+    holds") is therefore still true, and now the function's first sentence —
+    contenders end up at the FRONT — is true as well.
+
+    This is inert for `/search` BY CONSTRUCTION rather than by measurement: its
+    lane only fires when every row of the shipped page is a name match, and a
+    contender is outcome-only by the caller's own filter, so a contender that
+    is already on that page makes the gate false and the lane never runs. The
+    hoist branch is therefore unreachable from `/search`.
+
+    Rows already on the page are reconciled by identity and, when `dedup_key`
+    is given, a DIFFERENT market sharing the page's dedup key is still skipped
+    — so a promoted row can never restate something the page already holds.
+    Note that today's key does NOT merge the Kalshi/Polymarket pair for one
+    tournament (see MAX_HEADLINE_SLOTS); the cap, not the key, is what keeps
+    that question off the page twice. A key twin buried below the caller's
+    visible cut is the one case this fix does NOT reach: it stays a skip,
+    because hoisting a twin would change WHICH market's price the user reads,
+    and no live specimen exists (the pair above normalizes to two keys).
     """
     if not contenders or cap <= 0:
         return page, 0
 
     seen_ids = {getattr(m, "id", None) for m in page}
+    # Hoist the PAGE's own row, not the contender query's copy of it: the two
+    # are separate result sets, and shipping the page's object keeps the
+    # serialized row byte-identical to what the window would have produced.
+    page_by_id: dict = {}
+    for m in page:
+        mid = getattr(m, "id", None)
+        if mid is not None:
+            page_by_id.setdefault(mid, m)
     seen_keys = set()
     if dedup_key is not None:
         seen_keys = {dedup_key(m) for m in page}
 
     promoted = []
+    hoisted_ids: set = set()
     for market in contenders:
         if len(promoted) >= cap:
             break
         market_id = getattr(market, "id", None)
         if market_id in seen_ids:
+            page_row = page_by_id.get(market_id)
+            if page_row is None:
+                # An id-less contender meeting an id-less page row: there is
+                # nothing to reconcile the two by, so keep the conservative skip.
+                continue
+            hoisted_ids.add(market_id)
+            promoted.append(page_row)
             continue
         if dedup_key is not None:
             key = dedup_key(market)
@@ -256,10 +303,14 @@ def promote_headline_contenders(
     if not promoted:
         return page, 0
 
+    # A hoisted row leaves the body of the page so it cannot appear twice; a
+    # newly inserted one costs the page its weakest tail row. Both paths return
+    # `len(page)`, which is why hoisting cannot grow the caller's page.
+    rest = [m for m in page if getattr(m, "id", None) not in hoisted_ids]
     # Truncate from the TAIL: the rows that lose their slot are the weakest
     # name matches the window had, never the strongest.
     keep = len(page) - len(promoted)
-    return promoted + page[: max(keep, 0)], len(promoted)
+    return promoted + rest[: max(keep, 0)], len(promoted)
 
 
 def reserve_headline_slot(
