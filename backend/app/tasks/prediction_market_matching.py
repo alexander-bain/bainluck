@@ -79,6 +79,19 @@ class _LinkedMarketRef:
     away_team_name: str | None
 
     @property
+    def id(self) -> int:
+        """Alias so this scalar copy IS a `live_blend.MarketOutcomes.market`.
+
+        That protocol wants ``id``/``source``/``external_id``/``name``; this row
+        already carries the other three under the same names. Aliasing here is
+        what lets Phase 2 hand its scalar copies straight to the ONE shared
+        blend decision without first re-loading ORM markets it deliberately
+        does not hold (see this class's docstring — it exists precisely because
+        Phase 2 commits and rolls back per group).
+        """
+        return self.market_id
+
+    @property
     def is_game_winner(self) -> bool:
         # A5 (#1024): a two-sided winner line — team-sport …game OR a combat
         # fight winner (kxufcfight/kxboxing) — so the fight-winner is preferred
@@ -1830,6 +1843,318 @@ async def _phase15_revalidate(
             continue
 
 
+# Phase 2b bounds. A sweep over an ageing population needs BOTH ends (gotcha
+# #41): the floor stops it walking backwards forever into events nothing renders,
+# and the per-source cap stops it from starving the poll it shares a task with.
+# Oldest-first inside the floor, so the tail that Phase 2's 24-hour window just
+# dropped is the first thing picked up rather than the last.
+_PHASE2B_AGE_FLOOR_DAYS = 7
+_PHASE2B_EVENTS_PER_SOURCE = 75
+_PHASE2B_CURSOR_KEY_PREFIX = "phase2b:completed_catchup:cursor:"
+
+
+async def _phase2_persist_group_reading(
+    session,
+    group,
+    stats: dict,
+    *,
+    write_snapshot: bool = True,
+) -> int | None:
+    """Persist ONE (event, source) group's blend reading. Returns the speaker's id.
+
+    ONE DECISION, THREE WRITERS. `compute_source_home_probability` was extracted
+    into `app/utils/live_blend.py` (Q460) so the 120-second poll and the
+    WebSocket fast lane could not drift into two opinions of one number. This
+    task — the 15-minute matcher — was the writer left behind. It kept its own
+    inline copy of the arithmetic, and that copy asked the group's PRIMARY
+    market and no other row.
+
+    CERT-767 measured what that costs on the exact-head reproduction: the
+    repaired shared helper reads the match-winner child at id 9 and answers
+    0.62, while this writer still chose the empty parent at id 1 and wrote
+    nothing at all. That matters more than it sounds, because this is the writer
+    that stamps `win_probability_sources` for every SCHEDULED event — the poll
+    only reaches live events and the three hours before commence. So on
+    production the fixed helper was reachable for four live matches and the
+    source stayed blank on the twenty-five scheduled ones the repair was for.
+
+    So the reading is the shared one now, and the whole GROUP is what gets
+    asked. The caller still computes the primary itself and still runs the two
+    Kalshi unlink arms on it, deliberately: those are decisions about that row's
+    LINK, not about what the source says, and they keep running exactly where
+    they run today.
+
+    ``write_snapshot=False`` is the completed-catch-up's setting — see
+    `_phase2b_completed_catchup` for why a settled event gets the blend key but
+    never a new point on the chart.
+    """
+    from app.models.models import Event, FuturesOutcome
+    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+    from app.utils.aggregation import stamp_source_reading
+
+    refs = [ref for ref in (group or [])]
+    if not refs:
+        return None
+    anchor = refs[0]
+
+    # One query for the whole group. The previous shape was one query for the
+    # primary plus one per sibling on the devig path, so asking every row is not
+    # a new round trip — it is fewer.
+    outcome_rows = await session.execute(
+        select(FuturesOutcome)
+        .where(FuturesOutcome.market_id.in_([ref.market_id for ref in refs]))
+        .order_by(FuturesOutcome.rank)
+    )
+    outcomes_by_market: dict[int, list] = {}
+    for outcome_row in outcome_rows.scalars().all():
+        outcomes_by_market.setdefault(outcome_row.market_id, []).append(outcome_row)
+
+    reading = _compute_source_home_probability(
+        [
+            _LiveBlendGroup(market=ref, outcomes=outcomes_by_market.get(ref.market_id, []))
+            for ref in refs
+        ],
+        anchor.home_team_name,
+        anchor.away_team_name,
+    )
+    if reading is None:
+        return None
+
+    outcome = reading.outcome
+    yes_prob = reading.yes_probability
+    home_prob = await _check_and_fix_inversion(
+        session, anchor.event_id, reading.home_probability, anchor.source,
+    )
+    away_prob = 1.0 - home_prob
+
+    if write_snapshot:
+        snapshot, is_new = await _create_or_update_win_prob_snapshot(
+            session,
+            event_id=anchor.event_id,
+            source=anchor.source,
+            home_win_probability=round(home_prob, 4),
+            away_win_probability=round(away_prob, 4),
+            game_state={
+                # `reading.market`, NOT the group's primary. The primary is only
+                # the row picked to iterate once per (event, source); since the
+                # blend now falls through the group until a market can speak, it
+                # is not always the row the number came from, and "why did the
+                # blend say that" has to name the one that said it.
+                "market_name": reading.market.name,
+                "market_id": reading.market.id,
+                "outcome_name": outcome.name,
+                "yes_probability": yes_prob,
+                "yes_bid": float(outcome.current_yes_bid) if outcome.current_yes_bid else None,
+                "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
+            },
+        )
+        if is_new:
+            session.add(snapshot)
+            stats["snapshots_written"] += 1
+        else:
+            stats["snapshots_deduped"] += 1
+
+    _pm_r = await session.execute(
+        select(Event.win_probability_sources).where(Event.id == anchor.event_id)
+    )
+    # #1829: value + write time (a linked market can stop updating long before
+    # anything notices it has).
+    _pm_wps = stamp_source_reading(
+        _pm_r.scalar_one_or_none(), anchor.source, round(home_prob, 4)
+    )
+    await session.execute(
+        update(Event)
+        .where(Event.id == anchor.event_id)
+        .values(win_probability_sources=_pm_wps)
+    )
+
+    # Commit per group to avoid deadlocks with the live polling task.
+    await session.commit()
+    return reading.market.id
+
+
+async def _phase2b_completed_catchup(session, now, stats, time_remaining_fn) -> int:
+    """Fill the blend key on completed events Phase 2's 24-hour window aged past.
+
+    WHY THERE HAS TO BE ONE. Phase 2 admits a completed event only for its first
+    24 hours, and the live poll never admits one at all. Both are right: a
+    prediction-market price polled after the whistle stretches the OddsChart past
+    the real game boundary, which is the "prediction market bleed" bug (0t-1).
+    But the two windows together mean a group whose reading was VETOED while the
+    game was on gets no second chance once the game ends — the repair above heals
+    the live and scheduled cohorts and cannot reach the settled one. Measured on
+    production 2026-09-02: US Open event 15298238 (completed 08-31) holds a
+    readable Polymarket winner at 0.165 and a blank `win_probability_sources`,
+    and nothing that runs today will ever ask it.
+
+    WHY IT IS SAFE TO ANSWER NOW, in three properties this function must keep:
+
+    1. NO SNAPSHOT. It writes the blend key only, never a `win_prob_snapshots`
+       row, so the chart's completed journey is byte-for-byte what it is today
+       and 0t-1 stays fixed. `write_snapshot=False` is that promise.
+    2. HOLES ONLY. The candidate query demands the source key be ABSENT. It can
+       therefore add a reading where the source said nothing; it can never move
+       a number the user is already being shown, which is the same
+       strictly-additive property the helper repair itself has.
+    3. BOUNDED AT BOTH ENDS. `_PHASE2B_AGE_FLOOR_DAYS` and
+       `_PHASE2B_EVENTS_PER_SOURCE`, plus the task's own clock. It shares a
+       15-minute task with a link pass and a backfill and must never be the
+       reason either is skipped.
+
+    IT ROTATES, AND THAT IS NOT A DETAIL. Property 2 has a sharp edge: a
+    candidate that the shared helper legitimately REFUSES never gets a key, so
+    it never leaves the candidate set. A plain oldest-first `LIMIT 75` therefore
+    re-selects the same refused page every fifteen minutes, forever, and the
+    sweep advances zero rows. That is not a hypothesis — the first production
+    page of this exact query is 75 Brazilian lower-division rows whose own
+    `away_team_name` is `... - Halftime Result`, none of which will ever
+    resolve. So the page start is a Redis cursor on `commence_time`, advanced
+    past each page and WRAPPED to the floor when the scan runs dry. Refused rows
+    cost one rotation, not the whole sweep. Restarting from the floor on a lost
+    key is safe: every write here is a no-op on a row that already has the key.
+
+    It does NOT unlink. Phase 2's two date arms exist to repair a live link
+    before it writes; this pass reads settled rows and repairs nothing, so
+    handing it a destructive verb would give an old, low-signal population power
+    over the linkage table. Raw `text()` with `jsonb_exists` and a correlated
+    EXISTS mirrors `_cleanup_orphaned_blend_sources` — the ORM's `select()
+    .exists()` correlation is unreliable on this shape in this file.
+    """
+    from app.models.models import FuturesMarket
+
+    filled = 0
+    stats["funnel"].setdefault("phase2b_events_scanned", 0)
+    stats["funnel"].setdefault("phase2b_sources_filled", 0)
+    stats["funnel"].setdefault("phase2b_budget_stopped", False)
+    stats["funnel"].setdefault("phase2b_wrapped", 0)
+
+    recent_cutoff = now - timedelta(hours=24)
+    age_floor = now - timedelta(days=_PHASE2B_AGE_FLOOR_DAYS)
+
+    # A catch-up whose cursor is gone is a catch-up that pins on its first page,
+    # so it declines to run rather than pretending to sweep (gotcha #53 — the
+    # zero-yield case is recorded, not silent).
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        redis_client = get_redis_client()
+    except Exception as e:  # noqa: BLE001 — Redis down must not stop the beat
+        stats["funnel"]["phase2b_cursor_unavailable"] = str(e)[:80]
+        return 0
+
+    for source in ("kalshi", "polymarket"):
+        if time_remaining_fn() < 90:
+            stats["funnel"]["phase2b_budget_stopped"] = True
+            break
+
+        cursor_key = f"{_PHASE2B_CURSOR_KEY_PREFIX}{source}"
+        try:
+            raw_cursor = redis_client.get(cursor_key)
+        except Exception as e:  # noqa: BLE001
+            stats["funnel"]["phase2b_cursor_unavailable"] = str(e)[:80]
+            return filled
+        if isinstance(raw_cursor, bytes):
+            raw_cursor = raw_cursor.decode()
+        cursor = age_floor
+        if raw_cursor:
+            try:
+                parsed = datetime.fromisoformat(raw_cursor)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                # Clamp: a cursor left behind by a longer floor must not send the
+                # scan back over ground the floor has since retired.
+                cursor = max(parsed, age_floor)
+            except ValueError:
+                cursor = age_floor
+
+        candidates = (
+            await session.execute(
+                text(
+                    "SELECT e.id, e.home_team_name, e.away_team_name, e.commence_time "
+                    "FROM events e "
+                    "WHERE e.status IN ('completed', 'closed') "
+                    "AND e.commence_time < :recent AND e.commence_time >= :floor "
+                    "AND e.commence_time > :cursor "
+                    "AND (e.win_probability_sources IS NULL "
+                    "     OR NOT jsonb_exists(e.win_probability_sources, :source)) "
+                    "AND EXISTS (SELECT 1 FROM futures_markets fm "
+                    "WHERE fm.event_id = e.id AND fm.source = :source) "
+                    "ORDER BY e.commence_time ASC LIMIT :lim"
+                ),
+                {
+                    "recent": recent_cutoff,
+                    "floor": age_floor,
+                    "cursor": cursor,
+                    "source": source,
+                    "lim": _PHASE2B_EVENTS_PER_SOURCE,
+                },
+            )
+        ).all()
+        if not candidates:
+            # Scan ran dry — wrap to the floor so the next run re-walks from the
+            # oldest live row instead of sitting at the end of the population.
+            try:
+                redis_client.delete(cursor_key)
+            except Exception:  # noqa: BLE001 — a stuck cursor self-heals next wrap
+                pass
+            stats["funnel"]["phase2b_wrapped"] += 1
+            continue
+
+        # Advance past this page BEFORE working it. A page that dies on the time
+        # budget must not be the page the next run starts on again.
+        page_end = max(row[3] for row in candidates)
+        try:
+            redis_client.set(cursor_key, page_end.isoformat())
+        except Exception:  # noqa: BLE001
+            pass
+
+        event_names = {row[0]: (row[1], row[2]) for row in candidates}
+        stats["funnel"]["phase2b_events_scanned"] += len(event_names)
+
+        market_rows = (
+            await session.execute(
+                select(FuturesMarket).where(
+                    FuturesMarket.event_id.in_(list(event_names)),
+                    FuturesMarket.source == source,
+                )
+            )
+        ).scalars().all()
+
+        groups: dict[int, list[_LinkedMarketRef]] = {}
+        for market_row in market_rows:
+            home_name, away_name = event_names[market_row.event_id]
+            groups.setdefault(market_row.event_id, []).append(
+                _LinkedMarketRef(
+                    market_id=market_row.id,
+                    source=market_row.source,
+                    external_id=market_row.external_id,
+                    name=market_row.name,
+                    event_id=market_row.event_id,
+                    event_commence_time=None,
+                    home_team_name=home_name,
+                    away_team_name=away_name,
+                )
+            )
+
+        for event_id, group in groups.items():
+            if time_remaining_fn() < 60:
+                stats["funnel"]["phase2b_budget_stopped"] = True
+                break
+            try:
+                spoke = await _phase2_persist_group_reading(
+                    session, group, stats, write_snapshot=False,
+                )
+            except Exception as e:
+                await session.rollback()
+                stats["errors"].append(f"phase2b_{event_id}: {str(e)[:100]}")
+                continue
+            if spoke is not None:
+                filled += 1
+
+    stats["funnel"]["phase2b_sources_filled"] += filled
+    return filled
+
+
 async def _match_prediction_markets(limit: int = 500):
     """
     Match game-level prediction markets to events and write win_prob_snapshots.
@@ -1838,10 +2163,12 @@ async def _match_prediction_markets(limit: int = 500):
     1. Link: Find unlinked game-level markets and match to events (set event_id)
     2. Snapshot: For all linked markets, write current probability to win_prob_snapshots
     """
+    # `FuturesOutcome` and `_create_or_update_win_prob_snapshot` moved out with
+    # the reading: Phase 2 no longer loads outcomes or writes snapshots inline,
+    # `_phase2_persist_group_reading` does both.
     from app.models.models import (
-        FuturesMarket, FuturesOutcome, Event, Sport, WinProbSnapshot,
+        FuturesMarket, Event, Sport, WinProbSnapshot,
     )
-    from app.tasks.snapshots import _create_or_update_win_prob_snapshot
 
     stats = {
         "markets_scanned": 0,
@@ -2059,7 +2386,7 @@ async def _match_prediction_markets(limit: int = 500):
 
         phase2_processed = 0
         phase2_skipped_not_ml = 0
-        for market in best_per_event_source.values():
+        for _es_key, market in best_per_event_source.items():
             if _time_remaining() < 60:
                 logger.info("Phase 2 time budget exhausted after %d/%d markets", phase2_processed, len(linked_rows))
                 break
@@ -2155,110 +2482,26 @@ async def _match_prediction_markets(limit: int = 500):
                         stats["funnel"]["phase2_date_unlinked"] += 1
                         continue
 
-                matchup = extract_matchup_with_ticker_fallback(
-                    market.name, external_id=market.external_id,
-                )
-                if not matchup:
-                    continue
-
-                outcome_result = await session.execute(
-                    select(FuturesOutcome)
-                    .where(FuturesOutcome.market_id == market.market_id)
-                    .order_by(FuturesOutcome.rank)
-                )
-                all_outcomes = outcome_result.scalars().all()
-                if not all_outcomes:
-                    continue
-
-                ml_result = find_moneyline_outcome(
-                    all_outcomes, matchup,
-                    market.home_team_name, market.away_team_name,
-                )
-                if not ml_result:
-                    continue
-
-                outcome, yes_is_home = ml_result
-                yes_prob = float(outcome.current_probability)
-
-                if yes_is_home:
-                    home_prob = yes_prob
-                else:
-                    home_prob = 1.0 - yes_prob
-
-                # Devig: if dual markets exist (e.g., "Celtics win?" +
-                # "76ers win?"), average both sides to cancel vig.
-                es_key = (market.event_id, market.source)
-                siblings = all_per_event_source.get(es_key, [])
-                if len(siblings) == 2:
-                    home_probs = [home_prob]
-                    for sib_market in siblings:
-                        if sib_market.market_id == market.market_id:
-                            continue
-                        sib_outcomes_result = await session.execute(
-                            select(FuturesOutcome)
-                            .where(FuturesOutcome.market_id == sib_market.market_id)
-                            .order_by(FuturesOutcome.rank)
-                        )
-                        sib_outcomes = sib_outcomes_result.scalars().all()
-                        if sib_outcomes:
-                            sib_ml = find_moneyline_outcome(
-                                sib_outcomes, matchup,
-                                market.home_team_name, market.away_team_name,
-                            )
-                            if sib_ml:
-                                sib_outcome, sib_yes_is_home = sib_ml
-                                sib_prob = float(sib_outcome.current_probability)
-                                sib_home = sib_prob if sib_yes_is_home else 1.0 - sib_prob
-                                home_probs.append(sib_home)
-                    if len(home_probs) == 2:
-                        home_prob = sum(home_probs) / 2.0
-
-                home_prob = await _check_and_fix_inversion(
-                    session, market.event_id, home_prob, market.source,
-                )
-                away_prob = 1.0 - home_prob
-
-                source_key = market.source
-                snapshot, is_new = await _create_or_update_win_prob_snapshot(
+                # THE GROUP IS ASKED, NOT JUST THE PRIMARY. Everything from the
+                # matchup parse to the devig used to be a second inline copy of
+                # `live_blend.compute_source_home_probability`, run against this
+                # one row. `market` above is only the group's PRIMARY — the row
+                # picked to iterate once per (event, source) and to carry the
+                # two Kalshi link arms — and for Polymarket "primary" degrades
+                # to "lowest id", which is the oldest row: the event-level
+                # parent and the derivative books are minted before the
+                # match-winner child that holds the moneyline. When that row
+                # could not speak, this writer wrote nothing and the source went
+                # blank on the page (CERT-759, re-measured by CERT-767).
+                #
+                # The group's remaining rows are now tried too, under the shared
+                # helper's admission gate, and the reading it returns names the
+                # market that actually spoke.
+                await _phase2_persist_group_reading(
                     session,
-                    event_id=market.event_id,
-                    source=source_key,
-                    home_win_probability=round(home_prob, 4),
-                    away_win_probability=round(away_prob, 4),
-                    game_state={
-                        "market_name": market.name,
-                        "market_id": market.market_id,
-                        "outcome_name": outcome.name,
-                        "yes_probability": yes_prob,
-                        "yes_bid": float(outcome.current_yes_bid) if outcome.current_yes_bid else None,
-                        "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
-                    },
+                    all_per_event_source.get(_es_key) or [market],
+                    stats,
                 )
-
-                if is_new:
-                    session.add(snapshot)
-                    stats["snapshots_written"] += 1
-                else:
-                    stats["snapshots_deduped"] += 1
-
-                from sqlalchemy import update as _sql_upd
-                from app.utils.aggregation import stamp_source_reading
-                _pm_r = await session.execute(
-                    select(Event.win_probability_sources).where(Event.id == market.event_id)
-                )
-                # #1829: value + write time (a linked market can stop updating
-                # long before anything notices it has).
-                _pm_wps = stamp_source_reading(
-                    _pm_r.scalar_one_or_none(), source_key, round(home_prob, 4)
-                )
-                await session.execute(
-                    _sql_upd(Event)
-                    .where(Event.id == market.event_id)
-                    .values(win_probability_sources=_pm_wps)
-                )
-
-                # Commit per-market to avoid deadlocks with live polling task
-                await session.commit()
 
             except Exception as e:
                 err_str = str(e)
@@ -2270,6 +2513,16 @@ async def _match_prediction_markets(limit: int = 500):
                     await session.rollback()
                     stats["errors"].append(f"market {market.market_id}: {err_str[:100]}")
                 continue
+
+        # ── Phase 2b: the completed cohort Phase 2's 24-hour window aged past ─
+        # Blend key only, holes only, bounded at both ends — see the helper.
+        try:
+            await _phase2b_completed_catchup(
+                session, now, stats, _time_remaining,
+            )
+        except Exception as e:
+            await session.rollback()
+            stats["errors"].append(f"phase2b: {str(e)[:100]}")
 
     stats["phase2_skipped_not_moneyline"] = phase2_skipped_not_ml
 

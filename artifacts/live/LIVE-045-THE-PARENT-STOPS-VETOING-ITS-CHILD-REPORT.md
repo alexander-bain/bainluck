@@ -182,3 +182,140 @@ load-bearing.
   classification untouched (ONE OWNER).
 - **Not a D35 matching change:** no linkage, no `event_id`, no registry call. Every market
   here is already linked; the change is only about which linked market speaks for its source.
+
+---
+
+# ROUND 2 — the CERT-767 repair: the shared decision reaches the writer that ships it
+
+CERT-767 withheld the token for `9bd6dbe5` and was right. Everything above is about
+`live_blend.compute_source_home_probability`, and everything above holds. The cert's point is
+that **that helper is not the writer the ship is measured on.**
+
+## 7. What CERT-767 found
+
+> the 15-minute matching task still independently picks and parses only the lowest-id Polymarket
+> row before writing `win_probability_sources`; exact-head reproduction yields primary id 1 / no
+> matchup while the repaired helper selects child id 9 at 0.62.
+
+`_match_prediction_markets` Phase 2 carried its own inline copy of the arithmetic — primary
+selection, matchup parse, moneyline resolution, devig — and asked the primary and nothing else.
+That is the CERT-759 veto, intact, in the one writer that reaches a **scheduled** event. The live
+poll only ever selects live events and the three hours before commence, so the Round-1 repair was
+reachable for a handful of live matches and unreachable for the twenty-five scheduled ones the
+queue exists for. Round 1 fixed the decision; it did not fix the caller that ships it.
+
+The cert's second finding is a window, not a copy: Phase 2 admits a completed event only for its
+first 24 hours and the live poll never admits one, so a group vetoed *during* the game has no
+second chance *after* it.
+
+## 8. The two repairs
+
+**8a. Phase 2 asks the group, through the one shared decision.** The inline block is replaced by
+`_phase2_persist_group_reading`, which loads the outcomes of every market in the (event, source)
+group in one query and hands the whole group to `compute_source_home_probability`. The reading
+that comes back names the market that spoke, and that market's id is what the snapshot's
+`game_state` records.
+
+What deliberately did **not** move: the two Kalshi unlink arms. Those are decisions about a
+row's LINK, not about what the source says, and `test_kalshi_ticker_eastern_window_q439` and
+`test_ws_liveness_and_segment_unlink_q504b` scan `_match_prediction_markets` itself for them.
+The caller still computes the primary and still runs both arms on it, exactly where they run
+today; only the reading was extracted.
+
+**8b. `_phase2b_completed_catchup`** — a bounded pass over completed events that aged past Phase
+2's 24-hour window. Three safety properties, each with its own guard and its own killed mutation:
+
+- **No snapshot.** Blend key only. The chart's completed journey is byte-for-byte unchanged and
+  the "prediction market bleed" fix (0t-1) is untouched.
+- **Holes only.** The candidate query demands the source key be ABSENT, so the pass can add a
+  reading where the source said nothing and can never move a number already on screen — the same
+  strictly-additive property the Round-1 repair has.
+- **Bounded, and actually advancing.** A 7-day floor, 75 events per source per run, and the
+  task's own clock. The rotation is the part that took the thinking: a candidate the helper
+  legitimately REFUSES never gets a key, so it never leaves the candidate set, and a plain
+  `ORDER BY commence_time ASC LIMIT 75` hands back the same page every fifteen minutes forever.
+  Measured — the first production page of this query is 75 Brazilian lower-division rows whose
+  own `away_team_name` ends `- Halftime Result`, behind which US Open 15298238 sits unreachable.
+  So the page start is a Redis cursor, advanced past each page and wrapped to the floor when the
+  scan runs dry. A refused row costs one rotation, not the sweep.
+
+It never unlinks: this pass reads settled rows and repairs nothing, so it gets no destructive verb.
+
+## 9. Measurement — the WRITER replayed, two arms, two processes
+
+Round 1 replayed the helper. This replays **the writer**, over the complete population Phase 2
+actually selects: `scheduled`/`live` plus `completed`/`closed` inside 24h, both sources.
+
+    population   1,054 events / 5,191 markets / 31,735 outcomes    no chunk truncated
+    arm master   the inline block transcribed verbatim from master's source
+    arm branch   _phase2_persist_group_reading's decision
+                 (each arm in its own interpreter, from its own tree)
+
+    1,196 groups     spoke 606 -> 655     ADDED 49    LOST 0    CHANGED 1
+
+All **49** additions are Polymarket, all **49** classify `moneyline` under the shared recognizer,
+and **not one** carries a derivative token (`- Halftime`, `- Exact Score`, `Both Teams to Score`,
+`Set N`, `O/U`, `Handicap`, `Spread`). By status: 32 scheduled, 12 closed, 4 completed, 1 live.
+
+**The one CHANGED is a fix, and it is worth naming.** Phase 2's old devig was UNGATED — it
+averaged the primary with any sibling that resolved, where the shared helper requires a Kalshi
+sibling to be a game winner too. Routing Phase 2 through the helper inherits that gate:
+
+    15291920 kalshi   Flamengo vs Mirassol    0.6350 -> 0.8400
+
+0.6350 is exactly `(0.84 + 0.43) / 2` — the match winner averaged with the market's
+`Flamengo vs Mirassol: BTTS` "Yes" price. A number belonging to neither question was being
+stamped as the moneyline. Across the current population four Kalshi groups sat in that shape
+(`1st Half Winner`, `Total Goals`, `BTTS`, and a *What will the announcers say during Royal
+Rumble* row mislinked onto Kansas City vs Seattle); one of them moves the published number.
+
+### The ship, on production, before
+
+`US Open` Polymarket markets, events grouped by status (2026-09-02, after `a1fe4212` merged):
+
+| status | events | carrying a `polymarket` blend key |
+|---|---|---|
+| live | 6 | 6 |
+| scheduled | 25 | 17 |
+| completed | 8 | 4 |
+| **total** | **39** | **27** |
+
+Eleven of the twelve blank groups lead with a **zero-outcome** `- Exact Score` book at the lowest
+id, with the match winner minted next — the veto shape, exactly. The replay above turns all
+eleven on (they are the 11 US Open rows inside the 49). The twelfth, **15298238**, holds a
+readable winner at 0.165 and is blank only because it completed on 08-31; it is the catch-up's.
+
+## 10. Gates — round 2
+
+| gate | result |
+|---|---|
+| new guard file, red-first (master tree, master code) | **27 failed / 1 passed** → branch **28 passed** |
+| mutation battery, 11 mutations | **11 killed, 0 survivors** |
+| adjacent band (matching / phantom / q435 / q439 / q504b / settled-budget / beat wiring) | **573 passed** |
+| blend + market + snapshot band | **2,643 passed**, 11 skipped |
+| `ruff check` on the changed task module | **14** — identical to master's baseline |
+| `pytest tests/test_startup.py` | **4 passed** |
+| full backend suite | see the PR |
+| frontend / iOS | **no file in the diff** — those gates cannot move and were not run |
+
+**The mutation that mattered.** The first battery had a survivor: reverting the Phase 2 CALL SITE
+to `[market]` left all 21 tests green, because every behavioural test drives
+`_phase2_persist_group_reading` directly. A fully repaired writer handed one row reproduces
+CERT-759 exactly. The wiring is the ship, so the wiring got its own assertion
+(`test_the_loop_hands_over_the_GROUP_and_not_the_primary_alone`) and the mutation now kills.
+
+**One both-arm control, and the file says so.** `test_both_kalshi_unlink_arms_are_still_inline`
+passes on master too — it is what proves extracting the reading did not carry a link arm out with
+it. Every other test drives a function master does not have, so master cannot green them; their
+strength is the mutation record, not an arm crossing. The file states this rather than labelling
+27 symbol-missing failures as controls.
+
+## 11. Still named, still not smuggled in
+
+- The **463** US Open Polymarket rows filed as `table_tennis` remain **lane1/055's**. Untouched.
+- The **40 ASCII-only** `game_market_class` groups from Round 1 are still filed, still not fixed here.
+- **New, and disclosed:** the completed catch-up will add a `polymarket`/`kalshi` blend key to
+  events across every sport, not only tennis — ~2,690 events sit in the 7-day cohort today, of
+  which only those with a readable winner will ever fill. Source-disagreement audits may see new
+  WATCH cells on settled events as a result. That is a measurement-lane consequence of filling a
+  hole, not a new disagreement.
