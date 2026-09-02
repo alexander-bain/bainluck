@@ -7,7 +7,8 @@ Ruling (RULINGS-BATCH-2026-08-30, LIVE UPDATES 1+2): push for LIVE events only, 
 subscribe, non-live keeps polling; animated number (≤1 change/~5s) + "live · Ns ago" pulse +
 last-10-min sparkline; illiquidity ring stays; no smoothing.
 
-Status: DESIGN. Nothing built yet. Written 2026-09-01 ~6pm PT.
+Status: **BUILT, split into two ships, web half staged for cert.** Written 2026-09-01 ~6pm PT,
+ship-order section rewritten ~9pm PT.
 
 ---
 
@@ -127,15 +128,34 @@ green, per WIP 2.
 | R4 | `worker-ws` is a single dyno — if it dies, no ticks at all | client 60s-silence → poll fallback; publisher stats surface a dead publisher |
 | R5 | A stream open on an event that goes final | `status` transition publishes a terminal frame; client closes and refetches once |
 
-## 4. Ship order — BUILT 2026-09-01, PR #2617, cert owed
+## 4. Ship order — BUILT 2026-09-01, split into two ships
+
+All five slices are built. Ruling 2 is complete.
 
 | | what | state |
 |---|---|---|
 | **S1** | publisher + `/api/events/{id}/stream` + 49 guards | **built**, `88b0e2a2` |
 | **S2** | web client, poll suspension, "live · Ns ago" | **built**, `2c88a094` |
 | **S2b** | animated number | **built**, `afab053f` |
+| **S2c** | last-10-min sparkline | **built**, `22b2d792` |
 | **S3** | iOS `AsyncStream` client | **built**, `1211ceb5` — compile NOT verified, see below |
-| **S2c** | last-10-min sparkline | **NOT BUILT** — the one piece of ruling 2 still owed |
+
+### 4.1 Why this is two branches, not one
+
+`live/034-sse-live-push` @ `22b2d792` holds all five. But S3 **cannot be gated in this sandbox** —
+`xcodebuild` is proxy-blind to the Firebase SPM binaries (gotcha: `xcodebuild_spm_proxy_blind`), and
+the cert window sits in the same sandbox, so it cannot gate S3 either. Certing the two together
+would put a fully-gated web ship behind a compile nobody present can run.
+
+So the web half is cut as its own branch, `live/034-sse-live-push-web`, = the same six commits with
+the single iOS commit `1211ceb5` dropped. That commit touches only the three `ios/` files and
+nothing else touches them, so the drop is clean: the two branches differ by exactly those three
+files, verified by `git diff --name-status`. The full branch stays pushed at `22b2d792`, so no work
+is stripped (gotcha #154) — it becomes the S3 follow-up, certed after a real Xcode build on Alex's
+machine.
+
+**Ship 1 (now):** `live/034-sse-live-push-web` — server stream + web client. Fully gateable.
+**Ship 2 (after an Xcode build):** S3 iOS, rebased onto master once ship 1 lands.
 
 **Two design flaws the build caught, both fixed:**
 
