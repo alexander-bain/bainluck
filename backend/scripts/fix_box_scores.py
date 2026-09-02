@@ -32,6 +32,11 @@ async def fix():
             for eid, espn_id, home, away in events:
                 try:
                     ctx = await espn.get_event_context("baseball_mlb", espn_id)
+                    if ctx is None:
+                        # AUTHORITY DARK (lane1/045) — writing an empty box
+                        # score here would record ESPN's silence as the game's.
+                        print(f"  {eid}: SKIPPED — ESPN authority dark")
+                        continue
                     bs = ctx.get("box_score", {})
                     sp = ctx.get("scoring_plays", [])
                     bsd = json.dumps({"source": "espn", "players": bs, "scoring_plays": sp})

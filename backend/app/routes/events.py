@@ -11839,6 +11839,14 @@ async def get_line_movement_analysis(
                 from app.services.espn_api import ESPNAPIService
                 espn = ESPNAPIService()
                 ctx = await espn.get_event_context(event.sport.key, event.espn_id)
+                if ctx is None:
+                    # AUTHORITY DARK (lane1/045) — the page renders without ESPN
+                    # context rather than asserting there are no injuries/news.
+                    logger.warning(
+                        f"ESPN authority dark for event {event_id} — rendering "
+                        "without ESPN context"
+                    )
+                    ctx = {}
                 if ctx.get("injuries"):
                     injuries_data = [
                         {

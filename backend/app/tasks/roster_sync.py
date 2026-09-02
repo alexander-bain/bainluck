@@ -142,10 +142,22 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
 
     updated = 0
     empty_rosters = 0
+    authority_dark = 0
     total_player_names = 0
 
     for team in teams:
         roster = await espn.get_team_roster(sport_key, team.espn_id)
+
+        if roster is None:
+            # AUTHORITY DARK (lane1/045). The branch below CLEARS the stored
+            # roster on an empty answer, so a silent [] from a 403 would empty
+            # every roster in the league. ESPN not answering is not ESPN
+            # saying the team has no players — keep what we have.
+            authority_dark += 1
+            logger.warning(
+                f"  {team.name}: ESPN authority dark — stored roster kept"
+            )
+            continue
 
         if not roster:
             # Write empty list to clear stale data
@@ -200,6 +212,7 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
     logger.info(
         f"  {sport_key}: updated {updated}/{len(teams)} teams, "
         f"{total_player_names} player names, {empty_rosters} empty rosters, "
+        f"{authority_dark} authority-dark (roster kept), "
         f"{skipped} teams skipped (no espn_id)"
     )
 
@@ -208,6 +221,7 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
         "teams_with_espn_id": len(teams),
         "teams_skipped_no_espn_id": skipped,
         "empty_rosters": empty_rosters,
+        "authority_dark": authority_dark,
         "players_synced": total_player_names,
     }
 

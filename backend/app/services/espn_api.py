@@ -5,12 +5,41 @@ Uses ESPN's undocumented public API endpoints.
 These endpoints are used by many applications but are not officially supported,
 so they may change without notice. We implement conservative rate limiting and
 graceful fallbacks.
+
+TWO CONTRACTS THIS MODULE NOW HOLDS (lane1/045, Alex ruling 2026-09-01):
+
+1. **We do not name ourselves to ESPN.** ESPN began refusing the
+   ``User-Agent: BainLuck/1.0`` this client used to send. Measured 2026-09-01
+   21:4x PDT against ``soccer/bra.1/scoreboard``::
+
+       User-Agent: BainLuck/1.0        -> 403
+       User-Agent: Mozilla/5.0         -> 403
+       (User-Agent header removed)     -> 403
+       (httpx default, python-httpx/x) -> 200
+
+   So the client sends the httpx default UA and, on a 403, retries ONCE with
+   the User-Agent header removed entirely. The no-UA retry is a belt, not the
+   fix — it measured 403 on the day it was written (the earlier Q506 reading of
+   200 did not reproduce) and is kept because it costs one request on a path
+   that is already failing, and because it is the ruling's letter.
+
+2. **An empty list never means "the request failed"** (gotcha #53). ``_get``
+   raises :class:`ESPNAuthorityDark` on a transport failure or any non-2xx that
+   is not a 404; every public fetch converts that to ``None``. ``[]``/``{}``
+   now means only "ESPN answered, and there is nothing there". A caller that
+   receives ``None`` must keep the last known state and must NOT infer or
+   fabricate — an authority that did not answer has not said anything.
+
+   Consecutive darkness is counted in module state and, past
+   :data:`AUTHORITY_DARK_THRESHOLD`, logged ONCE at ERROR so it reaches Sentry.
+   The 403 above went unnoticed for an unknown period precisely because ``[]``
+   was silent.
 """
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 import httpx
 
@@ -22,6 +51,134 @@ ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
 
 # Mapping from our sport keys to ESPN sport/league paths
 from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
+
+#: Which identity served a request. Recorded and logged on change so an
+#: operator can see, without a repro, whether we are on the primary path.
+PATH_DEFAULT_UA = "default_ua"      # httpx's own User-Agent
+PATH_NO_UA = "no_ua"                # User-Agent header removed entirely
+
+#: Consecutive unanswered ESPN requests before the darkness is announced at
+#: ERROR. One announcement per dark spell, not one per request.
+AUTHORITY_DARK_THRESHOLD = 10
+
+
+class ESPNAuthorityDark(RuntimeError):
+    """ESPN did not answer.
+
+    Raised for a transport failure or any non-2xx that is not a 404. NOT raised
+    for "the resource does not exist" (404) and never for an honestly empty
+    payload — those are answers. Public methods convert this to ``None`` so a
+    caller can tell "ESPN says there are no games" (``[]``) from "ESPN did not
+    answer" (``None``).
+    """
+
+    def __init__(self, url: str, status: Optional[int] = None, error: Optional[str] = None):
+        self.url = url
+        self.status = status
+        self.error = error
+        detail = f"HTTP {status}" if status is not None else (error or "transport failure")
+        super().__init__(f"ESPN authority dark ({detail}) for {url}")
+
+
+@dataclass
+class _AuthorityState:
+    """Module-level health of the ESPN authority. Process-local by design.
+
+    Not persisted: the question it answers is "is this worker getting answers
+    from ESPN right now", and a counter that survives a dyno restart would
+    answer a different, staler question.
+    """
+
+    consecutive_failures: int = 0
+    total_failures: int = 0
+    total_answers: int = 0
+    announced: bool = False
+    dark_since: Optional[str] = None
+    last_status: Optional[int] = None
+    last_error: Optional[str] = None
+    last_url: Optional[str] = None
+    served_path: Optional[str] = None
+    served_counts: dict[str, int] = field(default_factory=dict)
+
+
+_AUTHORITY = _AuthorityState()
+
+
+def espn_authority_state() -> dict:
+    """Readable snapshot of ESPN's answering health (admin/tests/reports)."""
+    return {
+        "consecutive_failures": _AUTHORITY.consecutive_failures,
+        "total_failures": _AUTHORITY.total_failures,
+        "total_answers": _AUTHORITY.total_answers,
+        "is_dark": _AUTHORITY.consecutive_failures >= AUTHORITY_DARK_THRESHOLD,
+        "dark_since": _AUTHORITY.dark_since,
+        "last_status": _AUTHORITY.last_status,
+        "last_error": _AUTHORITY.last_error,
+        "last_url": _AUTHORITY.last_url,
+        "served_path": _AUTHORITY.served_path,
+        "served_counts": dict(_AUTHORITY.served_counts),
+    }
+
+
+def reset_espn_authority_state() -> None:
+    """Reset the counter. For tests and for an operator-triggered re-probe."""
+    global _AUTHORITY
+    _AUTHORITY = _AuthorityState()
+
+
+def _record_espn_answered(path: str) -> None:
+    """ESPN answered — including with a 404, which is an answer, not darkness."""
+    was_dark = _AUTHORITY.consecutive_failures >= AUTHORITY_DARK_THRESHOLD
+    _AUTHORITY.consecutive_failures = 0
+    _AUTHORITY.total_answers += 1
+    _AUTHORITY.dark_since = None
+    _AUTHORITY.announced = False
+    _AUTHORITY.served_counts[path] = _AUTHORITY.served_counts.get(path, 0) + 1
+    if _AUTHORITY.served_path != path:
+        # Which path served is logged on CHANGE, not per request: ESPN is polled
+        # thousands of times a day and a per-request line would be noise.
+        logger.info("ESPN API now being served on the %s path", path)
+        _AUTHORITY.served_path = path
+    if was_dark:
+        logger.error(
+            "ESPN AUTHORITY RECOVERED — answering again on the %s path after "
+            "%d consecutive failures. Update the ESPN item on "
+            ".claude/handoff/TOP-PRODUCT-DEFECTS.md.",
+            path,
+            _AUTHORITY.total_failures,
+        )
+
+
+def _record_espn_dark(url: str, status: Optional[int], error: Optional[str]) -> None:
+    """One unanswered request. Announces at ERROR once per dark spell."""
+    _AUTHORITY.consecutive_failures += 1
+    _AUTHORITY.total_failures += 1
+    _AUTHORITY.last_status = status
+    _AUTHORITY.last_error = error
+    _AUTHORITY.last_url = url
+    if _AUTHORITY.dark_since is None:
+        _AUTHORITY.dark_since = datetime.now(timezone.utc).isoformat()
+    if (
+        _AUTHORITY.consecutive_failures >= AUTHORITY_DARK_THRESHOLD
+        and not _AUTHORITY.announced
+    ):
+        _AUTHORITY.announced = True
+        # ERROR, so it reaches Sentry and the /health triage threshold. The
+        # durable instrument is the defect board — this line names it so the
+        # operator who sees the Sentry issue knows where the status line goes.
+        logger.error(
+            "ESPN AUTHORITY DARK: %d consecutive unanswered requests "
+            "(last %s for %s, error=%s, dark since %s). ESPN-derived scores, "
+            "schedules and win probabilities are FROZEN at their last known "
+            "state — nothing is being inferred from the silence. File/refresh "
+            "the ESPN item's status line on "
+            ".claude/handoff/TOP-PRODUCT-DEFECTS.md.",
+            _AUTHORITY.consecutive_failures,
+            f"HTTP {status}" if status is not None else "transport failure",
+            url,
+            error,
+            _AUTHORITY.dark_since,
+        )
 
 
 @dataclass
@@ -93,60 +250,141 @@ class ESPNEvent:
 class ESPNAPIService:
     """Client for ESPN's public API endpoints."""
 
-    def __init__(self, timeout: float = 10.0, rate_limit_delay: float = 0.5):
+    def __init__(
+        self,
+        timeout: float = 10.0,
+        rate_limit_delay: float = 0.5,
+        transport: Optional[httpx.AsyncBaseTransport] = None,
+    ):
         """
         Initialize ESPN API client.
 
         Args:
             timeout: Request timeout in seconds
             rate_limit_delay: Delay between requests in seconds
+            transport: Optional httpx transport. Tests inject a MockTransport
+                here; injecting it at CONSTRUCTION (rather than swapping the
+                attribute afterwards) is what makes the fake actually serve,
+                because a client built with proxy env vars mounts the proxy
+                ahead of its default transport and a swapped attribute is
+                never consulted.
         """
         self.timeout = timeout
         self.rate_limit_delay = rate_limit_delay
+        self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
+        self._client_no_ua: Optional[httpx.AsyncClient] = None
+
+    def _client_kwargs(self) -> dict:
+        kwargs: dict = {
+            "timeout": self.timeout,
+            "headers": {"Accept": "application/json"},
+        }
+        if self._transport is not None:
+            # mounts={} so an ambient proxy cannot outrank the injected wire.
+            kwargs["transport"] = self._transport
+            kwargs["mounts"] = {}
+        return kwargs
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client."""
+        """Get or create the primary HTTP client.
+
+        No ``User-Agent`` is set: httpx supplies its own (``python-httpx/x``),
+        which is the identity ESPN currently answers. Do not put a product UA
+        back here — see the module docstring for the measurement.
+        """
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=self.timeout,
-                headers={
-                    "User-Agent": "BainLuck/1.0",
-                    "Accept": "application/json",
-                },
-            )
+            self._client = httpx.AsyncClient(**self._client_kwargs())
         return self._client
 
+    async def _get_no_ua_client(self) -> httpx.AsyncClient:
+        """Client that sends NO ``User-Agent`` header at all (403 fallback).
+
+        httpx injects a default UA into every client, so the header is popped
+        after construction — passing ``""`` sends an *empty* UA, which is a
+        different (and measured-403) thing.
+        """
+        if self._client_no_ua is None or self._client_no_ua.is_closed:
+            client = httpx.AsyncClient(**self._client_kwargs())
+            client.headers.pop("user-agent", None)
+            self._client_no_ua = client
+        return self._client_no_ua
+
     async def close(self):
-        """Close the HTTP client."""
+        """Close the HTTP clients."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
-            self._client = None
+        self._client = None
+        if self._client_no_ua and not self._client_no_ua.is_closed:
+            await self._client_no_ua.aclose()
+        self._client_no_ua = None
+
+    def _dark(
+        self, url: str, *, status: Optional[int] = None, error: Optional[str] = None
+    ) -> ESPNAuthorityDark:
+        """Record + log one unanswered request and build the exception to raise."""
+        _record_espn_dark(url, status=status, error=error)
+        logger.warning(
+            "ESPN API did not answer: %s for %s (%d consecutive) — treating as "
+            "AUTHORITY DARK, not as an empty result",
+            f"HTTP {status}" if status is not None else f"transport error: {error}",
+            url,
+            _AUTHORITY.consecutive_failures,
+        )
+        return ESPNAuthorityDark(url, status=status, error=error)
 
     async def _get(self, url: str) -> Optional[dict]:
-        """Make a GET request with rate limiting and error handling."""
+        """GET one ESPN URL.
+
+        Returns the decoded body on 200, and ``None`` on a 404 — the resource
+        does not exist, which is an answer.
+
+        Raises:
+            ESPNAuthorityDark: transport failure, or any other non-2xx. The
+                caller must NOT read this as "nothing there".
+        """
         try:
             client = await self._get_client()
             response = await client.get(url)
+            served_path = PATH_DEFAULT_UA
 
             if response.status_code == 429:
-                logger.warning(f"ESPN API rate limited, waiting before retry")
+                logger.warning("ESPN API rate limited, waiting before retry: %s", url)
                 await asyncio.sleep(5)
                 response = await client.get(url)
 
-            if response.status_code != 200:
-                logger.warning(f"ESPN API returned {response.status_code} for {url}")
+            if response.status_code == 403:
+                # Refused on identity, not on the resource. One retry with the
+                # User-Agent header removed entirely, then we are dark.
+                logger.warning(
+                    "ESPN API 403 on the %s path for %s — retrying once with no "
+                    "User-Agent header",
+                    PATH_DEFAULT_UA,
+                    url,
+                )
+                no_ua_client = await self._get_no_ua_client()
+                response = await no_ua_client.get(url)
+                served_path = PATH_NO_UA
+
+            if response.status_code == 404:
+                logger.info("ESPN API 404 (resource absent, authority alive) for %s", url)
+                _record_espn_answered(served_path)
                 return None
 
-            await asyncio.sleep(self.rate_limit_delay)
-            return response.json()
+            if response.status_code != 200:
+                raise self._dark(url, status=response.status_code)
 
-        except httpx.TimeoutException:
-            logger.warning(f"ESPN API timeout for {url}")
-            return None
+            await asyncio.sleep(self.rate_limit_delay)
+            body = response.json()
+            _record_espn_answered(served_path)
+            return body
+
+        except ESPNAuthorityDark:
+            raise
+        except httpx.TimeoutException as e:
+            raise self._dark(url, error=f"timeout: {e}") from e
         except Exception as e:
-            logger.error(f"ESPN API error: {e}")
-            return None
+            raise self._dark(url, error=f"{type(e).__name__}: {e}") from e
 
     def _get_espn_path(self, sport_key: str) -> Optional[tuple[str, str]]:
         """Get ESPN sport/league path from our sport key."""
@@ -225,7 +463,7 @@ class ESPNAPIService:
             logger.error(f"Error parsing ESPN venue: {e}")
             return None
 
-    async def get_teams(self, sport_key: str) -> list[ESPNTeam]:
+    async def get_teams(self, sport_key: str) -> Optional[list[ESPNTeam]]:
         """
         Get all teams for a sport/league.
 
@@ -233,7 +471,8 @@ class ESPNAPIService:
             sport_key: Our internal sport key (e.g., "basketball_nba")
 
         Returns:
-            List of ESPNTeam objects
+            List of ESPNTeam objects, ``[]`` when ESPN lists none, or ``None``
+            when ESPN did not answer (authority dark — keep last known state).
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -243,7 +482,10 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/teams?limit=100"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return []
 
@@ -265,7 +507,9 @@ class ESPNAPIService:
             team_id: ESPN team ID
 
         Returns:
-            ESPNTeam object or None
+            ESPNTeam object, or None when the team is absent OR ESPN did not
+            answer. A single-object lookup cannot distinguish the two; callers
+            that need the distinction should read :func:`espn_authority_state`.
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -274,13 +518,18 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/teams/{team_id}"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return None
 
         return self._parse_team(data.get("team", data))
 
-    async def get_scoreboard(self, sport_key: str, date: Optional[str] = None) -> list[ESPNEvent]:
+    async def get_scoreboard(
+        self, sport_key: str, date: Optional[str] = None
+    ) -> Optional[list[ESPNEvent]]:
         """
         Get scoreboard (list of games) for a sport/league.
 
@@ -289,7 +538,10 @@ class ESPNAPIService:
             date: Optional date in YYYYMMDD format (defaults to today)
 
         Returns:
-            List of ESPNEvent objects
+            List of ESPNEvent objects, ``[]`` when ESPN's slate is genuinely
+            empty, or ``None`` when ESPN did not answer. ``None`` means the
+            authority is dark: an event's absence from the board proves
+            NOTHING, so no caller may settle, void or complete on it.
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -300,7 +552,10 @@ class ESPNAPIService:
         if date:
             url += f"?dates={date}"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return []
 
@@ -417,7 +672,8 @@ class ESPNAPIService:
             event_id: ESPN event ID
 
         Returns:
-            ESPNEvent object or None
+            ESPNEvent object, or None when the event is absent OR ESPN did not
+            answer (read :func:`espn_authority_state` to tell them apart).
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -426,7 +682,10 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return None
 
@@ -460,7 +719,8 @@ class ESPNAPIService:
             event_id: ESPN event ID
 
         Returns:
-            List of {time, home_win_probability} dicts, or None
+            List of {time, home_win_probability} dicts, or None when ESPN
+            publishes no win-probability series for the game OR did not answer.
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -469,7 +729,10 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return None
 
@@ -490,7 +753,7 @@ class ESPNAPIService:
 
     async def get_event_context(
         self, sport_key: str, event_id: str
-    ) -> dict:
+    ) -> Optional[dict]:
         """
         Get injury reports, news headlines, box score, and scoring plays for an event.
 
@@ -503,7 +766,9 @@ class ESPNAPIService:
 
         Returns:
             {"injuries": list[ESPNInjury], "news": list[ESPNNewsHeadline],
-             "box_score": dict, "scoring_plays": list[dict]}
+             "box_score": dict, "scoring_plays": list[dict]}, or ``None`` when
+            ESPN did not answer. An empty context means "ESPN has nothing for
+            this game"; ``None`` means we do not know — do not write from it.
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -512,7 +777,10 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/summary?event={event_id}"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return {"injuries": [], "news": [], "box_score": {}, "scoring_plays": []}
 
@@ -1085,7 +1353,7 @@ class ESPNAPIService:
 
         return plays
 
-    async def get_team_roster(self, sport_key: str, team_id: str) -> list[dict]:
+    async def get_team_roster(self, sport_key: str, team_id: str) -> Optional[list[dict]]:
         """
         Fetch roster for an ESPN team.
 
@@ -1094,7 +1362,8 @@ class ESPNAPIService:
             team_id: ESPN team ID
 
         Returns:
-            List of {"name": str, "position": str|None} dicts.
+            List of {"name": str, "position": str|None} dicts, or ``None`` when
+            ESPN did not answer (authority dark — keep the stored roster).
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -1103,7 +1372,10 @@ class ESPNAPIService:
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/teams/{team_id}/roster"
 
-        data = await self._get(url)
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
         if not data:
             return []
 
@@ -1138,7 +1410,7 @@ class ESPNAPIService:
         self,
         query: str,
         sport_key: Optional[str] = None,
-    ) -> list[ESPNTeam]:
+    ) -> Optional[list[ESPNTeam]]:
         """
         Search for teams by name.
 
@@ -1147,10 +1419,15 @@ class ESPNAPIService:
             sport_key: Optional sport to filter by
 
         Returns:
-            List of matching ESPNTeam objects
+            List of matching ESPNTeam objects, or ``None`` when ESPN did not
+            answer for the requested sport. In the all-sports case a dark sport
+            is skipped rather than failing the whole search — a partial result
+            is still an answer for the sports that did reply.
         """
         if sport_key:
             teams = await self.get_teams(sport_key)
+            if teams is None:
+                return None
             query_lower = query.lower()
             return [
                 t for t in teams
@@ -1164,6 +1441,8 @@ class ESPNAPIService:
             results = []
             for key in SPORT_LEAGUE_MAP.keys():
                 teams = await self.get_teams(key)
+                if teams is None:
+                    continue
                 query_lower = query.lower()
                 for t in teams:
                     if (

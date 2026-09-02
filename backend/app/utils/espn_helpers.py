@@ -1064,6 +1064,15 @@ async def fetch_completed_box_scores(session, stats):
                 continue
             try:
                 context = await box_espn.get_event_context(sport_key, event.espn_id)
+                if context is None:
+                    # AUTHORITY DARK (lane1/045). The else-branch below stamps
+                    # box_score_data with error="not_available" — a durable
+                    # claim about the GAME. ESPN not answering is a claim about
+                    # ESPN, so nothing is written and the row is retried later.
+                    stats["box_scores_authority_dark"] = (
+                        stats.get("box_scores_authority_dark", 0) + 1
+                    )
+                    continue
                 box_score = context.get("box_score", {})
                 scoring_plays = context.get("scoring_plays", [])
                 now_str = datetime.now(timezone.utc).isoformat()
@@ -1147,6 +1156,12 @@ async def fetch_live_box_scores(session, stats):
                 continue
             try:
                 context = await live_espn.get_event_context(sport_key, ev.espn_id)
+                if context is None:
+                    # AUTHORITY DARK (lane1/045) — keep the last live box score.
+                    stats["live_box_scores_authority_dark"] = (
+                        stats.get("live_box_scores_authority_dark", 0) + 1
+                    )
+                    continue
                 box_data = context.get("box_score", {})
                 scoring_plays = context.get("scoring_plays", [])
                 now_str = datetime.now(timezone.utc).isoformat()
@@ -1239,6 +1254,16 @@ async def backfill_missing_scores(session, stats):
                         dates.add(ev.commence_time.strftime("%Y%m%d"))
                 for date_str in dates:
                     espn_events = await score_espn.get_scoreboard(sport_key, date=date_str)
+                    if espn_events is None:
+                        # AUTHORITY DARK (lane1/045) — no board, no backfill.
+                        stats["score_backfill_authority_dark"] = (
+                            stats.get("score_backfill_authority_dark", 0) + 1
+                        )
+                        logger.warning(
+                            "ESPN score backfill: authority dark for "
+                            f"{sport_key}/{date_str} — scores left missing"
+                        )
+                        continue
                     if not espn_events:
                         continue
                     for ev in events_list:

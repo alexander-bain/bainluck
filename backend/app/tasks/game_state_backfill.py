@@ -438,6 +438,15 @@ async def _fetch_and_write_espn_periods(
         async with ESPNApiClient() as espn:
             context = await espn.get_event_context(sport_key, event.espn_id)
 
+        if context is None:
+            # AUTHORITY DARK (lane1/045) — ESPN did not answer. Distinct from
+            # "ESPN has no scoring plays for this game"; write nothing.
+            logger.warning(
+                f"ESPN authority dark for event {event.id} "
+                f"(espn_id={event.espn_id}, sport={sport_key}) — no periods written"
+            )
+            return 0
+
         scoring_plays = context.get("scoring_plays", [])
         if not scoring_plays:
             logger.info(f"ESPN fetch for event {event.id}: no scoring_plays returned (espn_id={event.espn_id}, sport={sport_key})")

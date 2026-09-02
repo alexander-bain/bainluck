@@ -205,6 +205,10 @@ async def _sync_espn_live_events():
         "sports_with_live": 0,
         "events_synced": 0,
         "events_updated": 0,
+        # lane1/045: sports whose scoreboard ESPN did NOT answer for. Counted
+        # separately from an empty slate — a dark sport is skipped, never read
+        # as "no games".
+        "authority_dark_sports": 0,
         "errors": [],
     }
 
@@ -239,10 +243,19 @@ async def _sync_espn_live_events():
                 for key in all_fetch_keys:
                     try:
                         events = await espn.get_scoreboard(key)
-                        espn_data[key] = events or []
+                        if events is None:
+                            # AUTHORITY DARK — ESPN did not answer. The key is
+                            # left ABSENT rather than set to [], so no pass can
+                            # read this sport's silence as an empty slate.
+                            stats["authority_dark_sports"] += 1
+                            logger.warning(
+                                "ESPN scoreboard authority dark for %s — sport "
+                                "skipped, last known state kept", key,
+                            )
+                            continue
+                        espn_data[key] = events
                     except Exception as e:
                         stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
-                        espn_data[key] = []
             finally:
                 await espn.close()
 
@@ -560,6 +573,14 @@ async def _backfill_team_logos():
                     stats["sports_checked"] += 1
                     try:
                         espn_teams = await espn.get_teams(sport_key)
+                        if espn_teams is None:
+                            # AUTHORITY DARK — not "this league has no teams".
+                            stats["errors"].append(f"authority_dark_{sport_key}")
+                            logger.warning(
+                                "ESPN teams authority dark for %s — logos left "
+                                "as they are", sport_key,
+                            )
+                            continue
                         stats["teams_fetched"] += len(espn_teams)
                     except Exception as e:
                         stats["errors"].append(f"fetch_{sport_key}: {str(e)}")
@@ -727,6 +748,18 @@ async def _cleanup_bad_espn_matches():
                         espn_teams = await espn.get_teams(sport_key)
                     except Exception as e:
                         stats["errors"].append(f"fetch_{sport_key}: {str(e)}")
+                        continue
+
+                    if espn_teams is None:
+                        # AUTHORITY DARK. This pass CLEARS a team's espn_id when
+                        # the id is absent from the fetched roster, so a silent
+                        # [] here would wipe every ESPN link in the league. A
+                        # sport we could not read is skipped whole.
+                        stats["errors"].append(f"authority_dark_{sport_key}")
+                        logger.warning(
+                            "ESPN teams authority dark for %s — espn_id "
+                            "validation SKIPPED, no ids cleared", sport_key,
+                        )
                         continue
 
                     if not espn_teams:
@@ -1018,6 +1051,10 @@ async def _backfill_box_scores(
 
                     try:
                         context = await espn.get_event_context(sport_key, event.espn_id)
+                        if context is None:
+                            # AUTHORITY DARK — leave the event exactly as it is.
+                            stats["authority_dark"] = stats.get("authority_dark", 0) + 1
+                            continue
                         box_score = context.get("box_score", {})
                         scoring_plays = context.get("scoring_plays", [])
                         scores = context.get("scores", {})
@@ -1168,6 +1205,16 @@ async def _backfill_espn_ids(limit: int = 1000):
                     except Exception as e:
                         stats["errors"] += 1
                         logger.warning(f"ESPN scoreboard error for {sport_key}/{date_str}: {e}")
+                        continue
+
+                    if espn_events is None:
+                        # AUTHORITY DARK — an event's absence from a board we
+                        # never received is not evidence about the event.
+                        stats["authority_dark"] = stats.get("authority_dark", 0) + 1
+                        logger.warning(
+                            "ESPN scoreboard authority dark for %s/%s — %d events "
+                            "left untouched", sport_key, date_str, len(date_events),
+                        )
                         continue
 
                     if not espn_events:
