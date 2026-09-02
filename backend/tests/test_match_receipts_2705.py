@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.dialects import sqlite as sqlite_dialect
+from sqlalchemy.exc import MissingGreenlet
 
 from app.tasks import prediction_market_matching as pmm
 from app.utils import match_receipts as mr
@@ -1017,3 +1018,322 @@ def test_the_flush_verifies_before_it_writes_and_counts_the_downgrades():
 def test_link_not_durable_is_a_registered_countable_reason():
     """It has to be GROUP BY-able, or the reconciliation job cannot alert on it."""
     assert mr.REJECT_LINK_NOT_DURABLE in mr.REJECT_REASONS
+
+
+# =============================================================================
+# Part 9 — CERT-774: one market's failure ends that ATTEMPT, never the PASS.
+#
+# The banked reproduction: a pass holds a preloaded list of ORM rows and walks
+# it across per-market rollback boundaries. `rollback()` expires every
+# persistent object in the session — `expire_on_commit=False` does not prevent
+# it (gotcha #6) — so the NEXT row's `market.id`, read outside the per-market
+# catcher, triggers an implicit refresh with no greenlet to run it and raises
+# `MissingGreenlet`. The pass dies before `_flush_pass_receipts`, its collected
+# receipts die in memory, and the rest of the queue is left unattempted and
+# unexplained: precisely the state #2705 exists to abolish, reintroduced by the
+# error handling that was supposed to contain a single bad market.
+#
+# The rig below is that behaviour and nothing else: a row that raises the real
+# `MissingGreenlet` on any attribute read once the session has rolled back.
+# `test_the_rig_reproduces_the_expiry_the_defect_needs` proves the rig can still
+# see the defect, so the passes' green is a result rather than an absence.
+# =============================================================================
+
+
+class _ExpiringRow:
+    """A market row with SQLAlchemy's post-rollback behaviour, and no other."""
+
+    _FIELDS = dict(
+        source="polymarket", category="sports", group_type=None, group_id=None,
+        llm_sport_category="tennis", event_id=None, sport_id=None,
+    )
+
+    def __init__(self, id, name, **extra):
+        values = dict(self._FIELDS)
+        values.update(
+            id=id, name=name, external_id=f"ext-{id}", commence_time=NOW,
+        )
+        values.update(extra)
+        object.__setattr__(self, "_values", values)
+        object.__setattr__(self, "_expired", False)
+
+    def expire(self):
+        object.__setattr__(self, "_expired", True)
+
+    def refresh(self):
+        object.__setattr__(self, "_expired", False)
+
+    def __getattr__(self, name):
+        values = object.__getattribute__(self, "_values")
+        if name not in values:
+            raise AttributeError(name)
+        if object.__getattribute__(self, "_expired"):
+            raise MissingGreenlet(
+                "greenlet_spawn has not been called; can't call await_only() "
+                "here. Was IO attempted in an unexpected place?"
+            )
+        return values[name]
+
+    def __setattr__(self, name, value):
+        object.__getattribute__(self, "_values")[name] = value
+
+
+class _RollbackExpiresRowsSession:
+    """The matcher's session, reduced to the one behaviour that matters."""
+
+    def __init__(self, rows):
+        self._rows = {r.id: r for r in rows}
+        self.loaded = []
+        self.rollbacks = 0
+        self.expunges = 0
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "JOIN market_match_receipts" in sql:
+            return _IdResult([])          # nothing stale; the never-queue is it
+        return _IdResult(list(self._rows))
+
+    async def scalar(self, stmt):
+        return len(self._rows)
+
+    async def get(self, model, pk):
+        self.loaded.append(pk)
+        row = self._rows.get(pk)
+        if row is not None:
+            row.refresh()                 # a fresh read is a fresh row
+        return row
+
+    async def rollback(self):
+        self.rollbacks += 1
+        for row in self._rows.values():
+            row.expire()
+
+    def expunge_all(self):
+        self.expunges += 1
+
+    async def commit(self):
+        pass                              # expire_on_commit=False
+
+
+class _IdResult:
+    def __init__(self, values):
+        self._values = list(values)
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._values)
+
+
+def _fresh_stats():
+    return {
+        "funnel": {
+            "not_game_level": 0, "no_matchup_extracted": 0,
+            "game_level_detected": 0, "no_event_found": 0, "linked": 0,
+            "sample_not_game_level": [], "sample_game_level_no_event": [],
+        },
+        "errors": [], "markets_scanned": 0, "newly_linked": 0,
+    }
+
+
+def _run_pass_with_one_failing_market(monkeypatch, pass_fn, *, failing_at):
+    """Two markets, the first one fails; return what the pass did.
+
+    ``failing_at`` is "search" or "link" — the candidate query and the write
+    are different halves of an attempt, and the old code guarded only the
+    second one.
+    """
+    rows = [
+        _ExpiringRow(1, "Ann Li vs Donna Vekic"),
+        _ExpiringRow(2, "Carlos Alcaraz vs. Jannik Sinner"),
+    ]
+    session = _RollbackExpiresRowsSession(rows)
+    stats = _fresh_stats()
+    steps = []
+    flushed = {}
+
+    async def _fake_search(session_, matchup, market, now_, **kw):
+        steps.append(("search", market.id))
+        if failing_at == "search" and market.id == 1:
+            raise RuntimeError("canceling statement due to statement timeout")
+        return None
+
+    async def _fake_link(session_, market, matchup, matched, stats_,
+                         game_date, now_, queue, *, receipt=None):
+        steps.append(("link", market.id))
+        if failing_at == "link" and market.id == 1:
+            raise RuntimeError("deadlock detected")
+        receipt.link(900 + market.id, how="test")
+
+    async def _capture_flush(session_, receipts, stats_, phase,
+                             session_factory=None):
+        flushed.setdefault("phases", []).append(phase)
+        flushed.setdefault("receipts", []).extend(receipts)
+
+    monkeypatch.setattr(pmm, "_find_matching_event", _fake_search)
+    monkeypatch.setattr(pmm, "_find_event_by_sport_and_time", _fake_search)
+    monkeypatch.setattr(pmm, "_try_link_market", _fake_link)
+    monkeypatch.setattr(pmm, "_flush_pass_receipts", _capture_flush)
+
+    if pass_fn is pmm._phase1_pass1_ticker_scan:
+        asyncio.run(pass_fn(session, stats, NOW, [], lambda: 700.0))
+    else:
+        asyncio.run(pass_fn(session, stats, NOW, set(), [], lambda: 700.0))
+    return session, stats, steps, flushed
+
+
+@pytest.mark.parametrize("failing_at", ["link", "search"])
+def test_a_failed_market_does_not_stop_the_next_one(monkeypatch, failing_at):
+    """THE SHIP. Market 1 raises, market 2 is still attempted, both receipts
+    reach the flush. Anything less and the tail of the queue goes back to being
+    indistinguishable from never having been tried."""
+    session, stats, steps, flushed = _run_pass_with_one_failing_market(
+        monkeypatch, pmm._phase1_pass3_backlog_scan, failing_at=failing_at,
+    )
+
+    assert ("link", 2) in steps, (
+        "market 2 was never attempted — market 1's failure ended the pass, "
+        "which is CERT-774 exactly"
+    )
+    assert session.rollbacks == 1
+    assert session.loaded == [1, 2], (
+        "each row must be read on the line before its own attempt; a preloaded "
+        "instance is expired by the rollback that precedes it"
+    )
+    receipts = {r.market_id: r for r in flushed["receipts"]}
+    assert set(receipts) == {1, 2}, "receipts died in memory with the pass"
+    assert receipts[2].outcome == mr.OUTCOME_LINKED
+    assert receipts[2].linked_event_id == 902
+    assert receipts[1].reject_reason == (
+        mr.REJECT_DEADLOCK if failing_at == "link" else mr.REJECT_ATTEMPT_ERROR
+    )
+    assert stats["funnel"]["backlog_scanned"] == 2
+
+
+@pytest.mark.parametrize("failing_at", ["link", "search"])
+def test_pass1_survives_a_failed_market_too(monkeypatch, failing_at):
+    """Pass 1 has its own loop, so it needs its own proof."""
+    session, stats, steps, flushed = _run_pass_with_one_failing_market(
+        monkeypatch, pmm._phase1_pass1_ticker_scan, failing_at=failing_at,
+    )
+    assert ("link", 2) in steps
+    assert session.loaded == [1, 2]
+    assert {r.market_id for r in flushed["receipts"]} == {1, 2}
+    assert flushed["phases"] == [mr.PHASE_PASS1_TICKER]
+
+
+def test_the_rollback_empties_the_session_so_the_next_read_is_a_real_read():
+    """Expiring is not enough — the expired instances have to go, or the next
+    ``get`` is an implicit refresh of a row that may no longer exist."""
+    session = _RollbackExpiresRowsSession([_ExpiringRow(1, "A vs B")])
+    receipt = _receipt(market_id=1)
+    asyncio.run(pmm._abandon_attempt(
+        session, market_id=1, phase=mr.PHASE_PASS2_GENERAL,
+        stats=_fresh_stats(), receipt=receipt, exc=RuntimeError("boom"),
+    ))
+    assert session.rollbacks == 1 and session.expunges == 1
+    assert receipt.reject_reason == mr.REJECT_ATTEMPT_ERROR
+
+
+def test_the_rig_reproduces_the_expiry_the_defect_needs():
+    """The control. If this stops raising, the two tests above prove nothing."""
+    row = _ExpiringRow(1, "Ann Li vs Donna Vekic")
+    session = _RollbackExpiresRowsSession([row])
+    assert row.id == 1
+    asyncio.run(session.rollback())
+    with pytest.raises(MissingGreenlet):
+        row.id
+
+
+def test_a_market_that_vanished_between_scan_and_attempt_is_counted(monkeypatch):
+    """The scan holds ids, so a row can be deleted or re-scoped underneath it.
+    That is a skip with a counter, never a crash."""
+    session = _RollbackExpiresRowsSession([_ExpiringRow(1, "Ann Li vs Vekic")])
+    session._rows[1] = None               # gone by the time the attempt reads it
+    stats = _fresh_stats()
+
+    async def _no_flush(*a, **kw):
+        pass
+
+    monkeypatch.setattr(pmm, "_flush_pass_receipts", _no_flush)
+    asyncio.run(pmm._phase1_pass3_backlog_scan(
+        session, stats, NOW, set(), [], lambda: 700.0,
+    ))
+    assert stats["funnel"]["row_gone_before_attempt"] == 1
+    assert stats["funnel"]["backlog_scanned"] == 0
+
+
+def test_receipts_are_published_even_when_the_pass_itself_raises(monkeypatch):
+    """The flush is in a ``finally``. A failure the pass does not anticipate
+    must still leave every attempt it already made accounted for."""
+    session = _RollbackExpiresRowsSession([_ExpiringRow(1, "Ann Li vs Vekic")])
+    flushed = []
+
+    async def _explode(session_, market, stats_, now_, queue, tr, receipts, phase):
+        receipts.append(_receipt(market_id=market.id, phase=phase))
+        raise RuntimeError("something nobody wrote a handler for")
+
+    async def _capture(session_, receipts, stats_, phase, session_factory=None):
+        flushed.extend(receipts)
+
+    monkeypatch.setattr(pmm, "_attempt_market", _explode)
+    monkeypatch.setattr(pmm, "_flush_pass_receipts", _capture)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(pmm._phase1_pass3_backlog_scan(
+            session, _fresh_stats(), NOW, set(), [], lambda: 700.0,
+        ))
+    assert [r.market_id for r in flushed] == [1]
+
+
+# ── The Polymarket history request follows the commit, never precedes it ──────
+
+
+class _CommitFailsSession(_CapturingSession):
+    def __init__(self, fail=True):
+        super().__init__()
+        self.fail = fail
+
+    async def commit(self):
+        if self.fail:
+            raise RuntimeError("could not serialize access")
+
+
+async def _link_one(session, queue):
+    market = _ExpiringRow(1, "Ann Li vs Donna Vekic")
+    receipt = _receipt(market_id=1)
+    await pmm._try_link_market(
+        session, market, None, {"event_id": 42, "home_team": "Li",
+                                "away_team": "Vekic"},
+        _fresh_stats(), None, NOW, queue, receipt=receipt,
+    )
+
+
+def _patch_link_deps(monkeypatch):
+    async def _no_refusal(*a, **kw):
+        return None
+
+    async def _no_identities(*a, **kw):
+        return None
+
+    monkeypatch.setattr(pmm, "_check_duplicate_kalshi_linkage_reason", _no_refusal)
+    monkeypatch.setattr(pmm, "_register_market_team_identities", _no_identities)
+
+
+def test_a_failed_commit_leaves_no_history_request_behind(monkeypatch):
+    """The backfill queue asks for the history of a (market, event) LINK. A
+    request enqueued before the commit outlives a commit that never lands."""
+    _patch_link_deps(monkeypatch)
+    queue = []
+    with pytest.raises(RuntimeError):
+        asyncio.run(_link_one(_CommitFailsSession(), queue))
+    assert queue == [], "queued history for a link the database never took"
+
+
+def test_the_history_request_is_still_made_when_the_commit_lands(monkeypatch):
+    """The control: moving the enqueue must not delete it."""
+    _patch_link_deps(monkeypatch)
+    queue = []
+    asyncio.run(_link_one(_CommitFailsSession(fail=False), queue))
+    assert queue == [(1, 42)]
