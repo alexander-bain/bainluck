@@ -1,0 +1,196 @@
+{
+ "counts": {
+  "adventure": {
+   "events": 0,
+   "futures": 1
+  },
+  "aussierules": {
+   "events": 0,
+   "futures": 7
+  },
+  "auto": {
+   "events": 0,
+   "futures": 2
+  },
+  "baseball": {
+   "events": 75,
+   "futures": 579
+  },
+  "basketball": {
+   "events": 0,
+   "futures": 475
+  },
+  "boxing": {
+   "events": 4,
+   "futures": 20
+  },
+  "business": {
+   "events": 0,
+   "futures": 1
+  },
+  "chess": {
+   "events": 0,
+   "futures": 26
+  },
+  "combat_archery": {
+   "events": 0,
+   "futures": 2
+  },
+  "commodities": {
+   "events": 0,
+   "futures": 3
+  },
+  "cricket": {
+   "events": 2,
+   "futures": 929
+  },
+  "crypto": {
+   "events": 0,
+   "futures": 15
+  },
+  "culture": {
+   "events": 0,
+   "futures": 24
+  },
+  "cycling": {
+   "events": 0,
+   "futures": 20
+  },
+  "darts": {
+   "events": 0,
+   "futures": 107
+  },
+  "dodgeball": {
+   "events": 0,
+   "futures": 1
+  },
+  "economics": {
+   "events": 0,
+   "futures": 2369
+  },
+  "energy": {
+   "events": 0,
+   "futures": 10
+  },
+  "entertainment": {
+   "events": 0,
+   "futures": 1796
+  },
+  "esports": {
+   "events": 3,
+   "futures": 1546
+  },
+  "football": {
+   "events": 1,
+   "futures": 2448
+  },
+  "geopolitics": {
+   "events": 0,
+   "futures": 806
+  },
+  "golf": {
+   "events": 0,
+   "futures": 83
+  },
+  "handball": {
+   "events": 0,
+   "futures": 23
+  },
+  "health": {
+   "events": 0,
+   "futures": 20
+  },
+  "hockey": {
+   "events": 10,
+   "futures": 136
+  },
+  "horse_racing": {
+   "events": 0,
+   "futures": 1
+  },
+  "lacrosse": {
+   "events": 0,
+   "futures": 12
+  },
+  "legal": {
+   "events": 0,
+   "futures": 165
+  },
+  "mma": {
+   "events": 15,
+   "futures": 133
+  },
+  "motorsports": {
+   "events": 0,
+   "futures": 142
+  },
+  "olympics": {
+   "events": 0,
+   "futures": 7
+  },
+  "other": {
+   "events": 27,
+   "futures": 526
+  },
+  "pickleball": {
+   "events": 0,
+   "futures": 99
+  },
+  "politics": {
+   "events": 0,
+   "futures": 6358
+  },
+  "real_estate": {
+   "events": 0,
+   "futures": 1
+  },
+  "retail": {
+   "events": 0,
+   "futures": 1
+  },
+  "rugby": {
+   "events": 0,
+   "futures": 77
+  },
+  "sailing": {
+   "events": 0,
+   "futures": 4
+  },
+  "soccer": {
+   "events": 392,
+   "futures": 5264
+  },
+  "softball": {
+   "events": 0,
+   "futures": 1
+  },
+  "space": {
+   "events": 0,
+   "futures": 1
+  },
+  "surfing": {
+   "events": 0,
+   "futures": 1
+  },
+  "table_tennis": {
+   "events": 0,
+   "futures": 9809
+  },
+  "tech": {
+   "events": 0,
+   "futures": 1052
+  },
+  "tennis": {
+   "events": 236,
+   "futures": 1846
+  },
+  "watchmaking": {
+   "events": 0,
+   "futures": 2
+  },
+  "weather": {
+   "events": 0,
+   "futures": 667
+  }
+ }
+}

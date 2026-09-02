@@ -203,7 +203,17 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     tier: 3,
   },
   {
-    key: "motorsport",
+    // The key is the PLURAL `motorsports` because a category key is not a
+    // label — it is looked up against `llm_sport_category` (see
+    // `getCategoryForFutures` below), it is the lookup key into
+    // `/api/feed/tag-counts`, and `/categories/<key>` sends it to the feed as
+    // `category=`. Every one of those three readers stores the plural, as does
+    // the rest of this codebase (`app/preferences`, `app/discover`,
+    // `lib/play/kidSafe`, `EXCLUDED_SUBCATEGORY_TAGS` below, and iOS's
+    // `DiscoverCategory.swift`). This entry was the only singular in the tree,
+    // so the tile counted nothing and `/categories/motorsport` served an empty
+    // page while 142 open markets sat under `motorsports` (#2627).
+    key: "motorsports",
     name: "Motorsport",
     emoji: "🏎️",
     prefixes: ["motorsport_", "racing_"],
@@ -548,9 +558,9 @@ const SPORT_PATTERNS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\bboxing\b/i, category: "boxing" },
 
   // Motorsport
-  { pattern: /\b(formula.1|f1|nascar|indycar|motogp|wrc)\b/i, category: "motorsport" },
-  { pattern: /\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b/i, category: "motorsport" },
-  { pattern: /\b(racing|motorsport)\b/i, category: "motorsport" },
+  { pattern: /\b(formula.1|f1|nascar|indycar|motogp|wrc)\b/i, category: "motorsports" },
+  { pattern: /\b(daytona.500|indy.500|le.mans|monaco.grand.prix)\b/i, category: "motorsports" },
+  { pattern: /\b(racing|motorsport)\b/i, category: "motorsports" },
 
   // Politics
   { pattern: /\b(election|president|congress|senate|governor|presidential|democrat|republican|trump|biden)\b/i, category: "politics" },
@@ -630,10 +640,10 @@ const FUTURES_KEYWORD_MAP: Record<string, string> = {
   // MMA
   ufc: "mma",
   // Motorsport
-  f1: "motorsport",
-  formula_1: "motorsport",
-  nascar: "motorsport",
-  indycar: "motorsport",
+  f1: "motorsports",
+  formula_1: "motorsports",
+  nascar: "motorsports",
+  indycar: "motorsports",
   // Soccer
   epl: "soccer",
   premier_league: "soccer",

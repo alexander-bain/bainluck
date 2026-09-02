@@ -27,16 +27,35 @@ export default function CategoriesIndexPage() {
     refreshInterval: 60000,
   });
 
+  // A tile with no items is a door that opens onto nothing: `/categories/<key>`
+  // asks the feed for `category=<key>` and renders that answer, so a category
+  // with zero counted items has an empty destination by construction. Poker is
+  // the standing example — 20 poker markets exist and every one is resolved, so
+  // the tile said "No items" and led to a blank page (#2627).
+  //
+  // Fails OPEN, deliberately. Counts are only allowed to remove a tile once
+  // they have actually arrived; while SWR is loading, has errored, or has
+  // handed back a body without a `counts` object, every tile renders exactly as
+  // it does today. Gating on `data` rather than on `!isLoading` matters because
+  // a revalidation error leaves `data` populated and `isLoading` false, and the
+  // grid must not empty itself over a transient fetch.
+  const countsByKey = data?.counts;
+
   const groups = useMemo(() => {
-    const tier1 = DISPLAY_CATEGORIES.filter((c) => c.tier === 1);
-    const tier2 = DISPLAY_CATEGORIES.filter((c) => c.tier === 2);
-    const tier3 = DISPLAY_CATEGORIES.filter((c) => c.tier === 3);
+    const visible = countsByKey
+      ? DISPLAY_CATEGORIES.filter((c) => {
+          const counts = countsByKey[c.key];
+          return (counts?.events ?? 0) + (counts?.futures ?? 0) > 0;
+        })
+      : DISPLAY_CATEGORIES;
     return [
-      { label: "Major Sports", items: tier1 },
-      { label: "More Sports & Topics", items: tier2 },
-      { label: "Niche", items: tier3 },
+      { label: "Major Sports", items: visible.filter((c) => c.tier === 1) },
+      { label: "More Sports & Topics", items: visible.filter((c) => c.tier === 2) },
+      { label: "Niche", items: visible.filter((c) => c.tier === 3) },
+      // Filtering the groups AFTER the tile filter is what keeps a section
+      // heading from rendering above an empty grid.
     ].filter((g) => g.items.length > 0);
-  }, []);
+  }, [countsByKey]);
 
   return (
     <div className="space-y-8">
