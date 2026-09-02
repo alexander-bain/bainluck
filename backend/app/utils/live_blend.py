@@ -36,7 +36,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
+from app.utils.game_market_class import classify_game_market_class
 from app.utils.prediction_market_matching import (
+    _strip_category_prefix,
     extract_matchup_with_ticker_fallback,
     feeds_win_prob_blend,
     find_moneyline_outcome,
@@ -113,8 +115,8 @@ def _home_probability_for_market(
 ) -> Optional[tuple[float, Any, float]]:
     """This single market's implied home probability, or None if it can't say.
 
-    ``matchup`` is the PRIMARY market's parse, deliberately, and it is passed in
-    rather than re-derived per market. Kalshi's per-team pair carries two
+    ``matchup`` is the SPEAKING market's parse, deliberately, and it is passed
+    in rather than re-derived per market. Kalshi's per-team pair carries two
     different market names for one game, so re-deriving would let the two halves
     of a devig disagree about which side is home — averaging a home reading with
     an away one, silently, only on the two-market path.
@@ -137,6 +139,74 @@ def _home_probability_for_market(
     return home_prob, outcome, yes_prob
 
 
+def _admissible_as_fallback(market: Any) -> bool:
+    """Whether a NON-primary market may speak for its source.
+
+    THE FALLBACK CARRIES A BURDEN THE PRIMARY DOES NOT, and deliberately so. The
+    primary is the row the live writers have always trusted, so gating it would
+    silently retire readings that ship today — the fallback is new admission,
+    and new admission proves itself.
+
+    It has to. Polymarket decomposes a game into a dozen rows that share the
+    match-winner's exact two-outcome shape and its "A vs. B" title, then append
+    a qualifier: `A vs. B - Halftime Result`, `- Exact Score`,
+    `: Both Teams to Score`. The matchup parser strips container suffixes to
+    recover the participants, so those names PARSE, and their outcomes are the
+    two team names, so they RESOLVE. Measured over a 3-day 2,197-group replay:
+    an ungated fallback newly stamped 95 such derivatives as the match
+    moneyline — a halftime price on the hero, confidently, with nothing on
+    screen to say so.
+
+    So a fallback must be a game winner by the ONE shared recognizer
+    (`game_market_class`), which is source-agnostic and keys on the bare-matchup
+    shape rather than on English words. Its league-tag stripper knows the Kalshi
+    spellings, not Polymarket's tournament prefixes (`US Open ATP: A vs B`), so
+    the shared parser's own prefix knowledge runs first — re-implementing that
+    list here is the #1951 drift failure, where the second copy does not throw
+    when it disagrees, it just quietly answers differently.
+
+    Fail-closed: a prefix neither module recognizes leaves the colon in place,
+    the name is not a bare matchup, and the market stays silent. That is the
+    behaviour it already has today.
+    """
+    name = market.name or ""
+    return classify_game_market_class(
+        _strip_category_prefix(name), market.external_id
+    ) == "moneyline"
+
+
+def _reading_for_entry(
+    entry: MarketOutcomes, home_team_name: str, away_team_name: str
+) -> Optional[tuple[Any, float, Any, float]]:
+    """``(matchup, home prob, outcome, yes prob)`` from ONE market, or None.
+
+    The whole admission rule for a single market lives here — the Kalshi
+    props/spreads gate, the name parse, and the moneyline resolution — so that
+    trying a second market widens the SEARCH without widening what is allowed
+    to speak. A market that cannot clear every one of these still says nothing.
+    """
+    # Kalshi props/spreads never write the blend, whatever they are linked to.
+    if entry.market.source == "kalshi" and entry.market.external_id:
+        if not feeds_win_prob_blend(entry.market.external_id):
+            return None
+
+    # Uses the ticker fallback for generically-named Kalshi markets.
+    matchup = extract_matchup_with_ticker_fallback(
+        entry.market.name, external_id=entry.market.external_id,
+    )
+    if not matchup:
+        return None
+
+    reading = _home_probability_for_market(
+        entry, matchup, home_team_name, away_team_name,
+    )
+    if reading is None:
+        return None
+
+    home_prob, outcome, yes_prob = reading
+    return matchup, home_prob, outcome, yes_prob
+
+
 def compute_source_home_probability(
     group: Sequence[MarketOutcomes],
     home_team_name: str,
@@ -148,6 +218,35 @@ def compute_source_home_probability(
     outcomes. Returns None — never a guess — whenever the market is not a game
     winner, the matchup cannot be parsed, or no moneyline outcome is found.
 
+    THE PRIMARY IS A PREFERENCE, NOT A VERDICT. ``select_primary_market`` is
+    still asked first, so any group that already spoke keeps saying exactly what
+    it said. But its tie-break among equals is "lowest market id", and
+    ``is_game_winner_market`` gates only KALSHI — for Polymarket every row of a
+    group scores the same, so "lowest id" means OLDEST. Polymarket mints an
+    event-level parent and the derivative books (Exact Score, Match O/U) before
+    the match-winner child that actually carries the moneyline, so the oldest
+    row is routinely one that cannot resolve a side, and the whole source went
+    silently blank on the very events this blend exists for. Measured by
+    CERT-759: an empty parent at id 1 beside a match-winner child at id 9
+    selects primary 1 and reads None.
+
+    So the rest of the group is tried, in the same deterministic id order, and
+    the first market that CAN speak wins. This can only WIDEN what is written:
+    the primary is still tried first, so a group that already resolved takes the
+    identical answer.
+
+    It does not widen what is ADMITTED. The Kalshi gate, the name parse and the
+    moneyline resolution all moved into the per-market attempt
+    (`_reading_for_entry`), so a Kalshi prop is still refused rather than fallen
+    back onto; and every non-primary candidate must additionally prove it is a
+    game winner (`_admissible_as_fallback`), because Polymarket's derivatives
+    wear the match winner's name and shape and would otherwise stamp a halftime
+    price as the moneyline.
+
+    ``select_primary_market`` itself is deliberately NOT changed: it is also the
+    row-picker in the poll's grouping pass, and moving the tie-break under it
+    would move a second caller this queue did not measure.
+
     DEVIG. When the source published exactly two markets for the game (Kalshi's
     per-team pair), both sides are resolved and averaged, which cancels the vig
     the two YES prices carry in opposite directions. With one market, or when
@@ -155,34 +254,38 @@ def compute_source_home_probability(
     of one usable number and one absent one is not a devig, it is a coin flip
     wearing the word.
     """
-    primary = select_primary_market(group)
+    entries = list(group or [])
+    if not entries:
+        return None
+
+    primary = select_primary_market(entries)
     if primary is None:
         return None
 
-    # Kalshi props/spreads never write the blend, whatever they are linked to.
-    if primary.market.source == "kalshi" and primary.market.external_id:
-        if not feeds_win_prob_blend(primary.market.external_id):
-            return None
+    ordered_entries = [primary] + [
+        entry
+        for entry in sorted(entries, key=lambda e: e.market.id)
+        if entry.market.id != primary.market.id
+    ]
 
-    # Uses the ticker fallback for generically-named Kalshi markets.
-    matchup = extract_matchup_with_ticker_fallback(
-        primary.market.name, external_id=primary.market.external_id,
-    )
-    if not matchup:
+    speaker = None
+    for entry in ordered_entries:
+        is_primary = entry.market.id == primary.market.id
+        if not is_primary and not _admissible_as_fallback(entry.market):
+            continue
+        found = _reading_for_entry(entry, home_team_name, away_team_name)
+        if found is not None:
+            speaker = entry
+            matchup, home_prob, outcome, yes_prob = found
+            break
+    if speaker is None:
         return None
 
-    primary_reading = _home_probability_for_market(
-        primary, matchup, home_team_name, away_team_name,
-    )
-    if primary_reading is None:
-        return None
-
-    home_prob, outcome, yes_prob = primary_reading
     devigged = False
 
-    if len(group) == 2:
-        for sibling in group:
-            if sibling.market.id == primary.market.id:
+    if len(entries) == 2:
+        for sibling in entries:
+            if sibling.market.id == speaker.market.id:
                 continue
             # A Kalshi sibling must be a WINNER line too, or this is not a
             # devig. The devig exists for Kalshi's per-team pair ("Celtics
@@ -213,7 +316,7 @@ def compute_source_home_probability(
 
     return BlendReading(
         home_probability=home_prob,
-        market=primary.market,
+        market=speaker.market,
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,

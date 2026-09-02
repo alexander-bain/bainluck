@@ -1,0 +1,376 @@
+{
+ "what": "Phase 2 WRITER two-arm replay over the complete live population",
+ "arms": {
+  "master": "inline primary-only parse + ungated devig, transcribed from master",
+  "branch": "_phase2_persist_group_reading -> shared compute_source_home_probability over the group"
+ },
+ "note": "each arm run in its own interpreter from its own tree",
+ "population": {
+  "events": 1054,
+  "markets": 5191,
+  "outcomes": 31735,
+  "groups": 1196,
+  "truncated_chunks": 0
+ },
+ "spoke_before": 606,
+ "spoke_after": 655,
+ "added_count": 49,
+ "lost_count": 0,
+ "changed_count": 1,
+ "added": [
+  {
+   "group": "15291061:polymarket",
+   "market": 59470642,
+   "name": "Inter Miami CF vs. Atlanta United FC",
+   "p": 0.68,
+   "status": "scheduled"
+  },
+  {
+   "group": "15291182:polymarket",
+   "market": 59852393,
+   "name": "CA River Plate vs. CS Independiente Rivadavia",
+   "p": 0.545,
+   "status": "scheduled"
+  },
+  {
+   "group": "15294595:polymarket",
+   "market": 59917936,
+   "name": "Lommel SK vs. Club Brugge",
+   "p": 0.145,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296105:polymarket",
+   "market": 59804121,
+   "name": "GAIS vs. BK Hacken",
+   "p": 0.275,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296106:polymarket",
+   "market": 59804120,
+   "name": "Degerfors IF vs. Halmstads BK",
+   "p": 0.5,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296182:polymarket",
+   "market": 59900865,
+   "name": "IK Oddevold vs. Falkenbergs FF",
+   "p": 0.44,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296342:polymarket",
+   "market": 60008725,
+   "name": "Korona Kielce vs. Wisla Krakow",
+   "p": 0.425,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296371:polymarket",
+   "market": 59909160,
+   "name": "Yellow-Red KV Mechelen vs. KVC Westerlo",
+   "p": 0.445,
+   "status": "scheduled"
+  },
+  {
+   "group": "15296622:polymarket",
+   "market": 59909154,
+   "name": "Standard Liege vs. Royal Antwerp FC",
+   "p": 0.435,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297297:polymarket",
+   "market": 60016235,
+   "name": "Heracles Almelo vs. De Graafschap",
+   "p": 0.675,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297336:polymarket",
+   "market": 59861063,
+   "name": "Aluminij Kidricevo vs. NK Celje",
+   "p": 0.003,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297388:polymarket",
+   "market": 60016233,
+   "name": "RKC Waalwijk vs. NAC Breda",
+   "p": 0.32,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297690:polymarket",
+   "market": 59837297,
+   "name": "FC Lugano vs. Servette Geneva",
+   "p": 0.48,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297728:polymarket",
+   "market": 59843690,
+   "name": "Go Ahead Eagles vs. FC Groningen",
+   "p": 0.25,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297730:polymarket",
+   "market": 59843689,
+   "name": "Fortuna Sittard vs. AFC Ajax",
+   "p": 0.25,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297731:polymarket",
+   "market": 59843687,
+   "name": "SBV Excelsior vs. FC Utrecht",
+   "p": 0.26,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297876:polymarket",
+   "market": 59887626,
+   "name": "IF Brommapojkarna vs. IF Elfsborg",
+   "p": 0.31,
+   "status": "scheduled"
+  },
+  {
+   "group": "15297958:polymarket",
+   "market": 59785121,
+   "name": "Atalanta BC vs. Cagliari Calcio",
+   "p": 0.185,
+   "status": "scheduled"
+  },
+  {
+   "group": "15298068:polymarket",
+   "market": 60015154,
+   "name": "SK Beveren vs. Oud-Heverlee Leuven",
+   "p": 0.475,
+   "status": "scheduled"
+  },
+  {
+   "group": "15298964:polymarket",
+   "market": 60010703,
+   "name": "Cercle Brugge vs. KAA Gent",
+   "p": 0.375,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299035:polymarket",
+   "market": 59925838,
+   "name": "Grasshopper Club Zurich vs. FC Zurich",
+   "p": 0.4,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299038:polymarket",
+   "market": 59925837,
+   "name": "FC Sion vs. FC Thun",
+   "p": 0.555,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299170:polymarket",
+   "market": 59976546,
+   "name": "Kalmar FF vs. Djurgardens IF",
+   "p": 0.24,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299311:polymarket",
+   "market": 60014855,
+   "name": "EC Bahia vs. Clube do Remo",
+   "p": 0.26,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299314:polymarket",
+   "market": 60014856,
+   "name": "CR Flamengo vs. SC Corinthians Paulista",
+   "p": 0.645,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299420:polymarket",
+   "market": 59646552,
+   "name": "Toronto Blue Jays vs. Cleveland Guardians",
+   "p": 0.535,
+   "status": "completed"
+  },
+  {
+   "group": "15299463:polymarket",
+   "market": 59959795,
+   "name": "US Open ATP: Alexander Bublik vs Adrian Mannarino",
+   "p": 0.755,
+   "status": "scheduled"
+  },
+  {
+   "group": "15299482:polymarket",
+   "market": 59959786,
+   "name": "US Open ATP: Lloyd Harris vs Stefanos Tsitsipas",
+   "p": 0.315,
+   "status": "live"
+  },
+  {
+   "group": "15299603:polymarket",
+   "market": 59959774,
+   "name": "US Open ATP: Brandon Nakashima vs Alex Michelsen",
+   "p": 0.0005,
+   "status": "completed"
+  },
+  {
+   "group": "15299604:polymarket",
+   "market": 59959792,
+   "name": "US Open ATP: Daniel Merida Aguilar vs Andrey Rublev",
+   "p": 0.999,
+   "status": "completed"
+  },
+  {
+   "group": "15299606:polymarket",
+   "market": 59959784,
+   "name": "US Open ATP: Daniil Medvedev vs Sebastian Gorzny",
+   "p": 0.999,
+   "status": "completed"
+  },
+  {
+   "group": "15299860:polymarket",
+   "market": 59977844,
+   "name": "US Open ATP: Felix Auger-Aliassime vs Karen Khachanov",
+   "p": 0.705,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300834:polymarket",
+   "market": 60026288,
+   "name": "US Open ATP: Dane Sweeny vs Lorenzo Musetti",
+   "p": 0.075,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300835:polymarket",
+   "market": 60026290,
+   "name": "US Open ATP: Tristan Schoolkate vs Flavio Cobolli",
+   "p": 0.175,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300836:polymarket",
+   "market": 60026293,
+   "name": "US Open ATP: Jan-Lennard Struff vs Francisco Cerundolo",
+   "p": 0.355,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300837:polymarket",
+   "market": 60026295,
+   "name": "US Open ATP: Taylor Fritz vs Mattia Bellucci",
+   "p": 0.855,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300873:polymarket",
+   "market": 60040759,
+   "name": "US Open ATP: Gael Monfils vs Learner Tien",
+   "p": 0.195,
+   "status": "scheduled"
+  },
+  {
+   "group": "15300878:polymarket",
+   "market": 60038401,
+   "name": "CD Tecnico Universitario vs. LDU Quito",
+   "p": 0.29,
+   "status": "closed"
+  },
+  {
+   "group": "15300883:polymarket",
+   "market": 60038527,
+   "name": "West Ham United FC vs. Fulham FC",
+   "p": 0.255,
+   "status": "closed"
+  },
+  {
+   "group": "15300894:polymarket",
+   "market": 60038526,
+   "name": "Liverpool FC vs. Tottenham Hotspur FC",
+   "p": 0.25,
+   "status": "closed"
+  },
+  {
+   "group": "15300900:polymarket",
+   "market": 60038524,
+   "name": "Ipswich Town FC vs. Arsenal FC",
+   "p": 0.22,
+   "status": "closed"
+  },
+  {
+   "group": "15300915:polymarket",
+   "market": 60045097,
+   "name": "Westchester SC vs. Chattanooga Red Wolves SC",
+   "p": 0.415,
+   "status": "closed"
+  },
+  {
+   "group": "15300918:polymarket",
+   "market": 60040643,
+   "name": "Moik Baku vs. Shahdag Qusar FK",
+   "p": 0.475,
+   "status": "closed"
+  },
+  {
+   "group": "15300954:polymarket",
+   "market": 59986073,
+   "name": "FK LNZ Cherkasy vs. FK Obolon Kyiv",
+   "p": 0.825,
+   "status": "closed"
+  },
+  {
+   "group": "15300976:polymarket",
+   "market": 60055767,
+   "name": "CA Central Norte Salta vs. Club Almirante Brown",
+   "p": 0.335,
+   "status": "closed"
+  },
+  {
+   "group": "15300978:polymarket",
+   "market": 60055766,
+   "name": "CA Chaco For Ever vs. CA Estudiantes",
+   "p": 0.395,
+   "status": "closed"
+  },
+  {
+   "group": "15300982:polymarket",
+   "market": 60055768,
+   "name": "Colon de Santa Fe vs. Deportivo Moron",
+   "p": 0.505,
+   "status": "closed"
+  },
+  {
+   "group": "15301056:polymarket",
+   "market": 60014873,
+   "name": "CA Mineiro vs. Fluminense FC",
+   "p": 0.29,
+   "status": "closed"
+  },
+  {
+   "group": "15301103:polymarket",
+   "market": 60067651,
+   "name": "AFC Ajax vs. Willem II Tilburg",
+   "p": 0.165,
+   "status": "closed"
+  }
+ ],
+ "lost": [],
+ "changed": [
+  {
+   "group": "15291920:kalshi",
+   "before": 0.635,
+   "after": 0.84,
+   "market_before": 59700891,
+   "market_after": 59700891,
+   "name": "Flamengo vs Mirassol"
+  }
+ ]
+}
