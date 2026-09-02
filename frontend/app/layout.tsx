@@ -23,11 +23,33 @@ import {
   DeferredMobileSearchTrigger as MobileSearchTrigger,
 } from "@/components/layout/DeferredChrome";
 
+// LAT-P202: `preload: false` is the whole fix, and it is deliberate.
+//
+// next/font preloads by default, which emits `<link rel="preload" as="font">` into the document
+// head. A font preload is a HIGH-priority fetch, so on a slow connection this 31 kB file competes
+// with — and is scheduled ahead of — the render-blocking CSS and the entry JS that actually draw
+// the page. That would be a fair trade if the font drew the page. It does not: JetBrains Mono is
+// wired only into `fontFamily.mono` (tailwind.config.ts) / `--font-mono` (globals.css), i.e. the
+// probability numbers. Body copy and headings run on the system sans stack, and the measured LCP
+// element on Discover is a plain `text-2xl font-black` DIV that never waits on this file.
+//
+// Measured on production before changing anything, by simulating exactly this edit — stripping the
+// preload tag out of the live HTML and serving both arms from the same bytes, interleaved, 3G +
+// 4x CPU, 390 ms TTFB on both arms, n=6/6 (tools/cold-load.mjs, COLD_ABLATE=fontpreload):
+//
+//     FCP  1810 -> 1422 ms  (-388)      LCP  2726 -> 2516 ms  (-210)
+//     DCL  1820 -> 1431 ms  (-389)      load 2655 -> 2452 ms  (-203)
+//     CLS 0.062 -> 0.062    (unchanged — next/font's metric-matched fallback absorbs the swap)
+//
+// `display: "swap"` stays and is what makes this safe: the numbers render immediately in the
+// fallback and swap when the font lands. Dropping the preload lengthens that fallback window; it
+// does not create one. CLS was measured, not assumed, precisely because that window gets longer.
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["500", "700"],
   variable: "--font-jetbrains-mono",
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
