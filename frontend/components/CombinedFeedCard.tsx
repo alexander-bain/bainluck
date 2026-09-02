@@ -14,6 +14,7 @@ import { formatProbability } from "@/lib/api";
 import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import type { GroupedMarket } from "@/lib/feedSections";
 import { sourceHex } from "@/lib/sourceColors";
+import { countOf } from "@/lib/plural";
 
 // ---------------------------------------------------------------------------
 // Source display helpers
@@ -124,7 +125,14 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
   const reason = items.find((i) => i.reason)?.reason || null;
 
   return (
-    <Link href={`/futures/${linkId}`} aria-label={`${primaryData.name} - ${sources.length} sources`}>
+    <Link
+      href={`/futures/${linkId}`}
+      aria-label={
+        sources.length > 1
+          ? `${primaryData.name} - ${countOf(sources.length, "source", "sources")}`
+          : primaryData.name
+      }
+    >
       <article className="rounded-card border border-surface-border bg-surface-card hover:bg-surface-elevated transition-all cursor-pointer overflow-hidden">
         {/* Header */}
         <div className="px-3 pt-3 pb-2">
@@ -135,9 +143,22 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
                 {catName}
               </span>
             </div>
-            <span className="text-[10px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium flex-shrink-0">
-              {sources.length} sources
-            </span>
+            {/* UX-P265 (#2645) — a single source renders NO badge, which is the
+                rule every other futures card already follows: FuturesCard:205
+                ("A single source renders nothing — users see one clean number,
+                not 'Kalshi'"), RelatedFutures' MultiSourceBadge, TotalPointsSpectrum's
+                SourceBadge and SourceAggregationBlock all return null below two.
+                This card was the only one missing the guard, so it printed the
+                shopper's "1 sources". Pluralising to "1 source" would have been a
+                third behaviour AND would advertise single-sourcing, which the
+                blend-is-the-product ruling says we do not do. The count is still
+                pluralised for the 2+ case so the string cannot regress if the
+                guard is ever loosened. */}
+            {sources.length > 1 && (
+              <span className="text-[10px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium flex-shrink-0">
+                {countOf(sources.length, "source", "sources")}
+              </span>
+            )}
           </div>
           <div className="text-sm font-medium text-text-primary line-clamp-2">
             {primaryData.name}
@@ -227,7 +248,7 @@ export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
         {/* Footer */}
         {hasMore && (
           <div className="px-3 py-1.5 text-center text-[10px] text-text-muted border-t border-surface-border/50">
-            +{merged.length - 5} more outcomes
+            +{countOf(merged.length - 5, "more outcome", "more outcomes")}
           </div>
         )}
       </article>

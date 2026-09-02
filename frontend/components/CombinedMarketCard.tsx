@@ -12,6 +12,7 @@
 import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
 import { sourceHex } from "@/lib/sourceColors";
+import { countOf } from "@/lib/plural";
 
 interface SourceOutcome {
   id: number;
@@ -164,7 +165,7 @@ export default function CombinedMarketCard({
       {/* Footer */}
       {hasMore && (
         <div className="px-4 py-2 text-center text-xs text-[var(--text-muted)] border-t border-[var(--surface-border)]/50">
-          +{merged.length - maxOutcomes} more outcomes
+          +{countOf(merged.length - maxOutcomes, "more outcome", "more outcomes")}
         </div>
       )}
     </motion.div>
