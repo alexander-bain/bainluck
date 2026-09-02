@@ -98,7 +98,15 @@ _PROBE_MIN_SECONDS_REMAINING = 90
 # silent truncation would read as "we attempted everything" when we did not,
 # which is the failure this whole pass exists to end.
 _BACKLOG_SCAN_MAX = 3000
-_BACKLOG_MIN_SECONDS_REMAINING = 240
+# Pass 3 runs BEFORE Phase 1.5 / the relinkers / Phase 2, and Phase 2 is the one
+# that writes win_prob_snapshots — the chart line on every live card. Measured
+# task cost is 337s p50 / 699s p95 against an 840s soft limit, so a sweep that
+# spent the slack would push Phase 2 into `phase2_skipped_budget` and take the
+# US Open charts down to buy a diagnosis. It therefore holds a hard RESERVE for
+# everything downstream of it: it will not start without the reserve free, and
+# it stops the moment it would eat into it.
+_BACKLOG_DOWNSTREAM_RESERVE_SECONDS = 420
+_BACKLOG_MIN_SECONDS_REMAINING = 480
 
 
 def _new_receipt(market, phase: str, now: datetime) -> MatchReceipt:
@@ -1400,6 +1408,10 @@ async def _attempt_market(
         try:
             await session.rollback()
         except Exception:
+            # A rollback that itself fails means the connection is already gone.
+            # There is nothing left to undo and nothing useful to report beyond
+            # the error already recorded above; re-raising here would replace a
+            # per-market failure with a whole-pass one and lose the receipt.
             pass
 
 
@@ -1497,10 +1509,11 @@ async def _phase1_pass3_backlog_scan(
     receipts: list[MatchReceipt] = []
     budget_exhausted = False
     for market in backlog:
-        if _time_remaining() < 120:
+        if _time_remaining() < _BACKLOG_DOWNSTREAM_RESERVE_SECONDS:
             logger.info(
-                "Phase 1 Pass 3 time budget exhausted after %d/%d fetched backlog markets",
-                stats["funnel"]["backlog_scanned"], len(backlog),
+                "Phase 1 Pass 3 stopped at the downstream reserve after %d/%d "
+                "fetched backlog markets (%.0fs left for Phase 1.5 + Phase 2)",
+                stats["funnel"]["backlog_scanned"], len(backlog), _time_remaining(),
             )
             budget_exhausted = True
             break

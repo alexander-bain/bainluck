@@ -851,3 +851,34 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     assert out["totals"]["rejected"] == 31433 - 10021
     assert out["by_reason"][0]["count"] == 6626
     assert sorted(mr.REJECT_REASONS) == out["valid_reasons"]
+
+
+def test_the_backlog_pass_holds_a_reserve_for_the_snapshot_phase():
+    """Pass 3 runs in FRONT of Phase 2, which writes the chart line.
+
+    Measured task cost is 337s p50 / 699s p95 against an 840s soft limit, so a
+    sweep that spent the slack would set `phase2_skipped_budget` and take the
+    live charts down to buy a diagnosis. The reserve must be larger than the
+    other passes' 120s floor, or it is not a reserve.
+    """
+    assert pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS >= 400
+    assert (
+        pmm._BACKLOG_MIN_SECONDS_REMAINING
+        > pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS
+    ), "starting below the reserve means the pass stops on its first check"
+    src = inspect.getsource(pmm._phase1_pass3_backlog_scan)
+    assert "_BACKLOG_DOWNSTREAM_RESERVE_SECONDS" in src
+
+
+def test_the_backlog_pass_stops_at_the_reserve_rather_than_running_to_the_floor():
+    """Hand it a clock that is past the reserve but above the other passes'
+    120s floor: it must stand down, not keep going."""
+    stats = {"funnel": {}, "errors": [], "markets_scanned": 0}
+    session = _CapturingSession()
+    asyncio.run(
+        pmm._phase1_pass3_backlog_scan(
+            session, stats, NOW, set(), [],
+            lambda: pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS + 1,
+        )
+    )
+    assert stats["funnel"]["backlog_skipped_budget"] is True
