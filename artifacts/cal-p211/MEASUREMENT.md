@@ -119,6 +119,34 @@ via the gate's count bridge in `calibration-020` §3.
 Both arms fire, so neither is vacuous. The inheritance control is what stops
 `accepted == current` from being satisfiable by any commit that edits both constants together.
 
+## 6b. Gates — run, not assumed
+
+| gate | command | result |
+|---|---|---|
+| smoke | `pytest tests/test_startup.py` | 🟢 **EXIT 0**, 4 passed |
+| calibration surface | `pytest tests/ -k "calibration or population or rollover or staged or beats_to_publish"` | 🟢 **EXIT 0**, 3,123 passed / 24 skipped |
+| **full backend suite** | `pytest tests/ -q` | 🟢 **25,895 passed, 158 skipped, 61 xfailed, 0 failed** (20:51) |
+| ruff | `ruff check <changed>` | 🟢 All checks passed |
+| black | — | **not run, deliberately.** All four touched files are already non-black-clean on `origin/master` and black is in no CI workflow; reformatting would bury a 5-line semantic diff in a whole-file rewrite |
+| frontend build / typecheck | — | **not run — no frontend file is touched.** Backend Python + one JSON fixture only |
+
+Branch `program/calibration-211-the-curve-publishes-under-a-declared-version` @ `e714a850`, pushed.
+**No cert staged and no READY token written** — the merge is gated on Alex, not on a grade.
+
+## 6c. Live state through the session (the babysit log)
+
+| time PT | bank | cursor_age_s | ledger generation / gate | curve |
+|---|--:|--:|---|---|
+| 22:51 | 5 / 128 | 926 | 1788326490717 · `refuse` | 2026-08-31, q268, 1.86 pp |
+| 23:05 | 5 / 128 | 1,778 | unchanged | unchanged |
+| 23:17 | — | — | unchanged (no new candidate) | — |
+| 23:27 | **10** / 128 | 269 | unchanged | unchanged |
+
+No drain dyno ran at any point. The bank rising 5 → 10 on a cold cursor is the **hourly beat**
+re-accumulating on its own, walking toward another complete candidate that the gate will refuse and
+bin for the same reason. That is the standing cost of leaving the decision open, and it is why
+"wait and see" is not a neutral option.
+
 ## 7. What is NOT claimed
 
 * **Not** that q269 fixes the curve. It makes the curve *publishable*; `cells_at_bar` is graded on
