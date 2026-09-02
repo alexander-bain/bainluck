@@ -190,6 +190,7 @@ class TestBeatScheduleCompleteness:
         "refresh-stale-futures-prices-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
+        "sync-tennis-from-espn",
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",

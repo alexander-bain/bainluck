@@ -73,6 +73,11 @@ DRAW_SLUGS: dict[str, str] = {
     "mixed-doubles": "mixed-doubles",
 }
 
+#: The two draws whose competitions name individual athletes.  A doubles
+#: competition names a TEAM and no athlete in some payloads, which yields a
+#: half-pair or none — silence, never a fixture to anchor on.
+SINGLES_SLUGS = ("mens-singles", "womens-singles")
+
 #: Only a FINAL competition yields a result.  An in-progress match has line
 #: scores too, and printing them as a result would be the settled-means-settled
 #: rule broken in the one direction that matters.
@@ -931,3 +936,111 @@ def fetch_scoreboards(dates: Optional[str] = None) -> tuple[list[dict[str, Any]]
         except Exception as exc:  # noqa: BLE001 — reported, never silent
             errors.append(f"{tour}: {exc}")
     return payloads, errors
+
+
+def scoreboard_competitions(
+    payloads: Iterable[dict[str, Any]],
+    *,
+    slugs: Iterable[str] = SINGLES_SLUGS,
+) -> list[dict[str, Any]]:
+    """EVERY competition on the board, deduped by id — the anchor's whole view.
+
+    ``parse_results`` answers "what is the state of the tournament I already
+    named" and is scoped two ways to do it: an ``event_name`` substring, and the
+    five ``DRAW_SLUGS``.  The ANCHOR asks the other question — "which ESPN
+    competition IS this event of ours" — and both scopings are wrong for it:
+
+    * The tournament name is what we are trying to establish.  Our ``events``
+      rows carry a sport key (``tennis_atp_us_open``) and player names, not
+      ESPN's event string, so filtering on a name we would have to guess is how
+      a whole tournament silently anchors nothing.
+    * A ``post`` competition gets no ``order_of_play`` entry, deliberately —
+      and the finished matches are most of what needs anchoring, because the
+      contradictions this rail exists to kill are rows we call ``live`` that
+      ESPN finished hours ago.
+
+    So this is a flat, unfiltered read: one dict per competition, carrying the
+    tournament it belongs to rather than being selected by it.  ``slugs``
+    defaults to the two singles draws — see :data:`SINGLES_SLUGS`.
+
+    ``state`` is the slate word, with lane1/054's :func:`play_refutes_upcoming`
+    already applied, so an anchor consumer and the hub card cannot disagree
+    about whether a match is being played.  A competition whose ESPN state we
+    have no word for is carried with ``state=None`` rather than dropped: the
+    anchor still wants to LINK it (identity does not depend on state), and the
+    authority write must be able to tell "ESPN says nothing I understand" from
+    "ESPN did not mention this match" — gotcha #53, the same distinction
+    ``order_of_play_complete`` is held to.
+
+    Both tours return the same competition ids for a shared event, so the second
+    tour is a duplicate pass; the first read of an id wins.
+    """
+    wanted = set(slugs)
+    seen: set[str] = set()
+    competitions: list[dict[str, Any]] = []
+
+    for payload in payloads:
+        for event in (payload or {}).get("events") or []:
+            event_name = str(event.get("name") or "")
+            for grouping in event.get("groupings") or []:
+                slug = ((grouping.get("grouping") or {}).get("slug")) or ""
+                if slug not in wanted:
+                    continue
+                for competition in grouping.get("competitions") or []:
+                    comp_id = str(competition.get("id") or "")
+                    if not comp_id or comp_id in seen:
+                        continue
+                    seen.add(comp_id)
+
+                    status = ((competition.get("status") or {}).get("type") or {})
+                    state = SLATE_STATE_BY_ESPN_STATE.get(str(status.get("state") or ""))
+                    if play_refutes_upcoming(state, competition):
+                        state = IN_PROGRESS_SLATE_STATE
+
+                    names = [
+                        name
+                        for name in (
+                            ((c.get("athlete") or {}).get("displayName") or "")
+                            for c in (competition.get("competitors") or [])
+                        )
+                        if name
+                    ]
+
+                    competitions.append({
+                        "espn_competition_id": comp_id,
+                        "event_name": event_name,
+                        "draw": DRAW_SLUGS.get(slug, slug),
+                        "state": state,
+                        # ESPN's own clock for this competition. For a `post`
+                        # row this is when it was PLAYED, which is the closest
+                        # thing the scoreboard has to an end time; for a `pre`
+                        # row it is the scheduled start, real or the midnight-ET
+                        # placeholder (`start_is_tbd` says which).
+                        "date": competition.get("date"),
+                        "start_is_tbd": (
+                            str(status.get("shortDetail") or "") == TBD_SHORT_DETAIL
+                        ),
+                        "players": names,
+                        "pair_key": pair_key(names) if len(names) == 2 else None,
+                        "sets_with_play": sets_with_play(competition),
+                    })
+
+    return competitions
+
+
+#: :data:`PLACEHOLDER_NAMES` through the same fold the join key uses, so the
+#: test is against what the comparison actually sees.
+_PLACEHOLDER_KEYS = frozenset(normalize_name(name) for name in PLACEHOLDER_NAMES)
+
+
+def is_placeholder_pairing(names: Iterable[str]) -> bool:
+    """Does this competition name a slot rather than two people?
+
+    ``TBD``/``Bye``/``Qualifier``/``Lucky Loser`` are the draw's unfilled
+    positions, and 56 of the US Open's 478 singles competitions carried
+    ``TBD vs TBD`` on 2026-09-02.  They collide with each other under
+    :func:`pair_key` — the ONLY key collision on the board — so an anchor that
+    did not refuse them would have 56 events fighting over one slot.
+    """
+    return any(normalize_name(name) in _PLACEHOLDER_KEYS for name in names)
+

@@ -1501,6 +1501,19 @@ def backfill_espn_ids(self, limit: int = 1000):
     return run_async(_backfill_espn_ids(limit=limit))
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.sync_tennis_from_espn")
+def sync_tennis_from_espn(self, limit: int = 1000, dates: str = None):
+    """Anchor tennis events to ESPN competitions and let ESPN write their state.
+
+    The sport `espn_sync` never covered: zero of 30,199 tennis rows carried an
+    `espn_id` on 2026-09-02, so the authority had no channel to correct a tennis
+    fixture and a wall-clock staleness net corrected it instead — three US Open
+    rows holding `live` and a `completed_at` at once. lane1/057 STEP 0.
+    """
+    from app.tasks.espn_sync import _sync_tennis_from_espn
+    return _tracked_run("tennis_espn_sync", _sync_tennis_from_espn(limit=limit, dates=dates))
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_espn_win_prob")
 def backfill_espn_win_prob(self, limit: int = 200, oldest_first: bool = False):
     """Backfill ESPN win probability history for completed events with sparse snapshots.
@@ -3832,6 +3845,27 @@ celery_app.conf.beat_schedule = {
     "sync-espn-live": {
         "task": "app.tasks.sync_espn_live_events",
         "schedule": 60.0,
+    },
+    # THE SPORT `sync-espn-live` NEVER COVERED (lane1/057 STEP 0).
+    #
+    # A CRONTAB, NOT AN INTERVAL, for the reason `link-tournament-matchups`
+    # states three entries below: a numeric schedule joins
+    # `BACKGROUND_INTERVAL_FLOOR`, the continuous floor the settlement sweep
+    # shares its slot with wherever it is placed. This is tournament upkeep —
+    # discrete, bounded, and reasonable to reason about as a co-fire.
+    #
+    # `*/5`, and the cadence is argued rather than copied. The defect it closes
+    # persists for HOURS unattended (Bergs v Taberner carried a phantom
+    # completion from 02:40Z to past 21:00Z), and the standing bar is that
+    # nothing the authority knows about is wrong for more than an hour — so five
+    # minutes is not a latency requirement, it is a wide margin under one. It is
+    # slower than `tournament_slate`'s three-minute read of the same scoreboard
+    # ON PURPOSE: the slate renders the live card, so it wants the tighter
+    # rhythm, while this writes the durable row and wants the cheaper one.
+    "sync-tennis-from-espn": {
+        "task": "app.tasks.sync_tennis_from_espn",
+        "schedule": crontab(minute="*/10"),
+        "options": {"queue": "background"},
     },
     "backfill-team-logos": {
         "task": "app.tasks.backfill_team_logos",
