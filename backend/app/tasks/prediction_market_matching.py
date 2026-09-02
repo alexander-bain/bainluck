@@ -1270,10 +1270,33 @@ async def _relink_collapsed_game_markets(session) -> int:
 
 
 #: Hard cap on the Kalshi tennis rows pulled for segment reconciliation. The
-#: source+status+prefix filter already bounds this to the high hundreds
-#: (measured 2026-08-29: 706 open ATP/WTA rows); the cap is here so a Kalshi
-#: series explosion cannot turn a bounded scan into an unbounded one.
-MAX_KALSHI_SEGMENT_ROWS = 5000
+#: source+window+prefix filter already bounds this to the low thousands
+#: (measured 2026-09-02: 589 open ATP/WTA rows of any age + 3,782 resolved rows
+#: created inside `KALSHI_SEGMENT_WINDOW_DAYS`, during the US Open fortnight —
+#: i.e. at the yearly peak). The cap is a BACKSTOP against a Kalshi series
+#: explosion, not a routine bound, which is why tripping it now REFUSES the pass
+#: (see `_reconcile_kalshi_match_segments`) instead of silently reconciling a
+#: partial view.
+MAX_KALSHI_SEGMENT_ROWS = 20000
+
+#: Q048: how far back the segment reconciler looks for markets that are no
+#: longer `open`.
+#:
+#: The reconciler used to read `status == "open"` and nothing else, which made
+#: convergence a RACE it loses exactly when it matters. A tennis match-winner
+#: market (`KXATPMATCH-…`) resolves the moment the match ends — and the moment
+#: the match ends is precisely when a ghost event holding it becomes the
+#: user-visible defect: a finished match still advertised as upcoming. If the
+#: schedule-derived twin had not appeared yet while the market was still open,
+#: `_choose_segment_event` saw ONE candidate, returned `single`, moved nothing,
+#: and the market then resolved out of the reconciler's sight forever.
+#:
+#: Measured on production 2026-09-02 with this module's own
+#: `kalshi_match_segment_key`: of 2,933 Kalshi tennis markets created since the
+#: US Open began, **25 sit on the wrong event of their own segment, and all 25
+#: are `resolved`** — a 100% blind spot. 17 of them are ones where the
+#: open-only read concludes `single` and moves nothing.
+KALSHI_SEGMENT_WINDOW_DAYS = 14
 
 #: A `commence_time_source` of this value means the time was DERIVED FROM THE
 #: TICKER because nothing better existed — an auto-created row, midnight UTC,
@@ -1354,6 +1377,40 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
       schedule-derived one (see `_choose_segment_event`). Refuses when the
       choice is not forced.
 
+    ═══ Q048: WHY THIS READS RESOLVED MARKETS, NOT JUST OPEN ONES ═══
+
+    The first cut of this pass read `status == "open"`, and that one word made
+    convergence a RACE that it loses at exactly the worst moment.
+
+    A tennis match-winner market resolves when the match ends. The match ending
+    is also the instant the ghost becomes the user-visible defect — a finished
+    match still advertised as an upcoming fixture. So if the schedule-derived
+    twin had not yet appeared while the winner market was open (one candidate ⇒
+    `_choose_segment_event` returns `single` ⇒ nothing moves), the market
+    resolved straight out of this pass's sight and stayed on the ghost forever.
+
+    Measured on production 2026-09-02, over the 2,933 Kalshi tennis markets
+    created since the US Open began: **25 markets sat on the wrong event of
+    their own segment, and all 25 were `resolved`** — the open-only read had a
+    100% blind spot on exactly this population. Every one of the 25 was a
+    `KX*MATCH-*` ticker, i.e. the market that decides the card, sitting on a
+    `kalshi_ticker` duplicate while the props sat on the real event.
+
+    The worked example is the one that opened the queue. `26AUG30VALMON`:
+
+        KXATPSETWINNER/GTOTAL/GSPREAD/EXACTMATCH-26AUG30VALMON
+                                    -> 15293804  (odds_api, 2026-09-01 23:04Z,
+                                                  completed 1-3 — the real row)
+        KXATPMATCH-26AUG30VALMON    -> 15300759  (kalshi_ticker, 2026-08-30
+                                                  00:00Z midnight stand-in,
+                                                  still "scheduled")
+
+    ESPN had the match final at 2026-09-01 23:05Z. A user searching "Monfils"
+    got the GHOST first — "Vallejo v Monfils, scheduled" — above the real,
+    correctly-settled row. Widening this read to resolved-and-linked markets
+    converges that winner market onto 15293804 and the ghost stops holding any
+    reason to be rendered.
+
     Only `event_id` moves. `is_winner`, `calibration_probability` and every
     `futures_outcomes` column are untouched (gotcha #21): the settlements were
     always right, only the link was wrong. `commence_time` is deliberately NOT
@@ -1367,8 +1424,13 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
     stats = {
         "candidates": 0, "segments": 0, "adopted": 0,
         "converged": 0, "ambiguous": 0, "no_anchor": 0,
+        "truncated": False,
     }
     try:
+        window_floor = (
+            datetime.now(timezone.utc)
+            - timedelta(days=KALSHI_SEGMENT_WINDOW_DAYS)
+        )
         rows = (
             await session.execute(
                 select(
@@ -1378,7 +1440,35 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                 )
                 .where(
                     FuturesMarket.source == "kalshi",
-                    FuturesMarket.status == "open",
+                    # Q048: a STRICT SUPERSET of the old `status == "open"`
+                    # population, so nothing that reconciles today stops
+                    # reconciling. The second arm is what closes the blind
+                    # spot: a market that has already resolved is still the
+                    # provider's own evidence about which event its segment
+                    # belongs to, and settlement columns are never touched
+                    # here (only `event_id`/`sport_id` move), so reading a
+                    # resolved row costs nothing that gotcha #21 protects.
+                    #
+                    # `event_id IS NOT NULL` on that arm is deliberate and is
+                    # the difference between a fix and a sprawl. A resolved
+                    # market that is ALREADY LINKED is the only kind that can
+                    # reveal a WRONG link, which is this pass's job; a resolved
+                    # market with no event at all is an ADOPT candidate, and
+                    # measured on production 2026-09-02 admitting those would
+                    # have attached 176 historical props to events in one pass
+                    # — a different, larger question with its own blast radius
+                    # (event pages, calibration grouping), parked rather than
+                    # smuggled in here. Candidate-event sets are identical
+                    # either way, because an unlinked row contributes no
+                    # candidate, so this narrowing cannot change a single
+                    # CONVERGE decision.
+                    or_(
+                        FuturesMarket.status == "open",
+                        and_(
+                            FuturesMarket.created_at >= window_floor,
+                            FuturesMarket.event_id.isnot(None),
+                        ),
+                    ),
                     or_(
                         FuturesMarket.external_id.like("KXATP%"),
                         FuturesMarket.external_id.like("KXWTA%"),
@@ -1389,6 +1479,26 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
             )
         ).all()
         stats["candidates"] = len(rows)
+
+        # A TRUNCATED READ IS NOT A SMALLER JOB — it is a different, wrong one.
+        # The cap slices by `id`, which cuts across segments: a segment whose
+        # schedule-derived member fell off the end reads as all-ticker-derived,
+        # and `_choose_segment_event` will then hand an `event_id IS NULL`
+        # sibling to the GHOST via the `single` branch. That is an actively
+        # wrong move, not a missed one, so refuse the pass and say so loudly
+        # rather than reconcile half a picture (gotcha #53 — and no silent
+        # caps).
+        if len(rows) >= MAX_KALSHI_SEGMENT_ROWS:
+            stats["truncated"] = True
+            logger.error(
+                "Kalshi match-segment reconcile REFUSED: read hit the %d-row "
+                "cap, so segment membership is unknowable and a partial view "
+                "could adopt markets onto a ticker-derived duplicate. No "
+                "markets moved. Raise MAX_KALSHI_SEGMENT_ROWS or shorten "
+                "KALSHI_SEGMENT_WINDOW_DAYS (currently %d days).",
+                MAX_KALSHI_SEGMENT_ROWS, KALSHI_SEGMENT_WINDOW_DAYS,
+            )
+            return stats
 
         # ONE definition of "same match" — the pure helper, in Python. Writing
         # the segment split a second time in SQL is how the two drift.
