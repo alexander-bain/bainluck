@@ -31,12 +31,14 @@ from app.models.models import (
     DiscoverPairwiseLabel,
     SettlementCapture,
     EventProviderAnchor,
+    MarketMatchReceipt,
 )
 
 __all__ = [
     "Sport",
     "SettlementCapture",
     "EventProviderAnchor",
+    "MarketMatchReceipt",
     "Team",
     "Event",
     "OddsSnapshot",
