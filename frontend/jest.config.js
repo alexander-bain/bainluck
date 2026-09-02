@@ -1,3 +1,17 @@
+// #2462 — pin the timezone HERE, before anything else, and see
+// `jest.setup.timezone.js` for why the suite needs a fixed zone at all.
+//
+// This line looks like it belongs in the setup file, and it was written there
+// first. It does not work there: jest builds each test file's `vm` realm BEFORE
+// running `setupFiles`, and that realm's `Date` keeps the zone it was born
+// with, so the assignment became a silent no-op (measured: `getTimezoneOffset()`
+// still 480 under `TZ=US/Pacific`). This module is evaluated in the main process
+// while the config is loaded — before any realm exists and before any worker is
+// forked — so both the in-band realm and the forked workers, which inherit
+// `process.env`, are born in UTC. `jest.setup.timezone.js` then *proves* that
+// inside the realm rather than trusting it.
+process.env.TZ = 'UTC';
+
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 module.exports = {
   preset: 'ts-jest',
@@ -22,7 +36,13 @@ module.exports = {
   // the CI command are the same command.
   watchman: false,
 
-  setupFiles: ['<rootDir>/jest.setup.network.js'],
+  // #2462: the timezone pin runs FIRST. Three suites assert rendered wall-clock
+  // copy and were green only in UTC, so `npx jest` was red for any developer
+  // outside it. Both files explain themselves; neither is optional.
+  setupFiles: [
+    '<rootDir>/jest.setup.timezone.js',
+    '<rootDir>/jest.setup.network.js',
+  ],
 
   moduleNameMapper: {
     // MUST precede the `^@/` alias: that alias matches
