@@ -161,4 +161,14 @@ _to_delete/
 # months reading like a current report. Snapshots belong in docs/archive/ under a dated
 # name, added deliberately with `git add -f`.
 /calibration_report.html
+
+# Evidence HTML written INTO the repo root by the frontend capture tests
+# (`frontend/__tests__/capture/*.test.tsx` resolve `../../../artifacts-ux-pNNN`).
+# Running `npx jest` — a mandatory gate — therefore dirties whichever worktree
+# ran it, and the shared lane trees are where that lands. Four such directories
+# sat untracked in `bainluck-dev/latency` long enough that a session's real
+# uncommitted work hid in the same `git status` list (LAT-P197). A gate must not
+# be able to redden the tree it runs in. Nothing under these paths has ever been
+# tracked; deliberate evidence can still be committed with `git add -f`.
+/artifacts-ux-*/
 .env*

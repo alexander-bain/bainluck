@@ -55,8 +55,11 @@ export {
   pendingDeferredSendCount,
 } from './core';
 
-// The single web telemetry consent authority — every non-essential provider
-// (GA, Vercel Analytics, Speed Insights, Web Vitals) reads its gate from here.
+// The single web telemetry consent authority — every consent-gated provider
+// (GA, Vercel Analytics, Web Vitals) reads its gate from here. Vercel Speed
+// Insights is deliberately NOT one of them: it is strictly-necessary
+// performance telemetry, mounted unconditionally in `app/layout.tsx` (LAT-P197,
+// Alex D30), so nothing here decides about it.
 export {
   decideTelemetry,
   isAnalyticsGranted,

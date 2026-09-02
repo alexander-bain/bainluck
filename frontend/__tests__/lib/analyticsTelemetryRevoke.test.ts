@@ -152,9 +152,9 @@ describe('planTelemetryChange — when a reload is required', () => {
     ).toBe(false);
   });
 
-  it('still reloads on revoke with NO measurement id — the Vercel providers were live', () => {
+  it('still reloads on revoke with NO measurement id — Vercel Analytics was live', () => {
     // Regression guard: keying the reload on the GA rail alone would leave
-    // Vercel Analytics + Speed Insights running on a build with no GA id.
+    // Vercel Analytics running on a build with no GA id.
     const h = setup({ configured: false });
     const plan = h.revoke.planTelemetryChange('analytics', 'none', { gaConfigured: false });
     expect(plan.requiresReload).toBe(true);
@@ -168,18 +168,43 @@ describe('anyProviderEnabled', () => {
       h.revoke.anyProviderEnabled({
         googleAnalytics: false,
         vercelAnalytics: false,
-        speedInsights: false,
         webVitals: false,
       }),
     ).toBe(false);
     expect(
       h.revoke.anyProviderEnabled({
         googleAnalytics: false,
-        vercelAnalytics: false,
-        speedInsights: true,
+        vercelAnalytics: true,
         webVitals: false,
       }),
     ).toBe(true);
+  });
+
+  /**
+   * LAT-P197 (Alex D30). `anyProviderEnabled` is a hand-written OR chain, and
+   * this queue EDITED it — removing `speedInsights` from the chain by hand. The
+   * failure that edit could have introduced is a term silently missing: the
+   * chain reads false while a provider is live, `requiresReload` says no, and a
+   * revoke leaves a loaded script running while the UI says "off". That is the
+   * L2-220 defect, reintroduced by omission.
+   *
+   * So this drives every key of the decision INDEPENDENTLY, derived from the
+   * real all-off decision rather than a literal, and every one of them must
+   * flip the answer to true. A key added to `TelemetryDecision` but forgotten
+   * in the OR chain reds here without anyone editing this test.
+   */
+  it('every key of the decision, alone, counts as a live provider', () => {
+    const h = setup();
+    const allOff = h.consent.decideTelemetry('none', { gaConfigured: true });
+    expect(h.revoke.anyProviderEnabled(allOff)).toBe(false);
+
+    const keys = Object.keys(allOff) as (keyof typeof allOff)[];
+    // Control: with no keys the loop below asserts nothing.
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      const oneOn = { ...allOff, [key]: true };
+      expect([key, h.revoke.anyProviderEnabled(oneOn)]).toEqual([key, true]);
+    }
   });
 });
 
@@ -242,7 +267,6 @@ describe('applyTelemetryChange', () => {
     expect(after).toEqual({
       googleAnalytics: false,
       vercelAnalytics: false,
-      speedInsights: false,
       webVitals: false,
     });
   });
@@ -375,7 +399,6 @@ describe('reload / remount parity', () => {
     expect(second.consent.getServerTelemetryDecision()).toEqual({
       googleAnalytics: false,
       vercelAnalytics: false,
-      speedInsights: false,
       webVitals: false,
     });
   });

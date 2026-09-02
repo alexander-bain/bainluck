@@ -102,7 +102,25 @@ const NOTHING_ALLOWED: TelemetryExpectation = {
     { id: "google_analytics", hostSuffix: "google-analytics.com", expect: "absent" },
     { id: "analytics_google", hostSuffix: "analytics.google.com", expect: "absent" },
     { id: "vercel_insights", pathPrefix: "/_vercel/insights", expect: "absent" },
-    { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "absent" },
+    // LAT-P197 (Alex D30) — this rule USED TO BE `absent`, and changing it is
+    // the point of that ruling, not a weakening of this pack.
+    //
+    // Speed Insights is strictly-necessary performance telemetry: no cookie,
+    // no storage read, no identifier. It now mounts outside the consent gate,
+    // so it beacons on a declined and an unanswered page alike, and an
+    // `absent` rule here would red every journey below for doing exactly what
+    // was ruled. It stays LISTED rather than deleted for the reason
+    // `ga4_other_events_allowed` is listed: this ledger is EXHAUSTIVE, so an
+    // unlisted destination fails under `no_unlisted_destinations` instead —
+    // the same red with a less honest name. Listing it keeps the beacon
+    // OBSERVED, so a future change in what it sends is still visible here.
+    //
+    // What still guards the ruling's boundary is `vercel_insights` directly
+    // above: Vercel ANALYTICS — the identified, page/visitor-counting rail —
+    // remains `absent` on every declined journey. If a refactor ever moved
+    // that one outside the gate too, this pack reds, which is the failure the
+    // `absent` on speed-insights was really standing in for.
+    { id: "vercel_speed", pathPrefix: "/_vercel/speed-insights", expect: "at_least", count: 0 },
     // UX-P144. The FIRST-PARTY rail, and the one this pack could not see. Every
     // rule above is a third-party collector; `/api/feed/interactions` is ours,
     // and it POSTed the reader's scroll — session id attached — on a declined
@@ -486,7 +504,7 @@ test("consent.storage_failure — honoured now, and not claimed as saved", async
   // …and the UI must NOT say the choice was saved.
   const status = (await page.locator(PREFS_SECTION).innerText()) || "";
   expect(status).toContain("would not save");
-  expect(status).not.toMatch(/^Analytics is OFF\. None of those load\.$/m);
+  expect(status).not.toMatch(/^Analytics is OFF\. Neither of those loads\.$/m);
 
   await journey.finish({
     allowedNavigationAborts: [RSC_PREFETCH_ABORT, INSTRUMENT_NAVIGATION_ABORT],

@@ -9,9 +9,15 @@
  *    its documented behavior, not a bug we can configure away. Once gtag.js has
  *    executed, `window.gtag` and `window.dataLayer` exist for the lifetime of
  *    the document.
- *  - `@vercel/analytics` and `@vercel/speed-insights` likewise inject their
- *    script into `<head>` and register listeners; unmounting the React
- *    component does not unload the script or detach what it already bound.
+ *  - `@vercel/analytics` likewise injects its script into `<head>` and
+ *    registers listeners; unmounting the React component does not unload the
+ *    script or detach what it already bound.
+ *
+ * `@vercel/speed-insights` is deliberately absent from every list here. It is
+ * strictly-necessary performance telemetry, mounted unconditionally outside the
+ * gate (LAT-055), so it is never a thing a revoke has to unload — and counting
+ * it as "live" would make `requiresReload` permanently true and hard-reload the
+ * page on every consent change, including ones that change nothing.
  *
  * So React unmount is NOT teardown, and gating the mount alone would let the
  * UI claim "off" while beacons kept leaving the page. Rather than pretend, a
@@ -36,14 +42,9 @@ import {
   type TelemetryDecision,
 } from './telemetryConsent';
 
-/** Whether any non-essential provider is permitted to run under a decision. */
+/** Whether any consent-gated provider is permitted to run under a decision. */
 export function anyProviderEnabled(decision: TelemetryDecision): boolean {
-  return (
-    decision.googleAnalytics ||
-    decision.vercelAnalytics ||
-    decision.speedInsights ||
-    decision.webVitals
-  );
+  return decision.googleAnalytics || decision.vercelAnalytics || decision.webVitals;
 }
 
 export interface TelemetryChangePlan {
