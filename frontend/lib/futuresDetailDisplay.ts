@@ -136,16 +136,63 @@ export function priceAgeDays(
   return Math.max(0, (now.getTime() - then.getTime()) / 86_400_000);
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+ * UX-P260 (#2624) — A DATE ON AN INSTANT BELONGS TO THE READER, NOT TO UTC.
+ *
+ * Alex, on `/futures/1` at 20:12 PT on **Sep 1**: the hero pill read
+ * **"last move · Sep 2"**. The site was dating a price move TOMORROW. The same
+ * page contradicted itself 400px lower — the Probability Trend axis ended at
+ * "Sep 1 5 PM", the same instant, formatted correctly.
+ *
+ * This function used to pin `timeZone: "UTC"`, and its reasoning is preserved
+ * here because it was not silly:
+ *
+ *     "A label built from the machine's local zone is a claim whose answer
+ *      depends on where it renders, and a guard for it is a test whose answer
+ *      depends on where it runs (the trap CERT-534 named one lane over)."
+ *
+ * The second half of that is a real hazard and this repo is still paying it —
+ * #2462 leaves `discoverTournamentCardTiming` five-red on clean master for
+ * anyone outside UTC. But the cure was worse than the disease: it bought a
+ * deterministic GUARD by making the SHIPPED LABEL wrong for every reader west
+ * of Greenwich, every evening. For US users that is every move after 17:00 PT.
+ *
+ * 🔵 THE DISTINCTION THAT DECIDES IT, and it is the whole fix: **a calendar date
+ * is not an instant.** A tournament runs Sep 3–6 no matter where you stand, so
+ * `gameTimeLabel.ts`, `UpcomingTournaments.tsx`, `NextEditionStrip.tsx` and the
+ * golf/playoff pages are RIGHT to pin UTC on their date-only values — pinning is
+ * what stops "2026-09-05" sliding to Sep 4 in Los Angeles. A price move is the
+ * opposite: it happened at one moment, and the only honest name for that moment's
+ * day is the day it was where the reader is standing. Those seven sites are
+ * deliberately untouched; this one was the only one formatting an instant.
+ *
+ * So the zone becomes a PARAMETER instead of a constant. That answers the old
+ * comment's objection rather than overriding it: the guards below pass an
+ * explicit zone and are therefore deterministic wherever they run, while the
+ * page passes nothing and gets the reader's own clock — the same thing
+ * `FuturesChart` has always done one component away (`FuturesChart.tsx:300`
+ * formats with no `timeZone`, which is why the axis was already right).
+ *
+ * Safe to render locally on this page specifically: the futures detail page
+ * takes its payload from `useSWR` behind an early return, so the label is never
+ * in the server HTML and there is no hydration boundary to mismatch across. The
+ * chart is the standing proof — it has formatted local here for as long as it
+ * has existed.
+ *
+ * Nothing here changes any number's VALUE, or the arithmetic in `priceAgeDays`,
+ * which compares epoch milliseconds and never had a zone to get wrong.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
 /**
- * "Aug 28" — always the UTC day. A label built from the machine's local zone is a
- * claim whose answer depends on where it renders, and a guard for it is a test
- * whose answer depends on where it runs (the trap CERT-534 named one lane over).
+ * "Aug 28" — the day the given INSTANT fell on, in `timeZone` when one is
+ * supplied, otherwise in the zone the code is running in (in the browser: the
+ * reader's own). Guards MUST pass an explicit zone; the app deliberately does not.
  */
-function utcDayLabel(when: Date): string {
+function instantDayLabel(when: Date, timeZone?: string): string {
   return when.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
+    ...(timeZone ? { timeZone } : {}),
   });
 }
 
@@ -160,9 +207,10 @@ function utcDayLabel(when: Date): string {
 export function movementWindowLabel(
   lastUpdated: string | null | undefined,
   now: Date = new Date(),
+  timeZone?: string,
 ): string {
   if (priceAgeDays(lastUpdated, now) == null) return "last move";
-  return `last move · ${utcDayLabel(new Date(lastUpdated as string))}`;
+  return `last move · ${instantDayLabel(new Date(lastUpdated as string), timeZone)}`;
 }
 
 /**
@@ -175,10 +223,11 @@ export function movementWindowLabel(
 export function asOfLabel(
   lastUpdated: string | null | undefined,
   now: Date = new Date(),
+  timeZone?: string,
 ): string | null {
   const age = priceAgeDays(lastUpdated, now);
   if (age == null || age <= AS_OF_AFTER_DAYS) return null;
-  return `as of ${utcDayLabel(new Date(lastUpdated as string))}`;
+  return `as of ${instantDayLabel(new Date(lastUpdated as string), timeZone)}`;
 }
 
 export type FuturesSortField = "probability" | "change" | "name";
