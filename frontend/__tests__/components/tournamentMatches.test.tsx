@@ -808,3 +808,94 @@ describe("Q463 — a fixture with no published order of play says TBD", () => {
     expect(entry.liveState).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #2550 — A MATCH THAT IS BEING PLAYED SAYS SO
+//
+// Shopper pass, 2026-09-01, 8:44 PM in Flushing Meadows: the hub printed
+// "4:05 PM · Men's Singles" over Monfils v Vallejo. The server had already
+// said `live_state: "in_progress"`, `status_detail: "3rd Set"` on that exact
+// row, and the DB had the event at `status='live'`. Nothing was missing from
+// the payload — `MatchRow` simply never read the field, so a match four hours
+// into its third set advertised a start time that had come and gone.
+//
+// The clock is the defect, not just the absent badge. "4:05 PM" on a match
+// being played now is not incomplete information, it is wrong information:
+// a reader who checks back at 4:05 has already missed two sets.
+//
+// The label is ESPN's words when ESPN has live words, and the flat "LIVE"
+// otherwise — the same `detail || "LIVE"` idiom `FeedCard` uses for a period
+// and a game clock. `status_detail` is NOT trusted blindly: on an `upcoming`
+// row that same field carries "Tue, September 1st at 9:00 PM EDT", and an
+// ESPN row that flips to `in` a beat before its detail catches up would put
+// a full scheduled datetime inside a red LIVE pill. A detail that still reads
+// like a schedule is refused and the row falls back to the word.
+// ---------------------------------------------------------------------------
+
+describe("#2550 — an in-progress match prints LIVE, not a start time", () => {
+  const inProgress = match({
+    matchup_key: "mens-singles:adolfo-daniel-vallejo-vs-gael-monfils:2026-08-30",
+    scheduled_date: "2026-09-01T23:05:00+00:00",
+    start_is_tbd: false,
+    live_state: "in_progress",
+    status_detail: "3rd Set",
+  });
+
+  it("carries the detail from the payload onto the entry", () => {
+    const [entry] = matchListFromSlate([inProgress]);
+    expect(entry.liveState).toBe("in_progress");
+    expect(entry.statusDetail).toBe("3rd Set");
+  });
+
+  it("prints ESPN's live words and NO scheduled clock", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([inProgress])} />
+    );
+    expect(html).toContain('data-testid="match-live"');
+    expect(html).toContain("3rd Set");
+    // The whole finding: the row must stop advertising a start that passed.
+    expect(html).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+  });
+
+  it("falls back to the word when ESPN carries no live detail", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches
+        entries={matchListFromSlate([match({ ...inProgress, status_detail: null })])}
+      />
+    );
+    expect(html).toContain('data-testid="match-live"');
+    expect(html).toContain("LIVE");
+    expect(html).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+  });
+
+  it("refuses a detail that is still a schedule, rather than printing it as live", () => {
+    // LAZY import: a missing export must fail THIS test, not collapse the
+    // whole file into a module-resolution error that proves nothing about
+    // what the row renders.
+    const { liveMatchLabel } = require("@/lib/matchList");
+    const [entry] = matchListFromSlate([
+      match({ ...inProgress, status_detail: "Tue, September 1st at 9:00 PM EDT" }),
+    ]);
+    expect(liveMatchLabel(entry)).toBe("LIVE");
+  });
+
+  // CONTROL. An upcoming row is untouched by all of the above — it keeps its
+  // clock and grows no badge. Without this the fix could simply delete times.
+  it("leaves an upcoming row with its time and no badge", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches
+        entries={matchListFromSlate([match({ live_state: "upcoming", status_detail: null })])}
+      />
+    );
+    expect(html).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+    expect(html).not.toContain('data-testid="match-live"');
+  });
+
+  it("leaves a row the scoreboard never listed with its time and no badge", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([match()])} />
+    );
+    expect(html).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+    expect(html).not.toContain('data-testid="match-live"');
+  });
+});
