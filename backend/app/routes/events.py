@@ -44,7 +44,6 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import expand_search_terms
-from app.utils.fixture_twins import collapse_fixture_twins, event_rows_for_collapse
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     SEARCH_RESPONSE_TTL_SECONDS,
@@ -3854,36 +3853,6 @@ async def search_events(
         await _recover_search_session(db, _deadline)
         events = []
         degraded.append("events")
-
-    # #2623 — one fixture, one row. `Sabalenka` returned "16 games" that were
-    # nine matches each listed twice: a rich odds_api row with the score beside a
-    # surname-only Kalshi ghost with no score and a start time up to 23 hours
-    # off. The ghosts are ruling 048's declared, bounded price for never
-    # absorbing an id-less claim (gotcha #32) — the event graph is right to hold
-    # both rows. The page is not right to charge the reader for it.
-    #
-    # WHY HERE AND NOT IN THE SQL. The predicate is a self-join on fuzzy name
-    # equality inside a time window, which is not a WHERE clause any index can
-    # serve — and this endpoint already carries LAT-P090's cache and a 20s
-    # deadline. `collapse_fixture_twins` is a pure pass over at most `per_page`
-    # rows.
-    #
-    # THE PAGE GETS SHORTER, AND THAT IS THE CORRECT TRADE. Collapsing after
-    # pagination means a page of 25 can come back as 16. The alternative is
-    # over-fetching and re-trimming, which changes the ranked window the whole
-    # endpoint is built on. `total_count` is reduced by what this page hid so
-    # the "N results" line never counts a row the reader cannot see, and
-    # `duplicate_fixtures_hidden` reports the number rather than leaving the
-    # short page unexplained.
-    _twins = collapse_fixture_twins(event_rows_for_collapse(events))
-    _twin_ghost_ids = {ghost["id"] for ghost, _keeper in _twins.dropped}
-    duplicate_fixtures_hidden = len(_twin_ghost_ids)
-    if _twin_ghost_ids:
-        logger.info(
-            "search %r: hid %d duplicate fixture row(s) %s",
-            q, duplicate_fixtures_hidden, sorted(_twin_ghost_ids),
-        )
-        events = [e for e in events if e.id not in _twin_ghost_ids]
     _mark("event_page")
 
     # Get latest aggregated odds for each event
@@ -4040,12 +4009,6 @@ async def search_events(
 
     # Calculate pagination metadata
     total_count = total_count or 0
-    # #2623: the count line must not promise rows the page deliberately hid.
-    # Only THIS page's hidden ghosts are subtracted — the count query is not
-    # re-run, because a self-join over the whole matching set is exactly the
-    # cost this endpoint's cache exists to avoid. The line therefore reads low
-    # rather than high, which is the safe direction for a duplicate.
-    total_count = max(0, total_count - duplicate_fixtures_hidden)
     total_pages = (total_count + per_page - 1) // per_page
 
     # Also search futures markets by name or outcome name.
@@ -4908,14 +4871,6 @@ async def search_events(
             "include_upcoming": include_upcoming,
         },
         **({"did_you_mean": fuzzy_corrected} if fuzzy_corrected else {}),
-        # #2623: ADDITIVE, and present only when this page actually hid a
-        # duplicate. A short page with no explanation is indistinguishable from
-        # a page that ran out of results — gotcha #53's shape, one surface over.
-        **(
-            {"duplicate_fixtures_hidden": duplicate_fixtures_hidden}
-            if duplicate_fixtures_hidden
-            else {}
-        ),
         # LAT-P002/#1494 (1e): ADDITIVE and present only when something was cut short.
         # A stage we could not complete must be distinguishable from a stage that
         # honestly found nothing — the same "missing evidence is not GREEN" grammar

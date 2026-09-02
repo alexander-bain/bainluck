@@ -12,7 +12,7 @@ import Link from "next/link";
 import type { FeedItem, FeedFuturesData, FeedFuturesOutcome } from "@/lib/types";
 import { formatProbability } from "@/lib/api";
 import { getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
-import { bundleIsOneQuestion, type GroupedMarket } from "@/lib/feedSections";
+import type { GroupedMarket } from "@/lib/feedSections";
 import { sourceHex } from "@/lib/sourceColors";
 
 // ---------------------------------------------------------------------------
@@ -103,20 +103,7 @@ interface CombinedFeedCardProps {
 }
 
 export default function CombinedFeedCard({ group }: CombinedFeedCardProps) {
-  // #2622 — the SECOND lock, and it is here because this component is where the
-  // relabelling happens: the title and the link come from `items[0]` while the
-  // outcomes come from all of them, so any member that is not the same question
-  // has its competitors silently re-badged with the first market's name. That
-  // is how "Carlos Alcaraz 36%" ended up leading the 2026 Women's US Open.
-  //
-  // `groupTopMarkets` already refuses to build such a group, so this arm should
-  // never fire from the shipped path. It stays because the invariant belongs to
-  // whoever renders the merge, not to whoever happened to construct it — a
-  // future caller building a `GroupedMarket` by hand inherits the guarantee
-  // rather than the bug.
-  const items = bundleIsOneQuestion(group.items)
-    ? group.items
-    : group.items.slice(0, 1);
+  const { items } = group;
   if (items.length === 0) return null;
 
   // Use the first item for shared metadata (name, category, etc.)
