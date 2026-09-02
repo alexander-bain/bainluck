@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from app.utils.event_awards import (
     CEREMONIES,
-    ceremony_end_date,
     classify_market,
     clean_category_label,
     derive_awards_concept,
@@ -69,37 +68,6 @@ class TestEditionYear:
         rd = datetime(2027, 12, 31, tzinfo=timezone.utc)
         assert edition_year("KXGRAMAOTY-69", rd) == 27
         assert edition_year("KXGRAMMYNOMAOTY-69", rd) == 27
-
-
-class TestCeremonyEndDate:
-    """A resolution date is a deadline; only sometimes is it a schedule. The four
-    instants below are the ones production actually served on 2026-09-01."""
-
-    def test_year_end_backstop_is_not_published(self):
-        # Oscars 2027, Grammys 2027 and Tonys 2026 all carried this SAME instant —
-        # a default, not three ceremonies that happen to fall on New Year's Eve.
-        for year in (2026, 2027):
-            rd = datetime(year, 12, 31, 15, 0, tzinfo=timezone.utc)
-            assert ceremony_end_date(rd) is None
-
-    def test_a_real_ceremony_date_survives(self):
-        # THE CONTROL. The Emmys publish a genuine date and it must still reach the
-        # page — without this arm the suppression above passes on a function that
-        # returns None for everything.
-        rd = datetime(2027, 9, 14, 14, 0, tzinfo=timezone.utc)
-        assert ceremony_end_date(rd) == rd.isoformat()
-
-    def test_missing_and_malformed_dates_are_absent_not_fatal(self):
-        assert ceremony_end_date(None) is None
-        assert ceremony_end_date("2027-12-31") is None
-
-    def test_the_backstop_still_bounds_the_status_arm(self):
-        # Suppression is display-only: `build_event` keeps reading the raw
-        # resolution date for settled/upcoming, so a past backstop must remain a
-        # usable ordering signal even though it is never shown.
-        past = datetime(2020, 12, 31, 15, 0, tzinfo=timezone.utc)
-        assert ceremony_end_date(past) is None
-        assert past < datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 class TestClassifyMarket:

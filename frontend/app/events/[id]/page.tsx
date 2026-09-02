@@ -81,7 +81,6 @@ import {
   computeSharedChartDomain,
   computeRealStartTime,
   computeLastChartPoint,
-  defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
 
 interface EventPageProps {
@@ -108,12 +107,6 @@ export default function EventPage({ params }: EventPageProps) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [chartTimeRange, setChartTimeRange] = useState<"all" | "live">("live");
-  // Once the reader picks a range it is theirs — the evidence sync below stops.
-  const [chartRangeUserSet, setChartRangeUserSet] = useState(false);
-  const handleChartTimeRangeChange = useCallback((range: "all" | "live") => {
-    setChartRangeUserSet(true);
-    setChartTimeRange(range);
-  }, []);
   const handleRenderedDomain = useCallback((start: string, end: string) => {
     setOddsChartDomain((prev) => {
       if (prev && prev.start === start && prev.end === end) return prev;
@@ -305,20 +298,6 @@ export default function EventPage({ params }: EventPageProps) {
     () => fetchTeamProgression(eventId),
     { revalidateOnFocus: false, dedupingInterval: 300000 }
   );
-
-  // The shared range both charts run on. `history` arrives async, so this is a
-  // sync effect rather than a useState initialiser — same shape as each chart's
-  // own internal sync. Holding "live" unconditionally is what rendered two empty
-  // grids on an event whose commence_time predates every point it has
-  // (see maxPostStartSeriesPoints in eventKeyStats.ts).
-  const evidenceChartTimeRange = useMemo(
-    () => defaultChartTimeRange(historyData, event?.commence_time),
-    [historyData, event?.commence_time],
-  );
-  useEffect(() => {
-    if (chartRangeUserSet) return;
-    setChartTimeRange(evidenceChartTimeRange);
-  }, [evidenceChartTimeRange, chartRangeUserSet]);
 
   // Compute real game start time from livescores data (see eventKeyStats.ts)
   const realStartTime = useMemo(
@@ -1017,7 +996,7 @@ export default function EventPage({ params }: EventPageProps) {
               chartEndTime={sharedChartDomain?.end}
               sharedTicks={sharedChartDomain?.ticks}
               externalTimeRange={chartTimeRange}
-              onTimeRangeChange={handleChartTimeRangeChange}
+              onTimeRangeChange={setChartTimeRange}
             />
           )}
           {/* Game Play Card — shows score/period/play as user hovers the chart */}
@@ -1124,7 +1103,7 @@ export default function EventPage({ params }: EventPageProps) {
             chartEndTime={sharedChartDomain?.end}
             sharedTicks={sharedChartDomain?.ticks}
             externalTimeRange={chartTimeRange}
-            onTimeRangeChange={handleChartTimeRangeChange}
+            onTimeRangeChange={setChartTimeRange}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>

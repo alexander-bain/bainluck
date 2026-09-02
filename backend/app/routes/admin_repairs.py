@@ -23,8 +23,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-create-from-truth | team-identity-mapping-repair
              | event-espn-id | label-store-converge
              | label-defect-routes
-             | polymarket-sport-category-census | polymarket-sport-category
-             | polymarket-leg-label-census | polymarket-leg-label }
+             | polymarket-sport-category-census | polymarket-sport-category }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -42,8 +41,7 @@ transactional session and RETURNS its own before/after census in the response bo
      registered it. Re-synced again 2026-08-21, UX-P118, adding
      label-defect-routes in the commit that registered it. Re-synced again
      2026-09-01, Q495, adding the two polymarket-sport-category entries in the
-     commit that registered them. Re-synced again 2026-09-01, Q499, adding the
-     two polymarket-leg-label entries in the commit that registered them.)
+     commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -426,55 +424,6 @@ _REPAIRS = {
     # cluster list using the route's own `_cluster_identity`. Accepts ?limit=.
     "label-defect-routes": (
         "app.tasks.backfill_defect_routes",
-        "repair",
-    ),
-    # Q499 (the residual half of Q492): read-only census of the open Polymarket
-    # legs whose outcome name has collapsed onto their market's own name, so the
-    # card prints a probability that names no side. Split by
-    # `llm_sport_category`, because a bare total cannot tell a drain that is
-    # working from one that is only reaching the category the poller happens to
-    # rotate through — which is exactly how Q492's partial fix came to be read
-    # as complete. A census timeout returns `measured: false` with a reason,
-    # NEVER a zero (gotcha #54). Never writes: `apply` is accepted and ignored.
-    "polymarket-leg-label-census": (
-        "app.tasks.repair_polymarket_leg_label",
-        "census",
-    ),
-    # Q499: the WRITE half. Re-asks Gamma for each collapsed leg BY CONDITION ID
-    # and stores the answer of the SHIPPED `_leg_label`, imported from the
-    # poller rather than restated — this rail contains no label rule of its own,
-    # and a guard fails the build if it grows one. The tempting shortcut
-    # (splitting "Venue: X vs Y" on " vs ") is the mutant Q492's own guard was
-    # written to catch: it cannot tell which side the price belongs to, which is
-    # the whole defect.
-    # 🔴 The venue read is TWO requests per batch on purpose: Gamma's
-    # `condition_ids` read on `/markets` silently applies a `closed=false`
-    # filter, and on a 40-id sample from this cohort the default call returned 7
-    # of 40 while the closed pass returned the other 33. A drain built on the
-    # default read would have called 82% of its own population missing and
-    # looked finished. (Written without the `param=` form on purpose — the Q496
-    # guard scans this file for documented params the dispatcher cannot forward,
-    # and it caught this comment on the first run.)
-    # Writes `futures_outcomes.name` and NOTHING else — `last_updated` is a
-    # poller touch-stamp another surface reads as liveness (#2024), so a repair
-    # that bumped it would forge an observation. Compare-and-set on the exact
-    # name the page selected, so a concurrent re-ingest is counted `raced`,
-    # never clobbered.
-    # Every leg reaches a NAMED verdict and each is counted (ruling 054):
-    # relabelled / unchanged / not_at_venue / no_condition_id /
-    # refused_collision (two legs of one market would take the same label) /
-    # raced. Nothing is written when the venue does not answer.
-    # Terminals mean PAUSED, not finished, and all of them hand back a cursor
-    # that RETRIES rather than steps over: `paused_deadline`, `paused_venue`,
-    # `paused_target_timeout`, `paused_pool_timeout`, `paused_write_timeout`.
-    # Paging is a keyset on `futures_outcomes.id`: `?after_id=` from
-    # `next_cursor`. Read `scan_exhausted`, not `remaining_legs`.
-    # Capped at APPLY_LEG_CAP=120 legs per call, by module constant — the whole
-    # 1,153-leg cohort is ten calls. Accepts ?limit=&sport=&after_id=.
-    # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
-    # state, not a standing job.
-    "polymarket-leg-label": (
-        "app.tasks.repair_polymarket_leg_label",
         "repair",
     ),
 }

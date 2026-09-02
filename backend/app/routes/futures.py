@@ -17,7 +17,6 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
-from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
@@ -822,7 +821,6 @@ async def browse_futures(
     # answer for this, the fourth caller: feed drops BEFORE its scale, detail and
     # search drop AFTER normalization, and browse has no basis step to sit either
     # side of.
-    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         is_placeholder_outcome_name,
@@ -831,19 +829,13 @@ async def browse_futures(
 
     items = []
     for market in markets:
-        # Q480: one condition, one outcome — drop a `_yes`/`_no` leg that duplicates
-        # a bare rung this same market already holds. See the module docstring; the
-        # legs carry the sub-market's price, so a 64.5% "No" outranks every real
-        # answer and becomes the browse card's subtitle. FIRST, so the placeholder
-        # filter's `or list(market.outcomes)` fallback can never resurrect one.
-        deduped = drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
         # NEVER EMPTIES, matching `display_rank_order`/`drop_dominant_field_outcomes`:
         # a market whose every outcome is a placeholder keeps its rows rather than
         # rendering a card with no subtitle at all.
         real_outcomes = [
-            o for o in deduped
+            o for o in market.outcomes
             if not is_placeholder_outcome_name(o.name)
-        ] or list(deduped)
+        ] or list(market.outcomes)
         sorted_outcomes = sorted(
             real_outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
@@ -2421,59 +2413,8 @@ async def get_related_events(
     week_ago = now - timedelta(days=1)  # Include recently completed games
     week_ahead = now + timedelta(days=7)
 
-    # ═══ THIS MARKET'S SPORT IS A CONSTRAINT, NOT A HINT (#2553) ═══
-    #
-    # `/futures/1` — MLB World Series Winner — served five MLS soccer fixtures
-    # under "Games This Week" during the MLB season: D.C. United at FC
-    # Cincinnati, CF Montreal at Philadelphia Union, San Diego FC at Orlando
-    # City. A reader needs no domain knowledge to see that D.C. United is not in
-    # the World Series race.
-    #
-    # The join above is by `futures_outcomes.team_id`, and it did exactly what
-    # it was told: outcome "Cincinnati Reds" carries the team id of FC
-    # Cincinnati, "Philadelphia Phillies" carries Philadelphia Union's,
-    # "San Diego Padres" carries San Diego FC's. A city name got matched across
-    # sports when those outcomes were linked, and 2,762 outcomes site-wide are
-    # linked to a team in the wrong sport (measured 2026-09-01). That corruption
-    # is the matching layer's to repair and is filed separately — it is NOT
-    # hand-patched here, and this route is not the place that would know how.
-    #
-    # But a futures market's related-games strip has no business showing a
-    # fixture from another sport WHATEVER the team link says, and that is a
-    # property of this query rather than of the data. So the sport is a WHERE
-    # clause now: an MLB market can only surface baseball events, and the day a
-    # link is repaired the strip is already correct instead of newly correct.
-    #
-    # Keyed off `llm_sport_category` through `sport_keys.py`, the single source
-    # of truth, rather than `Event.sport_id == market.sport_id` — the market is
-    # `baseball_mlb` and its own games arrive under `baseball_mlb` AND
-    # `baseball_mlb_preseason`, so an id equality would drop real baseball.
-    #
-    # FAIL OPEN, NARROWLY. A market with no category, or a category the map does
-    # not carry, gets the old behaviour — the alternative is emptying the strip
-    # on every non-league market to fix a cross-sport bug, and an absent
-    # category is not evidence of a wrong sport.
-    sport_prefix = (
-        LLM_CATEGORY_TO_SPORT_PREFIX.get(market.llm_sport_category)
-        if market.llm_sport_category
-        else None
-    )
-    sport_filters = []
-    if sport_prefix:
-        sport_filters.append(
-            or_(
-                Sport.key == sport_prefix,
-                # `startswith` and not a hand-built LIKE: the argument is
-                # escaped and bound by SQLAlchemy, which is the half of gotcha
-                # #45 that bites when a key contains an underscore — and every
-                # key here does.
-                Sport.key.startswith(f"{sport_prefix}_"),
-            )
-        )
-
     events_result = await db.execute(
         select(Event)
-        .join(Sport, Sport.id == Event.sport_id)
         .options(selectinload(Event.sport))
         .where(
             or_(
@@ -2481,7 +2422,6 @@ async def get_related_events(
                 Event.away_team_id.in_(team_ids),
             ),
             Event.commence_time.between(week_ago, week_ahead),
-            *sport_filters,
         )
         .order_by(
             # Live first, then upcoming, then completed
@@ -3821,7 +3761,6 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
     (incl. "Team C"), #23 normalization, leader-pick — so the detail page never
     leads with "Other 100%" while search shows "Cleveland Cavaliers 31%".
     """
-    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.outcome_display import (
         is_placeholder_outcome_name,
         normalize_display_probs,
@@ -3829,15 +3768,8 @@ def _format_market_detail(market: FuturesMarket, bookmakers: list[str] = None) -
         drop_dominant_field_outcomes,
     )
 
-    # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
-    # detail page renders the WHOLE list and then normalizes it — so a duplicate
-    # `_yes`/`_no` leg does not merely add a junk row, it sits in
-    # `normalize_display_probs`'s divisor and squeezes every number the page
-    # prints. That is the same mechanism as the "Other 1.0" halving documented
-    # below, arriving from a different direction.
     valid_outcomes = [
-        o
-        for o in drop_duplicate_legs(market.outcomes, lambda o: o.external_id)
+        o for o in market.outcomes
         if not is_placeholder_outcome_name(o.name)
     ]
     sorted_outcomes = sorted(

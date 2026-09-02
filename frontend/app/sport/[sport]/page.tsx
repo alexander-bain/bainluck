@@ -6,7 +6,6 @@ import Link from "next/link";
 import { fetchSportHierarchyDetail, fetchGolfData } from "@/lib/api";
 import type { SportHierarchy, SportLeague, SportShowcaseEvent, GolfTournament } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
-import { tournamentHubHref } from "@/lib/tournamentHubs";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
 
@@ -274,34 +273,6 @@ export default function SportHubPage() {
                       tournament={tournament}
                       href={`/sport/${sportSlug}/pga/${slug}`}
                     />
-                  );
-                }
-
-                // #2560: THE HUB, WHEN THERE IS ONE. Checked before the "odds
-                // later" card, because that card is a claim — and it was live
-                // and false on `US Open` on day two of the US Open, beside a
-                // built hub nothing linked to. A tournament with a hub has its
-                // draw, its prices and its results there now.
-                const hubHref = tournamentHubHref(sportSlug, event.name);
-                if (hubHref) {
-                  return (
-                    <Link
-                      key={event.name}
-                      href={hubHref}
-                      className="bg-surface-card border border-surface-border rounded-xl p-5 hover:shadow-md hover:-translate-y-0.5 transition-all group"
-                      data-testid="showcase-hub-link"
-                    >
-                      <h3 className="text-text-primary font-medium group-hover:underline">
-                        {event.name}
-                      </h3>
-                      {/* Ruling 138: the word is PROBABILITY, never "price" —
-                          "Draw, live prices and results" tripped the shipped-copy
-                          ban on the first build, which is the guard doing its job
-                          on a card written in trading vocabulary out of habit. */}
-                      <p className="text-text-muted text-sm mt-1">
-                        Draw, live probabilities and results
-                      </p>
-                    </Link>
                   );
                 }
 

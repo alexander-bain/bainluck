@@ -18,31 +18,17 @@ WHAT THIS DOES. After the WS flushes prices for a batch of outcomes, it hands
 the affected event ids here. For each, this recomputes that source's home
 probability from the rows the flush just wrote — via
 `app/utils/live_blend.py`, the SAME expression the 120s poll uses, so the two
-writers cannot disagree — and stamps `win_probability_sources`. Since Q501 it
-also appends the matching `win_prob_snapshots` point, so the CHART moves on the
-same beat as the number.
-
-THE CHART POINT (Q501). This module originally declined to write
-`win_prob_snapshots` on the grounds that a snapshot per tick would grow that
-table ~60x for resolution nobody can see. That reasoning was about *per-tick*
-writes, and it is still right — so the write is throttled on its own clock
-(`DEFAULT_SNAPSHOT_INTERVAL_S`, 25s) rather than the blend's 5s one, and it goes
-through the same `_create_or_update_win_prob_snapshot` helper the 120s poll uses,
-which appends a row only when the value actually CHANGES and otherwise just
-bumps `reading_count`/`valid_until` on the existing point. Upper bound is
-therefore ~4.8x the 120s poll on a continuously-moving market and 0x on a flat
-one — not 60x. What it buys is Alex's stated bar: a live match page gains a
-chart point within a minute instead of within two.
-
-It shares the transaction with the blend stamp deliberately. The chart point and
-the hero number are the same assertion about the same instant; committing them
-together means they cannot disagree even if the dyno dies between two writes.
+writers cannot disagree — and stamps `win_probability_sources`.
 
 THREE THINGS IT DELIBERATELY DOES NOT DO.
 
 * **It does not go through Celery.** It is called in-process on the `worker-ws`
   dyno. The background queue is a known congestion point (GIN beat starvation),
   and a fast lane queued behind a slow one is not a fast lane.
+* **It does not write `win_prob_snapshots`.** The chart's cadence is a separate
+  product question and the 120s poll still owns it. Writing a snapshot per tick
+  would multiply that table's growth by ~60x to make a line that no one can see
+  the extra resolution in.
 * **It does not re-derive the inversion verdict per tick.**
   `_check_and_fix_inversion` costs a per-event `odds_snapshots` lookup, which is
   affordable every 120 seconds and not every 2. Orientation is a property of the
@@ -82,13 +68,6 @@ DEFAULT_INVERSION_TTL_S = 150.0
 #: rather than progressively losing weight. Just not every five seconds.
 UNCHANGED_RESTAMP_INTERVAL_S = 45.0
 
-#: Per-event floor between fast-lane CHART points. Deliberately slower than the
-#: blend's 5s throttle: the number wants to be as live as the socket, the line
-#: only has to gain a point often enough that a watching user sees it grow.
-#: 25s clears Alex's "within a minute" bar with margin while keeping
-#: `win_prob_snapshots` growth to a small multiple of the 120s poll's.
-DEFAULT_SNAPSHOT_INTERVAL_S = 25.0
-
 
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
@@ -105,17 +84,14 @@ class LiveBlendRefresher:
         min_refresh_interval_s: float = DEFAULT_MIN_REFRESH_INTERVAL_S,
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
-        snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
         self.inversion_ttl_s = inversion_ttl_s
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
-        self.snapshot_interval_s = snapshot_interval_s
         self._last_refresh_at: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
-        self._last_snapshot_at: dict[int, float] = {}
         self._inversion: dict[int, tuple[float, bool]] = {}
         self.stats: dict[str, int] = {
             "considered": 0,
@@ -123,8 +99,6 @@ class LiveBlendRefresher:
             "no_reading": 0,
             "stamped": 0,
             "unchanged_skipped": 0,
-            "snapshots_written": 0,
-            "snapshots_deduped": 0,
             "errors": 0,
         }
 
@@ -272,68 +246,12 @@ class LiveBlendRefresher:
                     self._last_write_at[event_id] = now
                     self._last_written_value[event_id] = value
                     self.stats["stamped"] += 1
-
-                    await self._maybe_snapshot(
-                        session, event_id, value, reading, now,
-                    )
                 except Exception:
                     self.stats["errors"] += 1
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",
                         self.source, event_id,
                     )
-
-    async def _maybe_snapshot(
-        self, session, event_id: int, value: float, reading, now: float,
-    ) -> None:
-        """Append this reading to the chart series, on the snapshot clock.
-
-        Called only after a blend stamp actually happened, so a flat market
-        costs nothing here. `_create_or_update_win_prob_snapshot` is the same
-        helper the 120s poll uses — it appends a row only on a value CHANGE and
-        otherwise refreshes `valid_until`/`reading_count` in place, which is
-        what keeps the chart's live edge current without lengthening the series.
-
-        Failures are swallowed and counted like everything else in this module:
-        the chart is downstream of the number, and a snapshot that cannot be
-        written must not cost the blend stamp that already succeeded.
-        """
-        last = self._last_snapshot_at.get(event_id)
-        if last is not None and (now - last) < self.snapshot_interval_s:
-            return
-        self._last_snapshot_at[event_id] = now
-
-        try:
-            from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-
-            snapshot, is_new = await _create_or_update_win_prob_snapshot(
-                session,
-                event_id=event_id,
-                source=self.source,
-                home_win_probability=value,
-                away_win_probability=round(1.0 - value, 4),
-                game_state={
-                    "market_name": getattr(reading.market, "name", None),
-                    "market_id": getattr(reading.market, "id", None),
-                    "outcome_name": getattr(reading.outcome, "name", None),
-                    "yes_probability": reading.yes_probability,
-                    # Distinguishable from the poll's "live_fast" in the audit
-                    # trail, so "which writer produced this point" stays a
-                    # question the data can answer.
-                    "poll_type": "ws_fast_lane",
-                },
-            )
-            if is_new:
-                session.add(snapshot)
-                self.stats["snapshots_written"] += 1
-            else:
-                self.stats["snapshots_deduped"] += 1
-        except Exception:
-            self.stats["errors"] += 1
-            logger.exception(
-                "live_blend_refresh[%s]: snapshot failed for event %s",
-                self.source, event_id,
-            )
 
     def _should_write(self, event_id: int, value: float, now: float) -> bool:
         """Write on any real move; on no move, re-stamp only occasionally.

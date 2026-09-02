@@ -688,47 +688,6 @@ class TestAwardsEventAdapter:
         champ = [c for c in body["primary"]["competitors"] if c.get("won")]
         assert len(champ) == 1 and champ[0]["name"] == "Oppenheimer"
 
-    async def test_year_end_backstop_never_reaches_the_page(self, client, mock_db):
-        from datetime import datetime, timezone
-
-        from tests.integration.test_route_weather import _query_result
-
-        # Measured on production 2026-09-01: the marquee markets for Oscars 2027,
-        # Grammys 2027 and Tonys 2026 all carried this identical instant, and the
-        # header rendered it verbatim as a flat "Dec 31" on all three pages. It is
-        # the exchange's resolve-by deadline, not the night of the ceremony.
-        backstop = datetime(2027, 12, 31, 15, 0, tzinfo=timezone.utc)
-        best_pic = _award_market(
-            50, "Oscar winner: Best Picture", "KXOSCARPIC-27",
-            [("Sinners", 0.4), ("Hamnet", 0.3)], rd=backstop,
-        )
-        mock_db.execute.return_value = _query_result([best_pic])
-        resp = await client.get("/api/event/event:awards:oscars-2027")
-        assert resp.status_code == 200
-        body = resp.json()
-        # The page still renders and still knows WHICH ceremony it is — only the
-        # unknown date is withheld.
-        assert body["event"]["name"] == "The Oscars 2027"
-        assert body["event"]["end_date"] is None
-
-    async def test_a_published_ceremony_date_still_reaches_the_page(self, client, mock_db):
-        from datetime import datetime, timezone
-
-        from tests.integration.test_route_weather import _query_result
-
-        # THE CONTROL, and the reason this is a suppression and not a deletion: the
-        # Emmys carry a real published date (production served 09-14T14:00:00Z) and
-        # a reader must keep seeing it.
-        real = datetime(2027, 9, 14, 14, 0, tzinfo=timezone.utc)
-        drama = _award_market(
-            51, "Emmy Award for Outstanding Drama Series", "KXEMMYDSERIES-27",
-            [("Severance", 0.5), ("The Pitt", 0.3)], rd=real,
-        )
-        mock_db.execute.return_value = _query_result([drama])
-        resp = await client.get("/api/event/event:awards:emmys-2027")
-        assert resp.status_code == 200
-        assert resp.json()["event"]["end_date"] == real.isoformat()
-
     async def test_no_markets_404(self, client, mock_db):
         from tests.integration.test_route_weather import _query_result
         mock_db.execute.return_value = _query_result([])

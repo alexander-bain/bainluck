@@ -1256,7 +1256,6 @@ async def load_staged_cursor(
     owner: str,
     generation: int,
     max_age_s: float = STATE_MAX_AGE_S,
-    legacy_input_fingerprint: str | None = None,
 ):
     """Read + classify the staged futures cursor.
 
@@ -1303,11 +1302,6 @@ async def load_staged_cursor(
         owner=owner,
         generation=generation,
         now=time.time(),
-        # CAL-P205 layer 1. ``input_fingerprint`` above is now the NARROW
-        # ``staged_unit_fingerprint``; this is the wide digest the cursor on disk
-        # was stamped with before layer 1 shipped. Accepted once, re-stamped on
-        # the next save. ``None`` restores the pre-layer-1 behaviour exactly.
-        legacy_input_fingerprint=legacy_input_fingerprint,
     )
 
 

@@ -243,15 +243,8 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "fragment-boundary-always-exempts",
         EVENTS,
-        # The bare `if` line is NOT unique — the outcome arm carries the same test
-        # one indent deeper, so this matched twice (#2391). It applied to the right
-        # site only because `str.replace(..., 1)` takes the leftmost match and the
-        # futures arm happens to come first: a property of line ORDER, not of the
-        # anchor. The comment line pins it to the futures arm on purpose.
-        """    if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
-        """    if True:
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        """    if not _has_extractable_trigram(term):""",
+        """    if True:""",
         SHAPE_ORACLE,
         "Over-applies the exemption so nothing is ever word-tested — green on the "
         "2-char test while silently undoing the whole queue (`nba champion` returns "
@@ -260,11 +253,8 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "fragment-boundary-back-to-length",
         EVENTS,
-        # Same ambiguity as the mutant above, pinned the same way.
-        """    if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
-        """    if len(term) < 3:
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        """    if not _has_extractable_trigram(term):""",
+        """    if len(term) < 3:""",
         SHAPE_ORACLE,
         "Re-hand-rolls the cliff as a length check — the third copy, and blind to "
         "`u.s.`/`a.i.`/`d'or` (length 4, measured 22-31x their length-matched "
@@ -459,24 +449,11 @@ def _main() -> int:
     try:
         for mutant_id, path, needle, replacement, oracle, why in MUTANTS:
             original = path.read_text(encoding="utf-8")
-            hits = original.count(needle)
-            if hits != 1:
+            if needle not in original:
                 # A drifted needle is a HARNESS failure. Reporting it as a kill is
                 # the specific lie this harness is built to make impossible.
-                #
-                # #2391: `hits > 1` is the SAME lie one step further on. This loop
-                # used `needle not in original` and then `replace(..., 1)`, so an
-                # ambiguous anchor silently mutated whichever match came FIRST —
-                # which is a fact about line order, not about aim. Two mutants here
-                # were in exactly that state and passed only because the intended
-                # site happened to be leftmost. Order is not a contract; a count is.
-                why_not = (
-                    "needle not found — the source moved"
-                    if hits == 0
-                    else f"anchor matched {hits}x — not unique, so aim is unproven"
-                )
-                unapplied.append((mutant_id, why_not))
-                print(f"  UNAPPLIED {mutant_id}: {why_not}")
+                unapplied.append((mutant_id, "needle not found — the source moved"))
+                print(f"  UNAPPLIED {mutant_id}: needle not found")
                 continue
             mutated = original.replace(needle, replacement, 1)
             if mutated == original:
