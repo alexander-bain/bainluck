@@ -71,14 +71,15 @@ COVERED = (
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     "test_null_statpal_live_space_3094_real_postgres.py",
-    "test_repair_3672_bind_contract.py",
+    "test_polymarket_resolved_candidate_sql_pg.py",
     "test_rekey_statpal_anchors_real_postgres.py",
-    "test_restore_4586_manifest_cas_pg.py",
+    "test_repair_3672_bind_contract.py",
     "test_restore_3026_jsonb_roundtrip_pg.py",
+    "test_restore_4586_manifest_cas_pg.py",
     "test_soccer_statpal_manifest_restore_pg.py",
     "test_stand_in_event_starts_real_postgres.py",
-    "test_tennis_twin_sweep_pg.py",
     "test_tennis_commence_predicate_real_postgres.py",
+    "test_tennis_twin_sweep_pg.py",
     "test_typeahead_played_game_suppression_pg.py",
 )
 
