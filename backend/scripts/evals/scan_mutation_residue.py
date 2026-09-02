@@ -119,6 +119,10 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # sha256 residue check at exit until that glob is derived from the declared
     # targets (written, waiting on `program/latency-104`).
     "ios_duel_percent_served_pair_mutations": [("MUTANTS", 3, 4, 2)],
+    # Q048. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above — it sorts between the `ios_` and
+    # `latest_` entries and goes there, not at the end.
+    "kalshi_segment_resolved_link_mutations": [("MUTANTS", 2, 3, 4)],
     # LAT-P147. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above. Two targets in one table (the
     # shared loader and the route that delegates to it), carried per-entry at

@@ -58,11 +58,39 @@ from __future__ import annotations
 import unicodedata
 from typing import Any, Iterable
 
+from app.utils.event_completion import commence_time_is_a_reported_start
+
 # Observed pair-gap in the #2623 population runs to 23h (the ghost's start time
 # is a provider close-time, not a start time — gotcha #14). 36h keeps every
 # observed pair together while staying well inside "the next edition of this
 # fixture", which for tennis is days and for league sport is at minimum a day.
 FIXTURE_TIME_WINDOW_HOURS = 36
+
+# Q048: the window above is EVIDENCE OF SEPARATENESS — "these started far apart,
+# so they are different fixtures". That inference needs both sides to be times
+# somebody reported, and one whole class of ghost is exactly the case where one
+# is not.
+#
+# A `commence_time_source = 'kalshi_ticker'` row carries midnight UTC of a date
+# parsed out of a Kalshi ticker, and for tennis that date is the TOURNAMENT
+# SEGMENT's date, not the match's (CERT-706 measured the same thing from the
+# other side: `26AUG30` in the ticker while the match was played 2026-09-01).
+# So the gap against the real row is an artefact of the stand-in, and reading it
+# as evidence is reading something nobody reported.
+#
+# Measured on production 2026-09-02 over the 22 ghost/real pairs the Kalshi
+# segment key identifies across the US Open: gaps run **15.0h to 71.1h, median
+# 66.7h**, and **19 of the 22 fall outside the 36h window** — so the dedup that
+# #2623 shipped cannot reach the population this queue is about. `/api/events/
+# 15300759` (a ghost of Monfils v Vallejo) sits **71.1h** from the real row and
+# ranks FIRST for a search on "Monfils".
+#
+# 96h covers all 22 with headroom and stays bounded — it is deliberately NOT
+# "no window at all", because an unbounded pass would let any past meeting of
+# the same two players dominate a future ghost. Under-coverage is the safe
+# failure direction here: a missed ghost renders, a false drop deletes a real
+# match.
+DERIVED_START_WINDOW_HOURS = 96
 
 # The 1-on-1 sports, where the same two participants meeting twice inside the
 # window is not a thing that happens. Mirrors `_INDIVIDUAL_SPORT_PREFIXES` in
@@ -133,7 +161,10 @@ class _Row:
     model import so its tests need no database and no app import graph.
     """
 
-    __slots__ = ("obj", "id", "home", "away", "commence_time", "scored", "sport_key")
+    __slots__ = (
+        "obj", "id", "home", "away", "commence_time", "scored", "sport_key",
+        "derived_start",
+    )
 
     def __init__(self, obj: Any, sport_key: Any):
         self.obj = obj
@@ -141,6 +172,14 @@ class _Row:
         self.home = getattr(obj, "home_team_name", None)
         self.away = getattr(obj, "away_team_name", None)
         self.commence_time = getattr(obj, "commence_time", None)
+        # Q048. `commence_time_is_a_reported_start` is the repo's ONE definition
+        # of "this field holds a stand-in" (q076/CERT-690) and the two status
+        # clocks already read it. Reading the same predicate here rather than
+        # comparing to the literal is what keeps a future derived provenance
+        # from joining the rule in `event_completion` and being missed here.
+        self.derived_start = not commence_time_is_a_reported_start(
+            getattr(obj, "commence_time_source", None)
+        )
         self.scored = (
             getattr(obj, "home_score", None) is not None
             and getattr(obj, "away_score", None) is not None
@@ -230,7 +269,16 @@ def _within_window(a: _Row, b: _Row) -> bool:
         # happen in production, but a dedup pass is an accelerator and must
         # never be the thing that 500s a search. Unknown gap => not a twin.
         return False
-    return delta <= FIXTURE_TIME_WINDOW_HOURS * 3600
+    # Q048: a stand-in start is not evidence of separateness, so a pair holding
+    # one gets the wider bound. BOTH sides derived keeps the NARROW window on
+    # purpose — two stand-ins are two dates, and nothing in the gap between them
+    # was reported by anybody, so widening there would be pairing rows on no
+    # evidence at all. (Dominance would refuse them anyway: two ghosts are
+    # equally unspecific and equally scoreless. The window is the cheaper and
+    # more honest place to say so.)
+    one_side_derived = a.derived_start != b.derived_start
+    hours = DERIVED_START_WINDOW_HOURS if one_side_derived else FIXTURE_TIME_WINDOW_HOURS
+    return delta <= hours * 3600
 
 
 def duplicate_fixture_event_ids(events: Iterable[Any]) -> set:
