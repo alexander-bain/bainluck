@@ -6,7 +6,7 @@ import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import { getCategoryByKey, SPORT_CATEGORIES } from "@/lib/sportCategories";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
-import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
+import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import FeedCard from "@/components/FeedCard";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
@@ -98,9 +98,13 @@ export default function CategoryPage({
 
   const feedStats = useMemo(() => {
     if (allItems.length === 0) return { events: 0, futures: 0 };
+    // #2597 — count the CARDS, not the feed slots. A bundle is one item that
+    // renders as several, so the raw filter promised "18 markets" over a page
+    // showing 22 and a section badge saying 19: three numbers for one page.
+    const cards = flattenFeedBundles(allItems);
     return {
-      events: allItems.filter((i) => i.type === "event").length,
-      futures: allItems.filter((i) => i.type === "futures").length,
+      events: cards.filter((i) => i.type === "event").length,
+      futures: cards.filter((i) => i.type === "futures").length,
     };
   }, [allItems]);
 
@@ -175,7 +179,7 @@ export default function CategoryPage({
                         {section.title}
                       </h2>
                       <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                        {section.items.length}
+                        {section.count}
                       </span>
                     </div>
                     <div

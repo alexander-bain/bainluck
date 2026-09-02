@@ -53,7 +53,7 @@ jest.mock("@/components/Analytics", () => ({
 
 import FeedCard from "../../components/FeedCard";
 import CombinedFeedCard from "../../components/CombinedFeedCard";
-import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket } from "@/lib/feedSections";
+import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 
 import tennisPayload from "../fixtures/uxp254_category_tennis_bundle.20260901.json";
@@ -122,6 +122,18 @@ describe("the payload that broke /categories/tennis", () => {
     const sections = groupFeedIntoSections(tennisItems);
     expect(sections.map((s) => s.key)).toEqual(["markets"]);
     expect(sections[0].items).toHaveLength(tennisItems.length);
+  });
+
+  it("the section badge counts CARDS, so the page's three numbers agree", () => {
+    // Unfolding made the page state three different totals: the header counted
+    // top-level futures (18), the badge counted feed slots (19) and the grid
+    // rendered 22. `count` is the rendered number, and the header now derives from
+    // the same unfolded list.
+    const sections = groupFeedIntoSections(tennisItems);
+    const markets = sections.find((s) => s.key === "markets")!;
+    expect(markets.items).toHaveLength(19);
+    expect(markets.count).toBe(22);
+    expect(markets.count).toBe(flattenFeedBundles(tennisItems).length);
   });
 
   it("every card the page admits actually has something to print", () => {
