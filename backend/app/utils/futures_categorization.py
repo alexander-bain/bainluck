@@ -1608,6 +1608,269 @@ def detect_market_type(name: str) -> str:
 
 
 # =============================================================================
+# The DISCIPLINE axis of the canonical key (#2622)
+# =============================================================================
+#
+# WHY THIS EXISTS. `canonical_market_key` was `{sport}:{league}:{category}:
+# {season}` and nothing else, so it said "a tennis championship resolving in
+# 2026" — a description that fits 1,337 open markets at once. On 2026-09-01 the
+# two that reached /sports Top Markets were `2026 Men's US Open Winner` and
+# `2026 Women's US Open Winner`; both carried `tennis::championship:2026`, the
+# client grouped on that key alone, and the women's card rendered **Carlos
+# Alcaraz as the #1 favourite to win the women's title**. Soccer shares one key
+# across 8,826 open markets; politics 1,538. Every one of those is the same card
+# waiting for two of its members to rank.
+#
+# WHAT A DISCIPLINE IS. One more segment naming *which question this is* inside
+# the sport/league/category/season box: the draw (men's, women's, mixed), the
+# competition (US Open, Wimbledon, World Cup), or — for the very large
+# population of match markets that `detect_market_type` files as
+# "championship" — the matchup itself.
+#
+# WHY IT IS DERIVED FROM THE NAME AND NOT FROM `llm_gender`. `llm_gender` is
+# NULL on all 861,809 rows of `futures_markets` (measured 2026-08-24, see
+# `app/utils/tournament_register.py`), so a key that read it would be a key that
+# never changed. The name is what both venues actually publish.
+#
+# WHY UNDER-MERGING IS THE SAFE DIRECTION. Two sources agree on a key only when
+# they agree on the words; a source that omits "Men's" now gets its own key
+# instead of joining one. That costs a cross-source pairing. Over-merging costs
+# a man leading the women's board, and the "N sources" badge counting two
+# different questions as one. The first is a missing badge; the second is a lie
+# on the front page.
+
+#: Venues publish U+2019 in "Women's" (both US Open rows do). A pattern written
+#: with a plain apostrophe silently misses every one of them.
+_TYPOGRAPHIC_APOSTROPHES = str.maketrans(
+    {"’": "'", "‘": "'", "ʼ": "'", "´": "'"}
+)
+
+#: Draw/gender. `mixed` is tested first so "Mixed Doubles" never reads as men's.
+#: ITF names carry the draw as a level code — `M15 Trelew`, `W15 Luján` — which
+#: is the only gender token those 500-odd Polymarket rows have.
+_GENDER_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
+    (re.compile(r"\bmixed\b", re.I), "mixed"),
+    (re.compile(r"\b(?:wom[ae]n(?:'s)?|womens|ladies|wta|female)\b", re.I), "womens"),
+    (re.compile(r"^\s*w\d{2,3}\b", re.I), "womens"),
+    (re.compile(r"\b(?:m[ae]n(?:'s)?|mens|atp|male)\b", re.I), "mens"),
+    (re.compile(r"^\s*m\d{2,3}\+?h?\b", re.I), "mens"),
+]
+
+#: Competition. The sport is already segment 1 of the key, so a slug never has
+#: to disambiguate across sports — golf's US Open lands on
+#: `golf:PGA:championship:2026:us-open` and tennis's on
+#: `tennis::championship:2026:womens-us-open`. They cannot collide.
+_COMPETITION_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
+    # Tennis majors and the events both venues actually carry
+    (re.compile(r"\bwimbledon\b", re.I), "wimbledon"),
+    (re.compile(r"\b(?:roland[\s-]?garros|french\s+open)\b", re.I), "french-open"),
+    (re.compile(r"\baustralian\s+open\b", re.I), "australian-open"),
+    (re.compile(r"\bu\.?\s*s\.?\s+open\b", re.I), "us-open"),
+    (re.compile(r"\bindian\s+wells\b", re.I), "indian-wells"),
+    (re.compile(r"\bmiami\s+open\b", re.I), "miami-open"),
+    (re.compile(r"\bmadrid\s+open\b", re.I), "madrid-open"),
+    (re.compile(r"\b(?:italian\s+open|rome\s+masters)\b", re.I), "italian-open"),
+    (re.compile(r"\bcincinnati\s+open\b", re.I), "cincinnati-open"),
+    (re.compile(r"\b(?:canadian\s+open|national\s+bank\s+open)\b", re.I), "canadian-open"),
+    (re.compile(r"\bshanghai\s+masters\b", re.I), "shanghai-masters"),
+    (re.compile(r"\bparis\s+masters\b", re.I), "paris-masters"),
+    (re.compile(r"\bmonte[\s-]?carlo\b", re.I), "monte-carlo"),
+    (re.compile(r"\b(?:atp|wta)\s+finals\b", re.I), "tour-finals"),
+    (re.compile(r"\blaver\s+cup\b", re.I), "laver-cup"),
+    (re.compile(r"\bdavis\s+cup\b", re.I), "davis-cup"),
+    (re.compile(r"\bbillie\s+jean\s+king\s+cup\b", re.I), "bjk-cup"),
+    (re.compile(r"\bunited\s+cup\b", re.I), "united-cup"),
+    # Soccer — the 8,826-market key's real axis
+    (re.compile(r"\bclub\s+world\s+cup\b", re.I), "club-world-cup"),
+    (re.compile(r"\bworld\s+cup\b", re.I), "world-cup"),
+    (re.compile(r"\b(?:champions\s+league|ucl)\b", re.I), "champions-league"),
+    (re.compile(r"\beuropa\s+league\b", re.I), "europa-league"),
+    (re.compile(r"\bconference\s+league\b", re.I), "conference-league"),
+    (re.compile(r"\bcopa\s+libertadores\b", re.I), "copa-libertadores"),
+    (re.compile(r"\bcopa\s+am[eé]rica\b", re.I), "copa-america"),
+    (re.compile(r"\b(?:euro\s*20\d{2}|european\s+championship)\b", re.I), "euros"),
+    (re.compile(r"\bfa\s+cup\b", re.I), "fa-cup"),
+    (re.compile(r"\bcarabao\s+cup\b", re.I), "carabao-cup"),
+    (re.compile(r"\b(?:afcon|africa\s+cup\s+of\s+nations)\b", re.I), "afcon"),
+    (re.compile(r"\bgold\s+cup\b", re.I), "gold-cup"),
+    # Golf majors
+    (re.compile(r"\bthe\s+masters\b", re.I), "masters"),
+    (re.compile(r"\bpga\s+championship\b", re.I), "pga-championship"),
+    (re.compile(r"\b(?:the\s+open\s+championship|british\s+open)\b", re.I), "the-open"),
+    (re.compile(r"\bryder\s+cup\b", re.I), "ryder-cup"),
+    (re.compile(r"\bfedex\s*cup\b", re.I), "fedex-cup"),
+]
+
+#: "Does this player REACH round R" is not "does this player WIN the
+#: tournament". `app/utils/tournament_register.py` already rules the two apart
+#: (``SOURCE_KINDS = outright | match | reach`` — "the three must never be
+#: blended or ranked against each other"), and they share every other key
+#: segment: `US Open Men Singles: Quarterfinals Qualifiers` and
+#: `2026 Men's US Open Winner` are both tennis/championship/2026/mens-us-open,
+#: and their outcome sets OVERLAP, so no downstream disjointness check can tell
+#: them apart. A bare "final"/"finals" is deliberately absent — "Wimbledon Final
+#: Winner" IS the outright question.
+_REACH_ROUND_RE = re.compile(
+    r"\b(?:quarter[\s-]?finals?|semi[\s-]?finals?|qf|sf|"
+    r"round\s+of\s+\d+|last\s+\d+|r16|r32|r64|r128|"
+    r"qualif(?:y|ier|iers|ying))\b",
+    re.I,
+)
+
+#: The separators a venue uses between the two sides of a match market, in two
+#: tiers because they are not equally trustworthy.
+#:
+#: `vs` / `vs.` is a FIXTURE word: nothing but a matchup uses it, so it survives
+#: a trailing question mark ("Chiefs vs Ravens Winner?").
+#:
+#: `at` and `@` are ordinary English. A guard test caught the consequence in this
+#: very module: "What will Trump say at Davos?" minted
+#: `vs-davos-what-will-trump-say` because the trailing `?` had already been
+#: stripped before the prose check ran. They are now allowed only in a name that
+#: contains no question mark at all. `v` on its own is absent entirely.
+_DISCIPLINE_VS_SPLIT_RE = re.compile(r"\s+vs\.?\s+", re.I)
+_DISCIPLINE_AT_SPLIT_RE = re.compile(r"\s+(?:@|at)\s+", re.I)
+
+#: A trailing " - Exact Score" / " – Set 1 Winner" rider names the STAT, not the
+#: fixture; the fixture is what identifies the question here.
+_DISCIPLINE_RIDER_RE = re.compile(r"\s+[-–—]\s+")
+
+_DISCIPLINE_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+#: Corporate/organisational suffixes that identify NOTHING. Measured on the live
+#: `soccer::championship:2026` population 2026-09-01: reducing each side of a
+#: matchup to its last token — which is what makes Kalshi's `Fritz` meet
+#: Polymarket's `Taylor Fritz` — collapsed 238 unrelated English fixtures onto
+#: `vs-afc-fc` (`Tranmere Rovers FC vs. Oldham Athletic AFC` beside
+#: `Barrow AFC vs. Sutton United FC`), 49 onto `vs-fc-sc`, 40 onto
+#: `vs-calcio-fc`. That is the #2622 defect rebuilt inside its own fix, so the
+#: last-token rule is gone: a side is its WHOLE name with these stripped. The
+#: cost is the tennis surname pairing — Kalshi's `Fritz vs Bellucci` and
+#: Polymarket's `Taylor Fritz vs. Mattia Bellucci` now get different keys — and
+#: that is the trade this whole axis is built on: an unmade pair is a missing
+#: badge, a wrong merge is a wrong card.
+_CLUB_SUFFIX_TOKENS = frozenset({
+    "fc", "afc", "sc", "cf", "ac", "sk", "bk", "fk", "cd", "sv", "as", "rc",
+    "ud", "ca", "sd", "if", "il", "bc", "kc", "cs", "us", "calcio", "club",
+    "futbol", "football", "united", "city", "town", "county", "athletic",
+    "athletics", "rovers", "wanderers", "albion", "fk", "ii", "b", "jr", "sr",
+})
+
+#: Segment cap. `canonical_market_key` is `String(200)`; the other four segments
+#: are short and bounded, and a 60-char discipline keeps the whole key inside the
+#: column with room to spare even for the longest sport/category pair.
+MAX_DISCIPLINE_LEN = 60
+
+
+def _discipline_slug(text: str) -> str:
+    """Lowercase, ASCII-ish, hyphen-joined. Empty string when nothing survives."""
+    return _DISCIPLINE_SLUG_RE.sub("-", (text or "").lower()).strip("-")
+
+
+def detect_gender_axis(market_name: Optional[str]) -> Optional[str]:
+    """``mens`` | ``womens`` | ``mixed``, or None when the name does not say.
+
+    Reads the NAME, never ``llm_gender`` — that column is NULL on every row of
+    ``futures_markets`` (see the module note above), so a gender axis that read
+    it would separate nothing.
+    """
+    name = (market_name or "").translate(_TYPOGRAPHIC_APOSTROPHES)
+    if not name:
+        return None
+    for pattern, gender in _GENDER_PATTERNS:
+        if pattern.search(name):
+            return gender
+    return None
+
+
+def detect_competition_axis(market_name: Optional[str]) -> Optional[str]:
+    """The competition slug a name names, or None."""
+    name = (market_name or "").translate(_TYPOGRAPHIC_APOSTROPHES)
+    if not name:
+        return None
+    for pattern, slug in _COMPETITION_PATTERNS:
+        if pattern.search(name):
+            return slug
+    return None
+
+
+def _competitor_slug(side: str) -> Optional[str]:
+    """One side of a matchup as a slug, or None when it is not a competitor."""
+    side = side.strip().strip(".,;").strip()
+    # The same shape guard `detect_bare_matchup_sport` uses: a side that is a
+    # sentence is not a competitor.
+    if not side or len(side) > 48 or len(side.split()) > 6:
+        return None
+    tokens = [t for t in _discipline_slug(side).split("-") if t]
+    kept = [t for t in tokens if t not in _CLUB_SUFFIX_TOKENS and not t.isdigit()]
+    # A name made ENTIRELY of suffix tokens ("FC Barcelona" is not one, but
+    # "Athletic Club" is) keeps its tokens rather than vanishing — an empty slug
+    # would silently rejoin the very group this axis exists to split.
+    slug = "-".join(kept or tokens)
+    if not slug or slug.isdigit():
+        return None
+    return slug[:26]
+
+
+def detect_matchup_axis(market_name: Optional[str]) -> Optional[str]:
+    """``vs-<a>-<b>`` for a two-sided match market, or None.
+
+    The 856 open markets reading ``tennis::championship:2026`` on 2026-09-01
+    were overwhelmingly MATCH markets — `Fritz vs Bellucci`,
+    `M15 Trelew: Tomas Martinez vs Felipe De Dios`,
+    `Nikola Bartunkova vs Elise Mertens: Set 1 Winner` — that
+    ``detect_market_type`` files as "championship" because nothing else matches.
+    A fixture is its own question, so it gets its own key.
+    """
+    raw = (market_name or "").translate(_TYPOGRAPHIC_APOSTROPHES).strip()
+    if not raw:
+        return None
+    name = raw[:-1].rstrip() if raw.endswith("?") else raw
+    splitter = _DISCIPLINE_VS_SPLIT_RE
+    if len(splitter.findall(name)) != 1:
+        if "?" in raw:
+            return None
+        splitter = _DISCIPLINE_AT_SPLIT_RE
+        if len(splitter.findall(name)) != 1:
+            return None
+    m = splitter.search(name)
+    left, right = name[: m.start()], name[m.end():]
+    # "M15 Trelew: Tomas Martinez" — the venue/level prefix is carried by the
+    # gender and competition axes, not by the fixture's identity.
+    left = _DISCIPLINE_RIDER_RE.split(left.rsplit(":", 1)[-1])[-1]
+    # "Elise Mertens: Set 1 Winner" / "Mattia Bellucci - Exact Score" — the
+    # trailing rider names the STAT, and two stats on one fixture are two views
+    # of the same question.
+    right = _DISCIPLINE_RIDER_RE.split(right.split(":", 1)[0])[0]
+    a, b = _competitor_slug(left), _competitor_slug(right)
+    if not a or not b or a == b:
+        return None
+    return "vs-" + "-".join(sorted((a, b)))
+
+
+def market_discipline_axis(market_name: Optional[str]) -> str:
+    """The fifth segment of a canonical key. ``""`` when the name says nothing.
+
+    A matchup wins outright: once a market names two competitors, the fixture IS
+    the question, and the draw/competition it belongs to is a property of the
+    fixture rather than a second axis.
+    """
+    matchup = detect_matchup_axis(market_name)
+    if matchup:
+        return matchup[:MAX_DISCIPLINE_LEN]
+    name = (market_name or "").translate(_TYPOGRAPHIC_APOSTROPHES)
+    parts = [
+        p for p in (
+            detect_gender_axis(market_name),
+            detect_competition_axis(market_name),
+            "reach" if _REACH_ROUND_RE.search(name) else None,
+        )
+        if p
+    ]
+    return "-".join(parts)[:MAX_DISCIPLINE_LEN]
+
+
+# =============================================================================
 # Canonical market key computation
 # =============================================================================
 
@@ -1617,11 +1880,19 @@ def compute_canonical_market_key(
     llm_league: Optional[str],
     category: Optional[str],
     season: Optional[str],
+    market_name: Optional[str] = None,
 ) -> Optional[str]:
     """
     Compute a canonical market key for cross-source matching.
 
-    Format: {sport_category}:{league}:{category}:{season}
+    Format: ``{sport_category}:{league}:{category}:{season}`` plus, when the
+    market name carries one, a fifth ``:{discipline}`` segment (#2622).
+
+    The fifth segment is APPENDED rather than folded into an existing slot so
+    that every reader of segments 0-3 keeps reading what it read before: a
+    4-segment key and a 5-segment key agree on sport, league, category and
+    season. `market_name` is optional for the same reason — a caller that does
+    not pass it gets exactly the pre-#2622 key, never a wrong one.
 
     Only returns a key when we have enough axes to make a meaningful match.
     Missing sport_category or category will prevent key generation.
@@ -1631,6 +1902,7 @@ def compute_canonical_market_key(
         llm_league: League abbreviation (e.g., "NBA", "NFL")
         category: Market type (e.g., "championship", "mvp")
         season: Season string (e.g., "2025-26", "2025")
+        market_name: The market's name, read for the discipline axis only.
 
     Returns:
         Canonical key string, or None if insufficient data.
@@ -1664,4 +1936,8 @@ def compute_canonical_market_key(
         return None
 
     # Build key: use empty string for missing optional parts
-    return f"{sport}:{league}:{cat}:{szn}"
+    key = f"{sport}:{league}:{cat}:{szn}"
+    discipline = market_discipline_axis(market_name)
+    if discipline:
+        key = f"{key}:{discipline}"
+    return key

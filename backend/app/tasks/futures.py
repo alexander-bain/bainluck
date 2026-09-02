@@ -222,6 +222,7 @@ async def _poll_futures_odds():
                     # Compute canonical key for cross-source matching
                     canonical_key = compute_canonical_market_key(
                         sport_category, league, inferred_category, season,
+                        market_name=market_name,
                     )
 
                     # Generate category tags
@@ -541,6 +542,7 @@ async def _recategorize_other_impl(limit: int = 500, from_category: str = None):
         season = detect_season(market.name, league, market.resolution_date)
         market.canonical_market_key = compute_canonical_market_key(
             market.llm_sport_category, league, market.category, season,
+            market_name=market.name,
         )
 
     BATCH_SIZE = 25  # Small batches to stay within memory quota

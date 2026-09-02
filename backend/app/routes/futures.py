@@ -2607,18 +2607,31 @@ async def get_progression(
 
     # Method 2: Canonical key siblings
     if len(sibling_markets) < 2 and market.canonical_market_key:
-        # Parse key: "sport:league:category:season" → find same sport:league:*:season
+        # Parse key: "sport:league:category:season[:discipline]" → find the same
+        # sport:league:*:season.
+        #
+        # #2622: season is segment 3, NOT `parts[-1]`. Those were the same string
+        # only while every key had exactly four segments; a key that carries the
+        # discipline axis ends with `us-open`, and reading that as the season
+        # produced an ILIKE that matched nothing — the sibling panel would have
+        # gone quietly empty on exactly the markets the axis was added for.
         parts = market.canonical_market_key.split(":")
         if len(parts) >= 4:
             sport_part, league_part = parts[0], parts[1]
-            season_part = parts[-1]
-            # Search for markets sharing sport:league:*:season
+            season_part = parts[3]
+            # Search for markets sharing sport:league:*:season, with or without
+            # a trailing discipline segment.
             ck_result = await db.execute(
                 select(FuturesMarket)
                 .options(selectinload(FuturesMarket.outcomes))
                 .where(
-                    FuturesMarket.canonical_market_key.ilike(
-                        f"{sport_part}:{league_part}:%:{season_part}"
+                    or_(
+                        FuturesMarket.canonical_market_key.ilike(
+                            f"{sport_part}:{league_part}:%:{season_part}"
+                        ),
+                        FuturesMarket.canonical_market_key.ilike(
+                            f"{sport_part}:{league_part}:%:{season_part}:%"
+                        ),
                     ),
                     FuturesMarket.id != market_id,
                     FuturesMarket.status == "open",
