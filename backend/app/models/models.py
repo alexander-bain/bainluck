@@ -740,8 +740,15 @@ class FuturesMarket(Base):
 
     # When the event/tournament begins (e.g., when the Masters starts)
     commence_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    # When the market resolves (e.g., when the champion is crowned)
+    # When the market resolves (e.g., when the champion is crowned).
+    # Kalshi: max(close_time) — when trading actually stops (CAL-P989, #2660).
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Kalshi's legal backstop, max(expiration_time) — the LATEST a market could
+    # possibly expire, which is what resolution_date used to hold. Kept in its own
+    # column so the switch to close_time loses nothing; see
+    # app/utils/kalshi_resolution_window.py for why the backstop is the wrong
+    # field to render or to run `past resolution_date` predicates against.
+    expiration_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         String(20), default="open", index=True
     )  # open, suspended, resolved
