@@ -518,20 +518,35 @@ def _record(drain, attempted, failed, prior, prior_gave_up=0):
     return outcome.owed, calls
 
 
+def _issued(commands):
+    """The shared fake's `(name, args, kwargs)` in this file's older shape.
+
+    Kept as an adapter rather than rewriting the six assertions below, because
+    what those assertions check — WHICH command reached WHICH key — has not
+    changed. What changed (live/047, CERT-773) is that the commands are now
+    issued inside one MULTI/EXEC instead of as three round trips, and that is
+    asserted where it belongs, in the one-writer-per-tier suite.
+    """
+    shaped = []
+    for name, args, kwargs in commands:
+        if name == "hdel":
+            shaped.append(("hdel", args[0], tuple(args[1:])))
+        elif name == "hset":
+            shaped.append(("hset", args[0], kwargs.get("mapping")))
+        else:
+            shaped.append((name, *args))
+    return shaped
+
+
 def _record_outcome(drain, attempted, failed, prior, prior_gave_up=0):
     """As `_record`, but hands back the whole `AttemptOutcome`."""
-    calls: list[tuple] = []
-    client = MagicMock()
-    client.hdel = lambda key, *ids: calls.append(("hdel", key, ids))
-    client.hset = lambda key, mapping=None: calls.append(("hset", key, mapping))
+    from tests.lib_tier_redis import FakeTierRedis
 
-    def _incrby(key, n):
-        calls.append(("incrby", key, n))
-        # A real INCRBY answers with the value it just stored. Returning it is
-        # the whole point of the CERT-764 repair, so the fake must too.
-        return prior_gave_up + n
-
-    client.incrby = _incrby
+    # Seeded so a real INCRBY's answer — the value it just STORED, which is the
+    # whole point of the CERT-764 repair — matches what the caller expects.
+    client = FakeTierRedis(
+        {drain.GAVE_UP_KEY.format(tier="us_open"): prior_gave_up}
+    )
 
     original = drain._with_redis
     drain._with_redis = lambda tier, apply: apply(client)
@@ -541,7 +556,7 @@ def _record_outcome(drain, attempted, failed, prior, prior_gave_up=0):
         )
     finally:
         drain._with_redis = original
-    return outcome, calls
+    return outcome, _issued(client.commands)
 
 
 def test_a_failed_event_is_remembered_by_id():

@@ -115,6 +115,33 @@ RETRY_KEY = "chart_backfill_30d:retry:{tier}"
 #: the difference between `drained` and `drained_with_failures`.
 GAVE_UP_KEY = "chart_backfill_30d:gaveup:{tier}"
 
+#: 🔴 CERT-773 — ONE WRITER PER TIER. `POST /backfill-30d-charts` queues by
+#: default and tells the operator to re-call until the verdict is terminal, so
+#: two triggers overlapping on one tier is the ordinary case, not an attack.
+#: `SET NX EX` is the whole lock: the first trigger into a tier owns it, every
+#: other trigger reports `locked_out` and writes nothing at all.
+#:
+#: The TTL is what stops a SIGKILLed worker from holding a tier shut forever
+#: (gotcha: Celery SIGKILLs are untracked, so a `finally` release is not
+#: guaranteed to run). It is deliberately generous against a bounded pass — at
+#: `limit=200`, ~3 requests per event and a 0.25s inter-event sleep, a pass is
+#: minutes, not half an hour.
+#:
+#: 🔴 AND THE LOCK IS NOT THE GUARANTEE. A TTL that expires under a slow pass
+#: puts two writers back on one tier, which is why the terminal marker is
+#: independently monotone (see :func:`_mark_done`) and why the checkpoint read
+#: and the retry/give-up write are each ONE transaction. The lock removes the
+#: wasted double-fetch; the other three remove the wrong verdict. Any one of
+#: them alone would close CERT-773's reproduction, and they are all here because
+#: the failure they prevent is permanent and the cost of preventing it is not.
+TIER_LOCK_KEY = "chart_backfill_30d:lock:{tier}"
+TIER_LOCK_TTL_SECONDS = 1800
+
+#: A dry run holds no lock — it persists nothing, so there is nothing to
+#: serialize. This stands in for the token so the runner's release path stays
+#: one branch instead of two, and so `None` keeps its single meaning: LOCKED OUT.
+_DRY_RUN_LOCK = "dry-run"
+
 #: Terminal done-markers. `drained_with_failures` is terminal too — the drain
 #: stopped, and it says so by name rather than by looking finished.
 DONE_CLEAN = "drained"
@@ -358,15 +385,28 @@ def _read_checkpoint(tier: str) -> TierState:
     "start this tier from the top", which wastes a scan and never writes a wrong
     row. Routed through `get_redis_client()` so a socket with no timeout cannot
     freeze the worker's event loop (gotcha #39).
+
+    🔴 ONE TRANSACTION, ONE SNAPSHOT — CERT-773's read half. These four keys are
+    not four facts; they are one state, and the give-up counter only means
+    anything beside the retry hash it was incremented against. Read as four
+    round trips they can be torn by a sibling trigger writing between any two of
+    them, and the tear that matters is exactly the one the cert reproduced: the
+    hash read AFTER a sibling emptied it, the counter read BEFORE the sibling
+    incremented it — `retry={}`, `gave_up=0`, and a settlement that writes a
+    permanent clean `drained` over an event the drain had just abandoned.
+    MULTI/EXEC makes the four reads one server-side operation, so this returns a
+    state that actually existed rather than one assembled from two.
     """
     try:
         from app.tasks.redis_state import get_redis_client
 
         client = get_redis_client()
-        done_raw = client.get(TIER_DONE_KEY.format(tier=tier))
-        gave_up_raw = client.get(GAVE_UP_KEY.format(tier=tier))
-        retry_raw = client.hgetall(RETRY_KEY.format(tier=tier))
-        raw = client.get(CHECKPOINT_KEY.format(tier=tier))
+        with client.pipeline(transaction=True) as pipe:
+            pipe.get(TIER_DONE_KEY.format(tier=tier))
+            pipe.get(GAVE_UP_KEY.format(tier=tier))
+            pipe.hgetall(RETRY_KEY.format(tier=tier))
+            pipe.get(CHECKPOINT_KEY.format(tier=tier))
+            done_raw, gave_up_raw, retry_raw, raw = pipe.execute()
     except Exception:  # noqa: BLE001 — a hint that cannot be read is no hint
         return TierState(None, None, {}, 0)
 
@@ -429,12 +469,61 @@ def _write_cursor(tier: str, cursor: Optional[tuple]) -> None:
     )
 
 
-def _mark_done(tier: str, marker: str) -> None:
-    """Mark the tier terminal. `drained` and `drained_with_failures` are BOTH
-    terminal and are deliberately distinguishable — the second one means the
-    retry budget ran out with events still unreachable, and a reader of the
-    verdict has to be able to tell that from a clean finish (gotcha #53)."""
-    _with_redis(tier, lambda client: client.set(TIER_DONE_KEY.format(tier=tier), marker))
+def _mark_done(tier: str, marker: str) -> str:
+    """Mark the tier terminal, MONOTONICALLY. Returns the marker now in force.
+
+    `drained` and `drained_with_failures` are BOTH terminal and are deliberately
+    distinguishable — the second one means the retry budget ran out with events
+    still unreachable, and a reader of the verdict has to be able to tell that
+    from a clean finish (gotcha #53).
+
+    🔴 THE ORDER IS ONE-WAY, AND IT IS ENFORCED BY THE WRITE ITSELF (CERT-773).
+    An unconditional `SET` lets a second trigger's clean finish overwrite a first
+    trigger's `drained_with_failures`, and that overwrite is permanent: the tier
+    is done, nothing re-scans it, and the abandoned event stays thin behind a
+    marker that says the drain finished cleanly. So the two markers are written
+    with two different Redis verbs, chosen so the wrong direction is not
+    expressible:
+
+        `drained_with_failures`  plain SET — an UPGRADE is always allowed, and a
+                                 failure ending must be able to land on top of a
+                                 clean one.
+        `drained`                SET NX — it lands only on a tier that has no
+                                 terminal marker yet, so it can never downgrade
+                                 an existing `drained_with_failures`.
+
+    This is a property of the operation, not of a lock or of a read-then-write
+    the caller performs first, so it holds even when :data:`TIER_LOCK_TTL_SECONDS`
+    has expired under a slow pass and two writers are genuinely concurrent. NX
+    refusing is not an error — it means a sibling already recorded the truer
+    verdict — so the marker actually in force is read back and returned, and the
+    caller reports THAT rather than what it proposed (CERT-764's clause: one
+    decision, not three readers each inferring their own).
+    """
+    key = TIER_DONE_KEY.format(tier=tier)
+    in_force: list = []
+
+    def _apply(client):
+        if marker == DONE_WITH_FAILURES:
+            client.set(key, marker)
+            in_force.append(marker)
+            return
+        if client.set(key, marker, nx=True):
+            in_force.append(marker)
+            return
+        # Refused: something terminal is already there and it is not ours to
+        # replace. A legacy bare "1" reads as the clean verdict it meant, the
+        # same way `_read_checkpoint` reads it.
+        existing = _decode(client.get(key))
+        in_force.append(
+            DONE_WITH_FAILURES if existing == DONE_WITH_FAILURES else DONE_CLEAN
+        )
+
+    _with_redis(tier, _apply)
+    # Nothing persisted (Redis unreachable) still reports what was DECIDED — the
+    # verdict is not silently downgraded by an outage, and `_with_redis` has
+    # already logged that the checkpoint did not land.
+    return in_force[0] if in_force else marker
 
 
 class AttemptOutcome(NamedTuple):
@@ -503,19 +592,32 @@ def _record_attempts(
     def _apply(client):
         key = RETRY_KEY.format(tier=tier)
         dropped = [e for e in prior if e not in still_owed]
-        if dropped:
-            client.hdel(key, *[str(e) for e in dropped])
         added = {
             str(e): str(n) for e, n in still_owed.items() if prior.get(e) != n
         }
-        if added:
-            client.hset(key, mapping=added)
-        if gave_up:
-            # INCRBY returns the value it just stored, so the settlement below
-            # turns on the same number the next trigger will read back.
-            persisted.append(
-                client.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
-            )
+        # 🔴 ONE TRANSACTION — CERT-773's write half, and the exact operation the
+        # cert reproduced a tear inside. Removing the last retry field and
+        # incrementing the give-up counter are not two writes that happen to be
+        # adjacent; they are the two halves of ONE fact ("this event is no longer
+        # owed a retry BECAUSE we abandoned it"), and a reader between them sees
+        # a tier that owes nothing and gave up on nobody — a tier that finished
+        # cleanly. MULTI/EXEC means no reader can be between them: the whole
+        # block lands as a single visible transition.
+        #
+        # The order inside the block still matters for the ANSWER, not for the
+        # visibility: INCRBY is queued last so its reply is the last element of
+        # `execute()`, and that reply is the persisted post-attempt total the
+        # settlement turns on (CERT-764).
+        with client.pipeline(transaction=True) as pipe:
+            if dropped:
+                pipe.hdel(key, *[str(e) for e in dropped])
+            if added:
+                pipe.hset(key, mapping=added)
+            if gave_up:
+                pipe.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
+            results = pipe.execute()
+        if gave_up and results:
+            persisted.append(results[-1])
 
     _with_redis(tier, _apply)
 
@@ -538,6 +640,64 @@ def _with_redis(tier: str, apply) -> None:
             "30d chart drain: checkpoint for tier %s not persisted", tier,
             exc_info=True,
         )
+
+
+def _acquire_tier_lock(tier: str) -> Optional[str]:
+    """Claim this tier for one trigger. Returns a fencing token, or `None`.
+
+    🔴 CERT-773. `None` means another trigger is already inside this tier and
+    this one must not touch it — not its retry hash, not its counter, not its
+    cursor, not its done-marker. The loser writes NOTHING and reports
+    `locked_out`, which is not terminal, so the operator's re-call loop is
+    unchanged: a locked-out tier just means "come back".
+
+    🔴 FAIL OPEN, DELIBERATELY. If Redis cannot be reached the lock cannot be
+    taken — and neither can anything else. `_read_checkpoint` returns an empty
+    state, every write is swallowed by :func:`_with_redis`, and there is no
+    persisted verdict left to corrupt. Refusing to run in that case would turn a
+    Redis blip into a silently disabled drain, which is a worse failure than the
+    one the lock exists to prevent, so an unreachable Redis hands back a token
+    and the pass proceeds doing real (unpersisted) work.
+    """
+    import uuid
+
+    token = uuid.uuid4().hex
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        won = get_redis_client().set(
+            TIER_LOCK_KEY.format(tier=tier), token,
+            nx=True, ex=TIER_LOCK_TTL_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 — see FAIL OPEN above
+        logger.warning(
+            "30d chart drain: tier %s lock could not be taken; proceeding "
+            "unlocked (nothing is persisted while Redis is unreachable)",
+            tier, exc_info=True,
+        )
+        return token
+    return token if won else None
+
+
+def _release_tier_lock(tier: str, token: Optional[str]) -> None:
+    """Hand the tier back, but only if we still hold it.
+
+    The token check is what stops a pass that overran :data:`TIER_LOCK_TTL_SECONDS`
+    from deleting the lock a DIFFERENT trigger has since taken. It is a
+    read-then-delete rather than a compare-and-delete script, so a vanishingly
+    narrow window remains where the lock is re-taken between the two — and that
+    window costs a redundant concurrent pass, never a wrong verdict, because the
+    verdict's monotonicity lives in :func:`_mark_done`'s write and not here.
+    """
+    if not token:
+        return
+    key = TIER_LOCK_KEY.format(tier=tier)
+
+    def _apply(client):
+        if _decode(client.get(key)) == token:
+            client.delete(key)
+
+    _with_redis(tier, _apply)
 
 
 def reset_checkpoints() -> dict:
@@ -744,8 +904,17 @@ async def run_thirty_day_chart_drain(
                                   and deliberately not the same word.
 
     Anything else — ``in_progress``, or a tier at ``awaiting_retries``, or a
-    clean-looking page that wrote zero points — means there is more behind it
-    (gotcha #53 / `task_verdict`: "it returned" is not "it worked").
+    tier at ``locked_out``, or a clean-looking page that wrote zero points —
+    means there is more behind it (gotcha #53 / `task_verdict`: "it returned" is
+    not "it worked").
+
+    ONE TRIGGER PER TIER (CERT-773). Each tier is claimed with a TTL'd Redis
+    lock for the whole of its pass. A second trigger that arrives while the
+    first is inside reports that tier ``locked_out`` and writes nothing —
+    no retry field, no counter, no cursor, no done-marker. It is a normal
+    outcome, not an error: the route tells the operator to re-call until
+    terminal, so overlap is the expected traffic pattern and deferring is the
+    right answer to it.
     """
     from app.services.kalshi_api import KalshiAPIService
     from app.services.polymarket_api import PolymarketAPIService
@@ -769,112 +938,148 @@ async def run_thirty_day_chart_drain(
                 if remaining <= 0:
                     break
                 stopped = None
-                state = _read_checkpoint(tier.name)
-                if state.done:
+
+                # 🔴 ONE WRITER PER TIER — CERT-773. Taken BEFORE the checkpoint
+                # is read, because the read is half of what a sibling can tear.
+                # A dry run does not take it: it persists nothing, so there is
+                # nothing to serialize, and holding the lock would let a spot
+                # check shut the real drain out of a tier for its whole pass.
+                lock = _DRY_RUN_LOCK if dry_run else _acquire_tier_lock(tier.name)
+                if lock is None:
+                    # Another trigger owns this tier. Write NOTHING and say so.
+                    # `locked_out` is deliberately not terminal, so the verdict
+                    # stays `in_progress` and the operator's re-call loop —
+                    # which is what produced the overlap in the first place —
+                    # keeps working unchanged.
                     summary["tiers"][tier.name] = {
-                        "status": state.done, "already_done": True,
-                        "gave_up": state.gave_up,
+                        "why": tier.why,
+                        "status": "locked_out",
+                        "locked_out": True,
                     }
+                    logger.info(
+                        "30d chart drain: tier %s is already being drained by "
+                        "another trigger — this one writes nothing and defers",
+                        tier.name,
+                    )
                     continue
 
-                tier_report = {
-                    "why": tier.why,
-                    "sports": len(buckets[tier.name]),
-                    "resumed_from": _label(state.cursor),
-                    # The count ENTERING this trigger. `owed_retries` below is
-                    # the count LEAVING it, and they are different numbers the
-                    # moment a retry succeeds.
-                    "retries_owed_on_entry": len(state.retry),
-                    "gave_up": state.gave_up,
-                }
+                try:
+                    state = _read_checkpoint(tier.name)
+                    if state.done:
+                        summary["tiers"][tier.name] = {
+                            "status": state.done, "already_done": True,
+                            "gave_up": state.gave_up,
+                        }
+                        continue
 
-                # 🔴 RETRIES FIRST, before any new ground. These are events a
-                # previous trigger could not reach at all; the point of holding
-                # their ids is that the retry costs a handful of re-fetches
-                # instead of a re-walk of the tier.
-                owed = state.retry
-                # The give-up total this tier will SETTLE on. It starts at what
-                # Redis remembers and is replaced by the post-attempt total
-                # every time a pass records attempts — never read back from
-                # `state`, which is a snapshot taken before any of that.
-                gave_up_total = state.gave_up
-                retried = sorted(owed)[:remaining]
-                if retried:
-                    result = await _drain_events(
-                        session, retried,
-                        kalshi_service=kalshi_service,
-                        polymarket_service=polymarket_service,
-                        min_period_minutes=min_period_minutes,
-                        dry_run=dry_run, summary=summary,
+                    tier_report = {
+                        "why": tier.why,
+                        "sports": len(buckets[tier.name]),
+                        "resumed_from": _label(state.cursor),
+                        # The count ENTERING this trigger. `owed_retries` below
+                        # is the count LEAVING it, and they are different
+                        # numbers the moment a retry succeeds.
+                        "retries_owed_on_entry": len(state.retry),
+                        "gave_up": state.gave_up,
+                    }
+
+                    # 🔴 RETRIES FIRST, before any new ground. These are events a
+                    # previous trigger could not reach at all; the point of
+                    # holding their ids is that the retry costs a handful of
+                    # re-fetches instead of a re-walk of the tier.
+                    owed = state.retry
+                    # The give-up total this tier will SETTLE on. It starts at
+                    # what Redis remembers and is replaced by the post-attempt
+                    # total every time a pass records attempts — never read back
+                    # from `state`, which is a snapshot taken before any of that.
+                    gave_up_total = state.gave_up
+                    retried = sorted(owed)[:remaining]
+                    if retried:
+                        result = await _drain_events(
+                            session, retried,
+                            kalshi_service=kalshi_service,
+                            polymarket_service=polymarket_service,
+                            min_period_minutes=min_period_minutes,
+                            dry_run=dry_run, summary=summary,
+                        )
+                        remaining -= len(retried)
+                        tier_report["retried"] = len(retried)
+                        tier_report["retried_still_failing"] = len(result.failed)
+                        if not dry_run:
+                            outcome = _record_attempts(
+                                tier.name,
+                                result.attempted + result.missing,
+                                result.failed,
+                                owed,
+                                gave_up_total,
+                            )
+                            owed, gave_up_total = (
+                                outcome.owed, outcome.gave_up_total,
+                            )
+                        stopped = result.stopped
+                        if stopped == "consecutive_errors":
+                            summary["tiers"][tier.name] = dict(
+                                tier_report, status="in_progress",
+                            )
+                            summary["aborted"] = "consecutive_errors"
+                            break
+
+                    if remaining > 0:
+                        page = await select_thirty_day_page(
+                            session, sport_ids=buckets[tier.name],
+                            limit=remaining, after=state.cursor,
+                        )
+                    else:
+                        # The retries ate the budget. New ground was not looked
+                        # at, so this tier is emphatically NOT exhausted.
+                        page = DrainPage([], state.cursor, False, 0)
+                    tier_report["scanned"] = page.scanned
+                    tier_report["fillable"] = len(page.event_ids)
+
+                    if page.event_ids:
+                        result = await _drain_events(
+                            session, page.event_ids,
+                            kalshi_service=kalshi_service,
+                            polymarket_service=polymarket_service,
+                            min_period_minutes=min_period_minutes,
+                            dry_run=dry_run, summary=summary,
+                        )
+                        remaining -= len(page.event_ids)
+                        tier_report["failed"] = len(result.failed)
+                        if not dry_run:
+                            outcome = _record_attempts(
+                                tier.name,
+                                result.attempted + result.missing,
+                                result.failed,
+                                owed,
+                                gave_up_total,
+                            )
+                            owed, gave_up_total = (
+                                outcome.owed, outcome.gave_up_total,
+                            )
+                        stopped = result.stopped
+                    tier_report["advanced_to"] = _label(page.next_cursor)
+                    tier_report["exhausted"] = page.exhausted
+                    settled = _settle_tier(
+                        tier.name, page, tier_report,
+                        owed=owed, gave_up=gave_up_total, dry_run=dry_run,
                     )
-                    remaining -= len(retried)
-                    tier_report["retried"] = len(retried)
-                    tier_report["retried_still_failing"] = len(result.failed)
-                    if not dry_run:
-                        outcome = _record_attempts(
-                            tier.name,
-                            result.attempted + result.missing,
-                            result.failed,
-                            owed,
-                            gave_up_total,
-                        )
-                        owed, gave_up_total = outcome.owed, outcome.gave_up_total
-                    stopped = result.stopped
+                    # The verdict this trigger PERSISTED, carried on the report
+                    # rather than re-derived. `_verdict` and the next trigger's
+                    # `_read_checkpoint` must agree with it, and the only way to
+                    # be sure they do is for all three to come from one decision.
+                    if settled is not None:
+                        tier_report["persisted_done_marker"] = settled
+                    summary["tiers"][tier.name] = tier_report
                     if stopped == "consecutive_errors":
-                        summary["tiers"][tier.name] = dict(
-                            tier_report, status="in_progress",
-                        )
                         summary["aborted"] = "consecutive_errors"
                         break
-
-                if remaining > 0:
-                    page = await select_thirty_day_page(
-                        session, sport_ids=buckets[tier.name],
-                        limit=remaining, after=state.cursor,
-                    )
-                else:
-                    # The retries ate the budget. New ground was not looked at,
-                    # so this tier is emphatically NOT exhausted.
-                    page = DrainPage([], state.cursor, False, 0)
-                tier_report["scanned"] = page.scanned
-                tier_report["fillable"] = len(page.event_ids)
-
-                if page.event_ids:
-                    result = await _drain_events(
-                        session, page.event_ids,
-                        kalshi_service=kalshi_service,
-                        polymarket_service=polymarket_service,
-                        min_period_minutes=min_period_minutes,
-                        dry_run=dry_run, summary=summary,
-                    )
-                    remaining -= len(page.event_ids)
-                    tier_report["failed"] = len(result.failed)
+                finally:
+                    # Every exit — `continue`, `break`, or an exception on the
+                    # way out — hands the tier back. A SIGKILL cannot run this,
+                    # which is what the TTL is for.
                     if not dry_run:
-                        outcome = _record_attempts(
-                            tier.name,
-                            result.attempted + result.missing,
-                            result.failed,
-                            owed,
-                            gave_up_total,
-                        )
-                        owed, gave_up_total = outcome.owed, outcome.gave_up_total
-                    stopped = result.stopped
-                tier_report["advanced_to"] = _label(page.next_cursor)
-                tier_report["exhausted"] = page.exhausted
-                settled = _settle_tier(
-                    tier.name, page, tier_report,
-                    owed=owed, gave_up=gave_up_total, dry_run=dry_run,
-                )
-                # The verdict this trigger PERSISTED, carried on the report
-                # rather than re-derived. `_verdict` and the next trigger's
-                # `_read_checkpoint` must agree with it, and the only way to be
-                # sure they do is for all three to come from one decision.
-                if settled is not None:
-                    tier_report["persisted_done_marker"] = settled
-                summary["tiers"][tier.name] = tier_report
-                if stopped == "consecutive_errors":
-                    summary["aborted"] = "consecutive_errors"
-                    break
+                        _release_tier_lock(tier.name, lock)
     finally:
         for service in (kalshi_service, polymarket_service):
             try:
@@ -972,12 +1177,30 @@ def _settle_tier(
         )
     if not dry_run:
         _write_cursor(tier, page.next_cursor)
-        _mark_done(tier, marker)
+        # 🔴 CERT-773. `_mark_done` is MONOTONE and answers with the marker
+        # actually in force, which is not always the one proposed: a sibling
+        # trigger that abandoned an event has already written
+        # `drained_with_failures`, and a clean finish must not overwrite it. The
+        # report follows Redis rather than the other way round, so the summary,
+        # the persisted key and the next trigger's read-back stay one verdict
+        # (CERT-764's clause) even when two triggers settled the same tier.
+        in_force = _mark_done(tier, marker)
+        if in_force != marker:
+            logger.warning(
+                "30d chart drain: tier %s proposed %s but a concurrent trigger "
+                "had already recorded %s — the failure ending stands",
+                tier, marker, in_force,
+            )
+            marker = in_force
+            tier_report["status"] = in_force
     return marker
 
 
-#: Tier statuses that mean the tier has STOPPED. `awaiting_retries` and
-#: `in_progress` are not here, by design — both mean re-trigger.
+#: Tier statuses that mean the tier has STOPPED. `awaiting_retries`,
+#: `in_progress` and `locked_out` are not here, by design — all three mean
+#: re-trigger. `locked_out` especially: a tier another trigger is inside has not
+#: finished, and reading somebody else's in-flight work as a terminal verdict is
+#: the same class of mistake CERT-773 blocked.
 TERMINAL_TIER_STATUSES = frozenset({DONE_CLEAN, DONE_WITH_FAILURES})
 
 

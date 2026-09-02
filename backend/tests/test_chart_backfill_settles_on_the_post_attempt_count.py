@@ -42,53 +42,14 @@ def _drain():
     return module
 
 
-class _FakeRedis:
-    """Enough Redis to hold the drain's four per-tier keys, and INCRBY answers.
-
-    The real client returns the value it just stored; the CERT-764 repair reads
-    that answer, so a fake that returns `None` would let the repair look wrong
-    and a fake that never records would let the defect look fixed.
-    """
-
-    def __init__(self, initial=None):
-        self.store = dict(initial or {})
-        self.hashes: dict = {}
-
-    def get(self, key):
-        return self.store.get(key)
-
-    def set(self, key, value):
-        self.store[key] = value
-
-    def incrby(self, key, n):
-        new = int(self.store.get(key, 0)) + n
-        self.store[key] = new
-        return new
-
-    # Redis keys hash fields as BYTES on the wire, so `b"7007"` and `"7007"`
-    # are one field to a real server and two to a dict. Normalizing on the way
-    # in is what makes this fake able to see a delete the production code
-    # issues as `str(event_id)` against a field the drain read back as bytes.
-    @staticmethod
-    def _field(value):
-        return value.decode() if isinstance(value, bytes) else str(value)
-
-    def hgetall(self, key):
-        # And the real client hands values BACK as bytes, which is what
-        # `_read_checkpoint`'s `_decode` exists for.
-        return {
-            k.encode(): str(v).encode()
-            for k, v in self.hashes.get(key, {}).items()
-        }
-
-    def hset(self, key, mapping=None):
-        target = self.hashes.setdefault(key, {})
-        for field, value in (mapping or {}).items():
-            target[self._field(field)] = self._field(value)
-
-    def hdel(self, key, *ids):
-        for i in ids:
-            self.hashes.get(key, {}).pop(self._field(i), None)
+#: 🔴 ONE FAKE, SHARED (live/047). It models MULTI/EXEC, bytes-on-the-wire hash
+#: fields, `SET NX` refusing with `None`, and `INCRBY` answering with the value
+#: it stored — all four of which some guard in this family turns on. It used to
+#: be a per-file class; CERT-773's repair is about what a CONCURRENT READER can
+#: see, and a per-file fake that publishes a transaction's commands one at a
+#: time would make every interleaving guard green against a tree with no
+#: transaction in it.
+from tests.lib_tier_redis import FakeTierRedis as _FakeRedis  # noqa: E402
 
 
 def _install(monkeypatch, drain, redis):
