@@ -1354,6 +1354,32 @@ def is_kalshi_tennis_prop_ticker(external_id: Optional[str]) -> bool:
     return not lowered.startswith(_KALSHI_TENNIS_MATCH_SERIES)
 
 
+def is_kalshi_match_segment_ticker(external_id: Optional[str]) -> bool:
+    """True when this ticker carries a Kalshi tennis MATCH SEGMENT.
+
+    Q504-b. The segment token — ``26AUG30FERMUS`` — is Kalshi's own event key
+    for one match, and every market it prices (winner, set winners, exact score,
+    game totals, game spreads) repeats it verbatim. That is what
+    ``kalshi_match_segment_key`` reads, and it is why the Q435 reconciler may
+    link these markets to each other's event without comparing a single name.
+
+    **The date in that token is the tournament segment's date, not the match's.**
+    Measured on production 2026-09-01: ``KXATPMATCH-26AUG30FERMUS`` and its five
+    prop siblings all say ``26AUG30``; Fery actually played Musetti on
+    2026-09-01, 48h later. Kalshi mints the segment when the draw is published
+    and never re-dates it when the match is scheduled.
+
+    So a date-conflict test applied to one of these markets is not answering
+    "is this the same match?" — the segment token already answered that, with an
+    id — it is measuring the gap between a draw date and a play date and calling
+    it a mislink. This predicate names the class so the *unlink* arms can decline
+    to second-guess an id-anchored link. It deliberately does NOT relax the
+    name-anchored LINK path: a market that has no segment sibling to vouch for it
+    still has to earn its event the hard way.
+    """
+    return kalshi_match_segment_key(external_id) is not None
+
+
 def kalshi_game_teams(external_id: Optional[str]) -> Optional[str]:
     """Return the uppercase TEAM-code of a Kalshi game ticker (the game-id with
     its date + optional HHMM stripped), or None when absent.

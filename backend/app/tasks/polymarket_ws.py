@@ -114,7 +114,13 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
+    from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.price_change_stamp import price_changed_at_value
+
+    # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
+    # the token top-up or the slate query is visible as an AGE rather than as a
+    # silence indistinguishable from health.
+    _report_liveness("polymarket", "loading_slate")
 
     ws = PolymarketWebSocket()
 
@@ -328,6 +334,7 @@ async def _run_polymarket_ws_consumer():
 
     if not asset_ids:
         logger.info("Polymarket WS: no asset IDs found in market_metadata")
+        _report_liveness("polymarket", "no_asset_ids", legs=0)
         return {"status": "no_asset_ids"}
 
     logger.info(
@@ -617,15 +624,30 @@ async def _run_polymarket_ws_consumer():
     async def stats_loop():
         while True:
             await asyncio.sleep(60)
+            # Q504-b: blend counters ride along, same reasoning as the Kalshi arm.
+            blend = blend_refresher.stats
             logger.info(
-                "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, %d msgs",
+                "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
+                "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d",
                 stats["price_updates"], stats["trade_updates"],
                 stats["resolutions"], stats["errors"],
                 ws.stats.get("messages", 0),
+                blend["stamped"], blend["no_reading"],
+                blend["throttled"], blend["errors"],
+            )
+            _report_liveness(
+                "polymarket",
+                "streaming" if getattr(ws, "is_connected", False) else "disconnected",
+                legs=len(asset_ids),
+                msgs=ws.stats.get("messages", 0),
+                stamped=blend["stamped"],
+                no_reading=blend["no_reading"],
             )
 
     flush_task = asyncio.create_task(flush_loop())
     stats_task = asyncio.create_task(stats_loop())
+
+    _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
     try:
         # Q460: recycle on a timer so the slate is re-read — same reasoning as

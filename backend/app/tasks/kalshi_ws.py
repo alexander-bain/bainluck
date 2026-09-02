@@ -70,6 +70,7 @@ async def _run_kalshi_ws_consumer():
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
+    from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.price_change_stamp import price_changed_at_value
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
@@ -77,7 +78,13 @@ async def _run_kalshi_ws_consumer():
 
     if not api_key_id or not has_key:
         logger.warning("Kalshi WS: missing credentials, skipping")
+        _report_liveness("kalshi", "no_credentials")
         return {"status": "skipped", "reason": "no_credentials"}
+
+    # Q504-b: reported BEFORE the slate query, because a DB handshake that never
+    # resolves is one of the two shapes "up and silent" can take, and the arm
+    # cannot describe a state it is stuck inside.
+    _report_liveness("kalshi", "loading_slate")
 
     ws = KalshiWebSocket()
 
@@ -107,6 +114,7 @@ async def _run_kalshi_ws_consumer():
 
     if not rows:
         logger.info("Kalshi WS: no live/upcoming linked markets")
+        _report_liveness("kalshi", "no_markets", legs=0)
         return {"status": "no_markets"}
 
     event_tickers = list({row[0] for row in rows})
@@ -409,15 +417,34 @@ async def _run_kalshi_ws_consumer():
     async def stats_loop():
         while True:
             await asyncio.sleep(60)
+            # Q504-b: the blend counters ride along. `stamped` and `no_reading`
+            # are the difference between "the socket is delivering prices" and
+            # "the number on the card is moving", and on 2026-09-01 only the
+            # first of those was observable — the fast lane was streaming
+            # 10,098 prices into `futures_outcomes` while every tennis event's
+            # last mile returned None, invisibly, for hours.
+            blend = blend_refresher.stats
             logger.info(
-                "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, %d msgs",
+                "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
+                "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 ws.stats.get("messages", 0),
+                blend["stamped"], blend["no_reading"],
+                blend["throttled"], blend["errors"],
+            )
+            _report_liveness(
+                "kalshi", "streaming" if ws.is_connected else "disconnected",
+                legs=len(market_tickers),
+                msgs=ws.stats.get("messages", 0),
+                stamped=blend["stamped"],
+                no_reading=blend["no_reading"],
             )
 
     flush_task = asyncio.create_task(flush_loop())
     stats_task = asyncio.create_task(stats_loop())
+
+    _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
     try:
         # Q460: RECYCLE, don't run forever. The subscription list above is built
