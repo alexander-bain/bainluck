@@ -69,10 +69,15 @@ live phase ledger does not support it. Measured, from `calibration:main:phase_le
 | ⇒ UNASSISTED recovery | **ceil(128/13) = 10 hourly beats** | the plan's own arithmetic |
 | futures phase per full beat | **20.4 min** | `history.futures`, 8 full beats — consistent with 13 × 91.8 s |
 
-Two independent routes (mean-unit-cost and per-beat-throughput) agree. The honest range is
-**~3.3–3.7 h of build**, with an unassisted beat-only recovery of **~10 h**; the attended one-off
-drain lands between them. The ~26 h figure appears to be a prose estimate that was never
-re-measured — it is **not** in the ledger.
+Two independent routes (mean-unit-cost and per-beat-throughput) agree.
+
+**Correction to how I first framed this.** Directive `calibration/979` distinguishes an **attended
+drain (~4 h)** from a **passive, beat-only recovery (~26 h)**, and that split is right. The ledger
+does not refute the 26 h — it **confirms the ~4 h attended figure**: 128 × 91.8 s = **3.3 h**, or
+3.7 h on the worst-unit mean. The passive path is slower than its own theoretical floor of
+`ceil(128/13) = 10` beats because beats are being missed (`producer_beats_missed` 44 → 49 tonight),
+so ~26 h passive and ~4 h attended are both consistent with what I measured. The number that was
+loose is the one `calibration-020` used for the *attended* relaunch, and it is ~4 h, not ~26 h.
 
 **Consequence for the decision: the dark window is cheapest right now.** Started tonight it ends
 overnight; started at 9am it is dark across the working day.
@@ -119,6 +124,35 @@ via the gate's count bridge in `calibration-020` §3.
 Both arms fire, so neither is vacuous. The inheritance control is what stops
 `accepted == current` from being satisfiable by any commit that edits both constants together.
 
+## 6a. 🔴 THE BUMP IS NOT A BACKEND-ONLY CHANGE — CI caught what I missed
+
+My first push was backend-only and **CI failed it in 14 s**, correctly. There is a ratified
+cross-client contract, `frontend/e2e/contract/populationVersion.contract.test.js`, asserting that
+every client can *label* the population the backend publishes. Deployed backend-only, `/calibration`
+and the iOS surface would have **refused the live payload and shown no curve — the 2026-08-02
+outage, rebuilt on the client side.**
+
+Reproduced locally before fixing (`npm run contract`, EXIT 1), so the diagnosis is mine and not
+CI's word for it. The fix adds `"q269"` to both lists:
+
+| client | constant |
+|---|---|
+| `frontend/lib/calibrationContract.ts` | `COMPATIBLE_POPULATION_VERSIONS` |
+| `ios/Bain Luck/…/CalibrationViewModel.swift` | `compatiblePopulationVersions` |
+
+**Why one commit and not the contract's "ordered two-step".** The contract's header prescribes
+clients-first *when there is a choice*. The only precedent, **CAL-P070 `5b00f4f8`**, shipped the
+q267→q268 backend bump and BOTH client lists in a single commit — and the reason it is safe is that
+the list is **additive**: a client carrying `q267/q268/q269` accepts the old payload and the new
+one, so neither Vercel-first nor Heroku-first can open the window the header warns about. A split
+would also leave this branch permanently red on the contract check, since the test reads backend and
+clients from the same tree.
+
+🔴 **The unavoidable cost, stated rather than discovered:** iOS builds **already on devices** carry
+the old set and will read q269 as `.incompatible` until their owners update — and a shipped iOS
+build cannot be rolled back. This lands in **either** deploy order; it belongs to the bump, not to
+the sequencing. It is called out in `alex-inbox/calibration-021`.
+
 ## 6b. Gates — run, not assumed
 
 | gate | command | result |
@@ -127,6 +161,11 @@ Both arms fire, so neither is vacuous. The inheritance control is what stops
 | calibration surface | `pytest tests/ -k "calibration or population or rollover or staged or beats_to_publish"` | 🟢 **EXIT 0**, 3,123 passed / 24 skipped |
 | **full backend suite** | `pytest tests/ -q` | 🟢 **25,895 passed, 158 skipped, 61 xfailed, 0 failed** (20:51) |
 | ruff | `ruff check <changed>` | 🟢 All checks passed |
+| contract fixtures | `cd frontend/e2e && npm run contract` | 🟢 **EXIT 0**, 490 tests (was EXIT 1 on the backend-only push) |
+| frontend ESLint | `npm run build` | 🟢 **EXIT 0** |
+| frontend TypeScript | `npm run typecheck` | 🟢 **EXIT 0**, 70 vs baseline 70 exactly |
+| jest | `npx jest` | 🟢 **5,771 passed / 0 failed**, 326 suites |
+| iOS compile | — | ⚠️ **NOT run.** One-line `Set` literal; the contract test parses the file, but no `xcodebuild` ran |
 | black | — | **not run, deliberately.** All four touched files are already non-black-clean on `origin/master` and black is in no CI workflow; reformatting would bury a 5-line semantic diff in a whole-file rewrite |
 | frontend build / typecheck | — | **not run — no frontend file is touched.** Backend Python + one JSON fixture only |
 
