@@ -435,7 +435,7 @@ class TestPublishOrPark:
         assert pc._DEFAULT_MIN_CATEGORY_OUTCOMES == 1000
 
     def test_a_version_bump_carries_its_own_rollover_declaration(self):
-        """A version bump must never leave the page with nothing servable.
+        """A version bump either keeps the page lit or DECLARES that it will not.
 
         Bumping (tried and reverted 2026-08-02) makes ``snapshot_verdict``
         reject BOTH the live key and the 7-day last-good as ``wrong_version``
@@ -446,26 +446,102 @@ class TestPublishOrPark:
         This used to be pinned as ``== "q267"``, which was the right guard
         expressed the wrong way: a literal has to be edited by the very commit it
         exists to interrogate, and it passes the moment that commit edits it —
-        including a bump that really does take the page dark. So it now asserts
-        the INVARIANT the literal stood for. CAL-P070 bumped to q268 and the
-        outgoing version is declared compatible, which is what keeps the page
-        lit (dated, degraded, read-only) while the first build under the new
-        version runs.
+        including a bump that really does take the page dark. So it asserts the
+        INVARIANT the literal stood for.
+
+        CAL-P211 makes that invariant two-armed, because the earlier one-armed
+        form ("the outgoing version must be declared compatible") is not
+        universally true and would have blocked a bump the gate LEAVES NO
+        ALTERNATIVE to. A methodology-moving bump MUST empty the list — the
+        module docstring has always said so — so the honest invariant is not
+        "never go dark", it is **never go dark by accident**:
+
+        * compatibility declared  -> the outgoing version must be on the list,
+          exactly as before (the page stays lit, dated and degraded);
+        * list empty              -> the dark window must be accepted for THIS
+          version by name, via ``POPULATION_VERSION_DARK_WINDOW_ACCEPTED``.
+
+        Naming the version is what stops the acceptance being inherited. A
+        constant reading "we accept a dark window" would be satisfied forever by
+        one past decision; one reading ``"q269"`` expires the moment someone
+        bumps to q270, and the next dark window has to be decided again.
         """
         current = pc.CALIBRATION_POPULATION_VERSION
         declared = tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS)
+        accepted = pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
         assert current not in declared, (
             "the CURRENT version is not its own predecessor — listing it would "
             "make every artifact 'previous_version' and nothing 'ok'"
         )
-        # q267 is the last version whose artifact was ever published, so until
-        # something publishes under a later one, dropping it from the
-        # declaration is what takes the page dark.
-        assert "q267" in declared or current == "q267", (
-            f"population version is {current!r} but q267 — the last published "
-            "artifact's version — is not declared compatible, so every cached "
-            "copy becomes wrong_version on deploy and /calibration 503s until "
-            "the first build under the new version completes"
+        if declared:
+            # The lit path: whoever is declared compatible must actually be the
+            # outgoing version, or the declaration protects nothing.
+            assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION in declared, (
+                f"population version is {current!r} and the compatibility list "
+                f"is {declared!r}, which does not contain "
+                f"{pc.PREVIOUS_PUBLISHED_POPULATION_VERSION!r} — the last "
+                "version whose artifact was actually published. Every cached "
+                "copy becomes wrong_version on deploy and /calibration 503s "
+                "until the first build under the new version completes."
+            )
+        else:
+            assert accepted == current, (
+                "COMPATIBLE_PREVIOUS_POPULATION_VERSIONS is EMPTY, which takes "
+                f"/calibration dark on deploy, but the accepted-dark-window "
+                f"version is {accepted!r} and the current version is "
+                f"{current!r}. A dark window is not inheritable: set "
+                "POPULATION_VERSION_DARK_WINDOW_ACCEPTED to the version it was "
+                "actually decided for, or declare a compatible predecessor."
+            )
+
+    def test_the_dark_window_acceptance_cannot_be_inherited_by_a_later_bump(self):
+        """The control the guard above needs: it must FAIL on a stale acceptance.
+
+        Without this, ``accepted == current`` is satisfiable by any commit that
+        edits both constants together and reads as a guard while guarding
+        nothing. Here the module is interrogated through a stand-in whose
+        version has moved on and whose acceptance has not — the exact shape of
+        "someone bumped to q270 and left the empty list lying around" — and the
+        arm must reject it. Both arms are exercised, so neither is vacuous.
+        """
+
+        class _Stub:
+            CALIBRATION_POPULATION_VERSION = "q270"
+            COMPATIBLE_PREVIOUS_POPULATION_VERSIONS: tuple[str, ...] = ()
+            POPULATION_VERSION_DARK_WINDOW_ACCEPTED = "q269"
+
+        # Inherited acceptance -> REFUSED.
+        assert not (
+            _Stub.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
+            == _Stub.CALIBRATION_POPULATION_VERSION
+        ), "a q269 acceptance must not license a q270 dark window"
+
+        # Re-declared acceptance -> ADMITTED. The guard is not simply always-red.
+        _Stub.POPULATION_VERSION_DARK_WINDOW_ACCEPTED = "q270"
+        assert (
+            _Stub.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
+            == _Stub.CALIBRATION_POPULATION_VERSION
+        )
+
+    def test_the_shipped_bump_is_the_methodology_bump_it_says_it_is(self):
+        """q269 must be a bump that the gate's version escape hatch is FOR.
+
+        ``evaluate_publish`` returns before the population and per-category
+        rules when ``version_bumped`` is true, so a bump is the one thing that
+        can wave a -21.7% shrink through. That power is only legitimate for a
+        bump whose predicate really did move — which is why the empty
+        compatibility list and the bump have to travel together. Pinning them
+        to each other here means neither can be quietly undone: restoring a
+        compatible predecessor while keeping q269 would claim the methodology
+        did NOT move, and re-adding q268 is exactly the papering-over the
+        module docstring forbids.
+        """
+        assert pc.CALIBRATION_POPULATION_VERSION == "q269"
+        assert pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS == ()
+        assert pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED == "q269"
+        assert pc.PREVIOUS_PUBLISHED_POPULATION_VERSION == "q268", (
+            "q268 is the version the live artifact carries; if this moves, the "
+            "lit-path arm above is checking the wrong predecessor"
         )
 
 

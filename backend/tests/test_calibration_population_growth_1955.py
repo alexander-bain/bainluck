@@ -397,21 +397,60 @@ class TestTheRolloverDeclarationKeepsThePageLit:
     def test_the_shipped_declaration_covers_the_last_published_artifact(self):
         """The invariant that decides whether THIS deploy goes dark.
 
-        Production's durable ``calibration:main`` is q267. If the shipped
-        declaration does not name it, every tier refuses on boot.
+        Two things about this test were stale by 2026-09-01 and both are fixed
+        here rather than worked around:
+
+        1. It said "Production's durable ``calibration:main`` is q267". It is
+           **q268** — measured, not assumed: ``GET /api/calibration`` returned
+           ``population_version 'q268'``, ``generated_at
+           2026-08-31T04:37:36.703361+00:00``. Pinning the outgoing version as a
+           literal in the test body is what let it go stale silently, so it now
+           reads ``pc.PREVIOUS_PUBLISHED_POPULATION_VERSION``.
+        2. It assumed a rollover can always stay lit. It cannot. A bump that
+           MOVES THE METHODOLOGY is required to ship an empty compatibility list
+           (see the constant's docstring), and CAL-P211's q269 is exactly that:
+           the deployed predicate drops 201,508 outcomes on purpose, so the gate
+           refuses every unbumped rebuild and a q268 artifact does not mean what
+           a q269 page would say it means.
+
+        So the invariant is not "this deploy stays lit" — that would forbid a
+        bump the gate leaves no alternative to. It is **the outgoing artifact is
+        servable UNLESS going dark was declared for this exact version**. The
+        dark path is checked just as hard as the lit one; it just has a
+        different obligation.
         """
         from app.tasks import precompute_calibration as pc
 
+        outgoing = pc.PREVIOUS_PUBLISHED_POPULATION_VERSION
         verdict = snapshot_verdict(
-            _payload(outcomes=PUBLISHED_POP, version="q267"),
+            _payload(outcomes=PUBLISHED_POP, version=outgoing),
             expected_version=pc.CALIBRATION_POPULATION_VERSION,
             compatible_versions=tuple(pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS),
         )
-        assert verdict.status in ("ok", "previous_version"), (
-            f"a q267 artifact is {verdict.status!r} under the shipped constants — "
-            "/api/calibration 503s from the moment this deploys until the first "
-            "build under the new version publishes"
-        )
+        if pc.COMPATIBLE_PREVIOUS_POPULATION_VERSIONS:
+            assert verdict.status in ("ok", "previous_version"), (
+                f"a {outgoing} artifact is {verdict.status!r} under the shipped "
+                "constants — /api/calibration 503s from the moment this deploys "
+                "until the first build under the new version publishes"
+            )
+        else:
+            # Declared-dark. Assert the cost is REAL and was accepted for THIS
+            # version, so an empty list can never be a silent oversight.
+            assert verdict.status == "wrong_version", (
+                "the compatibility list is empty, so the outgoing artifact must "
+                f"be refused — got {verdict.status!r}. If it is servable anyway "
+                "the declaration is not doing what the dark-window acceptance "
+                "says it does."
+            )
+            assert (
+                pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED
+                == pc.CALIBRATION_POPULATION_VERSION
+            ), (
+                "/calibration goes dark on this deploy and the dark window was "
+                f"not accepted for {pc.CALIBRATION_POPULATION_VERSION!r} "
+                f"(acceptance names "
+                f"{pc.POPULATION_VERSION_DARK_WINDOW_ACCEPTED!r})"
+            )
 
 
 class TestTheContractCorpusStillPasses:

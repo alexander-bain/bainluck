@@ -215,35 +215,37 @@ def test_the_group_key_of_the_frozen_select_is_the_fold_key():
 
 
 # ---------------------------------------------------------------------------
-# 4. The freeze-window pin -- DATED, and it carries its own removal instruction
+# 4. The freeze-window pin -- REMOVED 2026-09-01 by CAL-P211, on its own terms
 # ---------------------------------------------------------------------------
-
-#: ``_main_input_fingerprint()`` as the LIVE beat was running it at
-#: 2026-09-01 16:00Z, reproduced by the local predictor at this branch's HEAD.
-_LIVE_FINGERPRINT_2026_09_01 = "e2040f90154fae876f0fb65f5abf74c3"
-
-
-def test_the_wide_fingerprint_is_unchanged_by_this_branch():
-    """Nothing on this branch may move the population fingerprint.
-
-    Two jobs, and both expire:
-
-    * the design's layer-1 cutover is only free if the new code computes the
-      SAME wide digest the stored cursor carries -- so the branch that builds it
-      must not edit any of the four hashed functions; and
-    * under D-G the whole lane is frozen out of calibration-source deploys. A
-      red here during the freeze means somebody moved the population.
-
-    RED FOR A LEGITIMATE REASON? Then the population genuinely changed, the
-    in-flight rebuild is already lost, and this test has done its job and should
-    be DELETED -- not updated to the new digest. It is a freeze-window
-    instrument with a date on it, not a permanent guard.
-    """
-    assert _main_input_fingerprint() == _LIVE_FINGERPRINT_2026_09_01, (
-        "the population fingerprint moved. If that was deliberate, the ~26-hour "
-        "staged rebuild in flight on 2026-09-01 has been discarded -- see "
-        "YOUR-TURN.md D-G. Delete this test rather than re-baselining it."
-    )
+#
+# What stood here was ``test_the_wide_fingerprint_is_unchanged_by_this_branch``,
+# pinning ``_main_input_fingerprint()`` to ``e2040f90154fae876f0fb65f5abf74c3``
+# to protect the staged rebuild that was in flight on 2026-09-01. It carried its
+# own removal instruction, quoted verbatim:
+#
+#     RED FOR A LEGITIMATE REASON? Then the population genuinely changed, the
+#     in-flight rebuild is already lost, and this test has done its job and
+#     should be DELETED -- not updated to the new digest. It is a freeze-window
+#     instrument with a date on it, not a permanent guard.
+#
+# BOTH of its conditions are met, measured rather than asserted:
+#
+# * The population genuinely changed, and is now DECLARED to have changed --
+#   that is the whole of CAL-P211 (``CALIBRATION_POPULATION_VERSION`` q268 ->
+#   q269). The digest moves to ``45becc2c3843c69025b2696996345218``.
+# * The rebuild it protected is already lost, and not by this branch. It
+#   COMPLETED all 128 units at 2026-09-01 22:27 PT and the publish gate refused
+#   it (``population_shrink`` -21.7%), and a refusal clears the checkpoint by
+#   design. The live phase ledger records the whole thing: ``outcome.gate
+#   'refuse'``, ``checkpoint_action 'invalidate'``, ``staged:units_banked 0`` --
+#   under ``input_fingerprint e2040f90154fae876f0fb65f5abf74c3``, i.e. the exact
+#   digest this test pinned. There is no in-flight rebuild left to protect.
+#
+# Re-baselining it to the new digest was explicitly ruled out by the instrument
+# itself, so it is deleted rather than carried. The permanent half of its job --
+# that a fingerprint move must be deliberate and declared -- now lives in
+# ``tests/test_calibration_result_authority_299.py`` as the two-armed rollover
+# guard, which fails closed on an undeclared or inherited dark window.
 
 
 # ---------------------------------------------------------------------------
