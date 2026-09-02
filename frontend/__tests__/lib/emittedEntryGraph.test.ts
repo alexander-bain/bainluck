@@ -89,12 +89,23 @@ const CHUNKS_DIR = join(FRONTEND_ROOT, ".next", "static", "chunks");
 const DEFERRED = [
   {
     what: "NavigationProgress (the nprogress package)",
-    marker: "nprogress",
+    // Was `"nprogress"`, which control 5 (LAT-P206) rejected: it is a substring
+    // of `"inprogress"`, so it also matched `components/event/PropsSection.tsx`
+    // and `lib/propDivergence.ts`. Neither is in any route's entry graph today,
+    // so the guard was green by luck rather than by construction — put either
+    // of them on the critical path and the assertion below would have kept
+    // passing while reporting on the wrong module. This is the config call, and
+    // it exists nowhere else.
+    marker: "showSpinner",
     source: join("components", "NavigationProgress.tsx"),
   },
   {
     what: "SearchBar (the whole typeahead subsystem)",
-    marker: "Search teams, games, and futures",
+    // Was the placeholder copy "Search teams, games, and futures", which
+    // `components/MobileSearchOverlay.tsx` carries verbatim — two components
+    // with the same visible string, so the marker could not tell which of them
+    // an entry chunk contained. This cache key is SearchBar's own.
+    marker: "bainluck:trending",
     source: join("components", "SearchBar.tsx"),
   },
   {
@@ -132,17 +143,61 @@ const DEFERRED = [
     marker: "✓ You got it right",
     source: join("components", "discover", "ResolutionCard.tsx"),
   },
+  // ─── LAT-P206: the sign-in implementation, and the daily game ─────────────
+  {
+    what: "lib/firebase.ts (the whole sign-in implementation)",
+    // NOT an `auth/...` error code: the Firebase SDK's own vendor chunk ships
+    // those same strings, so a marker like `auth/popup-closed-by-user` would
+    // flag whichever route legitimately loads the SDK and prove nothing about
+    // OUR module. This console string exists only in our file.
+    marker: "Backend response missing id_token",
+    source: join("lib", "firebase.ts"),
+    // `/admin/*` is behind an admin token, is not on anyone's cold path, and
+    // reads `getIdToken` straight from this module. Scoped out by NAME rather
+    // than by loosening the assertion, so adding a route here is a visible act.
+    exceptRoutes: ["admin/labeling.html", "admin/discover-quality.html"],
+  },
+  {
+    what: "GuessCard (the daily game's question card)",
+    // The card's visible header is "What are the odds?" and it is NOT usable:
+    // `app/discover/stats/page.tsx` QUOTES that phrase in its own empty-state
+    // prose, so the marker flagged `/discover/stats` for carrying a component
+    // it does not import. Control 5 below now refuses an ambiguous marker
+    // outright rather than leaving the next one to be caught by luck.
+    marker: "data-guess-card",
+    source: join("components", "discover", "GuessCard.tsx"),
+  },
+  {
+    what: "DailyChallengeCard (the daily game's progress bar)",
+    marker: "Come back tomorrow for a new set",
+    source: join("components", "discover", "DailyChallengeCard.tsx"),
+  },
 ] as const;
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);
 
 /* ─────────────────────────── the artifact readers ─────────────────────────── */
 
-/** Every prerendered route HTML, by filename. */
+/**
+ * Every prerendered route HTML, as a path relative to the prerender dir.
+ *
+ * LAT-P206 made this RECURSIVE. It used to read the top level only, which is
+ * 23 of the app's 40 prerendered routes — `discover/stats`, `categories/golf`,
+ * `share/my-odds` and every `/admin/*` page were silently outside the gate, so
+ * a regression that landed only in a nested route's entry chunk would have gone
+ * unseen by a guard that reported green.
+ */
 function prerenderedRoutes(): string[] {
-  return readdirSync(PRERENDER_DIR)
-    .filter((f) => f.endsWith(".html"))
-    .sort();
+  const out: string[] = [];
+  const walk = (dir: string, prefix: string) => {
+    for (const entry of readdirSync(dir).sort()) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, `${prefix}${entry}/`);
+      else if (entry.endsWith(".html")) out.push(`${prefix}${entry}`);
+    }
+  };
+  walk(PRERENDER_DIR, "");
+  return out;
 }
 
 /**
@@ -272,6 +327,53 @@ describeBuild("LAT-P201 the parse sees a real artifact", () => {
       }
     }
   });
+
+  /**
+   * Control 5 (LAT-P206) — a marker must name ONE module.
+   *
+   * Controls 2 and 3 both check that a marker still hits. Neither checks that
+   * it hits only what it means to. `GuessCard`'s visible header, "What are the
+   * odds?", passed both and still produced a false RED: `/discover/stats`
+   * quotes the phrase in its empty-state prose, so that route's own page chunk
+   * matched and the guard reported a component the route does not import.
+   *
+   * A false red is the cheap direction of this failure — someone investigates
+   * and finds nothing. The expensive direction is the same ambiguity pointing
+   * the other way: a marker whose real carrier gets deferred while some
+   * unrelated eager module keeps the string alive would leave the entry-graph
+   * assertion passing on a regression. So the requirement is exactly one
+   * source file, checked over the whole app rather than over a hand-list.
+   */
+  test("control 5 — every marker is unique to the source it names", () => {
+    const roots = ["app", "components", "lib", "hooks"];
+    const sources: string[] = [];
+    const walk = (dir: string) => {
+      if (!existsSync(dir)) return;
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(full)) sources.push(full);
+      }
+    };
+    for (const root of roots) walk(join(FRONTEND_ROOT, root));
+    expect(sources.length).toBeGreaterThan(100);
+
+    for (const { what, marker, source } of DEFERRED) {
+      const holders = sources
+        .filter((f) => readFileSync(f, "utf8").includes(marker))
+        .map((f) => f.slice(FRONTEND_ROOT.length + 1));
+      if (holders.length !== 1 || holders[0] !== source) {
+        throw new Error(
+          `Marker ${JSON.stringify(marker)} for ${what} should appear in ` +
+            `exactly one source file (${source}) but appears in ` +
+            `${holders.length}: ${holders.join(", ")}. An ambiguous marker ` +
+            `flags routes that do not import the module, and can hide a real ` +
+            `regression behind an unrelated eager copy of the string. Pick a ` +
+            `marker only this module has.`,
+        );
+      }
+    }
+  });
 });
 
 describeBuild("LAT-P201 deferred chrome is off the first load of every route", () => {
@@ -281,19 +383,42 @@ describeBuild("LAT-P201 deferred chrome is off the first load of every route", (
     // and checking one route would let 22 others rot.
     const offenders: string[] = [];
 
-    for (const route of prerenderedRoutes()) {
+    const routes = prerenderedRoutes();
+
+    for (const route of routes) {
       for (const file of entryScripts(route)) {
         const text = chunkText(file);
-        for (const { what, marker } of DEFERRED) {
-          if (text.includes(marker)) {
-            offenders.push(`${route}: ${basename(file)} carries ${what}`);
+        for (const entry of DEFERRED) {
+          const exempt: readonly string[] =
+            "exceptRoutes" in entry ? entry.exceptRoutes : [];
+          if (exempt.includes(route)) continue;
+          if (text.includes(entry.marker)) {
+            offenders.push(`${route}: ${basename(file)} carries ${entry.what}`);
           }
         }
       }
     }
 
-    // On master at 9c1629e8 this list is empty across all 23 prerendered
-    // routes. Before CERT-732 it named `app/layout-*.js` on every one of them.
+    // On master at 9c1629e8 this list was empty across the 23 top-level
+    // prerendered routes; LAT-P206 widened the walk to all 40 and it is still
+    // empty. Before CERT-732 it named `app/layout-*.js` on every one of them.
     expect(offenders).toEqual([]);
+
+    // Control 4 (LAT-P206) — every scoped-out route must still EXIST. An
+    // exemption for a route that has been renamed or deleted is an exemption
+    // that silently covers nothing, and the next real offender inherits a name
+    // nobody re-checked.
+    const known = new Set(routes);
+    for (const entry of DEFERRED) {
+      if (!("exceptRoutes" in entry)) continue;
+      for (const route of entry.exceptRoutes) {
+        if (!known.has(route)) {
+          throw new Error(
+            `${entry.what} is scoped out of ${route}, but no such prerendered ` +
+              `route exists. Drop the exemption or fix the path.`,
+          );
+        }
+      }
+    }
   });
 });

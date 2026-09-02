@@ -15,11 +15,30 @@
  * PERFORMANCE: Firebase SDK (~200KB) is loaded lazily via dynamic import()
  * so it doesn't block initial page render. The SDK loads on first auth
  * interaction (sign-in click or auth state check).
+ *
+ * LAT-P206: THIS MODULE IS ITSELF LAZY NOW, and it has to stay that way.
+ * `hooks/useAuth.ts` reaches it through `await import("@/lib/firebase")` behind
+ * the same `hasPreviouslySignedIn()` gate that already withheld the SDK, so a
+ * reader who has never signed in downloads none of the code below. The two
+ * questions that DO have to be answered on every render — "is auth configured"
+ * and "is there a stored backend session" — moved to `lib/authLocal.ts`, which
+ * is what an eager caller may import. Adding a static `import` of this file
+ * from anything on the entry graph of `/` puts all of it back on the first load
+ * and makes the dynamic import inert (the LAT-P200 / LAT-P205 barrel failure);
+ * `__tests__/lib/emittedEntryGraph.test.ts` asserts the built artifact, not the
+ * intent.
  */
 
 // Type-only imports — erased at compile time, zero bundle cost
 import type { FirebaseApp } from "firebase/app";
 import type { Auth, User as FirebaseUser } from "firebase/auth";
+import {
+  clearBackendAuth,
+  isFirebaseConfigured,
+  loadBackendAuth,
+  storeBackendAuth,
+  type BackendAuthData,
+} from "./authLocal";
 
 // Firebase config from environment variables
 const firebaseConfig = {
@@ -31,21 +50,11 @@ const firebaseConfig = {
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// localStorage key for backend-only auth fallback (Safari ITP)
-const BACKEND_AUTH_KEY = "bainluck_backendAuth";
-
-/**
- * Check if Firebase is configured (env vars are set).
- * Pure env-var check — no SDK needed.
- */
-export function isFirebaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN &&
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
-    GOOGLE_CLIENT_ID
-  );
-}
+// Re-exported so existing callers keep one import site. These two live in
+// `lib/authLocal.ts` because they are the only auth questions answerable
+// without downloading this file.
+export { getBackendAuthUser } from "./authLocal";
+export { isFirebaseConfigured };
 
 // Lazy-initialized singletons
 let app: FirebaseApp | null = null;
@@ -187,80 +196,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       (err) => { clearTimeout(timer); reject(err); }
     );
   });
-}
-
-/**
- * Backend-only auth data stored in localStorage when Firebase client SDK
- * can't communicate with identitytoolkit.googleapis.com (Safari ITP).
- */
-interface BackendAuthData {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-  photoURL: string | null;
-  idToken: string;
-  expiresAt: number; // Unix ms
-}
-
-/**
- * Store backend auth data in localStorage as fallback.
- */
-function storeBackendAuth(data: BackendAuthData): void {
-  try {
-    localStorage.setItem(BACKEND_AUTH_KEY, JSON.stringify(data));
-  } catch {
-    // localStorage full or blocked — ignore
-  }
-}
-
-/**
- * Load backend auth data from localStorage.
- * Returns null if expired or missing.
- */
-function loadBackendAuth(): BackendAuthData | null {
-  try {
-    const raw = localStorage.getItem(BACKEND_AUTH_KEY);
-    if (!raw) return null;
-    const data: BackendAuthData = JSON.parse(raw);
-    // Expired? Give 5 min buffer
-    if (Date.now() > data.expiresAt - 5 * 60 * 1000) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Clear backend auth data.
- */
-function clearBackendAuth(): void {
-  try {
-    localStorage.removeItem(BACKEND_AUTH_KEY);
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Get backend auth user info (for use by useAuth hook when Firebase
- * onAuthStateChanged doesn't fire after backend-only sign-in).
- */
-export function getBackendAuthUser(): {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-  photoURL: string | null;
-  idToken: string;
-} | null {
-  const data = loadBackendAuth();
-  if (!data) return null;
-  return {
-    uid: data.uid,
-    email: data.email,
-    displayName: data.displayName,
-    photoURL: data.photoURL,
-    idToken: data.idToken,
-  };
 }
 
 /**

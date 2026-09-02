@@ -9,6 +9,32 @@
  * the user explicitly clicks Sign In. Anonymous visitors pay zero
  * Firebase cost on initial page load.
  *
+ * LAT-P206 — and now they pay zero cost for our OWN Firebase glue either.
+ * The gate below ("no previous sign-in ⇒ don't touch Firebase") was already
+ * here, but it was a decision taken by code that had already been downloaded:
+ * a static import of `@/lib/firebase` put the Google popup flow, the Apple
+ * popup flow, the GIS script loader, the backend custom-token exchange and the
+ * sign-out path into the entry chunk of every page, `/` included. The two
+ * questions this hook must answer during render — is auth configured, is there
+ * a stored backend session — come from `@/lib/authLocal`, which is env vars and
+ * one localStorage read. Everything else is `await import("@/lib/firebase")`,
+ * reached only down a path this hook has already decided to take.
+ *
+ * Why the deferral is real rather than a byte shuffle (the LAT-P205 rule: a
+ * deferral is only a cut if the branch is UNREACHABLE on a cold load):
+ *   - the mount effect returns before `onAuthChange` when there is no
+ *     `bainluck_previouslySignedIn` marker and no stored backend session,
+ *     which is every first-run reader `/` is graded on;
+ *   - `signInWithGoogle` / `signInWithApple` / `signOut` need a click;
+ *   - `getToken` returns null unless `user` is already set.
+ * The chunk is therefore absent from a cold run's fetch list, not merely absent
+ * from the entry set — `cold-load.mjs` prints that list and it was checked.
+ *
+ * Popup blockers: the sign-in path is warmed one tap early. `UserMenu` calls
+ * `preloadFirebaseAuth()` when the provider dropdown OPENS, which now pulls
+ * this chunk as well as the SDK, so the provider click still finds both
+ * resident and `signInWithPopup` is not preceded by a fresh network wait.
+ *
  * When Firebase is not configured, all values indicate
  * "not authenticated" and auth methods are no-ops.
  */
@@ -16,17 +42,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  isFirebaseConfigured,
-  signInWithGoogle as firebaseSignInWithGoogle,
-  signInWithApple as firebaseSignInWithApple,
-  signOut as firebaseSignOut,
-  getIdToken,
-  onAuthChange,
-  getBackendAuthUser,
-  getCurrentFirebaseUser,
-  type FirebaseUser,
-} from "@/lib/firebase";
+import { getBackendAuthUser, isFirebaseConfigured } from "@/lib/authLocal";
+import type { FirebaseUser } from "@/lib/firebase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -152,26 +169,30 @@ export function useAuth(): UseAuthResult {
       return;
     }
 
-    // User has previously signed in — load Firebase and subscribe
+    // User has previously signed in — load Firebase and subscribe.
+    // This is the one place the heavy module is reached without a click, and
+    // it is below the early return above, so a first-run reader never gets here.
     let unsubscribe: (() => void) | null = null;
     let cancelled = false;
 
-    onAuthChange((fbUser) => {
-      if (cancelled) return;
-      console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
-      if (fbUser) {
-        setUser(mapFirebaseUser(fbUser));
-        setSignedInMarker(true);
-      } else {
-        const backendFallback = getBackendAuthUser();
-        if (backendFallback) {
-          console.log("[Auth] Firebase says null but backend auth is valid — keeping session for", backendFallback.email);
+    import("@/lib/firebase").then(({ onAuthChange }) =>
+      onAuthChange((fbUser) => {
+        if (cancelled) return;
+        console.log("[Auth]", fbUser ? `signed in as ${fbUser.email}` : "not signed in");
+        if (fbUser) {
+          setUser(mapFirebaseUser(fbUser));
+          setSignedInMarker(true);
         } else {
-          setUser(null);
+          const backendFallback = getBackendAuthUser();
+          if (backendFallback) {
+            console.log("[Auth] Firebase says null but backend auth is valid — keeping session for", backendFallback.email);
+          } else {
+            setUser(null);
+          }
         }
-      }
-      setIsLoading(false);
-    }).then((unsub) => {
+        setIsLoading(false);
+      })
+    ).then((unsub) => {
       if (cancelled) {
         unsub();
       } else {
@@ -191,6 +212,7 @@ export function useAuth(): UseAuthResult {
     setAuthError(null);
 
     try {
+      const { signInWithGoogle: firebaseSignInWithGoogle } = await import("@/lib/firebase");
       const idToken = await firebaseSignInWithGoogle();
       if (idToken) {
         tokenRef.current = idToken;
@@ -229,6 +251,10 @@ export function useAuth(): UseAuthResult {
     if (!isAuthAvailable) return;
 
     try {
+      const {
+        signInWithApple: firebaseSignInWithApple,
+        getCurrentFirebaseUser,
+      } = await import("@/lib/firebase");
       const idToken = await firebaseSignInWithApple();
       if (idToken) {
         tokenRef.current = idToken;
@@ -265,6 +291,7 @@ export function useAuth(): UseAuthResult {
 
   // Sign out
   const signOut = useCallback(async (): Promise<void> => {
+    const { signOut: firebaseSignOut } = await import("@/lib/firebase");
     await firebaseSignOut();
     tokenRef.current = null;
     setUser(null);
@@ -274,6 +301,7 @@ export function useAuth(): UseAuthResult {
   // Get fresh token for API calls
   const getToken = useCallback(async (): Promise<string | null> => {
     if (!isAuthAvailable || !user) return null;
+    const { getIdToken } = await import("@/lib/firebase");
     const token = await getIdToken();
     tokenRef.current = token;
     return token;

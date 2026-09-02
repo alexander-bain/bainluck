@@ -21,11 +21,14 @@ import { ThemeBundleCard } from "./discover/ThemeBundleCard";
 // Consumer code (discover/page.tsx) imports these from this file for backward compat.
 
 export type { DiscoverGroupedItem } from "./discover/types";
-export { GuessCard } from "./discover/GuessCard";
-export { DailyChallengeCard } from "./discover/DailyChallengeCard";
 
 // LAT-P205 — `ResolutionCard` / `ResolutionGroup` are NOT re-exported here any
 // more, and the omission is the fix rather than tidying.
+// LAT-P206 — `GuessCard` / `DailyChallengeCard` left this list for the same
+// reason: they are the daily game, and the game is LOCKED for the first-run
+// anonymous reader `/` is graded on (`areGamesUnlocked` returns false until
+// eight cards have been seen AND the reader has scrolled). `page.tsx` loads
+// them with `dynamic()` from their own modules.
 //
 // This file is imported eagerly by `/`: it is the card. A barrel is imported
 // whole, so every symbol on this list rides into the entry chunk of the landing

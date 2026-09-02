@@ -1,6 +1,9 @@
 "use client";
 
-import { GuessCard } from "@/components/DiscoverCard";
+// LAT-P206 — the direct module, not the `@/components/DiscoverCard` barrel.
+// A barrel is imported whole, so reaching `GuessCard` through it would pull
+// every Discover card type into this modal's chunk.
+import { GuessCard } from "@/components/discover/GuessCard";
 import { Button } from "@/components/ui/button";
 import { getItemId } from "@/lib/discover/itemId";
 import type { FeedItem } from "@/lib/types";

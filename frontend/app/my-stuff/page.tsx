@@ -5,7 +5,12 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuthContext } from "@/components/AuthProvider";
-import { preloadFirebaseAuth } from "@/lib/firebase";
+// LAT-P206 — dynamic, like the identical call in `components/UserMenu.tsx`.
+// A static import here would put the whole sign-in implementation into this
+// route's entry chunk, and it is only ever wanted by the signed-OUT branch of
+// this page, one render before a click.
+const preloadFirebaseAuth = () =>
+  void import("@/lib/firebase").then((m) => m.preloadFirebaseAuth()).catch(() => {});
 import { fetchFeed, fetchMyTeamFutures } from "@/lib/api";
 import { sourceHex } from "@/lib/sourceColors";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, TeamFutureItem } from "@/lib/types";

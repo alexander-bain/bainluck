@@ -8,7 +8,7 @@ import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
-import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard } from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
@@ -113,6 +113,95 @@ const ResolutionCard = dynamic(
   () => import("@/components/discover/ResolutionCard").then((m) => m.ResolutionCard),
   { ssr: false },
 );
+/**
+ * LAT-P206 — the daily game, off the first load, because the game is LOCKED
+ * for the reader this page is graded on.
+ *
+ * `areGamesUnlocked()` returns false for a first-run anonymous visitor until
+ * they have seen eight cards AND scrolled, so on a cold load neither
+ * `gamesUnlocked &&` branch below is taken and neither chunk is fetched. That
+ * is the LAT-P205 test — unreachable on the running page, not merely
+ * unreachable-looking in the JSX — and `cold-load.mjs`'s per-run fetch list is
+ * what settles it. Both also had to leave `components/DiscoverCard.tsx`'s
+ * re-export list, or these two calls would have been inert.
+ *
+ * The `loading` boxes are the whole reason this is shippable rather than
+ * parked. For a RETURNING reader games are unlocked on the first paint, so
+ * without a reserved box `DailyChallengeCard` would pop in above the grid and
+ * shove page one down — a visible shift for the reader who uses the feature
+ * most. Each placeholder reproduces its component's outer box, same padding,
+ * same border, same rounding, so the swap changes pixels inside the box and
+ * never the height of it.
+ */
+const DailyChallengeCard = dynamic(
+  () => import("@/components/discover/DailyChallengeCard").then((m) => m.DailyChallengeCard),
+  { ssr: false, loading: DailyChallengeBox },
+);
+const GuessCard = dynamic(
+  () => import("@/components/discover/GuessCard").then((m) => m.GuessCard),
+  { ssr: false, loading: GuessCardBox },
+);
+
+/**
+ * `DailyChallengeCard`'s box, reproduced — including the part that is easy to
+ * get wrong.
+ *
+ * The real card's inner row is `flex flex-col sm:flex-row`, so it is ONE row
+ * about 64 px tall on a wide screen and THREE stacked rows about 150 px tall on
+ * a phone. A placeholder that reserved only the wide-screen height would have
+ * been correct on desktop and wrong by ~86 px on the surface most readers use,
+ * which is the opposite of the point: this card sits ABOVE the grid, so an
+ * error here shoves all of page one down at the moment the chunk lands.
+ *
+ * The three children below therefore mirror the three the card renders, at the
+ * heights their content forces: the 40 px icon tile bounds the first (its text
+ * column is a 20 px and a 16 px line, so the tile is taller), the progress bar
+ * plus its count bounds the second, and the "Play next" button — present
+ * whenever the day is unfinished, which is when a returning reader sees this —
+ * bounds the third.
+ */
+function DailyChallengeBox() {
+  return (
+    <div
+      aria-hidden="true"
+      className="rounded-2xl overflow-hidden border border-amber-400/40 bg-surface-card shadow-md"
+    >
+      <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <span className="w-10 h-10 rounded-xl bg-amber-500/10" />
+        </div>
+        <div className="flex-1">
+          <div className="h-2 rounded-full bg-surface-elevated" />
+          <div className="mt-1 h-[15px]" />
+        </div>
+        <div className="shrink-0 h-9 w-[92px] rounded-xl bg-amber-500/20" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `GuessCard`'s chrome: the amber-bordered card and its gradient header strip.
+ * The body's height depends on the market it is asking about, so unlike the box
+ * above this one is an approximation — deliberately. This card is a slot in the
+ * masonry (every fifth position, so never the first screen), where a height
+ * mismatch reflows one column below the fold instead of shoving the page.
+ */
+function GuessCardBox() {
+  return (
+    <div
+      aria-hidden="true"
+      className="rounded-2xl overflow-hidden border-2 border-amber-400/50 bg-surface-card shadow-lg"
+    >
+      <div className="px-4 py-2.5 flex items-center gap-2 bg-surface-elevated">
+        <span className="h-4 w-32 rounded bg-surface-border" />
+      </div>
+      <div className="p-4">
+        <div className="h-24" />
+      </div>
+    </div>
+  );
+}
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;

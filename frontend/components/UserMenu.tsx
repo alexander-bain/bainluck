@@ -4,6 +4,24 @@
  * Unauthenticated: "Sign in" button that opens a provider chooser
  * (Google / Apple) inline dropdown.
  * Authenticated: User avatar that opens preferences/sign-out dropdown.
+ *
+ * 🔴 LAT-P206 — DO NOT ADD A STATIC `import ... from "@/lib/firebase"` HERE.
+ *
+ * `app/layout.tsx` is a Server Component that names this file, so this file is
+ * a client reference of the layout and is bundled into the EAGER
+ * `app/layout-*.js` entry chunk of every route in the app — the same mechanism
+ * LAT-P200 documented in `components/layout/DeferredChrome.tsx`. A static
+ * import from here therefore drags all 19 kB of the sign-in implementation onto
+ * the first load of `/`, and it did: measured 2026-09-02, one static edge from
+ * this line was enough to keep `lib/firebase.ts` eager even after
+ * `hooks/useAuth.ts` had already been converted to `await import()`. Both edges
+ * had to go for either to pay.
+ *
+ * The preload below is unchanged in behaviour: it still fires when the provider
+ * dropdown OPENS, one tap before any provider is clicked, so `signInWithPopup`
+ * is still not preceded by a fresh network wait and the popup blocker is still
+ * not tripped. It just fetches our glue alongside the SDK it was already
+ * fetching, instead of having shipped that glue to everyone in advance.
  */
 
 "use client";
@@ -11,7 +29,13 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useAuthContext } from "@/components/AuthProvider";
-import { preloadFirebaseAuth } from "@/lib/firebase";
+
+/** Warm the sign-in chunk (our glue) and the Firebase SDK it loads. */
+function preloadFirebaseAuth(): void {
+  import("@/lib/firebase").then((m) => m.preloadFirebaseAuth()).catch(() => {
+    // Best-effort warm-up. If it fails the provider click loads it again.
+  });
+}
 
 export default function UserMenu() {
   const {
