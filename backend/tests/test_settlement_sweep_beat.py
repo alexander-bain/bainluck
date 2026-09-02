@@ -577,7 +577,30 @@ BACKGROUND_INTERVAL_FLOOR = frozenset(
 #: window on a two-slot queue — ~0.36 % of one slot for the window, against a
 #: sweep whose own deadline is the 780. If a later queue needs this window back,
 #: the lever is this beat's allowance, and it is one constant with a test on it.
-SWEEP_WINDOW_COFIRE_CEILING = 16
+#: 🔴 **RE-DERIVED at lane1/057 STEP 0 (2026-09-02): 16 -> 17.** The tennis ESPN
+#: anchor (`sync-tennis-from-espn`) joined the window with **one** fire, the same
+#: contribution as `link-tournament-matchups` and
+#: `refresh-registered-tournament-prices` — the two sibling tournament-upkeep
+#: beats it deliberately shares a `*/10` cadence with. Obtained by running the
+#: census in `test_the_run_window_does_not_sit_under_a_growing_pile` over the
+#: assembled schedule and printing the total, never by adding one (#1910):
+#:
+#:     10:31 +13m  TOTAL 17
+#:       7  precompute-discover-candidate-base
+#:       2  warm-event-concepts        2  warm-futures-categories
+#:       1  discover-new-events        1  link-tournament-matchups
+#:       1  refresh-registered-tournament-prices
+#:       1  run-freshness-watchdog     1  sync-tennis-from-espn
+#:       1  update-max-movement
+#:
+#: COST OF THE ONE FIRE: two ESPN scoreboard fetches (~1.3 MB each, measured
+#: 1.5-3 s together) plus one indexed query bounded to the tournament buckets on
+#: today's board — 194 rows for the US Open, not the 2,904 tennis rows in the
+#: window. ~3 s of one slot inside a 780 s window on a two-slot queue.
+#:
+#: It is a CRONTAB precisely so it stays here, as a countable co-fire, rather
+#: than in `BACKGROUND_INTERVAL_FLOOR` where a 180 s interval would have put it.
+SWEEP_WINDOW_COFIRE_CEILING = 17
 
 
 def _effective_queue(entry):

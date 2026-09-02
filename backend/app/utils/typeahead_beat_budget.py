@@ -1142,7 +1142,11 @@ def free_background_slots(
 #: then returns `no_work` forever, costing one indexed query per fire. It is on
 #: `background` rather than `heavy` because it holds no DB work of consequence:
 #: the only statement per URL is a narrow indexed UPDATE.
-BACKGROUND_BEAT_COUNT = 110
+#: 🔴 lane1/057 STEP 0 (2026-09-02): 110 -> 111. `sync-tennis-from-espn`,
+#: `crontab(minute="*/10")`, explicitly routed here. Two ESPN scoreboard fetches
+#: and one indexed query bounded to the tournament buckets on today's board; no
+#: DB work of consequence, which is why `background` rather than `heavy`.
+BACKGROUND_BEAT_COUNT = 111
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

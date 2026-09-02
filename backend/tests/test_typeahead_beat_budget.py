@@ -750,6 +750,17 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     benign direction this docstring reserves. The cost declaration (one 1.37-
     1.59 s build per 5 min = ~0.46 % of a slot-day, and why `background` rather
     than `realtime`) is on `BACKGROUND_BEAT_COUNT`.
+    🔴 **RE-DERIVED at lane1/057 STEP 0 (2026-09-02): 110 -> 111, explicit
+    65 -> 66.** This lane added `sync-tennis-from-espn` (`crontab(minute="*/10")`,
+    the ESPN authority channel for tennis — the sport that had none) with an
+    explicit `options={"queue": "background"}`. RE-DERIVED by running the census
+    below over the assembled schedule and printing all three numbers, never by
+    adding one to the old number (#1910). The fall-through half is UNMOVED at
+    **45** — the new beat names its queue rather than defaulting into it, the
+    benign direction this docstring reserves. The cadence argument (why `*/10`
+    and why a crontab rather than the 180 s interval that would have joined
+    `BACKGROUND_INTERVAL_FLOOR`) is on the beat entry itself.
+
 
     🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
     57 -> 58.** This lane added `settlement-capture-sweep-nightly`
@@ -838,9 +849,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 65, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 66, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 110
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 111
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
