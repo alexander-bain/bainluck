@@ -1,0 +1,553 @@
+{
+ "matchup": {
+  "item": {
+   "type": "futures",
+   "score": 73,
+   "reason": "New favorite: Tampa Bay vs Los Angeles D (6%) now leads Pro Baseball Championship Series Matchup",
+   "headline": "New favorite: Tampa Bay vs Los Angeles D (6%)",
+   "context_summary": "New favorite: Tampa Bay vs Los Angeles D (6%)"
+  },
+  "data": {
+   "id": 2417016,
+   "name": "Pro Baseball Championship Series Matchup",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "baseball",
+   "source": "kalshi",
+   "source_count": 2,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "market_tier": 1,
+   "market_type": "field",
+   "status": "open",
+   "resolution_date": "2026-11-08T04:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 13986765,
+     "name": "Tampa Bay vs Los Angeles D",
+     "probability": 0.0557,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 6
+    },
+    {
+     "id": 13986731,
+     "name": "New York Y vs Los Angeles D",
+     "probability": 0.0461,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 5
+    },
+    {
+     "id": 13986775,
+     "name": "Tampa Bay vs Milwaukee",
+     "probability": 0.0288,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 3
+    }
+   ],
+   "card_sum_reason": null,
+   "outcome_count": 225,
+   "canonical_market_key": "baseball::championship:2026",
+   "group_id": "kalshi:KXTEAMSINWS-26",
+   "group_type": "kalshi_event",
+   "discover_card": {
+    "suggested_format": "outcome_distribution",
+    "bundle_candidate": true,
+    "comparison_theme": "sports_paths",
+    "threshold_points": [],
+    "distribution_outcomes": [
+     {
+      "label": "Tampa Bay vs Los Angeles D",
+      "probability": 0.0557,
+      "movement": null
+     },
+     {
+      "label": "New York Y vs Los Angeles D",
+      "probability": 0.0461,
+      "movement": null
+     },
+     {
+      "label": "Tampa Bay vs Milwaukee",
+      "probability": 0.0288,
+      "movement": null
+     },
+     {
+      "label": "Boston vs Milwaukee",
+      "probability": 0.0272,
+      "movement": null
+     },
+     {
+      "label": "Houston vs Los Angeles D",
+      "probability": 0.0249,
+      "movement": null
+     },
+     {
+      "label": "Boston vs Los Angeles D",
+      "probability": 0.0241,
+      "movement": null
+     },
+     {
+      "label": "Boston vs Atlanta",
+      "probability": 0.0189,
+      "movement": null
+     },
+     {
+      "label": "Tampa Bay vs Atlanta",
+      "probability": 0.0171,
+      "movement": null
+     }
+    ],
+    "remaining_outcome_count": 217,
+    "qa_signals": [
+     "multi_source_consistency_check"
+    ],
+    "public_source_disagreement": false,
+    "reasons": [
+     "multi_outcome_distribution",
+     "bundle_candidate"
+    ]
+   },
+   "image_url": "https://images.pexels.com/photos/33492033/pexels-photo-33492033.jpeg?auto=compress&cs=tinysrgb&h=350",
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.5294,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "discover_llm": {
+    "topic": "sports",
+    "subtopic": "baseball",
+    "archetype": "other",
+    "audience_scope": "broad",
+    "salience_score": 4,
+    "junk_flags": [],
+    "comparison_axes": []
+   },
+   "interestingness_score": 49.68,
+   "interestingness_reasons": [
+    "multi_source",
+    "trading_volume"
+   ],
+   "market_tags": [
+    "category:championship",
+    "market_status:open",
+    "source:kalshi",
+    "sport:baseball",
+    "tier:1"
+   ]
+  }
+ },
+ "party": {
+  "item": {
+   "type": "futures",
+   "score": 53,
+   "reason": "New People (NL) shifted up 18.9 points from opening in Which party will gain most seats in Russian Parliamentary Election?",
+   "headline": "New People (NL) up 18.9 points from opening",
+   "context_summary": "New People (NL) up 18.9 points from opening; United Russia (ER) leads at 56%"
+  },
+  "data": {
+   "id": 114299,
+   "name": "Which party will gain most seats in Russian Parliamentary Election?",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "politics",
+   "source": "polymarket",
+   "source_count": 2,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "market_tier": 2,
+   "market_type": "field",
+   "status": "open",
+   "resolution_date": "2026-09-20T00:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 1633322,
+     "name": "United Russia (ER)",
+     "probability": 0.565,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 56
+    },
+    {
+     "id": 1633323,
+     "name": "New People (NL)",
+     "probability": 0.3685,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 37
+    },
+    {
+     "id": 1633324,
+     "name": "Liberal Democratic Party of Russia (LDPR)",
+     "probability": 0.0355,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 4
+    }
+   ],
+   "card_sum_reason": null,
+   "outcome_count": 34,
+   "canonical_market_key": "politics:US:championship:2026",
+   "group_id": "polymarket:149589",
+   "group_type": "negrisk",
+   "discover_card": {
+    "suggested_format": "outcome_distribution",
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "threshold_points": [],
+    "distribution_outcomes": [
+     {
+      "label": "United Russia (ER)",
+      "probability": 0.565,
+      "movement": null
+     },
+     {
+      "label": "New People (NL)",
+      "probability": 0.3685,
+      "movement": null
+     },
+     {
+      "label": "Liberal Democratic Party of Russia (LDPR)",
+      "probability": 0.0355,
+      "movement": null
+     },
+     {
+      "label": "Communist Party of the Russian Federation (KPRF)",
+      "probability": 0.0275,
+      "movement": null
+     },
+     {
+      "label": "A Just Russia – For Truth (SRZP)",
+      "probability": 0.0045,
+      "movement": null
+     },
+     {
+      "label": "Rodina",
+      "probability": 0.0015,
+      "movement": null
+     },
+     {
+      "label": "Civic Platform (GP)",
+      "probability": 0.0015,
+      "movement": null
+     }
+    ],
+    "remaining_outcome_count": 0,
+    "qa_signals": [
+     "multi_source_consistency_check"
+    ],
+    "public_source_disagreement": false,
+    "reasons": [
+     "multi_outcome_distribution"
+    ]
+   },
+   "image_url": "https://images.pexels.com/photos/33065049/pexels-photo-33065049.jpeg?auto=compress&cs=tinysrgb&h=350",
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.5294,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "discover_llm": {
+    "topic": "politics",
+    "subtopic": "elections",
+    "archetype": "other",
+    "audience_scope": "mainstream",
+    "salience_score": 4,
+    "junk_flags": [],
+    "comparison_axes": []
+   },
+   "interestingness_score": 46.25,
+   "interestingness_reasons": [
+    "multi_source",
+    "resolving_soon",
+    "trading_volume"
+   ],
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:polymarket",
+    "sport:politics",
+    "tier:2"
+   ]
+  }
+ },
+ "particle": {
+  "item": {
+   "type": "futures",
+   "score": 38,
+   "reason": "Arthur Fery (42%) leads ATP Winston Salem Winner across 2 sources",
+   "headline": "Tracked by 2 sources",
+   "context_summary": "Arthur Fery leads at 42% across 2 sources"
+  },
+  "data": {
+   "id": 59699997,
+   "name": "ATP Winston Salem Winner",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "tennis",
+   "source": "kalshi",
+   "source_count": 2,
+   "sources": [
+    "kalshi",
+    "polymarket"
+   ],
+   "market_tier": 1,
+   "market_type": "field",
+   "status": "open",
+   "resolution_date": "2026-10-03T15:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 222337837,
+     "name": "Arthur Fery",
+     "probability": 0.42,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 42
+    },
+    {
+     "id": 222337841,
+     "name": "Luciano Darderi",
+     "probability": 0.05,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 5
+    },
+    {
+     "id": 222337842,
+     "name": "Fabian Marozsan",
+     "probability": 0.05,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 5
+    }
+   ],
+   "card_sum_reason": null,
+   "outcome_count": 15,
+   "canonical_market_key": "tennis:ATP:championship:2026",
+   "group_id": "kalshi:KXATP-26WINSTO",
+   "group_type": "kalshi_event",
+   "discover_card": {
+    "suggested_format": "outcome_distribution",
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "threshold_points": [],
+    "distribution_outcomes": [
+     {
+      "label": "Arthur Fery",
+      "probability": 0.42,
+      "movement": null
+     },
+     {
+      "label": "Luciano Darderi",
+      "probability": 0.05,
+      "movement": null
+     },
+     {
+      "label": "Fabian Marozsan",
+      "probability": 0.05,
+      "movement": null
+     },
+     {
+      "label": "Botic Van de Zandschulp",
+      "probability": 0.05,
+      "movement": null
+     },
+     {
+      "label": "Aleksandar Kovacevic",
+      "probability": 0.05,
+      "movement": null
+     },
+     {
+      "label": "Juan Manuel Cerundolo",
+      "probability": 0.03,
+      "movement": null
+     },
+     {
+      "label": "Stefanos Tsitsipas",
+      "probability": 0.03,
+      "movement": null
+     },
+     {
+      "label": "Daniel Altmaier",
+      "probability": 0.03,
+      "movement": null
+     }
+    ],
+    "remaining_outcome_count": 4,
+    "qa_signals": [
+     "multi_source_consistency_check"
+    ],
+    "public_source_disagreement": false,
+    "reasons": [
+     "multi_outcome_distribution"
+    ]
+   },
+   "image_url": "https://images.pexels.com/photos/5368570/pexels-photo-5368570.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "moderate",
+   "confidence_score": 0.5294,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "interestingness_score": 44.2,
+   "interestingness_reasons": [
+    "multi_source"
+   ],
+   "market_tags": [
+    "category:championship",
+    "market_status:open",
+    "source:kalshi",
+    "sport:tennis",
+    "tier:1"
+   ]
+  }
+ },
+ "showTitle": {
+  "item": {
+   "type": "futures",
+   "score": 73,
+   "reason": "The Super Mario Galaxy Movie moved down 49.4 points from opening in Which movie has biggest opening weekend in 2026?",
+   "headline": "The Super Mario Galaxy Movie down 49.4 points from opening",
+   "context_summary": "The Super Mario Galaxy Movie down 49.4 points from opening; Avengers: Doomsday leads at 72%"
+  },
+  "data": {
+   "id": 113356,
+   "name": "Which movie has biggest opening weekend in 2026?",
+   "sport": null,
+   "sport_name": null,
+   "llm_sport_category": "entertainment",
+   "source": "polymarket",
+   "source_count": 1,
+   "sources": [
+    "polymarket"
+   ],
+   "market_tier": 2,
+   "market_type": "field",
+   "status": "open",
+   "resolution_date": "2026-12-31T00:00:00+00:00",
+   "top_outcomes": [
+    {
+     "id": 1629183,
+     "name": "Avengers: Doomsday",
+     "probability": 0.715,
+     "rank": 1,
+     "movement": null,
+     "rendered_percent": 72
+    },
+    {
+     "id": 1629184,
+     "name": "Spider-Man: Brand New Day",
+     "probability": 0.265,
+     "rank": 2,
+     "movement": null,
+     "rendered_percent": 27
+    },
+    {
+     "id": 1629189,
+     "name": "Dune: Messiah",
+     "probability": 0.0125,
+     "rank": 3,
+     "movement": null,
+     "rendered_percent": 1
+    }
+   ],
+   "card_sum_reason": null,
+   "outcome_count": 27,
+   "canonical_market_key": null,
+   "group_id": "polymarket:79836",
+   "group_type": "negrisk",
+   "discover_card": {
+    "suggested_format": "outcome_distribution",
+    "bundle_candidate": false,
+    "comparison_theme": null,
+    "threshold_points": [],
+    "distribution_outcomes": [
+     {
+      "label": "Avengers: Doomsday",
+      "probability": 0.715,
+      "movement": null
+     },
+     {
+      "label": "Spider-Man: Brand New Day",
+      "probability": 0.265,
+      "movement": null
+     },
+     {
+      "label": "Dune: Messiah",
+      "probability": 0.0125,
+      "movement": null
+     },
+     {
+      "label": "Toy Story 5",
+      "probability": 0.0105,
+      "movement": null
+     },
+     {
+      "label": "Wuthering Heights",
+      "probability": 0.003,
+      "movement": null
+     },
+     {
+      "label": "Scream 7",
+      "probability": 0.002,
+      "movement": null
+     },
+     {
+      "label": "Michael",
+      "probability": 0.002,
+      "movement": null
+     },
+     {
+      "label": "The Hunger Games: Sunrise on the Reaping",
+      "probability": 0.0015,
+      "movement": null
+     }
+    ],
+    "remaining_outcome_count": 4,
+    "qa_signals": [],
+    "public_source_disagreement": false,
+    "reasons": [
+     "multi_outcome_distribution"
+    ]
+   },
+   "image_url": "https://images.pexels.com/photos/7234240/pexels-photo-7234240.jpeg?auto=compress&cs=tinysrgb&h=350",
+   "hook_description": null,
+   "temporal_badge": null,
+   "confidence_tier": "low",
+   "confidence_score": 0.3529,
+   "confidence_signals": {
+    "has_closing_line": false
+   },
+   "discover_llm": {
+    "topic": "entertainment",
+    "subtopic": "movies",
+    "archetype": "other",
+    "audience_scope": "mainstream",
+    "salience_score": 3,
+    "junk_flags": [],
+    "comparison_axes": []
+   },
+   "interestingness_score": 31.52,
+   "interestingness_reasons": [
+    "trading_volume"
+   ],
+   "market_tags": [
+    "category:conference",
+    "market_status:open",
+    "source:polymarket",
+    "sport:entertainment",
+    "tier:2"
+   ]
+  }
+ }
+}

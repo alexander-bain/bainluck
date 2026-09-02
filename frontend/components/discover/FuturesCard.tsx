@@ -12,7 +12,7 @@ import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
-import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
+import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
 import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
@@ -318,7 +318,15 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                     <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${index + 1} by probability`} aria-label={`Rank ${index + 1}`}>{index + 1}</span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className={`min-w-0 text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
+                        {/* UX-P263 (#2561): `truncate` is what lets
+                            compactOutcomeName leave a non-person label alone.
+                            The column measures 170px and nothing here wrapped
+                            before, so this clips only the labels that used to
+                            be initialised into nonsense — and it clips them at
+                            the real pixel boundary, which a character count
+                            cannot do across fonts, accents and the 390px
+                            viewport. The full string stays on `title`. */}
+                        <span className={`min-w-0 truncate text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
                         <MovementBadge m={row.movement} prob={row.probability} />
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
@@ -673,24 +681,6 @@ function formatComparisonTheme(theme: string | null | undefined): string {
     default:
       return "";
   }
-}
-
-function compactOutcomeName(name: string): string {
-  const trimmed = name.trim().replace(/\s+/g, " ");
-  if (trimmed.length <= 22) return trimmed;
-
-  const parts = trimmed.split(" ");
-  if (parts.length < 2) return trimmed;
-
-  const suffixes = new Set(["Jr.", "Jr", "Sr.", "Sr", "II", "III", "IV"]);
-  const suffix = suffixes.has(parts[parts.length - 1]) ? ` ${parts.pop()}` : "";
-  const last = parts.pop() || "";
-  const initials = parts
-    .filter(Boolean)
-    .map((part) => `${part[0]}.`)
-    .join(" ");
-
-  return `${initials} ${last}${suffix}`.trim();
 }
 
 // ── Compact row used by GroupCard ──

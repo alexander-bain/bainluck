@@ -507,3 +507,81 @@ export function generateThreshold(actualProb: number): number {
   }
   return Math.round(threshold * 100);
 }
+
+const OUTCOME_NAME_BUDGET = 22;
+
+/** Nobiliary and patronymic particles, which are part of a name but are never
+ *  initialised. `Botic Van de Zandschulp` reads `B. Van de Zandschulp`, never
+ *  `B. V. d. Zandschulp`. */
+const NAME_PARTICLES = new Set([
+  "de", "del", "della", "der", "den", "di", "do", "dos", "du", "da", "das",
+  "la", "le", "van", "von", "bin", "ibn", "al", "y",
+]);
+
+const NAME_SUFFIXES = new Set(["Jr.", "Jr", "Sr.", "Sr", "II", "III", "IV", "V"]);
+
+const isNameParticle = (part: string) => NAME_PARTICLES.has(part.toLowerCase());
+
+/**
+ * Is this label a PERSON'S NAME, and therefore safe to initialise?
+ *
+ * Initialising throws away every token but the last, so it is only ever
+ * readable when the last token is a surname. The test is deliberately strict:
+ * two or three capitalised words (particles don't count toward the total and
+ * may never lead), and nothing that marks the string as a matchup, a title or
+ * a phrase — a digit, a colon, a bracket, a dash, or any lowercase word that
+ * is not a particle. `vs`, `with`, `of`, `by` and `to` all fail on that last
+ * clause, which is what keeps matchups and show titles out.
+ */
+function looksLikePersonName(parts: string[]): boolean {
+  const named = parts.filter((part) => !isNameParticle(part));
+  if (named.length < 2 || named.length > 3) return false;
+  return parts.every((part, index) => {
+    if (isNameParticle(part)) return index > 0;
+    return /^\p{Lu}/u.test(part) && !/[\d:()[\]{}–—/&,+]/u.test(part);
+  });
+}
+
+/**
+ * UX-P263 (#2561) — this is a person-name abbreviator, and it used to run on
+ * every label longer than 22 characters.
+ *
+ * `Tampa Bay vs Los Angeles D` came out as `T. B. v. L. A. D` — it initialised
+ * the separator itself — and `Spider-Man: Brand New Day` as `S. B. N. Day`.
+ * Replayed over a live `GET /api/feed` capture, master abbreviated 19 of the
+ * 231 distribution labels on screen and only 3 of those 19 were people; the
+ * rest were matchups, show titles, party names and date phrases like
+ * `No release by September 30` -> `N. r. b. S. 30`.
+ *
+ * So initialising is now opt-in. A label earns it by reading as a person's
+ * name; everything else keeps its words and is clipped at the real pixel
+ * boundary by the `truncate` on the span that renders it. That span has always
+ * carried the untouched string as its `title`, so nothing is lost either way.
+ *
+ * Within the person branch, given names are initialised from the left ONE AT A
+ * TIME and stop as soon as the label fits, rather than all at once. That is
+ * what keeps `B. Van de Zandschulp` and `L. I. Lula da Silva` intact.
+ */
+export function compactOutcomeName(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= OUTCOME_NAME_BUDGET) return trimmed;
+
+  const parts = trimmed.split(" ").filter(Boolean);
+  if (parts.length < 2) return trimmed;
+
+  const suffix = NAME_SUFFIXES.has(parts[parts.length - 1]) ? ` ${parts.pop()}` : "";
+  if (!looksLikePersonName(parts)) return trimmed;
+
+  for (let take = 1; take < parts.length; take += 1) {
+    const head = parts
+      .slice(0, take)
+      .map((part) => (isNameParticle(part) ? part : `${part[0]}.`))
+      .join(" ");
+    const candidate = `${head} ${parts.slice(take).join(" ")}${suffix}`.trim();
+    if (candidate.length <= OUTCOME_NAME_BUDGET || take === parts.length - 1) {
+      return candidate;
+    }
+  }
+
+  return `${parts.join(" ")}${suffix}`.trim();
+}
