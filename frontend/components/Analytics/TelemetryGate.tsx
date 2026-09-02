@@ -42,6 +42,7 @@ import {
   subscribeTelemetryConsent,
 } from '@/lib/analytics';
 import WebVitalsReporter from './WebVitalsReporter';
+import ScreenTimingReporter from './ScreenTimingReporter';
 import { GoogleAnalytics } from './GoogleAnalytics';
 
 export function TelemetryGate() {
@@ -67,6 +68,11 @@ export function TelemetryGate() {
       {decision.googleAnalytics && <GoogleAnalytics />}
       {decision.vercelAnalytics && <Analytics />}
       {decision.webVitals && <WebVitalsReporter />}
+      {/* The felt number (latency/121). Gated with Web Vitals because it is the
+          same class of thing — a page-performance metric carrying no identifier —
+          and because it emits through gtag, which is not loaded before a grant
+          anyway. The sampling bias that creates is stated in the component. */}
+      {decision.webVitals && <ScreenTimingReporter />}
     </>
   );
 }
