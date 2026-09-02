@@ -7,6 +7,9 @@ import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import { useLiveEventStream } from "@/hooks/useLiveEventStream";
+import LiveAgeStamp from "@/components/event/LiveAgeStamp";
+import LiveSparkline from "@/components/event/LiveSparkline";
 import {
   eventTournamentKey,
   isTournamentSportKey,
@@ -121,6 +124,10 @@ export default function EventPage({ params }: EventPageProps) {
   const { isPinned, togglePin, isMaxReached } = usePinnedEvents();
   const eventIsPinned = isPinned(eventId);
 
+  // live/034 S2 — see the `refreshInterval` note below. Declared here because
+  // the SWR config closes over it and the hook that sets it needs `event`.
+  const streamConnectedRef = useRef(false);
+
   const {
     data: event,
     error: eventError,
@@ -130,8 +137,22 @@ export default function EventPage({ params }: EventPageProps) {
     ["event", eventId],
     () => fetchEvent(eventId),
     {
+      // live/034 S2 — when the SSE stream is delivering, polling stops. That is
+      // the whole ship: the same number, arriving instead of being waited for.
+      // The instant the stream stops delivering — errored, refused, closed, or
+      // silently dead — `streamConnected` goes false and the 32s poll comes
+      // straight back. A push path that dies must degrade to polling, never to
+      // a frozen number.
+      // Read through a REF, not the state value: `streamConnected` is derived
+      // from `event`, which is what this very call produces, so naming it here
+      // would be a use-before-declare. The ref is written just after the hook
+      // below, and SWR only ever invokes this after a render has completed.
       refreshInterval: (data) =>
-        data?.status === "live" ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
+        streamConnectedRef.current
+          ? 0
+          : data?.status === "live"
+            ? LIVE_REFRESH_INTERVAL
+            : SCHEDULED_REFRESH_INTERVAL,
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
@@ -151,6 +172,76 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Effectively live = event is live status
   const effectivelyLive = isLive;
+
+  // ── live/034 S2 — SSE push ────────────────────────────────────────────────
+  // Live events only, per the ruling; everything else keeps polling. The number
+  // in the database was already live (worker-ws flushes every 2s, the blend is
+  // stamped at most once per event per 5s) — it was the 32s poll that made it
+  // look stale on screen.
+  const { frame: liveFrame, connected: streamConnected } = useLiveEventStream(
+    eventId,
+    isLive,
+  );
+  streamConnectedRef.current = streamConnected;
+
+  // Apply a pushed frame to the SWR cache rather than holding it in a local
+  // override. One source of truth: the stream writes the same cache the poller
+  // writes, so the hero, the sources rail and every other consumer stay
+  // consistent and nothing downstream needs to know push exists.
+  useEffect(() => {
+    if (!liveFrame || liveFrame.p === null || liveFrame.p === undefined) return;
+    const p = liveFrame.p;
+    refreshEvent(
+      (prev) =>
+        prev
+          ? {
+              ...prev,
+              // `resolveProbability` reads `hero_probability` first on the live
+              // branch, so this is the number the hero actually renders.
+              hero_probability: p,
+              hero_probability_away: 1 - p,
+              win_probability_sources: {
+                ...(prev.win_probability_sources ?? {}),
+                [liveFrame.source]: {
+                  ...(prev.win_probability_sources?.[liveFrame.source] ??
+                    ({} as never)),
+                  value: liveFrame.source_value ?? p,
+                  updated_at: liveFrame.updated_at,
+                },
+              },
+            }
+          : prev,
+      // No revalidate: the frame IS the new value. Refetching here would put a
+      // request on every tick and undo the point of pushing.
+      { revalidate: false },
+    );
+    setLastRefresh(Date.now());
+  }, [liveFrame, refreshEvent]);
+
+  // The freshest write across all sources — what the age stamp counts from.
+  // MAX, not the pushed frame's own stamp: the hero is a blend, and its age is
+  // the age of the most recent thing that went into it. Reading only the source
+  // that last moved would make the number look stale whenever a quiet feed
+  // happened to be the one to tick.
+  const freshestSourceStamp = useMemo(() => {
+    const stamps = Object.values(event?.win_probability_sources ?? {})
+      .map((s) => s?.updated_at)
+      .filter((s): s is string => typeof s === "string" && !Number.isNaN(Date.parse(s)));
+    if (stamps.length === 0) return null;
+    return stamps.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
+  }, [event?.win_probability_sources]);
+
+  // When the stream stops delivering, refetch ONCE. This does two jobs: it
+  // settles the page on a number that came from the database rather than the
+  // last frame we happened to receive, and it restarts SWR's polling chain,
+  // which a `refreshInterval` of 0 had halted.
+  const wasStreamConnected = useRef(false);
+  useEffect(() => {
+    if (wasStreamConnected.current && !streamConnected) {
+      refreshEvent();
+    }
+    wasStreamConnected.current = streamConnected;
+  }, [streamConnected, refreshEvent]);
 
   // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
   // believe. `espn.period` is ESPN's status detail, and while ESPN still has the
@@ -278,6 +369,23 @@ export default function EventPage({ params }: EventPageProps) {
     () => fetchGameMarkets(eventId),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
+
+  // The sparkline's series: the served blend line, plus any frames that have
+  // arrived by push since the last fetch. Appending the pushed points matters —
+  // while the stream is delivering, polling is OFF, so `aggregate_line` stops
+  // advancing and a sparkline built from it alone would freeze exactly when the
+  // number is most alive.
+  const sparklinePoints = useMemo(() => {
+    const served = (historyData?.aggregate_line ?? []).map((p) => ({
+      timestamp: p.timestamp,
+      value: p.home_probability,
+    }));
+    if (liveFrame?.p === null || liveFrame?.p === undefined) return served;
+    const last = served[served.length - 1];
+    // Don't double-draw a point the fetch already carried.
+    if (last && last.timestamp === liveFrame.updated_at) return served;
+    return [...served, { timestamp: liveFrame.updated_at, value: liveFrame.p }];
+  }, [historyData?.aggregate_line, liveFrame]);
 
   // #2443 — the container the event belongs to, which for a registered
   // tournament carries the decided result the hero needs to name a winner.
@@ -506,8 +614,18 @@ export default function EventPage({ params }: EventPageProps) {
         </Link>
         </div>
 
+        {/* live/034 S2 — on a pushed event there is no "next update" to count
+            down to, because updates arrive. Show how old the number is instead.
+            The countdown stays for every event still on the poll. */}
+        {!isFinished && streamConnected && (
+          <div className="flex items-center gap-3">
+            <LiveSparkline points={sparklinePoints} />
+            <LiveAgeStamp updatedAt={freshestSourceStamp} connected={streamConnected} />
+          </div>
+        )}
+
         {/* Visual countdown timer */}
-        {!isFinished && (
+        {!isFinished && !streamConnected && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
@@ -753,6 +871,11 @@ export default function EventPage({ params }: EventPageProps) {
                 homeColor={event.home_team_data?.primary_color}
                 awayColor={event.away_team_data?.primary_color}
                 probSourceLabel={probSourceLabel}
+                // live/034 S2 — count to the new value only when it is arriving
+                // by push. On the 32s poll a jump IS the honest rendering of
+                // what happened; animating it would imply a continuity between
+                // two readings half a minute apart that the data does not have.
+                animate={streamConnected}
               />
               )}
 

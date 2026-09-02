@@ -1,3 +1,7 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+
 /**
  * The event page hero's two giant percents — #2085.
  *
@@ -32,6 +36,99 @@ interface EventHeroProbabilityPairProps {
   homeColor?: string | null;
   awayColor?: string | null;
   probSourceLabel?: string | null;
+  /**
+   * live/034 S2 — count the number to its new value instead of swapping it.
+   *
+   * Ruling (RULINGS-BATCH-2026-08-30, LIVE UPDATES 2): a live look is an
+   * animated number. Off by default, so every non-pushed caller renders exactly
+   * as before and the #2085 guard keeps testing the same thing.
+   */
+  animate?: boolean;
+}
+
+/** How long the count takes. Comfortably under the 5s minimum between updates. */
+const TWEEN_MS = 600;
+
+/**
+ * Count `target` from wherever it was, in whole percents.
+ *
+ * NOT smoothing (the ruling forbids it): this interpolates only between two
+ * values the server actually sent, and always lands exactly on the newer one.
+ * It never invents a reading, and it never lags behind the latest value — a new
+ * target mid-flight retargets from where the count currently is rather than
+ * queueing, so the number cannot fall behind a fast-moving market.
+ */
+function useCountTo(target: number | null, enabled: boolean): number | null {
+  const [shown, setShown] = useState<number | null>(target);
+  const frame = useRef<number | null>(null);
+  // What is currently on screen, readable without re-subscribing the effect.
+  const shownRef = useRef<number | null>(target);
+  shownRef.current = shown;
+
+  useEffect(() => {
+    if (target === null) {
+      setShown(null);
+      return;
+    }
+    // First paint, or animation off: land immediately. Counting up from nothing
+    // on load would animate a number that never moved.
+    if (!enabled || shownRef.current === null) {
+      setShown(target);
+      return;
+    }
+    const from = shownRef.current;
+    if (from === target) return;
+
+    // Respect the OS setting. An animated number is a nicety; motion sickness
+    // is not.
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ) {
+      setShown(target);
+      return;
+    }
+
+    const started = performance.now();
+    const step = (nowMs: number) => {
+      const t = Math.min(1, (nowMs - started) / TWEEN_MS);
+      // easeOutCubic — fast off the mark, settles gently.
+      const eased = 1 - Math.pow(1 - t, 3);
+      setShown(Math.round(from + (target - from) * eased));
+      if (t < 1) frame.current = requestAnimationFrame(step);
+      else setShown(target); // land EXACTLY on the served value, never near it
+    };
+    frame.current = requestAnimationFrame(step);
+    return () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+    };
+  }, [target, enabled]);
+
+  return shown;
+}
+
+/**
+ * Which pair of whole percents to PRINT this frame.
+ *
+ * Exported and pure on purpose. The invariant that matters — the two sides are
+ * complements, never independently rounded to 101 — has to hold on every
+ * intermediate frame of the count, and the test harness renders with
+ * `renderToStaticMarkup`, where effects never run and no tween is ever
+ * observable. Testing this function exhaustively tests the real decision;
+ * asserting it through the DOM would only ever re-test the settled state.
+ */
+export function shownPair(
+  homePct: number | null,
+  awayPct: number | null,
+  countedHome: number | null,
+  animate: boolean,
+): { home: number | null; away: number | null } {
+  const midFlight =
+    animate && countedHome !== null && homePct !== null && countedHome !== homePct;
+  if (!midFlight) return { home: homePct, away: awayPct };
+  // Derived from the counted side, never counted separately.
+  return { home: countedHome, away: 100 - (countedHome as number) };
 }
 
 export default function EventHeroProbabilityPair({
@@ -42,9 +139,19 @@ export default function EventHeroProbabilityPair({
   homeColor,
   awayColor,
   probSourceLabel,
+  animate = false,
 }: EventHeroProbabilityPairProps) {
   const home = homeColor || "#111827";
   const away = awayColor || "#94A3B8";
+
+  // The pair is ONE decision (#2085), so only ONE side is counted and the other
+  // is derived from it. Tweening the two independently would let them disagree
+  // mid-flight and print 101 — the exact defect this component exists to
+  // delete, reintroduced one frame at a time.
+  const countedHome = useCountTo(homePct, animate);
+  const { home: shownHome, away: shownAway } = shownPair(
+    homePct, awayPct, countedHome, animate,
+  );
 
   return (
     // UX-P003: the hero's half of "card == hero == chart". The rail reads
@@ -61,7 +168,7 @@ export default function EventHeroProbabilityPair({
         className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: home }}
       >
-        {homeProb !== null && homePct !== null ? homePct : "—"}
+        {homeProb !== null && shownHome !== null ? shownHome : "—"}
       </span>
       <span
         className="text-lg font-bold leading-none ml-0.5"
@@ -76,7 +183,7 @@ export default function EventHeroProbabilityPair({
         className="text-[48px] sm:text-[52px] font-black tracking-tight leading-none tabular-nums"
         style={{ color: away }}
       >
-        {awayProb !== null && awayPct !== null ? awayPct : "—"}
+        {awayProb !== null && shownAway !== null ? shownAway : "—"}
       </span>
       <span
         className="text-lg font-bold leading-none ml-0.5"

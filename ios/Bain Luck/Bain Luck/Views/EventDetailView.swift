@@ -262,8 +262,14 @@ struct EventDetailView: View {
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
                             sportKey: event.sport,
-                            homeWinProb: event.currentOdds?.homeProbability,
-                            awayWinProb: event.currentOdds?.awayProbability,
+                            // live/034 S3 — prefer the pushed number when the SSE
+                            // stream is delivering; `liveHomeProbability` falls
+                            // back to `currentOdds` the moment it is not, so a
+                            // dead stream degrades to the polled value rather
+                            // than to a frozen one.
+                            homeWinProb: vm.liveHomeProbability,
+                            awayWinProb: vm.livePush?.probability.map { 1 - $0 }
+                                ?? event.currentOdds?.awayProbability,
                             homeSpread: event.currentOdds?.homeSpread,
                             overUnder: event.currentOdds?.overUnder,
                             homeScore: event.homeScore,
