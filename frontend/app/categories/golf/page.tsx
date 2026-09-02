@@ -34,6 +34,8 @@ import TournamentProgressionTable from "@/components/TournamentProgressionTable"
 import TournamentCard from "@/components/TournamentCard";
 import { GolferRow } from "@/components/golf/GolferRow";
 import UpcomingTournaments from "@/components/golf/UpcomingTournaments";
+// UX-P274 (#2672): lifted out of this file so a render test can reach it.
+import { MoversStrip } from "@/components/golf/MoversStrip";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import LoadingState from "@/components/LoadingState";
 import ErrorState from "@/components/ErrorState";
@@ -886,58 +888,6 @@ function TourSection({
     </section>
   );
 }
-
-// ============================================================================
-// Movers Strip
-// ============================================================================
-
-function MoversStrip({ movers }: { movers: GolfMover[] }) {
-  return (
-    <section>
-      <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-3">
-        Biggest Movers (24h)
-      </h2>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0">
-        {movers.map((mover, i) => {
-          const isUp = mover.movement_24h > 0;
-          // `delta` is a MOVEMENT in points, not a probability — the floor does
-          // not apply to it and it is left exactly as it was (UX-P048 owns that
-          // conversion class separately).
-          const delta = Math.abs(Math.round(mover.movement_24h * 100));
-
-          return (
-            <div
-              key={`${mover.name}-${i}`}
-              className="flex-shrink-0 bg-surface-card rounded-lg border border-surface-border p-3 w-[160px]"
-            >
-              <div className="flex items-center gap-1 mb-1">
-                <span
-                  className={`text-sm font-bold ${
-                    isUp ? "text-green-400" : "text-red-400"
-                  }`}
-                >
-                  {isUp ? "\u25B2" : "\u25BC"} {delta}%
-                </span>
-              </div>
-              <div className="text-sm text-text-primary font-medium truncate">
-                {mover.name}
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-xs text-text-muted truncate">
-                  {mover.tournament_name}
-                </span>
-                <span className="text-xs font-mono text-text-secondary">
-                  {formatProbability(mover.probability)}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 
 // (Local TournamentCard removed — using shared @/components/TournamentCard)
 
