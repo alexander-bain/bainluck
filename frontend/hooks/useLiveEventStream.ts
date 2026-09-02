@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
+import {
+  TICK_INTERVAL_MS,
+  createLiveStreamController,
+  type LiveStreamFrame,
+  type StreamHandle,
+} from '@/lib/liveStreamController';
 
 /**
  * live/034 S2 — subscribe to a LIVE event's SSE push.
@@ -15,40 +21,27 @@ import { API_URL } from '@/lib/api';
  * Postgres could be 32s old in front of a user. This hook closes that gap.
  *
  * THE RULE THIS HOOK EXISTS TO ENFORCE: a push path that dies must degrade to
- * polling, never to a frozen number. Every failure mode below — refused,
- * errored, closed, aged out, or *silently* dead — ends with `connected: false`,
- * and the caller restores its poll interval on that. The silent case is the
- * dangerous one: a TCP connection that is open but receiving nothing looks
- * exactly like a quiet market, and would leave a stale number on screen
- * indefinitely while everything appeared healthy.
+ * polling, never to a frozen number. Every failure mode — refused, errored,
+ * closed, aged out, or *silently* dead — ends with `connected: false`, and the
+ * caller restores its poll interval on that.
+ *
+ * THE LIFECYCLE ITSELF LIVES IN `@/lib/liveStreamController`, not here, and
+ * that is deliberate. CERT-717 blocked this branch on two lifecycle defects
+ * that every gate passed straight over — the server's 900s rollover
+ * permanently killed push, and transport heartbeats masked a dead publisher —
+ * because a lifecycle welded into a React effect cannot be tested in a Jest
+ * that has no jsdom. This file is now the wiring; the rules are somewhere a
+ * test can advance a clock through them.
  */
 
-export interface LiveFrame {
-  event_id: number;
-  /** The AGGREGATE home probability — the number the hero renders. */
-  p: number | null;
-  /** Which feed moved, for the sources rail. */
-  source: string;
-  source_value: number | null;
-  /** The STAMPED write time, so "live · Ns ago" counts from when it was true. */
-  updated_at: string;
-  status: string | null;
-}
+export type LiveFrame = LiveStreamFrame;
 
 interface UseLiveEventStreamResult {
   /** Latest frame, or null until one arrives. */
   frame: LiveFrame | null;
-  /** True only while the stream is open AND delivering. Callers gate polling on this. */
+  /** True only while push is DELIVERING. Callers gate polling on this. */
   connected: boolean;
 }
-
-/**
- * Silence budget. The server heartbeats every 20s, so 60s is three missed
- * beats — long enough that a hiccup does not flap the client between push and
- * poll, short enough that a dead stream cannot hold a stale number for longer
- * than the poll interval it replaced would have.
- */
-const SILENCE_TIMEOUT_MS = 60_000;
 
 export function useLiveEventStream(
   eventId: number | undefined,
@@ -56,9 +49,15 @@ export function useLiveEventStream(
 ): UseLiveEventStreamResult {
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
-  // A ref, not state: the watchdog rearms on every message and must not
-  // re-render the page
-  const lastMessageAt = useRef<number>(0);
+  // A ref so the controller's callbacks never close over a stale setter.
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!enabled || !eventId || typeof window === 'undefined') {
@@ -68,87 +67,31 @@ export function useLiveEventStream(
     // Older browsers with no EventSource simply keep polling. Nothing to do.
     if (typeof EventSource === 'undefined') return;
 
-    let source: EventSource | null = null;
-    let watchdog: ReturnType<typeof setInterval> | null = null;
-    let closed = false;
+    const controller = createLiveStreamController({
+      open: () =>
+        new EventSource(
+          `${API_URL}/api/events/${eventId}/stream`,
+        ) as unknown as StreamHandle,
+      now: () => Date.now(),
+      onFrame: (next) => {
+        if (mounted.current) setFrame(next);
+      },
+      onDeliveringChange: (delivering) => {
+        if (mounted.current) setConnected(delivering);
+      },
+    });
 
-    const teardown = () => {
-      closed = true;
-      setConnected(false);
-      if (watchdog) clearInterval(watchdog);
-      watchdog = null;
-      // EventSource reconnects on its own by default, which is exactly what we
-      // do NOT want once we have given up — the caller has already gone back to
-      // polling and a background reconnect would double-fetch forever.
-      if (source) source.close();
-      source = null;
+    controller.start();
+    // ONE interval drives everything the controller schedules — the silence
+    // watchdogs and the reopen after a server-directed rollover. No second
+    // timer, and nothing scheduled inside a listener that a teardown could
+    // miss.
+    const timer = setInterval(() => controller.tick(), TICK_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+      controller.stop();
     };
-
-    try {
-      source = new EventSource(`${API_URL}/api/events/${eventId}/stream`);
-    } catch {
-      setConnected(false);
-      return;
-    }
-
-    source.addEventListener('open', () => {
-      if (closed) return;
-      lastMessageAt.current = Date.now();
-      setConnected(true);
-    });
-
-    source.addEventListener('probability', (e) => {
-      if (closed) return;
-      lastMessageAt.current = Date.now();
-      try {
-        const parsed = JSON.parse((e as MessageEvent).data) as LiveFrame;
-        // Guard the shape rather than trusting it: a malformed frame that set
-        // `p` to undefined would blank a working hero.
-        if (typeof parsed?.event_id === 'number') {
-          setFrame(parsed);
-          setConnected(true);
-        }
-      } catch {
-        // One bad frame is not a reason to abandon the stream.
-      }
-    });
-
-    // The match ended, or the server hit its connection ceiling and wants us
-    // back. Either way: stop, and let the caller's polling take over. The
-    // caller refetches once on `connected` going false, which settles a
-    // just-finished match on its final number.
-    source.addEventListener('closed', teardown);
-    source.addEventListener('reconnect', teardown);
-
-    // Fired for a refused connect (409 non-live, 503 at capacity, 404) as well
-    // as for a dropped connection. All of them mean the same thing here.
-    source.addEventListener('error', () => {
-      if (closed) return;
-      // EventSource retries by itself while CONNECTING; only give up once it
-      // has actually closed, so a single blip does not bounce us to polling.
-      if (source && source.readyState === EventSource.CLOSED) teardown();
-      else setConnected(false);
-    });
-
-    // The server's heartbeat is a NAMED event, not the conventional `: ping`
-    // comment, precisely so it can rearm the watchdog below. A comment fires no
-    // handler, which would leave the watchdog measuring "is this market moving"
-    // rather than "is this server alive" — and on a quiet market it would tear
-    // down a perfectly healthy stream.
-    source.addEventListener('heartbeat', () => {
-      if (closed) return;
-      lastMessageAt.current = Date.now();
-      setConnected(true);
-    });
-
-    // The watchdog. Any frame or heartbeat rearms it; silence past the budget
-    // means the stream is dead in a way no event will ever tell us about.
-    watchdog = setInterval(() => {
-      if (closed || !lastMessageAt.current) return;
-      if (Date.now() - lastMessageAt.current > SILENCE_TIMEOUT_MS) teardown();
-    }, 5_000);
-
-    return teardown;
   }, [eventId, enabled]);
 
   return { frame, connected };
