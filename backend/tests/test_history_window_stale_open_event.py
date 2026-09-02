@@ -23,8 +23,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.routes.events import (
     _event_started_long_ago_unsettled,
     get_event_odds_history,
