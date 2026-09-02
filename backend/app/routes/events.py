@@ -23,6 +23,10 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Event, OddsSnapshot, Sport, ScoreSnapshot, EIPercentile, FuturesMarket, FuturesOutcome, Team, User
 from app.dependencies.auth import get_optional_user
 from app.services import get_db, get_db_rw, OddsAPIService, fetch_current_odds
+from app.services.anchor_channel import (
+    is_drain_candidate_row,
+    resolve_market_born_duplicate,
+)
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
 from app.utils.lifecycle import served_event_status
@@ -7641,6 +7645,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
     _now = _time.time()
+    requested_event_id = event_id
     if event_id in _event_detail_cache:
         _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
         _ttl = _EVENT_DETAIL_LIVE_TTL if _cached_status == "live" else _EVENT_DETAIL_DEFAULT_TTL
@@ -7656,6 +7661,48 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── Q050: a market-born duplicate reads as the row it duplicates ──────────
+    #
+    # Ruling 048 accepts duplicate rows as a bounded, declared cost on the
+    # promise that "id-keyed reconciliation drains the duplicate when an id
+    # arrives". `_reconcile_kalshi_match_segments` builds the first half — it
+    # moves the markets onto the schedule-derived row — and stops there, which
+    # ORPHANS the duplicate rather than draining it. Measured on production
+    # 2026-09-02, after Q048 deployed: event 15300759 holds zero markets and
+    # still answers this route with `scheduled, 2026-08-30 00:00Z` for a match
+    # ESPN had final at 2026-09-01 23:05Z, on event 15293804.
+    #
+    # `resolve_market_born_duplicate` reads that as the id-keyed contradiction
+    # it is: the anchor row says market `KXATPMATCH-26AUG30VALMON` created
+    # 15300759, the market says its event is 15293804. Nothing is merged and
+    # nothing is written — the ghost stays addressable, and the verdict is
+    # recomputed from live state on every miss, so a market that moves back
+    # un-drains its row on the next request.
+    #
+    # The gate is what keeps this off the hot path: a fixture from a real
+    # schedule, or any row carrying a score, answers in Python and never issues
+    # the query.
+    if is_drain_candidate_row(
+        commence_time_source=getattr(event, "commence_time_source", None),
+        home_score=event.home_score,
+        away_score=event.away_score,
+        completed_at=event.completed_at,
+    ):
+        canonical_id = await resolve_market_born_duplicate(db, event_id)
+        if canonical_id is not None and canonical_id != event_id:
+            canonical = (
+                await db.execute(
+                    select(Event)
+                    .options(selectinload(Event.sport))
+                    .where(Event.id == canonical_id)
+                )
+            ).scalar_one_or_none()
+            # A resolution whose target vanished between the two reads is a
+            # refusal, not a 404: the row the caller asked for still exists.
+            if canonical is not None:
+                event = canonical
+                event_id = canonical_id
 
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
     # This prevents R14 memory errors on events with thousands of snapshots.
@@ -7881,10 +7928,15 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "players": event.box_score_data.get("players"),
         }
 
-    if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
-        oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
-        del _event_detail_cache[oldest]
-    _event_detail_cache[event_id] = (_now, event.status, response)
+    # Q050: cache under the id the caller ASKED FOR as well as the one we
+    # served. `event_id` is rebound above when a duplicate resolves, so caching
+    # only under it would make every request for a ghost url re-run the verdict
+    # query — the one population that always needs it.
+    for _cache_key in {requested_event_id, event_id}:
+        if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
+            oldest = min(_event_detail_cache, key=lambda k: _event_detail_cache[k][0])
+            del _event_detail_cache[oldest]
+        _event_detail_cache[_cache_key] = (_now, event.status, response)
 
     return response
 

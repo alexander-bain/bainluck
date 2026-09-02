@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
 import LiveSparkline from "@/components/event/LiveSparkline";
@@ -163,6 +164,31 @@ export default function EventPage({ params }: EventPageProps) {
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
+
+  // ── Q050: this url named a duplicate, so correct the url ─────────────────
+  //
+  // `/api/events/{id}` now answers a market-born duplicate with the row it
+  // duplicates (ruling 048's drain clause, read side), so `event.id` can come
+  // back different from the id in the path. Rendering the canonical event under
+  // the ghost's id would be half a fix and a worse-looking one: every sibling
+  // fetch on this page — history, game markets, tournament, team progression —
+  // is keyed on `eventId` from the ROUTE, so the reader would get a FINAL hero
+  // above an empty chart and no markets. Moving the url moves all of them.
+  //
+  // `replace`, not `push`: the ghost url is not a place anyone chose to be, and
+  // leaving it in history would make Back a no-op that lands here again. The
+  // query string rides along so a shared link keeps its `utm_*` attribution.
+  const router = useRouter();
+  const canonicalEventId = event?.id;
+  const canonicalHref = canonicalEventHref(
+    eventId,
+    canonicalEventId,
+    searchParams.toString(),
+  );
+  useEffect(() => {
+    if (!canonicalHref) return;
+    router.replace(canonicalHref);
+  }, [canonicalHref, router]);
 
   // Check if the game has actually started (commence_time is in the past)
   const hasStarted = event?.commence_time

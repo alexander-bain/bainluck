@@ -131,6 +131,12 @@ SHAPES: dict[str, list[tuple[str, object, object, object]]] = {
     # LAT-P128. Alphabetical, for the reason spelled out under
     # `futures_movers_warm_mutations` above.
     "league_context_grid_cache_mutations": [("MUTANTS", 2, 3, "SERVICE")],
+    # Q050. Alphabetical, for the reason spelled out under
+    # `futures_movers_warm_mutations` above. Two targets in one table (the
+    # anchor-channel resolver and the event route that consults it), carried
+    # per-entry at index 4 — the `kalshi_segment_resolved_link_mutations` shape,
+    # which is Q048's harness and the one this ship continues.
+    "market_born_duplicate_drain_mutations": [("MUTANTS", 2, 3, 4)],
     "offline_rerank_fidelity_mutations": [("MUTATIONS", 3, 4, 1)],
     "outcome_evidence_class_mutations": [("MUTATIONS", 3, 4, 1)],
     # Q499. Alphabetical, for the reason spelled out under
