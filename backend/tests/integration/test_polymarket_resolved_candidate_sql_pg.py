@@ -146,7 +146,10 @@ async def futures_markets_table(pg_session):
                 ('polymarket', '0xdef', 'Trump visits Alabama', 'prop', true,
                  'open', 'polymarket:92611', now() - interval '10 days',
                  '{"polymarket_event_id": "92611"}'::jsonb),
-                -- recent: outside the 48h census window.
+                -- recent: outside the 48h CENSUS window, but inside the SWEEP
+                -- population. The two predicates are deliberately different —
+                -- the sweep asks the venue about every unresolved row, and only
+                -- the needle cares how old they are. Asserted below.
                 ('polymarket', '999', 'Fresh market', 'prop', true,
                  'open', NULL, now(), '{}'::jsonb),
                 -- already resolved: outside the sweep population.
@@ -199,9 +202,28 @@ class TestTheSweepPopulationQueryIsLegalSQL:
         reported that as a run that simply found nothing to do."""
         rows = (await pg_session.execute(text(_candidate_sql()))).fetchall()
 
-        assert [r[0] for r in rows] == ["92611", "139236"], (
-            "the population query returned the wrong set — expected the two "
-            f"unresolved Polymarket event ids in ascending numeric order; got {rows}"
+        assert [r[0] for r in rows] == ["999", "92611", "139236"], (
+            "the population query returned the wrong set — expected the three "
+            "unresolved Polymarket event ids in ascending NUMERIC order "
+            f"(the resolved row and the Kalshi row excluded); got {rows}"
+        )
+
+    async def test_the_sweep_population_is_not_keyed_on_staleness(
+        self, pg_session, futures_markets_table
+    ):
+        """The sweep asks the venue about every unresolved row; only the NEEDLE
+        cares how old they are.
+
+        Event `999` commences `now()` — outside the 48h census window — and must
+        still be swept. Narrowing the sweep to the census predicate would be the
+        staleness key #2637 forbids, arriving through the back door: a market
+        that settles within 48h of starting (most of them) would then never be
+        reached at all.
+        """
+        rows = {r[0] for r in (await pg_session.execute(text(_candidate_sql())))}
+
+        assert "999" in rows, (
+            "a recently-started unresolved market was excluded from the sweep"
         )
 
     async def test_it_orders_numerically_not_lexicographically(
