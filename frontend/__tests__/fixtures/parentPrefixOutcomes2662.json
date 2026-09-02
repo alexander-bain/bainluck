@@ -1,0 +1,380 @@
+{
+  "114160": {
+    "id": 114160,
+    "name": "2026 Women’s US Open Winner (Tennis)",
+    "sport": null,
+    "sport_name": null,
+    "category": "championship",
+    "llm_sport_category": "tennis",
+    "market_tier": 1,
+    "market_type_label": "Championship",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-13T00:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 1632749,
+        "name": "Aryna Sabalenka",
+        "probability": 0.235,
+        "american_odds": 326,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 1632754,
+        "name": "Coco Gauff",
+        "probability": 0.1825,
+        "american_odds": 448,
+        "rank": 4,
+        "movement": null
+      },
+      {
+        "id": 1632750,
+        "name": "Iga Swiatek",
+        "probability": 0.145,
+        "american_odds": 590,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 1632773,
+        "name": "Jessica Pegula",
+        "probability": 0.0905,
+        "american_odds": 1005,
+        "rank": 8,
+        "movement": null
+      }
+    ],
+    "outcome_count": 41,
+    "updated_at": "2026-09-02T00:50:03.640668+00:00"
+  },
+  "59705676": {
+    "id": 59705676,
+    "name": "Zeynep Sonmez vs Coco Gauff: Total Games",
+    "sport": "tennis_wta_us_open",
+    "sport_name": "WTA US Open",
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 5,
+    "market_type_label": "Prop",
+    "status": "open",
+    "source": "kalshi",
+    "resolution_date": "2026-09-13T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222365495,
+        "name": "Over 16.5 games",
+        "probability": 0.99,
+        "american_odds": -174,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 222365496,
+        "name": "Over 21.5 games",
+        "probability": 0.01,
+        "american_odds": 400,
+        "rank": 2,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-08-30T16:50:00.303350+00:00"
+  },
+  "59705588": {
+    "id": 59705588,
+    "name": "Zeynep Sonmez vs Coco Gauff: Set 1 Winner",
+    "sport": "tennis_wta_us_open",
+    "sport_name": "WTA US Open",
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 1,
+    "market_type_label": "Championship",
+    "status": "open",
+    "source": "kalshi",
+    "resolution_date": "2026-09-13T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222365324,
+        "name": "Coco Gauff",
+        "probability": 0.99,
+        "american_odds": -700,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 222365325,
+        "name": "Zeynep Sonmez",
+        "probability": 0.01,
+        "american_odds": 852,
+        "rank": 2,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-08-31T16:08:14.016814+00:00"
+  },
+  "59705587": {
+    "id": 59705587,
+    "name": "Zeynep Sonmez vs Coco Gauff: Set 2 Winner",
+    "sport": "tennis_wta_us_open",
+    "sport_name": "WTA US Open",
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 1,
+    "market_type_label": "Championship",
+    "status": "open",
+    "source": "kalshi",
+    "resolution_date": "2026-09-13T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222365322,
+        "name": "Coco Gauff",
+        "probability": 0.99,
+        "american_odds": -700,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 222365323,
+        "name": "Zeynep Sonmez",
+        "probability": 0.01,
+        "american_odds": 770,
+        "rank": 2,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-09-02T11:12:49.219753+00:00"
+  },
+  "59705725": {
+    "id": 59705725,
+    "name": "Zeynep Sonmez vs Coco Gauff: Exact Match Score",
+    "sport": "tennis_wta_us_open",
+    "sport_name": "WTA US Open",
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 5,
+    "market_type_label": "Prop",
+    "status": "open",
+    "source": "kalshi",
+    "resolution_date": "2026-09-13T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222365595,
+        "name": "Coco Gauff wins 2-0",
+        "probability": 0.99,
+        "american_odds": -285,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 222365598,
+        "name": "Zeynep Sonmez wins 2-0",
+        "probability": 0.01,
+        "american_odds": 1329,
+        "rank": 4,
+        "movement": null
+      },
+      {
+        "id": 222365597,
+        "name": "Zeynep Sonmez wins 2-1",
+        "probability": 0.01,
+        "american_odds": 1150,
+        "rank": 3,
+        "movement": null
+      },
+      {
+        "id": 222365596,
+        "name": "Coco Gauff wins 2-1",
+        "probability": 0.01,
+        "american_odds": 590,
+        "rank": 2,
+        "movement": null
+      }
+    ],
+    "outcome_count": 4,
+    "updated_at": "2026-08-29T18:50:00.396780+00:00"
+  },
+  "59687214": {
+    "id": 59687214,
+    "name": "Set 2 Winner: Sonmez vs Gauff",
+    "sport": null,
+    "sport_name": null,
+    "category": "game_prop",
+    "llm_sport_category": "table_tennis",
+    "market_tier": 1,
+    "market_type_label": "Championship",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-06T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222261813,
+        "name": "No",
+        "probability": 0.865,
+        "american_odds": -641,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 222261812,
+        "name": "Yes",
+        "probability": 0.135,
+        "american_odds": 641,
+        "rank": 1,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-08-28T14:36:45.883707+00:00"
+  },
+  "59678644": {
+    "id": 59678644,
+    "name": "Set 1 Winner: Sonmez vs Gauff",
+    "sport": null,
+    "sport_name": null,
+    "category": "game_prop",
+    "llm_sport_category": "table_tennis",
+    "market_tier": 1,
+    "market_type_label": "Championship",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-06T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222228757,
+        "name": "No",
+        "probability": 0.85,
+        "american_odds": -567,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 222228756,
+        "name": "Yes",
+        "probability": 0.15,
+        "american_odds": 567,
+        "rank": 1,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-08-28T12:19:30.828537+00:00"
+  },
+  "59556774": {
+    "id": 59556774,
+    "name": "Will Coco Gauff advance to the Round of 16 in Women's Singles at the 2026 US Open?",
+    "sport": null,
+    "sport_name": null,
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 5,
+    "market_type_label": "Prop",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-06T23:59:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 221651041,
+        "name": "Yes",
+        "probability": 0.785,
+        "american_odds": -365,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 221651042,
+        "name": "No",
+        "probability": 0.215,
+        "american_odds": 365,
+        "rank": 2,
+        "movement": null
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-09-02T11:31:39.312533+00:00"
+  },
+  "59559121": {
+    "id": 59559121,
+    "name": "Will Coco Gauff advance to the Final in Women's Singles at the 2026 US Open?",
+    "sport": null,
+    "sport_name": null,
+    "category": "game_prop",
+    "llm_sport_category": "tennis",
+    "market_tier": 5,
+    "market_type_label": "Prop",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-11T23:59:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 221667103,
+        "name": "No",
+        "probability": 0.675,
+        "american_odds": -208,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 221667102,
+        "name": "Yes",
+        "probability": 0.325,
+        "american_odds": 208,
+        "rank": 1,
+        "movement": -0.015
+      }
+    ],
+    "outcome_count": 2,
+    "updated_at": "2026-09-02T11:31:39.312533+00:00"
+  },
+  "59669267": {
+    "id": 59669267,
+    "name": "US Open WTA: Zeynep Sonmez vs Coco Gauff",
+    "sport": null,
+    "sport_name": null,
+    "category": "championship",
+    "llm_sport_category": "table_tennis",
+    "market_tier": 5,
+    "market_type_label": "Prop",
+    "status": "open",
+    "source": "polymarket",
+    "resolution_date": "2026-09-06T15:00:00+00:00",
+    "top_outcomes": [
+      {
+        "id": 222228758,
+        "name": "US Open WTA: Zeynep Sonmez vs Coco Gauff Set 1 O/U 8.5",
+        "probability": 0.515,
+        "american_odds": -106,
+        "rank": 1,
+        "movement": null
+      },
+      {
+        "id": 222228759,
+        "name": "US Open WTA: Zeynep Sonmez vs Coco Gauff Set 1 Winner",
+        "probability": 0.15,
+        "american_odds": 567,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 222261815,
+        "name": "US Open WTA: Zeynep Sonmez vs Coco Gauff Set 2 Winner",
+        "probability": 0.135,
+        "american_odds": 641,
+        "rank": 2,
+        "movement": null
+      },
+      {
+        "id": 222181714,
+        "name": "US Open WTA: Zeynep Sonmez vs Coco Gauff",
+        "probability": 0.095,
+        "american_odds": 953,
+        "rank": 3,
+        "movement": null
+      }
+    ],
+    "outcome_count": 4,
+    "updated_at": "2026-08-28T14:22:41.704703+00:00"
+  }
+}

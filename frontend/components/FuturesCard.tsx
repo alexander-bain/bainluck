@@ -10,6 +10,7 @@ import { isNonSportsCategory } from "@/lib/images";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
+import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -86,6 +87,11 @@ export default function FuturesCard({
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
   const topOutcomes = outcomes.slice(0, 5);
+  // #2662: some markets name every outcome with this market's own full title plus a
+  // suffix, so the rows read identically once truncated. Evaluate the all-or-nothing
+  // predicate over the WHOLE shipped set, not the sliced five — a market whose first
+  // five happen to be prefixed must not be stripped on the strength of a sample.
+  const outcomeLabels = outcomeDisplayNames(market.name, outcomes.map((o) => o.name));
   const isResolved = market.status === "resolved";
 
   const handlePinClick = (e: React.MouseEvent) => {
@@ -186,7 +192,7 @@ export default function FuturesCard({
                   isLeader={index === 0}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
-                  marketName={market.name}
+                  displayName={outcomeLabels[index]}
                 />
               </motion.div>
             ))}
@@ -228,14 +234,17 @@ function OutcomeRow({
   isLeader,
   isResolved,
   marketCategory,
-  marketName,
+  displayName,
 }: {
   outcome: FuturesOutcome;
   rank: number;
   isLeader: boolean;
   isResolved: boolean;
   marketCategory?: string | null;
-  marketName?: string;
+  /** The label to render (#2662). Required — the caller owns the strip decision,
+   *  because it needs the whole outcome set to make it. Defaulting this would let a
+   *  future call site silently render the un-stripped name with every test green. */
+  displayName: string;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
@@ -247,6 +256,12 @@ function OutcomeRow({
     <div className="flex items-center gap-2">
       {/* Rank or Entity Image */}
       {isNonSports ? (
+        // Deliberately the RAW name, not `displayName` (#2662): this is a Wikipedia
+        // entity lookup, not a label, and a stripped suffix like "Set 1 Winner" is not
+        // a better query than the full title. Provably a no-op for the strip
+        // population anyway — all 375 of those markets carry a sports
+        // `llm_sport_category` (372 table_tennis, 2 tennis, 1 cricket), so
+        // `isNonSportsCategory` is false and this branch never renders for them.
         <EntityImage type="wikipedia" name={outcome.name} size={20} className="flex-shrink-0" />
       ) : (
         <span className={cn(
@@ -262,11 +277,14 @@ function OutcomeRow({
       {/* Name + mini bar */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className={cn(
-            "text-sm truncate",
-            isLeader ? "font-medium text-text-primary" : "text-text-secondary",
-          )}>
-            {outcome.name}
+          <span
+            data-outcome-label
+            className={cn(
+              "text-sm truncate",
+              isLeader ? "font-medium text-text-primary" : "text-text-secondary",
+            )}
+          >
+            {displayName}
           </span>
           {outcome.is_winner && (
             <span className="text-[10px] bg-accent-live/15 text-accent-live px-1 py-0.5 rounded flex-shrink-0">
@@ -275,7 +293,7 @@ function OutcomeRow({
           )}
         </div>
         {/* Mini probability bar */}
-        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${outcome.name} probability`}>
+        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${displayName} probability`}>
           <motion.div
             className="h-full rounded-full"
             style={{
