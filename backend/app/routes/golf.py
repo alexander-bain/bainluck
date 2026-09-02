@@ -2267,24 +2267,68 @@ def _upcoming_from_schedule(
     return [item for _, item in dated[:limit]]
 
 
+#: The one key `GET /api/golf` serves its card from, written hourly by
+#: `app.tasks.precompute_category_pages._precompute_golf` with a 7,200 s TTL.
+#: Named (UX-P270) because a SECOND reader now exists: the progression table
+#: takes this payload as the authority for the win column, so that the two
+#: numbers a user sees on `/categories/golf` come from the same bytes. A reader
+#: that hardcoded the string could drift from the writer and fail silently open,
+#: which reads as "the fix did nothing" rather than as an error.
+GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
+
+
 @router.get("")
 async def get_golf_cached(
     db: AsyncSession = Depends(get_db),
 ):
-    """Return golf data (Redis-cached to avoid OOM on 512MB dyno)."""
+    """Return golf data (Redis-cached to avoid OOM on 512MB dyno).
+
+    Every payload this route serves is stamped with a per-tournament win receipt
+    (UX-P271 / CERT-746) so the progression table can bind its Win column to the
+    exact snapshot the caller is looking at. This response is HTTP-cacheable for
+    `max-age=300, stale-while-revalidate=60`, so "the card the browser is holding"
+    and "the card Redis holds now" are genuinely different objects, and the receipt
+    is what lets the other endpoint tell them apart.
+
+    Stamping is a pure function of the bytes being served, so it is applied on the
+    cache-hit path too: an unstamped payload left over from a previous deploy still
+    reaches the client with a usable receipt.
+    """
     import json as _json
     from app.tasks.redis_state import get_async_redis_client
+    from app.utils.golf_card_snapshot import SNAPSHOT_TTL_S, stamp_card_payload
 
     try:
         rc = get_async_redis_client()
-        cached = await rc.get("bainluck:category:golf")
+        cached = await rc.get(GOLF_CATEGORY_CACHE_KEY)
         await rc.aclose()
         if cached:
-            return _json.loads(cached)
+            payload = _json.loads(cached)
+            # No re-registration on a hit: the writer registered these bytes, and a
+            # receipt recomputed from the served payload resolves against them.
+            stamp_card_payload(payload)
+            return payload
     except Exception:
         pass
 
-    return await get_golf(db)
+    payload = await get_golf(db)
+
+    # Cache-miss rebuild. These bytes were never written to the card key, so
+    # nothing else will ever register them — but they are about to be served, and
+    # a served card that cannot be bound to is the defect this ships against.
+    try:
+        rc = get_async_redis_client()
+        try:
+            for key, body in stamp_card_payload(payload):
+                await rc.set(key, body, ex=SNAPSHOT_TTL_S)
+        finally:
+            await rc.aclose()
+    except Exception:
+        # Registration is best-effort: an unbindable receipt degrades to the
+        # echo-and-converge path, never to a failed page.
+        logger.debug("golf card snapshot registration failed", exc_info=True)
+
+    return payload
 
 
 async def get_golf(

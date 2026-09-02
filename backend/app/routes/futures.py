@@ -3,7 +3,6 @@
 import logging
 import os
 import re
-import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
@@ -37,14 +36,14 @@ router = APIRouter()
 # e.g., KXPGATOP10-ARPIPBM26 → suffix "ARPIPBM26"
 _KALSHI_TICKER_RE = re.compile(r"^[A-Z0-9]+-([A-Z0-9]{4,})$", re.IGNORECASE)
 
-# Non-decomposable letters that NFD normalization can't handle.
-# Must be transliterated before NFD strip — used in _progression_merge_key().
-_MERGE_KEY_TRANSLITERATIONS = str.maketrans({
-    "ø": "o", "Ø": "O",
-    "đ": "d", "Đ": "D",
-    "ł": "l", "Ł": "L",
-    "æ": "ae", "Æ": "AE",
-})
+# The participant-name normalizer moved to `app.utils.golf_card_snapshot` in
+# UX-P271, because the card receipt is computed over the keys it produces and a
+# receipt whose normalizer could drift from this endpoint's would name a map this
+# endpoint cannot apply. Imported under its original private name so every existing
+# caller, patch target and test reference keeps resolving.
+from app.utils.golf_card_snapshot import (  # noqa: E402
+    progression_name_key as _progression_name_key,
+)
 
 
 def _extract_kalshi_suffix(external_id: str) -> Optional[str]:
@@ -2533,6 +2532,17 @@ async def get_related_events(
 async def get_progression(
     market_id: int,
     top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
+    golf_card_receipt: Optional[str] = Query(
+        None,
+        max_length=64,
+        description=(
+            "Receipt of the GET /api/golf card snapshot the caller is displaying "
+            "(UX-P271). Golf only. Binds the Win column to that exact snapshot "
+            "rather than to whatever the cache holds at request time, which is not "
+            "the same thing once the card has been served from an HTTP cache. The "
+            "receipt actually applied is echoed back as `golf_card_receipt`."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2649,6 +2659,63 @@ async def get_progression(
             if tournament_names_match(source_tournament_name, candidate_name):
                 sibling_markets.append(candidate)
 
+    # Method 4: Cross-source sibling discovery (UX-P268 / #2661)
+    # Methods 1-3 stop as soon as they have found A sibling, which answers "does
+    # this tournament have other STAGES" but never asks "does it have other
+    # SOURCES". Omega European Masters is the worked case: the DataGolf prefix scan
+    # returns the four other DataGolf stages, so `len(sibling_markets) >= 2` and the
+    # Kalshi "Omega European Masters Winner" — priced, open, and blended into the
+    # /api/golf card the user is reading two lists above — is never looked for at
+    # all. Without this pass the blend below has nothing to blend and the table
+    # keeps publishing one source's raw price.
+    #
+    # Scoped so it only costs a query when it can pay: it runs solely when every
+    # market found so far shares the primary's source, it asks for the other
+    # sources by name, and it makes Postgres do the tournament-name narrowing
+    # instead of shipping 100 unrelated markets and their outcomes to Python.
+    # Measured on this tournament: 1 market / 162 outcomes in 13ms, against
+    # Method 3's unfiltered 47 / 3,266.
+    if (
+        len(sibling_markets) >= 2
+        and source_tournament_name
+        and len({m.source for m in sibling_markets}) < 2
+    ):
+        # `source_tournament_name` is data, so neutralize LIKE metacharacters —
+        # a tournament called "50_50 Open" must not match every 5-char prefix.
+        name_needle = (
+            source_tournament_name.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        cross_filters = [
+            FuturesMarket.llm_sport_category == sport_cat,
+            FuturesMarket.id != market_id,
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),  # Not game-level
+            FuturesMarket.source != market.source,
+            FuturesMarket.name.ilike(f"%{name_needle}%", escape="\\"),
+        ]
+        if market.resolution_date:
+            window = timedelta(days=30)
+            cross_filters.append(
+                FuturesMarket.resolution_date.between(
+                    market.resolution_date - window,
+                    market.resolution_date + window,
+                )
+            )
+        cross_result = await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(*cross_filters)
+            .limit(100)
+        )
+        for candidate in cross_result.scalars().unique().all():
+            if is_game_level_market(candidate.name):
+                continue
+            candidate_name = extract_tournament_name(candidate.name)
+            if tournament_names_match(source_tournament_name, candidate_name):
+                sibling_markets.append(candidate)
+
     # Deduplicate by market ID
     seen_ids: set[int] = set()
     unique_markets: list[FuturesMarket] = []
@@ -2663,12 +2730,30 @@ async def get_progression(
         unique_markets = [m for m in unique_markets if _is_golf_market(m)]
 
     # --- Classify each market into a stage ---
+    # The first market classified into a stage is that stage's PRIMARY: it alone
+    # decides which participants the stage has a row for. A further market at the
+    # same stage is SECONDARY — it contributes a price to participants that already
+    # merge, but never introduces a participant of its own.
+    #
+    # UX-P268 (#2661): a tournament can carry one stage from two sources (Omega
+    # European Masters has a Kalshi "Winner" and a DataGolf "- Winner"). Keeping only
+    # the first meant publishing one source's raw price while the /api/golf card
+    # published the blend, so one golfer read 5.8% on the card and 4.5% in the table.
+    # Letting the secondary market define rows too is NOT the fix: 15 of its 162
+    # outcomes do not merge and 7 of those outrank the display cut, so "Eugenio
+    # Chacarra" and "Eugenio Lopez-Chacarra" would both render, as would "Angel
+    # Ayora" and "Angel Ayora Fanegas".
     stage_markets: dict[str, FuturesMarket] = {}
+    stage_secondary_markets: dict[str, list[FuturesMarket]] = defaultdict(list)
     for m in unique_markets:
         stage_key = classify_market_stage(
             m.name, m.external_id, m.market_tier, stages
         )
-        if stage_key and stage_key not in stage_markets:
+        if not stage_key:
+            continue
+        if stage_key in stage_markets:
+            stage_secondary_markets[stage_key].append(m)
+        else:
             stage_markets[stage_key] = m
 
     if len(stage_markets) < 1:
@@ -2735,6 +2820,90 @@ async def get_progression(
                     p["conference"] = t_info["conference"]
                     p["record"] = t_info["record"]
 
+    # --- Blend same-stage sources into one number per participant ---
+    # "The blend is the product": where two sources price the same stage, a
+    # participant's number is the unweighted mean of the sources that name them —
+    # the same rule GET /api/golf uses for its card, so the two surfaces agree.
+    # A participant absent from the primary market is skipped, which is what keeps
+    # the row set identical to the single-source response. The mean is taken over
+    # every contributing source at once, so the published number does not depend on
+    # which market happened to be primary.
+    for stage_key, extra_markets in stage_secondary_markets.items():
+        prob_contrib: dict[str, list[float]] = defaultdict(list)
+        change_contrib: dict[str, list[float]] = defaultdict(list)
+        for m in extra_markets:
+            for o in m.outcomes:
+                merge_key = _progression_merge_key(o)
+                if merge_key not in participants:
+                    continue  # secondary-only participant: never becomes a row
+                if o.current_probability is not None:
+                    prob_contrib[merge_key].append(float(o.current_probability))
+                if o.probability_change_24h is not None:
+                    change_contrib[merge_key].append(float(o.probability_change_24h))
+
+        for merge_key, extra_probs in prob_contrib.items():
+            p = participants[merge_key]
+            primary_prob = p["probabilities"].get(stage_key)
+            sources = (
+                extra_probs if primary_prob is None
+                else [primary_prob, *extra_probs]
+            )
+            # Quantize each source to 3dp before averaging, then quantize the mean.
+            # This is not cosmetic: it is GET /api/golf's own arithmetic
+            # (`golf.py` rounds every per-source price to 3dp, means them, and
+            # rounds again), and reproducing it is the difference between the two
+            # surfaces agreeing and merely getting closer. Averaging the raw prices
+            # instead still left 4 of 15 golfers printing two different numbers —
+            # Wallace 5.7% against the card's 5.8% — because a 0.0002 gap survives
+            # into the first decimal the page renders. Single-source stages never
+            # reach this line, so their raw values are untouched.
+            blended = round(mean([round(v, 3) for v in sources]), 3)
+            p["probabilities"][stage_key] = blended
+            # Clinched/eliminated is a claim about the number we publish, so it is
+            # recomputed from the blend rather than left on the primary's verdict.
+            p["status"].pop(stage_key, None)
+            if blended >= 0.999:
+                p["status"][stage_key] = "clinched"
+            elif blended <= 0.001:
+                p["status"][stage_key] = "eliminated"
+
+        for merge_key, extra_changes in change_contrib.items():
+            p = participants[merge_key]
+            primary_change = p["changes_24h"].get(stage_key)
+            p["changes_24h"][stage_key] = mean(
+                extra_changes if primary_change is None
+                else [primary_change, *extra_changes]
+            )
+
+    # --- One clock: the card is the authority for the number it publishes ---
+    # UX-P270 / CERT-740. Applied AFTER the blend so it overrides it, and BEFORE
+    # the sort below so the table is ordered by the numbers it actually prints
+    # rather than by values the user never sees. Scoped to golf's `win` stage
+    # because that is the only cell `GET /api/golf` also publishes: every other
+    # stage, and every golfer the card does not carry, keeps the live blend and is
+    # left strictly fresher. See `_golf_card_win_probabilities` for why the card
+    # rather than this endpoint is the authority.
+    #
+    # UX-P271 / CERT-746: the page names WHICH card it is holding, because the one
+    # this process would read now is not necessarily the one on the user's screen.
+    applied_card_receipt: Optional[str] = None
+    if sport_cat == "golf" and "win" in stage_markets:
+        card_wins, applied_card_receipt = await _golf_card_win_probabilities(
+            source_tournament_name, golf_card_receipt
+        )
+        for merge_key, card_prob in card_wins.items():
+            p = participants.get(merge_key)
+            if p is None:
+                continue  # on the card, not in this market's field — never a row
+            p["probabilities"]["win"] = card_prob
+            # Terminal state is a claim about the number we publish, so it is
+            # recomputed from the published value rather than left on the blend's.
+            p["status"].pop("win", None)
+            if card_prob >= 0.999:
+                p["status"]["win"] = "clinched"
+            elif card_prob <= 0.001:
+                p["status"]["win"] = "eliminated"
+
     # Sort participants by highest-stage probability (rightmost stage first)
     stage_order = sorted(stage_markets.keys(), key=lambda k: next(
         (s["order"] for s in stages if s["key"] == k), 0
@@ -2767,7 +2936,129 @@ async def get_progression(
         "tournament_name": source_tournament_name,
         "stages": stages_response,
         "participants": sorted_participants,
+        # The card snapshot the Win column was actually bound to (UX-P271).
+        # Echoed rather than assumed: when this differs from the receipt the page
+        # sent, the page is holding a card this response could not bind to — an
+        # LRU eviction, or a client older than the deploy — and it re-reads the
+        # card past its HTTP cache so the two converge. Silence there would be the
+        # original defect wearing a fix's clothes.
+        "golf_card_receipt": applied_card_receipt,
     }
+
+
+async def _golf_card_win_probabilities(
+    tournament_name: Optional[str],
+    requested_receipt: Optional[str] = None,
+) -> tuple[dict[str, float], Optional[str]]:
+    """The win probabilities the card is publishing, and the receipt they came from.
+
+    Returns `(win_map, applied_receipt)`. The receipt is echoed to the caller so the
+    page can tell whether the table bound to the card it is actually holding; see
+    the module docstring of `app.utils.golf_card_snapshot` for why that matters.
+
+    UX-P270 / CERT-740. The blend above reproduces the card's ARITHMETIC, and that
+    is not enough to make the two numbers on `/categories/golf` agree, because they
+    are not computed at the same MOMENT. `GET /api/golf` serves
+    `bainluck:category:golf`, written hourly by the category precompute with a
+    7,200 s TTL; this endpoint reads `futures_outcomes.current_probability` live.
+    So the two surfaces read the same rows through different clocks and drift apart
+    whenever a price moves between the snapshot and the request — during play the
+    DataGolf poller rewrites those rows every 90 seconds. Reproducing the
+    arithmetic more exactly cannot close a gap that is made of time.
+
+    Two independently-clocked computations of one quantity cannot be made to agree;
+    only ONE authority can. This returns the card's own published numbers so the
+    win column can adopt them, which makes agreement true by construction rather
+    than true-when-nothing-moved. The card is the authority and not the reverse
+    because the reverse is unaffordable: `get_golf` is a ~1.5 s rebuild behind a
+    45 ms cached read, and `/api/golf` additionally ships
+    `max-age=300, stale-while-revalidate=60`, so even a live origin would be read
+    through a browser cache this endpoint does not share.
+
+    KNOWN AND DELIBERATE: the win column therefore inherits the card's staleness
+    for the golfers the card carries. That is a trade, and it is the right way
+    round — a user reading two different numbers for one golfer on one screen is
+    the reported defect (#2661), whereas both numbers being equally old is the
+    ordinary freshness budget of the page they are already reading. This does NOT
+    re-open CERT-686, which blocked serving the golf tournament HEADLINE field from
+    this cache: nothing here changes what the headline reads, and the rows the card
+    does not carry keep their live blended value.
+
+    UX-P271 / CERT-746 — WHICH card. "Adopt the card" and "adopt the card the
+    browser is holding" are different, because `/api/golf` ships
+    `public, max-age=300, stale-while-revalidate=60` while this endpoint sends no
+    `Cache-Control` at all. A page can therefore render a card response up to 360 s
+    old out of an HTTP cache while this request reads Redis now, and if the hourly
+    precompute landed in between, adopting "the current card" reintroduces exactly
+    the two numbers #2661 reports. UX-P270's page-side fingerprint cannot catch
+    that: it is computed from the card response alone, so it is perfectly stable
+    while the two clocks disagree.
+
+    So the page names the snapshot it is holding, by a receipt over that snapshot's
+    own contents, and this resolves THAT snapshot. The bind is exact at any card
+    age within the cache window, because a receipt cannot come to mean different
+    numbers — different numbers are a different receipt.
+
+    Fails open in every direction — no Redis, no payload, no matching tournament,
+    or a malformed entry all return `({}, None)` and leave the live blend in place.
+    A receipt that cannot be resolved (Redis here is an LRU and may evict) does NOT
+    silently fall through to a different snapshot's numbers pretending to be the
+    requested one: the current card is adopted and its OWN receipt is echoed, so
+    the mismatch is visible to the caller instead of being absorbed here.
+    """
+    if not tournament_name:
+        return {}, None
+
+    from app.utils.golf_card_snapshot import (
+        card_win_map,
+        card_win_receipt,
+        resolve_snapshot,
+        snapshot_key,
+    )
+
+    try:
+        import json as _json
+
+        from app.routes.golf import GOLF_CATEGORY_CACHE_KEY
+        from app.tasks.redis_state import get_async_redis_client
+
+        rc = get_async_redis_client()
+        try:
+            # The requested snapshot first: it is what the user is looking at.
+            # Only fall back to the current card when it cannot be resolved.
+            if requested_receipt:
+                pinned_raw = await rc.get(snapshot_key(requested_receipt))
+                pinned = resolve_snapshot(
+                    pinned_raw, requested_receipt, tournament_name
+                )
+                if pinned:
+                    return pinned, requested_receipt
+            raw = await rc.get(GOLF_CATEGORY_CACHE_KEY)
+        finally:
+            await rc.aclose()
+        if not raw:
+            return {}, None
+        payload = _json.loads(raw)
+    except Exception:
+        logger.debug("golf card authority unavailable", exc_info=True)
+        return {}, None
+
+    if not isinstance(payload, dict):
+        return {}, None
+    for entry in payload.get("tournaments") or []:
+        if not isinstance(entry, dict):
+            continue
+        card_name = entry.get("name")
+        if not card_name or not tournament_names_match(tournament_name, card_name):
+            continue
+        published = card_win_map(entry)
+        if not published:
+            return {}, None
+        # Recomputed from the map actually being applied rather than read off the
+        # payload's stamped field, so the echoed receipt always describes the
+        # numbers this response carries — even if the stamp were stale or absent.
+        return published, card_win_receipt(published)
+    return {}, None
 
 
 def _progression_merge_key(outcome: FuturesOutcome) -> str:
@@ -2784,27 +3075,11 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
     """
     if outcome.team_id:
         return f"team:{outcome.team_id}"
-    name = outcome.name or ""
-    # Strip "Yes: " / "No: " prefixes (Kalshi format)
-    name = re.sub(r"^(?:Yes|No)\s*[-:]\s*", "", name, flags=re.IGNORECASE)
-    # Strip wrapping quotes (Polymarket NegRisk format)
-    name = re.sub(r'^"(.*)"$', r"\1", name)
-    # Convert "Last, First" to "First Last" (DataGolf format)
-    comma_match = re.match(r"^(\w[\w'-]+),\s+(\w[\w'-]+.*)$", name, flags=re.UNICODE)
-    if comma_match:
-        name = f"{comma_match.group(2)} {comma_match.group(1)}"
-    # Strip diacritics: transliterate non-decomposable letters first (ø→o, đ→d),
-    # then NFD decomposition + remove combining marks for the rest (ü→u, é→e)
-    name = name.translate(_MERGE_KEY_TRANSLITERATIONS)
-    name = unicodedata.normalize("NFD", name)
-    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
-    name = name.lower().strip()
-    # Remove Jr./Sr./III suffixes
-    name = re.sub(r"\b(?:jr|sr|iii|ii|iv)\.?\b", "", name)
-    # Remove non-alphanumeric (keep spaces)
-    name = re.sub(r"[^a-z0-9\s]", "", name).strip()
-    name = re.sub(r"\s+", " ", name)
-    return f"name:{name}"
+    return _progression_name_key(outcome.name or "")
+
+
+# `_progression_name_key` is imported at the top of this module from
+# `app.utils.golf_card_snapshot`, which owns it as of UX-P271.
 
 
 @router.get("/{market_id}/probability-timeline")
