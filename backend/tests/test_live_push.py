@@ -336,3 +336,206 @@ class TestLiveGate:
         from app.routes.event_stream import HEARTBEAT_INTERVAL_S
 
         assert HEARTBEAT_INTERVAL_S * 2 < 55
+
+
+class FakePubSub:
+    """A pubsub that yields a scripted sequence, then silence forever."""
+
+    def __init__(self, messages=None):
+        self._messages = list(messages or [])
+        self.subscribed = []
+        self.unsubscribed = []
+        self.closed = False
+
+    async def subscribe(self, channel):
+        self.subscribed.append(channel)
+
+    async def unsubscribe(self, channel):
+        self.unsubscribed.append(channel)
+
+    async def close(self):
+        self.closed = True
+
+    async def get_message(self, ignore_subscribe_messages=False, timeout=None):
+        if self._messages:
+            return self._messages.pop(0)
+        return None
+
+
+class FakeRedisConn:
+    def __init__(self, pubsub):
+        self._pubsub = pubsub
+
+    def pubsub(self):
+        return self._pubsub
+
+    async def aclose(self):
+        pass
+
+
+class FakeRequest:
+    """`disconnect_after` passes before the client is reported gone."""
+
+    def __init__(self, disconnect_after=3):
+        self._left = disconnect_after
+
+    async def is_disconnected(self):
+        self._left -= 1
+        return self._left < 0
+
+
+async def _collect(event_id, pubsub, monkeypatch, disconnect_after=3):
+    from app.routes import event_stream as mod
+
+    monkeypatch.setattr(
+        "app.tasks.redis_state.get_async_redis_client",
+        lambda: FakeRedisConn(pubsub),
+    )
+    return [
+        chunk
+        async for chunk in mod._stream(
+            event_id, FakeRequest(disconnect_after)
+        )
+    ]
+
+
+class TestStreamOutput:
+    """The generator's actual bytes. Everything below is a class of bug that
+    leaves the wire looking correct while no client handler ever fires."""
+
+    @pytest.mark.asyncio
+    async def test_the_heartbeat_is_an_observable_named_event(
+        self, monkeypatch
+    ):
+        """THE bug this guards: a conventional `: ping` SSE comment keeps the
+        Heroku router from reaping the connection but fires NO handler in
+        EventSource. The client's silence watchdog would then be measuring "is
+        this market moving" instead of "is this server alive", and would tear
+        down a healthy stream on a quiet market."""
+        from app.routes import event_stream as mod
+
+        monkeypatch.setattr(mod, "HEARTBEAT_INTERVAL_S", 0.0)
+        out = "".join(await _collect(1, FakePubSub(), monkeypatch))
+        assert "event: heartbeat" in out
+        assert not out.startswith(": ping")
+        assert ": ping" not in out
+
+    @pytest.mark.asyncio
+    async def test_opens_with_a_retry_hint_and_an_open_event(
+        self, monkeypatch
+    ):
+        """`retry:` is what stops a browser hammering reconnects."""
+        out = "".join(await _collect(7, FakePubSub(), monkeypatch))
+        assert out.startswith("retry: ")
+        assert "event: open" in out
+
+    @pytest.mark.asyncio
+    async def test_subscribes_and_unsubscribes_the_events_own_channel(
+        self, monkeypatch
+    ):
+        """A leaked subscription is a slow resource leak on a shared loop."""
+        pubsub = FakePubSub()
+        await _collect(55, pubsub, monkeypatch)
+        assert pubsub.subscribed == ["live:event:55"]
+        assert pubsub.unsubscribed == ["live:event:55"]
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_a_published_frame_is_forwarded_as_a_probability_event(
+        self, monkeypatch
+    ):
+        from app.routes import event_stream as mod
+
+        fresh = _frame(
+            event_id=3,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        pubsub = FakePubSub(
+            [{"type": "message", "data": json.dumps(fresh)}]
+        )
+        out = "".join(await _collect(3, pubsub, monkeypatch))
+        assert "event: probability" in out
+        assert '"event_id": 3' in out or '"event_id":3' in out
+
+    @pytest.mark.asyncio
+    async def test_a_stale_frame_is_not_forwarded(self, monkeypatch):
+        """It would animate the number BACKWARDS to a price the market left."""
+        stale = _frame(
+            updated_at=(
+                datetime.now(timezone.utc)
+                - timedelta(seconds=MAX_FRAME_AGE_S + 60)
+            ).isoformat(),
+        )
+        pubsub = FakePubSub([{"type": "message", "data": json.dumps(stale)}])
+        out = "".join(await _collect(1, pubsub, monkeypatch))
+        assert "event: probability" not in out
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_message_does_not_kill_the_connection(
+        self, monkeypatch
+    ):
+        """This loop shares the web dyno with `/api/feed`. One bad message must
+        not raise out of the generator."""
+        pubsub = FakePubSub([{"type": "message", "data": "not json"}])
+        out = "".join(await _collect(1, pubsub, monkeypatch))
+        assert "event: open" in out
+        assert "event: probability" not in out
+
+    @pytest.mark.asyncio
+    async def test_a_frame_whose_status_left_live_closes_the_stream(
+        self, monkeypatch
+    ):
+        """A stream held open on a decided event never settles on screen."""
+        final = _frame(
+            status="completed",
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        pubsub = FakePubSub([{"type": "message", "data": json.dumps(final)}])
+        out = "".join(
+            await _collect(1, pubsub, monkeypatch, disconnect_after=50)
+        )
+        assert "event: closed" in out
+
+    @pytest.mark.asyncio
+    async def test_a_disconnected_client_ends_the_stream(self, monkeypatch):
+        """The common exit, and the one that actually frees the slot.
+
+        The `retry:`/`open` preamble is written before the loop starts, so a
+        client that is already gone still costs those two frames — that is the
+        contract, not a leak. What must NOT happen is the loop continuing to
+        heartbeat at a client nobody is reading.
+        """
+        from app.routes import event_stream as mod
+
+        monkeypatch.setattr(mod, "HEARTBEAT_INTERVAL_S", 0.0)
+        out = "".join(
+            await _collect(1, FakePubSub(), monkeypatch, disconnect_after=0)
+        )
+        assert "event: open" in out
+        assert "event: heartbeat" not in out
+
+    @pytest.mark.asyncio
+    async def test_the_connection_slot_is_released_on_every_exit(
+        self, monkeypatch
+    ):
+        """Leak this and the per-worker cap eventually refuses every client."""
+        from app.routes import event_stream as mod
+
+        before = mod._open_connections
+        await _collect(1, FakePubSub(), monkeypatch)
+        assert mod._open_connections == before
+
+    @pytest.mark.asyncio
+    async def test_a_slot_is_released_even_when_teardown_fails(
+        self, monkeypatch
+    ):
+        """A pubsub that raises on close must not strand a counted slot."""
+        from app.routes import event_stream as mod
+
+        class ExplodingPubSub(FakePubSub):
+            async def unsubscribe(self, channel):
+                raise ConnectionError("gone")
+
+        before = mod._open_connections
+        await _collect(1, ExplodingPubSub(), monkeypatch)
+        assert mod._open_connections == before
