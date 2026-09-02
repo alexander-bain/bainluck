@@ -992,6 +992,17 @@ export interface FeedFuturesData {
   /** Cross-source grouping key; a shape signal for container members. */
   group_id?: string | null;
   image_url?: string | null;
+  /**
+   * True pixel size of the raster `image_url` returns (LAT-P193/P195, #2614) —
+   * measured from the image bytes, NOT parsed from the url, because Pexels
+   * serves through imgix and the parameters do not name the pixels.
+   *
+   * Null means "not measured yet", which is the majority while the backfill
+   * drains. Every consumer must treat null as "carry on as before" rather than
+   * substituting a guess; `buildHeroSrcSet` is the worked example.
+   */
+  image_width?: number | null;
+  image_height?: number | null;
   hook_description?: string | null;
   temporal_badge?: "Live" | "Closing Soon" | "New" | null;
   /** #490 — confidence signal (1-3 bars): how much we trust the probability. */

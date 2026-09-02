@@ -269,3 +269,155 @@ describe("HERO_IMAGE_SIZES tracks the Discover masonry", () => {
     expect((1280 - 32 - 3 * 16) / 4).toBe(300);
   });
 });
+
+// ---------------------------------------------------------------------------
+// LAT-P195 (#2614) — THE MEASURED ARM.
+//
+// Everything above this line calls `buildHeroSrcSet(url)` with no second
+// argument. That is not legacy: it IS the un-measured arm, and it is the arm
+// the whole live population is in on day one, because `image_width` is nullable
+// and the backfill drains it over days. Leaving those assertions byte-for-byte
+// unchanged is the control — if passing a true width had altered the null path,
+// the pinned ladders above would have moved.
+//
+// CERT-709 blocked the storage half for having no consumer. This is the
+// consumer, and the property it adds is narrow: when the photo's real width is
+// known, the ladder is derived from THAT instead of from `ASPECT_FLOOR`. The
+// floor was never a fact about the photo — it was an admission that the url
+// does not name its pixels. Once they are measured, the admission is retired
+// for that photo and kept for every photo still unmeasured.
+describe("LAT-P195 — a measured raster replaces the floor", () => {
+  // The two shapes at their measured widths. `h=350` renders ~525 (aspect 1.5)
+  // and `h=650&w=940` renders 867 when the height binds first — both numbers
+  // are LAT-P189/P191 measurements of these exact families, not assumptions.
+  const HEIGHT_ONLY_TRUE = 525;
+  const WIDE_TRUE = 867;
+
+  it("h=350 gains the rung the floor was hiding", () => {
+    // The floor said 350 for a photo that is really 525, so every rung was
+    // derived from a width 33% too small and the ladder stopped one rung early.
+    // This is the "honest price" the CERT-705 note names, being paid back.
+    expect(buildHeroSrcSet(HEIGHT_ONLY, HEIGHT_ONLY_TRUE)).toBe(
+      [
+        "https://images.pexels.com/photos/8846076/pexels-photo-8846076.jpeg?auto=compress&cs=tinysrgb&h=200 300w",
+        "https://images.pexels.com/photos/8846076/pexels-photo-8846076.jpeg?auto=compress&cs=tinysrgb&h=280 420w",
+        `${HEIGHT_ONLY} 525w`,
+      ].join(", "),
+    );
+    expect(parseRungs(buildHeroSrcSet(HEIGHT_ONLY, HEIGHT_ONLY_TRUE)!)).toHaveLength(3);
+    expect(parseRungs(buildHeroSrcSet(HEIGHT_ONLY)!)).toHaveLength(2);
+  });
+
+  it("h=650&w=940 gains a rung and an honest top descriptor", () => {
+    expect(buildHeroSrcSet(WIDE, WIDE_TRUE)).toBe(
+      [
+        "https://images.pexels.com/photos/16587315/pexels-photo-16587315.jpeg?auto=compress&cs=tinysrgb&h=225&w=325 300w",
+        "https://images.pexels.com/photos/16587315/pexels-photo-16587315.jpeg?auto=compress&cs=tinysrgb&h=315&w=455 420w",
+        "https://images.pexels.com/photos/16587315/pexels-photo-16587315.jpeg?auto=compress&cs=tinysrgb&h=405&w=585 540w",
+        "https://images.pexels.com/photos/16587315/pexels-photo-16587315.jpeg?auto=compress&cs=tinysrgb&h=525&w=759 700w",
+        `${WIDE} 867w`,
+      ].join(", "),
+    );
+  });
+
+  it.each([
+    ["h=350 only", HEIGHT_ONLY, HEIGHT_ONLY_TRUE, 350],
+    ["h=650&w=940", WIDE, WIDE_TRUE, 650],
+  ])(
+    "%s — every descriptor becomes EXACT, not merely un-overstated",
+    (_label, url, trueWidth, urlHeight) => {
+      // THE SHIP, stated as a measurement. With the floor, a descriptor was a
+      // lower bound: a rung labelled 300w could hand back 450 real pixels, so
+      // the browser over-downloaded to be safe. With the true raster the label
+      // and the pixels agree, which is what lets a slot pick the rung it
+      // actually wants instead of the next one up.
+      const aspect = trueWidth / urlHeight;
+      for (const rung of parseRungs(buildHeroSrcSet(url, trueWidth)!)) {
+        expect(renderedWidthAt(rung.url, aspect)).toBe(rung.width);
+      }
+    },
+  );
+
+  it.each([
+    ["h=350 only", HEIGHT_ONLY, HEIGHT_ONLY_TRUE],
+    ["h=650&w=940", WIDE, WIDE_TRUE],
+  ])("%s — still never heavier than the url we request today", (_l, url, trueWidth) => {
+    // The structural guarantee is unchanged and must survive the new input:
+    // every rung is a SHRINK of the original request, and the top rung is the
+    // original string verbatim.
+    const rungs = parseRungs(buildHeroSrcSet(url, trueWidth)!);
+    expect(rungs.at(-1)!.url).toBe(url);
+    for (const rung of rungs.slice(0, -1)) {
+      const w = param(rung.url, "w");
+      const h = param(rung.url, "h");
+      if (w !== null) expect(w).toBeLessThan(param(url, "w")!);
+      if (h !== null) expect(h).toBeLessThan(param(url, "h")!);
+    }
+  });
+
+  it("never advertises more than the url's own `w` cap, even if the column disagrees", () => {
+    // Defence in depth. The stored width is documented as never larger than the
+    // real raster, but a stale row whose url was re-enriched could still name a
+    // bigger number, and imgix cannot serve wider than `w` asked for. Clamping
+    // to the cap can only move the ladder the safe way.
+    const rungs = parseRungs(buildHeroSrcSet(WIDE, 5000)!);
+    expect(rungs.at(-1)!.width).toBe(940);
+  });
+
+  it.each([
+    ["null — the state of the whole population on day one", null],
+    ["undefined — an old payload with no such key", undefined],
+    ["zero", 0],
+    ["negative", -100],
+    ["NaN from a malformed payload", NaN],
+  ])(
+    "falls back to EXACTLY today's ladder when the width is %s",
+    (_label, bad) => {
+      // The reason 0% coverage is safe to ship. Not "similar to" today's
+      // ladder — identical to it, compared against the same function with the
+      // argument omitted entirely.
+      for (const url of [WIDE, HEIGHT_ONLY]) {
+        expect(buildHeroSrcSet(url, bad as number | null)).toBe(buildHeroSrcSet(url));
+      }
+    },
+  );
+
+  it("a raster smaller than the smallest rung yields null, not a fabricated ladder", () => {
+    // The refusal path, reached through the new argument. A 240px photo has
+    // nothing below the 300px rung to offer, so there is no safe ladder and the
+    // hero renders exactly as it does today. `null` is a supported answer here,
+    // not a failure — callers are forbidden from substituting a fallback.
+    expect(buildHeroSrcSet(HEIGHT_ONLY, 240)).toBeNull();
+  });
+
+  it("a measured portrait cannot upscale, which the floor could not promise", () => {
+    // The one hole CERT-705 left open and named: `ASPECT_FLOOR = 1.0` is an
+    // assumption, and a PORTRAIT hero (aspect < 1) would overstate again by the
+    // ratio it falls short. A measured width closes it by construction — there
+    // is no aspect left to be wrong about.
+    const portraitTrue = 320; // 320x350, aspect 0.914 — below the 1.0 floor
+    const rungs = parseRungs(buildHeroSrcSet(HEIGHT_ONLY, portraitTrue)!);
+    for (const rung of rungs) {
+      expect(renderedWidthAt(rung.url, portraitTrue / 350)).toBeGreaterThanOrEqual(
+        rung.width,
+      );
+    }
+    // And the floor arm, on the same photo, is the case that made this a
+    // known-open risk rather than a solved one.
+    const floorRungs = parseRungs(buildHeroSrcSet(HEIGHT_ONLY)!);
+    const overstated = floorRungs.filter(
+      (r) => renderedWidthAt(r.url, portraitTrue / 350) < r.width,
+    );
+    expect(overstated.length).toBeGreaterThan(0);
+  });
+});
+
+/** Pixels Pexels really returns for a rung url, given the photo's aspect. */
+function renderedWidthAt(rungUrl: string, aspect: number): number {
+  const w = param(rungUrl, "w");
+  const h = param(rungUrl, "h");
+  const caps: number[] = [];
+  if (w !== null) caps.push(w);
+  if (h !== null) caps.push(h * aspect);
+  return Math.round(Math.min(...caps));
+}

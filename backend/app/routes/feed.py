@@ -6329,6 +6329,12 @@ def _futures_feed_load_options() -> list:
             FuturesMarket.group_id,
             FuturesMarket.group_type,
             FuturesMarket.image_url,
+            # LAT-P195 (#2614): the hero `srcset` needs the raster's TRUE width,
+            # not the one the URL implies. Same rule as `market_type` above —
+            # unprojected, these lazy-load inside the per-item serializer and
+            # empty the whole futures pool (gotcha #42).
+            FuturesMarket.image_width,
+            FuturesMarket.image_height,
             FuturesMarket.hook_description,
             FuturesMarket.hook_generated_at,
             FuturesMarket.hook_leader_at_generation,
@@ -6912,6 +6918,13 @@ async def _score_sports_mode_futures(
             "group_type": market.group_type,
             "discover_card": discover_card,
             "image_url": market.image_url,
+            # LAT-P195 (#2614): true raster size, so the client can build a
+            # `srcset` from the pixels the photo HAS instead of the conservative
+            # lower bound the URL can prove. Null means "not measured yet" and
+            # the client falls back to that bound — the same ladder it builds
+            # today. Defensive read for the same reason as `market_type` above.
+            "image_width": getattr(market, "image_width", None),
+            "image_height": getattr(market, "image_height", None),
             "hook_description": effective_hook,
             "temporal_badge": _compute_temporal_badge(
                 status=market.status,
@@ -8341,6 +8354,10 @@ async def _score_futures(
                 "group_type": market.group_type,
                 "discover_card": discover_card,
                 "image_url": market.image_url,
+                # LAT-P195 (#2614): see the sibling serializer. Both surfaces
+                # carry it or the Sports hero silently keeps the old ladder.
+                "image_width": getattr(market, "image_width", None),
+                "image_height": getattr(market, "image_height", None),
                 "hook_description": effective_hook,
                 "temporal_badge": _compute_temporal_badge(
                     status=market.status,

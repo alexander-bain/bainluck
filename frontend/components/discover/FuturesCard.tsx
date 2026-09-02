@@ -135,9 +135,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   const resolveText = resolvesLabel(data.resolution_date);
   const hasImage = !!data.image_url;
   // LAT-P191 (#1636, ruling on latency-022 = option b). Pure function of the
-  // url, so SSR and hydration agree; `null` means "no safe ladder", and the
-  // hero then renders exactly as it did before.
-  const heroSrcSet = data.image_url ? buildHeroSrcSet(data.image_url) : null;
+  // url and the measured raster width, so SSR and hydration agree; `null` means
+  // "no safe ladder", and the hero then renders exactly as it did before.
+  //
+  // LAT-P195 (#2614): `image_width` is the photo's TRUE width when the backfill
+  // has reached it and null until then. Passing it through is the whole ship —
+  // with it the ladder is derived from the pixels the photo has, without it
+  // from the conservative bound the url can prove, which is today's behaviour.
+  const heroSrcSet = data.image_url
+    ? buildHeroSrcSet(data.image_url, data.image_width)
+    : null;
   const outcomesAreDate = data.top_outcomes?.some((o) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}/i.test(o.name));
   // L2-65: a winner-field market that IS an event concept (e.g. a tennis
   // tournament winner) links into the richer /event/[key] surface; everything

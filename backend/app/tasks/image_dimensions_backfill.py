@@ -34,6 +34,7 @@ zero work once the population is covered.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -97,30 +98,127 @@ async def _measure_url(client: httpx.AsyncClient, url: str) -> tuple[int, int] |
         return dimensions_from_header(bytes(buffer))
 
 
+# Which photos still need measuring. Kept as a module constant so the guard can
+# run THIS string against a real engine rather than restating the predicate in
+# the test, where the two could quietly drift apart.
+_SELECT_SQL = """
+    SELECT image_url
+    FROM futures_markets
+    WHERE image_url IS NOT NULL
+      AND (image_width IS NULL OR image_height IS NULL)
+      AND status IN ('open', 'active')
+    GROUP BY image_url
+    ORDER BY MAX(volume_24h) DESC NULLS LAST
+    LIMIT :limit
+"""
+
+_STORE_SQL = """
+    UPDATE futures_markets AS fm
+    SET image_width = v.w, image_height = v.h
+    FROM (
+        SELECT
+            p->>'url' AS url,
+            (p->>'w')::int AS w,
+            (p->>'h')::int AS h
+        FROM jsonb_array_elements(CAST(:payload AS jsonb)) AS p
+    ) AS v
+    WHERE fm.image_url = v.url
+      AND (fm.image_width IS DISTINCT FROM v.w OR fm.image_height IS DISTINCT FROM v.h)
+"""
+
+# Bound as CAST(:payload AS jsonb), never `:payload::jsonb` — SQLAlchemy's bind
+# regex skips a param followed by `::`, so that spelling reaches asyncpg
+# unbound and dies on "syntax error at or near :".
+_STORE_SQL_TEXT = text(_STORE_SQL)
+_SELECT_SQL_TEXT = text(_SELECT_SQL)
+
+
+async def _store_dimensions(sized: list[tuple[str, int, int]]) -> tuple[int, int]:
+    """Persist measured dimensions. Returns (urls stored, market rows written).
+
+    ONE STATEMENT PER PASS, NOT ONE PER URL (LAT-P193-BACKFILL-INDEX-BUDGET).
+    `futures_markets.image_url` carries no index and should not get one: it is a
+    long text column rewritten by every enrichment, and the only reader that
+    would use the index is this 6-hourly task. So the budget question is not
+    "how fast is one lookup" but "how many lookups does a pass make" — and 150
+    separate `WHERE image_url = :url` updates make 150 passes over the table,
+    where joining the whole measured batch against it makes one. That is the
+    cost fixed at the source, with no migration and no index to maintain.
+
+    The `IS DISTINCT FROM` guard replaces the old `image_width IS NULL` guard.
+    Overwriting is now deliberate — a measured pair supersedes the width
+    `enrich_tmdb` declares from a URL path — and the guard keeps the write
+    idempotent, so `rowcount` counts rows that actually changed rather than
+    rows that were merely visited.
+
+    A URL whose market has since been re-enriched to a different photo simply
+    does not match, which is the correct outcome: those dimensions describe an
+    image that row no longer shows.
+    """
+    if not sized:
+        return 0, 0
+
+    payload = json.dumps([{"url": u, "w": w, "h": h} for u, w, h in sized])
+    try:
+        async with get_task_session() as session:
+            result = await session.execute(_STORE_SQL_TEXT, {"payload": payload})
+            await session.commit()
+        return len(sized), result.rowcount or 0
+    except Exception as e:  # noqa: BLE001 — a bad batch must not discard good reads
+        logger.warning(
+            "image dims: batched write of %d urls failed (%s); retrying per-url",
+            len(sized),
+            e,
+        )
+
+    # Fall back to one statement per URL. This is the slow path the batch exists
+    # to avoid, and it runs only when the batch itself failed — at which point
+    # salvaging the reads we already paid for is worth more than the scans.
+    stored = 0
+    rows = 0
+    for url, width, height in sized:
+        try:
+            async with get_task_session() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        UPDATE futures_markets
+                        SET image_width = :w, image_height = :h
+                        WHERE image_url = :url
+                          AND (image_width IS DISTINCT FROM :w
+                               OR image_height IS DISTINCT FROM :h)
+                        """
+                    ),
+                    {"w": width, "h": height, "url": url},
+                )
+                await session.commit()
+            stored += 1
+            rows += result.rowcount or 0
+        except Exception as e:  # noqa: BLE001 — one bad photo never wipes the pass
+            logger.warning("image dims: write failed for %s: %s", url, e)
+    return stored, rows
+
+
 async def backfill_image_dimensions(limit: int = 150) -> dict:
     """Measure and store dimensions for up to `limit` distinct un-sized images.
 
     Open markets first and highest 24h volume first, so the photos a user is
     most likely to actually see are sized before the long tail.
+
+    ELIGIBILITY IS "EITHER COLUMN MISSING", NOT "WIDTH MISSING".
+    `enrich_tmdb` writes a width it can read straight out of the TMDB path and
+    leaves the height NULL for this task to measure. A `image_width IS NULL`
+    filter silently excludes exactly those rows, so the height the writer's
+    comment promises would never arrive — the whole TMDB population would sit
+    half-sized forever. Selecting on either column being NULL is what makes that
+    promise true. A re-measure of an already-sized row is not a cost worth
+    avoiding here: the population is bounded and a measured pair supersedes a
+    declared one, so the write below deliberately overwrites both columns.
     """
     stats = {"urls": 0, "measured": 0, "markets_updated": 0, "failed": 0}
 
     async with get_task_session() as session:
-        result = await session.execute(
-            text(
-                """
-                SELECT image_url
-                FROM futures_markets
-                WHERE image_url IS NOT NULL
-                  AND image_width IS NULL
-                  AND status IN ('open', 'active')
-                GROUP BY image_url
-                ORDER BY MAX(volume_24h) DESC NULLS LAST
-                LIMIT :limit
-                """
-            ),
-            {"limit": limit},
-        )
+        result = await session.execute(_SELECT_SQL_TEXT, {"limit": limit})
         urls = [row[0] for row in result.all()]
 
     if not urls:
@@ -131,6 +229,7 @@ async def backfill_image_dimensions(limit: int = 150) -> dict:
         stats["terminal"] = _terminal_for(0, 0)
         return stats
 
+    sized: list[tuple[str, int, int]] = []
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         for url in urls:
             stats["urls"] += 1
@@ -145,30 +244,15 @@ async def backfill_image_dimensions(limit: int = 150) -> dict:
                 stats["failed"] += 1
                 continue
 
-            width, height = size
-            try:
-                # Every market sharing this exact URL gets the same raster.
-                async with get_task_session() as session:
-                    updated = await session.execute(
-                        text(
-                            """
-                            UPDATE futures_markets
-                            SET image_width = :w, image_height = :h
-                            WHERE image_url = :url
-                              AND image_width IS NULL
-                            """
-                        ),
-                        {"w": width, "h": height, "url": url},
-                    )
-                    await session.commit()
-                stats["markets_updated"] += updated.rowcount or 0
-                stats["measured"] += 1
-            except Exception as e:  # noqa: BLE001
-                logger.warning("image dims: write failed for %s: %s", url, e)
-                stats["failed"] += 1
-                continue
-
+            sized.append((url, size[0], size[1]))
             await asyncio.sleep(0.2)
+
+    stored, rows = await _store_dimensions(sized)
+    stats["measured"] += stored
+    stats["markets_updated"] += rows
+    # A photo we read but could not persist is a failure of the pass, not a
+    # success: the next run has to fetch it again.
+    stats["failed"] += len(sized) - stored
 
     stats["terminal"] = _terminal_for(stats["urls"], stats["measured"])
 

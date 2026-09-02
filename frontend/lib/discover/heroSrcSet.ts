@@ -126,12 +126,43 @@ function readIntParam(params: URLSearchParams, key: string): number | null {
 }
 
 /**
+ * A measured raster width, or `null` when we have not measured this photo.
+ *
+ * Anything that is not a positive finite number is `null` — a zero, a NaN from
+ * a malformed payload, or a negative would otherwise flow into the scale factor
+ * below and produce rungs that request a raster that cannot exist.
+ */
+function measuredWidth(raster: number | null | undefined): number | null {
+  if (typeof raster !== "number" || !Number.isFinite(raster) || raster <= 0) {
+    return null;
+  }
+  return Math.round(raster);
+}
+
+/**
  * Build a `srcset` for a Discover hero url, or `null` when there is nothing
  * safe to build — an unrecognised host, no dimension parameter to scale, or a
  * raster already smaller than the smallest rung. `null` means "render exactly
  * as before"; callers must not fabricate a fallback.
+ *
+ * `rasterWidth` is the TRUE width of the image this url returns, measured from
+ * the image bytes at ingest and served on the feed payload as `image_width`
+ * (LAT-P193/P195, #2614). Pass it when it is known and `null` when it is not.
+ *
+ * WHY IT IS OPTIONAL, AND WHY NULL IS THE SAFE SIDE.
+ * The column is nullable and starts empty for the whole live population; the
+ * backfill drains it over days. So the interesting case is not the measured one
+ * — it is the un-measured one, and that case must be EXACTLY today's behaviour.
+ * It is: with `rasterWidth` null this function computes the same conservative
+ * `ASPECT_FLOOR` bound it computes now, builds the same ladder, and returns the
+ * same string. 0% coverage is therefore "no improvement yet", never a
+ * regression, and the CERT-701 upscale defect stays unreachable at every
+ * coverage level rather than only at the end of the backfill.
  */
-export function buildHeroSrcSet(url: string): string | null {
+export function buildHeroSrcSet(
+  url: string,
+  rasterWidth?: number | null,
+): string | null {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -154,7 +185,24 @@ export function buildHeroSrcSet(url: string): string | null {
   if (width !== null) bounds.push(width);
   if (height !== null) bounds.push(Math.round(height * ASPECT_FLOOR));
   if (bounds.length === 0) return null;
-  const floorWidth = Math.min(...bounds);
+
+  // WHEN THE RASTER HAS BEEN MEASURED, THE GUESS IS OVER.
+  // `ASPECT_FLOOR` exists only because the url does not name its own pixels.
+  // `image_width` does: it is the width THIS url delivered, read from the bytes
+  // it returned, so it replaces the assumption rather than joining it. The
+  // `w` cap is still honoured, because imgix cannot serve wider than `w` asked
+  // for and a stored value above it would describe some other render — taking
+  // the min can only move the ladder the safe way.
+  //
+  // This is what buys back the price the CERT-705 note above calls "honest":
+  // on the `h=350` family the floor said 350 where the photo is really ~525, so
+  // every rung was derived from a width 33% too small and the ladder was one
+  // rung short. Measured, the rungs land on the pixels the slot actually wants.
+  const measured = measuredWidth(rasterWidth);
+  const floorWidth =
+    measured !== null
+      ? Math.min(measured, width ?? measured)
+      : Math.min(...bounds);
 
   const smaller = CANDIDATE_WIDTHS.filter((candidate) => candidate < floorWidth);
   if (smaller.length === 0) return null;
@@ -172,7 +220,9 @@ export function buildHeroSrcSet(url: string): string | null {
   // `floorWidth`, NOT the width it probably renders at, which is the "never
   // softer" half: a browser that needs more than `floorWidth` has nothing above
   // this rung to climb to, and picking it hands back at least `floorWidth` real
-  // pixels by the definition of the floor.
+  // pixels by the definition of the floor. When the raster has been measured
+  // that descriptor stops being a floor and becomes the exact width — still
+  // never an over-statement, which is the only property the guarantee needs.
   rungs.push(`${url} ${floorWidth}w`);
   return rungs.join(", ");
 }

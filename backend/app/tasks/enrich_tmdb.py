@@ -217,6 +217,11 @@ async def enrich_tmdb_images(limit: int = 50):
                 # old photo's size describing the new image. TMDB names the
                 # rendered width in the path and honours it exactly; the height
                 # is not derivable here and is left for the backfill to measure.
+                # That handoff only works because `image_dimensions_backfill`
+                # selects rows with EITHER column NULL. Narrowing it back to
+                # `image_width IS NULL` strands every row written here, since
+                # this writer always sets a width — guarded by
+                # test_backfill_image_dimensions.py.
                 values["image_width"] = tmdb_declared_width(url)
                 values["image_height"] = None
                 stats["found"] += 1
