@@ -144,6 +144,45 @@ describe("ANTI-DRIFT: the unit is interpreted in exactly one place", () => {
     expect(src).not.toMatch(/Math\.round\(\s*m\s*\*\s*100\s*\)/);
   });
 
+  // UX-P274 (#2672) — the eighth call site, found three weeks after UX-P048
+  // shipped. `/golf`'s "Biggest Movers (24h)" strip still ran its own
+  // `Math.abs(Math.round(mover.movement_24h * 100))`, so it printed whole
+  // points while every other renderer printed one decimal — including
+  // `TournamentCard` ~600px below it on the same page. It was also asymmetric:
+  // `Math.round` is half-up toward +Infinity, so `Math.round(-0.5)` is `-0`,
+  // and the backend admits a mover at exactly `abs(movement_24h) >= 0.005`
+  // (`routes/golf.py`). The smallest downward move the producer can admit was
+  // therefore the one value guaranteed to render "0%", in red, under a down
+  // arrow. Rendered proof: `__tests__/golfMoversPrecisionUxp274.test.tsx`.
+  it("the golf movers strip delegates the conversion instead of restating it", () => {
+    const src = read("components/golf/MoversStrip.tsx");
+
+    // Scope the scan to the component itself, so neither an unrelated `* 100`
+    // nor an unrelated absence of one elsewhere in the file can decide this.
+    const start = src.indexOf("export function MoversStrip");
+    // A scan that cannot find its subject must RAISE, not pass vacuously —
+    // if the component is renamed or moved, this test has stopped guarding
+    // anything and must say so rather than going quietly green.
+    expect(start).toBeGreaterThan(-1);
+    const raw = src.slice(start, src.indexOf("\n}", start));
+
+    // Strip comments before matching. The rule is about what the component
+    // COMPUTES, and the note above the fixed line necessarily quotes the
+    // arithmetic it replaced — scanning prose as if it were code made this
+    // test fail on its own explanation. (The same conflation in the other
+    // direction is how a `toContain` guard passes because a docstring
+    // mentions the symbol.)
+    const body = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    // The strip cannot remove everything, or the assertions below are vacuous.
+    expect(body).toContain("movers.map");
+
+    expect(body).toContain("movementPoints(mover.movement_24h)");
+    expect(body).toContain("formatMovementPoints(mover.movement_24h)");
+    // The two forms the old line took, neither of which may come back.
+    expect(body).not.toMatch(/movement_24h\s*\*\s*100/);
+    expect(body).not.toMatch(/Math\.round/);
+  });
+
   it("both surfaces state their threshold in POINTS, not as a bare fraction", () => {
     expect(read("components/discover/FuturesCard.tsx")).toContain(
       "HERO_MIN_MOVEMENT_POINTS",
