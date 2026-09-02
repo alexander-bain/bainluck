@@ -169,6 +169,13 @@ export interface MatchListEntry {
   startIsTbd: boolean;
   /** ESPN's live state for the fixture, or `null` when it carries none (Q463). */
   liveState: "in_progress" | "upcoming" | null;
+  /**
+   * ESPN's words for that state — "3rd Set" (#2550). Read ONLY alongside
+   * `liveState === "in_progress"`: on an upcoming row the same field carries
+   * the full scheduled sentence ("Tue, September 1st at 9:00 PM EDT"), which
+   * is why `liveMatchLabel` refuses it rather than the row printing it.
+   */
+  statusDetail: string | null;
   drawLabel: string | null;
   sides: [MatchListSide, MatchListSide];
   decided: boolean;
@@ -266,6 +273,40 @@ function pairKey(a: string, b: string): string {
  * silence IS the information, and "has not moved" was a sentence saying
  * nothing three times over.
  */
+/** The word a live row falls back to when ESPN has no better one (#2550). */
+export const LIVE_MATCH_FALLBACK_LABEL = "LIVE";
+
+/**
+ * What the badge on a match being played RIGHT NOW says — or `null` when the
+ * row is not one (#2550).
+ *
+ * The shopper found the hub printing "4:05 PM" over a match four hours into
+ * its third set. The server had said `in_progress` and "3rd Set" on that row
+ * all along; the renderer read neither. A stale start time is worse than no
+ * time: a reader who comes back at 4:05 has missed two sets.
+ *
+ * `statusDetail` IS NOT TRUSTED ON ITS FACE. The same field on an `upcoming`
+ * row carries the whole scheduled sentence — "Tue, September 1st at 9:00 PM
+ * EDT" — and ESPN flips `state` to `in` on its own cadence, so a row can be
+ * live for a beat while its detail is still the schedule. A detail that still
+ * reads like one (a clock, an "at", or simply too long to be "3rd Set") is
+ * refused and the row says the word instead. Refusing costs the reader "3rd
+ * Set"; accepting puts a date inside a red LIVE pill.
+ *
+ * `decided` short-circuits because a finished match is a result, not a state.
+ */
+export function liveMatchLabel(entry: {
+  liveState: "in_progress" | "upcoming" | null;
+  statusDetail: string | null;
+  decided: boolean;
+}): string | null {
+  if (entry.liveState !== "in_progress" || entry.decided) return null;
+  const detail = (entry.statusDetail ?? "").trim();
+  const readsAsSchedule =
+    detail.length > 24 || / at /i.test(detail) || /\d{1,2}:\d{2}/.test(detail);
+  return detail === "" || readsAsSchedule ? LIVE_MATCH_FALLBACK_LABEL : detail;
+}
+
 export function matchDetailNote(entry: {
   coherent: boolean;
   decided: boolean;
@@ -388,6 +429,7 @@ export function matchListFromSlate(
       scheduledDate: match.scheduled_date ?? null,
       startIsTbd: match.start_is_tbd === true,
       liveState: match.live_state ?? null,
+      statusDetail: match.status_detail ?? null,
       drawLabel: match.draw_label ?? null,
       sides,
       decided,
@@ -527,6 +569,7 @@ export function matchListFromBracket(
         scheduledDate: joined?.scheduled_date ?? null,
         startIsTbd: joined?.start_is_tbd === true,
         liveState: joined?.live_state ?? null,
+        statusDetail: joined?.status_detail ?? null,
         drawLabel: joined?.draw_label ?? null,
         sides,
         decided,

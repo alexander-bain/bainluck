@@ -8,6 +8,7 @@ import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   defaultMatchRound,
+  liveMatchLabel,
   matchRoundPills,
   matchRoundReconciliation,
   matchesInRound,
@@ -326,9 +327,14 @@ function MatchRow({
    *  has no `events` row to route to. Never a tournament-private URL. */
   matchHref: string | null;
 }) {
-  const time = entry.scheduledDate
-    ? formatMatchTime(entry.scheduledDate, new Date(), entry.startIsTbd)
-    : null;
+  /* #2550. A match being played does not get to advertise a start time. The
+     badge REPLACES the clock rather than sitting beside it — "LIVE · 4:05 PM"
+     is the same wrong fact with a correct one stapled to it. */
+  const liveLabel = liveMatchLabel(entry);
+  const time =
+    liveLabel === null && entry.scheduledDate
+      ? formatMatchTime(entry.scheduledDate, new Date(), entry.startIsTbd)
+      : null;
   const names = entry.sides.map((side) => side.displayName).join(" v ");
 
   /* #2452: ONE rounding for the pair, here, where both sides are in scope. */
@@ -358,8 +364,22 @@ function MatchRow({
         dataAttrs={{ "data-match-card": entry.id }}
       >
         <div className="mb-1 flex items-center gap-2 text-[10.5px] uppercase tracking-[0.06em] text-text-muted">
+          {liveLabel !== null && (
+            <span
+              className="inline-flex items-center gap-1 rounded bg-accent-live/15 px-1.5 py-0.5 font-semibold text-accent-live"
+              data-testid="match-live"
+            >
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 rounded-full bg-accent-live motion-safe:animate-pulse"
+              />
+              {liveLabel}
+            </span>
+          )}
           {time && <span className="tabular-nums">{time}</span>}
-          {time && entry.drawLabel && <span aria-hidden="true">·</span>}
+          {(liveLabel !== null || time) && entry.drawLabel && (
+            <span aria-hidden="true">·</span>
+          )}
           {entry.drawLabel && <span>{entry.drawLabel}</span>}
           {entry.freshnessLabel !== null && (
             <span
