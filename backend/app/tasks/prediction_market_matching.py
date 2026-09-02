@@ -18,10 +18,6 @@ from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
 
 from app.tasks.base import get_task_session
-from app.utils.event_completion import (
-    TICKER_DERIVED_COMMENCE_SOURCE,
-    commence_time_is_a_reported_start,
-)
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 from app.utils.prediction_market_matching import (
     is_game_level_market,
@@ -38,7 +34,6 @@ from app.utils.prediction_market_matching import (
     find_moneyline_outcome,
     feeds_win_prob_blend,
     is_combat_fight_ticker,
-    is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
@@ -573,37 +568,7 @@ def auto_create_commence_time(market, fallback):
         return fallback, None
     if not auto_create_self_refutes(market, fallback):
         return fallback, None  # already coherent — change nothing
-    return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
-
-
-def auto_create_status(commence_time, commence_time_source, now) -> str:
-    """The status an auto-created row should be BORN in. Pure: no DB.
-
-    q076, and this is the OTHER DOOR into the frozen-final-score class.
-    ``espn_sync._transition_event_statuses_impl`` promoting ``scheduled -> live``
-    every 60s is the one everybody looks at; this line creates rows already live,
-    and for a ticker-derived time it does so almost every time.
-
-    :func:`auto_create_commence_time` returns the ticker's DATE, which has no
-    time-of-day and therefore resolves to **midnight UTC**. Every auto-create
-    that happens after midnight on the ticker's own day then satisfies
-    ``commence_time <= now``, so the row is born ``live`` for a match played that
-    AFTERNOON — and from there the staleness nets settle it at the sport's
-    maximum duration with no score, exactly as if it had been promoted.
-
-    Measured on production 2026-09-01: of every event ever stamped
-    ``kalshi_ticker``, 705 are ``closed`` and **all 705 are unscored**. Refusing
-    to birth this population live cannot cost a real result, because it has never
-    produced one.
-
-    The predicate is shared with the promotion gate rather than restated, so the
-    two doors cannot drift on what counts as a start. Anything else — including a
-    ``None`` source, which is most of the table — keeps the original rule
-    untouched.
-    """
-    if not commence_time_is_a_reported_start(commence_time_source):
-        return "scheduled"
-    return "live" if commence_time <= now else "scheduled"
+    return ticker_time, "kalshi_ticker"
 
 
 def auto_create_self_refutes(market, commence_time) -> bool:
@@ -1280,12 +1245,7 @@ MAX_KALSHI_SEGMENT_ROWS = 5000
 #: with names parsed out of a market title ("Wu" / "Walton"). Any other non-null
 #: provenance means the event came from a real schedule (`odds_api`, `espn`,
 #: `statpal`), which is what the draw register and the tournament page point at.
-#:
-#: q076 moved the literal to `app.utils.event_completion`, where the two status
-#: clocks now read it as well. Re-exported under the old private name so this
-#: module's reconciliation rule and those clocks can never disagree about which
-#: provenance is derived — one string, three readers.
-_TICKER_DERIVED_COMMENCE_SOURCE = TICKER_DERIVED_COMMENCE_SOURCE
+_TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
 
 
 def _choose_segment_event(event_ids, provenance: dict) -> tuple:
@@ -1979,41 +1939,10 @@ async def _match_prediction_markets(limit: int = 500):
                     # the same function the link path uses — the ticker's clock is
                     # US Eastern, and reading it as UTC unlinked every MLB game
                     # market on every run.
-                    #
-                    # Q504-b: Kalshi tennis match segments are exempt for the same
-                    # reason combat fights are, and the measurement is on the
-                    # record. `KXATPMATCH-26AUG30FERMUS` carries the TOURNAMENT
-                    # SEGMENT's date; Fery played Musetti on 2026-09-01, 48h after
-                    # the `26AUG30` in its own ticker. Every one of its five prop
-                    # siblings carries that same stale date and none of them ever
-                    # reaches this check — props `continue` on the
-                    # `feeds_win_prob_blend` gate three lines up. So this arm fired
-                    # on exactly one market per tennis match: THE WINNER, the only
-                    # one that writes the blend.
-                    #
-                    # The result was a fight between two phases of this same task.
-                    # `_reconcile_kalshi_match_segments` (Q435) adopts the winner
-                    # onto the event its segment siblings already hold — an
-                    # id-anchored link, ruling 048 arm A — and then, seconds later
-                    # in the same run, this unlinked it again. Measured 2026-09-01
-                    # 22:47Z: adopted=2 against phase2_date_unlinked=27, and 15 open
-                    # ATP/WTA match-winner markets sitting unlinked beside linked
-                    # prop siblings. Downstream, those 15 events hold Kalshi PROPS
-                    # ONLY, so `compute_source_home_probability` returns None, the
-                    # WS consumer never subscribes the winner ticker (it selects on
-                    # `event_id IS NOT NULL`), and the hero's Kalshi number freezes
-                    # at whatever the last transient link happened to stamp.
-                    #
-                    # A date test cannot adjudicate this link: the segment token
-                    # already did, with the provider's own id. Declining here does
-                    # not loosen the LINK path — Phase 1 still refuses these on the
-                    # same predicate, and the only thing that may link them remains
-                    # the id-anchored reconciler.
                     ticker_date = extract_game_date_from_ticker(market.external_id)
                     _prefix = _kalshi_prefix(market.external_id)
                     if (
                         not is_combat_fight_ticker(market.external_id)
-                        and not is_kalshi_match_segment_ticker(market.external_id)
                         and _ticker_date_conflicts_with_event(
                             ticker_date, market.event_commence_time, _prefix
                         )
@@ -2807,7 +2736,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
-    status = auto_create_status(commence_time, commence_source, now)
+    status = "live" if commence_time <= now else "scheduled"
     external_id = f"pm_{market.source}_{market.external_id}"
 
     from app.services.event_registry import (

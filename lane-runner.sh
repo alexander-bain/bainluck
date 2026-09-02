@@ -139,7 +139,7 @@ while true; do
     # Fresh headless session per queue. Timeout guards a hung session; state is
     # in handoff files, so a killed session resumes via its own report + re-stage.
     ( timeout "$SESSION_TIMEOUT" claude --dangerously-skip-permissions --verbose \
-        --output-format stream-json -p "$(cat "$RUN")" \
+        --output-format stream-json -p "$(cat "$HANDOFF/STANDING-NOTICES.md" 2>/dev/null; echo; cat "$RUN")" \
         2>&1 | python3 -u -c "$FMT" | tee -a "$LOG"
       # PIPESTATUS MUST be read inside the subshell. Read outside it, the array
       # holds the subshell's OWN status — i.e. tee's — so a timeout-124 or a

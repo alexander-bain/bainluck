@@ -181,7 +181,6 @@ from app.utils.labeling_queue import (
     load_reviewed_ranking_keys as _load_reviewed_ranking_keys,
     review_key_for_feed_item as _review_key_for_feed_item,
 )
-from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.outcome_display import (
     display_rank_order,
@@ -4044,11 +4043,8 @@ def _apply_card_percents(top_outcomes_data: list[dict]) -> str | None:
 def _top_outcomes_for_trace(
     market: FuturesMarket,
 ) -> tuple[list[dict], str | None, float | None]:
-    # Q480: one condition, one outcome. The TRACE must agree with the card it
-    # explains — a debug view that still shows the dropped leg would send the next
-    # reader hunting a row the feed no longer serves.
     sorted_outcomes = sorted(
-        drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+        market.outcomes,
         key=lambda o: (
             float(o.current_probability) if o.current_probability is not None else 0
         ),
@@ -6295,82 +6291,6 @@ async def _score_events(
     return scored_items
 
 
-def _futures_feed_load_options() -> list:
-    """The ONE loader projection for both futures feed queries.
-
-    `_score_futures` (Discover) and `_score_sports_mode_futures` (Sports) each
-    held a byte-identical copy of this list, and CERT-622 caught what that
-    costs: Q480 added a read of `FuturesOutcome.external_id` at both call
-    sites and neither copy grew the column. Under async SQLAlchemy the
-    unprojected read lazy-loads and raises MissingGreenlet INSIDE the per-item
-    serializer — so Discover skips the whole futures pool and Sports serves a
-    degraded partial feed (gotcha #42, and the third time this file has paid
-    for it: see the #1698 note on `market_type` below).
-
-    Two copies is the defect. One factory is the fix: a column added for a new
-    read cannot land on one surface and miss the other.
-    """
-    return [
-        load_only(
-            FuturesMarket.id,
-            FuturesMarket.name,
-            FuturesMarket.source,
-            FuturesMarket.external_id,
-            FuturesMarket.sport_id,
-            FuturesMarket.category,
-            FuturesMarket.llm_sport_category,
-            FuturesMarket.market_tier,
-            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
-            # Omitted, the attribute access lazy-loads, and a lazy load under async
-            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
-            # WHOLE futures pool rather than dropping one card (gotcha #42).
-            FuturesMarket.market_type,
-            FuturesMarket.canonical_market_key,
-            FuturesMarket.group_id,
-            FuturesMarket.group_type,
-            FuturesMarket.image_url,
-            FuturesMarket.hook_description,
-            FuturesMarket.hook_generated_at,
-            FuturesMarket.hook_leader_at_generation,
-            FuturesMarket.market_metadata,
-            FuturesMarket.curation_score_adj,
-            FuturesMarket.volume_24h,
-            FuturesMarket.updated_at,
-            FuturesMarket.commence_time,
-            FuturesMarket.resolution_date,
-            FuturesMarket.status,
-            FuturesMarket.created_at,
-            FuturesMarket.llm_league,
-            FuturesMarket.llm_gender,
-            FuturesMarket.llm_level,
-        ),
-        selectinload(FuturesMarket.outcomes).load_only(
-            FuturesOutcome.id,
-            FuturesOutcome.name,
-            FuturesOutcome.team_id,
-            FuturesOutcome.current_probability,
-            FuturesOutcome.probability_change_24h,
-            FuturesOutcome.rank,
-            FuturesOutcome.rank_change_24h,
-            FuturesOutcome.opening_probability,
-            # L2-172: needed for the has_closing_line calibration signal; deferred
-            # here would lazy-load per outcome and crash this async route.
-            FuturesOutcome.calibration_probability,
-            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
-            # rule as the line above — omitting these lazy-loads per outcome and
-            # crashes the async route.
-            FuturesOutcome.current_yes_bid,
-            FuturesOutcome.current_yes_ask,
-            # Q480 / CERT-622: `drop_duplicate_legs(..., lambda o: o.external_id)`
-            # runs on these ORM rows at BOTH call sites. Same rule as the two
-            # notes above — and this one is the column whose absence emptied the
-            # futures pool.
-            FuturesOutcome.external_id,
-        ),
-        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
-    ]
-
-
 async def _score_sports_mode_futures(
     db: AsyncSession,
     now: datetime,
@@ -6426,10 +6346,60 @@ async def _score_sports_mode_futures(
     if not market_ids:
         return []
 
-    # Q480 / CERT-622: ONE shared projection — see `_futures_feed_load_options`.
-    # Inlining a second copy here is what let `external_id` be read at this call
-    # site and loaded at neither.
-    base_options = _futures_feed_load_options()
+    base_options = [
+        load_only(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.sport_id,
+            FuturesMarket.category,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.market_tier,
+            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
+            # Omitted, the attribute access lazy-loads, and a lazy load under async
+            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
+            # WHOLE futures pool rather than dropping one card (gotcha #42).
+            FuturesMarket.market_type,
+            FuturesMarket.canonical_market_key,
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
+            FuturesMarket.image_url,
+            FuturesMarket.hook_description,
+            FuturesMarket.hook_generated_at,
+            FuturesMarket.hook_leader_at_generation,
+            FuturesMarket.market_metadata,
+            FuturesMarket.curation_score_adj,
+            FuturesMarket.volume_24h,
+            FuturesMarket.updated_at,
+            FuturesMarket.commence_time,
+            FuturesMarket.resolution_date,
+            FuturesMarket.status,
+            FuturesMarket.created_at,
+            FuturesMarket.llm_league,
+            FuturesMarket.llm_gender,
+            FuturesMarket.llm_level,
+        ),
+        selectinload(FuturesMarket.outcomes).load_only(
+            FuturesOutcome.id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            FuturesOutcome.current_probability,
+            FuturesOutcome.probability_change_24h,
+            FuturesOutcome.rank,
+            FuturesOutcome.rank_change_24h,
+            FuturesOutcome.opening_probability,
+            # L2-172: needed for the has_closing_line calibration signal; deferred
+            # here would lazy-load per outcome and crash this async route.
+            FuturesOutcome.calibration_probability,
+            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
+            # rule as the line above — omitting these lazy-loads per outcome and
+            # crashes the async route.
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
+        ),
+        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
+    ]
 
     markets_result = await db.execute(
         select(FuturesMarket)
@@ -6462,13 +6432,8 @@ async def _score_sports_mode_futures(
             if res_dt and res_dt < now:
                 continue
 
-        # Q480: one condition, one outcome. This is the card that read "New
-        # favorite: No: Who will Taylor Swift's bridesmai... (64%)" over ten people
-        # all rendering 0% — the "No" is the `_yes`/`_no` leg of ONE of those
-        # people's own sub-markets, duplicating a bare rung this market already
-        # holds. Dropped before the sort, so it can never win the leader pick.
         sorted_outcomes = sorted(
-            drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+            market.outcomes,
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
@@ -7387,10 +7352,60 @@ async def _score_futures(
     # Base filters + the ordered candidate-ID pools now live in
     # ``_compute_ordered_candidate_ids`` (Queue 285) so both the request-path
     # direct-query fallback and the precompute beat build the identical base.
-    # Q480 / CERT-622: ONE shared projection — see `_futures_feed_load_options`.
-    # Inlining a second copy here is what let `external_id` be read at this call
-    # site and loaded at neither.
-    base_options = _futures_feed_load_options()
+    base_options = [
+        load_only(
+            FuturesMarket.id,
+            FuturesMarket.name,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.sport_id,
+            FuturesMarket.category,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.market_tier,
+            # #1698: the serializer reads `market_type`, so it MUST be loaded here.
+            # Omitted, the attribute access lazy-loads, and a lazy load under async
+            # raises MissingGreenlet INSIDE the per-item serializer — which empties the
+            # WHOLE futures pool rather than dropping one card (gotcha #42).
+            FuturesMarket.market_type,
+            FuturesMarket.canonical_market_key,
+            FuturesMarket.group_id,
+            FuturesMarket.group_type,
+            FuturesMarket.image_url,
+            FuturesMarket.hook_description,
+            FuturesMarket.hook_generated_at,
+            FuturesMarket.hook_leader_at_generation,
+            FuturesMarket.market_metadata,
+            FuturesMarket.curation_score_adj,
+            FuturesMarket.volume_24h,
+            FuturesMarket.updated_at,
+            FuturesMarket.commence_time,
+            FuturesMarket.resolution_date,
+            FuturesMarket.status,
+            FuturesMarket.created_at,
+            FuturesMarket.llm_league,
+            FuturesMarket.llm_gender,
+            FuturesMarket.llm_level,
+        ),
+        selectinload(FuturesMarket.outcomes).load_only(
+            FuturesOutcome.id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            FuturesOutcome.current_probability,
+            FuturesOutcome.probability_change_24h,
+            FuturesOutcome.rank,
+            FuturesOutcome.rank_change_24h,
+            FuturesOutcome.opening_probability,
+            # L2-172: needed for the has_closing_line calibration signal; deferred
+            # here would lazy-load per outcome and crash this async route.
+            FuturesOutcome.calibration_probability,
+            # UX-P011 (#1574): the fabricated-midpoint gate reads the book. Same
+            # rule as the line above — omitting these lazy-loads per outcome and
+            # crashes the async route.
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
+        ),
+        selectinload(FuturesMarket.sport).load_only(Sport.key, Sport.name),
+    ]
 
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
@@ -7657,11 +7672,8 @@ async def _score_futures(
             leader_name = None
             leader_prob = None
 
-            # Q480: one condition, one outcome — see the sibling call in the card
-            # builder. This is the SCORING half of the same market, so the leg must
-            # go here too or the card and its score disagree about what is on it.
             sorted_outcomes = sorted(
-                drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
+                market.outcomes,
                 key=lambda o: float(o.current_probability) if o.current_probability else 0,
                 reverse=True,
             )

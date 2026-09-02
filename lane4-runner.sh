@@ -94,8 +94,36 @@ Bank a CERT-BUS-STATUS "DRAINED" row ONLY when the drained state is NEW — if t
 # v1's bug was the mirror image: it treated ANYTHING that was not `done` as
 # pending, so the 10 superseded/withdrawn/running blocks kept it firing forever.
 # The fix is to exclude the FULL terminal set, which is what v1 was missing.
-TERMINAL="done superseded withdrawn withdrawn-by-author"
+TERMINAL="done superseded withdrawn withdrawn-by-author parked-mismatch"
+# STALE-CLAIM RESET (Fable-5, 2026-09-01): a bus session that dies mid-grade leaves its block at
+# `status: running` forever, and every later poll walks past it (CERT-629/630/631 sat a day).
+# Any block still `running` whose claim is older than 3h with no verdict row gets reset to staged.
+reset_stale () {
+  python3 - "$Q" "$(pwd)/.claude/handoff/CODEX-CERT-LOG.md" <<'PY'
+import re,sys,os,time,json
+q,log=sys.argv[1],sys.argv[2]
+s=open(q).read(); verdicts=open(log).read() if os.path.exists(log) else ""
+# v2 (Fable-5): v1 keyed on the queue FILE's mtime, which lanes touch constantly, so the reset
+# never fired (CERT-621 sat 23h). Now track each cert's first-seen-running time in a sidecar.
+state_p=q+".claims.json"
+try: state=json.load(open(state_p))
+except Exception: state={}
+now=time.time(); running=set()
+def fix(m):
+    cid=m.group(1); running.add(cid)
+    first=state.setdefault(cid,now)
+    if now-first<3*3600: return m.group(0)
+    if re.search(r"\| %s "%re.escape(cid), verdicts): return m.group(0)
+    return m.group(0).replace("status: running","status: staged   # stale claim reset by lane4-runner")
+s2=re.sub(r"queue_id: (CERT-\d+)\n(?:.*\n){0,12}?status: running", fix, s)
+for cid in list(state):
+    if cid not in running: del state[cid]
+json.dump(state,open(state_p,"w"))
+if s2!=s: open(q,"w").write(s2); print("[lane4] reset stale running claims")
+PY
+}
 pending () {
+  reset_stale
   awk -v terminal="$TERMINAL" '
     BEGIN { n=split(terminal,t," "); for(i=1;i<=n;i++) TERM[t[i]]=1; TERM["running"]=1 }
 
@@ -138,10 +166,21 @@ while true; do
       BACKOFF=60
       echo "[lane4] session banked $((AFTER-BEFORE)) verdict(s) — re-checking in ${BACKOFF}s"
     else
-      BACKOFF=$(( BACKOFF * 2 )); [ "$BACKOFF" -gt 1800 ] && BACKOFF=1800
-      echo "[lane4] ⚠ session banked NO new verdict while pending() said '$P'."
-      echo "[lane4]   That is a definition mismatch, not work. Backing off ${BACKOFF}s."
-      echo "[lane4]   If this repeats, the block for '$P' is malformed — tell Fable."
+      # SELF-HEAL (Fable-5, 9/2): the bus reports nothing pending while our awk sees
+      # 'status: staged' for $P -> the block is already banked/merged by the bus's identity
+      # rules. Park it (status: parked-mismatch) so both graders stop idling on it, and
+      # leave a note for Fable instead of backing off for 30 minutes.
+      python3 - "$Q" "$P" <<'PY'
+import re,sys
+q,subj=sys.argv[1],sys.argv[2]
+s=open(q).read()
+pat=re.compile(r"(queue_id: %s\n(?:.*\n){0,6}?status: )staged[^\n]*"%re.escape(subj))
+s2,n=pat.subn(r"\1parked-mismatch   # auto-parked by lane4-runner: bus reports nothing pending for this subject; Fable to close or restage",s,count=1)
+if n: open(q,"w").write(s2); print("[lane4] parked '%s' (mismatch) -> tell Fable"%subj)
+else: print("[lane4] could not find a staged block for '%s' to park"%subj)
+PY
+      echo "$(date '+%F %T') parked-mismatch $P" >> "$HOME/bainluck/.claude/handoff/LANE4-PARKED.log"
+      BACKOFF=30
     fi
     sleep "$BACKOFF"
   else

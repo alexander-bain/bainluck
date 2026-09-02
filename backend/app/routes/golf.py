@@ -2989,18 +2989,11 @@ def _assemble_completed_winner_field(
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
-    golf_data: dict | None = None,
 ) -> dict | None:
     """Build tournament data from closed/resolved markets for completed tournaments.
 
     Called when the main golf listing doesn't include the tournament (markets closed).
     Returns a tournament dict compatible with get_golf_tournament's expectations, or None.
-
-    ``golf_data`` is the golf listing the CALLER already holds. It is used for one
-    thing — reading ``pga_schedule`` — and passing it in is what stops this function
-    from rebuilding that entire listing a second time inside the same request
-    (LAT-P186). It stays optional so the function is still usable, and testable,
-    on its own; when it is omitted the cached listing is fetched here instead.
     """
     # LAT-P014/#1107: match on a NARROW projection, then hydrate only the matches.
     #
@@ -3094,23 +3087,13 @@ async def _build_completed_tournament(
         tournament_markets
     )
 
-    # Try to find schedule data from the golf listing. LAT-P186: this comment said
-    # "already cached" and then called the UNCACHED `get_golf()`, so a completed
-    # tournament paid the full listing rebuild TWICE per request — once in
-    # `get_golf_tournament` to discover the slug was absent, and again here to read
-    # a single key off the result. The caller now hands its copy down.
-    #
-    # The direct-call fallback stays on the LIVE builder for the same reason the
-    # caller does: see the CERT-686 note at the `get_golf` call in
-    # `get_golf_tournament`. Reading the hourly cache here would reintroduce the
-    # stale-winner-field regression through the side door.
+    # Try to find schedule data from the golf API response (already cached)
     start_date = None
     end_date = None
     venue = None
     schedule_status = None
     try:
-        if golf_data is None:
-            golf_data = await get_golf(db=db)
+        golf_data = await get_golf(db=db)
         schedule = golf_data.get("pga_schedule", [])
         for event in schedule:
             # Match by multiple strategies: display name slug, key slug, or
@@ -3165,40 +3148,7 @@ async def get_golf_tournament(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed tournament data for a specific golf tournament."""
-    # LAT-P186/#1107: the comment that used to sit here said "Reuse get_golf() for
-    # its caching and aggregation" — and `get_golf()` has NO caching. The caching is
-    # `get_golf_cached()`, its sibling thirty lines up, which is what `GET /api/golf`
-    # is wired to. `_build_completed_tournament` carried the same wrong belief in its
-    # own comment ("already cached") and called `get_golf()` a SECOND time in the same
-    # request to read one field off the result, so a completed tournament paid the
-    # entire listing rebuild TWICE.
-    #
-    # MEASURED on production 2026-09-01, `x-timing-split`, median of 5:
-    #     /api/golf/tournaments/us-open       2,076 ms wall   1,556 ms app   q=19
-    #     /api/golf/tournaments/the-masters   1,795 ms wall   1,391 ms app   q=18
-    #     /api/golf            (cached)          45 ms wall       0 ms db    q=0
-    # `app` dominates every slug: the rebuild is mostly Python over every open golf
-    # market's eagerly-loaded outcomes, plus up to three DataGolf schedule fetches.
-    #
-    # 🔴 THIS CALL DELIBERATELY STAYS ON THE LIVE `get_golf()`. DO NOT "OPTIMISE" IT TO
-    # `get_golf_cached()`. That was tried and CERT-686 BLOCKED it, correctly:
-    #   - during play the DataGolf task writes `FuturesOutcome.current_probability`
-    #     every 90 SECONDS, while `bainluck:category:golf` is produced hourly with a
-    #     7,200 s TTL. Sourcing the winner field from it makes the headline "who wins?"
-    #     number lag by up to an hour, and up to two after a missed precompute. An
-    #     exact-SHA probe held a cached 18% against a live 61% leaderboard row.
-    #   - `fuse_golf_live()` overlays position/score/thru/round ONLY. It never replaces
-    #     `probability`, so nothing downstream repairs the staleness.
-    #   - a cached still-open entry is also found BEFORE the completed-market fallback
-    #     below, which keeps pre-settlement probabilities on screen after the database
-    #     already has a winner.
-    # The freshness evidence that argued for the cache measured `futures_odds_snapshots`
-    # cadence on UPCOMING tournaments and mistook it for the freshness of the live
-    # field. Wrong table, wrong state. A cached read here needs a live-winner overlay
-    # and a settlement bypass first — it is not a one-word swap.
-    #
-    # What this queue DOES remove is the DUPLICATE: the listing is built ONCE per
-    # request and handed to `_build_completed_tournament` instead of rebuilt there.
+    # Reuse get_golf() for its caching and aggregation
     golf_data = await get_golf(db=db)
 
     tournaments = golf_data.get("tournaments", [])
@@ -3214,7 +3164,7 @@ async def get_golf_tournament(
     if not tournament:
         # Fallback: tournament may have completed and its markets closed.
         # Query closed/resolved markets directly to serve completed tournament data.
-        tournament = await _build_completed_tournament(slug, db, golf_data=golf_data)
+        tournament = await _build_completed_tournament(slug, db)
         if not tournament:
             raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
 
@@ -3248,50 +3198,6 @@ async def get_golf_tournament(
         market_groups.values(),
         key=lambda g: type_order.index(g["type"]) if g["type"] in type_order else 99
     )
-
-    # LAT-P192/#2012: market_id -> source, fetched AT MOST ONCE per request.
-    #
-    # (#1107, cited by the notes above and by two cycles of golf-latency work, has
-    # been CLOSED-as-completed since 2026-08-10 on its own production proof. The
-    # open issue for this page's latency is #2012.)
-    #
-    # Three blocks below each used to issue their own
-    # `SELECT id, source FROM futures_markets WHERE id IN (...)` — the placement
-    # grid (#954), the round markets, and the related-futures cards (#956/#957).
-    # Every one of those id sets is drawn from `sorted_groups`, hence a subset of
-    # this tournament's `market_ids`, and two of them genuinely OVERLAP: a
-    # `round_leader` market is claimed by the placement block AND by
-    # `round_market_kinds`, so its source row was read twice.
-    #
-    # Set-equivalent at every read site by construction: all three maps are only
-    # ever consulted as `.get(<mid>)` keyed by an id from that block's own group,
-    # never iterated, sized or `.values()`-ed, so a whole-tournament map cannot
-    # change an answer — only the number of round trips. A guard pins that read
-    # shape so a future edit cannot quietly make the superset observable.
-    #
-    # Sized honestly: `app` dominates `db` on this route (2,076 ms wall /
-    # 1,556 ms app / q=19 on `us-open`, production 2026-09-01, median of 5), so
-    # this is two of nineteen queries, not the headline. It is committed because
-    # it is free, not because it is large.
-    #
-    # Lazy on purpose. Hoisting the query unconditionally would ADD a round trip
-    # to every tournament that has none of the three groups; those requests issue
-    # zero today and must keep doing so.
-    _source_by_market_id: dict[int, str] = {}
-    _source_map_loaded = False
-
-    async def _market_source_map() -> dict[int, str]:
-        nonlocal _source_map_loaded
-        if not _source_map_loaded:
-            _source_map_loaded = True
-            if market_ids:
-                _src_rows = await db.execute(
-                    select(FuturesMarket.id, FuturesMarket.source).where(
-                        FuturesMarket.id.in_(market_ids)
-                    )
-                )
-                _source_by_market_id.update({row[0]: row[1] for row in _src_rows.all()})
-        return _source_by_market_id
 
     # Find the winner market for the evolution chart. The RANKING is policy and
     # lives in `app.utils.golf_evolution_market` (pure, no session — ruling 005);
@@ -3469,10 +3375,12 @@ async def get_golf_tournament(
                 mid_to_type[mid] = type_key
 
         # market_id -> source, so placement probs can prefer DataGolf (#954).
-        # Shared with the round-market and related-futures blocks below — see
-        # `_market_source_map` (LAT-P192). Read only by `.get(o.market_id)`,
-        # where `market_id` is one of `all_placement_ids`.
-        mid_to_source: dict[int, str] = await _market_source_map()
+        src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(all_placement_ids)
+            )
+        )
+        mid_to_source: dict[int, str] = {row[0]: row[1] for row in src_result.all()}
 
         # Build match_key -> {type_key: probability} from placement outcomes.
         # DataGolf is the authoritative in-play model; a blind cross-source
@@ -3578,11 +3486,12 @@ async def get_golf_tournament(
         rt_by_market: dict[int, list] = defaultdict(list)
         for o in rt_out_result.scalars().all():
             rt_by_market[o.market_id].append(o)
-        # Shared source map (LAT-P192). `rt_ids` overlaps the placement block's
-        # ids — every `round_leader` market is in both — so this was the round
-        # trip that most obviously duplicated another. Read only by `.get(mid)`
-        # for `mid` in `rt_ids`.
-        rt_src = await _market_source_map()
+        rt_src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(rt_ids)
+            )
+        )
+        rt_src = {row[0]: row[1] for row in rt_src_result.all()}
 
         # Which rounds are OVER — derived from the data itself, no live call.
         # The highest graded-leader round is the last completed round; every
@@ -3739,9 +3648,12 @@ async def get_golf_tournament(
             })
 
         # market_id -> source for cross-source dedup + per-card attribution (#956/#957).
-        # Shared source map (LAT-P192); read only by `.get(mid, "unknown")` for
-        # `mid` in `other_group["market_ids"]`.
-        other_mid_to_source: dict[int, str] = await _market_source_map()
+        other_src_result = await db.execute(
+            select(FuturesMarket.id, FuturesMarket.source).where(
+                FuturesMarket.id.in_(other_group["market_ids"])
+            )
+        )
+        other_mid_to_source: dict[int, str] = {r[0]: r[1] for r in other_src_result.all()}
 
         def _lead_prob(outcomes: list) -> float | None:
             """Representative probability for a card — the 'Yes' side of a binary
