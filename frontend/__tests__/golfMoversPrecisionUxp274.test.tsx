@@ -104,14 +104,26 @@ function mover(name: string, movement_24h: number, probability = 0.085): GolfMov
   };
 }
 
-/** Every `data-mover-delta` span's text, keyed by golfer, from rendered markup. */
+/**
+ * Every `data-mover-delta` span's text, keyed by golfer, from rendered markup.
+ *
+ * The span's content is plain text ("▼ 0.5%") — verified against the real
+ * render, not assumed. So this does not strip tags: it RAISES if it ever finds
+ * one. A regex tag-strip here would quietly change what is being asserted the
+ * day someone nests an element inside the badge, and "silently sanitize" is the
+ * wrong instinct in a guard whose whole job is to read exact output.
+ */
 function deltasByGolfer(markup: string): Record<string, string> {
   const out: Record<string, string> = {};
-  const re = /<span[^>]*data-mover-delta="([^"]*)"[^>]*>(.*?)<\/span>/g;
+  const re = /<span[^>]*data-mover-delta="([^"]*)"[^>]*>([^<]*)<\/span>/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(markup)) !== null) {
-    out[decodeEntities(m[1])] = decodeEntities(m[2].replace(/<[^>]*>/g, "")).trim();
+    out[decodeEntities(m[1])] = decodeEntities(m[2]).trim();
   }
+  // If a badge grew a child element the `[^<]*` above skipped it entirely, so
+  // the extractor would under-report rather than mis-report. Catch that.
+  const badgeCount = (markup.match(/data-mover-delta=/g) ?? []).length;
+  expect(Object.keys(out)).toHaveLength(badgeCount);
   return out;
 }
 
@@ -131,9 +143,20 @@ function decodeEntities(s: string): string {
   });
 }
 
-/** The magnitude only, with the arrow and the percent sign stripped. */
+/**
+ * The magnitude the badge prints, as a string, e.g. "0.5" from "▼ 0.5%".
+ *
+ * A positive extraction rather than a subtractive one. Chained `.replace()`
+ * calls that peel characters off are both imprecise (a bare `.replace("%","")`
+ * removes only the FIRST occurrence) and easy to misread as sanitization; this
+ * states the shape it expects and fails loudly on anything else, so a badge
+ * that starts printing something unexpected cannot slip through as a silently
+ * mangled string.
+ */
 function magnitudeOf(delta: string): string {
-  return delta.replace(/[▲▼]/g, "").replace("%", "").trim();
+  const m = /^[▲▼]\s*(\d+(?:\.\d+)?)%$/.exec(delta.trim());
+  if (!m) throw new Error(`badge did not print an arrow + magnitude + %: ${JSON.stringify(delta)}`);
+  return m[1];
 }
 
 function render(movers: GolfMover[]): string {
