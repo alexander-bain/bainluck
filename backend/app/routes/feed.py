@@ -9822,7 +9822,15 @@ async def get_tag_counts(
                     WHEN s.key LIKE 'aussierules_%' THEN 'aussierules'
                     WHEN s.key LIKE 'esports_%' THEN 'esports'
                     WHEN s.key LIKE 'lacrosse_%' THEN 'lacrosse'
-                    WHEN s.key LIKE 'motorsport_%' OR s.key LIKE 'racing_%' THEN 'motorsport'
+                    -- 'motorsports', PLURAL, because the futures arm below
+                    -- emits raw `llm_sport_category` and the classifier stores
+                    -- the plural. This arm was the only singular, so the two
+                    -- halves of one response described one category under two
+                    -- keys: the reader (`/categories`) looks up a single key,
+                    -- found the event count under 'motorsport' and the market
+                    -- count under 'motorsports', and could only ever print one
+                    -- of them (#2627).
+                    WHEN s.key LIKE 'motorsport_%' OR s.key LIKE 'racing_%' THEN 'motorsports'
                     ELSE 'other'
                 END AS category,
                 COUNT(*) AS cnt

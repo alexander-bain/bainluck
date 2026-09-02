@@ -199,7 +199,9 @@ describe('getCategoryForFutures', () => {
     });
 
     test('F1', () => {
-      expect(getCategoryForFutures(null, 'F1 World Championship')?.key).toBe('motorsport');
+      // Plural since #2627 — a category key is matched against
+      // `llm_sport_category`, which stores `motorsports`.
+      expect(getCategoryForFutures(null, 'F1 World Championship')?.key).toBe('motorsports');
     });
 
     test('Kentucky Derby', () => {
