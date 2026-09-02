@@ -44,6 +44,14 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import expand_search_terms
+from app.utils.search_headline_contender import (
+    HEADLINE_MARKET_TIER,
+    MIN_CONTENDER_PROBABILITY,
+    MIN_CONTENDER_VOLUME,
+    contender_patterns,
+    promote_headline_contenders,
+    reserve_headline_slot,
+)
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
     SEARCH_RESPONSE_TTL_SECONDS,
@@ -4485,6 +4493,108 @@ async def search_events(
 
     futures_markets = deduped_futures[:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
+    # UX-P259/#2579: the tournament a player can win is reachable by their name.
+    #
+    # `Alcaraz` returned 10 futures mid-US-Open and NONE was a US Open winner
+    # market. The cause is this route's own ORDER BY: `_futures_name_tier` is
+    # absolute, so all 41 open name matches outrank every outcome-only row and
+    # fill the 20-row window before `market_tier` — the QUALITY prior, third key —
+    # is ever consulted. `_fetch_futures_window` makes it literal: with the tier<=1
+    # arms saturating the window it SKIPS the outcome arm, so for `Alcaraz` that
+    # arm never runs. Mahomes is the control that proves it is arithmetic and not
+    # tennis: 4 name matches, 6 slots spare, and his outcome-only markets DO
+    # surface today.
+    #
+    # This is the fix LAT-P032 (#1732) predicted and deliberately left for its own
+    # gate — "tier separation is not enforced at the page boundary — a RANKING
+    # fix, not a recall one. Verify that before deleting anything." Verified on the
+    # live corpus; the measurement is in `search_headline_contender`.
+    #
+    # NOT A WIDER `LIMIT`, for LAT-P038's stated reason: paying on every search to
+    # protect a case that mostly does not happen is a latency change wearing a
+    # recall fix's clothes. It pays only when the defect is OBSERVED — the window
+    # came back saturated AND every row that survived to the page is a name match,
+    # which is exactly the state in which an outcome-only row cannot have reached
+    # it. A narrow query never saturates the window and never runs this.
+    #
+    # MEASURED cost when it does run (production EXPLAIN ANALYZE, two passes each,
+    # quoting BLOCKS because wall-clock varied ~2x while blocks did not):
+    #     Alcaraz    38.3 / 6.4ms    1,172 / 1,166 shared blocks, 0 read
+    #     Sabalenka  14.7 / 9.2ms    1,286 / 1,280
+    #     Mahomes     6.5 / 6.6ms      828 /   828
+    # Bounded because tier 1 + open is 15,875 markets holding 91,822 outcomes —
+    # 2.3% of the 3.9M-row table. For scale, #1732 measured the general outcome arm
+    # at 7,384 blocks, 69% of everything that query touched.
+    _headline_patterns = contender_patterns(expanded)
+    _headline_promoted = 0
+    if (
+        _headline_patterns
+        and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and futures_markets
+        and all(_query_name_match(m, expanded) for m in futures_markets)
+        and time.monotonic() < _deadline
+    ):
+        await _apply_search_statement_timeout(db, _deadline)
+        try:
+            _headline_result = await db.execute(
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.sport))
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
+                    FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
+                    *_futures_open_now,
+                    *[
+                        FuturesMarket.id.in_(
+                            select(FuturesOutcome.market_id).where(
+                                FuturesOutcome.name.op("~*")(pattern),
+                                FuturesOutcome.current_probability
+                                >= MIN_CONTENDER_PROBABILITY,
+                            )
+                        )
+                        for pattern in _headline_patterns
+                    ],
+                )
+                # Volume desc is the #993 "real-interest signal" the reranker
+                # already trusts, and `id` after it keeps the order TOTAL for the
+                # same LAT-P111 reason the main window needs one.
+                .order_by(
+                    FuturesMarket.volume.desc().nulls_last(),
+                    FuturesMarket.id.asc(),
+                )
+                .limit(_SEARCH_FUTURES_PAGE)
+            )
+            _headline_rows = _headline_result.scalars().unique().all()
+        except Exception as exc:  # noqa: BLE001
+            if not _is_query_timeout(exc):
+                raise
+            # A bonus lane must never cost the page it was meant to improve.
+            logger.warning(
+                "search headline-contender lane timed out for %r — shipping the "
+                "page unchanged", q
+            )
+            await _recover_search_session(db, _deadline)
+            _headline_rows = []
+
+        # Outcome-only by the route's OWN definition, so a market whose name
+        # already matches cannot spend a reserved slot on a row the page holds
+        # (Sabalenka's tier-1 "…vs Camila Osorio: Set 1 Winner" is a name match
+        # and is filtered here, not by a second hand-rolled rule).
+        _headline_rows = [
+            m for m in _headline_rows if not _query_name_match(m, expanded)
+        ]
+        futures_markets, _headline_promoted = promote_headline_contenders(
+            futures_markets,
+            _headline_rows,
+            dedup_key=_normalize_futures_dedup_key,
+        )
+        if _headline_promoted:
+            logger.info(
+                "search promoted %d headline-contender market(s) for %r",
+                _headline_promoted, q,
+            )
+    _mark("headline_contenders")
+
     # LAT-P038/#1769 Item 2: say so when the bucket is short BECAUSE rows were
     # merged away, not because the corpus had nothing.
     #
@@ -4511,7 +4621,15 @@ async def search_events(
 
     # Format each deduped market ONCE and reuse in both flat + families (avoids
     # double outcome_display work — protects the L2-38 latency gains). #993 L2-41
-    _formatted_by_id = {m.id: _format_futures_for_search(m) for m in deduped_futures}
+    # UX-P259/#2579: `futures_markets` may now hold a promoted headline-contender
+    # row that is NOT in `deduped_futures` (it was never in the window — that is
+    # the whole defect), so the map is keyed over both. A dict comprehension
+    # collapses by id, so on every query that promotes nothing this is exactly the
+    # old map: `futures_markets` is a slice of `deduped_futures`.
+    _formatted_by_id = {
+        m.id: _format_futures_for_search(m)
+        for m in (*deduped_futures, *futures_markets)
+    }
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
 
     # #993 L2-41: backend-composed topical families (additive; flat `futures`
@@ -5742,6 +5860,98 @@ async def typeahead_search(
         futures_result.scalars().unique().all() if futures_result is not None else [],
         ta_expanded,
     )
+
+    # UX-P259/#2579, the dropdown seam. #2579 was REPORTED against the header
+    # dropdown ("typed Alcaraz into the header search on /") and confirmed on
+    # `/search`, so fixing one surface would leave the reported one broken —
+    # the #2580/#2623 lesson, where the same defect had to be closed at both
+    # seams or the user still saw it.
+    #
+    # The cause here is NOT this endpoint's ORDER BY, which already leads with
+    # `market_tier` — it is `_rerank_search_futures`, shared with `/search` for
+    # parity (L2-45), whose first rule is "name-match beats outcome-only-match".
+    # Measured live 2026-09-01: the `Alcaraz` dropdown was five tier-5 name
+    # matches, and the `Sabalenka` dropdown was four tier-1 SET-winner props.
+    # Neither offered a US Open winner market.
+    #
+    # Same gate as `/search`: only when every suggestion the pool would keep is
+    # a name match, which is exactly the state in which an outcome-only row
+    # cannot have reached it. A query the dropdown already answers well pays
+    # nothing.
+    # Ids of the markets the promoter actually chose, carried to the far end of
+    # this function. The global scorer below re-sorts every pool by match class
+    # and would otherwise sink an outcome-only winner market beneath the props
+    # that name the player — see `reserve_headline_slot`, which is where the
+    # decision made here is honoured.
+    _ta_headline_ids: set = set()
+    _ta_headline_patterns = contender_patterns(ta_expanded)
+    if (
+        _ta_headline_patterns
+        and ta_futures_ranked
+        and all(
+            _query_name_match(m, ta_expanded) for m in ta_futures_ranked[:5]
+        )
+        and time.monotonic() < _ta_deadline
+    ):
+        await _apply_search_statement_timeout(db, _ta_deadline)
+        try:
+            _ta_headline_result = await db.execute(
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
+                    FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
+                    *_ta_open_now,
+                    *[
+                        FuturesMarket.id.in_(
+                            select(FuturesOutcome.market_id).where(
+                                FuturesOutcome.name.op("~*")(pattern),
+                                FuturesOutcome.current_probability
+                                >= MIN_CONTENDER_PROBABILITY,
+                            )
+                        )
+                        for pattern in _ta_headline_patterns
+                    ],
+                )
+                .order_by(
+                    FuturesMarket.volume.desc().nulls_last(),
+                    FuturesMarket.id.asc(),
+                )
+                .limit(5)
+            )
+            _ta_headline_rows = [
+                m
+                for m in _ta_headline_result.scalars().unique().all()
+                if not _query_name_match(m, ta_expanded)
+            ]
+        except Exception as exc:  # noqa: BLE001
+            if not _is_query_timeout(exc):
+                raise
+            # The dropdown must never be slower BECAUSE of a bonus lane.
+            _ta_mark("headline_contenders_TIMED_OUT")
+            logger.warning(
+                "typeahead headline-contender lane timed out for %r — shipping "
+                "the dropdown unchanged", q
+            )
+            await _recover_search_session(db, _ta_deadline)
+            _ta_headline_rows = []
+        ta_futures_ranked, _ta_headline_promoted = promote_headline_contenders(
+            ta_futures_ranked,
+            _ta_headline_rows,
+            dedup_key=_normalize_futures_dedup_key,
+        )
+        # Read off the FRONT of the returned list, which is that function's
+        # documented contract, rather than re-deriving the choice from
+        # `_ta_headline_rows` — a second derivation is a second rule, and two
+        # rules that can disagree is the class of bug the evidence echo below
+        # exists to eliminate one level up.
+        _ta_headline_ids = {
+            getattr(m, "id", None)
+            for m in ta_futures_ranked[:_ta_headline_promoted]
+        }
+        _ta_headline_ids.discard(None)
+        _ta_mark("headline_contenders")
+
     futures_pool = []
     seen_futures_keys: set[str] = set()
     for market in ta_futures_ranked:
@@ -6068,7 +6278,14 @@ async def typeahead_search(
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
-    suggestions = _s_rank(q, _ta_candidates)[:7]
+    # The reservation runs BETWEEN the scorer and the slice, never inside either.
+    # Inside the scorer it would weaken MC1-before-MC4 for every query; after the
+    # slice it would rescue a winner that ranked 6th and lose one that ranked 8th,
+    # and the 8th is the reported bug. `reserve_headline_slot` is a no-op on the
+    # empty id set, so a query that earned no contender pays nothing here.
+    suggestions = reserve_headline_slot(
+        _s_rank(q, _ta_candidates), _ta_headline_ids
+    )[:7]
     _ta_mark("rank")
 
     for _s in suggestions:
