@@ -747,6 +747,12 @@ async def sync_espn_teams(
 
     # Fetch ESPN teams
     espn_teams = await espn.get_teams(sport_key)
+    if espn_teams is None:
+        return {
+            "status": "authority_dark",
+            "message": "ESPN did not answer — no team list was received. This is "
+                       "NOT 'the league has no teams'; nothing was matched.",
+        }
     if not espn_teams:
         return {"status": "espn_error", "message": "Could not fetch teams from ESPN"}
 
@@ -911,6 +917,12 @@ async def sync_espn_live_events(
 
     # Get ESPN scoreboard
     espn_events = await espn.get_scoreboard(sport_key)
+    if espn_events is None:
+        return {
+            "status": "authority_dark",
+            "message": "ESPN did not answer — the scoreboard was never received, "
+                       "which is not the same as an empty slate.",
+        }
     if not espn_events:
         return {"status": "no_events", "message": "No events from ESPN scoreboard"}
 
@@ -1181,6 +1193,11 @@ async def match_espn_teams(
     espn = get_espn_service()
     espn_teams = await espn.get_teams(sport_key)
 
+    if espn_teams is None:
+        return {
+            "status": "authority_dark",
+            "message": "ESPN did not answer — no candidates could be scored.",
+        }
     if not espn_teams:
         return {"status": "error", "message": "Could not fetch ESPN teams"}
 
@@ -1382,6 +1399,17 @@ async def backfill_espn_ids(
             try:
                 espn_events = await espn.get_scoreboard(sport_key, date=date_str)
             except Exception:
+                continue
+
+            if espn_events is None:
+                # AUTHORITY DARK (lane1/045) — reported, not folded into
+                # "unmatched", for the same reason a refused stamp is.
+                refused.append({
+                    "sport_key": sport_key,
+                    "date": date_str,
+                    "reason": "espn-authority-dark",
+                    "events": len(group_events),
+                })
                 continue
 
             if not espn_events:

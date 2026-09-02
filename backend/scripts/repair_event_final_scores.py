@@ -665,6 +665,17 @@ async def repair(
                 "action": "skip_scoreboard_error", "error": f"{type(exc).__name__}: {exc}",
             })
             continue
+        if board is None:
+            # AUTHORITY DARK (lane1/045). Every verdict below reads a row's
+            # ABSENCE from this board as evidence (`skip_espn_id_off_slate`,
+            # and the score comparison that follows a proven link). A board we
+            # never received says nothing about any row in the bucket, so the
+            # whole group is skipped and named in the ledger.
+            ledger.append({
+                "sport_key": sport_key, "date": game_date.isoformat(),
+                "action": "skip_authority_dark", "events": len(bucket),
+            })
+            continue
         by_id = {str(e.espn_id): e for e in board if e.espn_id is not None}
 
         group_writes = 0

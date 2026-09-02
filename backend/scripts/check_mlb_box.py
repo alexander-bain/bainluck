@@ -36,6 +36,9 @@ async def check():
             espn = ESPNAPIService()
             try:
                 ctx = await espn.get_event_context("baseball_mlb", ev.espn_id)
+                if ctx is None:
+                    print("  ESPN AUTHORITY DARK — no answer, nothing to report")
+                    return
                 bs = ctx.get("box_score", {})
                 sp = ctx.get("scoring_plays", [])
                 print(f"  box_score: {type(bs).__name__} len={len(bs) if bs else 0}")

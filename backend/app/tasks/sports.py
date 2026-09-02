@@ -332,7 +332,16 @@ async def _discover_events():
                                                 sport_key, date=date_str
                                             )
                                         )
-                                        if espn_evts:
+                                        if espn_evts is None:
+                                            # AUTHORITY DARK (lane1/045): ESPN
+                                            # did not answer. Leave the date out
+                                            # of the map entirely rather than
+                                            # recording an empty slate.
+                                            logger.warning(
+                                                "ESPN schedule authority dark "
+                                                f"for {sport_key}/{date_str}"
+                                            )
+                                        elif espn_evts:
                                             espn_events_by_date[
                                                 date_str
                                             ] = espn_evts
