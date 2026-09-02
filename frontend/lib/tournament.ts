@@ -151,6 +151,12 @@ export interface TournamentPayload {
    * Men's tab are results rows, and every one of them was inert while the
    * server already knew the event id for 28 of them.
    *
+   * ux/1002: and then the MATCH list read only the per-row stamp, so the page
+   * held two answers to one question and the live half was the one that could
+   * go dead. Both lists resolve through `lib/tournamentEventLink.ts` now —
+   * "every list on this page routes from the SAME map" is finally true of
+   * every list, which is what this field was published for.
+   *
    * `unresolved` is the reason census (`MARKET_UNLINKED`, `NO_PINNED_MARKET`,
    * …) — kept on the type because a row with no link has to be a NAMED gap and
    * not a row that quietly stopped being clickable.

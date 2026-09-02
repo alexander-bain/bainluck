@@ -50,6 +50,7 @@ import {
   type PrematchPair,
   type RoundName,
 } from "./bracket";
+import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
 import {
   formatSlateProbability,
   matchBroadcast,
@@ -246,6 +247,44 @@ export interface MatchListEntry {
 /** Unordered pair key — the only thing the slate and the draw share. */
 function pairKey(a: string, b: string): string {
   return [a, b].sort().join("|");
+}
+
+/**
+ * WHERE THIS CARD GOES WHEN YOU TAP IT (ux/1002) — `/events/{id}` or `null`.
+ *
+ * TWO SOURCES, IN THIS ORDER, AND THE ORDER IS THE POINT:
+ *
+ *  1. `entry.eventId` — the row's own stamp. On a slate row the server already
+ *     put the answer here (`build_match_row` reads the same `by_matchup` map),
+ *     and a row that carries its own id needs no map to be routable. This also
+ *     keeps a caller that passes no `eventIds` behaving exactly as before.
+ *  2. `eventIds[entry.matchupKey]` — the payload's PUBLISHED map, which is what
+ *     the FINISHED list has read since #2568 and what Alex named as already
+ *     holding the answer the live card was missing.
+ *
+ * The second is not redundancy. `matchListFromBracket` has no `event_id` of its
+ * own and inherits one only from a slate row it joins by unordered NAME PAIR —
+ * and the slate only carries fixtures still to come, so on a populated bracket
+ * that join finds nothing for most of the draw. The map is keyed by matchup and
+ * covers all of it. See `lib/tournamentEventLink.ts` for the full argument and
+ * for the `espn:` refusal, which must survive both paths.
+ *
+ * NEVER a third source. There is no name join here and there must not be one:
+ * a reader who taps a card and lands on somebody else's match has been lied to
+ * by the surface whose entire posture is that identity is pinned (ruling 048).
+ */
+export function matchEventHref(
+  entry: Pick<MatchListEntry, "eventId" | "matchupKey">,
+  eventIds?: MatchupEventIds
+): string | null {
+  if (
+    typeof entry.eventId === "number" &&
+    Number.isFinite(entry.eventId) &&
+    entry.eventId > 0
+  ) {
+    return `/events/${entry.eventId}`;
+  }
+  return matchupEventHref(entry.matchupKey, eventIds);
 }
 
 /**

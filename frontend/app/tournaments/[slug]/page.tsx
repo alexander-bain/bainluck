@@ -398,6 +398,15 @@ export default function TournamentPage() {
                      standard event page, where the graph, the hero and the
                      match's props all live — so it needs no tournament
                      context to build its own link. */
+                  /* ux/1002: THE SAME MAP THE FINISHED LIST READS. Alex, on the
+                     live hub: the Zverev–Sonego card was not clickable while
+                     `event_links.by_matchup` held its event id all along.
+                     CERT-703 wired that map into `TournamentResults` and
+                     stopped there, so the half of the page with live prices
+                     was still routing off a per-row stamp that only slate rows
+                     carry. Both lists now resolve through
+                     `lib/tournamentEventLink.ts`. */
+                  eventIds={data.event_links?.by_matchup}
                   notice={data.slate ? slateNotice(data.slate) : null}
                   /**
                    * UX-P145: this used to end "…and the draw fills them in on
