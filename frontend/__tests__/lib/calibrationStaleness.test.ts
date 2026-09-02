@@ -208,6 +208,8 @@ describe("stalenessHeadline", () => {
         unitsDrifted: null,
         unitsDriftUnknown: null,
         unitsBanked: null,
+        producerStalled: null,
+        beatsMissed: null,
       }),
     );
     expect(new Set(lines).size).toBe(3);

@@ -32,6 +32,12 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import {
+  decideCalibrationStaleness,
+  stalenessScheduleClause,
+  type CalibrationProducerDisclosure,
+} from "@/lib/calibrationStaleness";
+
 const PAGE = path.join(__dirname, "..", "..", "app", "calibration", "page.tsx");
 const SOURCE: string = fs.readFileSync(PAGE, "utf8");
 
@@ -133,6 +139,59 @@ describe("the calibration staleness banner", () => {
     expect(copy).toContain("staleness.stagedAt");
     expect(copy).toContain("staleness.stagedAgeS");
     expect(copy).toContain("driftClause");
+  });
+
+  // #2649: the schedule sentence MOVED OUT of this region.
+  //
+  // It used to be a string literal in the JSX, so scanning `copy` covered it.
+  // It now comes from `stalenessScheduleClause`, because the sentence had to
+  // become conditional on `producer.stalled` — the page was promising "The
+  // curve rebuilds hourly" over a payload reporting 51 missed beats. That fix
+  // is right, and it silently took the clause out of this suite's reach: a
+  // future "we'll be back shortly" added to that function would sail past every
+  // assertion above.
+  //
+  // So the ban follows the copy. And it follows it as OUTPUT rather than as
+  // source text, which is strictly stronger: source-scanning a function whose
+  // whole job is to return different strings in different states can only see
+  // the literals, never which one actually renders.
+  describe("the schedule clause is held to the same ban", () => {
+    /** Every state the clause can render in, so no branch escapes the scan. */
+    const STATES: Array<[string, CalibrationProducerDisclosure | null]> = [
+      ["stalled with a count", { stalled: true, beats_missed: 51 }],
+      ["stalled, one beat", { stalled: true, beats_missed: 1 }],
+      ["stalled, count unreadable", { stalled: true, beats_missed: null }],
+      ["stalled, zero beats", { stalled: true, beats_missed: 0 }],
+      ["beat is landing", { stalled: false, beats_missed: 0 }],
+      ["producer block absent", null],
+    ];
+
+    function clauseIn(producer: CalibrationProducerDisclosure | null): string {
+      const notice = decideCalibrationStaleness({
+        availability: "stale",
+        cache: { status: "stale", generated_at: "2026-08-31T04:37:36Z", age_s: 184401 },
+        ...(producer === null ? {} : { producer }),
+      });
+      if (notice === null) throw new Error("fixture produced no notice");
+      return stalenessScheduleClause(notice) ?? "";
+    }
+
+    it("renders a real sentence in the states that have one", () => {
+      // Non-vacuity, same reason as above: an always-empty clause would satisfy
+      // every ban below, and emptying it is not a fix.
+      expect(clauseIn({ stalled: true, beats_missed: 51 }).length).toBeGreaterThan(20);
+      expect(clauseIn({ stalled: false, beats_missed: 0 }).length).toBeGreaterThan(10);
+    });
+
+    it.each(STATES)("makes no forward-looking promise when %s", (_label, producer) => {
+      const clause = clauseIn(producer);
+      for (const banned of BANNED) {
+        const hit = clause.match(banned.pattern);
+        expect(
+          hit ? `schedule clause contains ${JSON.stringify(hit[0])} — ${banned.why}` : null,
+        ).toBeNull();
+      }
+    });
   });
 
   it("documents the retired sentences instead of quietly dropping them", () => {

@@ -440,8 +440,38 @@ final class CalibrationViewModel: ObservableObject {
             whenText = "earlier"
         }
         let age = cache.ageS.map { " (\(Self.formatAge($0)) ago)" } ?? ""
+        let schedule = scheduleClause.map { " " + $0 } ?? ""
         return "These numbers were built \(whenText)\(age) and are not being "
-            + "refreshed right now. The curve rebuilds hourly."
+            + "refreshed right now.\(schedule)"
+    }
+
+    /// The closing sentence about the hourly schedule, or `nil` for "say nothing".
+    ///
+    /// #2649. This used to be the literal tail of `staleBannerDetail`: "The curve
+    /// rebuilds hourly.", unconditionally. On 2026-09-02 the payload carrying it
+    /// also carried `producer: { stalled: true, beats_missed: 51 }` — so both
+    /// surfaces spent 51 hours telling readers to come back in an hour, for a
+    /// stall that could not self-resolve (the publish gate was refusing every
+    /// rebuild and binning it).
+    ///
+    /// Kept as a sentence rather than deleted, because when the beat IS landing
+    /// the cadence is useful and checkable. What changed is that it must now be
+    /// earned. Mirrors `frontend/lib/calibrationStaleness.ts`
+    /// `stalenessScheduleClause` state for state — the cross-client contract
+    /// means a web-only fix would leave this surface saying the false thing.
+    ///
+    /// Three readings, and absence is deliberately NOT the reassuring one
+    /// (gotcha #53): a payload with no `producer` block is not evidence of a
+    /// healthy beat, so it gets silence rather than the promise.
+    var scheduleClause: String? {
+        guard let producer = data?.producer else { return nil }
+        if producer.beatIsLanding { return "The curve rebuilds hourly." }
+        guard producer.stalled == true else { return nil }
+        guard let missed = producer.beatsMissed, missed > 0 else {
+            return "Hourly rebuilds are not currently succeeding."
+        }
+        let noun = missed == 1 ? "hourly rebuild has" : "hourly rebuilds have"
+        return "\(missed) \(noun) come and gone without one succeeding."
     }
 
     /// The population contracts THIS BUILD's labels honestly describe.

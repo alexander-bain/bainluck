@@ -2038,6 +2038,21 @@ export interface CalibrationCacheState {
  * consumer must never read a missing count as zero. See
  * `lib/calibrationStaleness.ts` for the rendering decision.
  */
+/**
+ * `producer` as `calibration_publish_gate._producer_block` emits it (#2649).
+ *
+ * Every field optional and nullable: this crosses a version boundary, and
+ * `beats_missed` is `null` server-side whenever the artifact age is unknown.
+ */
+export interface CalibrationProducerState {
+  task?: string;
+  interval_s?: number | null;
+  stall_after_s?: number | null;
+  age_s?: number | null;
+  beats_missed?: number | null;
+  stalled?: boolean;
+}
+
 export interface CalibrationStagedState {
   measured: boolean;
   reason?: string;
@@ -2064,6 +2079,13 @@ export interface CalibrationData {
    */
   availability?: string;
   staged?: CalibrationStagedState | null;
+  /**
+   * The hourly producer's own verdict on itself (#2649). Optional for the same
+   * reason `availability` is — an older payload predates it — and absent must
+   * never be read as a healthy beat. `stalled` is pessimistic by construction
+   * server-side: an unknown artifact age publishes as `true`.
+   */
+  producer?: CalibrationProducerState | null;
   buckets: CalibrationBucket[];
   total_markets: number;
   total_outcomes: number;

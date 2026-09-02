@@ -109,12 +109,33 @@ export interface CalibrationStalenessNotice {
   /** Banked units the drift check could not reach. `null` means unreadable. */
   unitsDriftUnknown: number | null;
   unitsBanked: number | null;
+  /**
+   * The server's verdict on the hourly beat. `null` means the payload did not
+   * carry one — which is NOT "healthy", and no caller may read it as such.
+   */
+  producerStalled: boolean | null;
+  /** Hourly beats that came and went without a newer artifact. `null` = unread. */
+  beatsMissed: number | null;
+}
+
+/**
+ * The `producer` block, as `calibration_publish_gate._producer_block` builds it.
+ *
+ * `stalled` is the server's own verdict on whether the hourly beat is still
+ * landing, and it is deliberately pessimistic: an UNKNOWN age publishes as
+ * `stalled: true`, never as healthy (gotcha #53, and that module says so). This
+ * mirrors it rather than importing it — same reason as everything else here.
+ */
+export interface CalibrationProducerDisclosure {
+  stalled?: unknown;
+  beats_missed?: unknown;
 }
 
 /** The shape this module needs. Deliberately narrower than `CalibrationData`. */
 export interface CalibrationStalenessInput {
   availability?: unknown;
   staged?: CalibrationStagedDisclosure | null;
+  producer?: CalibrationProducerDisclosure | null;
   cache?: {
     status?: unknown;
     /** The server's machine-readable why, republished as the notice's `reason`. */
@@ -166,6 +187,18 @@ export function decideCalibrationStaleness(
   const unitsDriftUnknown = stagedMeasured ? asCount(staged.units_drift_unknown) : null;
   const unitsBanked = stagedMeasured ? asCount(staged.units_banked) : null;
 
+  // Tri-state on purpose, and only a literal boolean counts. `undefined` (an
+  // older payload with no `producer` block) and a non-boolean both land on
+  // `null` = "the server did not tell us", which is a different claim from
+  // "the beat is fine" and must never collapse into it.
+  const producer = data?.producer;
+  const producerStalled =
+    typeof producer === "object" && producer !== null && typeof producer.stalled === "boolean"
+      ? producer.stalled
+      : null;
+  const beatsMissed =
+    typeof producer === "object" && producer !== null ? asCount(producer.beats_missed) : null;
+
   const common = {
     generatedAt,
     ageS,
@@ -174,6 +207,8 @@ export function decideCalibrationStaleness(
     unitsDrifted,
     unitsDriftUnknown,
     unitsBanked,
+    producerStalled,
+    beatsMissed,
   };
 
   // Precedence, and it is this way round deliberately. A dated last-good is the
@@ -220,6 +255,56 @@ export function stalenessHeadline(notice: CalibrationStalenessNotice): string {
     case "undisclosed":
       return "We can't confirm how current this is.";
   }
+}
+
+/**
+ * The closing sentence about the hourly SCHEDULE, or `null` for "say nothing".
+ *
+ * ## The defect this closes (#2649)
+ *
+ * The banner used to end, unconditionally, with "The curve rebuilds hourly."
+ * On 2026-09-02 production served that sentence over a payload that said, in
+ * the same JSON object, `producer: { stalled: true, beats_missed: 51 }`. A
+ * reader was told to come back in an hour, 51 hours running — and it could not
+ * self-resolve, because under `q268` the publish gate refused every rebuild and
+ * binned the work that earned it. The page had the refutation in hand and
+ * printed the promise anyway.
+ *
+ * `calibrationBannerCopy.test.tsx` had deliberately exempted this sentence from
+ * its forward-looking ban, on the reasoning that it is "present tense about a
+ * SCHEDULE that is externally true (the beat fires at :15 every hour)". That
+ * reasoning is right, and it rests on a premise — *the beat fires* — which the
+ * payload can measure and which `beats_missed: 51` refutes. So the fix is not
+ * to delete the sentence: when the beat really is firing, telling a reader the
+ * cadence is useful and true. The fix is to stop asserting the premise for
+ * free.
+ *
+ * Hence three readings, and the middle one is the whole point:
+ *
+ *   * `stalled === false` -> the schedule is real; state it.
+ *   * `stalled === true`  -> DESCRIBE the failure; never predict a recovery.
+ *   * `stalled === null`  -> the server did not say; say nothing.
+ *
+ * The third is the gotcha #53 case and it is why absence does not fall through
+ * to the reassuring branch. An older payload carrying no `producer` block is
+ * not evidence of a healthy beat, and a sentence we cannot support is worse
+ * than a shorter banner. The reader still gets the dated artifact either way.
+ *
+ * Same rule as CAL-P080 settled for the `frozen-inputs` copy, applied to the
+ * branch that never got it: THE BANNER MAY DESCRIBE, IT MAY NOT PREDICT.
+ */
+export function stalenessScheduleClause(notice: CalibrationStalenessNotice): string | null {
+  if (notice.producerStalled === false) return "The curve rebuilds hourly.";
+  if (notice.producerStalled !== true) return null;
+  // Stalled. Report the measured count when we have one; the count is the whole
+  // reason this sentence is credible, so an unread count gets the vaguer
+  // sentence rather than a fabricated number.
+  if (notice.beatsMissed === null || notice.beatsMissed <= 0) {
+    return "Hourly rebuilds are not currently succeeding.";
+  }
+  const beats = notice.beatsMissed.toLocaleString();
+  const rebuild = notice.beatsMissed === 1 ? "hourly rebuild has" : "hourly rebuilds have";
+  return `${beats} ${rebuild} come and gone without one succeeding.`;
 }
 
 /**

@@ -56,13 +56,16 @@ final class CalibrationSurfaceTests: XCTestCase {
     /// Carries a parked category with Queue 299's machine-readable disposition.
     private static func healthy(
         populationVersion: String? = CalibrationSurfaceTests.acceptedVersion,
-        cache: String? = nil
+        cache: String? = nil,
+        producer: String? = nil
     ) -> String {
         let versionLine = populationVersion.map { "\"population_version\": \"\($0)\"," } ?? ""
         let cacheLine = cache.map { "\"cache\": \($0)," } ?? ""
+        let producerLine = producer.map { "\"producer\": \($0)," } ?? ""
         return """
         {
           \(cacheLine)
+          \(producerLine)
           \(versionLine)
           "buckets": [\(buckets)],
           "total_markets": 12,
@@ -297,7 +300,12 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertTrue(detail.contains("Aug"), "banner must name the month: \(detail)")
         // The age IS timezone-free, so it is asserted exactly.
         XCTAssertTrue(detail.contains("19h ago"), "banner must age the snapshot: \(detail)")
-        XCTAssertTrue(detail.contains("rebuilds hourly"))
+        // #2649: this fixture carries NO `producer` block, and absence is not
+        // evidence of a healthy beat. It used to assert the opposite — that the
+        // banner promises "rebuilds hourly" regardless — which is exactly the
+        // defect: production served that sentence over `stalled: true,
+        // beats_missed: 51`. Silence is the honest reading of an absent block.
+        XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
         // Stale is a freshness state, not a contract failure — the curve renders.
         XCTAssertFalse(vm.isIncompatible)
         XCTAssertEqual(vm.cohortN, 600)
@@ -328,8 +336,68 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertTrue(vm.isStale)
         let detail = try XCTUnwrap(vm.staleBannerDetail)
         XCTAssertTrue(detail.contains("built earlier"), detail)
-        XCTAssertTrue(detail.contains("rebuilds hourly"))
+        // #2649, same rule: no `producer` block, so no cadence claim.
+        XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
         XCTAssertFalse(detail.localizedCaseInsensitiveContains("nil"))
+    }
+
+    // MARK: - 3b. #2649 — the cadence sentence must be earned
+
+    @MainActor
+    func testStalledProducerIsDescribedInsteadOfPromisingAnHourlyRebuild() throws {
+        // The exact production state of 2026-09-02: a two-day-old artifact whose
+        // own payload reports the hourly beat has missed 51 of them. The old copy
+        // closed with "The curve rebuilds hourly." over precisely this.
+        let vm = try model(Self.healthy(
+            cache: Self.staleCache,
+            producer: #"{"stalled": true, "beats_missed": 51}"#
+        ))
+        let detail = try XCTUnwrap(vm.staleBannerDetail)
+        XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
+        XCTAssertTrue(detail.contains("51 hourly rebuilds have"), detail)
+    }
+
+    @MainActor
+    func testHealthyProducerStillStatesTheCadence() throws {
+        // The control, and it matters: deleting the sentence is not a fix for the
+        // sentence being wrong. When the beat is landing, the cadence is true and
+        // worth telling a reader — a suite that only banned the string would be
+        // satisfied by ripping the copy out entirely.
+        let vm = try model(Self.healthy(
+            cache: Self.staleCache,
+            producer: #"{"stalled": false, "beats_missed": 0}"#
+        ))
+        let detail = try XCTUnwrap(vm.staleBannerDetail)
+        XCTAssertTrue(detail.contains("The curve rebuilds hourly."), detail)
+    }
+
+    @MainActor
+    func testStalledProducerWithNoCountDescribesTheStallWithoutInventingANumber() throws {
+        let vm = try model(Self.healthy(
+            cache: Self.staleCache,
+            producer: #"{"stalled": true}"#
+        ))
+        let detail = try XCTUnwrap(vm.staleBannerDetail)
+        XCTAssertTrue(detail.contains("not currently succeeding"), detail)
+        XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
+        XCTAssertFalse(detail.contains("0 hourly"), detail)
+    }
+
+    @MainActor
+    func testWebAndNativeAgreeOnTheCadenceSentence() throws {
+        // Cross-client contract. `frontend/lib/calibrationStaleness.ts`
+        // `stalenessScheduleClause` is the other half of this pair and returns
+        // the same four strings for the same four states; a web-only fix would
+        // have left this surface saying the false thing.
+        let stalled = try model(Self.healthy(
+            cache: Self.staleCache, producer: #"{"stalled": true, "beats_missed": 1}"#))
+        XCTAssertEqual(stalled.scheduleClause,
+                       "1 hourly rebuild has come and gone without one succeeding.")
+        let landing = try model(Self.healthy(
+            cache: Self.staleCache, producer: #"{"stalled": false}"#))
+        XCTAssertEqual(landing.scheduleClause, "The curve rebuilds hourly.")
+        let absent = try model(Self.healthy(cache: Self.staleCache))
+        XCTAssertNil(absent.scheduleClause)
     }
 
     @MainActor
