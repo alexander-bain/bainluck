@@ -62,12 +62,12 @@ import { sportVocab } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
 import {
-  useAnalytics,
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
   usePinnedEvents,
 } from "@/hooks";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";

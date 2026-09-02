@@ -6,7 +6,8 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { searchTeamsByLocation, searchTeams, submitOnboarding, fetchUserPreferences } from "@/lib/api";
 import { SPORT_CATEGORIES, getLeagueDisplay, getEmojiForLeague } from "@/lib/sportCategories";
 import type { TeamSearchResult, OnboardingSubmission, UserFavoriteItem } from "@/lib/types";
-import { usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
+import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useAnalytics } from "@/hooks/useAnalytics";
 
 const STEP_NAMES = ['location', 'follow', 'alma_maters', 'interests', 'rivals'] as const;
 

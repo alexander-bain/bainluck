@@ -27,11 +27,11 @@ import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
 import {
-  useAnalytics,
   usePageTracking,
   useScrollDepth,
   useEngagementTime,
 } from "@/hooks";
+import { useAnalytics } from "@/hooks/useAnalytics";
 
 // ---------------------------------------------------------------------------
 // Sports feed

@@ -28,7 +28,8 @@ jest.mock("next/link", () => ({
   ),
 }));
 
-jest.mock("../../hooks", () => ({
+// The module, not the `@/hooks` barrel — see LAT-P209 and EventCard.test.ts.
+jest.mock("../../hooks/useAnalytics", () => ({
   useAnalytics: () => ({ trackEventCardClick: jest.fn() }),
 }));
 

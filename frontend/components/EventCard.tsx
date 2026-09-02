@@ -5,7 +5,7 @@ import { useSpring, useTransform } from "framer-motion";
 import { motion } from "@/components/motion";
 import type { Event } from "@/lib/types";
 import { getLeagueDisplay } from "@/lib/sportCategories";
-import { useAnalytics } from "@/hooks";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import { cn } from "@/lib/utils";
 import EventCardShell from "./EventCardShell";
 import PersonalizedBadge from "./PersonalizedBadge";

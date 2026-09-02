@@ -12,7 +12,11 @@ jest.mock("next/link", () => {
   };
 });
 
-jest.mock("../../hooks", () => ({
+// The module, not the `@/hooks` barrel. LAT-P209 took `useAnalytics` off that
+// barrel so the GA4 event catalog stops riding onto every route that wants only
+// the three mandated page-tracking hooks; `EventCard` now imports it directly,
+// and a mock still aimed at the barrel would silently stop intercepting.
+jest.mock("../../hooks/useAnalytics", () => ({
   useAnalytics: () => ({
     trackEventCardClick: jest.fn(),
   }),

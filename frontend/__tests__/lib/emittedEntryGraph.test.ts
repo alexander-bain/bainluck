@@ -216,6 +216,57 @@ const DEFERRED = [
     source: join("lib", "api.ts"),
     onlyRoutes: ["index.html", "discover.html", "discover/stats.html"],
   },
+  // ─── LAT-P209: the sport-category table behind the GA4 event catalog ──────
+  //
+  // Back to `exceptRoutes`, and deliberately — LAT-P208's warning against it
+  // does not apply here, because the ratio is inverted. `lib/api.ts` was
+  // legitimately eager on 17 of 40 routes and absent from 3, so an exemption
+  // list was the majority of the app and would silently swallow route 18.
+  // This table is legitimately eager on 8 and absent from 29. Default-deny is
+  // therefore the behaviour we want: a NEW route that pulls the table onto its
+  // first load should red, and under `onlyRoutes` it would be silently
+  // unchecked instead. Pick the mechanism by which side is the default, not by
+  // which one the last cycle used.
+  //
+  // ═══ WHY THIS ENTRY NAMES THE TABLE AND NOT THE CATALOG IT GUARDS ═══
+  //
+  // The cut was `hooks/useAnalytics.ts` — the GA4 event catalog — which the
+  // `@/hooks` barrel used to launder onto every route that wanted only the
+  // three mandated page-tracking hooks. The catalog cannot be marked. It has
+  // ZERO source-unique string literals (measured, not assumed): every event
+  // name it passes to `track()` is also a member of `KNOWN_EVENT_NAMES` in
+  // `lib/analytics/sanitize.ts`, and sanitize.ts stays eager BY DESIGN, since
+  // `core.ts` sanitizes every event including the page_view that fires on a
+  // cold load. So any event-name marker would be present in both arms and
+  // green on a regression — the expensive failure direction control 5 exists
+  // to prevent.
+  //
+  // The table is the catalog's own eager dependency (`getCategoryByKey`), and
+  // nothing else put it on these 29 routes: it left all 29 entry graphs on the
+  // same diff. So it reds when the catalog comes back, which is the regression
+  // this guards. It can also red if some future module imports the table
+  // eagerly on its own — a false red, the cheap direction, and still a true
+  // statement about the critical path.
+  //
+  // Not a league key like `basketball_nba`: control 5 refuses all of them, and
+  // they are exactly the strings sanitize.ts keeps alive. These two prefixes
+  // (`racing_`, `rugbyunion_`) were the ONLY source-unique strings among the
+  // 132 that left `/`'s entry graph on this diff.
+  {
+    what: "lib/sportCategories.ts (the sport-category table the GA4 event catalog drags with it)",
+    marker: "rugbyunion_",
+    source: join("lib", "sportCategories.ts"),
+    exceptRoutes: [
+      "calibration.html",
+      "categories/golf.html",
+      "categories.html",
+      "my-stuff.html",
+      "onboarding.html",
+      "preferences.html",
+      "search.html",
+      "sports.html",
+    ],
+  },
 ] as const;
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);
@@ -509,7 +560,13 @@ describeBuild("LAT-P201 deferred chrome is off the first load of every route", (
 
     for (const entry of DEFERRED) {
       if (!("onlyRoutes" in entry)) continue;
-      const outside = routes.filter((r) => !entry.onlyRoutes.includes(r));
+      // Widened deliberately: `as const` types each entry's `onlyRoutes` as a
+      // tuple of its own literals, so `.includes(someRoute: string)` stops
+      // compiling as soon as a second scoped entry (or, as in LAT-P209, an
+      // `exceptRoutes`-only sibling) changes the union. Same widening the
+      // entry-graph test above already does for `scoped`.
+      const scopedRoutes: readonly string[] = entry.onlyRoutes;
+      const outside = routes.filter((r) => !scopedRoutes.includes(r));
       const carriers = outside.filter((route) =>
         entryScripts(route).some((file) => chunkText(file).includes(entry.marker)),
       );
