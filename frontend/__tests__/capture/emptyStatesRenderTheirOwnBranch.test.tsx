@@ -442,7 +442,13 @@ const CASES: PageCase[] = [
           // The modal is exported for this render. `items: []` is the state the
           // empty branch exists for: the challenge opened and the feed held
           // nothing eligible.
-          const { ChallengeModal } = require("@/app/discover/page");
+          //
+          // LAT-P205 moved it out of `app/discover/page.tsx` into its own
+          // module so the page could `dynamic()` it off the entry chunk. This
+          // render is the reason it keeps a NAMED export: `dynamic()` consumes
+          // the default, and a test that went through the page would now get a
+          // lazy wrapper that renders nothing here.
+          const { ChallengeModal } = require("@/components/discover/ChallengeModal");
           return React.createElement(ChallengeModal, {
             items: [],
             currentIndex: 0,

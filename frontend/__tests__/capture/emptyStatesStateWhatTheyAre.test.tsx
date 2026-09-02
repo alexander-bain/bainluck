@@ -312,7 +312,11 @@ const SITES: Site[] = [
   },
   {
     site: "app/discover · ChallengeModal has no cards",
-    file: "app/discover/page.tsx",
+    // LAT-P205 moved this markup into its own module so `/`'s entry chunk
+    // stops carrying a modal that opens on a tap. Same words, same
+    // `data-empty-state-name`, new file — and it is a COMPONENT site now, which
+    // is why the page census below counts five rather than six.
+    file: "components/discover/ChallengeModal.tsx",
     emptyState: "challenge-no-cards",
     states: "The daily challenge draws its questions from the live feed.",
     retired: "Check back after the feed refreshes.",
@@ -474,8 +478,12 @@ describe("every PAGE site is scoped — the escape hatch is closed", () => {
   // the whole-file scan CERT-562 blocked — the cheapest way to make a failure go away.
   const PAGE_SITES = SITES.filter((s) => s.file.startsWith("app/"));
 
-  it("all six page sites are present and carry a scope", () => {
-    expect(PAGE_SITES).toHaveLength(6);
+  // Five since LAT-P205: `ChallengeModal` left `app/discover/page.tsx` for its
+  // own module and is now scanned as a component site. The row above it in
+  // SITES still carries an `emptyState`, so nothing opted out of scoping — only
+  // the directory changed.
+  it("all five page sites are present and carry a scope", () => {
+    expect(PAGE_SITES).toHaveLength(5);
     expect(PAGE_SITES.filter((s) => !s.emptyState).map((s) => s.site)).toEqual([]);
   });
 

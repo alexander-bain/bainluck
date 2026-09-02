@@ -23,8 +23,21 @@ import { ThemeBundleCard } from "./discover/ThemeBundleCard";
 export type { DiscoverGroupedItem } from "./discover/types";
 export { GuessCard } from "./discover/GuessCard";
 export { DailyChallengeCard } from "./discover/DailyChallengeCard";
-export { ResolutionCard } from "./discover/ResolutionCard";
-export { ResolutionGroup } from "./discover/ResolutionGroup";
+
+// LAT-P205 — `ResolutionCard` / `ResolutionGroup` are NOT re-exported here any
+// more, and the omission is the fix rather than tidying.
+//
+// This file is imported eagerly by `/`: it is the card. A barrel is imported
+// whole, so every symbol on this list rides into the entry chunk of the landing
+// page whether or not the reader can reach it — the same mechanism LAT-P204
+// found in `components/Analytics/index.ts`. The settled-guess cards are
+// reachable only by a signed-in reader who has already guessed, which no cold
+// anonymous visitor is, and `app/discover/page.tsx` now loads them with
+// `dynamic()` from their own modules. Re-exporting either one from here would
+// put the bytes straight back on the first load and the `dynamic()` calls would
+// go quietly inert — the LAT-P200 failure, one layer down.
+//
+// Rule for this list: re-export only what a caller reaches THROUGH this file.
 
 interface DiscoverCardProps {
   groupedItem: DiscoverGroupedItem;

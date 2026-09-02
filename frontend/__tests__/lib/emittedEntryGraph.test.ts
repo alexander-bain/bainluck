@@ -102,6 +102,36 @@ const DEFERRED = [
     marker: "Open search",
     source: join("components", "MobileSearchTrigger.tsx"),
   },
+  // ─── LAT-P205: two Discover screens no cold reader is looking at ───────────
+  //
+  // Same class, one layer down. These are not root-layout chrome; they are
+  // branches of `/` itself, reachable only after a tap (the challenge) or a
+  // scroll to the bottom of the feed (the end card). The guard is identical
+  // because the failure is identical: a `dynamic()` that stops splitting puts
+  // them back on the critical path of the landing page and nothing says so.
+  {
+    what: "ChallengeModal (the daily challenge overlay)",
+    marker: "The daily challenge draws its questions from the live feed.",
+    source: join("components", "discover", "ChallengeModal.tsx"),
+  },
+  // `EndOfFeedCard` is NOT on this list, and its absence is a measurement: its
+  // chunk was fetched on all six treatment runs of the LAT-P205 A/B without any
+  // scrolling, so deferring it moved bytes rather than removing them. The
+  // reasoning lives at the `dynamic()` block in `app/discover/page.tsx`.
+  {
+    what: "ResolutionGroup (a signed-in reader's settled guesses)",
+    // The visible heading is "Your results · settled" and it is NOT usable as a
+    // marker: the minifier emits the middot as the escape `\xb7`, so the literal
+    // string appears in no chunk and control 2 fails — which is the control
+    // doing its job. This aria-label survives minification verbatim.
+    marker: "Your resolved guesses",
+    source: join("components", "discover", "ResolutionGroup.tsx"),
+  },
+  {
+    what: "ResolutionCard (one settled guess)",
+    marker: "✓ You got it right",
+    source: join("components", "discover", "ResolutionCard.tsx"),
+  },
 ] as const;
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);

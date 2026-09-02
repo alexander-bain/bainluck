@@ -1,17 +1,17 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
-import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
+import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
-import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime, usePinnedFutures } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import {
@@ -47,6 +47,72 @@ import {
   GAMES_UNLOCK_CARDS_SEEN,
   type FirstRunStorage,
 } from "@/lib/discoverFirstRun";
+import { getItemId } from "@/lib/discover/itemId";
+
+/**
+ * LAT-P205 — two screens that no cold reader is looking at, off the entry chunk.
+ *
+ * `/`'s blocking javascript is what a first card waits on: with the feed fetch
+ * moved to the first packet the card still arrived at the same millisecond
+ * (`COLD_ABLATE=feedbootpreload`, re-measured on today's production bundle —
+ * feedStart −1,029 ms, ttfc +12.6 ms), and CPU throttling 4× versus 1× is worth
+ * ~1 ms. What is left is download time for the entry set, so the only lever on
+ * this page is bytes that are fetched before hydration.
+ *
+ * Neither of these is reachable on the path to a first card:
+ *   - `ChallengeModal` renders only behind `challengeOpen`, i.e. after a tap.
+ *   - `ResolutionCard` / `ResolutionGroup` render a signed-in reader's SETTLED
+ *     guesses, from a second request (`/api/resolutions`) that returns nothing
+ *     for the anonymous cold visitor this page is measured on. They also had to
+ *     leave `components/DiscoverCard.tsx`'s re-export list to move at all — a
+ *     barrel is imported whole, so a `dynamic()` alone would have been inert.
+ *
+ * `dynamic()` here is a real split point because THIS file is a Client
+ * Component — the same call in a Server Component splits nothing, which is the
+ * defect CERT-732 fixed (`components/layout/DeferredChrome.tsx` carries the
+ * mechanism in full). `emittedEntryGraph.test.ts` asserts the artifact rather
+ * than the intent: both markers must be absent from every route's entry graph
+ * and present in some async chunk.
+ *
+ * `FeedUnavailableNotice` is deliberately NOT deferred. It is the surface a
+ * reader sees when the feed request has just failed, and a lazy chunk is one
+ * more request over the network that is failing — deferring it would trade
+ * bytes for the possibility of an error state that cannot draw itself.
+ */
+const ChallengeModal = dynamic(
+  () => import("@/components/discover/ChallengeModal"),
+  { ssr: false },
+);
+/**
+ * 🔴 `EndOfFeedCard` WAS DEFERRED HERE AND IS DELIBERATELY NOT ANY MORE.
+ *
+ * It reads as the safest deferral on the page — "the end of the feed, which
+ * nobody has scrolled to yet" — and it was measured instead of assumed. In the
+ * A/B that graded this cut (n=6+6, 3G + 4× CPU, two builds behind one
+ * switchable proxy) its async chunk was fetched on ALL SIX treatment runs,
+ * 1,125 B on the wire each time, with no scrolling. One of its two branches is
+ * live during a normal cold load, so deferring it removed 1,125 B from the
+ * entry set and put 1,125 B back on the wire as an extra request: the whole
+ * three-component cut netted −411 B of script on the wire instead of the
+ * −1,588 B the entry-set diff promised.
+ *
+ * The general rule, banked: A DEFERRAL IS ONLY A CUT IF THE BRANCH IS ACTUALLY
+ * UNREACHABLE ON A COLD LOAD. "Unreachable" is a claim about the running page,
+ * not about how the JSX reads, and `cold-load.mjs` prints the fetched chunk
+ * list that settles it.
+ */
+/**
+ * Named exports, so the `.then()` picks the component out of the module —
+ * `dynamic()` renders `default` and these two modules have none.
+ */
+const ResolutionGroup = dynamic(
+  () => import("@/components/discover/ResolutionGroup").then((m) => m.ResolutionGroup),
+  { ssr: false },
+);
+const ResolutionCard = dynamic(
+  () => import("@/components/discover/ResolutionCard").then((m) => m.ResolutionCard),
+  { ssr: false },
+);
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -105,20 +171,6 @@ function saveDismissed(items: Set<string>) {
     const fresh = Array.from(byId.values()).slice(-MAX_LOCAL_DISMISSES);
     localStorage.setItem(DISMISSED_KEY, JSON.stringify({ items: fresh }));
   } catch { }
-}
-
-function getItemId(item: FeedItem): string {
-  if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
-  if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
-  // Theme/comparison bundles carry a stable unique `id` (story_key/group_id +
-  // member ids). Without this case bundles fell through to `tournament-undefined`,
-  // collided, and got dropped by the dedup pass (Queue #62 / OPS-88).
-  if (item.type === "bundle") return `bundle-${(item.data as FeedBundleData).id}`;
-  // Concept cards (UFC/F1/cycling) carry their own `event:<domain>:<slug>` key —
-  // give them a concept-specific id so they no longer share the `tournament-`
-  // namespace (avoids a prefix collision in the dedup pass). (L2-167 Item 3.)
-  if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
-  return `tournament-${(item.data as any).key}`;
 }
 
 function getItemCategory(item: FeedItem): string {
@@ -430,109 +482,6 @@ function FeedItemShell({
   return (
     <div ref={ref} data-personalization-trace={personalizationTrace}>
       {children}
-    </div>
-  );
-}
-
-// Exported for `__tests__/capture/emptyStatesRenderTheirOwnBranch.test.tsx`,
-// which renders the no-cards branch. Three certs blocked a source-only anchor on
-// this empty state; a render needs the component to be reachable.
-export function ChallengeModal({
-  items,
-  currentIndex,
-  completed,
-  onClose,
-  onGuessCompleted,
-  onNextQuestion,
-}: {
-  items: FeedItem[];
-  currentIndex: number;
-  completed: boolean;
-  onClose: () => void;
-  onGuessCompleted: () => void;
-  onNextQuestion: () => void;
-}) {
-  const goal = Math.min(5, Math.max(items.length, 1));
-  const progress = completed ? 1 : currentIndex / goal;
-  const currentItem = items[currentIndex];
-  const isLastQuestion = currentIndex >= goal - 1;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-surface-deep shadow-2xl border border-surface-border">
-        <div className="sticky top-0 z-10 bg-surface-card/90 backdrop-blur border-b border-surface-border px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-text-primary">Today’s Challenge</div>
-              <div className="text-xs text-text-muted">
-                {completed ? "Set complete" : `Question ${Math.min(currentIndex + 1, goal)} of ${goal}`}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="grid place-items-center w-8 h-8 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors"
-              aria-label="Close challenge"
-            >
-              ×
-            </button>
-          </div>
-          <div className="mt-3 h-2 rounded-full bg-surface-elevated overflow-hidden">
-            <div
-              className="h-full rounded-full bg-amber-500 transition-all duration-500"
-              style={{ width: `${progress * 100}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="p-4">
-          {completed ? (
-            <div className="rounded-2xl border border-green-400/40 bg-surface-card p-6 text-center shadow-md">
-              <div className="text-4xl mb-3">🏆</div>
-              <h2 className="text-xl font-black text-text-primary">Challenge complete</h2>
-              <p className="mt-2 text-sm text-text-secondary">
-                Your predictions are counted. Come back tomorrow for a fresh set.
-              </p>
-              <Button
-                type="button"
-                onClick={onClose}
-                size="lg"
-                className="mt-5 w-full rounded-xl"
-              >
-                Back to Discover
-              </Button>
-            </div>
-          ) : currentItem ? (
-            <GuessCard
-              key={getItemId(currentItem)}
-              item={currentItem}
-              onGuessCompleted={onGuessCompleted}
-              nextButtonLabel={isLastQuestion ? "Finish challenge" : "Next question"}
-              onNextQuestion={onNextQuestion}
-            />
-          ) : (
-            <div
-              className="rounded-2xl border border-surface-border bg-surface-card p-6 text-center shadow-md"
-              data-empty-state-name="challenge-no-cards"
-            >
-              <h2 className="text-lg font-black text-text-primary">No challenge cards right now</h2>
-              {/* Ruling 142: say where the challenge gets its questions, not
-                  when more will arrive. */}
-              <p className="mt-2 text-sm text-text-secondary">
-                The daily challenge draws its questions from the live feed.
-              </p>
-              <Button
-                type="button"
-                onClick={onClose}
-                size="lg"
-                className="mt-5 w-full rounded-xl"
-              >
-                Back to Discover
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
