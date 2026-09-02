@@ -117,15 +117,38 @@ const LCP_HOOK = `
 // COLD_ABLATE=<name> blocks a class of requests at the browser and interleaves treatment runs with
 // control runs (A,B,A,B,…) inside one invocation, so network drift hits both arms equally. A cut
 // that shows no delta here is dead before anyone writes the code for it.
+/**
+ * Match on the PARSED url, never on the raw string.
+ *
+ * A bare `/images\.pexels\.com/.test(url)` also matches
+ * `https://example.com/images.pexels.com/x.jpg` and
+ * `https://images.pexels.com.example.com/x.jpg` — the host appearing anywhere in the string is not
+ * the same claim as the host BEING that host. It is only a measurement rig, so the consequence here
+ * is an arm that silently blocks the wrong thing rather than anything unsafe; but an ablation that
+ * blocks the wrong requests reports a delta for a cut nobody proposed, which is the one failure
+ * this whole file exists to avoid. (CodeQL js/regex/missing-regexp-anchor flagged exactly this.)
+ */
+const parts = (url) => {
+  try {
+    const u = new URL(url);
+    return { host: u.hostname, path: u.pathname, search: u.search };
+  } catch {
+    return { host: '', path: '', search: '' };
+  }
+};
+
 const ABLATIONS = {
   // Next.js App Router prefetch: RSC payloads for card destinations + the JS of nav routes the
   // reader has not opened. Everything here is speculative work for a navigation that may never come.
-  prefetch: (url) => /[?&]_rsc=/.test(url) || /\/chunks\/app\/(sports|my-stuff|discover\/stats)\/page-/.test(url),
+  prefetch: (url) => {
+    const { path, search } = parts(url);
+    return /[?&]_rsc=/.test(search) || /^\/_next\/static\/chunks\/app\/(sports|my-stuff|discover\/stats)\/page-/.test(path);
+  },
   // The hero photographs, to size what imagery costs the critical path.
-  images: (url) => /images\.pexels\.com/.test(url),
+  images: (url) => parts(url).host === 'images.pexels.com',
   // The preloaded webfont. Not a shippable change by itself — this sizes the prize, so we know
   // whether subsetting / font-display / dropping a weight is worth a queue.
-  font: (url) => /\/_next\/static\/media\/.*\.woff2?$/.test(url),
+  font: (url) => /^\/_next\/static\/media\/[^/]+\.woff2?$/.test(parts(url).path),
 };
 // HTML-REWRITE ablations. Blocking a request tells you what the BYTES cost; it does not tell you
 // what a config change would buy, because `preload: false` still downloads the font — it just
