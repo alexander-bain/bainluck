@@ -34,15 +34,46 @@
  */
 
 import { useSyncExternalStore, useEffect } from 'react';
-import { Analytics } from '@vercel/analytics/next';
+import dynamic from 'next/dynamic';
 import {
   initTelemetryConsent,
   getTelemetryDecision,
   getServerTelemetryDecision,
   subscribeTelemetryConsent,
 } from '@/lib/analytics';
-import WebVitalsReporter from './WebVitalsReporter';
-import { GoogleAnalytics } from './GoogleAnalytics';
+
+/**
+ * LAT-P204: the gated providers are LAZY, and that is the whole cut.
+ *
+ * Enforcement was already by absence — a provider the decision does not permit
+ * is never rendered, so it never loads its script and never sends a beacon.
+ * But `import` is not `render`. Statically importing them here put gtag.js's
+ * wrapper, Vercel Analytics and the web-vitals reporter into the BLOCKING entry
+ * chunk of every route, so a visitor who declined — or who has not been asked
+ * yet, which is every cold first load — downloaded the code for three rails
+ * they will never run before the first card could be drawn.
+ *
+ * `TelemetryGate` is a Client Component, so `dynamic()` here is a real split
+ * point. That is not a given: the same three calls written in `app/layout.tsx`
+ * would split nothing, because a Server Component turns every client module it
+ * names into a client reference of its own entry chunk and webpack has lost the
+ * split point before `React.lazy` ever sees it (LAT-P200 / DeferredChrome.tsx).
+ *
+ * The consent contract is unchanged and, if anything, stronger: the decision
+ * still governs whether the component renders at all, and now the bytes are not
+ * even fetched until it does. `ssr: false` matches what the gate already did —
+ * `getServerTelemetryDecision()` is all-false, so none of these has ever been
+ * part of the server render.
+ */
+const Analytics = dynamic(
+  () => import('@vercel/analytics/next').then((m) => m.Analytics),
+  { ssr: false },
+);
+const GoogleAnalytics = dynamic(
+  () => import('./GoogleAnalytics').then((m) => m.GoogleAnalytics),
+  { ssr: false },
+);
+const WebVitalsReporter = dynamic(() => import('./WebVitalsReporter'), { ssr: false });
 
 export function TelemetryGate() {
   // Hydrate the authority from the persisted choice. Idempotent, so React

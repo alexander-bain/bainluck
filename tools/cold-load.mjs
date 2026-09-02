@@ -9,9 +9,17 @@
 // prior connection) plus an explicit CDP Network.setCacheDisabled. --single-process supports
 // exactly one context, so one browser per run is forced anyway.
 //
-// Reports TWO numbers, because one is not enough (alex-inbox/latency-020 §3):
+// Reports THREE numbers, because two were not enough (alex-inbox/latency-020 §3):
 //   usable  — first contentful paint / LCP / DOMContentLoaded: when the reader sees the page
 //   finish  — load event and network-quiet: when the page stops working
+//   ttfc    — TIME TO FIRST CARD: when the reader gets what they actually came for
+//
+// 🔴 ON DISCOVER, FCP IS THE WRONG NUMBER AND WILL MISLEAD YOU. The server HTML for `/` contains
+// 12,441 B of markup, 444 chars of visible text, ZERO event anchors and ZERO percentages — nav
+// chrome, tagline, footer. Every card is client-rendered. So FCP answers "when did the header
+// appear", and a cut can improve FCP by 660 ms while making the first card 958 ms later (see the
+// `scripts` delay arm below — that is a measured trade, not a hypothetical). `ttfc` watches the DOM
+// for the first real card link; `ttfp` for the first probability. Grade this page on those.
 //
 // ⚠️ POPULATION (P188): these run through the session egress proxy on this machine. They are NOT
 // comparable to numbers taken on Alex's laptop on his network. They ARE comparable to each other,
@@ -39,7 +47,17 @@ const PACE_MS = parseInt(process.env.COLD_PACE_MS || '3000', 10);
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const baseArgs = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
-if (proxy) baseArgs.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
+// 🔴 `<-loopback>` REMOVES Chrome's implicit loopback bypass — it sends 127.0.0.1 THROUGH the
+// proxy, which is the opposite of what the name reads like. Correct for a production URL (the
+// sandbox proxy is the only egress) and fatal for a local `next start`: the proxy cannot reach this
+// machine's ports, so every run 200s on 687 bytes and renders nothing. Measured exactly that way —
+// ten runs, all INVALID, all "faster" than production. Keep the implicit bypass when either arm is
+// local, so localhost is served directly and api.bainluck.com still goes out through the proxy.
+const isLoopback = (u) => { try { const h = new URL(u).hostname; return h === 'localhost' || h === '127.0.0.1' || h === '[::1]'; } catch { return false; } };
+if (proxy) {
+  baseArgs.push(`--proxy-server=${proxy}`);
+  if (!isLoopback(url) && !isLoopback(process.env.COLD_ALT_URL || '')) baseArgs.push('--proxy-bypass-list=<-loopback>');
+}
 
 // Collected inside the page. Buffered observers so nothing that fired before we attach is lost.
 const COLLECT = `(() => {
@@ -59,6 +77,15 @@ const COLLECT = `(() => {
     .map(r => ({ name: r.name, type: r.initiatorType, start: Math.round(r.startTime), end: Math.round(r.responseEnd), dur: Math.round(r.duration), transfer: r.transferSize || 0 }))
     .sort((a, b) => b.end - a.end)
     .slice(0, 20);
+  // The critical path in full, in request order — the only way to tell a resource that is STARVED
+  // (starts early, finishes late) from one that is merely DISCOVERED LATE (starts late).
+  const crit = res
+    .filter(r => /\\.css(\\?|$)/.test(r.name) || /\\.woff2?(\\?|$)/.test(r.name) || /\\/api\\//.test(r.name)
+                 || /webpack-|main-app-|\\/app\\/(page|layout)-/.test(r.name))
+    .map(r => ({ n: r.name.split('/').pop().slice(0, 44), t: r.initiatorType,
+                 start: Math.round(r.startTime), end: Math.round(r.responseEnd),
+                 dur: Math.round(r.duration), enc: r.encodedBodySize || 0 }))
+    .sort((a, b) => a.start - b.start);
   // Proof of a real render, not an error page timed to look fast (gotcha #53 / timing-on-404).
   const proof = {
     title: document.title,
@@ -76,17 +103,58 @@ const COLLECT = `(() => {
     fcp: paint['first-contentful-paint'],
     lcp: window.__lcp || null,
     lcpEl: window.__lcpEl || null,
+    ttfc: window.__ttfc || null,
+    ttfp: window.__ttfp || null,
+    stage: window.__stage || null,
     cls: window.__cls || 0,
     resourceCount: res.length,
     resourceTransfer: res.reduce((a, r) => a + (r.transferSize || 0), 0),
     lastResourceEnd: res.reduce((a, r) => Math.max(a, r.responseEnd), 0),
     byType,
+    crit,
     slowest,
     proof,
   };
 })()`;
 
 const LCP_HOOK = `
+  // TIME TO FIRST CARD. FCP on Discover is the paint of the NAV CHROME — the server HTML carries
+  // 444 chars of visible text and zero cards — so FCP answers "when did the header appear", not
+  // "when did the reader get what they came for". Watch the DOM for the first real card.
+  window.__ttfc = null; window.__ttfp = null;
+  try {
+    const CARD = 'a[href^="/futures/"], a[href^="/event/"], a[href^="/events/"]';
+    const check = () => {
+      if (window.__ttfc == null && document.querySelector(CARD)) window.__ttfc = performance.now();
+      // textContent, NOT innerText: innerText forces a layout on every mutation, and this observer
+      // fires hundreds of times during hydration. An instrument that reflows the page it is timing
+      // is P202b all over again.
+      if (window.__ttfp == null && /\\d+%/.test(document.body ? document.body.textContent : '')) window.__ttfp = performance.now();
+      return window.__ttfc != null && window.__ttfp != null;
+    };
+    const mo = new MutationObserver(() => { if (check()) mo.disconnect(); });
+    const start = () => { if (!check()) mo.observe(document.body, { childList: true, subtree: true }); };
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+  } catch (e) {}
+  // Stage attribution: when did each class of critical-path resource finish, and when did the
+  // client-side feed fetch actually happen. Cross-origin entries without Timing-Allow-Origin still
+  // expose startTime/responseEnd (only the connect-phase fields and the size fields are redacted),
+  // which is exactly what a timeline needs.
+  window.__stage = { cssEnd: 0, scriptEnd: 0, feedStart: null, feedEnd: null, feedCount: 0 };
+  try {
+    new PerformanceObserver((l) => {
+      for (const r of l.getEntries()) {
+        if (r.initiatorType === 'link' && /\\.css(\\?|$)/.test(r.name)) window.__stage.cssEnd = Math.max(window.__stage.cssEnd, r.responseEnd);
+        if (r.initiatorType === 'script') window.__stage.scriptEnd = Math.max(window.__stage.scriptEnd, r.responseEnd);
+        if (/\\/api\\/feed/.test(r.name)) {
+          window.__stage.feedCount++;
+          if (window.__stage.feedStart == null || r.startTime < window.__stage.feedStart) window.__stage.feedStart = r.startTime;
+          window.__stage.feedEnd = Math.max(window.__stage.feedEnd || 0, r.responseEnd);
+        }
+      }
+    }).observe({ type: 'resource', buffered: true });
+  } catch (e) {}
   // CLS matters here specifically: the font ships display:swap, so anything that delays the swap
   // trades paint time against a visible reflow. A prize measured without its cost is half a number.
   window.__cls = 0;
@@ -157,11 +225,102 @@ const REWRITES = {
   // next/font's `preload: false`: drop the <link rel="preload"> for the woff2, keep everything else.
   // The font still loads, just off the earliest critical window.
   fontpreload: (html) => html.replace(/<link[^>]+rel="preload"[^>]*\.woff2?[^>]*>/g, ''),
+  // 🔴 START THE FEED FETCH EARLIER — MEASURED, DEAD. Keep both arms: they are the evidence.
+  //
+  // The premise looked airtight. `components/discover/FeedBootScript.tsx` already exists to start
+  // the anonymous reader's /api/feed fetch early, but it renders inside <body>, after three
+  // render-blocking <link rel=stylesheet>, and a parser-inserted synchronous script cannot execute
+  // until pending stylesheets have loaded. So the "early" fetch is not early: on production
+  // feedStart tracks cssEnd to within ~25ms across two very different values (1978 vs 1948, and
+  // 1213 vs 1209 under an unrelated script-delay arm) — same coupling at both, which is causation,
+  // not coincidence.
+  //
+  // `feedbootpreload` is the only BUILDABLE shape of the cut, and it works exactly as designed:
+  // the boot script cannot be hoisted above Next's stylesheets (Next owns head positions 0-6 —
+  // charSet, viewport, the next/font preload, the three `data-precedence` CSS links — and anything
+  // the root layout renders into <head> lands around position 27, still after the CSS), but a
+  // <link rel=preload> does not need the parser at all: the HTML preload SCANNER runs ahead of the
+  // blocked parser and fetches it from the first packet.
+  //
+  // 🔴 AND IT BOUGHT NOTHING. 3G/4x CPU, n=4+4 interleaved, all 8 runs valid:
+  //     feedStart  1860 -> 398 ms   (-1463 — the scheduling change fully landed)
+  //     ttfc       2746 -> 2716 ms  (-30)
+  //     wire       +21,988 B        (the preload is never claimed, so the feed is fetched TWICE)
+  // The feed payload sat parsed and waiting for ~1.8 s and the page still could not draw a card.
+  // TIME TO FIRST CARD IS NOT GATED BY THE FEED FETCH. Confirmed from the other side: 3G with CPU
+  // throttling 4x and 1x give ttfc 2509 vs 2508 ms, so it is not execution-bound either. What
+  // remains is JS DOWNLOAD over a saturated pipe. Do not re-open "fetch the feed sooner" — it is
+  // the cheapest-looking cut on this page and it is worth 30 ms.
+  feedbootpreload: (html) => html.replace(
+    '<script data-testid="feed-boot">',
+    '<link rel="preload" as="fetch" crossorigin="anonymous" href="https://api.bainluck.com/api/feed?limit=20&event_pct=0.15"/><script data-testid="feed-boot">'
+  ),
+  // The unbuildable upper bound of the same idea, kept only to size the prize: move the script
+  // itself above everything. Next 14 cannot emit this document — see the position note above.
+  feedboothead: (html) => {
+    const m = html.match(/<script data-testid="feed-boot">[\s\S]*?<\/script>/);
+    if (!m) return html; // no match => the vacuous-arm guard rejects the run
+    return html.replace(m[0], '').replace('<head>', '<head>' + m[0]);
+  },
 };
+// DELAY ablations. Blocking answers "what do these bytes cost"; it cannot answer "what does their
+// SCHEDULING cost", and it destroys the page, so every run trips the P202a validity guard and the
+// arm has no rendered proof. Holding a request back instead keeps the page whole: the browser still
+// fetches everything, just later, so the treatment arm renders and can be graded. This is the
+// faithful simulation of deprioritising a class of request rather than deleting it.
+const DELAYS = {
+  // The async entry chunks. 313 kB of them share one H2 connection with 20 kB of render-blocking
+  // CSS, and FCP cannot happen until that CSS lands.
+  //
+  // MEASURED (3G/4x CPU, n=5+5, COLD_DELAY_MS=1200): the CSS is STARVED, not discovered late.
+  // Every critical resource is requested at ~712 ms, but the 17,452 B stylesheet does not finish
+  // until 1945 ms because ~345 kB of concurrent script shares 200 kB/s. Holding the chunks back:
+  //     cssEnd  1948 -> 1209 ms  (-738)      fcp  1984 -> 1324 ms  (-660)
+  //     ttfc    2523 -> 3481 ms  (+958)
+  // So FCP on Discover is bandwidth-contention, and it is ALSO the wrong number to chase: the
+  // server HTML carries 444 chars of visible text and zero cards, so FCP is the paint of the nav
+  // chrome. Buying 660 ms of chrome by costing 958 ms of the first card is a loss. Grade Discover
+  // on `ttfc`, and treat this arm as a diagnostic, never as a proposal.
+  scripts: (url) => /^\/_next\/static\/chunks\//.test(parts(url).path),
+};
+const DELAY_MS = parseInt(process.env.COLD_DELAY_MS || '1200', 10);
 const ablateName = process.env.COLD_ABLATE || null;
 const rewrite = ablateName ? REWRITES[ablateName] : null;
+const delay = ablateName ? DELAYS[ablateName] : null;
 const ablate = ablateName ? ABLATIONS[ablateName] : null;
-if (ablateName && !ablate && !rewrite) { console.error(`unknown COLD_ABLATE=${ablateName}; known: ${[...Object.keys(ABLATIONS), ...Object.keys(REWRITES)]}`); process.exit(2); }
+if (ablateName && !ablate && !rewrite && !delay) { console.error(`unknown COLD_ABLATE=${ablateName}; known: ${[...Object.keys(ABLATIONS), ...Object.keys(REWRITES), ...Object.keys(DELAYS)]}`); process.exit(2); }
+
+// TWO-BUILD A/B — grade a cut that is BUILT but not DEPLOYED.
+//
+// The ablation arms above simulate a cut by editing the live page. That is the right instrument
+// while the cut is still a proposal, and the wrong one once the code exists: an ablation answers
+// "what would removing these requests be worth", never "is this diff worth it". This lane cannot
+// push, so without this arm every shipped cut is graded in BYTES and its milliseconds are somebody
+// else's post-deploy problem — which is how eight cuts came to be certified on byte counts alone.
+//
+// COLD_ALT_URL points at a second origin, normally `next start` on two ports over two builds of
+// two trees. Control loads `url`, treatment loads COLD_ALT_URL, interleaved A,B,A,B in ONE
+// invocation on ONE machine, so machine load and API drift hit both arms equally. Two sequential
+// invocations would not: a build is minutes of full-core compile, and the arm that runs after it
+// inherits a hotter machine and a warmer server-side cache.
+//
+// ⚠️ The two origins MUST differ only by the diff under test. Same throttle, same viewport, same
+// backing API — everything here is per-run, so that holds by construction; what it cannot check is
+// that you built the right two trees.
+// COLD_ARM_FILE is the SAME-ORIGIN form of the same A/B, and it exists because the two-origin form
+// cannot always be used: the API's CORS allowlist names one local port, so two `next start`s on two
+// ports produce two pages that fetch no feed, render no card, and are correctly thrown out by the
+// validity guard. Instead both builds sit behind one switchable reverse proxy on the allowed port;
+// the rig writes `control` / `treatment` into COLD_ARM_FILE before each navigation and the proxy
+// reads it. Origin, CORS, port and document URL are then identical between arms by construction,
+// and the only difference left is which build answered.
+const altUrl = process.env.COLD_ALT_URL || null;
+const armFile = process.env.COLD_ARM_FILE || null;
+if ((altUrl || armFile) && (ablate || rewrite || delay)) {
+  console.error('COLD_ALT_URL / COLD_ARM_FILE cannot be combined with COLD_ABLATE: both claim the treatment arm');
+  process.exit(2);
+}
+if (altUrl && armFile) { console.error('COLD_ALT_URL and COLD_ARM_FILE are two spellings of one arm; pick one'); process.exit(2); }
 
 // Fetch the document ONCE via curl (which has the session's egress, unlike Node) and derive both
 // arms from those exact bytes, so the only difference between them is the rewrite itself.
@@ -177,19 +336,32 @@ if (rewrite) {
 }
 
 const results = [];
-const TOTAL = (ablate || rewrite) ? RUNS * 2 : RUNS;
+const TOTAL = (ablate || rewrite || delay || altUrl || armFile) ? RUNS * 2 : RUNS;
 for (let i = 0; i < TOTAL; i++) {
   // Interleave: even = control, odd = treatment. Never all-of-one-then-all-of-the-other.
-  const treated = (ablate || rewrite) ? (i % 2 === 1) : false;
+  const treated = (ablate || rewrite || delay || altUrl || armFile) ? (i % 2 === 1) : false;
+  const target = treated && altUrl ? altUrl : url;
+  // Flip the upstream BEFORE the browser launches, so the very first byte of the run is the
+  // arm's own build. Written every run, including the control, so a stale file from a killed
+  // run cannot silently make both arms the same build.
+  if (armFile) writeFileSync(armFile, treated ? 'treatment' : 'control');
   if (i > 0 && PACE_MS > 0) await new Promise((r) => setTimeout(r, PACE_MS));
   const browser = await chromium.launch({ args: baseArgs });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    let blocked = 0;
+    let blocked = 0, delayed = 0;
     if (treated && ablate) {
       await page.route('**/*', (route) => {
         const u = route.request().url();
         if (ablate(u)) { blocked++; return route.abort(); }
+        return route.continue();
+      });
+    }
+    if (treated && delay) {
+      await page.route('**/*', async (route) => {
+        if (!delay(route.request().url())) return route.continue();
+        delayed++;
+        await new Promise((r) => setTimeout(r, DELAY_MS));
         return route.continue();
       });
     }
@@ -263,7 +435,7 @@ for (let i = 0; i < TOTAL; i++) {
     });
 
     const t0 = Date.now();
-    await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    await page.goto(target, { waitUntil: 'load', timeout: 120000 });
     const tLoad = Date.now() - t0;
     // "finish" = the network goes quiet. This is the number a reader experiences as "done".
     let quiet = null;
@@ -292,8 +464,10 @@ for (let i = 0; i < TOTAL; i++) {
       m.wireAfterScroll = JSON.parse(JSON.stringify(wire));
     }
     m.run = i + 1;
-    m.arm = (ablate || rewrite) ? (treated ? 'treatment' : 'control') : 'single';
+    m.arm = (ablate || rewrite || delay || altUrl || armFile) ? (treated ? 'treatment' : 'control') : 'single';
+    m.url = target;
     m.blocked = blocked;
+    m.delayed = delayed;
     // 🔴 A PAGE THAT RENDERED NOTHING STILL EMITS A PERFECTLY PLAUSIBLE FCP. Measured here: eight
     // consecutive runs reported FCP ~1,770ms with zero cards and zero probabilities on screen —
     // faster than the healthy runs, and completely meaningless. Averaging those in would have
@@ -301,7 +475,7 @@ for (let i = 0; i < TOTAL; i++) {
     m.valid = m.proof.cards > 0 && m.proof.pct > 0;
     if (!m.valid) console.error(`   ⚠️ run ${i + 1} INVALID — rendered no cards and no probabilities; excluded from medians`);
     results.push(m);
-    console.error(`run ${i + 1}/${TOTAL} ${m.arm.padEnd(9)} blocked=${blocked}  ttfb=${Math.round(m.ttfb)}  fcp=${Math.round(m.fcp || 0)}  lcp=${Math.round(m.lcp || 0)}  dcl=${Math.round(m.dcl)}  load=${Math.round(m.load)}  cls=${(m.cls||0).toFixed(3)}  quiet=${quiet}  wire=${m.wireAboveFold.total}${m.wireAfterScroll ? `  wireScrolled=${m.wireAfterScroll.total}` : ''}  cards=${m.proof.cards}  pct=${m.proof.pct}`);
+    console.error(`run ${i + 1}/${TOTAL} ${m.arm.padEnd(9)} blocked=${blocked}${delayed ? ` delayed=${delayed}` : ''}  ttfb=${Math.round(m.ttfb)}  fcp=${Math.round(m.fcp || 0)}  ttfc=${m.ttfc ? Math.round(m.ttfc) : "NONE"}  lcp=${Math.round(m.lcp || 0)}  dcl=${Math.round(m.dcl)}  load=${Math.round(m.load)}  cls=${(m.cls||0).toFixed(3)}  quiet=${quiet}  wire=${m.wireAboveFold.total}${m.wireAfterScroll ? `  wireScrolled=${m.wireAfterScroll.total}` : ''}  cards=${m.proof.cards}  pct=${m.proof.pct}`);
   } catch (e) {
     console.error(`run ${i + 1}/${RUNS} FAILED :: ${e.message}`);
     results.push({ run: i + 1, error: e.message });
@@ -325,6 +499,12 @@ const stats = (rows) => ({
   n: rows.length,
   ttfb: median(rows.map(r => r.ttfb)),
   fcp: median(rows.map(r => r.fcp)),
+  ttfc: median(rows.map(r => r.ttfc)),
+  ttfp: median(rows.map(r => r.ttfp)),
+  cssEnd: median(rows.map(r => r.stage && r.stage.cssEnd)),
+  scriptEnd: median(rows.map(r => r.stage && r.stage.scriptEnd)),
+  feedStart: median(rows.map(r => r.stage && r.stage.feedStart)),
+  feedEnd: median(rows.map(r => r.stage && r.stage.feedEnd)),
   lcp: median(rows.map(r => r.lcp)),
   dcl: median(rows.map(r => r.dcl)),
   load: median(rows.map(r => r.load)),
@@ -338,14 +518,24 @@ const summary = {
   url, runs: RUNS, ok: ok.length,
   throttle: process.env.COLD_THROTTLE || 'none', cpuThrottle: process.env.COLD_CPU || '1',
   ablate: ablateName || 'none',
+  altUrl: altUrl || null,
+  armFile: armFile || null,
   median: stats(ok),
 };
-if (ablate || rewrite) {
+if (ablate || rewrite || delay || altUrl || armFile) {
   const c = stats(ok.filter(r => r.arm === 'control'));
   const t = stats(ok.filter(r => r.arm === 'treatment'));
+  // A treatment arm that touched nothing is the same silent vacuous arm the REWRITE guard above
+  // catches at document level: the A/B compares the page to itself and reports "no effect" for a
+  // cut that was never applied. A block/delay predicate that matches no request is exactly that,
+  // so it fails loudly here rather than being written up as a kill.
+  if ((ablate || delay) && !ok.some(r => r.arm === 'treatment' && (r.blocked || r.delayed))) {
+    console.error(`ABLATION '${ablateName}' MATCHED NO REQUEST in any treatment run — vacuous arm`);
+    process.exit(1);
+  }
   summary.arms = { control: c, treatment: t };
   summary.delta = Object.fromEntries(
-    ['ttfb', 'fcp', 'lcp', 'dcl', 'load', 'networkIdle', 'wireBytesAboveFold']
+    ['ttfb', 'fcp', 'ttfc', 'ttfp', 'cssEnd', 'scriptEnd', 'feedStart', 'feedEnd', 'lcp', 'dcl', 'load', 'networkIdle', 'wireBytesAboveFold']
       .map(k => [k, (c[k] != null && t[k] != null) ? +(t[k] - c[k]).toFixed(1) : null])
   );
 }
