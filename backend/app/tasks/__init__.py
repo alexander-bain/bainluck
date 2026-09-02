@@ -659,6 +659,10 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_kalshi_volume",
     "app.tasks.backfill_polymarket_history",
     "app.tasks.backfill_polymarket_winners",
+    # live/035 — same family: a multi-minute network sweep over an EXPIRING
+    # population (Kalshi purges a settled market's candlesticks at ~47-86 days).
+    "app.tasks.backfill_event_chart_history",
+    "app.tasks.backfill_thin_event_charts",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
     # #2077 (queue 419). Same class as `kalshi_cliff_drain` two lines up and
@@ -1156,6 +1160,40 @@ def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero")
     """Backfill historical prices from Kalshi candlesticks API for outcomes with sparse data."""
     from app.tasks.kalshi import _backfill_kalshi_price_history
     return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit, mode))
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_event_chart_history")
+def backfill_event_chart_history(self, event_ids=None, limit: int = 40, dry_run: bool = False):
+    """live/035: draw an event's whole win-prob lifetime from its venues' history.
+
+    For prediction-market-native events the `events` row is routinely created
+    AFTER the match it describes (the Vallejo v Monfils specimen: event minted
+    2026-09-01, market listed 2026-08-27), so every sampler-style win-prob writer
+    we have is structurally incapable of the pre-match and in-match curve. Kalshi
+    candlesticks and the Polymarket CLOB still hold it.
+
+    Called with `event_ids` for a named repair; called bare it selects the
+    thinnest charts still inside Kalshi's retention window.
+    """
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+    return _tracked_run(
+        "event_chart_backfill",
+        run_event_chart_backfill(event_ids, limit=limit, dry_run=dry_run),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thin_event_charts")
+def backfill_thin_event_charts(self, limit: int = 60):
+    """Nightly: fill in every event chart holding fewer points than its life earned.
+
+    Bounded at both ends (gotcha #41): the floor keeps it off markets Kalshi has
+    provably purged, and inside that floor it works oldest-first so the at-risk
+    edge is reached before it expires rather than after.
+    """
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+    return _tracked_run(
+        "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_settled")
@@ -4590,6 +4628,19 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.kalshi_cliff_drain",
         "schedule": crontab(minute=20),  # hourly, off the :00/:15/:30/:45 crowd
         "kwargs": {"limit": 400},
+        "options": {"queue": "background"},
+    },
+    # live/035: the nightly chart-completeness sweep. 08:40 UTC = 01:40 PDT —
+    # after the morning sentinels (07:10/07:25/07:40/07:45) have had the queue
+    # and before the day's slate starts creating new thin charts, so a run is
+    # never competing with an attended fold. Nightly rather than hourly because
+    # the population it drains is created by yesterday's finished events, not
+    # continuously; the cliff-drain one line up is the hourly rail for the
+    # genuinely expiring cohort.
+    "backfill-thin-event-charts": {
+        "task": "app.tasks.backfill_thin_event_charts",
+        "schedule": crontab(minute=40, hour=8),
+        "kwargs": {"limit": 60},
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------

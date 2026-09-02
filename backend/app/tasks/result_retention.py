@@ -68,6 +68,10 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.backfill_canonical_keys",
         "app.tasks.backfill_combat_wps",
         "app.tasks.backfill_espn_win_prob",
+        # live/035: dispatched from POST /admin/backfill-event-chart when the
+        # request is too large to run inline, so its result must be retained or
+        # the status poll hangs.
+        "app.tasks.backfill_event_chart_history",
         "app.tasks.backfill_game_state",
         "app.tasks.backfill_historical_odds",
         "app.tasks.backfill_kalshi_candlestick",

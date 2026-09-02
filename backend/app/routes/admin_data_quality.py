@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+#: live/035 — how many events `/backfill-event-chart` will redraw inside one
+#: request. Each event costs 1-3 upstream calls per source; eight keeps the
+#: worst case comfortably inside the dyno's request timeout, and anything bigger
+#: is a sweep, which is what the `queue=true` path and the nightly beat are for.
+_INLINE_EVENT_CAP = 8
+
 
 @router.post("/snapshots/collapse")
 async def trigger_snapshot_collapse(
@@ -5039,6 +5045,53 @@ async def trigger_backfill_espn_win_prob(
         "app.tasks.backfill_espn_win_prob", args=[limit]
     )
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
+
+
+@router.post("/backfill-event-chart")
+async def trigger_backfill_event_chart(
+    request: Request, secret: str = Query(None),
+    event_ids: str = Query(None, description="Comma-separated event ids"),
+    limit: int = Query(40),
+    queue: bool = Query(False, description="Dispatch to Celery instead of running inline"),
+    dry_run: bool = Query(False),
+):
+    """live/035: redraw an event's win-prob chart from the venues' own price history.
+
+    Runs INLINE by default and returns the per-source verdict, because the point
+    of a named repair is to see whether it worked. `_safe_send_task` would hand
+    back a task id and nothing else, and the background queue is a known
+    congestion point — a repair you cannot read the result of is a repair you
+    cannot certify.
+
+    Inline runs are bounded to `_INLINE_EVENT_CAP` events so the request cannot
+    outlive the dyno's request timeout; pass `queue=true` for anything larger.
+    """
+    _check_admin_secret(secret, request=request)
+
+    ids: list[int] = []
+    if event_ids:
+        for chunk in str(event_ids).split(","):
+            chunk = chunk.strip()
+            if chunk:
+                try:
+                    ids.append(int(chunk))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400, detail=f"not an event id: {chunk}"
+                    )
+
+    if queue or len(ids) > _INLINE_EVENT_CAP or (not ids and limit > _INLINE_EVENT_CAP):
+        result = _safe_send_task(
+            "app.tasks.backfill_event_chart_history",
+            kwargs={"event_ids": ids or None, "limit": limit, "dry_run": dry_run},
+        )
+        return {"status": "queued", "task_id": str(result.id), "event_ids": ids}
+
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+
+    return await run_event_chart_backfill(
+        ids or None, limit=min(limit, _INLINE_EVENT_CAP), dry_run=dry_run
+    )
 
 
 @router.get("/coverage-trends")

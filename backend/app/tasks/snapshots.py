@@ -15,6 +15,7 @@ async def _create_or_update_win_prob_snapshot(
     away_win_probability: float,
     game_state: dict = None,
     is_completed: bool = False,
+    max_gap_seconds: float = None,
 ) -> tuple:
     """
     Create a new WinProbSnapshot or update existing if value unchanged.
@@ -22,6 +23,20 @@ async def _create_or_update_win_prob_snapshot(
     Returns (snapshot, is_new) tuple.
     - If value changed: creates new snapshot, returns (new_snapshot, True)
     - If value same: updates existing snapshot's reading_count/valid_until, returns (existing, False)
+
+    ``max_gap_seconds`` (live/035) is the LIVE CADENCE FLOOR: when set, an
+    unchanged value still appends a new point once the last one is older than
+    this. Without it a flat market emits nothing at all — the dedup below only
+    bumps ``reading_count`` — so a tense 0-0 stretch draws as a straight segment
+    between two distant points and a blowout draws as one dot. Alex's bar is at
+    least one snapshot per minute per live event; the callers that own a live
+    event pass 60 and nobody else passes anything, so the growth is bounded to
+    one row per minute per source on games that are actually in progress, and
+    zero everywhere else.
+
+    It deliberately does NOT apply to completed events: ``is_completed`` refreshes
+    the terminal point in place (#922) and a heartbeat there would rebuild the
+    stale tail that rule exists to prevent.
 
     #922: when ``is_completed`` is True (the event is completed/closed), a value
     change does NOT append a new time-series point — instead the most recent
@@ -61,6 +76,18 @@ async def _create_or_update_win_prob_snapshot(
             if new_period and old_period and str(new_period) != str(old_period):
                 period_same = False
         is_same = prob_same and period_same
+
+    # live/035: a live event's line must keep gaining points even when the price
+    # does not move. Treated as "not the same observation" rather than as a
+    # separate branch, so the heartbeat point is created, chained and counted by
+    # exactly the same code that handles a real move.
+    if is_same and max_gap_seconds and not is_completed:
+        last_seen = getattr(existing, "captured_at", None)
+        if last_seen is not None:
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            if (now - last_seen).total_seconds() >= float(max_gap_seconds):
+                is_same = False
 
     if existing is None or not is_same:
         # #922: completed/closed event — refresh the terminal point in place

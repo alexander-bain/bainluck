@@ -11057,6 +11057,34 @@ def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     return commence_cap
 
 
+def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
+    """An event whose start is older than the whole requested window, still open.
+
+    live/035. `hours` is a FOCUS device for an upcoming or in-progress game:
+    "the last day of movement" is the interesting slice while the story is still
+    being told. Applied to an event that started days ago and never reached a
+    terminal status, it is not a focus — it is an arbitrary chord across a dead
+    event, and it clips the chart to whatever happens to fall inside it.
+
+    The Vallejo v Monfils specimen is the shape: `status='scheduled'`,
+    `commence_time` 2026-08-30 (a Kalshi ticker-derived midnight stand-in,
+    gotcha #14), the real match played on 09-01, and five days of venue price
+    history either side of a 48-hour window. Windowed, the page draws a stub of
+    a match it cannot even locate correctly; unwindowed, it draws the match.
+
+    Deliberately narrow. It fires only when `commence_time < now - hours`, so a
+    genuinely live game — whose start is by definition inside its own window —
+    is untouched, and an event with no `commence_time` is untouched. The end is
+    left OPEN rather than capped on `commence_time + max_duration`, because on
+    exactly this cohort `commence_time` is the field that is wrong: capping
+    there would clip the real match out in the name of trimming a stale tail.
+    The 3,000-row LIMIT is what bounds the response.
+    """
+    if event.commence_time is None:
+        return False
+    return event.commence_time < now - timedelta(hours=hours)
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -11203,11 +11231,26 @@ async def get_event_odds_history(
     # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
     is_finished = _event_is_really_finished(event, now)
+    # live/035: a past-start, never-settled event is served whole, not windowed.
+    is_stale_open = not is_finished and _event_started_long_ago_unsettled(
+        event, now, hours
+    )
 
-    if response and is_finished:
+    if response and (is_finished or is_stale_open):
         response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=300"
 
-    if is_finished:
+    end_cap = None
+    if is_stale_open:
+        # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
+        # why `commence_time` cannot be trusted to bound this cohort.
+        result = await db.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id == event_id)
+            .order_by(OddsSnapshot.captured_at)
+            .limit(3000)
+        )
+        cutoff = None
+    elif is_finished:
         # Return snapshots up to 30 min after game end to exclude stale
         # prediction market data from hours/days after completion.
         #
@@ -11975,6 +12018,25 @@ async def get_event_odds_history(
             _domain_end = datetime.fromisoformat(history[-1]["timestamp"])
     else:
         _domain_end = now
+    if is_stale_open:
+        # live/035: on this cohort `commence_time` is the untrustworthy field
+        # (a Kalshi ticker-derived midnight, gotcha #14), so an axis anchored on
+        # it can open AFTER the data it is the axis for. Widen — never narrow —
+        # to contain the earliest point actually being served. #240's concern was
+        # a SLIVER axis on a young live game; widening cannot produce one, and
+        # this branch cannot reach a young live game by construction.
+        _earliest = min(
+            (
+                datetime.fromisoformat(pts[0]["timestamp"])
+                for pts in list(win_prob_history.values()) + [history]
+                if pts
+            ),
+            default=None,
+        )
+        if _earliest is not None and (
+            _domain_start is None or _earliest < _domain_start
+        ):
+            _domain_start = _earliest
     time_domain = None
     if _domain_start and _domain_end:
         if not is_finished and (

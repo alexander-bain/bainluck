@@ -1142,7 +1142,32 @@ def free_background_slots(
 #: then returns `no_work` forever, costing one indexed query per fire. It is on
 #: `background` rather than `heavy` because it holds no DB work of consequence:
 #: the only statement per URL is a narrow indexed UPDATE.
-BACKGROUND_BEAT_COUNT = 110
+#:
+#: 🔵 live/035 RE-DERIVATION (against its own base, 2026-09-02): 109 → 110,
+#: explicit 64 → 65, fall-through still 45. One beat added, naming `background`
+#: explicitly: `backfill-thin-event-charts` (nightly 08:40 UTC, `limit=60`) —
+#: the event-chart completeness sweep. It belongs to the 600-960s backfill
+#: family the routing block keeps OFF `heavy`, for the same reason
+#: `kalshi_cliff_drain` is: a multi-minute network sweep that would fill both
+#: heavy slots and delay the hourly calibration warmer. Cost: ~1.9s selection +
+#: up to 60 events × 2-3 upstream calls, ONCE a night, in the quiet window after
+#: the morning sentinels.
+#:
+#: 🔴 RE-DERIVATION AT THE REBASE (live/040, 2026-09-02): INT-158's collision
+#: repeated exactly. LAT-P193 and live/035 EACH moved this constant 109 → 110
+#: for a DIFFERENT beat (`backfill-image-dimensions` and
+#: `backfill-thin-event-charts`), each correct against its own base, and 110 is
+#: the one number that is wrong on the merged tree — both beats are present.
+#: Note the shape of the trap: the two branches also made the SAME edit to
+#: `test_typeahead_beat_budget.py` (64→65, 109→110), so git auto-merged the
+#: assertion without a conflict and the guard would have gone red pointing at
+#: the constant rather than at the merge. The census below was RUN over the
+#: assembled `beat_schedule` on the REBASED tree and its printed value —
+#: `explicit 66 implicit 45 total 111` — is what stands here. It was not
+#: obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above remain
+#: accurate as written; live/039's `backfill_thirty_day_charts` is deliberately
+#: NOT on the beat schedule and correctly moves nothing here.
+BACKGROUND_BEAT_COUNT = 111
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
