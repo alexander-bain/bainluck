@@ -1,0 +1,496 @@
+{
+ "label": "after",
+ "verdict": "GREEN",
+ "graded_form": "union(_futures_name_arms)",
+ "or_fold_is_contrast_only": true,
+ "ratio_threshold": 0.8,
+ "expected_indexes": [
+  "ix_futures_name_fts_open",
+  "ix_futures_name_trgm"
+ ],
+ "rounds": 3,
+ "orfold_rounds": 1,
+ "terms": {
+  "champions": {
+   "class": "recall/common",
+   "graded_form": "union",
+   "arm_ms": [
+    64.598,
+    84.657,
+    79.38
+   ],
+   "ctrl_ms": [
+    510.623,
+    462.876,
+    385.194
+   ],
+   "arm_median_ms": 79.4,
+   "ctrl_median_ms": 462.9,
+   "ratio": 0.171,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 484,
+    "sig": "ca55903849b6360428ee0110132d8654",
+    "ground_truth_n": 484,
+    "ground_truth_sig": "ca55903849b6360428ee0110132d8654",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 484,
+    "or_fold_sig": "ca55903849b6360428ee0110132d8654",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     221.279
+    ],
+    "median_ms": 221.3,
+    "speedup_vs_union": 2.8,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "relegation": {
+   "class": "recall",
+   "graded_form": "union",
+   "arm_ms": [
+    16.199,
+    18.696,
+    18.499
+   ],
+   "ctrl_ms": [
+    329.879,
+    347.435,
+    409.823
+   ],
+   "arm_median_ms": 18.5,
+   "ctrl_median_ms": 347.4,
+   "ratio": 0.053,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 116,
+    "sig": "844861ee6c32ac7bf214122bf7c1538b",
+    "ground_truth_n": 116,
+    "ground_truth_sig": "844861ee6c32ac7bf214122bf7c1538b",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 116,
+    "or_fold_sig": "844861ee6c32ac7bf214122bf7c1538b",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     19.838
+    ],
+    "median_ms": 19.8,
+    "speedup_vs_union": 1.1,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "chiefs": {
+   "class": "recall",
+   "graded_form": "union",
+   "arm_ms": [
+    9.115,
+    8.437,
+    23.004
+   ],
+   "ctrl_ms": [
+    763.17,
+    545.258,
+    587.897
+   ],
+   "arm_median_ms": 9.1,
+   "ctrl_median_ms": 587.9,
+   "ratio": 0.016,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 32,
+    "sig": "a4ca999d9ed6370eea527defa0461476",
+    "ground_truth_n": 32,
+    "ground_truth_sig": "a4ca999d9ed6370eea527defa0461476",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 32,
+    "or_fold_sig": "a4ca999d9ed6370eea527defa0461476",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     12.061
+    ],
+    "median_ms": 12.1,
+    "speedup_vs_union": 1.3,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "election": {
+   "class": "recall/common",
+   "graded_form": "union",
+   "arm_ms": [
+    55.304,
+    54.386,
+    43.785
+   ],
+   "ctrl_ms": [
+    339.234,
+    368.772,
+    344.919
+   ],
+   "arm_median_ms": 54.4,
+   "ctrl_median_ms": 344.9,
+   "ratio": 0.158,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_markets_status",
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 2475,
+    "sig": "06f391e8329fdfff64cb3cd73ec3fcf8",
+    "ground_truth_n": 2475,
+    "ground_truth_sig": "06f391e8329fdfff64cb3cd73ec3fcf8",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 2475,
+    "or_fold_sig": "06f391e8329fdfff64cb3cd73ec3fcf8",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     151.03
+    ],
+    "median_ms": 151.0,
+    "speedup_vs_union": 2.8,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "winner": {
+   "class": "high-frequency",
+   "graded_form": "union",
+   "arm_ms": [
+    97.984,
+    123.554,
+    79.058
+   ],
+   "ctrl_ms": [
+    389.289,
+    458.147,
+    284.828
+   ],
+   "arm_median_ms": 98.0,
+   "ctrl_median_ms": 389.3,
+   "ratio": 0.252,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_markets_status",
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 3834,
+    "sig": "21f1a37942aed1f3cb0c640df093fbbd",
+    "ground_truth_n": 3834,
+    "ground_truth_sig": "21f1a37942aed1f3cb0c640df093fbbd",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 3834,
+    "or_fold_sig": "21f1a37942aed1f3cb0c640df093fbbd",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     1374.453
+    ],
+    "median_ms": 1374.5,
+    "speedup_vs_union": 14.0,
+    "bitmap_or": false,
+    "indexes_used": [
+     "ix_futures_markets_status"
+    ]
+   }
+  },
+  "trump": {
+   "class": "high-frequency",
+   "graded_form": "union",
+   "arm_ms": [
+    45.757,
+    45.378,
+    77.74
+   ],
+   "ctrl_ms": [
+    369.246,
+    693.568,
+    596.891
+   ],
+   "arm_median_ms": 45.8,
+   "ctrl_median_ms": 596.9,
+   "ratio": 0.077,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 611,
+    "sig": "483051a343840ef57c4e2cd4666ea0c8",
+    "ground_truth_n": 611,
+    "ground_truth_sig": "483051a343840ef57c4e2cd4666ea0c8",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 611,
+    "or_fold_sig": "483051a343840ef57c4e2cd4666ea0c8",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     162.605
+    ],
+    "median_ms": 162.6,
+    "speedup_vs_union": 3.6,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "fed": {
+   "class": "high-frequency",
+   "graded_form": "union",
+   "arm_ms": [
+    12.725,
+    11.562,
+    11.85
+   ],
+   "ctrl_ms": [
+    411.709,
+    357.749,
+    327.745
+   ],
+   "arm_median_ms": 11.8,
+   "ctrl_median_ms": 357.7,
+   "ratio": 0.033,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 291,
+    "sig": "536abfd800eef6f8afe59071fc016276",
+    "ground_truth_n": 291,
+    "ground_truth_sig": "536abfd800eef6f8afe59071fc016276",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 291,
+    "or_fold_sig": "536abfd800eef6f8afe59071fc016276",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     39.825
+    ],
+    "median_ms": 39.8,
+    "speedup_vs_union": 3.4,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "werder": {
+   "class": "rare",
+   "graded_form": "union",
+   "arm_ms": [
+    10.727,
+    5.689,
+    5.519
+   ],
+   "ctrl_ms": [
+    408.879,
+    284.21,
+    515.773
+   ],
+   "arm_median_ms": 5.7,
+   "ctrl_median_ms": 408.9,
+   "ratio": 0.014,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 22,
+    "sig": "49b57d94ad25f42745b797e8aa0cd8ca",
+    "ground_truth_n": 22,
+    "ground_truth_sig": "49b57d94ad25f42745b797e8aa0cd8ca",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 22,
+    "or_fold_sig": "49b57d94ad25f42745b797e8aa0cd8ca",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     10.34
+    ],
+    "median_ms": 10.3,
+    "speedup_vs_union": 1.8,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "schalke": {
+   "class": "rare",
+   "graded_form": "union",
+   "arm_ms": [
+    24.394,
+    7.919,
+    7.275
+   ],
+   "ctrl_ms": [
+    445.824,
+    349.237,
+    318.284
+   ],
+   "arm_median_ms": 7.9,
+   "ctrl_median_ms": 349.2,
+   "ratio": 0.023,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 21,
+    "sig": "5935f4fc053ec29085a247fd3434b9c9",
+    "ground_truth_n": 21,
+    "ground_truth_sig": "5935f4fc053ec29085a247fd3434b9c9",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 21,
+    "or_fold_sig": "5935f4fc053ec29085a247fd3434b9c9",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     11.005
+    ],
+    "median_ms": 11.0,
+    "speedup_vs_union": 1.4,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  },
+  "mvp": {
+   "class": "rare",
+   "graded_form": "union",
+   "arm_ms": [
+    2.899,
+    3.012,
+    3.059
+   ],
+   "ctrl_ms": [
+    459.5,
+    343.7,
+    448.195
+   ],
+   "arm_median_ms": 3.0,
+   "ctrl_median_ms": 448.2,
+   "ratio": 0.007,
+   "bitmap_or": false,
+   "indexes_used": [
+    "ix_futures_name_fts_open",
+    "ix_futures_name_trgm"
+   ],
+   "indexes_missing": [],
+   "shape_ok": true,
+   "budget_ok": true,
+   "semantics_ok": true,
+   "signature": {
+    "n": 29,
+    "sig": "6ba7dbe4e1748ac014f693bc3855623a",
+    "ground_truth_n": 29,
+    "ground_truth_sig": "6ba7dbe4e1748ac014f693bc3855623a",
+    "agrees_with_forced_scan": true,
+    "or_fold_n": 29,
+    "or_fold_sig": "6ba7dbe4e1748ac014f693bc3855623a",
+    "agrees_with_or_fold": true
+   },
+   "or_fold": {
+    "ms": [
+     4.059
+    ],
+    "median_ms": 4.1,
+    "speedup_vs_union": 1.3,
+    "bitmap_or": true,
+    "indexes_used": [
+     "ix_futures_name_fts_open",
+     "ix_futures_name_trgm"
+    ]
+   }
+  }
+ }
+}
