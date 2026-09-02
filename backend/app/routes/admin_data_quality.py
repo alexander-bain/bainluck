@@ -5094,6 +5094,67 @@ async def trigger_backfill_event_chart(
     )
 
 
+@router.post("/backfill-30d-charts")
+async def trigger_backfill_thirty_day_charts(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(200, description="Fillable events to drain this call"),
+    queue: bool = Query(True, description="Dispatch to Celery (default) or run inline"),
+    dry_run: bool = Query(False),
+    min_period_minutes: int = Query(
+        None, description="Force a granularity floor; omit to derive from event age"
+    ),
+    only_tier: str = Query(None, description="us_open | reachable | remainder"),
+    reset: bool = Query(False, description="Forget every tier checkpoint first"),
+):
+    """live/039: the one-time 30-day drain. Re-call until it reports `drained`.
+
+    Queued by DEFAULT, the opposite of `/backfill-event-chart` above, and for the
+    opposite reason: that one is a named repair whose whole point is reading the
+    verdict, and this one is a network sweep over thousands of events that cannot
+    fit inside a request. `queue=false` runs a small page inline for a spot check.
+
+    `reset=true` clears the per-tier checkpoints so the next call starts from the
+    top of the window. It writes nothing itself — re-drained events are skipped
+    minute-by-minute inside `backfill_event_chart`, so a reset costs scan time
+    rather than duplicate rows.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.chart_backfill_thirty_day import (
+        TIERS, reset_checkpoints, run_thirty_day_chart_drain,
+    )
+
+    if only_tier and only_tier not in {tier.name for tier in TIERS}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown tier {only_tier!r}; expected one of "
+                   f"{sorted(tier.name for tier in TIERS)}",
+        )
+
+    reset_report = reset_checkpoints() if reset else None
+
+    if queue:
+        result = _safe_send_task(
+            "app.tasks.backfill_thirty_day_charts",
+            kwargs={
+                "limit": limit, "dry_run": dry_run,
+                "min_period_minutes": min_period_minutes, "only_tier": only_tier,
+            },
+        )
+        return {
+            "status": "queued", "task_id": str(result.id),
+            "limit": limit, "only_tier": only_tier, "reset": reset_report,
+        }
+
+    verdict = await run_thirty_day_chart_drain(
+        limit=min(limit, _INLINE_EVENT_CAP), dry_run=dry_run,
+        min_period_minutes=min_period_minutes, only_tier=only_tier,
+    )
+    if reset_report:
+        verdict["reset"] = reset_report
+    return verdict
+
+
 @router.get("/coverage-trends")
 async def get_coverage_trends(
     request: Request, secret: str = Query(None),

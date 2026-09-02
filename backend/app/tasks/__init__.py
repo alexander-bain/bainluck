@@ -663,6 +663,9 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # population (Kalshi purges a settled market's candlesticks at ~47-86 days).
     "app.tasks.backfill_event_chart_history",
     "app.tasks.backfill_thin_event_charts",
+    # live/039 — the one-time 30-day drain. Same family again, and the longest
+    # runner of the three: it is re-triggered until it reports `drained`.
+    "app.tasks.backfill_thirty_day_charts",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
     # #2077 (queue 419). Same class as `kalshi_cliff_drain` two lines up and
@@ -1199,6 +1202,32 @@ def backfill_thin_event_charts(self, limit: int = 90):
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
         "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thirty_day_charts")
+def backfill_thirty_day_charts(
+    self, limit: int = 200, dry_run: bool = False,
+    min_period_minutes=None, only_tier=None,
+):
+    """live/039: the ONE-TIME drain of the last 30 days of attached events.
+
+    Alex: "if we had Polymarket integration we could backfill all the events we
+    don't have probabilities for from the last 30 days."
+
+    Deliberately NOT on the beat schedule. The two steady-state rails already
+    exist — `backfill_thin_event_charts` pre-warms the ±7-day reader window and
+    `plan_on_demand_fill` catches what a reader opens — and this is the one-off
+    backlog bite those two were told to stop chasing. It checkpoints per tier in
+    Redis and is re-triggered until its verdict reads `drained`.
+    """
+    from app.tasks.chart_backfill_thirty_day import run_thirty_day_chart_drain
+    return _tracked_run(
+        "thirty_day_chart_drain",
+        run_thirty_day_chart_drain(
+            limit=limit, dry_run=dry_run,
+            min_period_minutes=min_period_minutes, only_tier=only_tier,
+        ),
     )
 
 
