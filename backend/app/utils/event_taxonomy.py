@@ -11,7 +11,12 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from app.utils.highlights import LEAGUE_TIERS, EventFlags, HighlightResult
+from app.utils.highlights import (
+    LEAGUE_TIERS,
+    EventFlags,
+    HighlightResult,
+    get_league_tier,
+)
 from app.utils.league_classification import LEAGUE_CLASS
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
@@ -251,7 +256,9 @@ def compute_event_tags(
         tags.add(f"league:{league_tag}")
 
     # ── tier ──
-    tier = LEAGUE_TIERS.get(sport_key, 4)
+    # Same question the ranker asks, so it must be the same answer: a card scored
+    # as a Grand Slam must not also be tagged tier:4 (#2552).
+    tier = get_league_tier(sport_key)
     tags.add(f"tier:{tier}")
 
     # ── class ──

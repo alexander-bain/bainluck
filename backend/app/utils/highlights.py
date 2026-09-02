@@ -82,10 +82,14 @@ LEAGUE_TIERS: dict[str, int] = {
     # Tennis: Grand Slams → tier 2, regular tour → tier 4
     # Regular ATP/WTA tour events are not interesting to the anonymous US audience.
     # Grand Slams ARE the moments casual fans care about.
+    # The slams are spelled here WITHOUT the tour segment; real sport keys carry it
+    # ("tennis_atp_us_open"), so `get_league_tier` drops the tour and re-reads this
+    # same table rather than this table listing every tour × slam pair.
     "tennis_us_open": 2,
     "tennis_french_open": 2,
     "tennis_wimbledon": 2,
     "tennis_australian_open": 2,
+    "tennis_aus_open": 2,               # The Odds API's own spelling of the same slam
     "tennis_atp_aus_open_singles": 2,
     "tennis_wta_aus_open_singles": 2,
     "tennis_atp_dubai": 4,              # Regular ATP tour event
@@ -294,11 +298,41 @@ class HighlightResult:
     primary_reason: Optional[str] = None
 
 
+# Tour segments that sit between the sport and the tournament in a tennis sport key.
+_TENNIS_TOUR_SEGMENTS = frozenset({"atp", "wta", "itf"})
+
+
+def _tour_agnostic_tennis_key(sport_key: str) -> Optional[str]:
+    """Strip the tour segment from a tennis sport key, or None if there isn't one.
+
+    "tennis_atp_us_open" → "tennis_us_open"; "tennis_atp" and "tennis_other" → None.
+    A slam is the same moment whichever tour is playing it, so the tier table names
+    each one once and this drops the tour so the lookup can find it.
+    """
+    parts = sport_key.split("_")
+    if len(parts) < 3 or parts[0] != "tennis" or parts[1] not in _TENNIS_TOUR_SEGMENTS:
+        return None
+    return "_".join([parts[0]] + parts[2:])
+
+
 def get_league_tier(sport_key: Optional[str]) -> int:
-    """Get the tier for a league (1=major, 2=notable, 3=niche, 4=minor)."""
+    """Get the tier for a league (1=major, 2=notable, 3=niche, 4=minor).
+
+    Exact spelling wins; a tennis key that misses falls back to its tour-agnostic
+    form. Without that fallback every Grand Slam match ever ingested scored tier 4
+    — a -45 penalty — because the table spells the slams "tennis_us_open" while the
+    events carry "tennis_atp_us_open" (#2552). Regular tour stops have no entry
+    under either spelling and stay tier 4.
+    """
     if not sport_key:
         return 4
-    return LEAGUE_TIERS.get(sport_key, 4)
+    tier = LEAGUE_TIERS.get(sport_key)
+    if tier is not None:
+        return tier
+    tour_agnostic = _tour_agnostic_tennis_key(sport_key)
+    if tour_agnostic is not None:
+        return LEAGUE_TIERS.get(tour_agnostic, 4)
+    return 4
 
 
 def get_season_multiplier(sport_key: Optional[str], now: Optional[datetime] = None) -> float:
