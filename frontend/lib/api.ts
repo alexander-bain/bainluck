@@ -44,6 +44,7 @@ import type {
   SportHierarchy,
   EventConceptResponse,
   Event,
+  EventStatus,
   GolfLeaderboardResponse,
   TeamData,
 } from "./types";
@@ -490,7 +491,12 @@ export interface TeamGameBrief {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
-  status: "scheduled" | "live" | "completed" | "closed";
+  // live/056 — was a fifth inline copy of the status union, and it was the copy
+  // that had never heard of `suspended`. `EventStatus`' own docstring exists
+  // because three payloads carried three copies; this one was outside that
+  // sweep, so the team page could not even TYPE the state its rail now
+  // carries. One definition, spent here.
+  status: EventStatus;
   commence_time: string | null;
   sport_key: string | null;
   is_home: boolean;

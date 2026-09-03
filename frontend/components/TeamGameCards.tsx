@@ -3,7 +3,8 @@
 import Link from "next/link";
 import type { TeamGameBrief } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { isGameLive, teamResult } from "@/lib/teamGames";
+import { SUSPENDED_LABEL } from "@/lib/eventState";
+import { isGameLive, isGameSuspended, teamLastScore, teamResult } from "@/lib/teamGames";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -139,6 +140,14 @@ export function RecentGameCard({
   const result = teamResult(game);
   const dateStr = formatSettledDate(game.completed_at || game.commence_time);
 
+  // live/056 — this rail now carries `suspended` (it was on neither of the team
+  // page's two rails before). `teamResult` refuses to grade it, so `result` is
+  // null and the else-branch below would have printed "Final" over a match
+  // nobody said had ended. It gets its own branch and the app's ONE suspended
+  // sentence instead.
+  const suspended = isGameSuspended(game);
+  const lastScore = suspended ? teamLastScore(game) : null;
+
   const pre = game.pregame_win_probability;
   const teamWon = result?.char === "W";
   const upset = pre !== null && pre !== undefined && teamWon && pre < 0.35;
@@ -161,7 +170,18 @@ export function RecentGameCard({
       </div>
 
       <div className="flex items-baseline gap-2">
-        {result ? (
+        {suspended ? (
+          // The badge says what is NOT known; the last score says what is, and
+          // the pair is the whole honest statement (lib/eventState). Printed
+          // team-relative because every other number on this card is — the
+          // shared string takes its order from the surface (#2786), and this
+          // surface speaks from the team's side.
+          <span className="text-sm font-medium text-text-secondary">
+            {lastScore
+              ? `${SUSPENDED_LABEL} · last score ${lastScore.teamScore}-${lastScore.oppScore}`
+              : SUSPENDED_LABEL}
+          </span>
+        ) : result ? (
           <>
             <span
               className={cn(
@@ -184,7 +204,11 @@ export function RecentGameCard({
         )}
       </div>
 
-      {pre !== null && pre !== undefined && (
+      {/* "we had them at 72%" is the grade-our-call line, and a suspended match
+          has no call to grade — the same reason the shared card drops its `Proj`
+          footer (CERT-799). The pre-game number is still true; printed beside a
+          non-result it reads as a verdict on one. */}
+      {!suspended && pre !== null && pre !== undefined && (
         <div className="text-xs mt-0.5">
           {upset ? (
             <span className="text-accent-brand font-medium">

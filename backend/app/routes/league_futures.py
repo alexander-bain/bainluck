@@ -25,6 +25,7 @@ from app.routes.events import (
 )
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
+from app.utils.event_completion import RECENT_RAIL_STATUSES
 from app.utils.game_state import normalize_live_game_state
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
@@ -310,7 +311,14 @@ def recent_results_query(sport_key: str, now: datetime):
             # 'closed' as well as 'completed' — #1204's lesson: a settled
             # doubleheader (and every source that closes rather than completes)
             # is orphaned from a recents rail that only looks for 'completed'.
-            Event.status.in_(["completed", "closed"]),
+            #
+            # 🔴 AND `suspended` — live/056. The other rail is live/scheduled
+            # gated on `now - 2h`, and a match is suspended precisely because
+            # hours have passed, so between the two lists it appeared on this
+            # league's page NOWHERE. Shared vocabulary rather than a fourth
+            # hand-written literal: a copy is how the omission survived
+            # CERT-786's sweep of the feed and `GET /api/events`.
+            Event.status.in_(RECENT_RAIL_STATUSES),
             Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
         )
         .offset(literal_column("0"))
