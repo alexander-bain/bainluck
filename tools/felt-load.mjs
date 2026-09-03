@@ -30,6 +30,13 @@
 // egress proxy. They are comparable TO EACH OTHER — before a cut and after a cut, page against page —
 // and they are NOT comparable to a stopwatch on Alex's laptop on his own network.
 //
+// 🔴 PACING IS PART OF THE MEASUREMENT (LAT-P218). Production caps a client at 60 requests/minute and
+// one `/events/{id}` cold load fires ~22 of them, so at the default 3 s pace the Event surface alone
+// runs at roughly twice the budget and can measure its own 429s. Every run now reports `api429` and
+// the summary reports `throttledRuns`; if that number is not zero the row is about the battery, not
+// about the site. Raise `FELT_PACE_MS` (20000 is the measured-safe value for the Event page) rather
+// than reading a throttled row.
+//
 // Usage:
 //   node tools/felt-load.mjs <surface|url> [runs] [out.json]
 //   FELT_MODE=cold|warm   FELT_THROTTLE=slow4g|fast4g|3g   FELT_CPU=4   FELT_PACE_MS=3000
@@ -296,10 +303,21 @@ const COLLECT = `(() => {
   }
   // Which API calls the first screen waited on, and how long each took. This is the "where do the
   // seconds go" column: a slow /api/feed and a slow bundle look identical in FCP and nothing alike here.
-  const api = res
-    .filter(r => /api\\.bainluck\\.com/.test(r.name))
-    .map(r => ({ url: r.name.replace(/^https?:\\/\\/[^/]+/, ''), start: Math.round(r.startTime), end: Math.round(r.responseEnd), dur: Math.round(r.duration) }))
+  //
+  // 🔴 THE STATUS COLUMN IS NOT DECORATION (LAT-P218). One /events/{id} cold load fires ~22 requests
+  // and production caps a client at 60/minute, so an unpaced battery throttles itself and then reports
+  // the throttling as a blank page: the "blank event page" of #2783 turned out to be the app rendering
+  // "Rate limit exceeded: 60/minute", 673 body chars, indistinguishable from an empty render in every
+  // column this table used to have. responseStatus is what tells them apart, and without it an
+  // UNATTENDED watcher can bank its own 429s as a reader-visible regression. ?? null because the
+  // field is only populated for same-origin or CORS-visible responses; a null is "not reported", never 200.
+  // (No backticks anywhere in this block: it lives inside a template literal.)
+  const apiRes = res.filter(r => /api\\.bainluck\\.com/.test(r.name));
+  const api = apiRes
+    .map(r => ({ url: r.name.replace(/^https?:\\/\\/[^/]+/, ''), start: Math.round(r.startTime), end: Math.round(r.responseEnd), dur: Math.round(r.duration), status: r.responseStatus ?? null }))
     .sort((a, b) => a.start - b.start).slice(0, 12);
+  const statusCounts = {};
+  for (const r of apiRes) { const s = r.responseStatus ?? 'unreported'; statusCounts[s] = (statusCounts[s] || 0) + 1; }
   const scriptMs = res.filter(r => r.initiatorType === 'script' || /\\.js(\\?|$)/.test(r.name))
     .reduce((a, r) => Math.max(a, r.responseEnd), 0);
   return {
@@ -311,12 +329,19 @@ const COLLECT = `(() => {
     ttfb: nav.responseStart ?? null, dcl: nav.domContentLoadedEventEnd ?? null, load: nav.loadEventEnd ?? null,
     lastScriptEnd: Math.round(scriptMs),
     api,
+    apiCount: apiRes.length,
+    apiStatus: statusCounts,
+    api429: statusCounts['429'] || 0,
+    api5xx: Object.entries(statusCounts).filter(([s]) => /^5\\d\\d$/.test(s)).reduce((a, [, n]) => a + n, 0),
     byKind,
     proof: {
       title: document.title,
       cards: document.querySelectorAll('[data-testid="discover-card"], a[href^="/futures/"], a[href^="/event/"], a[href^="/events/"]').length,
       pct: (document.body.innerText.match(/\\d+%/g) || []).length,
       bodyChars: document.body.innerText.length,
+      // The rate-limit page is a REAL render of a REAL error, so pct=0 and bodyChars~673 look exactly
+      // like an empty page. Its own words are the only unambiguous signal, and they are cheap to read.
+      rateLimitText: /Rate limit exceeded/i.test(document.body.innerText),
     },
   };
 })()`;
@@ -420,14 +445,21 @@ for (let i = 0; i < RUNS; i++) {
     // The LAT-P202 empty-render guard is unaffected: those runs had `first`
     // null, because nothing real ever appeared by any definition.
     m.valid = m.first !== null;
-    if (!m.valid) console.error(`   ⚠️ run ${i + 1} INVALID — no real card ever appeared; excluded from medians`);
+    // 🔴 A SELF-THROTTLED RUN IS NEITHER A PASS NOR A BLANK (LAT-P218). It is the battery measuring its
+    // own 60/min budget, and it has to be its own outcome: counted as valid it drags the medians with a
+    // number nobody experiences, counted as invalid it becomes a false "reader saw nothing" — which is
+    // exactly how #2783 was filed. So it is excluded from medians and reported on its own line.
+    m.throttled = (m.api429 || 0) > 0 || !!m.proof?.rateLimitText;
+    if (!m.valid && !m.throttled) console.error(`   ⚠️ run ${i + 1} INVALID — no real card ever appeared; excluded from medians`);
+    if (m.throttled) console.error(`   🔴 run ${i + 1} SELF-THROTTLED — ${m.api429} of ${m.apiCount} API responses were 429; excluded from medians and NOT a blank`);
     results.push(m);
     console.error(
       `run ${i + 1}/${RUNS} ${surfaceKey.padEnd(11)} ${String(m.how).padEnd(12)} ` +
       `shell=${m.shell == null ? '   -' : Math.round(m.shell)} first=${m.first == null ? 'NONE' : Math.round(m.first)} ` +
       `hero=${m.hero == null ? (m.heroPresent ? 'NEVER-REAL' : 'ABSENT') : Math.round(m.hero)} ` +
       `firstNum=${m.firstNumber == null ? 'NONE' : Math.round(m.firstNumber)} fold=${m.fold == null ? 'NONE' : Math.round(m.fold)} ` +
-      `foldCards=${m.foldCards} cards=${m.proof.cards} pct=${m.proof.pct} skel=${m.skeletonSeen}`
+      `foldCards=${m.foldCards} cards=${m.proof.cards} pct=${m.proof.pct} skel=${m.skeletonSeen} ` +
+      `api=${m.apiCount}${m.throttled ? ` 🔴429x${m.api429}` : ''}${m.api5xx ? ` 5xx×${m.api5xx}` : ''}`
     );
   } catch (e) {
     console.error(`run ${i + 1}/${RUNS} FAILED :: ${e.message}`);
@@ -437,7 +469,10 @@ for (let i = 0; i < RUNS; i++) {
   }
 }
 
-const ok = results.filter(r => r.valid);
+// Medians are taken over runs that both rendered AND were not self-throttled. `valid` still means
+// "the detector found real content" — the two counts are reported side by side so a table can never
+// silently average a 429 into a felt number.
+const ok = results.filter(r => r.valid && !r.throttled);
 const pct = (xs, p) => {
   const s = xs.filter(x => typeof x === 'number' && isFinite(x)).sort((a, b) => a - b);
   if (!s.length) return null;
@@ -455,6 +490,8 @@ const summary = {
   surface: surfaceKey, url: surface.url, tab: surface.tab,
   mode: MODE, throttle: process.env.FELT_THROTTLE || 'none', cpu: process.env.FELT_CPU || '1',
   runs: RUNS, valid: ok.length,
+  throttledRuns: results.filter(r => r.throttled).length,
+  medianApiCalls: pct(results.map(r => r.apiCount), 50),
   shell: summ('shell'), first: summ('first'), firstNumber: summ('firstNumber'), fold: summ('fold'),
   // `hero` is reported next to `first` rather than replacing it, because the gap between them is
   // itself the finding: on the Event page `first` is the related-markets rail and `hero` is the
