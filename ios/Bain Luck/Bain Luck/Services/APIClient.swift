@@ -1015,6 +1015,18 @@ actor APIClient {
         return try await fetch("/api/playoffs/\(slug)", cacheTTL: 300)
     }
 
+    // MARK: - Tournament hubs
+
+    /// Fetches a registered tournament hub (`us-open`, …) — the same payload the
+    /// web hub page renders.
+    ///
+    /// A 60-second TTL, not the 300 the other slug-keyed pages use: while a
+    /// tournament is being played this response carries live match state, and a
+    /// five-minute-old "4th Set" is a lie the phone tells for four minutes.
+    func fetchTournamentHub(slug: String) async throws -> TournamentHubResponse {
+        return try await fetch("/api/tournaments/\(slug)", cacheTTL: 60)
+    }
+
     // MARK: - Golf
 
     /// Fetches golf landing-page markets and tournament summaries.

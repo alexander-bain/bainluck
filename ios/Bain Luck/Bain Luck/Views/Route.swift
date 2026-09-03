@@ -12,6 +12,8 @@ enum Route: Hashable {
     case golfCategory
     case golfLeaderboard
     case golfTournament(slug: String, name: String)
+    /// A registered tournament hub — `/api/tournaments/{slug}`.
+    case tournamentHub(slug: String, name: String)
     case futuresList
     case teamDetail(slug: String)
     case predictionStats
@@ -40,6 +42,7 @@ struct RouteDestination: View {
         case .golfCategory: GolfCategoryView()
         case .golfLeaderboard: GolfCategoryView()
         case .golfTournament(_, let name): SportCategoryView(categoryKey: "golf", categoryName: name)
+        case .tournamentHub(let slug, let name): TournamentHubView(slug: slug, displayName: name)
         case .futuresList: FuturesListView()
         case .teamDetail(let slug): TeamDetailView(slug: slug)
         case .predictionStats: PredictionStatsView()
