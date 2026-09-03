@@ -38,7 +38,7 @@ for (const s of SURFACES) {
   rows.push(`| ${s} | ${S.valid}/${S.runs} | ${S.runs - S.valid} | ${n(S.shell?.p50)} | ${n(S.first?.p50)} | ${n(S.first?.p95)} | ${n(S.hero?.p50)} |`);
 }
 
-const ringAfter = rd(`${WORK}/ring-after-${CUR}.json`) || {};
+const ringAfter = rd(process.env.RING_PATH || `${WORK}/ring-after-${CUR}.json`) || {};
 const ev = ringAfter.events || [];
 const since = Date.now() / 1000 - 3600;
 const fresh = ev.filter((e) => e.t >= since);
@@ -53,13 +53,35 @@ for (const e of convoy) {
 const releasedTogether = [...buckets.entries()].filter(([, n]) => n >= 2);
 
 const realBlanks = blanks.filter((b) => b.includes('REAL BLANK')).length;
-const verdict = realBlanks === 0 && releasedTogether.length === 0
-  ? 'CLOSES #2724 — the fix was exercised and neither symptom appeared'
-  : 'RE-OPENS #2724 — the symptom survived a migration-carrying deploy';
+const STUCK = !!process.env.REPORT_STUCK;
+const verdict = STUCK
+  ? (realBlanks === 0 && releasedTogether.length === 0
+    ? 'READERS ARE FINE, THE PIPELINE IS NOT — the migration cannot land, and the lock_timeout is keeping the cost off readers'
+    : 'RE-OPENS #2724 — the migration cannot land AND readers are paying for it')
+  : (realBlanks === 0 && releasedTogether.length === 0
+    ? 'CLOSES #2724 — the fix was exercised and neither symptom appeared'
+    : 'RE-OPENS #2724 — the symptom survived a migration-carrying deploy');
 
-writeFileSync(REPORT_PATH, `# latency/129 — #2724 is settled by \`${CUR}\`, the first migration-carrying deploy
+const heading = STUCK
+  ? `# latency/129 — a migration-carrying deploy is STUCK: production is still \`${CUR}\`, master is \`${LAST}\``
+  : `# latency/129 — #2724 is settled by \`${CUR}\`, the first migration-carrying deploy`;
 
-Written unattended by \`tools/watch-migration-deploy.sh\`. Nobody re-measured #2724 by hand, which is
+const preamble = STUCK
+  ? `Written unattended by \`tools/watch-migration-deploy.sh\`. The deploy this watcher was armed for
+arrived and **the deployed commit never changed** — the release command failed, so \`/api/health\` still
+reports the old sha. That shape is invisible to a commit-change watcher and to CI, whose own \`deploy\`
+job reports success when the Heroku release phase is what failed.
+
+**Machine read: ${verdict}.** The prose below is what that read is made of; check it before quoting it.
+
+**The pending range:** production \`${CUR}\` → master \`${LAST}\`, carrying:
+\`\`\`
+${MIGS}
+\`\`\`
+The watcher has NOT exited: the eventual successful release is still the verdict #2724 is waiting for.
+Check \`releases-stuck-${CUR}.txt\` beside the raw runs for the Heroku release list, and
+\`pg_stat_activity\` for a long \`idle in transaction\` session — an \`ACCESS EXCLUSIVE\` cannot jump one.`
+  : `Written unattended by \`tools/watch-migration-deploy.sh\`. Nobody re-measured #2724 by hand, which is
 the point: the verdict had to wait for a condition no session could schedule.
 
 **Machine read: ${verdict}.** The prose below is what that read is made of; check it before quoting it.
@@ -70,9 +92,13 @@ ${MIGS}
 \`\`\`
 This is the condition LAT-P216 could not test. The 790 release carried no migration, so its clean
 40/40 was a negative control over an unexercised path. Here the \`lock_timeout\` armed on the
-migration's connection actually ran.
+migration's connection actually ran.`;
 
-## 40 cold loads across the deploy window
+writeFileSync(REPORT_PATH, `${heading}
+
+${preamble}
+
+## 40 cold loads ${STUCK ? 'while the release was failing' : 'across the deploy window'}
 
 | surface | valid | blank | shell p50 | first p50 | first p95 | hero p50 |
 |---|---:|---:|---:|---:|---:|---:|
@@ -99,6 +125,6 @@ Procfile still swallows Alembic failures via \`|| echo\` (#2741): a migration th
 apply produces the same clean loads as a migration that applied safely, and only the release log
 tells them apart. Do that read before closing.
 
-Raw: \`${OUT}/\`, \`${WORK}/ring-at-${CUR}.json\`, \`${WORK}/ring-after-${CUR}.json\`.
+Raw: \`${OUT}/\`, \`${process.env.RING_PATH || `${WORK}/ring-after-${CUR}.json`}\`${STUCK ? `, \`${WORK}/releases-stuck-${CUR}.txt\`` : `, \`${WORK}/ring-at-${CUR}.json\``}.
 `);
 console.log(`wrote ${REPORT_PATH}`);

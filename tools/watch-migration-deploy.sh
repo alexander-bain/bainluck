@@ -72,7 +72,49 @@ while true; do
 
   CUR=$(health_commit)
   [ -z "$CUR" ] && { say "health unreadable (release window or egress) — will retry"; continue; }
-  [ "$CUR" = "$LAST" ] && continue
+
+  # THE SECOND SHAPE, added after the first real event walked straight past the first one.
+  #
+  # This watcher was built to fire when the deployed COMMIT CHANGES. On the night it was armed, the
+  # migration-carrying deploy arrived and the commit never changed: four consecutive Heroku releases
+  # (v4016-v4019) failed at the release command because `ALTER TABLE futures_markets` could not take
+  # ACCESS EXCLUSIVE behind a two-hour `idle in transaction` platform session. Production sat on the
+  # old sha, `/api/health` never moved, and a commit-change watcher is blind to the whole event —
+  # while CI's own `deploy` job reported success on both shas.
+  #
+  # So a stuck deploy is also a #2724 verdict condition, and it is reported ONCE without exiting: the
+  # eventual successful release is still the verdict this watcher is waiting for.
+  if [ "$CUR" = "$LAST" ]; then
+    [ -n "$STUCK_REPORTED" ] && continue
+    git -C "$REPO" fetch origin --quiet 2>>"$LOG"
+    HEAD_SHA=$(git -C "$REPO" rev-parse --short=8 origin/master 2>>"$LOG")
+    if [ -z "$HEAD_SHA" ] || [ "$HEAD_SHA" = "$CUR" ]; then continue; fi
+    PENDING_MIGS=$(git -C "$REPO" diff --name-only "$CUR" "$HEAD_SHA" -- backend/alembic/versions/ 2>>"$LOG")
+    if [ -z "$PENDING_MIGS" ]; then continue; fi
+    # Master carries a migration production has not taken. Give it a grace window — a normal release
+    # takes minutes, and calling that "stuck" would fire on every healthy deploy.
+    if [ -z "$STUCK_SINCE" ]; then STUCK_SINCE=$NOW_EPOCH; say "  master $HEAD_SHA is ahead with a migration; starting stuck-deploy grace window"; continue; fi
+    if [ $(( NOW_EPOCH - STUCK_SINCE )) -lt "${STUCK_GRACE_S:-900}" ]; then continue; fi
+
+    say "  🔴 STUCK MIGRATION DEPLOY: prod $CUR, master $HEAD_SHA, pending: $PENDING_MIGS"
+    ring > "$WORK/ring-stuck-$CUR.json" 2>/dev/null
+    heroku releases -n 8 -a bainluck > "$WORK/releases-stuck-$CUR.txt" 2>&1
+    OUT="$WORK/burst-stuck-$CUR"; mkdir -p "$OUT"
+    for s in discover sports usopen event; do
+      ( cd "$REPO" && FELT_MODE=cold "$NODE" tools/felt-load.mjs "$s" 10 "$OUT/cold-$s.json" \
+          > /dev/null 2>>"$OUT/log.txt" )
+      say "  stuck-burst $s exit=$?"
+    done
+    REPORT="$INBOX/129-2724-stuck-$CUR.md"
+    MIGS="$PENDING_MIGS" CUR="$CUR" LAST="$HEAD_SHA" OUT="$OUT" WORK="$WORK" \
+      REPORT_STUCK=1 RING_PATH="$WORK/ring-stuck-$CUR.json" REPORT_PATH="$REPORT" \
+      "$NODE" "$REPO/tools/watch-2724-report.mjs" >>"$LOG" 2>&1
+    [ -s "$REPORT" ] || printf '# latency/129 — stuck migration deploy at %s (report failed to render)\n\nPending: %s\nRaw: %s\n' "$CUR" "$PENDING_MIGS" "$OUT" > "$REPORT"
+    say "  wrote $REPORT — still watching for the release that lands"
+    STUCK_REPORTED=1
+    continue
+  fi
+  STUCK_SINCE=""
 
   say "COMMIT CHANGED $LAST -> $CUR"
   # Ring FIRST: the convoy is already over by the time a poll notices, and the ring is where it lives.
