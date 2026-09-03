@@ -291,16 +291,15 @@ async def _save_plan(payload: dict[str, Any]) -> tuple[bool, str]:
     from app.services.durable_snapshots import publish_snapshot_standalone
     from app.utils.durable_state import DurableEnvelope
 
+    envelope = DurableEnvelope.build(
+        identity=PLAN_IDENTITY,
+        schema_version=PLAN_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="repair:authority-id-collisions",
+    )
     try:
-        result = await publish_snapshot_standalone(
-            DurableEnvelope.build(
-                identity=PLAN_IDENTITY,
-                schema_version=PLAN_SCHEMA,
-                payload=payload,
-                complete=True,
-                source="repair:authority-id-collisions",
-            )
-        )
+        result = await publish_snapshot_standalone(envelope)
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("%s plan persist raised: %s", ISSUE, type(exc).__name__)
         return False, f"persist raised: {type(exc).__name__}"
@@ -312,11 +311,12 @@ async def _read_plan() -> tuple[Optional[dict[str, Any]], str]:
     """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
     from app.services.durable_snapshots import read_snapshot_standalone
 
+    read = read_snapshot_standalone(
+        PLAN_IDENTITY, expected_version=PLAN_SCHEMA, max_age_s=PLAN_MAX_AGE_S
+    )
     try:
-        got = await read_snapshot_standalone(
-            PLAN_IDENTITY, expected_version=PLAN_SCHEMA, max_age_s=PLAN_MAX_AGE_S
-        )
-    except Exception as exc:  # noqa: BLE001
+        got = await read
+    except Exception as exc:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
         logger.warning("%s plan read raised: %s", ISSUE, type(exc).__name__)
         return None, REASON_PLAN_UNREADABLE
     if not got.ok or got.envelope is None:

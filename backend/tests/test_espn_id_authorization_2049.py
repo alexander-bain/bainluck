@@ -763,6 +763,18 @@ class TestNoUngatedEspnIdStampSurvives:
          "team.espn_id = matched_espn.espn_id"):
             "Team.espn_id again, and already gated on `match_was_exact` so a "
             "fuzzy token-overlap hit never sets the id.",
+        ("app/tasks/repair_authority_id_collisions.py", "<module>",
+         "UPDATE events SET espn_id = NULL"):
+            "A CLEAR, and the gate is the wrong shape for it: "
+            "`authorize_espn_pair` authorizes STAMPING an id onto a fixture, "
+            "and this rail's whole job is the opposite — taking one OFF the "
+            "196 ids (430 rows, 2026-09-02) that name more than one event, so "
+            "the column can carry a unique constraint (#2693 step 2). Writing "
+            "NULL manufactures no identity; the same reading as "
+            "`cleanup_oscillation` above. The row is chosen by ESPN's own "
+            "answer for that event id, and the compare IS the WHERE clause "
+            "(`AND espn_id = :contested`), so it cannot clear a row whose id "
+            "moved after the plan was reviewed.",
         ("app/tasks/repair_event_espn_id.py", "<module>",
          "SET espn_id = :true_espn_id"):
             "The attended repair rail (SPEC-Q370): the value comes from a "
