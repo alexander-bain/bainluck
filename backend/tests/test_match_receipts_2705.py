@@ -851,7 +851,14 @@ def test_an_unknown_reject_reason_filter_is_refused_by_name():
 
 def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     """open unlinked markets with NO receipt — ARTIFACT-M-20260902-O's hole."""
-    reason_rows = [_Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="polymarket", n=6626)]
+    reason_rows = [
+        _Row(
+            reject_reason=mr.REJECT_NO_CANDIDATE,
+            source="polymarket",
+            n=6626,
+            still_linkable=6626,
+        )
+    ]
     totals = _Row(receipts=31433, linked=10021, oldest=NOW - timedelta(hours=2), newest=NOW)
     change_rows = [
         _Row(outcome=mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
@@ -873,6 +880,168 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     assert out["totals"]["rejected"] == 31433 - 10021
     assert out["by_reason"][0]["count"] == 6626
     assert sorted(mr.REJECT_REASONS) == out["valid_reasons"]
+
+
+class TestTheRejectHistogramIsOrderedByWhatCanStillBeFixed:
+    """Measured on production 2026-09-03: 7,854 of 8,032 rejects were on
+    ALREADY-RESOLVED markets, so the flat histogram's top bucket
+    (``no_candidate``, 6,843) is overwhelmingly settled ITF tennis whose events
+    are never ingested. A reader who sorts on ``count`` picks the one bucket no
+    matching fix can move. Gotcha #53: a rate needs a denominator where 100% is
+    structurally achievable.
+    """
+
+    @staticmethod
+    def _summary(reason_rows):
+        totals = _Row(receipts=10, linked=2, oldest=NOW, newest=NOW)
+        return _call(
+            db=_FakeDB(
+                [_FakeResult(reason_rows), _FakeResult([totals]), _FakeResult([])],
+                scalar=0,
+            ),
+            market_id=None, external_id=None, event_id=None,
+            reject_reason=None, source=None, limit=50,
+        )
+
+    def test_the_big_dead_bucket_does_not_outrank_the_small_live_one(self):
+        # Production's actual shape, rounded to the two reasons that matter:
+        # no_candidate is 38x larger and 98% unfixable.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=109),
+                _Row(reject_reason=mr.REJECT_NAME_MISMATCH, source="kalshi",
+                     n=93, still_linkable=40),
+            ]
+        )
+        # Sorted by still_linkable, both rows are present and the caller can
+        # see which is worth a fix — but the ordering no longer sends them at
+        # 6,734 settled rows first.
+        assert [r["reject_reason"] for r in out["by_reason"]] == [
+            mr.REJECT_NO_CANDIDATE,
+            mr.REJECT_NAME_MISMATCH,
+        ]
+        assert out["by_reason"][0]["still_linkable"] == 109
+        assert out["by_reason"][0]["settled"] == 6843 - 109
+
+    def test_nothing_is_excluded_the_settled_column_is_published(self):
+        # The standing doctrine: read-side scoping protects a metric, it never
+        # closes an issue. A census that DROPPED the settled rows would be
+        # unable to show that the matcher is still re-attempting them.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=109),
+                _Row(reject_reason=mr.REJECT_OUTSIDE_TIME_WINDOW, source="kalshi",
+                     n=452, still_linkable=8),
+            ]
+        )
+        assert out["reject_totals"]["still_linkable"] == 117
+        assert out["reject_totals"]["settled"] == (6843 - 109) + (452 - 8)
+        assert sum(r["count"] for r in out["by_reason"]) == 6843 + 452
+
+    def test_a_reason_with_no_live_market_left_still_appears(self):
+        # It sorts last, but a reason that has gone entirely settled is a fact
+        # about a class that USED to fail — dropping it would erase the only
+        # evidence the class ever existed.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=0),
+            ]
+        )
+        assert out["by_reason"][0]["still_linkable"] == 0
+        assert out["by_reason"][0]["settled"] == 6843
+        assert out["reject_totals"]["still_linkable"] == 0
+
+    def test_the_split_is_computed_from_the_market_not_from_the_receipt(self):
+        """The join is the whole mechanism, and it is what a refactor drops.
+
+        A receipt carries no status of its own — ``market_match_receipts`` has
+        no column that says whether the market has settled — so the split can
+        only come from joining ``futures_markets``. A version of this query
+        without the join compiles, returns rows, and silently answers the flat
+        question again.
+        """
+        import inspect
+
+        from app.routes import admin_matching
+
+        src = inspect.getsource(admin_matching.match_receipts)
+        head, marker, tail = src.partition("still_linkable = func.count().filter(")
+        assert marker, "the reason histogram's split moved; re-point this guard"
+        query = marker + tail.split(").all()")[0]
+        assert 'FuturesMarket.status == "open"' in query, query
+        assert "FuturesMarket.id == MarketMatchReceipt.market_id" in query, query
+        assert "still_linkable.desc()" in query, query
+
+    def test_the_statement_itself_executes_and_puts_the_live_reason_first(self):
+        """The source scan above pins the SQL; this one RUNS it.
+
+        A shape test driven by a fake DB proves the response formatting and
+        nothing about the query, and the query is where the whole fix lives.
+        The same statement the endpoint builds is executed here against a real
+        engine over four markets — two settled, two open — arranged so that the
+        flat count and the live count disagree about which reason is worst.
+        """
+        from sqlalchemy import create_engine, func, select, text
+
+        from app.models.models import FuturesMarket, MarketMatchReceipt
+
+        still = func.count().filter(FuturesMarket.status == "open")
+        stmt = (
+            select(
+                MarketMatchReceipt.reject_reason,
+                MarketMatchReceipt.source,
+                func.count().label("n"),
+                still.label("still_linkable"),
+            )
+            .join(FuturesMarket, FuturesMarket.id == MarketMatchReceipt.market_id)
+            .where(MarketMatchReceipt.outcome == "rejected")
+            .group_by(MarketMatchReceipt.reject_reason, MarketMatchReceipt.source)
+            .order_by(still.desc(), func.count().desc())
+        )
+
+        engine = create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE futures_markets "
+                    "(id INTEGER PRIMARY KEY, status TEXT)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE market_match_receipts (id INTEGER PRIMARY KEY, "
+                    "market_id INTEGER, source TEXT, outcome TEXT, "
+                    "reject_reason TEXT)"
+                )
+            )
+            # no_candidate: 3 rejects, ALL settled — production's shape.
+            # name_mismatch: 1 reject, still open.
+            conn.execute(
+                text(
+                    "INSERT INTO futures_markets VALUES "
+                    "(1,'resolved'),(2,'resolved'),(3,'resolved'),(4,'open')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO market_match_receipts VALUES "
+                    "(1,1,'kalshi','rejected','no_candidate'),"
+                    "(2,2,'kalshi','rejected','no_candidate'),"
+                    "(3,3,'kalshi','rejected','no_candidate'),"
+                    "(4,4,'kalshi','rejected','name_mismatch')"
+                )
+            )
+            rows = list(conn.execute(stmt))
+
+        # Flat count says no_candidate (3) is the biggest problem. It is not:
+        # every one of its markets has settled and no fix can move it.
+        assert [(r[0], r[2], r[3]) for r in rows] == [
+            ("name_mismatch", 1, 1),
+            ("no_candidate", 3, 0),
+        ]
 
 
 def test_the_summary_answers_the_question_that_had_no_answer():
