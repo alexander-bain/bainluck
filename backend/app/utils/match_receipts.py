@@ -186,6 +186,32 @@ class CandidateTrace:
     #: ``outside_time_window``, ``state_disagrees``, ``lower_score``, or
     #: ``chosen``.
     verdict: str = "considered"
+    #: How many of the sides the MARKET named this candidate's two teams cover,
+    #: out of ``sides_named``. This is the difference between a candidate and a
+    #: coincidence, and it is why the first-look measured `name_mismatch` at
+    #: 234/333 with not one row meaning what the bucket is documented to mean:
+    #: the retrieval ILIKE fires on ONE token, so "Morehouse Maroon Tigers vs
+    #: Arkansas-Pine Bluff" retrieves Detroit Tigers (MLB) and Hanshin Tigers
+    #: (NPB). Both were reported as a name-gate refusal — a bug in OUR matcher —
+    #: when the truth is that the game is not in ``events`` at all.
+    #: ``None`` on a trace whose coverage was never computed.
+    sides_matched: Optional[int] = None
+    #: How many sides the market named: 2 for a normal matchup, 1 for the
+    #: single-team ``will_win`` shape. Stored per trace so one exported row is
+    #: readable without its market — the same reason ``source`` is denormalized
+    #: onto the receipt.
+    sides_named: Optional[int] = None
+
+    @property
+    def covers_matchup(self) -> bool:
+        """True when this candidate's teams cover EVERY side the market named.
+
+        A candidate that covers fewer is a retrieval coincidence, not a rejected
+        candidate, and must not be reported as one.
+        """
+        if self.sides_matched is None or self.sides_named is None:
+            return False
+        return self.sides_matched >= self.sides_named
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,6 +225,8 @@ class CandidateTrace:
             "sport_key": self.sport_key,
             "score": round(self.score, 3) if self.score is not None else None,
             "verdict": self.verdict,
+            "sides_matched": self.sides_matched,
+            "sides_named": self.sides_named,
         }
 
 
