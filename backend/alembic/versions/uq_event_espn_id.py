@@ -112,8 +112,15 @@ swallowed. Until #2741 is ruled on, running this migration hopefully is
 indistinguishable from running it successfully.
 
 Revision ID: uq_event_espn_id
-Revises: match_receipts
+Revises: link_change_history
 Create Date: 2026-09-02
+
+Re-pointed 2026-09-03 (lane1/065). It originally revised ``match_receipts``, which
+has since become a BRANCHPOINT — lane1b's ``link_loss_receipts`` →
+``link_change_history`` (#2758) landed off it while this file was out of tree. CI
+runs the MERGE ref, so the second head showed up there and not in a local
+``alembic heads`` on an un-rebased branch. If this file sits out of tree again,
+re-point it at whatever the single head is before restaging.
 """
 
 from alembic import op
@@ -121,7 +128,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "uq_event_espn_id"
-down_revision = "match_receipts"
+down_revision = "link_change_history"
 branch_labels = None
 depends_on = None
 

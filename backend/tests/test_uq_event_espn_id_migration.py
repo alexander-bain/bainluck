@@ -290,13 +290,36 @@ class TestTheInvariantBites:
 class TestItIsReachable:
     """A migration that is not on the chain runs on nobody's deploy."""
 
-    def test_is_the_single_head_and_follows_match_receipts(self):
+    def test_is_the_single_head(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
         heads = list(script.get_heads())
         assert heads == ["uq_event_espn_id"], f"expected a single head, got {heads}"
 
+    def test_chains_onto_a_revision_that_exists(self):
+        """Its parent must resolve, and the chain must reach base.
+
+        Deliberately NOT pinned to a parent by NAME. This file sat out of tree
+        while lane1b's `link_loss_receipts` → `link_change_history` (#2758)
+        landed off `match_receipts`, turning that into a branchpoint — so the
+        parent it must name is whatever the head is on the day it lands, and a
+        name assertion here only ever produces a second failure to fix after the
+        head assertion above already caught the real one. What must be true is
+        that the parent resolves and the chain is walkable.
+
+        Worth recording why the head check is the one that matters: a local
+        `alembic heads` on an un-rebased branch reads SINGLE while the merge ref
+        CI actually runs reads TWO. Rebase before trusting it.
+        """
+        script = ScriptDirectory.from_config(Config("alembic.ini"))
         revision = script.get_revision("uq_event_espn_id")
-        assert revision.down_revision == "match_receipts"
+
+        assert revision.down_revision is not None, "orphan: no parent"
+        parent = script.get_revision(revision.down_revision)
+        assert parent is not None
+
+        walked = [r.revision for r in script.walk_revisions("base", "uq_event_espn_id")]
+        assert "uq_event_espn_id" in walked
+        assert revision.down_revision in walked
 
     def test_revision_id_fits_alembics_column(self):
         # Gotcha #1: alembic_version.version_num is VARCHAR(32).
