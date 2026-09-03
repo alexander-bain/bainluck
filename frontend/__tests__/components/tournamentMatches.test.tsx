@@ -507,6 +507,10 @@ describe("ruling 6 — the redundancy is dead", () => {
       matchDetailNote({
         coherent: false,
         decided: false,
+        // #2690 made this required. It is irrelevant to THIS arm — the row is
+        // priced, so it never reaches the unpriced branch — and passing it
+        // explicitly is the point: no call site may omit the row's state.
+        liveState: null,
         score: null,
         sides: [] as never,
       })

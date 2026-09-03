@@ -361,24 +361,81 @@ export function liveMatchLabel(entry: {
   return detail === "" || readsAsSchedule ? LIVE_MATCH_FALLBACK_LABEL : detail;
 }
 
+/**
+ * WHAT AN UNPRICED ROW MAY SAY ABOUT ITSELF (UX-P142, corrected by #2690).
+ *
+ * ═══ THE SENTENCE WAS RIGHT ABOUT A POPULATION IT NO LONGER DESCRIBES ═══
+ *
+ * UX-P142 wrote *"Nobody is quoting this match yet. It is in the draw with no
+ * probability against it."* against a measured population, and the reasoning
+ * held: on ceremony day the released main draw is 96 registered fixtures four
+ * days out, and `tournament_slate.py` says why nobody lists them — *"nobody
+ * quotes a first round before qualifying finishes"*. Both clauses were true of
+ * every row that could reach them. `payload-2026-08-27.json` still proves it:
+ * 96 of 113 slate rows unpriced, and **not one of them live or decided.**
+ *
+ * Then the AUTHORITY builder landed. It reuses the same `priced: false` flag
+ * for ESPN-paired rows, and those rows CAN be live — #2690 caught this sentence
+ * under a match in its third set, while `/sports` priced it 51/49 and
+ * `/events/15300190` drew it a chart with five lead changes. Both clauses had
+ * become false at once: the site was quoting the match, and it was not "in the
+ * draw", it was being played.
+ *
+ * ═══ WHY THE FIX IS NOT THE ONE #2690 PROPOSED ═══
+ *
+ * The issue suggests *"We can't show a price for this match yet"*. That is a
+ * ruling-138 violation (`price` is trading vocabulary; the word is
+ * PROBABILITY) and `tournamentPlainLanguage` would reject it at the render.
+ *
+ * Nor may the sentence name a REASON. #2690 measures `priced: false` and
+ * `event_id: null` coinciding 2 for 2 and calls linkage "the whole defect" —
+ * but that is one afternoon, not the mechanism. `tournament_slate.py:790-809`
+ * lists FOUR ways a row arrives unpriced: no link; a link whose sides do not
+ * cover both athletes; a link whose outcomes we hold no probability for; and
+ * `len(loaded_by_key) != 2`, one side priced and the other not. "We could not
+ * tie this match to a market" would be a NEW false sentence on three of them.
+ *
+ * ═══ SO IT STATES ONLY WHAT THE ROW KNOWS ═══
+ *
+ * Where the match stands (which the row does know, and which is the fact
+ * UX-P142 wanted — the fixture is real), that we have no probability, and an
+ * explicit refusal of the inference. The refusal is not invented here: it is
+ * the closing clause `prematchAbsenceNote` already ships on this same page.
+ * That function and this one describe the same absence, and until now one
+ * refused the claim about the world while the other asserted it.
+ */
+function unpricedDetailNote(entry: {
+  decided: boolean;
+  liveState: "in_progress" | "upcoming" | null;
+}): string {
+  const standing = entry.decided
+    ? "This match is over"
+    : entry.liveState === "in_progress"
+      ? "This match is under way"
+      : "This match is in the draw";
+  // Second clause verbatim from UX-P142; third verbatim from the sibling
+  // `prematchAbsenceNote`, so the page refuses this inference in one voice.
+  return `${standing} with no probability against it. That is not a statement about whether a venue listed one.`;
+}
+
 export function matchDetailNote(entry: {
   coherent: boolean;
   decided: boolean;
   score: string | null;
   sides: [MatchListSide, MatchListSide];
+  /**
+   * REQUIRED, and deliberately not defaulted. The whole #2690 defect is a
+   * sentence that could not see what state its row was in; a default would let
+   * the next call site silently re-acquire that blindness with every test green
+   * (both production call sites already pass a full `MatchListEntry`).
+   */
+  liveState: "in_progress" | "upcoming" | null;
   /** Absent reads as priced — every row before UX-P142 was. */
   priced?: boolean;
 }): string | null {
   if (entry.priced === false) {
-    // FOURTH CASE (UX-P142). An unpriced fixture used to fall into the
-    // incoherent branch and tell the reader "the two prices do not agree",
-    // which names a disagreement between two numbers that do not exist. The
-    // released main draw is 96 such rows; getting this sentence wrong would
-    // have been the page's most-printed sentence on ceremony day.
-    // UX-P146: "the price comes later" — Alex's product-wide ruling on the noun.
-    // Ruling 142: "the number comes later" was still a promise about a listing
-    // we do not control. The fact is the fixture is real and has no probability.
-    return "Nobody is quoting this match yet. It is in the draw with no probability against it.";
+    // FOURTH CASE (UX-P142), re-aimed by #2690 — see `unpricedDetailNote`.
+    return unpricedDetailNote(entry);
   }
   if (!entry.coherent) {
     return "The two numbers for this match do not agree yet, so we are not showing a split.";
