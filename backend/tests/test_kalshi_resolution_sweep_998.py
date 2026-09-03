@@ -33,9 +33,34 @@ from pathlib import Path
 import pytest
 
 from app.tasks import kalshi_resolution_sweep as sweep
+from app.tasks.kalshi_resolution_sweep import next_offset
 from app.utils import task_verdict
 
 NOW = datetime(2026, 9, 3, 22, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _in_memory_cursor(monkeypatch):
+    """A working cursor store for every test that is not about the cursor.
+
+    Without it the sweep reaches for real Redis, `_write_cursor` returns False,
+    and every terminal test reads `failed` for a reason that has nothing to do
+    with what it is asserting. Tests that ARE about Redis behaviour re-patch
+    this below; the later monkeypatch wins.
+    """
+    import app.tasks.redis_state as redis_state
+
+    store: dict = {}
+
+    class _Redis:
+        async def get(self, key):
+            return store.get(key)
+
+        async def set(self, key, value, ex=None):
+            store[key] = value
+
+    monkeypatch.setattr(redis_state, "get_async_redis_client", _Redis)
+    return store
 
 BEAT_ENTRY = "sweep-kalshi-resolution-window"
 TASK_NAME = "app.tasks.sweep_kalshi_resolution_window"
@@ -276,7 +301,192 @@ class TestTheTerminal:
 
 
 # ---------------------------------------------------------------------------
-# 5. End to end, against a fake venue — the sealed row is actually corrected
+# 5. The rotating cursor — the jam this queue MEASURED
+# ---------------------------------------------------------------------------
+
+
+class TestTheCursorRotatesPastAJam:
+    """The first production-shaped run selected 500 rows and wrote zero.
+
+    `pg_stat_statements` settled what happened: `SELECT_SQL` 1 call / 500 rows /
+    185 ms, `COUNT_SQL` 1 call, and no matching UPDATE recorded at all. The head
+    of the batch says why — `KXTXPRIMARY-31D26`, `commence_time 2027-11-03`
+    (equal to the backstop, the poisoned-column shape #2771 named), last touched
+    by the poller 2026-06-20. The retention floor is a `commence_time` test, so
+    it reads a purged row as recent and admits it; the venue returns no markets;
+    the row cannot be written; and a row that is never written never has its
+    `updated_at` refreshed, so under `ORDER BY updated_at ASC` it holds the head
+    forever.
+
+    #2771's rotation argument is true only of rows that get WRITTEN. These tests
+    pin the part that makes it true of the rest.
+    """
+
+    def test_a_fully_stranded_batch_advances_the_cursor(self):
+        """Without this the beat re-selects the same 500 rows every night."""
+        assert next_offset(
+            offset=0, candidates=500, applied=0, eligible_total=5569
+        ) == 500
+
+    def test_it_advances_by_what_stayed_put_not_by_the_batch_size(self):
+        """470 of 500 written means 30 rows kept their slot. Advancing a full
+        batch would skip 470 rows that just rotated to the back — and advancing
+        zero would re-read the 30 forever. Only `candidates - applied` tracks
+        the jam itself."""
+        assert next_offset(
+            offset=100, candidates=500, applied=470, eligible_total=5569
+        ) == 130
+
+    def test_a_clean_batch_holds_its_offset_instead_of_resetting(self):
+        """The correction the offset-500 measurement forced.
+
+        Resetting to 0 on a clean batch is the obvious first implementation and
+        it re-enters the jam every other night: measured 2026-09-03, offset 0 is
+        500 unwritable rows last touched in June and offset 500 is 500 rows the
+        poller touched today, all of which write cleanly. Reset gives
+        jam/productive/jam/productive and burns half the nights.
+
+        Holding is also just correct — when 500 rows rotate to the back, the row
+        that was at position 1,000 is now at 500, so the same offset already
+        points at fresh content.
+        """
+        assert next_offset(
+            offset=800, candidates=500, applied=500, eligible_total=5569
+        ) == 800
+
+    def test_the_cursor_wraps_instead_of_walking_off_the_end(self):
+        """A monotonic cursor eventually points past the population and the
+        sweep goes permanently quiet — the same silent nothing this queue is
+        fixing, wearing a different mechanism. Wrapping also re-reaches rows
+        that BECAME resolvable: Kalshi publishes `close_time` on finalize, so
+        September's unresolvable row is October's necessary write."""
+        assert next_offset(
+            offset=5400, candidates=500, applied=0, eligible_total=5569
+        ) == 0
+
+    def test_an_empty_batch_returns_to_the_head(self):
+        assert next_offset(offset=900, candidates=0, applied=0, eligible_total=0) == 0
+
+    def test_run_sweep_starts_from_the_cursor_and_persists_the_next_one(
+        self, monkeypatch
+    ):
+        seen: dict = {}
+        _fake_backfill(
+            monkeypatch, _report(candidates=500, applied=0, unresolvable=500,
+                                 eligible=5569), seen
+        )
+        written: list = []
+
+        async def _read():
+            return 1000
+
+        async def _write(v):
+            written.append(v)
+            return True
+
+        monkeypatch.setattr(sweep, "_read_cursor", _read)
+        monkeypatch.setattr(sweep, "_write_cursor", _write)
+
+        out = asyncio.run(sweep.run_sweep())
+
+        assert seen["offset"] == 1000, "the batch must start where the cursor points"
+        assert out["next_offset"] == 1500
+        assert written == [1500]
+        assert out["stranded"] == 500
+
+    def test_an_unreadable_cursor_starts_at_the_head_rather_than_raising(
+        self, monkeypatch
+    ):
+        """A Redis outage must degrade this sweep to its PRE-CURSOR behaviour —
+        offset 0 — not take the beat down."""
+        import app.tasks.redis_state as redis_state
+
+        class _DeadRedis:
+            async def get(self, key):
+                raise ConnectionError("Error 111 connecting to rediss://host")
+
+            async def set(self, *a, **kw):
+                raise ConnectionError("Error 111 connecting to rediss://host")
+
+        monkeypatch.setattr(redis_state, "get_async_redis_client", _DeadRedis)
+
+        assert asyncio.run(sweep._read_cursor()) == 0
+        assert asyncio.run(sweep._write_cursor(500)) is False
+
+    def test_a_cursor_round_trips_through_redis(self, monkeypatch):
+        """The control for the test above: with a working client the cursor is
+        actually read and actually written, so `== 0` there is a degradation
+        rather than the only thing this code can do."""
+        import app.tasks.redis_state as redis_state
+
+        store: dict = {}
+
+        class _LiveRedis:
+            async def get(self, key):
+                return store.get(key)
+
+            async def set(self, key, value, ex=None):
+                store[key] = value
+                store[key + ":ttl"] = ex
+
+        monkeypatch.setattr(redis_state, "get_async_redis_client", _LiveRedis)
+
+        assert asyncio.run(sweep._write_cursor(1500)) is True
+        assert asyncio.run(sweep._read_cursor()) == 1500
+        assert store[sweep.SWEEP_CURSOR_KEY + ":ttl"] == sweep.SWEEP_CURSOR_TTL_S
+
+    def test_a_cursor_that_did_not_persist_is_failed_not_quietly_fine(
+        self, monkeypatch
+    ):
+        """Progress made and silently unresumable: the next beat re-enters this
+        exact batch and the jam returns. Same call the typeahead index builder
+        makes for the same reason (#1866)."""
+        _fake_backfill(
+            monkeypatch,
+            _report(candidates=500, applied=0, unresolvable=500, eligible=5569),
+            {},
+        )
+
+        async def _read():
+            return 0
+
+        async def _write(v):
+            return False
+
+        monkeypatch.setattr(sweep, "_read_cursor", _read)
+        monkeypatch.setattr(sweep, "_write_cursor", _write)
+
+        out = asyncio.run(sweep.run_sweep())
+
+        assert out["cursor_persisted"] is False
+        assert out["terminal"] == "failed"
+        assert not task_verdict.verdict_for(TRACKED_LABEL, out).is_green
+
+    def test_no_write_is_attempted_when_the_cursor_does_not_move(self, monkeypatch):
+        """A clean batch's next offset is 0 and the cursor is usually already 0.
+        Writing it anyway would turn every healthy run into a Redis round trip
+        that can fail and mark the run `failed` for no reason."""
+        _fake_backfill(monkeypatch, _report(candidates=10, applied=10, eligible=10), {})
+        calls: list = []
+
+        async def _read():
+            return 0
+
+        async def _write(v):
+            calls.append(v)
+            return False
+
+        monkeypatch.setattr(sweep, "_read_cursor", _read)
+        monkeypatch.setattr(sweep, "_write_cursor", _write)
+
+        out = asyncio.run(sweep.run_sweep())
+
+        assert calls == []
+        assert out["terminal"] == "complete"
+
+
+# ---------------------------------------------------------------------------
+# 6. End to end, against a fake venue — the sealed row is actually corrected
 # ---------------------------------------------------------------------------
 
 

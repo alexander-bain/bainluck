@@ -354,6 +354,122 @@ async def run_backfill(
 
 
 # ---------------------------------------------------------------------------
+# The rotating cursor — CAL-P998, measured on the first unattended-shaped run
+# ---------------------------------------------------------------------------
+
+#: Where the next batch starts. A ROTATING cursor, and it exists because the
+#: first production run of this sweep under CAL-P998 selected 500 rows and wrote
+#: zero.
+#:
+#: WHAT WAS MEASURED (2026-09-03 16:17 PT, `heroku run:detached`, `--limit 500
+#: --apply`). Before and after on the exact selected batch: 411 rows with a NULL
+#: `expiration_time` before and 411 after, 89 sealed before and 89 after, 0
+#: converged. `pg_stat_statements` confirms the run happened and what it did:
+#: `SELECT_SQL` **1 call, 500 rows, 185 ms**, `COUNT_SQL` 1 call — and **no
+#: matching UPDATE statement recorded at all.** (The dyno's stdout is not
+#: readable from the agent sandbox — `heroku logs` returns EPERM — so the
+#: distinction between "ran and yielded nothing" and "never ran" was settled by
+#: a second signal rather than assumed. Gotcha #53.)
+#:
+#: WHY, off the head of the batch itself:
+#:
+#:     KXTXPRIMARY-31D26   commence_time 2027-11-03   resolution_date 2027-11-03
+#:                         expiration_time NULL       updated_at 2026-06-20
+#:
+#: `commence_time` equals the backstop — the poisoned-column shape #2771 named
+#: (4,954 of 5,143 sealed rows carry `commence_time = expiration_time`). So the
+#: retention floor, which is a `commence_time` test, reads these as recent and
+#: admits them, while the venue purged them months ago and returns no markets.
+#: They yield no date, and a row this script may not write is a row whose
+#: `updated_at` is never refreshed — so under `ORDER BY updated_at ASC` it stays
+#: at the head **forever**.
+#:
+#: #2771's rotation argument ("every write refreshes the stamp, so the sweep
+#: rotates") is true only of rows that get written. Unwritable rows do not
+#: rotate, and 500 of them are enough to jam the entire beat: 5,143 sealed rows
+#: at 05:00Z became 5,137 seventeen hours later, which is what a jam looks like
+#: from outside.
+#:
+#: The script's own docstring already names the remedy for a human — *"`--offset`
+#: exists so an operator can advance past a stuck prefix rather than re-running
+#: into it"*. An unattended beat has no operator, so it must do that itself.
+SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset"
+
+#: 30 days. Long enough that a fortnight of failed beats does not silently reset
+#: the sweep to the jammed head; short enough that a stale cursor left behind by
+#: a retired population expires instead of skipping rows forever.
+SWEEP_CURSOR_TTL_S = 60 * 60 * 24 * 30
+
+
+async def _read_cursor() -> int:
+    """The offset to start at. An unreadable cursor is 0, never an exception.
+
+    0 is the pre-cursor behaviour, so a Redis outage degrades this sweep to
+    exactly what it did before the cursor existed rather than taking it down.
+    """
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(SWEEP_CURSOR_KEY)
+        return max(0, int(raw))
+    except Exception:  # noqa: BLE001 — a missing cursor is a start, not a failure
+        return 0
+
+
+async def _write_cursor(value: int) -> bool:
+    """Persist the next offset. Returns whether it landed — the caller reports it.
+
+    Swallowing this would be the worst option available: the run would look
+    clean, the cursor would stay where it was, and the next beat would re-enter
+    the same jam. So the boolean travels onto the summary and into the terminal.
+    """
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        await get_async_redis_client().set(
+            SWEEP_CURSOR_KEY, str(int(value)), ex=SWEEP_CURSOR_TTL_S
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def next_offset(*, offset: int, candidates: int, applied: int, eligible_total: int) -> int:
+    """Where the next batch starts, given what this one could not move.
+
+    ``candidates - applied`` is exactly the number of rows that KEPT their slot:
+    a written row rotates to the back of `updated_at ASC` on its own (the write
+    refreshes the stamp), an unwritten one does not. Advancing by that number —
+    not by ``limit`` — is what makes the cursor track the jam rather than a
+    batch size, so a run that writes 470 of 500 advances 30 and a run that
+    writes none advances a full batch.
+
+    A CLEAN BATCH HOLDS ITS OFFSET; IT DOES NOT RESET. This is the correction
+    that the offset-500 measurement forced, and it is worth spelling out because
+    the reset is the obvious first implementation and it re-enters the jam every
+    other night. Measured 2026-09-03: offset 0 is 500 unwritable rows last
+    touched in June, and offset 500 is 500 rows the poller touched today which
+    all write cleanly. Under "reset to 0 when nothing was stranded" the sweep
+    alternates jam / productive / jam / productive and burns half its nights.
+    Holding the offset is also simply correct: when 500 rows rotate to the back,
+    the row that was at position 1,000 is now at position 500, so the same
+    offset points at fresh content.
+
+    It WRAPS. A cursor that only ever grows walks off the end of the population
+    and the sweep goes permanently quiet — the same silent nothing it is here to
+    end, wearing a different mechanism. Wrapping is also what re-reaches the
+    skipped jam periodically, which matters: the venue publishes `close_time` on
+    finalize, so a row that is unresolvable in September can be the exact row
+    that needs writing in October.
+    """
+    stranded = max(0, candidates - applied)
+    if candidates == 0:
+        return 0
+    advanced = offset + stranded
+    return 0 if advanced >= max(1, eligible_total) else advanced
+
+
+# ---------------------------------------------------------------------------
 # The unattended entry point
 # ---------------------------------------------------------------------------
 
@@ -363,6 +479,7 @@ async def run_sweep(
     limit: int = SWEEP_BATCH_LIMIT,
     concurrency: int = SWEEP_CONCURRENCY,
     apply: bool = True,
+    offset: Optional[int] = None,
     session_maker: Optional[Callable] = None,
     client_factory: Optional[Callable[[], object]] = None,
 ) -> dict:
@@ -386,14 +503,21 @@ async def run_sweep(
     ``apply`` defaults to TRUE here and FALSE in ``run_backfill``, deliberately:
     the CLI's default must be the harmless one because a human types it, and the
     beat's default must be the useful one because nobody is there to pass a flag.
+
+    ``offset`` defaults to the rotating cursor. Pass an explicit one only to pin
+    a run; see :data:`SWEEP_CURSOR_KEY` for the measurement that made the cursor
+    necessary — without it this beat writes zero rows every night, forever, and
+    looks healthy doing it.
     """
     from app.services.database import async_session_maker
+
+    start = await _read_cursor() if offset is None else max(0, int(offset))
 
     report = await run_backfill(
         session_maker=session_maker or async_session_maker,
         client_factory=client_factory or KalshiAPIService,
         limit=limit,
-        offset=0,
+        offset=start,
         apply=apply,
         concurrency=concurrency,
     )
@@ -402,15 +526,36 @@ async def run_sweep(
     candidates = int(stats.get("candidates") or 0)
     applied = int(stats.get("writes_applied") or 0)
     errors = int(stats.get("errors") or 0)
+    eligible = int(stats.get("eligible_total") or 0)
 
-    if candidates and errors >= candidates:
+    nxt = next_offset(
+        offset=start, candidates=candidates, applied=applied, eligible_total=eligible
+    )
+    persisted = True if nxt == start else await _write_cursor(nxt)
+
+    report["offset"] = start
+    report["next_offset"] = nxt
+    report["stranded"] = max(0, candidates - applied)
+    report["cursor_persisted"] = persisted
+
+    if not persisted:
+        # Progress may have been made and it is silently unresumable: the next
+        # beat re-enters this exact batch and the jam returns. The typeahead
+        # index builder makes the same call for the same reason (#1866).
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"cursor not persisted — the next run repeats offset {start} "
+            f"instead of advancing to {nxt}"
+        )
+    elif candidates and errors >= candidates:
         report["terminal"] = "failed"
         report["terminal_reason"] = f"all {candidates} selected rows errored at the venue"
     elif candidates and applied == 0:
         report["terminal"] = "partial"
         report["terminal_reason"] = (
             f"{candidates} rows selected, 0 written — "
-            f"{stats.get('unresolvable_at_venue')} unresolvable at the venue"
+            f"{stats.get('unresolvable_at_venue')} unresolvable at the venue; "
+            f"cursor advanced {start} -> {nxt} so the next run does not re-enter it"
         )
     else:
         report["terminal"] = "complete"
@@ -418,7 +563,5 @@ async def run_sweep(
     # The population this run did NOT reach, carried on the summary so a bounded
     # sweep can never be read as a finished one — the same reason `run_backfill`
     # reports `eligible_total` beside `candidates`.
-    report["remaining_after_batch"] = max(
-        0, int(stats.get("eligible_total") or 0) - applied
-    )
+    report["remaining_after_batch"] = max(0, eligible - applied)
     return report
