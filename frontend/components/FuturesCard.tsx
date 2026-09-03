@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -103,6 +104,13 @@ export default function FuturesCard({
     probability: outcome.probability,
   }));
   const topOutcomes = leaderFirstSlice(labelled, 5);
+  // #2831: a market with exactly two outcomes prints BOTH sides of one question,
+  // and rounding them independently makes `0.925/0.075` read "93% / 8%". Decide
+  // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
+  // for the same reason `outcomeLabels` is: two rows out of a longer field are
+  // not a duel, and `slice` must not be able to manufacture one.
+  const rowPercents = renderedOutcomeRowPercents(outcomes.map((o) => o.probability));
+  const renderedById = new Map(outcomes.map((o, i) => [o.id, rowPercents[i] ?? null]));
   const isResolved = market.status === "resolved";
 
   const handlePinClick = (e: React.MouseEvent) => {
@@ -204,6 +212,7 @@ export default function FuturesCard({
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
                   displayName={displayName}
+                  rendered={renderedById.get(outcome.id) ?? null}
                 />
               </motion.div>
             ))}
@@ -246,6 +255,7 @@ function OutcomeRow({
   isResolved,
   marketCategory,
   displayName,
+  rendered,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -256,6 +266,12 @@ function OutcomeRow({
    *  because it needs the whole outcome set to make it. Defaulting this would let a
    *  future call site silently render the un-stripped name with every test green. */
   displayName: string;
+  /** The card-level integer for this row, or null for "no override" (#2831).
+   *  Required for the same reason `displayName` is: the pair decision needs the
+   *  whole outcome set, so only the caller can make it. A default of `null` would
+   *  compile at the next call site and silently print 101 again with every test
+   *  green — which is exactly how this row came to round independently. */
+  rendered: number | null;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
@@ -304,7 +320,11 @@ function OutcomeRow({
           )}
         </div>
         {/* Mini probability bar */}
-        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${displayName} probability`}>
+        {/* #2831: the same integer the digits print, so a screen-reader user and a
+            sighted one are never told two different numbers about one row. The bar
+            WIDTH deliberately still comes off the raw probability below — only the
+            rounding was at fault, and the geometry must not move. */}
+        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={rendered ?? Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${displayName} probability`}>
           <motion.div
             className="h-full rounded-full"
             style={{
@@ -345,7 +365,7 @@ function OutcomeRow({
               "font-mono text-sm tabular-nums",
               isLeader ? "font-bold text-text-primary" : "text-text-muted",
             )}>
-              {formatProbability(outcome.probability)}
+              {formatProbability(outcome.probability, { rendered })}
             </span>
           </>
         )}
