@@ -9,9 +9,23 @@
  *            render of the code that shipped, NOT a drawing of it.
  *   AFTER    the shipped `components/RelatedByTag.tsx`, same payload.
  *   CONTROL  the shipped component on a futures-only payload — the ordinary row
- *            must be byte-for-byte what it always was. A repair that fixed
- *            concepts by disturbing the futures row would pass every other
- *            assertion in this queue.
+ *            must still say what it always said. A repair that fixed concepts
+ *            by disturbing the futures row would pass every other assertion in
+ *            this queue.
+ *
+ * ⚠️ **THE CONTROL WAS A BYTE COMPARISON AND IS NOT ANY MORE (ux/1034 B6).**
+ * `expect(control).toBe(controlBefore)` was the right test while the only change
+ * on the table was a concept repair that had no business touching a futures row.
+ * B6 restyles the ordinary row ON PURPOSE — Alex, on `/events/15293830`: this
+ * section is *"formatted horribly"*, *"make it the same card grid the hub
+ * uses"* — so byte-equality is now asserting that a ruling was not carried out.
+ *
+ * What the control is actually for survives the restyle and is what it tests
+ * now: the ordinary futures row still names its subject, still prints its
+ * probability, and still links to its own market. Those are the three things
+ * UX-P177's repair could have broken; the chassis around them was never the
+ * claim. The legacy render is still produced, because the artifact's third
+ * panel is a before/after and needs both.
  *
  * The payload is `uxp177_related_mma_before.json`: a verbatim `/api/feed` body
  * read from production on 2026-08-29 through the exact URL the component builds
@@ -104,11 +118,23 @@ describe("UX-P177 artifact", () => {
     expect(after.match(/href="/g)).toHaveLength(4);
     expect(visibleText(after)).toContain("Tadej Pogacar");
 
-    // ── CONTROL: the ordinary futures row is untouched by all of this ──
+    // ── CONTROL: the ordinary futures row still SAYS what it always said ──
+    //
+    // Not byte-for-byte any more — see the ⚠️ at the top of this file. Every
+    // fact the legacy row published is required to survive into the new one,
+    // and the assertion is written that way round (legacy is the source of the
+    // expectation) so it cannot be satisfied by a row that prints something
+    // else and happens to contain the right substring.
     const controlBefore = render(RelatedByTagLegacy, FUTURES_ONLY, "More Mma");
-    expect(control).toBe(controlBefore);
-    expect(visibleText(control)).toContain("Khamzat Chimaev");
+    const hrefs = (markup: string) => markup.match(/href="[^"]*"/g) ?? [];
+    expect(hrefs(control)).toEqual(hrefs(controlBefore));
+    for (const fact of ["Khamzat Chimaev", "62%", "Islam Makhachev", "55%"]) {
+      expect(visibleText(controlBefore)).toContain(fact);
+      expect(visibleText(control)).toContain(fact);
+    }
     expect(control).toContain("/futures/196");
+    // And the restyle is real, not a no-op the assertions above would tolerate.
+    expect(control).not.toBe(controlBefore);
 
     const panel = (title: string, note: string, markup: string) => `
       <section>
@@ -149,8 +175,8 @@ ${panel(
   after
 )}
 ${panel(
-  "CONTROL — an ordinary futures payload, before and after are identical",
-  "Asserted byte-for-byte equal between the legacy and shipped components. A repair that fixed concepts by disturbing the ordinary row would pass every other assertion in this queue.",
+  "CONTROL — an ordinary futures payload, restyled by ux/1034 B6",
+  "Every fact the legacy row published — subject, probability, link — is asserted to survive into this one. The chassis is deliberately different: Alex ruled this section &ldquo;formatted horribly&rdquo; and asked for the hub&rsquo;s card grid.",
   control
 )}
 </body></html>`;
