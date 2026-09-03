@@ -76,22 +76,61 @@ describe("assignGameNumbers — doubleheaders", () => {
     // Local (no Z) datetimes so the calendar-day grouping is timezone-stable.
     const g2 = brief({ id: 2, opponent: "New York Yankees", commence_time: "2026-07-22T19:00:00" });
     const g1 = brief({ id: 1, opponent: "New York Yankees", commence_time: "2026-07-22T13:00:00" });
-    const nums = assignGameNumbers([g2, g1]);
+    const nums = assignGameNumbers([g2, g1], "mlb");
     expect(nums[1]).toBe(1);
     expect(nums[2]).toBe(2);
   });
 
   test("a solo game gets no number", () => {
     const solo = brief({ id: 9, opponent: "New York Yankees", commence_time: "2026-07-22T13:00:00" });
-    expect(assignGameNumbers([solo])[9]).toBeUndefined();
+    expect(assignGameNumbers([solo], "mlb")[9]).toBeUndefined();
   });
 
   test("same opponent on different days are not a doubleheader", () => {
     const a = brief({ id: 1, opponent: "Yankees", commence_time: "2026-07-22T13:00:00" });
     const b = brief({ id: 2, opponent: "Yankees", commence_time: "2026-07-23T13:00:00" });
-    const nums = assignGameNumbers([a, b]);
+    const nums = assignGameNumbers([a, b], "mlb");
     expect(nums[1]).toBeUndefined();
     expect(nums[2]).toBeUndefined();
+  });
+});
+
+describe("assignGameNumbers — a duplicate is not a doubleheader (#2866)", () => {
+  // The exact production shape 082 photographed on the Bears page: the same
+  // opponent, the same calendar day, the same result — two rows for one game,
+  // because 47 of 50 NFL preseason rows have a regular-season twin.
+  const twin = () => [
+    brief({ id: 1, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00" }),
+    brief({ id: 2, opponent: "Tennessee Titans", commence_time: "2026-08-29T17:00:00" }),
+  ];
+
+  test("an NFL same-day pair gets NO chips — the duplicate is not explained away", () => {
+    const nums = assignGameNumbers(twin(), "nfl");
+    expect(nums[1]).toBeUndefined();
+    expect(nums[2]).toBeUndefined();
+  });
+
+  test("CONTROL: the identical pair in MLB still gets G1/G2", () => {
+    // Both arms, and they differ ONLY by league. Without this arm a function
+    // hard-wired to return {} would pass the guard above perfectly — which is
+    // the whole failure mode of a one-armed test.
+    const nums = assignGameNumbers(twin(), "mlb");
+    expect(nums[1]).toBe(1);
+    expect(nums[2]).toBe(2);
+  });
+
+  test("the gate is an ALLOWLIST: an unknown or empty league gets no chips", () => {
+    // A denylist ("not nfl") would silently re-break for every league added
+    // later. These stand in for that future league.
+    for (const league of ["nba", "nhl", "epl", "ncaaf", "", "MLB-ish"]) {
+      const nums = assignGameNumbers(twin(), league);
+      expect(nums[1]).toBeUndefined();
+      expect(nums[2]).toBeUndefined();
+    }
+  });
+
+  test("the allowlist is case-insensitive, so a route segment cannot miss it", () => {
+    expect(assignGameNumbers(twin(), "MLB")[1]).toBe(1);
   });
 });
 
