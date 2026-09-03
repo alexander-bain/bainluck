@@ -78,6 +78,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
+from app.utils.prematch_reading import prematch_source_rank
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -1185,38 +1186,63 @@ def _prematch_by_pair(
     their chance of winning a first-round match) would be a fabricated number
     wearing a real player's name.
     """
-    out: dict[tuple, dict[str, float]] = {}
+    out: dict[tuple, dict[str, Any]] = {}
     for matchup in reg.matchups:
         players = matchup.get("players")
         if not isinstance(players, list) or len(players) != 2:
             continue
-        block = next(
+        # ══ ux/1036: THE LADDER IS ORDERED, AND IT USED TO BE WHICHEVER CAME
+        #    FIRST ══
+        #
+        # This took `next(... status == "live")` — the first live block in
+        # register order. Where a pair is pinned at BOTH venues that is an
+        # arbitrary choice between two different numbers, decided by the order
+        # an agent happened to write the register file in.
+        #
+        # Alex's rule for the settled pre-match reading, given for #2747 and
+        # applied to every surface by ux/1036: **Kalshi → Polymarket → books**,
+        # ordered and never merged. `prematch_source_rank` is that order, and it
+        # is the SAME constant the feed's game cards resolve against, so the two
+        # surfaces cannot drift into quoting different venues for the same kind
+        # of question.
+        #
+        # The books rung is not reachable from here and that is stated rather
+        # than half-built: `Event.opening_*` is per-EVENT, and the only
+        # id-anchored path from a finished row to its event is
+        # `event_links.by_matchup`, which by construction covers only pairs the
+        # register still carries a matchup for. The row Alex read
+        # (Shelton–Hurkacz, `espn:182730`) is not one of them — see #2747, which
+        # stays open for it.
+        blocks = sorted(
             (
                 b for b in (matchup.get("sources") or [])
                 if isinstance(b, dict) and b.get("status") == "live"
             ),
-            None,
+            key=lambda b: prematch_source_rank(b.get("source")),
         )
-        if block is None:
-            continue
-        sides = block.get("sides")
-        if not isinstance(sides, dict) or set(sides) != set(players):
-            continue
+        for block in blocks:
+            sides = block.get("sides")
+            if not isinstance(sides, dict) or set(sides) != set(players):
+                continue
 
-        raw: list[Optional[float]] = []
-        for entity_key in players:
-            side = sides.get(entity_key) or {}
-            outcome_id = side.get("outcome_id")
-            loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
-            raw.append(_as_float((loaded or {}).get("opening_probability")))
+            raw: list[Optional[float]] = []
+            for entity_key in players:
+                side = sides.get(entity_key) or {}
+                outcome_id = side.get("outcome_id")
+                loaded = prices.get(outcome_id) if isinstance(outcome_id, int) else None
+                raw.append(_as_float((loaded or {}).get("opening_probability")))
 
-        a_open, b_open, _sum, coherent = normalize_pair(raw[0], raw[1])
-        if not coherent or a_open is None or b_open is None:
-            continue
-        out[(str(matchup.get("draw")), tuple(sorted(players)))] = {
-            players[0]: a_open,
-            players[1]: b_open,
-        }
+            a_open, b_open, _sum, coherent = normalize_pair(raw[0], raw[1])
+            if not coherent or a_open is None or b_open is None:
+                # Not "this pair has no prior" — "this VENUE has no coherent one".
+                # Falling through to the next rung is the whole point of an
+                # ordered ladder; the old single-block form could not.
+                continue
+            out[(str(matchup.get("draw")), tuple(sorted(players)))] = {
+                "probabilities": {players[0]: a_open, players[1]: b_open},
+                "source": block.get("source"),
+            }
+            break
     return out
 
 
@@ -1314,6 +1340,8 @@ def build_results(
                 continue
 
             prematch = prematch_by_pair.get((draw, tuple(sorted(keys))))
+            prematch_probs = (prematch or {}).get("probabilities") or {}
+            prematch_source = (prematch or {}).get("source")
             if prematch:
                 with_prematch += 1
 
@@ -1351,7 +1379,14 @@ def build_results(
                      # absence the section states rather than fills in. See
                      # `_prematch_by_pair` for why the opening quote and not the
                      # current one.
-                     "prematch_probability": (prematch or {}).get(key)}
+                     "prematch_probability": prematch_probs.get(key),
+                     # WHICH VENUE SAID IT (ux/1036). Alex: label the number when
+                     # it is not a prediction-market opening. Carried per player
+                     # rather than per row because the ladder is resolved per
+                     # PAIR and a row could one day hold two rungs; today both
+                     # slots always agree, and a renderer that reads it off the
+                     # player it labels cannot mislabel one of them.
+                     "prematch_source": prematch_source if prematch_probs.get(key) is not None else None}
                     for key, entry in zip(keys, entries)
                 ],
                 "winner_entity_key": winner_key,

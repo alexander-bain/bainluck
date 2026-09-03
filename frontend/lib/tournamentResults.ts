@@ -69,6 +69,19 @@ export interface ResultPlayer {
    * the last one we saw.
    */
   prematch_probability: number | null;
+  /**
+   * WHICH VENUE gave it (ux/1036) — `kalshi`, `polymarket`, or `books`.
+   *
+   * Alex's ladder is ORDERED, not merged: Kalshi first, then Polymarket, then
+   * the sportsbook median. `_prematch_by_pair` used to take whichever live block
+   * came first in register order, which on a pair pinned at both venues was an
+   * arbitrary choice between two different numbers.
+   *
+   * Optional, and absent means what it has always meant: a prediction-market
+   * opening, which needs no caveat. A `books` reading is a different claim and
+   * says so — see `prematchSourceNote`.
+   */
+  prematch_source?: string | null;
 }
 
 export interface TournamentResult {
@@ -661,6 +674,40 @@ export function prematchAbsenceNote(coverage: PrematchCoverage): string {
     `whether a venue listed one.`
   );
 }
+
+/**
+ * The clause the footnote owes when some prior is NOT a prediction-market
+ * opening (ux/1036), or `""`.
+ *
+ * Alex: *"labelled when not a prediction market."* The grey figures on this list
+ * are described as "what the market gave that player", and that sentence is only
+ * true of the Kalshi and Polymarket rungs. A sportsbook median is a different
+ * claim in the same shape, and ux/1034 A3 is the standing lesson about printing
+ * one as the other on this exact list.
+ *
+ * Counted over the ROWS a reader is looking at, like every other note in this
+ * module, and silent when every prior is a prediction-market one — which is the
+ * whole served population today (`_prematch_by_pair` cannot reach the books rung
+ * for a row the register does not carry a matchup for; #2747 stays open for
+ * that). It is written now because the alternative is a books number arriving
+ * on this list one day wearing a prediction market's sentence.
+ */
+export function prematchSourceNote(matches: TournamentResult[]): string {
+  let books = 0;
+  for (const match of matches) {
+    const other = match.players.some(
+      (player) =>
+        typeof player.prematch_probability === "number" &&
+        player.prematch_source != null &&
+        !PREDICTION_MARKET_SOURCES.has(player.prematch_source)
+    );
+    if (other) books += 1;
+  }
+  if (books === 0) return "";
+  return `${books} of them ${books === 1 ? "is" : "are"} a sportsbook opening rather than a prediction market's.`;
+}
+
+const PREDICTION_MARKET_SOURCES = new Set(["kalshi", "polymarket"]);
 
 /** Newest first — a results list is read from the top for what just happened. */
 export function sortedResults(matches: TournamentResult[]): TournamentResult[] {

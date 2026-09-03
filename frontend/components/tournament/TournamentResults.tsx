@@ -13,6 +13,7 @@ import {
   prematchAbsenceNote,
   prematchCoverage,
   prematchPercents,
+  prematchSourceNote,
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
@@ -396,6 +397,9 @@ export default function TournamentResults({
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
   const prior = prematchCoverage(matches);
+  /* ux/1036: whether any of those priors is a sportsbook opening rather than a
+     prediction market's, which is a different claim and has to say so. */
+  const sourceNote = prematchSourceNote(matches);
   /* #2450: the total says which population it is over, or says nothing. */
   const population = resultsPopulationNote(matches);
   /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
@@ -472,6 +476,14 @@ export default function TournamentResults({
           The grey figure beside a name is what the market gave that player{" "}
           <b className="font-semibold text-text-secondary">before the match started</b> —
           its opening number, not a reading taken after the result was known.{" "}
+          {/* ux/1036, Alex: "labelled when not a prediction market." The
+              sentence above is only true of the Kalshi and Polymarket rungs;
+              a sportsbook median is a different claim in the same shape. Empty
+              on today's served payload, and written anyway — see
+              `prematchSourceNote`. */}
+          {sourceNote && (
+            <span data-testid="results-prematch-source-note">{sourceNote} </span>
+          )}
           {prior.withPrior < prior.total && (
             <>
               Shown on{" "}

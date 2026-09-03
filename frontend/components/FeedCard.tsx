@@ -32,6 +32,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
+import { prematchReading } from "@/lib/prematchReading";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -408,10 +409,31 @@ function EventFeedCard({
     data.opening_odds?.away_probability,
     data.opening_odds?.home_probability,
   );
+  // ═══ ux/1036: LIVE ONLY. A SETTLED CARD GIVES EACH TEAM ITS OWN NUMBER ═══
+  //
+  // Alex, on /sports "Just Happened" at phone width: "How come none of these
+  // show pre-event probability?" — reading a column of FINAL cards on which THIS
+  // was the only pre-match figure. It is one grey string carrying two numbers,
+  // and it never says which team is the 40. The live card three rows up gives
+  // each team its own.
+  //
+  // So the settled card takes the per-team treatment below, and this footnote
+  // stops running on it — "drop 'Opened x/y' once the per-team numbers exist".
+  // A LIVE card keeps it unchanged: it is showing the CURRENT split per team, so
+  // the opening is genuinely a second, comparative fact there rather than the
+  // only one.
   const openedContext =
-    (isLive || isFinished) && openedHomePct !== null && openedAwayPct !== null
+    isLive && openedHomePct !== null && openedAwayPct !== null
       ? `Opened ${openedHomePct}/${openedAwayPct}`
       : null;
+
+  // ═══ THE PER-TEAM PRE-MATCH READING (ux/1036 Tier A) ═══
+  //
+  // Server-resolved down Alex's ladder — Kalshi → Polymarket → books, ordered
+  // and never merged — with the rung named so a books number can say it is one.
+  // `lib/prematchReading.ts` owns the fallback for a cached payload predating
+  // `prematch_odds`, and the reason only the books rung carries a label.
+  const prematch = isFinished ? prematchReading(data) : null;
 
   // For the probability bar: finished events show opening odds, others show current
   const barHomeProb = isFinished
@@ -516,7 +538,17 @@ function EventFeedCard({
           ) : null}
         </div>
 
-        {/* Main row: teams with logos + probability */}
+        {/* Main row: teams with logos + probability.
+
+            ux/1036 — ON A FINAL CARD THE SCORE IS THE RIGHT-HAND COLUMN.
+            Alex: "keep the live-card layout on FINAL cards — score bold in the
+            right column AND the pre-match probability greyed beside each name."
+            The score used to sit `ml-auto` INSIDE the names column, which is why
+            there was nowhere for a per-team number to go and why the pre-match
+            figure ended up as a footnote. Moving it into the column the live
+            card uses for its probability chips is what makes the row read
+            "Padres 40% ......... 5" — the same grammar the tennis hub's finished
+            list has used since UX-P146. */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
             {/* Away team */}
@@ -531,9 +563,21 @@ function EventFeedCard({
                     : `font-medium ${displayAwayProb !== null && displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
                 }`}
               />
-              {isFinished && data.away_score != null && (
-                <span className={`ml-auto font-mono text-sm ${awayWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
-                  {data.away_score}
+              {/* The prior, beside the name it is about. Grey on BOTH rows,
+                  winner included: the bold treatment on this card means "this
+                  is what happened", and the pre-match number is the opposite of
+                  that — it is what was thought before anything had. */}
+              {prematch && prematch.awayPercent !== null && (
+                <span
+                  className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                  data-testid="feed-card-prematch-away"
+                  data-prematch={prematch.awayProbability}
+                  data-prematch-source={prematch.source}
+                >
+                  <span className="sr-only">
+                    Before the game, the market gave {data.away_team}{" "}
+                  </span>
+                  {prematch.awayPercent}%
                 </span>
               )}
             </div>
@@ -549,9 +593,17 @@ function EventFeedCard({
                     : `font-medium ${displayHomeProb !== null && displayHomeProb >= 0.5 ? "text-text-primary" : "text-text-secondary"}`
                 }`}
               />
-              {isFinished && data.home_score != null && (
-                <span className={`ml-auto font-mono text-sm ${homeWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
-                  {data.home_score}
+              {prematch && prematch.homePercent !== null && (
+                <span
+                  className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                  data-testid="feed-card-prematch-home"
+                  data-prematch={prematch.homeProbability}
+                  data-prematch-source={prematch.source}
+                >
+                  <span className="sr-only">
+                    Before the game, the market gave {data.home_team}{" "}
+                  </span>
+                  {prematch.homePercent}%
                 </span>
               )}
             </div>
@@ -576,13 +628,30 @@ function EventFeedCard({
               </div>
             </div>
           )}
+
+          {/* The settled score, in the same column the live chips occupy. Bold
+              on the winner, muted on the loser — unchanged from the treatment
+              this card already had, moved. */}
+          {isFinished && (data.away_score != null || data.home_score != null) && (
+            <div className="flex-shrink-0 text-right" data-testid="feed-card-final-score">
+              <div className={`font-mono text-sm mb-0.5 ${awayWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
+                {data.away_score ?? "—"}
+              </div>
+              <div className={`font-mono text-sm ${homeWon ? "font-bold text-text-primary" : "text-text-muted"}`}>
+                {data.home_score ?? "—"}
+              </div>
+            </div>
+          )}
         </div>
+
 
         {/* Probability bar — current odds for live/scheduled; dropped on FINAL
             (the settled card shows score + winner, not a live-style split) and
             on SUSPENDED, which drops it with the chips above: the bar is the
             same stale blend drawn wider, and a full-width split is the most
-            confident thing on the card. */}
+            confident thing on the card. On FINAL the pre-game context is also no
+            longer the muted "Opened X/Y" text below: as of ux/1036 it is a
+            number beside each team name, above. */}
         {!isFinished && !isSuspended && barHomeProb !== null && barAwayProb !== null && (
           <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
             <div
@@ -604,8 +673,14 @@ function EventFeedCard({
           </div>
         )}
 
-        {/* Bottom row: reason + context + thumbs */}
-        {(item.reason || openedContext) && (
+        {/* Bottom row: reason + context + thumbs.
+
+            ux/1036 — the settled card's source label goes HERE, in the slot
+            `Opened X/Y` vacated, and not on a line of its own. A caption under
+            the team rows added a row to every FINAL card at phone width, which
+            is the width Alex was reading; this keeps the card the height it
+            already was. */}
+        {(item.reason || openedContext || prematch?.label) && (
           <div className="flex items-center justify-between gap-2 mt-1.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               {item.reason && (
@@ -613,6 +688,18 @@ function EventFeedCard({
               )}
               {openedContext && (
                 <span className="text-[11px] text-text-muted flex-shrink-0">{openedContext}</span>
+              )}
+              {/* Alex: "labelled when not a prediction market." One label for
+                  the pair — both grey numbers always come off the same rung,
+                  and saying it twice on one card is noise. */}
+              {prematch?.label && (
+                <span
+                  className="text-[11px] text-text-muted flex-shrink-0"
+                  data-testid="feed-card-prematch-label"
+                  data-prematch-source={prematch.source}
+                >
+                  Pre-match · {prematch.label}
+                </span>
               )}
             </div>
             <ThumbButtons
@@ -623,7 +710,7 @@ function EventFeedCard({
           </div>
         )}
         {/* Thumbs-only row when no reason or context */}
-        {!item.reason && !openedContext && (
+        {!item.reason && !openedContext && !prematch?.label && (
           <div className="flex items-center justify-end mt-1">
             <ThumbButtons
               category={category}
