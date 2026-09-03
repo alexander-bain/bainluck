@@ -29,6 +29,7 @@ from app.tasks.config import (
     SPORT_TIER_MULTIPLIERS,
     SPORT_REGION_OVERRIDES,
 )
+from app.utils.impossible_final import is_impossible_final
 from app.tasks.redis_state import (
     get_redis_client,
     compute_odds_hash,
@@ -147,6 +148,44 @@ async def _last_post_commence_snapshot(session, event_id):
     return row.last_snap if row else None
 
 
+def _impossible_final_scrub(event) -> dict:
+    """Extra column values that stop a close from asserting a result the sport cannot produce.
+
+    This closer marks an event terminal on an ODDS signal and never touches
+    scores, so whatever the row holds at that instant silently becomes its
+    final. For a draw-impossible sport a level score is then a statement the
+    rules forbid — "Final · TIED 1-1" on a baseball game — and it is
+    indistinguishable downstream from a real result: the team page renders it as
+    a Recent Result and the ``game_score`` grader in ``backfill_winners`` reads
+    it as ground truth (and does not permit itself to be overwritten later).
+
+    So we close the event but refuse to let the score stand. Returning the scores
+    as NULL is the same move ``derive_completed_at`` makes four lines below for
+    the same reason, in this same function: **a visible gap that a repair can
+    fill beats a plausible-looking wrong value that nothing will ever question.**
+    ``game_state_backfill`` reconciles scores for terminal events and can fill a
+    NULL; it has no reason to revisit a confident 7-7.
+
+    Returns ``{}`` — write nothing extra — in every other case, including when
+    the sport's rules genuinely permit a draw (NFL, spring-training baseball,
+    NCAA baseball) and when we have made no rules claim about the sport at all.
+    """
+    sport_key = getattr(getattr(event, "sport", None), "key", None)
+    if not is_impossible_final(
+        sport_key, "closed", event.home_score, event.away_score
+    ):
+        return {}
+
+    logger.warning(
+        "Event %s (%s vs %s, %s) would close at an impossible %s-%s final — "
+        "%s cannot end level. Closing with scores NULL rather than asserting a "
+        "tie; game_state_backfill can fill the real result.",
+        event.id, event.home_team_name, event.away_team_name, sport_key,
+        event.home_score, event.away_score, sport_key,
+    )
+    return {"home_score": None, "away_score": None}
+
+
 async def detect_and_close_stale_events(session) -> int:
     """
     Detect live events with stale odds and mark them as "closed".
@@ -222,6 +261,7 @@ async def detect_and_close_stale_events(session) -> int:
             statpal_end = get_statpal_end_time(event)
             if statpal_end and statpal_end <= now:
                 close_vals = {"status": "closed"}
+                close_vals.update(_impossible_final_scrub(event))
                 if not event.completed_at:
                     close_vals["completed_at"] = statpal_end
                 await session.execute(
@@ -337,6 +377,7 @@ async def detect_and_close_stale_events(session) -> int:
                     continue
 
                 close_values = {"status": "closed"}
+                close_values.update(_impossible_final_scrub(event))
                 if not event.completed_at:
                     # gotcha #22: completed_at is a GAME-END time. now() is when
                     # the backend noticed, which is wrong by however long the
