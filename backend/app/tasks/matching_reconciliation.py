@@ -478,7 +478,9 @@ def receipts_hint_for(finding: dict) -> str | None:
             "reading it as missing links (#2803): what clears this number is a "
             "receipt, and for most of the population that receipt is a refusal. "
             "`coverage.backlog_pass_has_run` false means nothing is driving it "
-            "down at all."
+            "down at all; null means the durable store did not answer, which is "
+            "not the same thing — check `coverage.backlog_pass.status` before "
+            "concluding the backlog pass never ran."
         )
     if finding["key"] == "linked_unsourced" and finding["rows"]:
         eid = finding["rows"][0]["event_id"]

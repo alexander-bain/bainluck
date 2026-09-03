@@ -902,6 +902,16 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     assert sorted(mr.REJECT_REASONS) == out["valid_reasons"]
 
 
+def _ran(rows_attempted=3000, at=None):
+    """The durable fact a completed Pass 3 leaves behind (#2803/CERT-819)."""
+    from app.utils.matcher_pass_runs import PassRunFact
+
+    return PassRunFact(
+        phase=mr.PHASE_PASS3_BACKLOG, has_run=True, status="ok",
+        last_run_at=at or NOW, rows_attempted=rows_attempted,
+    )
+
+
 class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
     """#2803. The published figure was 36,966 open unlinked markets without a
     receipt against ``target: 0``, and it was unreadable three ways.
@@ -922,7 +932,19 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
     """
 
     @staticmethod
-    def _summary(never_rows=(), explained_rows=(), phase_rows=()):
+    def _summary(never_rows=(), explained_rows=(), phase_rows=(), pass_run=None):
+        """``pass_run`` stands in for the durable per-pass row (#2803/CERT-819).
+
+        Defaults to "never published", the state production was measured in.
+        """
+        from unittest.mock import patch
+
+        from app.utils.matcher_pass_runs import PassRunFact
+
+        fact = pass_run or PassRunFact(
+            phase=mr.PHASE_PASS3_BACKLOG, has_run=False, status="missing",
+        )
+
         db = _FakeDB(
             [
                 _FakeResult([]),                       # reason histogram
@@ -934,10 +956,15 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
             ],
             scalar=0,
         )
-        out = _call(
-            db=db, market_id=None, external_id=None, event_id=None,
-            reject_reason=None, source=None, limit=50,
-        )
+
+        async def _fake_read(_db, _phase, **_kw):
+            return fact
+
+        with patch("app.utils.matcher_pass_runs.read_pass_run", _fake_read):
+            out = _call(
+                db=db, market_id=None, external_id=None, event_id=None,
+                reject_reason=None, source=None, limit=50,
+            )
         return out["coverage"], db
 
     def test_the_denominator_is_pass3s_own_eligibility_set_row_for_row(self):
@@ -1043,7 +1070,7 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
             phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
         )
         assert cov["backlog_pass_has_run"] is False
-        assert cov["matcher_phases_seen"] == {mr.PHASE_PASS1_TICKER: 138676}
+        assert cov["receipt_phase_labels_now"] == {mr.PHASE_PASS1_TICKER: 138676}
 
         cov, _ = self._summary(
             never_rows=[_Row(source="kalshi", n=12)],
@@ -1051,8 +1078,74 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
                 _Row(phase=mr.PHASE_PASS1_TICKER, n=7000),
                 _Row(phase=mr.PHASE_PASS3_BACKLOG, n=3000),
             ],
+            pass_run=_ran(rows_attempted=3000),
         )
         assert cov["backlog_pass_has_run"] is True
+
+    def test_pass1_overwriting_every_pass3_label_does_not_unmake_the_run(self):
+        """CERT-819, the exact sequence it blocked on, at the endpoint.
+
+        The receipt table is one MUTABLE row per market and the upsert sets
+        ``phase = excluded.phase``, so after Pass 3 runs, Pass 1/2 re-attempting
+        those same open unlinked markets erase every ``pass3_backlog`` label.
+        The census below is that end state — 100% ``pass1_ticker``, not one
+        ``pass3_backlog`` row left — and the flag must STILL be true, because
+        the pass did run.
+        """
+        after_erasure = [_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)]
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            phase_rows=after_erasure,
+            pass_run=_ran(rows_attempted=3000),
+        )
+        assert cov["backlog_pass_has_run"] is True, (
+            "a later pass overwriting the phase label unmade the run — that is "
+            "the CERT-819 defect back"
+        )
+        assert cov["backlog_pass"]["last_run_at"] == NOW.isoformat()
+        assert cov["backlog_pass"]["rows_attempted"] == 3000
+
+        # THE RED ARM. The blocked derivation, evaluated on the same state: it
+        # says "never ran" about a table where Pass 3 demonstrably ran. Without
+        # this, the assertion above could pass for the wrong reason.
+        phases_seen = {r.phase: r.n for r in after_erasure}
+        assert (mr.PHASE_PASS3_BACKLOG in phases_seen) is False, (
+            "the old label-census derivation is supposed to be wrong here; if "
+            "it is right, this fixture no longer reproduces the erasure"
+        )
+
+    def test_a_durable_store_that_does_not_answer_is_not_a_no(self):
+        """``false`` is a claim about the matcher; a read failure is a claim
+        about the database. Publishing the second as the first sends an admin
+        hunting a dead beat that is alive — the same false negative CERT-819
+        blocked, arriving by a different route."""
+        from app.utils.matcher_pass_runs import PassRunFact
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            pass_run=PassRunFact(
+                phase=mr.PHASE_PASS3_BACKLOG, has_run=None,
+                status="unavailable", error_class="TimeoutError",
+            ),
+        )
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == "unavailable"
+        assert cov["backlog_pass"]["error_class"] == "TimeoutError"
+        assert "null" in cov["note"].lower()
+
+    def test_the_label_census_no_longer_claims_to_be_a_run_history(self):
+        """The census is still published — it is useful — but under a name and
+        a note that cannot be read as "these passes have run"."""
+        cov, _ = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+        )
+        assert "matcher_phases_seen" not in cov, (
+            "the old name asserted an ever-fact the column cannot support"
+        )
+        note = cov["receipt_phase_labels_note"].lower()
+        assert "overwrites" in note
+        assert "not a run history" in note
 
     def test_the_note_does_not_let_the_number_be_read_as_missing_links(self):
         """The failure this whole block exists to stop: a reader takes 36,966 as

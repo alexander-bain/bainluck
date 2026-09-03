@@ -4759,6 +4759,7 @@ async def match_receipts(
         link_changes_for_market_query,
         link_changes_off_event_query,
     )
+    from app.utils.matcher_pass_runs import read_pass_run
 
     def _serialize(r: MarketMatchReceipt) -> dict:
         return {
@@ -5070,12 +5071,11 @@ async def match_receipts(
 
     never = sum(v["without_receipt"] for v in by_source.values())
 
-    # WHICH PASSES HAVE EVER WRITTEN A ROW. The number above can only fall while
-    # Pass 3 runs, so a coverage figure that does not say whether Pass 3 has
-    # ever run is a target with no mechanism behind it. Before #2798, Pass 1 had
-    # no status predicate and no LIMIT, spent the whole budget re-refusing
-    # 131,229 already-resolved markets, and Passes 2 and 3 never started —
-    # invisible in every number this endpoint published. It is visible here now.
+    # WHICH PASS LABEL EACH RECEIPT CURRENTLY CARRIES. Useful, and NOT a run
+    # history: `phase` is overwritten by every later attempt on the same market
+    # (`match_receipts.flush_receipts`: "phase": stmt.excluded.phase), so this is
+    # a census of the present, and a pass can disappear from it entirely without
+    # ever having stopped running. It is published under a name that says so.
     phase_rows = (
         await db.execute(
             select(MarketMatchReceipt.phase, func.count().label("n"))
@@ -5084,6 +5084,15 @@ async def match_receipts(
         )
     ).all()
     phases_seen = {r.phase: int(r.n or 0) for r in phase_rows if r.phase}
+
+    # WHETHER PASS 3 HAS EVER RUN — read from the durable per-pass row, NOT from
+    # the census above. The number this block publishes can only fall while Pass
+    # 3 runs, so "has the mechanism run" is the fact that makes it actionable;
+    # deriving it from a mutable label meant Pass 1/2 re-attempting the same
+    # markets could report "never ran" minutes after it ran (CERT-819).
+    # Tri-state on purpose: null is "the durable store did not answer", which is
+    # not the same claim as false.
+    backlog_run = await read_pass_run(db, PHASE_PASS3_BACKLOG)
 
     return {
         "totals": {
@@ -5122,8 +5131,15 @@ async def match_receipts(
             "open_unlinked_without_receipt": int(never or 0),
             "target": 0,
             "by_source": by_source,
-            "matcher_phases_seen": phases_seen,
-            "backlog_pass_has_run": PHASE_PASS3_BACKLOG in phases_seen,
+            "receipt_phase_labels_now": phases_seen,
+            "receipt_phase_labels_note": (
+                "A census of the phase label each receipt carries RIGHT NOW, "
+                "not a run history: every later attempt on a market overwrites "
+                "its phase, so a pass can vanish from this map while still "
+                "running every cycle. Read backlog_pass for whether a pass ran."
+            ),
+            "backlog_pass_has_run": backlog_run.has_run,
+            "backlog_pass": backlog_run.as_dict(),
             "denominator": (
                 "source IN (kalshi, polymarket) AND event_id IS NULL AND "
                 "status = 'open' — copied from _phase1_pass3_backlog_scan's "
@@ -5140,7 +5156,8 @@ async def match_receipts(
                 "this as a count of missing links. Split by source because one "
                 "source's zero can be a fact about the writer rather than about "
                 "coverage. It can only fall while the backlog pass runs: "
-                "backlog_pass_has_run false means no mechanism is driving it."
+                "backlog_pass_has_run false means no mechanism is driving it, "
+                "and null means we could not find out — do not read null as no."
             ),
         },
         "by_reason": [
