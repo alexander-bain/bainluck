@@ -108,6 +108,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional, Sequence
 
+from app.utils.authority_name_forms import canonical_forms, composed_forms
 from app.utils.name_normalization import normalize_team_name_for_matching
 
 __all__ = [
@@ -172,6 +173,14 @@ def _normalized(value: Any) -> str:
     return normalize_team_name_for_matching(value)
 
 
+def _forms_of_all(names) -> frozenset[str]:
+    """The union of every reduction of every name the authority published."""
+    forms: set[str] = set()
+    for name in names:
+        forms |= canonical_forms(name)
+    return frozenset(forms)
+
+
 def authority_names(competitor: dict[str, Any]) -> frozenset[str]:
     """Every name ESPN publishes for one competitor, normalized.
 
@@ -183,6 +192,15 @@ def authority_names(competitor: dict[str, Any]) -> frozenset[str]:
     This is the list the exact-match rule tests against, and its breadth is
     what lets the rule stay exact — ``Ole Miss`` is in ESPN's vocabulary for
     the Rebels, so no fuzzy rule is needed to accept it.
+
+    #2792: the breadth was not sufficient after all, in a way that is ESPN's
+    formatting rather than our matching. It publishes ``location`` and ``name``
+    separately and only *usually* prints their concatenation as ``displayName``
+    — for the AFL, Hawthorn's ``displayName`` is bare ``Hawthorn``, so our
+    ordinary "Hawthorn Hawks" matched none of the five strings read here. The
+    compositions ESPN's own fields imply are therefore added
+    (:func:`~app.utils.authority_name_forms.composed_forms`); the rule stays
+    exact and only the vocabulary grows.
     """
     block = competitor.get("team") if isinstance(competitor.get("team"), dict) else competitor
     names = set()
@@ -197,6 +215,7 @@ def authority_names(competitor: dict[str, Any]) -> frozenset[str]:
         normalized = _normalized(block.get(key))
         if normalized:
             names.add(normalized)
+    names |= composed_forms(block)
     return frozenset(names)
 
 
@@ -308,14 +327,30 @@ def _teams_agree(row: CandidateRow, record: AuthorityRecord) -> tuple[bool, bool
     the team ids are carried into the receipt as an observation — a row whose
     names agree while its team ids point elsewhere is a team-identity finding
     (#1204), not a reason to change this verdict.
+
+    ═══ WHY THE COMPARISON IS BETWEEN SETS OF FORMS (#2792) ═══
+
+    Both sides are reduced through
+    :func:`~app.utils.authority_name_forms.canonical_forms` and agree when their
+    form sets intersect. The reductions are punctuation, a leading article, a
+    club initialism and a founding year — each one a rewriting of the WHOLE
+    name, so no name reduces to a fragment of itself and no short token becomes
+    a wildcard. That property is what keeps ``Ohio State Buckeyes`` and ``Texas
+    State Bobcats`` apart, which is the case #2792 is named for and the one this
+    rule exists to fail.
+
+    Because every form set contains the plain normalized name, this is a strict
+    widening: nothing the exact rule used to agree on can stop agreeing.
     """
-    home = _normalized(row.home_team_name)
-    away = _normalized(row.away_team_name)
-    if not home or not away or not record.home_names or not record.away_names:
+    ours_home = canonical_forms(row.home_team_name)
+    ours_away = canonical_forms(row.away_team_name)
+    if not ours_home or not ours_away or not record.home_names or not record.away_names:
         return False, False, "none"
-    if home in record.home_names and away in record.away_names:
+    theirs_home = _forms_of_all(record.home_names)
+    theirs_away = _forms_of_all(record.away_names)
+    if (ours_home & theirs_home) and (ours_away & theirs_away):
         return True, False, "team_name"
-    if home in record.away_names and away in record.home_names:
+    if (ours_home & theirs_away) and (ours_away & theirs_home):
         return True, True, "team_name"
     return False, False, "team_name"
 
