@@ -10,14 +10,18 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let homeTeam: String
     let awayTeam: String
     let commenceTime: String?
-    let status: String?
+    // #2687 — a `closed` frame means the match ended under the stream; the
+    // status has to be able to follow it without a full refetch.
+    var status: String?
     let homeScore: Int?
     let awayScore: Int?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
     let metadata: EventMetadata?
     let standingsContext: StandingsContext?
-    let currentOdds: CurrentOdds?
+    // #2687 — `var` so a pushed SSE frame can write the fresher blend into the
+    // model every native surface already reads. See `CurrentOdds`.
+    var currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
