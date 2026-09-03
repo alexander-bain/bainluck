@@ -358,8 +358,13 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only; a FINAL card drops the
-                  live-style chip for the settled score block above (L2-112 Item 2). */}
-              {!isLive && !isFinished && (
+                  live-style chip for the settled score block above (L2-112 Item 2),
+                  and so does a SUSPENDED one (live/048, CERT-792). `suspended` is
+                  neither live nor finished, so it fell through to the pregame chip
+                  and printed a confident 72%/28% two lines under "No result
+                  reported" — the card contradicting itself in one glance. The
+                  suspended summary above is the whole statement. */}
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
                   value={homeProb}
                   className={cn(
@@ -376,8 +381,10 @@ export default function EventCard({
               )}
             </div>
 
-            {/* Team-colored probability bar — hidden on FINAL (settled score above) */}
-            {!isFinished && (
+            {/* Team-colored probability bar — hidden on FINAL (settled score
+                above) and on SUSPENDED (CERT-792): a filled bar is the loudest
+                claim on the card, and there is no live price behind it. */}
+            {!isFinished && !isSuspended && (
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
@@ -430,7 +437,7 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only (see home team above). */}
-              {!isLive && !isFinished && (
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
                   value={awayProb}
                   className={cn(
@@ -448,8 +455,10 @@ export default function EventCard({
             </div>
           </div>
 
-          {/* Footer — contextual info (hide for finished games) */}
-          {!isFinished && (
+          {/* Footer — contextual info (hide for finished games, and for
+              suspended ones: "Proj 6-4" is a pregame promise and the match is
+              stopped, not upcoming — CERT-792). */}
+          {!isFinished && !isSuspended && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
               {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
                   strict test with `undefined !== null` → true, and the card then
