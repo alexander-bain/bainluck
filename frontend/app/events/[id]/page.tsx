@@ -62,6 +62,7 @@ import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
 import { sportVocab } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
+import { chartSourceChips } from "@/lib/chartSourceChips";
 import {
   useAnalytics,
   usePageTracking,
@@ -497,6 +498,22 @@ export default function EventPage({ params }: EventPageProps) {
     const timer = setTimeout(() => setLoadingTimedOut(true), 12000);
     return () => clearTimeout(timer);
   }, [eventLoading]);
+
+  /**
+   * The win-probability sources the chart actually DREW, as legend chips
+   * (ux/1034 B7). The rules and the measurement live in `chartSourceChips` —
+   * a Next.js page may not carry named exports, so the seam a guard can hold
+   * has to be a module.
+   *
+   * ABOVE THE LOADING/ERROR RETURNS, with every other hook on this page: a
+   * `useMemo` after an early return is a rules-of-hooks error and the ESLint
+   * gate fails the build on it — which is how this landed here rather than
+   * beside the strip it feeds.
+   */
+  const sourceChips = useMemo(
+    () => chartSourceChips(historyData?.win_prob_sources, historyData?.win_prob_history),
+    [historyData]
+  );
 
   if (eventLoading) {
     if (loadingTimedOut) {
@@ -1202,12 +1219,40 @@ export default function EventPage({ params }: EventPageProps) {
                     <span className="text-[10px] text-text-muted">{sourceLabel("betting")}</span>
                   </div>
                 )}
-                {historyData?.win_prob_sources && Object.keys(historyData.win_prob_sources).some(k => k.toLowerCase().includes('kalshi')) && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-4 h-[2px] rounded bg-violet-400" />
-                    <span className="text-[10px] text-text-muted">Kalshi</span>
+                {/* ═══ ux/1034 B7: THE LEGEND READS THE PAYLOAD ═══
+
+                    Alex asked this to be VERIFIED, not built: "the legend must
+                    pick [Polymarket] up without a deploy." It could not, and
+                    that is why this changed.
+
+                    The chip beside this one was
+
+                      Object.keys(win_prob_sources).some(k => k contains 'kalshi')
+                        -> a hard-coded <span>Kalshi</span> in violet
+
+                    — one hard-coded venue, present or absent. There was no
+                    branch for a second source at all, so no attachment could
+                    ever reach this strip. Measured on `/events/15293830` at
+                    2026-09-03T02:00Z: Polymarket had been attached since
+                    20:26Z the previous evening (145 points in
+                    `win_prob_history`, a full entry in `win_prob_sources`), the
+                    chart above was drawing its line, and the strip still read
+                    "BainLuck · Sportsbooks · Kalshi".
+
+                    It also disagreed with the chart on COLOUR. `SOURCE_COLORS`
+                    is the one registry (L2-155: "same source, same colour,
+                    everywhere") and it puts Kalshi at #22c55e; this strip drew
+                    it violet, which matched nothing above it. Both facts now
+                    come from the same place the chart's own legend reads. */}
+                {sourceChips.map((chip) => (
+                  <div key={chip.key} className="flex items-center gap-1.5">
+                    <div
+                      className="w-4 h-[2px] rounded"
+                      style={{ backgroundColor: chip.color }}
+                    />
+                    <span className="text-[10px] text-text-muted">{chip.label}</span>
                   </div>
-                )}
+                ))}
               </div>
               <button
                 onClick={() => setSourcesOpen(!sourcesOpen)}
