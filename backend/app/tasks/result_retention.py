@@ -117,6 +117,10 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.kalshi_cliff_drain",
         "app.tasks.lookup_and_backfill_extids",
         "app.tasks.match_prediction_markets",
+        # #2706: POST /api/admin/matching-reconciliation/run enqueues this and
+        # hands back a task_id, so its result must be retained or that poll
+        # never resolves.
+        "app.tasks.matching_reconciliation",
         "app.tasks.merge_degenerate_combat_events",
         "app.tasks.merge_duplicate_events",
         "app.tasks.null_impossible_both_sides_openings",
