@@ -13,6 +13,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
@@ -65,6 +66,14 @@ logger = logging.getLogger(__name__)
 # in the final window before (or after) commence so it reflects the settled
 # pregame consensus rather than a stale hours-out price.
 _PREGAME_MARK_LEAD_MINUTES = 15
+
+# live/035: the cadence floor this 120s poll enforces on a LIVE event's chart.
+# The WS fast lane (`live_blend_refresh`, 45s worst case) is the primary
+# guarantee; this is the backstop for the sources and dynos it does not cover,
+# so it is derived from the poll's OWN 120s period rather than from the WS one.
+# 60s here would be observed 180s late — see `live_blend_refresh.heartbeat_deadline`
+# for why a deadline must be the target minus the sampling period.
+_LIVE_SNAPSHOT_HEARTBEAT_S = 60.0
 
 # ── Matching receipts (#2705) ───────────────────────────────────────────────
 # Group/container rows: a parent describes a set of sub-markets, and it is the
@@ -120,6 +129,75 @@ def _new_receipt(market, phase: str, now: datetime) -> MatchReceipt:
         phase=phase,
         attempted_at=now,
     )
+
+
+def _record_link_change(
+    sink: Optional[list[MatchReceipt]], market, phase: str, now: datetime,
+) -> MatchReceipt:
+    """Open a receipt for a link this pass is about to END or MOVE.
+
+    Returns the receipt whether or not ``sink`` is collecting, so the call site
+    reads the same either way — ``_record_link_change(...).unlink(42)`` — and a
+    caller that opted out cannot accidentally skip the ``.unlink()`` and leave
+    the receipt half-built. The discarded object costs one allocation on a path
+    that is already doing a database write.
+
+    ``market`` is duck-typed: Phase 1.5 passes ORM rows and the Polymarket
+    sibling arm passes result tuples, and both carry the five denormalized
+    fields a receipt keeps. Never touch a relationship here — this runs inside a
+    loop with rollback boundaries, and a lazy load on an expired row would turn
+    bookkeeping into the thing that raises (gotcha #6).
+    """
+    receipt = MatchReceipt(
+        market_id=market.id,
+        source=market.source,
+        external_id=market.external_id,
+        market_name=market.name,
+        phase=phase,
+        attempted_at=now,
+    )
+    if sink is not None:
+        sink.append(receipt)
+    return receipt
+
+
+async def _receipt_bulk_moves(
+    moves: list[tuple[Optional[int], int, dict]], *, phase: str, label: str,
+) -> int:
+    """Receipt a set of link MOVES made by one bulk SQL pass. Never raises.
+
+    ``moves`` is ``(from_event_id, to_event_id, market_row)``. Rows with no
+    previous event are dropped: those are first attaches, which the forward
+    path already receipts, and calling them moves would inflate the very census
+    this exists to make trustworthy.
+
+    Grouped by ``(from, to)`` so one merge-shaped move of a whole group is one
+    round trip rather than one per market — these passes move hundreds of rows
+    in a run, and the record must stay cheaper than the thing it records.
+    """
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for from_eid, to_eid, row in moves:
+        if not from_eid or from_eid == to_eid:
+            continue
+        grouped.setdefault((int(from_eid), int(to_eid)), []).append(row)
+    if not grouped:
+        return 0
+
+    written = 0
+    for (from_eid, to_eid), rows in grouped.items():
+        written += await _receipts.record_link_change_receipts(
+            rows,
+            previous_event_id=from_eid,
+            new_event_id=to_eid,
+            actor=_receipts.ACTOR_MATCHER_PASS,
+            phase=phase,
+        )
+    if written != sum(len(v) for v in grouped.values()):
+        logger.warning(
+            "%s: %d link moves, %d receipted — the census will under-report",
+            label, sum(len(v) for v in grouped.values()), written,
+        )
+    return written
 
 
 def _receipt_parent_or_not_game_level(market, receipt: MatchReceipt) -> bool:
@@ -1783,12 +1861,31 @@ async def _relink_collapsed_game_markets(session) -> int:
                 LIMIT 1
             ) tgt ON true
             WHERE fm.id = ml.mid AND fm.event_id <> tgt.id
+            RETURNING fm.id AS mid, fm.source AS msource,
+                      fm.external_id AS mext, fm.name AS mname,
+                      ml.cur_eid AS from_eid, tgt.id AS to_eid
         """))
-        n = r.rowcount or 0
+        # RETURNING, not rowcount, because LINKLOSS-02 needs the PAIR. This
+        # statement MOVES links — 261 of them in one run is an ordinary night —
+        # and a count alone leaves every one of those moves looking, from
+        # outside, exactly like the matcher having dropped a link.
+        moved_rows = r.all()
+        n = len(moved_rows)
         await session.commit()
         if n:
             logger.info(
                 "Relink collapsed game markets (#944): moved %d markets to correct-date events", n
+            )
+            await _receipt_bulk_moves(
+                [
+                    (row.from_eid, row.to_eid, {
+                        "id": row.mid, "source": row.msource,
+                        "external_id": row.mext, "name": row.mname,
+                    })
+                    for row in moved_rows
+                ],
+                phase=_receipts.PHASE_RELINK_COLLAPSED,
+                label="relink_collapsed_game_markets",
             )
         return n
     except Exception as e:
@@ -2064,6 +2161,9 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                     sport_ids[int(eid)] = int(sport_id)
 
         moves: dict[int, list[int]] = {}
+        # (from_event_id, to_event_id, market_row) for the CONVERGE half only —
+        # the moves that take a price off an event (LINKLOSS-02).
+        receipted_moves: list[tuple[Optional[int], int, dict]] = []
         for members in segments.values():
             target, reason = _choose_segment_event(
                 [r.event_id for r in members], provenance,
@@ -2075,6 +2175,15 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                 if row.event_id == target:
                     continue
                 moves.setdefault(target, []).append(row.id)
+                if row.event_id is not None:
+                    # A CONVERGE takes the market off an event it was on, so
+                    # that event's card loses this source's price. An ADOPT
+                    # takes it off nothing and is the forward path's to
+                    # explain (LINKLOSS-02).
+                    receipted_moves.append((row.event_id, target, {
+                        "id": row.id, "source": "kalshi",
+                        "external_id": row.external_id, "name": None,
+                    }))
                 stats["adopted" if row.event_id is None else "converged"] += 1
 
         for target, market_ids in moves.items():
@@ -2102,6 +2211,11 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
             )
         if moves:
             await session.commit()
+            await _receipt_bulk_moves(
+                receipted_moves,
+                phase=_receipts.PHASE_SEGMENT_RECONCILE,
+                label="reconcile_kalshi_match_segments",
+            )
             logger.info(
                 "Kalshi match-segment reconcile (Q435): %d adopted, %d converged "
                 "across %d segments (%d ambiguous, %d without an anchor)",
@@ -2122,8 +2236,22 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
 
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
+    link_changes: Optional[list[MatchReceipt]] = None,
 ) -> None:
-    """Phase 1.5: fix stale and mislinked markets."""
+    """Phase 1.5: fix stale and mislinked markets.
+
+    ``link_changes`` collects a receipt for every link this pass ENDS or MOVES
+    (LINKLOSS-02). It is a list the caller owns and flushes AFTER its commit,
+    not written here, for two reasons. The receipt session is separate on
+    purpose (see :func:`_flush_pass_receipts`) so bookkeeping can never roll
+    back matching — and a separate session cannot see this one's uncommitted
+    unlinks, so a receipt written mid-pass would be re-read by
+    ``verify_links_are_durable`` against a row that still looks linked and would
+    be downgraded as un-durable. Collect now, publish once the unlink is real.
+
+    ``None`` (the default) means the caller does not want them; the pass then
+    behaves exactly as it did before. Tests rely on that.
+    """
     from app.models.models import FuturesMarket, Event, WinProbSnapshot
 
     stats["funnel"].setdefault("stale_relinked", 0)
@@ -2207,6 +2335,13 @@ async def _phase15_revalidate(
                     )
                     _shadowed_event_id = linked_event.id
                     market.event_id = None
+                    _record_link_change(
+                        link_changes, market,
+                        _receipts.PHASE_PHASE15_REVALIDATE, now,
+                    ).unlink(
+                        _shadowed_event_id,
+                        cause="shadowed_futures_ticker",
+                    )
                     await session.flush()
                     if await _prune_orphaned_blend_source(
                         session, _shadowed_event_id, market.source,
@@ -2318,8 +2453,31 @@ async def _phase15_revalidate(
                     stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 market.event_id = better_match["event_id"]
                 _set_market_sport_fields(market, better_match)
+                _record_link_change(
+                    link_changes, market,
+                    _receipts.PHASE_PHASE15_REVALIDATE, now,
+                ).link(
+                    better_match["event_id"],
+                    previous_event_id=linked_event.id,
+                    cause=reason,
+                )
                 if market.group_id and market.source == "polymarket":
                     from sqlalchemy import text as _text
+                    # THE SIBLINGS MOVE TOO, AND THEY MOVE SILENTLY. This one
+                    # statement can carry a whole Polymarket group onto the new
+                    # event, and every row it touches is a link change nobody
+                    # else in this loop will ever see: the pass iterates the
+                    # PRIMARY market, not the group. Read the affected rows
+                    # first so each one can name the event it came off — a
+                    # receipt that cannot say where a link went is the shape
+                    # that left LINKLOSS-02 unanswerable.
+                    _siblings = (await session.execute(_text("""
+                        SELECT id, source, external_id, name, event_id
+                        FROM futures_markets
+                        WHERE group_id = :gid
+                          AND group_type = 'polymarket_sub_market'
+                          AND (event_id IS NULL OR event_id != :eid)
+                    """), {"eid": better_match["event_id"], "gid": market.group_id})).all()
                     await session.execute(_text("""
                         UPDATE futures_markets
                         SET event_id = :eid
@@ -2327,6 +2485,21 @@ async def _phase15_revalidate(
                           AND group_type = 'polymarket_sub_market'
                           AND (event_id IS NULL OR event_id != :eid)
                     """), {"eid": better_match["event_id"], "gid": market.group_id})
+                    for _sib in _siblings:
+                        if _sib.id == market.id or _sib.event_id is None:
+                            # A sibling attaching for the first time is an
+                            # ordinary link, made by the forward path's own
+                            # receipt; only a MOVE is this pass's to explain.
+                            continue
+                        _record_link_change(
+                            link_changes, _sib,
+                            _receipts.PHASE_PHASE15_REVALIDATE, now,
+                        ).link(
+                            better_match["event_id"],
+                            previous_event_id=_sib.event_id,
+                            cause="polymarket_group_follows_primary",
+                            primary_market_id=market.id,
+                        )
                 if is_auto_created:
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
@@ -2350,6 +2523,10 @@ async def _phase15_revalidate(
                 stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 _unlinked_event_id = linked_event.id
                 market.event_id = None
+                _record_link_change(
+                    link_changes, market,
+                    _receipts.PHASE_PHASE15_REVALIDATE, now,
+                ).unlink(_unlinked_event_id, cause=reason)
                 await session.flush()  # persist event_id=None before the count query
                 # #1163: prune the now-orphaned blend source key (invariant:
                 # a PM source may not sit in the blend without a linked market).
@@ -2752,9 +2929,20 @@ async def _match_prediction_markets(limit: int = 500):
         # Phase 1.5: Re-validate linked markets
         logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
                     stats["markets_scanned"], stats["newly_linked"], _time_remaining())
-        await _phase15_revalidate(session, stats, now, _time_remaining)
+        # LINKLOSS-02: Phase 1.5 and Phase 2 are the only passes that can END or
+        # MOVE a link that already existed, and until now they did it with no
+        # record at all — which is why "did tonight's merge drop 261 links?" had
+        # no answer. Each collects its receipts here and they are published
+        # AFTER the commit that makes the change real (see _phase15_revalidate).
+        link_changes: list[MatchReceipt] = []
+        await _phase15_revalidate(
+            session, stats, now, _time_remaining, link_changes,
+        )
 
         await session.commit()
+        await _flush_pass_receipts(
+            session, link_changes, stats, _receipts.PHASE_PHASE15_REVALIDATE,
+        )
 
         # #944: correct Kalshi game markets that collapsed onto the last game's
         # event (commence_time = resolution date). Idempotent + write-on-change,
@@ -2777,6 +2965,10 @@ async def _match_prediction_markets(limit: int = 500):
         #
         # Time-budgeted: skip if running low on time
         stats["funnel"].setdefault("phase2_skipped_budget", False)
+        # Declared before the budget check so the flush after Phase 2b always
+        # has a list to publish, including on the skipped path (an empty flush
+        # is a no-op; an undefined name is a NameError in the error handler).
+        phase2_link_changes: list[MatchReceipt] = []
         linked_rows = []
         if _time_remaining() < 60:
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
@@ -2887,6 +3079,15 @@ async def _match_prediction_markets(limit: int = 500):
                     update(FuturesMarket)
                     .where(FuturesMarket.id == m.market_id)
                     .values(event_id=None)
+                )
+                _record_link_change(
+                    phase2_link_changes, m, _receipts.PHASE_PHASE2_LINKED, now,
+                ).unlink(
+                    ev_ref.event_id,
+                    cause="phase2_multi_game_wrong_date",
+                    ticker_date=d,
+                    event_commence_time=ec,
+                    diff_hours=round(diff_hours, 1),
                 )
                 stats["funnel"]["phase2_multi_game_unlinked"] += 1
                 # #1163: prune the orphaned blend source key on unlink.
@@ -3003,6 +3204,15 @@ async def _match_prediction_markets(limit: int = 500):
                             .where(FuturesMarket.id == market.market_id)
                             .values(event_id=None)
                         )
+                        _record_link_change(
+                            phase2_link_changes, market,
+                            _receipts.PHASE_PHASE2_LINKED, now,
+                        ).unlink(
+                            market.event_id,
+                            cause="phase2_ticker_date_conflict",
+                            ticker_date=_td,
+                            event_commence_time=_ec,
+                        )
                         # #1163: prune the orphaned blend source key on unlink
                         # (before the commit so it lands atomically).
                         if await _prune_orphaned_blend_source(
@@ -3056,6 +3266,13 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2b: {str(e)[:100]}")
+
+    # Published after the matcher's session is closed, on the receipts' own
+    # session. Phase 2 commits each unlink inline, so by here every claim in the
+    # list is durable and `verify_links_are_durable` re-reads it as such.
+    await _flush_pass_receipts(
+        None, phase2_link_changes, stats, _receipts.PHASE_PHASE2_LINKED,
+    )
 
     stats["phase2_skipped_not_moneyline"] = phase2_skipped_not_ml
 
@@ -4456,6 +4673,18 @@ async def _poll_live_prediction_market_prices():
                         "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
                         "poll_type": "live_fast",
                     },
+                    # live/035: on a LIVE event a flat price must still gain a
+                    # point. The poll's own period is 120s, so the deadline is
+                    # derived from it the same way the WS lane derives its own —
+                    # a deadline equal to the period is first noticed one period
+                    # late. Scheduled (pre-game) events are excluded: their
+                    # prices genuinely sit still for hours and a heartbeat there
+                    # buys a longer table and no visible line.
+                    max_gap_seconds=(
+                        _LIVE_SNAPSHOT_HEARTBEAT_S
+                        if (event.status or "").lower() == "live"
+                        else None
+                    ),
                 )
 
                 if is_new:
@@ -4650,12 +4879,21 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 return stats
 
-            # Fetch price history
-            history = await service.get_prices_history(
-                token_id=token_id,
-                interval=interval,
-                fidelity=fidelity,
-            )
+            # Fetch price history. `get_prices_history` raises when the venue
+            # could not be asked at all and returns [] only when it answered and
+            # holds nothing — the two must not land in the same bucket, or an
+            # outage reads as a market with no history (gotcha #53).
+            from app.services.polymarket_api import PolymarketHistoryUnavailable
+
+            try:
+                history = await service.get_prices_history(
+                    token_id=token_id,
+                    interval=interval,
+                    fidelity=fidelity,
+                )
+            except PolymarketHistoryUnavailable as exc:
+                stats["errors"].append(f"price history unavailable: {str(exc)[:120]}")
+                return stats
             if not history:
                 stats["errors"].append("empty price history")
                 return stats

@@ -56,6 +56,34 @@ output: a missing link is a smaller harm than a wrong one, and
   two different events.  Exactly the case where a name-matcher would pick one
   and look right.  Both are dropped: if the ids disagree, we do not know.
 
+═══ THE SECOND CHANNEL: THE AUTHORITY'S OWN EVENT ID (#2693 step 2) ═══
+
+The channel above starts at a *register matchup*, and ``build_slate`` retires a
+matchup the moment its match starts.  So the Finished list — the one surface
+made entirely of matches that have already started — is the one the channel
+above structurally cannot serve: measured on production 2026-09-02, **118 of
+its 235 rows carry no matchup at all**, only ``espn:{competition_id}``, and
+every one of them rendered as dead text.
+
+Those rows are not id-less.  ``espn:184739`` IS an id, it is the authority's,
+and since lane1/057 (#2693 step 0) put an ``espn_id`` on 196 of the 200 US Open
+``events`` rows there is now something for it to dereference to:
+
+    ESPN competition id  ->  events.espn_id  ->  events.id
+
+One indexed lookup, no name, no time window — the same posture as the market
+channel, through a different id.  Measured on the same payload, 47 of the 118
+resolve and the other 71 are qualifying matches for which no ``events`` row
+exists at all: a coverage fact, not a join failure, and the reason the count is
+published rather than the gap being papered over.
+
+**It refuses on ambiguity, and that refusal is load-bearing.**  ``espn_id`` had
+no unique constraint when this was written — 196 ids were worn by 430 rows —
+so an id naming two events must resolve to neither.  Picking one would put a
+reader on a coin-flip page while looking perfectly well.  The refusal is
+counted as ``ESPN_ID_AMBIGUOUS``, which is also the alarm that says the step-2
+repair has regressed.
+
 Nothing here reads a probability, and nothing here writes.  Identity only —
 the same rule ``tournament_register`` states about itself.
 """
@@ -63,7 +91,7 @@ the same rule ``tournament_register`` states about itself.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,6 +106,17 @@ UNRESOLVED_REASONS = (
     "MARKET_NOT_FOUND",
     "MARKET_UNLINKED",
     "EVENT_DISAGREEMENT",
+)
+
+#: Named refusals of the authority-id channel.  Same rule as above: a
+#: competition id that does not resolve is COUNTED, never dropped silently.
+ESPN_UNRESOLVED_REASONS = (
+    #: No ``events`` row carries this competition id. Almost all of these are
+    #: qualifying matches we hold no market for and therefore never created.
+    "NO_EVENT_FOR_ESPN_ID",
+    #: Two or more rows carry it. Resolves to neither — see the module
+    #: docstring, and #2693 step 2, which is what drives this to zero.
+    "ESPN_ID_AMBIGUOUS",
 )
 
 
@@ -221,6 +260,76 @@ async def resolve_matchup_events(
     return {
         "by_matchup": by_matchup,
         "by_event": by_event,
+        "unresolved": unresolved,
+        "reason_counts": dict(sorted(reason_counts.items())),
+    }
+
+
+async def resolve_espn_competition_events(
+    session: AsyncSession,
+    competition_ids: Sequence[str],
+    sport_keys: Sequence[str],
+) -> dict[str, Any]:
+    """ESPN competition id -> ``events.id``, for the ids a results feed names.
+
+    ONE QUERY, bounded twice over: by the competition ids the caller actually
+    holds (a few hundred at most) and by ``sport_keys``, which is the
+    tournament spec's own named list.  The sport bound is not an optimisation —
+    it is what stops a tennis competition id from resolving to a baseball row
+    should the two id spaces ever collide, and it is named in
+    ``REGISTERED_TOURNAMENTS`` rather than inferred from the slug for the same
+    reason every other bound on this page is.
+
+    Returns::
+
+        {
+          "by_espn":       {competition_id: event_id},
+          "unresolved":    {competition_id: reason},
+          "reason_counts": {reason: n},
+        }
+
+    An id carried by two events resolves to NEITHER.  ``espn_id`` is not unique
+    yet (#2693 step 2), and a link that guesses between two rows is worse than
+    no link: it is wrong half the time and looks right every time.
+    """
+    from app.models.models import Event, Sport  # noqa: PLC0415 — task-code import
+
+    wanted = [str(cid) for cid in dict.fromkeys(competition_ids) if cid]
+    by_espn: dict[str, int] = {}
+    unresolved: dict[str, str] = {}
+    if not wanted or not sport_keys:
+        return {"by_espn": by_espn, "unresolved": unresolved, "reason_counts": {}}
+
+    rows = await session.execute(
+        select(Event.espn_id, Event.id)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(Event.espn_id.in_(wanted), Sport.key.in_(list(sport_keys)))
+    )
+
+    claims: dict[str, list[int]] = {}
+    for espn_id, event_id in rows.all():
+        claims.setdefault(str(espn_id), []).append(int(event_id))
+
+    for competition_id in wanted:
+        found = claims.get(competition_id) or []
+        if not found:
+            unresolved[competition_id] = "NO_EVENT_FOR_ESPN_ID"
+        elif len(set(found)) > 1:
+            unresolved[competition_id] = "ESPN_ID_AMBIGUOUS"
+            logger.warning(
+                "tournament event link: espn competition %s names %s events (%s) — "
+                "all dropped; #2693 step 2 has regressed",
+                competition_id, len(set(found)), ", ".join(str(e) for e in sorted(set(found))),
+            )
+        else:
+            by_espn[competition_id] = found[0]
+
+    reason_counts: dict[str, int] = {}
+    for reason in unresolved.values():
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    return {
+        "by_espn": by_espn,
         "unresolved": unresolved,
         "reason_counts": dict(sorted(reason_counts.items())),
     }

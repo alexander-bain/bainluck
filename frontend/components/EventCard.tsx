@@ -17,6 +17,11 @@ import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  isFinishedStatus,
+  isSuspendedStatus,
+  suspendedSummary,
+} from "@/lib/eventState";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -44,16 +49,23 @@ interface EventCardProps {
 }
 
 // ---------------------------------------------------------------------------
-// AnimatedProbability — smoothly counts between probability values
+// AnimatedProbability — smoothly counts between ALREADY-RESOLVED whole percents
 // ---------------------------------------------------------------------------
+//
+// #2787: this took a raw probability and did its own `Math.round(v * 100)`
+// inside `useTransform`, which is what put the card's two chips outside the
+// rendered-percent contract. The rounding happens on the SPRING's output, so a
+// per-side `renderedPercent` at the call site would have been discarded — the
+// contract has to be applied to the spring's TARGET. So the target is the whole
+// percent now, and this component only animates towards it.
 function AnimatedProbability({
-  value,
+  percent,
   className,
 }: {
-  value: number | null;
+  percent: number | null;
   className?: string;
 }) {
-  const springValue = useSpring(value !== null ? value * 100 : 0, {
+  const springValue = useSpring(percent ?? 0, {
     stiffness: 80,
     damping: 20,
     mass: 0.5,
@@ -62,10 +74,10 @@ function AnimatedProbability({
 
   // Update spring target when value changes
   useEffect(() => {
-    springValue.set(value !== null ? value * 100 : 0);
-  }, [value, springValue]);
+    springValue.set(percent ?? 0);
+  }, [percent, springValue]);
 
-  if (value === null) {
+  if (percent === null) {
     return <span className={className}>-</span>;
   }
 
@@ -105,6 +117,11 @@ export default function EventCard({
   // none print 99. The away side is derived as `1 - home` when absent, exactly as
   // before, which is precisely what makes the pair an exact complement and the
   // both-sides-round-up case reachable.
+  //
+  // #2787 AMENDMENT: that reasoning was right and its SCOPE was wrong. The
+  // HEADLINE CHIPS print both sides of the same question in fixed positions too
+  // — home above, away below — so they are the same duel, and they were not
+  // going through this. See `chipAwayPct`/`chipHomePct` below.
   const [openedAwayPct, openedHomePct] = renderedDuelPercents(
     opening?.away_probability ?? (opening ? 1 - opening.home_probability : null),
     opening?.home_probability,
@@ -114,7 +131,7 @@ export default function EventCard({
   let homeProb: number | null;
   let awayProb: number | null;
 
-  if ((event.status === "completed" || event.status === "closed") && opening) {
+  if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
   } else if (shouldWithholdProbability(event)) {
@@ -127,15 +144,27 @@ export default function EventCard({
     awayProb = odds?.away_probability ?? null;
   }
 
+  // #2787 — the fourth arm of #2084/#2085/#2279. The chips below print
+  // `homeProb` and `awayProb` in two fixed slots of one card, and each side was
+  // rounded ALONE inside `AnimatedProbability`, so an exact complement pair
+  // landing on a half-percent on both sides rounded up twice: measured on
+  // production 2026-09-03, `/sports/tennis_atp_us_open` printed 82/19, 20/81
+  // and 18/83 on three of ~16 upcoming cards. Resolved ONCE here, as a pair, and
+  // handed to the chips already whole — never a per-side round at the leaf.
+  //
+  // `homeFavorite` deliberately still reads the raw probabilities: which side is
+  // emphasised is a comparison, not a printed number, and it must not flip on a
+  // rounding tie.
+  const [chipAwayPct, chipHomePct] = renderedDuelPercents(awayProb, homeProb);
+
   const handleCardClick = () => {
     trackEventCardClick(event, sourceSection, positionIndex);
   };
 
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
   const isLive = event.status === "live" && hasStarted;
-  const isCompleted = event.status === "completed";
-  const isClosed = event.status === "closed";
-  const isFinished = isCompleted || isClosed;
+  const isFinished = isFinishedStatus(event.status);
+  const isSuspended = isSuspendedStatus(event.status);
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
   // Format time and date compactly
@@ -237,7 +266,30 @@ export default function EventCard({
                   {formatLiveClockLabel(event.espn?.period, event.espn?.game_clock) || highlightLabel || "LIVE"}
                 </span>
               )}
-              {!isLive && !isFinished && hasGameTime && (
+              {/* live/048: a suspended match must not advertise a start time.
+                  Its commence_time is in the PAST and the clock has run out —
+                  printing "Today 7:00 PM" beside it is the upcoming-branch
+                  fall-through this state exists to avoid. */}
+              {/* CERT-786 — one shared summary, not the bare badge this
+                  originally carried. Four surfaces render this state and they
+                  now render one string, so "the card says the same thing
+                  wherever you meet it" is a property of the function rather
+                  than of four editors remembering. Not uppercased: the settled
+                  sibling below uppercases the single word "Final", and shouting
+                  a whole sentence is a different register. */}
+              {/* #2786 — HOME-AWAY, because that is what this component does
+                  everywhere else: the FINAL block below prints home then away,
+                  both live score slots put home above away, and the `Proj`
+                  footer is home-away. The away-home default made this the only
+                  numeric pair on the card reading the other way, and it shipped
+                  an inverted score on production (event 15293347: "last score
+                  6-3" for a 3-6 match, directly under the HOME team's name). */}
+              {isSuspended && (
+                <span className="text-micro-xs text-text-muted">
+                  {suspendedSummary(event.away_score, event.home_score, "home-away")}
+                </span>
+              )}
+              {!isLive && !isFinished && !isSuspended && hasGameTime && (
                 <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (
@@ -338,10 +390,15 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only; a FINAL card drops the
-                  live-style chip for the settled score block above (L2-112 Item 2). */}
-              {!isLive && !isFinished && (
+                  live-style chip for the settled score block above (L2-112 Item 2),
+                  and so does a SUSPENDED one (live/048, CERT-792). `suspended` is
+                  neither live nor finished, so it fell through to the pregame chip
+                  and printed a confident 72%/28% two lines under "No result
+                  reported" — the card contradicting itself in one glance. The
+                  suspended summary above is the whole statement. */}
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
-                  value={homeProb}
+                  percent={chipHomePct}
                   className={cn(
                     "font-mono tabular-nums",
                     homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
@@ -350,14 +407,16 @@ export default function EventCard({
               )}
               {isLive && (
                 <AnimatedProbability
-                  value={homeProb}
+                  percent={chipHomePct}
                   className="font-mono tabular-nums text-xs text-text-muted"
                 />
               )}
             </div>
 
-            {/* Team-colored probability bar — hidden on FINAL (settled score above) */}
-            {!isFinished && (
+            {/* Team-colored probability bar — hidden on FINAL (settled score
+                above) and on SUSPENDED (CERT-792): a filled bar is the loudest
+                claim on the card, and there is no live price behind it. */}
+            {!isFinished && !isSuspended && (
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
@@ -410,9 +469,9 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only (see home team above). */}
-              {!isLive && !isFinished && (
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
-                  value={awayProb}
+                  percent={chipAwayPct}
                   className={cn(
                     "font-mono tabular-nums",
                     !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
@@ -421,15 +480,17 @@ export default function EventCard({
               )}
               {isLive && (
                 <AnimatedProbability
-                  value={awayProb}
+                  percent={chipAwayPct}
                   className="font-mono tabular-nums text-xs text-text-muted"
                 />
               )}
             </div>
           </div>
 
-          {/* Footer — contextual info (hide for finished games) */}
-          {!isFinished && (
+          {/* Footer — contextual info (hide for finished games, and for
+              suspended ones: "Proj 6-4" is a pregame promise and the match is
+              stopped, not upcoming — CERT-792). */}
+          {!isFinished && !isSuspended && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
               {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
                   strict test with `undefined !== null` → true, and the card then

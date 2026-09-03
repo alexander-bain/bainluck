@@ -1,4 +1,9 @@
 import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData } from "@/lib/types";
+import {
+  eventSectionKey,
+  isSuspendedStatus,
+  liveSectionTitle,
+} from "@/lib/eventState";
 
 export interface FeedSection {
   key: string;
@@ -134,9 +139,15 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       }
     } else {
       const data = item.data as FeedEventData;
-      if (data.status === "live") {
+      // live/048 + CERT-786 — the ladder is `eventSectionKey`'s, not this
+      // loop's. It used to be three inline comparisons here, three more in My
+      // Stuff and three more on native, and `suspended` reached none of them:
+      // every copy ended in an `else` that means "upcoming", so a match that
+      // had already started was filed under games that have not.
+      const section = eventSectionKey(data.status);
+      if (section === "live") {
         liveNow.push(item);
-      } else if (data.status === "completed" || data.status === "closed") {
+      } else if (section === "finished") {
         justHappened.push(item);
       } else {
         upcoming.push(item);
@@ -156,7 +167,19 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
     sections.push({ key, emoji, title, accent, items, count: countCards(items) });
   };
 
-  push("live", "\uD83D\uDD34", "Live Now", "text-accent-live", liveNow);
+  // The live section names what is actually in it (live/048). A header reading
+  // "Live Now" above a rain-delayed match is the same false claim the card
+  // branch refuses, told one size larger \u2014 and the header is read first.
+  const liveHasSuspended = liveNow.some((item) =>
+    isSuspendedStatus((item.data as FeedEventData).status),
+  );
+  push(
+    "live",
+    "\uD83D\uDD34",
+    liveSectionTitle(liveHasSuspended),
+    "text-accent-live",
+    liveNow,
+  );
   push("finished", "\uD83C\uDFC1", "Just Happened", "text-text-secondary", justHappened);
   push("upcoming", "\uD83D\uDCC5", "Upcoming", "text-text-secondary", upcoming);
   push("markets", "\uD83D\uDCCA", "Top Markets", "text-accent-futures", topMarkets);

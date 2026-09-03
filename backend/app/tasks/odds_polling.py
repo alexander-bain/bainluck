@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
+from app.utils.event_completion import venue_live_write_is_a_resurrection
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.utils.polling_config import compute_effective_interval
@@ -147,16 +148,33 @@ async def _last_post_commence_snapshot(session, event_id):
     return row.last_snap if row else None
 
 
-async def detect_and_close_stale_events(session) -> int:
+async def detect_and_close_stale_events(session) -> dict:
     """
-    Detect live events with stale odds and mark them as "closed".
+    Detect live events whose odds have gone stale and take them off the board.
+
+    Returns ``{"closed": int, "suspended": int}`` — two outcomes, because since
+    live/048 only ONE of the two arms below is entitled to end a match, and a
+    single number would have hidden which arm fired.
 
     This provides a fallback when the Scores API doesn't report completion,
     which can happen with tennis and other sports.
 
-    An event is marked as "closed" when:
+    An event is marked "closed" — FINAL, terminal, graded by every reader —
+    only when StatPal reported an end time. StatPal watches the match, so its
+    end time is a positive statement on rung 3 of the state ladder
+    (EVENT-GRAPH-DOCTRINE §R).
+
+    An event is marked ``suspended`` — non-terminal, asserts no outcome — when
+    the books that were pricing it have all gone quiet. That is the ladder's
+    bottom rung reporting its own ABSENCE, and it never had standing to write
+    Final: books go quiet at the final whistle, and equally at a rain delay, at
+    a limit, and when a trader logs off. live/042 stopped a venue tick HOLDING a
+    row live; this stops venue silence SETTLING one, which is the same rule read
+    from the other side (CERT-752).
+
+    The suspending arm requires ALL of:
     1. It's currently "live" status
-    2. StatPal reported an end time (definitive), OR ALL of:
+    2. ALL of:
        a. It has been live longer than its sport's own maximum duration
           (``get_max_duration_for_sport`` — 5.0h for baseball, 3.5h for
           basketball, 6.0h for tennis), AND
@@ -164,8 +182,6 @@ async def detect_and_close_stale_events(session) -> int:
           for ODDS_STALE_MINUTES, AND
        c. No source anywhere has captured a post-commence snapshot inside
           ``STILL_ACTIVE_MINUTES`` (``game_may_still_be_running``)
-
-    Returns the number of events marked as closed.
 
     🔴 QUEUE 067 — THIS FUNCTION USED TO CLOSE ANY LIVE EVENT AT 90 MINUTES.
     Conditions (a) and (c) are new; before them the only elapsed-time gate was
@@ -187,12 +203,13 @@ async def detect_and_close_stale_events(session) -> int:
     per-sport maximum (3.0h) is twice it.
     """
     from app.utils.event_completion import (
-        derive_completed_at,
+        EVENT_SUSPENDED,
         game_may_still_be_running,
     )
 
     now = datetime.now(timezone.utc)
     closed_count = 0
+    suspended_count = 0
     # Ruling: a bound that drops work silently reads as "there was none". Each
     # arm that declines to close keeps its own number and they are logged
     # together below, so "closed 0" and "held 40" can never look alike.
@@ -336,27 +353,41 @@ async def detect_and_close_stale_events(session) -> int:
                     held_still_running += 1
                     continue
 
-                close_values = {"status": "closed"}
-                if not event.completed_at:
-                    # gotcha #22: completed_at is a GAME-END time. now() is when
-                    # the backend noticed, which is wrong by however long the
-                    # bookmakers had been stale — and it is what chart domains
-                    # and "settled" language stand on. Derive it from the last
-                    # real post-commence snapshot, or leave it NULL: a visible
-                    # gap the CAL-P002 repair can fill beats a plausible-looking
-                    # wrong value that nothing will ever question.
-                    close_values["completed_at"] = derive_completed_at(
-                        last_snap, event.commence_time,
-                    )
+                # SUSPENDED, NOT CLOSED (live/048, EVENT-GRAPH-DOCTRINE §R).
+                #
+                # `close_reason` here is only ever `all_bookmakers_stale`, and
+                # that is the bottom rung of the state ladder reporting its own
+                # absence: books go quiet when a game ends, and they also go
+                # quiet at a suspension, at a limit, and when a trader logs off.
+                # A price says nothing about play, so the ABSENCE of one says
+                # nothing about play either — this arm never had standing to
+                # write Final, and the fix that stopped venue ticks HOLDING a
+                # row live has to stop venue silence SETTLING one in the same
+                # breath, or the defect just changes sign.
+                #
+                # `completed_at` is deliberately not stamped: a game-end time
+                # for a game nothing has said ended. Leaving it NULL is also
+                # what keeps `venue_live_write_is_a_resurrection` reading the
+                # row as un-settled, so the scores feed may promote it straight
+                # back to live when play resumes.
+                #
+                # The StatPal arm above still CLOSES, and it is the contrast
+                # that makes this rule legible: StatPal reports a real end time
+                # from a source that watches the match. That is a positive
+                # statement on rung 3, not an inference from silence.
                 await session.execute(
                     Event.__table__.update()
                     .where(Event.id == event.id)
-                    .values(**close_values)
+                    .values(status=EVENT_SUSPENDED)
                 )
-                closed_count += 1
-                logger.info(f"Marked event {event.id} ({event.home_team_name} vs {event.away_team_name}) "
-                      f"as closed: {close_reason}, {hours_since_start:.1f}h since start "
-                      f"(sport max {max_hours:.1f}h)")
+                suspended_count += 1
+                logger.info(
+                    "live/048 suspended event %s (%s vs %s): %s, %.1fh since "
+                    "start (sport max %.1fh). Not closed — a quiet book is not "
+                    "a final whistle.",
+                    event.id, event.home_team_name, event.away_team_name,
+                    close_reason, hours_since_start, max_hours,
+                )
 
         except Exception as e:
             logger.warning(f"Error checking staleness for event {event.id}: {e}")
@@ -366,13 +397,14 @@ async def detect_and_close_stale_events(session) -> int:
         # A hold that is not counted is a hold nobody finds, and "closed 0"
         # would otherwise be indistinguishable from "there was nothing to do".
         logger.info(
-            "Staleness pass: %d live candidates, %d closed, held %d within sport "
-            "max duration / %d still running / %d never priced",
-            len(live_events), closed_count, held_within_max_duration,
-            held_still_running, held_no_price_evidence,
+            "Staleness pass: %d live candidates, %d closed (statpal end time), "
+            "%d suspended (books quiet), held %d within sport max duration / "
+            "%d still running / %d never priced",
+            len(live_events), closed_count, suspended_count,
+            held_within_max_duration, held_still_running, held_no_price_evidence,
         )
 
-    return closed_count
+    return {"closed": closed_count, "suspended": suspended_count}
 
 
 def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
@@ -984,6 +1016,7 @@ async def _poll_all_odds():
         scores_refused_stale_id = 0
         scores_refused_unverifiable = 0
         scores_unbound_id = 0
+        scores_refused_resurrection = 0
         # #2368: score fetches the quota breaker refused. Same rule as the
         # `scores_refused_*` counters above — a guard whose refusals are
         # invisible is indistinguishable from a guard that is off, and this
@@ -1024,14 +1057,19 @@ async def _poll_all_odds():
             # and update scores for recently started games
             if not sport_data:
                 # Still run staleness detection for any live events that may have ended
-                events_closed = await detect_and_close_stale_events(session)
+                stale_outcome = await detect_and_close_stale_events(session)
                 await session.commit()
                 return {
                     "events": 0,
                     "snapshots": 0,
                     "sports": 0,
                     "sports_skipped": 0,
-                    "events_closed": events_closed,
+                    "events_closed": stale_outcome["closed"],
+                    # live/048 — the arm that used to produce nearly all of
+                    # `events_closed` now suspends instead, and a count that
+                    # vanished from the stats would read as an arm that stopped
+                    # firing rather than one that stopped over-claiming.
+                    "events_suspended": stale_outcome["suspended"],
                     "message": "No sports with games in the next 6 hours.",
                     "skipped": True,
                 }
@@ -1680,6 +1718,40 @@ async def _poll_all_odds():
                             else:
                                 event_status = None
 
+                            # live/042: a venue's "still quoting it" is not a
+                            # state signal. `completed: false` on a row that is
+                            # ALREADY settled is the resurrection half of the
+                            # stuck-live loop — it re-opens the row and leaves
+                            # `completed_at` behind, so the reader gets a match
+                            # that is live and finished at once. Production ran
+                            # the experiment: event 15293808's ticks stopped at
+                            # 12:21, the net closed it at 13:37, and this writer
+                            # flipped it back to `live` by 14:55 with the
+                            # fabricated completion still on the row.
+                            #
+                            # A `suspended` row is deliberately NOT refused
+                            # (live/048): it is not settled and carries no
+                            # completion, so the scores feed — rung 3 of the
+                            # ladder — may promote it straight back to live when
+                            # play resumes. The score write below is untouched
+                            # either way, and #1201's authority un-settle (which
+                            # clears `completed_at` in the same write) still
+                            # reopens a genuine replay.
+                            if event_status == "live" and venue_live_write_is_a_resurrection(
+                                event_obj.status, event_obj.completed_at
+                            ):
+                                scores_refused_resurrection += 1
+                                logger.warning(
+                                    "live/042 refused venue resurrection: event %s (%s vs %s) "
+                                    "is %s with completed_at=%s, and the Odds scores feed "
+                                    "reports completed=false. Status left settled; only the "
+                                    "authority feed un-settles (#1201).",
+                                    event_obj.id, event_obj.home_team_name,
+                                    event_obj.away_team_name, event_obj.status,
+                                    event_obj.completed_at,
+                                )
+                                event_status = None
+
                             update_values = {}
                             if event_status is not None:
                                 update_values["status"] = event_status
@@ -1808,9 +1880,12 @@ async def _poll_all_odds():
                         logger.warning("Error fetching scores for %s: %s", sport_key, e)
                     continue
 
-            # Detect and mark stale events as "closed"
-            # This catches matches that the Scores API didn't report as completed
-            events_closed = await detect_and_close_stale_events(session)
+            # Take stale events off the live board. This catches matches the
+            # Scores API didn't report as completed — StatPal's end time closes
+            # one, quiet books only SUSPEND one (live/048).
+            stale_outcome = await detect_and_close_stale_events(session)
+            events_closed = stale_outcome["closed"]
+            events_suspended = stale_outcome["suspended"]
 
             # Update GEI for all live events (real-time excitement scores)
             live_gei_updated = 0
@@ -1847,9 +1922,14 @@ async def _poll_all_odds():
             "scores_refused_stale_id": scores_refused_stale_id,
             "scores_refused_unverifiable": scores_refused_unverifiable,
             "scores_unbound_id": scores_unbound_id,
+            # live/042 — the same reason as the counters above: a refusal that
+            # reports nothing reads as "there was nothing to refuse". This one
+            # should trend to zero once the settled rows stop being re-quoted.
+            "scores_refused_resurrection": scores_refused_resurrection,
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
+            "events_suspended": events_suspended,
             "live_gei_updated": live_gei_updated,
             "data_changed": data_changed,
             "has_live_games": has_live_games,

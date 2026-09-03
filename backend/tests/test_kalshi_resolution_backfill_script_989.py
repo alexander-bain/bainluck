@@ -317,6 +317,203 @@ class TestTheFloorIsInThePredicate:
         )
 
 
+# --- CAL-P992: the sweep must be able to come BACK to a row it already wrote --
+#
+# The pre-CAL-P992 candidate test, kept verbatim as the defect arm. `expiration_time
+# IS NULL` reads "have I ever touched this row", which is not the same question as
+# "is this row's date final" — and Kalshi makes the difference load-bearing, because
+# it publishes the backstop AS `close_time` while a market is active and rewrites it
+# to the settlement instant on finalize.
+SEALED_DEFECT_SELECT_SQL = """
+    SELECT id, external_id, resolution_date, commence_time, market_tier
+    FROM futures_markets
+    WHERE source = 'kalshi'
+      AND status = 'open'
+      AND external_id LIKE 'KX%'
+      AND expiration_time IS NULL
+      AND (commence_time IS NULL OR commence_time >= :purge_floor)
+    ORDER BY market_tier ASC NULLS LAST, commence_time DESC NULLS LAST
+    LIMIT :limit OFFSET :offset
+"""
+
+INSERT_SWEPT = """
+    INSERT INTO futures_markets
+        (id, external_id, source, status, market_tier, commence_time,
+         resolution_date, expiration_time, updated_at)
+    VALUES (:id, :external_id, 'kalshi', 'open', :market_tier, :commence_time,
+            :resolution_date, :expiration_time, :updated_at)
+"""
+
+#: The backstop these fixtures share. Kalshi hands the same legal expiry to every leg
+#: of a tennis prop event, which is why a mid-life sweep writes it into BOTH columns.
+BACKSTOP = NOW + timedelta(days=11)
+
+
+@pytest.fixture
+def seeded_sealed_db():
+    """Production's shape on 2026-09-02, seeded: 600 sealed tier-1 rows + the tail.
+
+    * 600 tier-1 rows the sweep wrote while their markets were still trading, so
+      `resolution_date == expiration_time == BACKSTOP`. Freshly stamped, because the
+      2h poller is still enumerating them as open.
+    * `KXWTASETWINNER-26AUG30JOVFRE-1` — tier 5, same sealed shape, but Kalshi
+      finalized it, so the poller stopped enumerating it (gotcha #33) and its
+      `updated_at` is FROZEN two days back. This is the row the whole change exists
+      for; there are more than `BATCH` tier-1 rows ahead of it precisely so that a
+      tier-first ordering cannot reach it.
+    * `KXCONVERGED-01` — the sweep already read a real `close_time` for it, so
+      `resolution_date < expiration_time`. The control: it must stay OUT.
+    """
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text(CREATE_TABLE))
+        for i in range(600):
+            conn.execute(
+                text(INSERT_SWEPT),
+                {
+                    "id": i + 1,
+                    "external_id": f"KXSEALEDT1-{i:04d}",
+                    "market_tier": 1,
+                    "commence_time": BACKSTOP.isoformat(),
+                    "resolution_date": BACKSTOP.isoformat(),
+                    "expiration_time": BACKSTOP.isoformat(),
+                    "updated_at": (NOW - timedelta(minutes=20)).isoformat(),
+                },
+            )
+        conn.execute(
+            text(INSERT_SWEPT),
+            {
+                "id": 9101,
+                "external_id": "KXWTASETWINNER-26AUG30JOVFRE-1",
+                "market_tier": 5,
+                # Poisoned by the same backstop: measured on production, 4,954 of
+                # the 5,143 sealed rows carry `commence_time = expiration_time`, so
+                # a "has it commenced yet" gate would miss this row entirely.
+                "commence_time": BACKSTOP.isoformat(),
+                "resolution_date": BACKSTOP.isoformat(),
+                "expiration_time": BACKSTOP.isoformat(),
+                "updated_at": (NOW - timedelta(days=2)).isoformat(),
+            },
+        )
+        conn.execute(
+            text(INSERT_SWEPT),
+            {
+                "id": 9102,
+                "external_id": "KXCONVERGED-01",
+                "market_tier": 1,
+                "commence_time": (NOW - timedelta(days=4)).isoformat(),
+                "resolution_date": (NOW - timedelta(days=3)).isoformat(),
+                "expiration_time": BACKSTOP.isoformat(),
+                "updated_at": (NOW - timedelta(days=9)).isoformat(),
+            },
+        )
+    return engine
+
+
+def _select(engine, sql, limit=BATCH, offset=0):
+    with engine.begin() as conn:
+        return conn.execute(
+            text(sql),
+            {
+                "purge_floor": PURGE_FLOOR.isoformat(),
+                "limit": limit,
+                "offset": offset,
+            },
+        ).all()
+
+
+class TestASweptRowIsNotFinishedUntilItsDateIs:
+    """CAL-P992. The first sweep drained the backlog and re-created it silently."""
+
+    def test_the_defect_arm_cannot_see_the_sealed_row(self, seeded_sealed_db):
+        """The failure, shown: `expiration_time IS NULL` selects nothing at all.
+
+        Every row in this fixture has been written once. Under the pre-CAL-P992
+        predicate the whole population — including the finalized US Open leg still
+        advertising a date eleven days out — is invisible forever.
+        """
+        rows = _select(seeded_sealed_db, SEALED_DEFECT_SELECT_SQL)
+
+        assert rows == [], (
+            "fixture check: if the pre-CAL-P992 SQL selects anything here, this "
+            "file is not reproducing the seal and the guard below proves nothing"
+        )
+
+    def test_the_sealed_finalized_row_is_selectable_again(self, seeded_sealed_db):
+        """The ship: a provisional date is a candidate, however often it was written."""
+        tickers = [r[1] for r in _select(seeded_sealed_db, _mod().SELECT_SQL)]
+
+        assert "KXWTASETWINNER-26AUG30JOVFRE-1" in tickers, (
+            "RED-FIRST ANCHOR: this is the row the venue finalized an hour after "
+            "the sweep sealed it. If it is not selectable the card keeps a date "
+            "eleven days out forever, because the open-market poll can never "
+            "re-enumerate a finalized event (gotcha #33)."
+        )
+
+    def test_a_row_with_a_real_close_time_stays_out(self, seeded_sealed_db):
+        """The control, and the reason the sweep still converges.
+
+        Without this the change would merely swap one starvation for an infinite
+        loop: every row ever written would be re-read on every run.
+        """
+        tickers = {r[1] for r in _select(seeded_sealed_db, _mod().SELECT_SQL)}
+
+        assert "KXCONVERGED-01" not in tickers, (
+            "once the venue has moved `resolution_date` EARLIER than the backstop "
+            "the date is final and the row is done. Selecting it again means the "
+            "sweep never terminates."
+        )
+
+    def test_the_sealed_row_is_reached_within_the_first_batch(self, seeded_sealed_db):
+        """A predicate that selects a row the ORDER BY never reaches is not a fix.
+
+        600 sealed tier-1 rows sit ahead of the tier-5 leg under the old
+        `market_tier ASC` key — production's real shape, where tier 1+2 hold 2,951
+        provisional rows and tier 5 holds 2,038. `updated_at ASC` puts the leg
+        first instead, because its stamp froze when Kalshi stopped enumerating it.
+        """
+        tickers = [r[1] for r in _select(seeded_sealed_db, _mod().SELECT_SQL)]
+
+        assert len(tickers) == BATCH, "the batch must still be full — no silent cap"
+        assert tickers[0] == "KXWTASETWINNER-26AUG30JOVFRE-1", (
+            "least-recently-enumerated must come first. Under `market_tier ASC` "
+            "this row sorts at position 601 and a --limit 500 run never sees it."
+        )
+        assert all(t.startswith("KXSEALEDT1-") for t in tickers[1:]), (
+            "control: the rest of the batch is the tier-1 sealed cohort, so the "
+            "ordering assertion above is about position and not about a fixture "
+            "that only had one candidate"
+        )
+
+    def test_the_two_selection_reasons_are_counted_apart(self, seeded_sealed_db):
+        """An operator must be able to tell a shrinking tail from a refilling one."""
+        with seeded_sealed_db.begin() as conn:
+            conn.execute(
+                text(INSERT),
+                {
+                    "id": 9103,
+                    "external_id": "KXNEVERSWEPT-01",
+                    "market_tier": 3,
+                    "commence_time": (NOW - timedelta(days=2)).isoformat(),
+                    "resolution_date": BACKSTOP.isoformat(),
+                },
+            )
+            totals = conn.execute(
+                text(_mod().COUNT_SQL), {"purge_floor": PURGE_FLOOR.isoformat()}
+            ).first()
+
+        eligible_total, _excluded, never_swept, provisional = totals
+        assert never_swept == 1, "the legacy tail: rows the sweep has never touched"
+        assert provisional == 601, (
+            "600 sealed tier-1 rows plus the finalized tier-5 leg. KXCONVERGED-01 "
+            "is excluded because its date is final."
+        )
+        assert eligible_total == never_swept + provisional, (
+            "the two reasons must partition the eligible population; if they "
+            "overlap or leave a gap the report is not readable as a census"
+        )
+
+
 # --- composed path: selection -> venue -> the two-column UPDATE --------------
 
 
@@ -402,7 +599,11 @@ def _drive(apply: bool, rows=(STALE_ROW,)):
     sessions: list[_FakeSession] = []
 
     def maker():
-        s = _FakeSession(recorder, list(rows), (len(rows), 0))
+        # The totals tuple must have the same arity as `COUNT_SQL` returns
+        # (eligible_total, excluded_purged, never_swept, provisional_recheck). A
+        # fake that is narrower than the real result set would let a widened
+        # COUNT_SQL ship with an IndexError nobody executed.
+        s = _FakeSession(recorder, list(rows), (len(rows), 0, len(rows), 0))
         sessions.append(s)
         return s
 

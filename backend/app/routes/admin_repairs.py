@@ -24,7 +24,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-espn-id | label-store-converge
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
-             | polymarket-leg-label-census | polymarket-leg-label }
+             | polymarket-leg-label-census | polymarket-leg-label
+             | authority-id-collisions }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -43,7 +44,9 @@ transactional session and RETURNS its own before/after census in the response bo
      label-defect-routes in the commit that registered it. Re-synced again
      2026-09-01, Q495, adding the two polymarket-sport-category entries in the
      commit that registered them. Re-synced again 2026-09-01, Q499, adding the
-     two polymarket-leg-label entries in the commit that registered them.)
+     two polymarket-leg-label entries in the commit that registered them.
+     Re-synced again 2026-09-02, lane1/058, adding authority-id-collisions in
+     the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -399,6 +402,18 @@ _REPAIRS = {
     # Accepts ?population=&plan_hash=&probe=. ATTENDED ONLY: never wire to a beat.
     "event-espn-id": (
         "app.tasks.repair_event_espn_id",
+        "repair",
+    ),
+    # #2693 step 2, lane1/058: ONE GAME, ONE AUTHORITY ID. 196 ESPN event ids
+    # worn by 430 `events` rows (measured 2026-09-02), which means `espn_sync`
+    # writes one game's status, clock and score onto two fixtures. Asks ESPN who
+    # each contested id really is, and takes the id OFF every row that is not
+    # that game — `espn_id = NULL`, one nullable column, no merge and no DELETE.
+    # Two-call: ?apply=false persists a plan and returns its hash; ?apply=true
+    # &plan_hash= consumes THAT plan and re-derives nothing. Accepts
+    # ?sport=&limit=&plan_hash=. ATTENDED ONLY: never wire to a beat.
+    "authority-id-collisions": (
+        "app.tasks.repair_authority_id_collisions",
         "repair",
     ),
     # UX-P112 (#1933 bullet 2): the BACKWARD half of the label-store

@@ -89,6 +89,29 @@ UNCHANGED_RESTAMP_INTERVAL_S = 45.0
 #: `win_prob_snapshots` growth to a small multiple of the 120s poll's.
 DEFAULT_SNAPSHOT_INTERVAL_S = 25.0
 
+#: live/035 — the CADENCE FLOOR, which is a different promise from the throttle
+#: above. The throttle is a ceiling on how often a moving market may write; this
+#: is a floor under how long a FLAT one may stay silent. Both are needed: without
+#: the floor, `_create_or_update_win_prob_snapshot` writes nothing at all while
+#: the price holds, so a tense goalless half draws as one straight segment
+#: between its endpoints. 60s is Alex's stated bar and bounds the cost at one row
+#: per minute per source per live event.
+DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
+
+
+def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
+    """The age at which an unchanged value must be re-recorded, given sampling.
+
+    A deadline is not the same thing as a sampling period, and setting the two
+    equal quietly misses the bar. This path only *checks* every
+    ``sample_interval_s``, so a deadline of exactly ``max_gap_s`` is first
+    observed to be breached one whole sample LATE — the real worst-case gap
+    becomes ``max_gap_s + sample_interval_s``. Subtracting the period means the
+    sample that crosses the deadline lands at or before it, so the guarantee the
+    caller asked for is the guarantee the table gets.
+    """
+    return max(1.0, float(max_gap_s) - float(sample_interval_s))
+
 
 class LiveBlendRefresher:
     """Stateful per-source refresher, owned by one WS consumer run.
@@ -106,12 +129,14 @@ class LiveBlendRefresher:
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
+        snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
         self.inversion_ttl_s = inversion_ttl_s
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
         self.snapshot_interval_s = snapshot_interval_s
+        self.snapshot_max_gap_s = snapshot_max_gap_s
         self._last_refresh_at: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
@@ -396,11 +421,13 @@ class LiveBlendRefresher:
     ) -> None:
         """Append this reading to the chart series, on the snapshot clock.
 
-        Called only after a blend stamp actually happened, so a flat market
-        costs nothing here. `_create_or_update_win_prob_snapshot` is the same
-        helper the 120s poll uses — it appends a row only on a value CHANGE and
-        otherwise refreshes `valid_until`/`reading_count` in place, which is
-        what keeps the chart's live edge current without lengthening the series.
+        Called only after a blend stamp actually happened, which on a FLAT
+        market is the `unchanged_restamp_interval_s` beat (45s) rather than the
+        5s blend beat. `_create_or_update_win_prob_snapshot` is the same helper
+        the 120s poll uses — it appends a row on a value CHANGE and, since
+        live/035, also once `max_gap_seconds` of silence have passed, so a
+        motionless market still draws a breathing line instead of one straight
+        segment between its endpoints.
 
         Failures are swallowed and counted like everything else in this module:
         the chart is downstream of the number, and a snapshot that cannot be
@@ -430,6 +457,9 @@ class LiveBlendRefresher:
                     # question the data can answer.
                     "poll_type": "ws_fast_lane",
                 },
+                max_gap_seconds=heartbeat_deadline(
+                    self.snapshot_max_gap_s, self.snapshot_interval_s
+                ),
             )
             if is_new:
                 session.add(snapshot)

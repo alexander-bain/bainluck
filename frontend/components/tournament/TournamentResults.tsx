@@ -324,6 +324,7 @@ export default function TournamentResults({
   draw,
   roundCount,
   eventIds,
+  espnEventIds,
   initialExpanded = false,
 }: {
   results: ResultsModel | null | undefined;
@@ -337,6 +338,17 @@ export default function TournamentResults({
    * rather than throwing, and it never invents an address of its own.
    */
   eventIds?: Record<string, number> | null;
+  /**
+   * `event_links.by_espn` from the hub payload — the server's id-anchored
+   * `ESPN competition id -> events.id` map (#2693 step 2).
+   *
+   * The channel that reaches THIS list. A finished match has usually lost its
+   * register matchup (`build_slate` retires one the moment its match starts),
+   * so `eventIds` above cannot cover it and 118 of 235 rows rendered as dead
+   * text. Optional and absent-tolerant for the same reason as `eventIds`: an
+   * older cached payload degrades to the market channel alone.
+   */
+  espnEventIds?: Record<string, number> | null;
   /**
    * How many main-draw rounds this tournament plays (#2449).
    *
@@ -389,7 +401,7 @@ export default function TournamentResults({
   /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
      a list where some rows open a page and some do not has to say which, or the
      dead ones read as a broken page rather than as the edge of our coverage. */
-  const links = resultLinkCoverage(matches, eventIds);
+  const links = resultLinkCoverage(matches, eventIds, espnEventIds);
 
   return (
     <section data-testid="tournament-results" data-draw={draw} data-count={matches.length}>
@@ -428,7 +440,7 @@ export default function TournamentResults({
               </li>
               <ResultRow
                 result={result}
-                href={resultEventHref(result, eventIds)}
+                href={resultEventHref(result, eventIds, espnEventIds)}
               />
             </React.Fragment>
           ))}

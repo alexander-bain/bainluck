@@ -182,7 +182,8 @@ struct FeedView: View {
 
             let live = vm.filteredLiveNow(for: selectedCategory)
             if !live.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: live)
+                // live/048 — the header reads the bucket. See `EventState`.
+                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.filteredLiveNowHasSuspended(for: selectedCategory)), systemImage: "circle.fill", imageColor: .red, items: live)
             }
 
             let happened = vm.filteredJustHappened(for: selectedCategory)

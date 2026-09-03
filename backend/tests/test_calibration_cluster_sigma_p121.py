@@ -192,6 +192,20 @@ SHIPPED_DIMENSIONS = {
     "policy": ("POLICY_EXPR", "POLICY_JOIN", "SUMBAND_PRE"),
     "cpdrift": ("DRIFT_EXPR", "DRIFT_JOIN", ""),
     "policy2": ("POLICY2_EXPR", "POLICY2_JOIN", "SUMBAND_PRE"),
+    # Added to the RAIL by CAL-P991 (the O/U side split that found the half-book),
+    # and registered WITHOUT this entry — so `program/calibration-991`'s own HEAD
+    # commit `d4836b6a` was red, and would have taken master red on merge. Added
+    # here by CAL-P992, which found it by running the full suite rather than the
+    # neighbouring files.
+    #
+    # FIFTH TIME. CAL-P127 predicted the re-occurrence, CAL-P130 hit it anyway,
+    # CAL-P131 and CAL-P132 wrote entries in the same commit as the registration,
+    # and CAL-P991 regressed to the old shape. A pinned hand-maintained copy of a
+    # table is a guard that fails in the same direction every time; the recurrence
+    # is now its own issue (#2779) rather than a sixth note.
+    # `calibration_cluster_sigma` still contributes exactly `marketid`, which
+    # remains the thing being guarded.
+    "ouside": ("OUSIDE_EXPR", "OUSIDE_JOIN", ""),
 }
 
 

@@ -840,6 +840,14 @@ async def _poll_kalshi_markets():
                         "resolution_date": resolution_date,
                         "expiration_time": expiration_time,
                         "status": market_status,
+                        # LINKLOSS-02: the stamp is coupled to the status in the
+                        # SAME statement. This upsert rewrites `status` on every
+                        # poll and can flip a market back to 'open', so a stamp
+                        # written anywhere else would survive the reopen and
+                        # count an open market as one that left the population.
+                        "settled_at": (
+                            func.now() if market_status == "resolved" else None
+                        ),
                         "category_tags": tags,
                         "group_id": kalshi_group_id,
                         "group_type": kalshi_group_type,
@@ -856,6 +864,13 @@ async def _poll_kalshi_markets():
                         "category": category,
                         "market_tier": market_tier,
                         "status": market_status,
+                        # Resolved keeps the FIRST observation (this poll runs
+                        # every ~2h over the same settled rows); reopened clears
+                        # it, because a market that is open again did not settle.
+                        "settled_at": (
+                            func.coalesce(FuturesMarket.settled_at, func.now())
+                            if market_status == "resolved" else None
+                        ),
                         "commence_time": commence_time,
                         "resolution_date": resolution_date,
                         "expiration_time": expiration_time,
@@ -3079,7 +3094,8 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                         resolve_result = await session.execute(
                             text("""
                                 UPDATE futures_markets
-                                SET status = 'resolved'
+                                SET status = 'resolved',
+                                    settled_at = COALESCE(settled_at, NOW())
                                 WHERE source = 'kalshi'
                                   AND status != 'resolved'
                                   AND id IN (

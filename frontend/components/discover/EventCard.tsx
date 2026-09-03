@@ -14,6 +14,12 @@ import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
+import {
+  SUSPENDED_LABEL,
+  isFinishedStatus,
+  isSuspendedStatus,
+  suspendedSummary,
+} from "@/lib/eventState";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -29,7 +35,13 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const homeColor = data.home_team_data?.primary_color || "#374151";
   const awayColor = data.away_team_data?.primary_color || "#6b7280";
   const isLive = data.status === "live";
-  const isDone = data.status === "completed" || data.status === "closed";
+  const isDone = isFinishedStatus(data.status);
+  // live/048 + CERT-786. This card had the worst fall-through of the three,
+  // because its "upcoming" arm is a COUNTDOWN computed from `commence_time`:
+  // a suspended row's commence time is in the past by construction, so the
+  // crest strip printed a NEGATIVE number of minutes to a start that already
+  // happened. Not a wrong label — an impossible one.
+  const isSuspended = isSuspendedStatus(data.status);
   // UX-P042 (#1640) — withhold a probability manufactured from an untraded
   // Polymarket midpoint; `current_odds` presents it as a confident 0.5/0.5.
   const probWithheld = shouldWithholdProbability(data);
@@ -69,7 +81,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 
-  const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : data.highlight?.label || "");
+  const headline = item.headline || (isLive ? "Live now" : isDone ? "Final" : isSuspended ? SUSPENDED_LABEL : data.highlight?.label || "");
   // UX-P045 — a settled card used to collapse to the bare word "Final", so a game
   // that ended 20 minutes ago and one that ended 19 hours ago read identically.
   // Measured 2026-08-10 07:04 PT: 15 of 15 event cards were finished games and 14
@@ -83,7 +95,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // between two 64px crests, on the default landing page, at kickoff. The clock
   // is deliberately still not shown here — this card only ever read `period`, and
   // adding the clock would be a restyle rather than the fix.
-  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : (() => {
+  // "Paused" and not the full badge: this slot sits between two 64px crests and
+  // is sized for "Q3". The full sentence lives in the row below the crests,
+  // where the settled card puts its winner line — same place, same weight, so a
+  // reader's eye finds the state in the position it already looks for it.
+  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : isSuspended ? "Paused" : (() => {
     const d = new Date(data.commence_time);
     const diffH = (d.getTime() - Date.now()) / 36e5;
     if (diffH < 1) return `${Math.round(diffH * 60)}m`;
@@ -110,7 +126,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
     : `Track ${data.away_team} vs ${data.home_team} on Bain Luck.`;
 
   return (
-    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : ""}`} data-card-format="event">
+    <article className="relative rounded-[10px] overflow-hidden border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={`${data.away_team} vs ${data.home_team}${isLive ? " - Live" : isDone ? " - Final" : isSuspended ? ` - ${SUSPENDED_LABEL}` : ""}`} data-card-format="event">
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
@@ -120,12 +136,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
 
         <div className="flex flex-col items-center gap-2">
           {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{(data.away_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}</div>}
-          {(isLive || isDone) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
+          {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
           {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{(data.home_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}</div>}
-          {(isLive || isDone) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
+          {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>
 
@@ -141,7 +157,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
 
         {/* Live/pregame win-probability strip — a settled game drops it for the
             winner treatment below (L2-112 Item 2: FINAL cards don't carry live chips). */}
-        {!isDone && homeProb != null && awayProb != null && (
+        {!isDone && !isSuspended && homeProb != null && awayProb != null && (
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm mb-1">
               {/* UX-P003: the card's half of "card == hero == chart". These
@@ -202,6 +218,27 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                 {finishedLabel}
               </span>
             )}
+          </div>
+        )}
+
+        {/* Suspended treatment — the settled row's sibling (live/048), in the
+            same slot and at the same weight, because a reader looking for "how
+            did it end" looks HERE. It says the two things that are true and
+            stops: the match left the live board with no reported result, and
+            this is where the score stood. Deliberately NOT the settled row's
+            "X won" line — the whole defect CERT-752 caught was a winner
+            declared off a partial score. */}
+        {isSuspended && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <span
+              className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated text-text-muted"
+              data-testid="event-card-suspended"
+            >
+              {/* #2786 — AWAY-HOME, unchanged. This is the one surface whose
+                  own scores really are away-first: the hero above paints
+                  `away_score` on the left and `home_score` on the right. */}
+              {suspendedSummary(data.away_score, data.home_score, "away-home")}
+            </span>
           </div>
         )}
 

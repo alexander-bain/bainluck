@@ -94,7 +94,21 @@ def _is_eligible(item: dict, now: datetime, soon_window_hours: int) -> bool:
 
     # A finished game is not "tonight's game" — it is a result, and the settled
     # surfaces own it. Leading with one would be the opposite of the ruling.
-    if status in {"completed", "closed", "postponed", "cancelled", "canceled"}:
+    #
+    # `suspended` (live/048) is rejected HERE, explicitly, rather than being left
+    # to the `return False` at the bottom. The outcome is identical today; the
+    # difference is that the rejection is now a decision on the record — a match
+    # nobody is watching is not the game to LEAD the deck with, however true its
+    # card is. It still appears in the mix (this pass only re-orders), so the
+    # rejection costs the reader nothing and buys the next editor a reason.
+    if status in {
+        "completed",
+        "closed",
+        "suspended",
+        "postponed",
+        "cancelled",
+        "canceled",
+    }:
         return False
 
     # Same bar the noise filter already applies: no logos, no lead slot. This is

@@ -26,6 +26,12 @@ import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName 
 import { useAnalyticsContext } from "@/components/Analytics";
 import { feedItemHasRenderableContent, resolvesLabel, formatConceptMovement } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  SUSPENDED_LABEL,
+  isFinishedStatus,
+  isSuspendedStatus,
+  suspendedSummary,
+} from "@/lib/eventState";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -322,7 +328,13 @@ function EventFeedCard({
 }) {
   const { track } = useAnalyticsContext();
   const isLive = data.status === "live";
-  const isFinished = data.status === "completed" || data.status === "closed";
+  const isFinished = isFinishedStatus(data.status);
+  // live/048 + CERT-786 — the branch this card did not have. Its three states
+  // were live / finished / scheduled, and `isScheduled` was the only one that
+  // did not test the status it names, so a suspended payload landed in it and
+  // took the pregame treatment: a start time for a match already played, and a
+  // live-style probability split for one nothing is reporting on.
+  const isSuspended = isSuspendedStatus(data.status);
   const isScheduled = data.status === "scheduled";
   const homeProb = data.current_odds?.home_probability ?? null;
   const awayProb = data.current_odds?.away_probability ?? null;
@@ -410,7 +422,7 @@ function EventFeedCard({
     : displayAwayProb;
 
   return (
-    <Link href={`/events/${data.id}`} aria-label={`${data.away_team} at ${data.home_team}${isLive ? " - Live" : isFinished ? "- Final" : ""}`} onClick={() => {
+    <Link href={`/events/${data.id}`} aria-label={`${data.away_team} at ${data.home_team}${isLive ? " - Live" : isFinished ? "- Final" : isSuspended ? ` - ${SUSPENDED_LABEL}` : ""}`} onClick={() => {
       track('event_card_click', {
         event_id: data.id,
         sport: data.sport || 'unknown',
@@ -482,8 +494,18 @@ function EventFeedCard({
             )}
           </div>
 
-          {/* Right side: game time for scheduled, score for live/finished */}
-          {hasScore && !isFinished ? (
+          {/* Right side: game time for scheduled, score for live/finished,
+              and — live/048 — the suspended line, which is FIRST in the chain
+              because every later arm would tell a lie about this row. */}
+          {isSuspended ? (
+            <span className="text-[11px] text-text-muted font-medium text-right leading-tight max-w-[46%]">
+              {/* #2786 — HOME-AWAY, matching the live branch immediately below
+                  it. Both arms render into THIS SLOT, so an away-home summary
+                  made the two numbers swap places the moment a match suspended,
+                  with nothing on the card to say they had. */}
+              {suspendedSummary(data.away_score, data.home_score, "home-away")}
+            </span>
+          ) : hasScore && !isFinished ? (
             <span className="text-base font-mono font-bold flex-shrink-0 text-accent-live">
               {data.home_score} - {data.away_score}
             </span>
@@ -540,8 +562,13 @@ function EventFeedCard({
           </div>
 
           {/* Live/pregame probability chips — dropped on FINAL for the settled
-              treatment (L2-112 Item 2: the score + bold winner tell the story). */}
-          {!isFinished && displayHomeProb !== null && displayAwayProb !== null && (
+              treatment (L2-112 Item 2: the score + bold winner tell the story),
+              and dropped on SUSPENDED for the opposite reason (live/048): the
+              numbers are the last live blend on a match nothing is reporting
+              on, so printing them at full weight beside "no result reported"
+              presents a stale line as a current read. This is the "live/pregame
+              probability treatment" CERT-786 named. */}
+          {!isFinished && !isSuspended && displayHomeProb !== null && displayAwayProb !== null && (
             <div className="flex-shrink-0 text-right">
               {/* Away prob */}
               <div className={`font-mono text-sm font-bold mb-0.5 ${displayAwayProb >= 0.5 ? "text-text-primary" : "text-text-muted"}`}>
@@ -556,9 +583,11 @@ function EventFeedCard({
         </div>
 
         {/* Probability bar — current odds for live/scheduled; dropped on FINAL
-            (the settled card shows score + winner, not a live-style split). The
-            pre-game context survives as the muted "Opened X/Y" text below. */}
-        {!isFinished && barHomeProb !== null && barAwayProb !== null && (
+            (the settled card shows score + winner, not a live-style split) and
+            on SUSPENDED, which drops it with the chips above: the bar is the
+            same stale blend drawn wider, and a full-width split is the most
+            confident thing on the card. */}
+        {!isFinished && !isSuspended && barHomeProb !== null && barAwayProb !== null && (
           <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
             <div
               className="h-full transition-all rounded-l-full"
