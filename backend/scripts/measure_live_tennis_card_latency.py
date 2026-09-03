@@ -1,0 +1,340 @@
+"""Measure how long a live tennis card takes to move after the score changes.
+
+live/057. The queue asked for "median seconds from a point ending to our card
+moving, before and after". This is the instrument that answers it.
+
+TWO OBSERVERS, ONE CLOCK
+------------------------
+* **A — the upstream.** ESPN's tennis scoreboard, the source our tennis state
+  actually comes from (`_sync_tennis_from_espn`, `_sync_tournament_results`).
+  Polled fast. Sets complete are counted from the per-set **linescores**, at
+  the first instant ESPN will tell anyone. NOT from ``status.period``, which
+  trails its own linescores — see :func:`completed_sets`.
+* **B — the card.** ``GET /api/events/{id}``, the payload the event page
+  renders. ``home_score + away_score`` is the number of completed sets — the
+  finest grain our tennis card can express today (there is no games or
+  game-score field on the row; see the run report).
+
+Latency for one score change = (first instant B shows the new set total)
+minus (first instant A showed it). That deliberately excludes ESPN's own lag
+from the real point: this measures the segment WE control, which is the
+segment a cadence change moves. It is a floor on the user-visible number, not
+the whole of it.
+
+WHY NOT STATPAL AS OBSERVER A: StatPal publishes tennis at 15s with point-level
+`game_score`, but it writes nothing to a tennis row today (no live tennis event
+sits on a sport key in ``STATPAL_SPORT_MAPPING``, and no tennis event carries a
+``statpal_fixture_id``). An observer that cannot reach the card cannot bound
+the card's latency.
+
+RATE DISCIPLINE: the public API rate-limits around 60 req/min, and a cold-load
+battery has measured itself into its own 429 before. One request per event per
+``--card-interval`` plus one ESPN read per ``--espn-interval``; the default of
+9 events at 20s is 27 req/min. Raise the interval before raising the event
+count.
+
+Usage::
+
+    python3 scripts/measure_live_tennis_card_latency.py \
+        --minutes 40 --out /tmp/before.json
+
+Reads ``BAINLUCK_API`` from the environment (default: production).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import statistics
+import sys
+import time
+import urllib.request
+from datetime import datetime, timezone
+
+ESPN_SCOREBOARD = (
+    "https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard"
+)
+TOURS = ("atp", "wta")
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+def _get_json(url: str, timeout: float = 15.0) -> dict | None:
+    # No custom User-Agent. ESPN's edge 403s a `Mozilla/5.0` or any bespoke
+    # agent string from this network and serves urllib's default fine —
+    # measured three ways before believing it. A header that costs the
+    # observer its upstream is not worth the politeness.
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 — an observer must not die on one read
+        print(f"  ! fetch failed {url[:60]}: {exc}", file=sys.stderr)
+        return None
+
+
+# ---------------------------------------------------------------- observer A
+
+
+def set_is_complete(a, b) -> bool:
+    """Whether a per-set game pair is a finished set.
+
+    6-4 and 7-5 are two clear games; 7-6 is a tiebreak and is one. 6-5 and 6-6
+    are sets still being played and must not count — miscounting either way
+    shifts every latency by a whole set.
+    """
+    try:
+        a, b = float(a), float(b)
+    except (TypeError, ValueError):
+        return False
+    return max(a, b) >= 6 and (abs(a - b) >= 2 or max(a, b) == 7)
+
+
+def completed_sets(games: list) -> int | None:
+    """Sets complete, from ESPN's per-set linescores — the card's own quantity.
+
+    THIS, NOT ``status.period``. Measured 2026-09-03 over 9 paired transitions:
+    ESPN's ``period`` trails its own linescores often enough that 3 of the 9
+    latencies came out NEGATIVE — our card moved before the field said the set
+    had. A ground truth that arrives after the thing it is timing cannot bound
+    anything. The linescores are what our writer reads, so they are what the
+    clock starts on.
+    """
+    if not games or len(games) != 2:
+        return None
+    left, right = games
+    return sum(
+        1 for i in range(min(len(left), len(right)))
+        if set_is_complete(left[i], right[i])
+    )
+
+
+def read_espn() -> dict[str, dict]:
+    """Live competitions from ESPN's tennis scoreboards, keyed by competition id.
+
+    Returns ``{espn_id: {"period": int, "sets": int, "detail": str,
+    "games": [[...], [...]]}}`` for every competition ESPN reports as
+    in-progress. ``sets`` is the field to time against; ``period`` is kept only
+    so a run can show how far the two disagree.
+    """
+    out: dict[str, dict] = {}
+    for tour in TOURS:
+        payload = _get_json(ESPN_SCOREBOARD.format(tour=tour))
+        if not payload:
+            continue
+        for event in payload.get("events") or []:
+            for grouping in event.get("groupings") or []:
+                for comp in grouping.get("competitions") or []:
+                    status = (comp.get("status") or {})
+                    kind = (status.get("type") or {})
+                    if kind.get("state") != "in":
+                        continue
+                    games = [
+                        [ls.get("value") for ls in (c.get("linescores") or [])]
+                        for c in (comp.get("competitors") or [])
+                    ]
+                    out[str(comp.get("id"))] = {
+                        "period": status.get("period"),
+                        "sets": completed_sets(games),
+                        "detail": kind.get("detail"),
+                        "games": games,
+                    }
+    return out
+
+
+# ---------------------------------------------------------------- observer B
+
+
+def read_card(api: str, event_id: int) -> dict | None:
+    payload = _get_json(f"{api}/api/events/{event_id}")
+    if payload is None:
+        return None
+    home, away = payload.get("home_score"), payload.get("away_score")
+    return {
+        "home_score": home,
+        "away_score": away,
+        "sets": (home or 0) + (away or 0),
+        "status": payload.get("status"),
+    }
+
+
+# ------------------------------------------------------------------ the loop
+
+
+def discover_events(api: str) -> list[dict]:
+    """Live tennis events that carry the ESPN id the two observers join on."""
+    payload = _get_json(f"{api}/api/events/live?limit=200") or {}
+    events = payload if isinstance(payload, list) else payload.get("events") or []
+    found = []
+    for ev in events:
+        sport = str(ev.get("sport") or "")
+        espn_id = ((ev.get("espn") or {}).get("espn_id"))
+        if sport.startswith("tennis") and espn_id:
+            found.append({"event_id": ev["id"], "espn_id": str(espn_id)})
+    return found
+
+
+def pair_transitions(
+    espn_seen: dict[str, dict[int, float]],
+    card_seen: dict[int, dict[int, float]],
+    by_espn: dict[str, int],
+    started: float,
+    espn_interval: float,
+    card_interval: float,
+) -> list[dict]:
+    """Join what the upstream showed to what the card showed, one set at a time.
+
+    Both sides are keyed on the SAME quantity — sets complete. Upstream it is
+    derived from ESPN's per-set linescores (:func:`completed_sets`); on the card
+    it is ``home_score + away_score``. Keying the two on the same number is what
+    makes the subtraction mean anything.
+
+    A value first observed within the opening poll cycle is the state we WALKED
+    IN ON, not a transition we watched happen. Pairing it would measure the
+    order the two observers booted in, so it is dropped from both sides.
+    """
+    pairs: list[dict] = []
+    for espn_id, totals in espn_seen.items():
+        event_id = by_espn.get(espn_id)
+        if event_id is None:
+            continue
+        for total, t_a in totals.items():
+            t_b = card_seen.get(event_id, {}).get(total)
+            if t_b is None:
+                continue
+            if (t_a - started < espn_interval * 1.5
+                    or t_b - started < card_interval * 1.5):
+                continue
+            pairs.append({
+                "event_id": event_id, "espn_id": espn_id,
+                "sets": total,
+                "espn_at": _iso(t_a), "card_at": _iso(t_b),
+                "latency_s": round(t_b - t_a, 1),
+            })
+    return pairs
+
+
+def run(api: str, events: list[dict], minutes: float,
+        espn_interval: float, card_interval: float) -> dict:
+    by_espn = {e["espn_id"]: e["event_id"] for e in events}
+    started = _now()
+    deadline = started + minutes * 60
+
+    # espn_id -> period -> first instant ESPN showed it
+    espn_seen: dict[str, dict[int, float]] = {}
+    # event_id -> set total -> first instant the card showed it
+    card_seen: dict[int, dict[int, float]] = {}
+    espn_last: dict[str, int] = {}
+    card_last: dict[int, int] = {}
+    games_changes: list[float] = []
+    espn_games_last: dict[str, str] = {}
+
+    next_espn = started
+    next_card = started
+    polls = {"espn": 0, "card": 0}
+
+    while _now() < deadline:
+        now = _now()
+
+        if now >= next_espn:
+            next_espn = now + espn_interval
+            polls["espn"] += 1
+            for espn_id, state in read_espn().items():
+                if espn_id not in by_espn:
+                    continue
+                sets_done = state.get("sets")
+                if isinstance(sets_done, int):
+                    seen = espn_seen.setdefault(espn_id, {})
+                    if sets_done not in seen:
+                        seen[sets_done] = now
+                        if espn_last.get(espn_id) is not None:
+                            print(f"  A set-end  {espn_id} sets->{sets_done} "
+                                  f"(period {state.get('period')}) @ {_iso(now)}",
+                                  flush=True)
+                        espn_last[espn_id] = sets_done
+                games = json.dumps(state.get("games"))
+                if espn_games_last.get(espn_id) not in (None, games):
+                    games_changes.append(now)
+                espn_games_last[espn_id] = games
+
+        if now >= next_card:
+            next_card = now + card_interval
+            for espn_id, event_id in by_espn.items():
+                card = read_card(api, event_id)
+                polls["card"] += 1
+                if card is None:
+                    continue
+                total = card["sets"]
+                seen = card_seen.setdefault(event_id, {})
+                if total not in seen:
+                    seen[total] = now
+                    if card_last.get(event_id) is not None:
+                        print(f"  B card     {event_id} sets->{total} @ {_iso(now)}",
+                              flush=True)
+                    card_last[event_id] = total
+
+        time.sleep(1.0)
+
+    pairs = pair_transitions(
+        espn_seen, card_seen, by_espn, started, espn_interval, card_interval,
+    )
+    # EVERY pair, sign included. Dropping the negatives would be selecting on
+    # the outcome — it lifts the median by discarding exactly the cases where
+    # the card was fast — so a negative is reported as the reading it is.
+    lat = sorted(p["latency_s"] for p in pairs)
+    return {
+        "api": api,
+        "started_at": _iso(started),
+        "ended_at": _iso(_now()),
+        "minutes": minutes,
+        "espn_interval_s": espn_interval,
+        "card_interval_s": card_interval,
+        "events_watched": events,
+        "polls": polls,
+        "espn_game_level_changes": len(games_changes),
+        "set_transitions_observed": len(pairs),
+        "negative_pairs": sum(1 for p in pairs if p["latency_s"] < 0),
+        "pairs": pairs,
+        "median_latency_s": round(statistics.median(lat), 1) if lat else None,
+        "min_latency_s": lat[0] if lat else None,
+        "max_latency_s": lat[-1] if lat else None,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--minutes", type=float, default=40.0)
+    ap.add_argument("--espn-interval", type=float, default=15.0)
+    ap.add_argument("--card-interval", type=float, default=20.0)
+    ap.add_argument("--out", default="/tmp/live057_latency.json")
+    ap.add_argument("--api", default=os.environ.get(
+        "BAINLUCK_API", "https://api.bainluck.com"))
+    args = ap.parse_args()
+
+    events = discover_events(args.api)
+    if not events:
+        print("no live tennis events carrying an espn_id — nothing to measure")
+        return 2
+    print(f"watching {len(events)} live tennis events for {args.minutes} min")
+    for e in events:
+        print(f"  event {e['event_id']} <-> espn {e['espn_id']}")
+
+    result = run(args.api, events, args.minutes,
+                 args.espn_interval, args.card_interval)
+    with open(args.out, "w") as fh:
+        json.dump(result, fh, indent=2)
+    print(json.dumps({k: v for k, v in result.items()
+                      if k not in ("pairs", "events_watched")}, indent=2))
+    print(f"wrote {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
