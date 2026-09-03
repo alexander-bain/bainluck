@@ -52,6 +52,7 @@ from app.utils.live_blend import (
     select_primary_market as _select_primary_market,
 )
 from app.utils import match_receipts as _receipts
+from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
     CandidateTrace,
     MatchReceipt,
@@ -1984,6 +1985,21 @@ async def _phase1_pass3_backlog_scan(
             )
     finally:
         await _flush_pass_receipts(session, receipts, stats, _receipts.PHASE_PASS3_BACKLOG)
+        # THE RUN IS RECORDED WHERE THE RUN CANNOT BE OVERWRITTEN. The receipts
+        # just flushed carry phase=pass3_backlog, but that label is the market's,
+        # not the run's: Pass 1/2 re-attempt these same open unlinked markets and
+        # the upsert overwrites `phase`, so counting labels can report "the
+        # backlog pass never ran" minutes after it ran (CERT-819). The durable
+        # per-phase row cannot be touched by another pass. In the `finally` on
+        # purpose — a pass that died partway through still ran, and the coverage
+        # reader needs to know that more, not less.
+        run_stage = await _pass_runs.record_pass_run(
+            phase=_receipts.PHASE_PASS3_BACKLOG,
+            ran_at=now,
+            rows_attempted=stats["funnel"]["backlog_scanned"],
+            eligible_total=stats["funnel"].get("backlog_eligible_total"),
+        )
+        stats["funnel"]["backlog_run_recorded"] = run_stage.get("status")
 
 
 async def _relink_collapsed_game_markets(session) -> int:
