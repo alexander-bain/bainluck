@@ -38,8 +38,8 @@ not smuggled: if a reviewer wants the population proven still first, the audit
 script re-derives the whole census in one call.
 
 **Correction, never deletion** (ruling 079) holds in the strong sense here —
-not one row is removed, and every prior value is written to a durable record
-BEFORE the first unstamp, so the entire repair reverses:
+not one row is removed, and every id this rail clears is receipted to a durable
+record as it is cleared, so the repair reverses:
 
     POST …/authority-id-collisions?undo_identity=<id>            # dry run
     POST …/authority-id-collisions?undo_identity=<id>&apply=true # put them back
@@ -51,6 +51,15 @@ precondition of the write, not a property claimed afterwards). Until 2026-09-03
 this docstring said the prior values were "in the plan artifact" — they were,
 but that artifact is one rotating slot with a 24h life, so draining MLS and then
 planning MLB destroyed MLS's undo. See ``UNDO_IDENTITY_PREFIX``.
+
+**The record receipts what was CLEARED, not what was planned** (CERT-846). Those
+differ every time a planned row's id has moved since the review: the apply
+reports it ``ESPN_ID_MOVED`` and writes nothing, and a record built from the plan
+would still offer to restamp it — putting an id back onto a row this rail never
+touched, and re-creating a collision another writer had just resolved. So the
+receipt grows one row at a time, after each unstamp commits, and the restore
+replays that list and no other. The cost is one durable write per cleared row,
+which is why the operator note recommends slices rather than one 352-row call.
 
 ═══ THE TWO-CALL CONTRACT ═══
 
@@ -136,7 +145,25 @@ APPLY_OUTCOMES = ("UNSTAMPED", "ESPN_ID_MOVED")
 # An undo therefore gets its OWN dated identity per apply, never reused and
 # never rotated, and the apply REFUSES to write until that record is on disk.
 UNDO_IDENTITY_PREFIX = "repair:authority_id_collisions:undo"
-UNDO_SCHEMA = "authority-id-collisions-undo/v1"
+
+# v1 recorded the rows the apply was ABOUT to clear and called that its backup.
+# CERT-846 showed what that buys: a planned row whose id had moved since the
+# review is a no-op for the apply (`ESPN_ID_MOVED`, `unstamped=0`) and was still
+# listed in the record, so the restore put an id back onto a row THIS APPLY
+# NEVER TOUCHED — re-creating a collision some other writer had just cleared.
+# Reproduced exactly: apply `unstamped=0`, its own undo `restamped=1`.
+#
+# So a v2 record separates the two questions it was conflating:
+#
+#     rows_planned  — what the apply set out to do (the reviewed work list)
+#     rows          — THE RECEIPT: rows this apply actually cleared, and only
+#                     those. The restore reads this one and nothing else.
+#
+# The version bump is load-bearing, not cosmetic: `read_snapshot_standalone`
+# is called with `expected_version=UNDO_SCHEMA`, so a v1 record — whose `rows`
+# mean the other thing — cannot be read by the v2 restore at all. It reads as
+# MISSING rather than being silently reinterpreted as a receipt.
+UNDO_SCHEMA = "authority-id-collisions-undo/v2"
 
 #: An undo must outlive the incident that needs it, not the day. Deliberately
 #: far longer than `PLAN_MAX_AGE_S`: the two artifacts have opposite duties —
@@ -148,6 +175,9 @@ REASON_UNDO_UNWRITTEN = "UNDO_NOT_PERSISTED"
 REASON_UNDO_MISSING = "UNDO_MISSING"
 REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
 REASON_UNDO_UNREADABLE = "UNDO_UNREADABLE"
+#: A row was cleared and its receipt could not be written. The apply STOPS —
+#: it does not keep clearing rows it has lost the ability to name.
+REASON_UNDO_RECEIPT_FAILED = "UNDO_RECEIPT_FAILED"
 
 #: Per-row undo outcomes. Closed set. `ESPN_ID_REOCCUPIED` is not a failure —
 #: it is the undo declining to overwrite a fresher truth, and it is named so a
@@ -399,6 +429,52 @@ def undo_identity_for(plan_hash: str, *, at: datetime) -> str:
     """
     stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{str(plan_hash)[:12]}"
+
+
+def undo_row_for(plan_row: dict[str, Any]) -> dict[str, Any]:
+    """One plan row -> the shape the undo record and the restore both read."""
+    return {
+        "event_id": int(plan_row["event_id"]),
+        "prior_espn_id": str(plan_row["contested_espn_id"]),
+        "sport": plan_row.get("sport"),
+        "matchup": plan_row.get("matchup"),
+        "verdict": plan_row.get("verdict"),
+    }
+
+
+def undo_payload(
+    *,
+    plan_hash: str,
+    taken_at: datetime,
+    sport: Optional[str],
+    planned: list[dict[str, Any]],
+    receipted: list[dict[str, Any]],
+    complete: bool,
+) -> dict[str, Any]:
+    """The v2 record. ``rows`` is the RECEIPT; ``rows_planned`` is the intent.
+
+    Keeping the receipt under ``rows`` is deliberate: it is the key the restore
+    and ``--list`` already read, so after this change both speak about rows that
+    were really cleared without either having to learn a new name for the only
+    list that may be replayed onto the table.
+    """
+    return {
+        "issue": ISSUE,
+        "plan_hash": str(plan_hash),
+        "taken_at": taken_at.isoformat(),
+        "sport": sport,
+        # THE RECEIPT — rows whose unstamp returned a row id AND committed.
+        # A planned row that turned out to be `ESPN_ID_MOVED` is not here, and
+        # that absence is the whole fix: an undo may only put back an id it can
+        # prove this apply took away.
+        "rows": list(receipted),
+        # The intent, kept for the operator's forensics and never replayed.
+        "rows_planned": list(planned),
+        # False while the loop is still running. A record found `False` is an
+        # apply that died or was stopped part-way; its receipt is still exact
+        # for every row it names.
+        "receipt_complete": complete,
+    }
 
 
 async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]:
@@ -662,25 +738,22 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
     # backup that does not exist for exactly the run that crashed halfway.
     undo_at = datetime.now(timezone.utc)
     undo_identity = undo_identity_for(str(plan_hash), at=undo_at)
-    undo_saved, undo_note = await _save_undo(undo_identity, {
-        "issue": ISSUE,
-        "plan_hash": str(plan_hash),
-        "taken_at": undo_at.isoformat(),
-        "sport": stored.get("sport"),
-        # Every row the apply is ABOUT to attempt, with the value it is about
-        # to clear. Recorded from the plan rather than re-read, so the undo
-        # names the same rows the reviewer read.
-        "rows": [
-            {
-                "event_id": int(r["event_id"]),
-                "prior_espn_id": str(r["contested_espn_id"]),
-                "sport": r.get("sport"),
-                "matchup": r.get("matchup"),
-                "verdict": r.get("verdict"),
-            }
-            for r in stored["rows"]
-        ],
-    })
+    planned_rows = [undo_row_for(r) for r in stored["rows"]]
+
+    def _record(receipted: list[dict[str, Any]], *, complete: bool) -> dict[str, Any]:
+        return undo_payload(
+            plan_hash=str(plan_hash),
+            taken_at=undo_at,
+            sport=stored.get("sport"),
+            planned=planned_rows,
+            receipted=receipted,
+            complete=complete,
+        )
+
+    # The record exists before the first write with an EMPTY receipt: at this
+    # instant the true answer to "what has this apply cleared" is "nothing", and
+    # a backup that claims otherwise is the defect CERT-846 found.
+    undo_saved, undo_note = await _save_undo(undo_identity, _record([], complete=False))
     if not undo_saved:
         return {
             "issue": ISSUE, "apply": True, "refused": True,
@@ -698,30 +771,63 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         }
 
     applied: list[int] = []
+    receipted: list[dict[str, Any]] = []
     moved: list[dict[str, Any]] = []
     by_verdict: dict[str, int] = {}
+    receipt_failure: Optional[str] = None
 
-    for row in stored["rows"]:
+    for row, undo_row in zip(stored["rows"], planned_rows):
         event_id = int(row["event_id"])
         contested = str(row["contested_espn_id"])
         result = (await session.execute(
             UNSTAMP_SQL, {"event_id": event_id, "contested": contested}
         )).first()
         if result is None:
-            # NOT a silent success. The row's id is no longer the one reviewed:
-            # ingest moved it, or a sibling apply already took it.
+            # NOT a silent success, and NOT a row the undo may speak for. The
+            # row's id is no longer the one reviewed: ingest moved it, or a
+            # sibling apply already took it. Either way this apply did not
+            # clear it, so it never enters the receipt.
             moved.append({
                 "event_id": event_id,
                 "expected_espn_id": contested,
                 "reason_code": "ESPN_ID_MOVED",
             })
             continue
-        applied.append(event_id)
-        verdict = str(row.get("verdict") or "UNKNOWN")
-        by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+        # Said out loud before the commit so the single row that a crash could
+        # leave cleared-but-unreceipted is recoverable from the log rather than
+        # from archaeology.
+        logger.info(
+            "%s unstamping event %s (prior espn_id %s) under undo %s",
+            ISSUE, event_id, contested, undo_identity,
+        )
         # `events` is hot — commit per row, the same posture Phase 2 matching
         # takes for deadlock avoidance (gotcha #13).
         await session.commit()
+        applied.append(event_id)
+        receipted.append(undo_row)
+        verdict = str(row.get("verdict") or "UNKNOWN")
+        by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+
+        # Receipt AFTER the commit, per row. The window this leaves is one row
+        # wide and it under-claims: a crash here leaves a row cleared that the
+        # restore will not offer to put back. That is the safe direction — the
+        # opposite order would let the record claim a row the transaction then
+        # rolled back, which is the class of lie being fixed.
+        ok, note = await _save_undo(undo_identity, _record(receipted, complete=False))
+        if not ok:
+            receipt_failure = note
+            logger.warning(
+                "%s receipt write failed after %s row(s); stopping the apply: %s",
+                ISSUE, len(receipted), note,
+            )
+            break
+
+    # Seals the record: a reader can now tell a finished apply from one that
+    # stopped part-way. A failure here costs the seal, never the receipt — the
+    # per-row writes above already carry every row that was cleared.
+    sealed, seal_note = await _save_undo(
+        undo_identity, _record(receipted, complete=receipt_failure is None)
+    )
 
     after = await _census(session)
     return {
@@ -734,6 +840,18 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         "unstamped": len(applied),
         "unstamped_by_verdict": dict(sorted(by_verdict.items())),
         "moved": moved,
+        # The number the operator should compare against `unstamped`, and the
+        # reason this rail can call itself reversible: rows the undo record can
+        # prove this apply cleared. `unstamped` and `rows_receipted` differ only
+        # if a receipt write failed, and then the apply has already stopped.
+        "rows_receipted": len(receipted),
+        "receipt_complete": receipt_failure is None and sealed,
+        **(
+            {"reason_codes": [REASON_UNDO_RECEIPT_FAILED], "receipt_note": receipt_failure}
+            if receipt_failure
+            else {}
+        ),
+        **({"seal_note": seal_note} if not sealed else {}),
         # The undo is quoted as an IDENTITY and a runnable line, not as a
         # reassurance. An operator who has to go and find out how to reverse a
         # write does not have a reversible write.
@@ -745,9 +863,19 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         "note": (
             f"contested ids {before['contested_ids']} -> {after['contested_ids']}; "
             f"rows wearing a contested id {before['rows_wearing']} -> "
-            f"{after['rows_wearing']}. Reversible: this apply's prior values are in "
-            f"its OWN dated record {undo_identity}, which no later plan or apply "
-            f"overwrites. Restore with undo_command."
+            f"{after['rows_wearing']}. Reversible: the {len(receipted)} row(s) this "
+            f"apply actually cleared are receipted in its OWN dated record "
+            f"{undo_identity}, which no later plan or apply overwrites. The "
+            f"{len(moved)} ESPN_ID_MOVED row(s) are NOT in it — this apply did not "
+            f"clear them, so the restore must not put their ids back. Restore with "
+            f"undo_command."
+            + (
+                f" WARNING: the apply STOPPED after {len(receipted)} row(s) because a "
+                f"receipt could not be written ({receipt_failure}); the rows it names "
+                f"are still exactly reversible, and the rest of the plan was not run."
+                if receipt_failure
+                else ""
+            )
         ),
     }
 
@@ -757,6 +885,12 @@ async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
 
     The mirror of `_apply`, with the same two properties: it acts on a stored
     artifact rather than a re-derivation, and its compare is in the write.
+
+    **It replays the RECEIPT, never the plan.** ``rows`` is the list of rows the
+    apply proved it cleared; ``rows_planned`` is what it set out to do, is often
+    longer, and is read here only to report the difference. CERT-846: replaying
+    the plan let an apply that cleared nothing restamp a row another writer had
+    just blanked, re-creating the collision.
     """
     stored, reason = await _read_undo(undo_identity)
     if stored is None:
@@ -772,6 +906,31 @@ async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
         }
 
     rows = stored["rows"]
+    planned = stored.get("rows_planned")
+    n_planned = len(planned) if isinstance(planned, list) else None
+    # A planned row missing from the receipt is a row the apply did NOT clear.
+    # Named rather than summed away: an operator comparing "12 planned" with
+    # "10 restorable" is looking at ESPN_ID_MOVED rows, not at lost data.
+    not_cleared = (n_planned - len(rows)) if n_planned is not None else None
+    incomplete = stored.get("receipt_complete") is False
+    scope = (
+        f"This record receipts {len(rows)} row(s) actually cleared"
+        + (f" of {n_planned} planned" if n_planned is not None else "")
+        + ". Only receipted rows are ever restamped."
+        + (
+            f" {not_cleared} planned row(s) were not cleared by that apply "
+            f"(ESPN_ID_MOVED) and their ids are deliberately NOT put back."
+            if not_cleared
+            else ""
+        )
+        + (
+            " The record is NOT sealed: that apply stopped part-way, so it may "
+            "have cleared one further row than it receipted — check the logs for "
+            "the identity before assuming the table is fully reversed."
+            if incomplete
+            else ""
+        )
+    )
     before = await _census(session)
     if not apply:
         return {
@@ -781,11 +940,13 @@ async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
             "taken_at": stored.get("taken_at"),
             "before": before,
             "rows_in_record": len(rows),
+            "rows_planned_in_record": n_planned,
+            "receipt_complete": stored.get("receipt_complete"),
             "rows": rows,
             "note": (
                 f"Nothing was written. Re-run with apply=true to put these "
                 f"{len(rows)} id(s) back. A row that has since been re-anchored is "
-                f"reported ESPN_ID_REOCCUPIED and left alone."
+                f"reported ESPN_ID_REOCCUPIED and left alone. " + scope
             ),
         }
 
@@ -816,6 +977,8 @@ async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
         "before": before,
         "after": after,
         "rows_in_record": len(rows),
+        "rows_planned_in_record": n_planned,
+        "receipt_complete": stored.get("receipt_complete"),
         "restamped": len(restamped),
         "reoccupied": reoccupied,
         "note": (
@@ -823,7 +986,7 @@ async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
             f"rows wearing a contested id {before['rows_wearing']} -> "
             f"{after['rows_wearing']}. Putting ids back RE-CREATES the collisions "
             f"this apply removed — that is what an undo is — so the unique index "
-            f"pre-check will rise by the number restored."
+            f"pre-check will rise by the number restored. " + scope
         ),
     }
 

@@ -25,6 +25,13 @@ make the undo cause the corruption it exists to reverse, so such a row is
 reported ``ESPN_ID_REOCCUPIED`` and left alone. A restore that reports some of
 these is working, not failing.
 
+**It restores what the apply CLEARED, not what it planned to clear** (CERT-846).
+An apply reports ``ESPN_ID_MOVED`` for a planned row whose id changed between the
+review and the run; it wrote nothing to that row, so its id is not put back. A
+record therefore often names fewer rows than the plan did, and the counts printed
+below say which is which. Restoring a row the apply never touched would re-create
+a collision somebody else had just resolved.
+
 Needs ``BAINLUCK_API`` and ``ADMIN_TOKEN`` in the environment
 (``source ~/.claude/.env``). Talks to the admin rail over HTTPS rather than to
 Postgres directly, because 5432 egress is blocked from the sandbox and because
@@ -84,9 +91,14 @@ def _post(url: str, token: str, body: dict | None = None) -> dict:
 
 def _list_records(api: str, token: str) -> int:
     """Show the undo records on file. A read, through db-query."""
+    # `rows` is the RECEIPT (cleared) and `rows_planned` the intent; both are
+    # shown because a gap between them is normal (ESPN_ID_MOVED) and an operator
+    # who sees only the smaller number will think rows went missing.
     sql = (
         "SELECT identity, generated_at, "
-        "jsonb_array_length(payload->'rows') AS rows, payload->>'sport' AS sport "
+        "jsonb_array_length(payload->'rows') AS rows, payload->>'sport' AS sport, "
+        "jsonb_array_length(payload->'rows_planned') AS planned, "
+        "payload->>'receipt_complete' AS sealed "
         "FROM durable_state_snapshots "
         f"WHERE identity LIKE '{UNDO_IDENTITY_PREFIX}%' "
         "ORDER BY generated_at DESC"
@@ -101,11 +113,18 @@ def _list_records(api: str, token: str) -> int:
         )
         return 0
     print(f"{len(rows)} undo record(s), newest first:\n")
+    print("  the count is rows RESTORABLE (cleared) / rows PLANNED\n")
     # db-query returns rows as ARRAYS, not dicts.
     for r in rows:
         identity, generated_at, n_rows, sport = r[0], r[1], r[2], r[3]
+        planned, sealed = (r[4] if len(r) > 4 else None), (r[5] if len(r) > 5 else None)
+        counts = f"{n_rows}/{planned if planned is not None else '?'}"
+        # `sealed` is the JSON text of receipt_complete: "false" means that apply
+        # stopped part-way and may have cleared one row more than it receipted.
+        flag = "" if str(sealed).lower() == "true" else "  [UNSEALED]"
         print(
-            f"  {generated_at}  {n_rows:>4} row(s)  {sport or 'all sports':<24} {identity}"
+            f"  {generated_at}  {counts:>9} row(s)  "
+            f"{sport or 'all sports':<24} {identity}{flag}"
         )
     print("\nRestore one with:  --identity <identity> --apply")
     return 0
@@ -153,15 +172,23 @@ def main() -> int:
         return 1
 
     if not args.apply:
+        planned = result.get("rows_planned_in_record")
         print(f"DRY RUN — nothing written. Record {args.identity}")
         print(f"  planned by  : {result.get('plan_hash')}")
         print(f"  taken at    : {result.get('taken_at')}")
-        print(f"  would restore: {result.get('rows_in_record')} row(s)\n")
+        print(f"  would restore: {result.get('rows_in_record')} row(s) — rows that apply")
+        print("                 actually cleared, which is the only list replayed")
+        if planned is not None:
+            print(f"  that apply planned: {planned} row(s)")
+        if result.get("receipt_complete") is False:
+            print("  [UNSEALED] that apply stopped part-way — see the note below")
+        print()
         for row in result.get("rows") or []:
             print(
                 f"    event {row.get('event_id')}  <- espn_id {row.get('prior_espn_id')}"
                 f"   {row.get('matchup') or ''}"
             )
+        print(f"\n{result.get('note', '')}")
         print("\nRe-run with --apply to put these back.")
         return 0
 

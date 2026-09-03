@@ -180,28 +180,46 @@ class TestNothingIsUnstampedWithoutAnUndoRecord:
         session = _OrderingSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
-        assert order == ["undo-saved", "unstamp", "unstamp"]
+        # The receipt (CERT-846) means the record is now saved repeatedly — once
+        # before the loop and once per cleared row — so the assertion is on the
+        # PREFIX, which is the property: the record existed before any write.
+        # Moving the pre-loop save below the loop makes this start with
+        # "unstamp" and reddens.
+        assert order[:2] == ["undo-saved", "unstamp"]
+        assert order.count("unstamp") == 2
 
     def test_the_record_carries_every_row_the_apply_will_touch_with_its_prior_id(
         self, monkeypatch
     ):
-        """A backup missing a row is not a backup; it is a partial one nobody
-        can tell apart from a complete one at restore time."""
+        """The PLANNED list is complete from the first write.
+
+        A backup missing a row is not a backup. What changed at CERT-846 is
+        which key answers which question: `rows_planned` is the full intent and
+        is written before the first unstamp, while `rows` is the receipt and
+        starts empty because at that instant nothing has been cleared.
+        """
         monkeypatch.setattr(rail, "_read_plan", _plan_reader())
-        captured: dict = {}
+        calls: list[dict] = []
 
         async def _capture(identity, payload):
-            captured["identity"] = identity
-            captured["payload"] = payload
+            calls.append({"identity": identity, "payload": payload})
             return True, "ok"
 
         monkeypatch.setattr(rail, "_save_undo", _capture)
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
-        saved = {r["event_id"]: r["prior_espn_id"] for r in captured["payload"]["rows"]}
-        assert saved == {11: "401856667", 22: "401856668"}
-        assert captured["payload"]["plan_hash"] == "abc123def456"
+        first = calls[0]["payload"]
+        planned = {r["event_id"]: r["prior_espn_id"] for r in first["rows_planned"]}
+        assert planned == {11: "401856667", 22: "401856668"}
+        assert first["rows"] == [], "the pre-write record claimed rows it had not cleared"
+        assert first["receipt_complete"] is False
+        assert first["plan_hash"] == "abc123def456"
+
+        # And by the end the receipt has caught up with reality.
+        last = calls[-1]["payload"]
+        assert {r["event_id"] for r in last["rows"]} == {11, 22}
+        assert last["receipt_complete"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -444,3 +462,235 @@ class TestTheUndoIsReachableFromTheAdminRail:
         import inspect
 
         assert "undo_identity" in inspect.signature(rail.repair).parameters
+
+
+# ---------------------------------------------------------------------------
+# 7. CERT-846 — the record receipts what was CLEARED, not what was PLANNED.
+#
+# The BLOCK's reproduction, verbatim: a moved row made the apply return
+# `unstamped=0`, and that same apply's undo then returned `restamped=1`. The
+# undo had put an espn_id back onto a row the apply never touched — so a stale
+# or no-op apply could reverse ANOTHER writer's clear and re-create the very
+# collision this rail exists to remove.
+#
+# Both arms on every guard. "The receipt is empty" passes for a rail that
+# receipts nothing at all, so each test that pins an exclusion is paired with
+# one proving the included row still goes back.
+# ---------------------------------------------------------------------------
+
+
+def _capturing_save(calls):
+    async def _save(identity, payload):
+        # Copied, not aliased: the rail mutates its receipt list in place
+        # between saves, and a shared reference would make every recorded call
+        # look like the last one.
+        calls.append({
+            "identity": identity,
+            "rows": [dict(r) for r in payload["rows"]],
+            "rows_planned": [dict(r) for r in payload.get("rows_planned", [])],
+            "receipt_complete": payload.get("receipt_complete"),
+        })
+        return True, "ok"
+
+    return _save
+
+
+class TestAMovedRowIsNeverInTheReceipt:
+    def test_THE_REGRESSION_an_apply_that_cleared_nothing_restores_nothing(
+        self, monkeypatch
+    ):
+        """CERT-846's exact reproduction, end to end and in one test.
+
+        Plan one row; its id has moved, so the unstamp matches nothing and the
+        apply reports `unstamped=0`. Feed that apply's OWN record straight into
+        the undo, with the row now blank (another writer cleared it). Before the
+        fix the undo restamped it. It must now restamp nothing.
+        """
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader(rows=[PLAN_ROWS[0]]))
+        calls: list[dict] = []
+        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+
+        # `[]` from the unstamp = rowcount 0 = ESPN_ID_MOVED.
+        apply_session = _FakeSession([CENSUS_BEFORE, [], CENSUS_BEFORE])
+        applied = asyncio.run(
+            rail.repair(apply_session, apply=True, plan_hash="abc123def456")
+        )
+        assert applied["unstamped"] == 0
+        assert [m["reason_code"] for m in applied["moved"]] == ["ESPN_ID_MOVED"]
+        assert applied["rows_receipted"] == 0
+
+        # The record this apply actually left behind — not a hand-built one.
+        record = calls[-1]
+        assert record["rows"] == [], "a row the apply never cleared entered the receipt"
+        assert len(record["rows_planned"]) == 1, "the intent must still be recorded"
+
+        async def _read(identity):
+            return {"plan_hash": "abc123def456", "taken_at": "t", **record}, "ok"
+
+        monkeypatch.setattr(rail, "_read_undo", _read)
+        # The row IS blank now, so a restamp WOULD succeed if one were attempted
+        # — the only thing that made the old bug bite. The script holds the two
+        # censuses and no unstamp answer: an attempted restamp would take a
+        # census tuple and fail loudly rather than pass quietly.
+        undo_session = _FakeSession([CENSUS_BEFORE, CENSUS_BEFORE])
+        out = asyncio.run(
+            rail.repair(undo_session, apply=True, undo_identity=record["identity"])
+        )
+
+        assert out["restamped"] == 0
+        assert _restamps(undo_session) == [], (
+            "the undo wrote an espn_id onto a row its apply never unstamped — "
+            "CERT-846 exactly"
+        )
+
+    def test_CONTROL_the_row_that_WAS_cleared_still_goes_back(self, monkeypatch):
+        """Without this arm the regression above passes for a dead undo.
+
+        Same shape, one difference: the unstamp succeeds. The receipt must then
+        carry the row and the undo must put its id back.
+        """
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader(rows=[PLAN_ROWS[0]]))
+        calls: list[dict] = []
+        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+
+        apply_session = _FakeSession([CENSUS_BEFORE, [(11,)], CENSUS_AFTER])
+        applied = asyncio.run(
+            rail.repair(apply_session, apply=True, plan_hash="abc123def456")
+        )
+        assert applied["unstamped"] == 1
+        assert applied["rows_receipted"] == 1
+
+        record = calls[-1]
+        assert [r["event_id"] for r in record["rows"]] == [11]
+
+        async def _read(identity):
+            return {"plan_hash": "abc123def456", "taken_at": "t", **record}, "ok"
+
+        monkeypatch.setattr(rail, "_read_undo", _read)
+        undo_session = _FakeSession([CENSUS_AFTER, [(11,)], CENSUS_BEFORE])
+        out = asyncio.run(
+            rail.repair(undo_session, apply=True, undo_identity=record["identity"])
+        )
+
+        assert out["restamped"] == 1
+        assert {p["prior"] for _, p in _restamps(undo_session)} == {"401856667"}
+
+    def test_a_partly_moved_plan_receipts_only_the_rows_it_cleared(self, monkeypatch):
+        """The mixed case, which is what a real slice looks like."""
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+        calls: list[dict] = []
+        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+
+        # Row 11 moved, row 22 cleared.
+        session = _FakeSession([CENSUS_BEFORE, [], [(22,)], CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+
+        assert out["unstamped"] == 1
+        assert out["rows_receipted"] == 1
+        record = calls[-1]
+        assert [r["event_id"] for r in record["rows"]] == [22]
+        assert {r["event_id"] for r in record["rows_planned"]} == {11, 22}
+
+    def test_the_receipt_is_written_per_row_not_only_at_the_end(self, monkeypatch):
+        """A crash mid-loop must not cost the rows already cleared.
+
+        A record written only after the loop is the CERT-843/846 family again:
+        the apply is durable, its reversal is not, and the gap is exactly the
+        run that died. Pinned by asserting the receipt GREW while the loop ran.
+        """
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+        calls: list[dict] = []
+        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+
+        session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
+        asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+
+        sizes = [len(c["rows"]) for c in calls]
+        assert sizes[0] == 0, "the pre-write record must claim nothing"
+        assert 1 in sizes, (
+            "no save carried exactly one row — the receipt is written only after "
+            "the loop, so a crash mid-drain loses the undo for rows already cleared"
+        )
+        assert sizes[-1] == 2
+        assert sizes == sorted(sizes), "a receipt may only grow"
+
+    def test_a_failed_receipt_STOPS_the_apply(self, monkeypatch):
+        """Clearing a row you cannot name is the thing D51 forbids.
+
+        The first row's receipt fails, so the second row is never touched.
+        """
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+        saves = {"n": 0}
+
+        async def _fail_after_first(identity, payload):
+            saves["n"] += 1
+            # 1 = the pre-write record, 2 = the first row's receipt.
+            return (False, "undo persist rejected: error") if saves["n"] == 2 else (True, "ok")
+
+        monkeypatch.setattr(rail, "_save_undo", _fail_after_first)
+        # One unstamp answer only: the apply must stop before asking for a
+        # second, so a rail that carried on would read a census tuple as an
+        # unstamp result and blow up rather than quietly pass.
+        session = _FakeSession([CENSUS_BEFORE, [(11,)], CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+
+        assert len(_unstamps(session)) == 1, "the apply kept clearing after a lost receipt"
+        assert out["unstamped"] == 1
+        assert out["reason_codes"] == [rail.REASON_UNDO_RECEIPT_FAILED]
+        assert out["receipt_complete"] is False
+
+    def test_CONTROL_receipts_that_all_succeed_run_the_whole_plan(self, monkeypatch):
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+
+        async def _ok(identity, payload):
+            return True, "ok"
+
+        monkeypatch.setattr(rail, "_save_undo", _ok)
+        session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+
+        assert len(_unstamps(session)) == 2
+        assert out["receipt_complete"] is True
+        assert "reason_codes" not in out
+
+
+class TestAV1RecordCannotBeReadAsAReceipt:
+    def test_the_schema_version_was_bumped_so_v1_rows_cannot_be_replayed(self):
+        """The version is the mechanism, not a label.
+
+        A v1 record's `rows` key holds PLANNED rows. Read by v2 code it would be
+        replayed as a receipt — the original bug, resurrected from storage. The
+        read passes `expected_version`, so bumping the version is what makes an
+        old record unreadable rather than silently reinterpreted.
+        """
+        import inspect
+
+        assert rail.UNDO_SCHEMA.endswith("/v2"), (
+            "the record's meaning changed; a reader that accepts the old version "
+            "will treat a planned row as a cleared one"
+        )
+        src = inspect.getsource(rail._read_undo)
+        assert "expected_version=UNDO_SCHEMA" in src
+
+    def test_the_undo_reports_planned_and_cleared_as_DIFFERENT_numbers(
+        self, monkeypatch
+    ):
+        """An operator must be able to see the gap, or they will read a short
+        receipt as data loss and go looking for a way to force the rest back."""
+
+        async def _read(identity):
+            return {
+                "plan_hash": "abc123def456",
+                "taken_at": "t",
+                "rows": [UNDO_ROWS[0]],
+                "rows_planned": UNDO_ROWS,
+                "receipt_complete": True,
+            }, "ok"
+
+        monkeypatch.setattr(rail, "_read_undo", _read)
+        session = _FakeSession([CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, undo_identity="repair:x:undo:1"))
+
+        assert out["rows_in_record"] == 1
+        assert out["rows_planned_in_record"] == 2
+        assert "ESPN_ID_MOVED" in out["note"]
