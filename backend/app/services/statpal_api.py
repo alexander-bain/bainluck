@@ -888,17 +888,51 @@ class StatPalAPIService(BaseAPIClient):
         if away_score is None and item.get("away_score") is not None:
             away_score = _safe_int(item.get("away_score"))
 
-        # Parse start time — StatPal uses "date" (DD.MM.YYYY) + "time" (HH:MM).
-        # NFL is the exception: its "date" is prose ("Wednesday, September 9,
-        # 2026") and its "time" is venue-local ("7:20 PM"), so neither parses and
-        # the two together would be an hours-wrong answer if they did. It ships
-        # "datetime_utc" (DD.MM.YYYY HH:MM, UTC) instead — prefer it wherever it
-        # appears. NBA/NHL/MLB/soccer carry no such field (measured 2026-09-03),
-        # so this changes nothing for them.
+        # ── START TIME: `datetime_utc` FIRST, AND THIS IS LOAD-BEARING ON THE
+        #    LIVE PATH. Do not "isolate" it to the authority parser.
+        #
+        # StatPal's `date` + `time` pair is UTC on SOME endpoints and VENUE-LOCAL
+        # on others, for the SAME sport, with nothing in the pair to say which.
+        # The tell is two sibling fields: an endpoint that serves a local clock
+        # also serves `timezone` and `datetime_utc`. Measured 2026-09-03:
+        #
+        #   /v1/mlb/season-schedule   time=16:35            no tz, no datetime_utc  -> UTC
+        #   /v1/mlb/livescores        time=12:35  tz="ET"   datetime_utc=16:35      -> LOCAL
+        #   /v1/nfl/livescores        time="6:00 PM" tz="EST" datetime_utc=23:00    -> LOCAL
+        #
+        # Same provider, same sport, same game: `season-schedule` says 16:35 and
+        # `livescores` says 12:35. **9 of 9 live MLB games and 16 of 16 live NFL
+        # games disagree with their own `datetime_utc`, every one of them by the
+        # UTC offset.** Reading the pair as UTC on those endpoints writes a
+        # commence_time four or five hours early.
+        #
+        # That is not theoretical and it is not the authority program's problem
+        # alone. `sync_statpal_schedules` pairs a live row to a scheduled row
+        # with `pair_verdict(fixture.start_time, live_data.start_time)` (#1945),
+        # so a live row read four hours off does not merely carry a wrong time —
+        # it fails to pair, and the live score never reaches the event.
+        #
+        # CERT-842 flagged this preference as a dark-lane change reaching the
+        # live writer and asked for it to be isolated or fenced. Measurement says
+        # fence: isolating it would restore a four-hour error on live MLB today
+        # and on live NFL from 9/10. `tests/test_statpal_local_clock_is_not_utc.py`
+        # pins the live path's use of it in both directions.
         date_str = item.get("date", "")
         time_str = item.get("time", "")
         start_time = _parse_datetime(item.get("datetime_utc"))
         if not start_time and date_str and time_str:
+            if item.get("timezone"):
+                # The pair is venue-local and the field that would convert it is
+                # missing. Parsing it as UTC is a known-wrong answer, so it is
+                # said out loud rather than written silently — this is the shape
+                # that would put a game on the wrong day.
+                logger.warning(
+                    f"StatPal: {item.get('date')} {item.get('time')} carries "
+                    f"timezone={item.get('timezone')!r} but no datetime_utc — "
+                    f"reading a venue-local clock as UTC "
+                    f"({item.get('home', {}).get('name')} v "
+                    f"{item.get('away', {}).get('name')})"
+                )
             start_time = _parse_datetime(f"{date_str} {time_str}")
         if not start_time:
             start_time = _parse_datetime(
@@ -937,10 +971,18 @@ class StatPalAPIService(BaseAPIClient):
             if qs:
                 away_q_scores = qs
 
-        # NFL games have no "id" at all — the key is "contestid" (374/374 games,
-        # measured 2026-09-03). A blank fixture_id is not an absence, it is an
-        # unusable linkage: 8,272 rows once carried '' for exactly this reason
+        # ── `contestid`, AND THIS TOO IS LOAD-BEARING ON THE LIVE PATH.
+        #
+        # NFL games have no "id" at all — the key is "contestid", on 374/374
+        # season-schedule games AND on 16/16 games the LIVE endpoint served on
+        # 2026-09-03. A blank fixture_id is not an absence, it is an unusable
+        # linkage: 8,272 rows once carried '' for exactly this reason
         # (backend/scripts/repair_statpal_fixture_id_blanks.py).
+        #
+        # CERT-842's other half. Same verdict as the time field above, for the
+        # same measured reason: isolating this to the authority parser gives
+        # every live NFL fixture a blank id from 9/10. Fenced, not moved, and
+        # pinned in `tests/test_statpal_local_clock_is_not_utc.py`.
         fixture_id = str(
             item.get("id") or item.get("contestid") or item.get("fixture_id") or ""
         )
