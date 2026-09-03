@@ -198,8 +198,16 @@ describe("ux/1036 — a sportsbook prior says so", () => {
   }) as unknown as TournamentResult;
 
   it("counts and names the books rows", () => {
+    // ux/1040 (CERT-812) EXTENDED this string rather than replacing what it
+    // asserted. Round one's note was the ONLY place the books rung was named,
+    // over a list that identified none of the rows it meant — which is what the
+    // block called "an aggregate footer about unidentified rows". The count is
+    // still correct and still asserted; it now also names the per-row marker it
+    // is a legend for. The test's own title always said "and NAMES the books
+    // rows", which round one did not do.
     expect(prematchSourceNote([row("books"), row("kalshi")])).toBe(
-      "1 of them is a sportsbook opening rather than a prediction market's.",
+      "1 of them is a sportsbook opening rather than a prediction market's, " +
+        "marked books beside the number.",
     );
   });
 
