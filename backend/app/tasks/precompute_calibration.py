@@ -1016,20 +1016,84 @@ KALSHI_LIQUIDITY_RULE_TEXT = (
 # The bid check uses SNAPSHOT provenance (evidence captured over the outcome's
 # life), not the current bid — live bids can clear on resolution.
 POLY_PLACEHOLDER_EXCLUDE = (
-    "(vm.source = 'polymarket'\n"
+    "((vm.source = 'polymarket'\n"
     "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
     "     AND COALESCE(fo.calibration_probability, fo.opening_probability) <= 0.55\n"
     "     AND NOT EXISTS (\n"
     "        SELECT 1 FROM futures_odds_snapshots fos\n"
     "        WHERE fos.outcome_id = fo.id\n"
     "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+    # -- CAL-P992 (#1978, calibration-027 option A, Alex 2026-09-02): PAIR SYMMETRY.
+    #
+    # The clause above is per LEG on a market that has two of them, and Polymarket's
+    # O/U markets are not written symmetrically: only the Over side comes from a real
+    # order book, and the Under is stored as the arithmetic complement with no book of
+    # its own. Measured on `polymarket/basketball/quantity`, the leg clause fires on
+    # 398 Under legs and ZERO Over legs (652 of 1,045 Unders never showed a bid or a
+    # trade at any price; 1,045 of 1,045 Overs did). So it deleted the bookless half of
+    # each pair and published the other half alone — 398 orphan Over legs at a mean
+    # 0.4966 that go on to win 9.8%. The curve was grading half a book against the
+    # venue's settlement.
+    #
+    # The rule is the minimal one: if the exclusion removed one leg of a two-leg
+    # market, the partner may not publish alone. It picks no side, invents no
+    # threshold, and touches only rows that are ALREADY half-excluded — the same
+    # sentence R1 already enforces for the 0.5000 pair, because half a book is not a
+    # forecast.
+    #
+    # NOT CELL-SCOPED, deliberately, and that is Alex's call rather than this file's
+    # convention. `NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS` and
+    # `INCOHERENT_BINARY_EXCLUDED_CELLS` scope by cell because they are SHAPE claims
+    # about a category. This is a coherence claim about the clause directly above it:
+    # wherever that clause fires on one leg of a pair, the survivor is half a book by
+    # construction, and there is no cell in which that is acceptable. Option B (census
+    # first, ship after) was declined because the census happens inside the freeze
+    # window anyway; option C (either bookless leg kills the whole market) is refused
+    # by its own measurement — it removes 91% of the cell and leaves the residual over
+    # the bar.
+    #
+    # It stays ONE constant rather than two composed ones on purpose: every
+    # module-level SQL string here is a hole the calibration fingerprint does not
+    # hash, and `test_a_behaviour_only_input_does_not_widen_the_sql_shaping_hole`
+    # counts them. The pre-CAL-P992 shape is pinned in
+    # `tests/test_calibration_poly_pair_symmetry_992.py` as its own defect arm, which
+    # is where a defect arm belongs anyway.
+    #
+    # Measured effect, through the producer's own chain (artifacts/cal-p991,
+    # reproduced in artifacts/cal-p992):
+    #   polymarket/basketball/quantity  15.43 -> 8.85 pp, price-vs-outcome gap
+    #                                   -9.45 -> -0.35
+    #   polymarket/basketball (cell)     4.42 -> 2.25 pp  (under the bar)
+    #   the `field` control              zero rows moved
+    "\n     OR (vm.source = 'polymarket'\n"
+    "     AND (SELECT COUNT(*) FROM futures_outcomes fo8\n"
+    "          WHERE fo8.market_id = fo.market_id) = 2\n"
+    "     AND EXISTS (\n"
+    "        SELECT 1 FROM futures_outcomes fo9\n"
+    "        WHERE fo9.market_id = fo.market_id AND fo9.id <> fo.id\n"
+    "          AND COALESCE(fo9.calibration_probability,\n"
+    "                       fo9.opening_probability) >= 0.45\n"
+    "          AND COALESCE(fo9.calibration_probability,\n"
+    "                       fo9.opening_probability) <= 0.55\n"
+    "          AND NOT EXISTS (\n"
+    "             SELECT 1 FROM futures_odds_snapshots fos9\n"
+    "             WHERE fos9.outcome_id = fo9.id\n"
+    "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))))"
+    # The closing paren of the doubled opener. Load-bearing: this string is
+    # interpolated as a bare expression (`{POLY_PLACEHOLDER_EXCLUDE} AS
+    # is_poly_placeholder`), so an unwrapped top-level OR would bind against
+    # whatever follows it.
+    ")"
 )
 
 POLY_PLACEHOLDER_RULE_TEXT = (
     "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed "
     "a real bid or trade in any snapshot — Gamma synthetic placeholder prices, not "
     "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
-    "has-bid at 0.43–0.55). Read-side only; never mutates resolutions."
+    "has-bid at 0.43–0.55). Pair-symmetric: on a two-outcome market the partner of "
+    "an excluded leg is excluded with it, because Polymarket writes only the Over "
+    "side from a real book and publishing the survivor alone grades half a book. "
+    "Read-side only; never mutates resolutions."
 )
 
 # Queue #220/221 Item 3 — the EXCLUSION-SYMMETRY census.
