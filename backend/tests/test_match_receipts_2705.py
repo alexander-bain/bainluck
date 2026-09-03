@@ -932,20 +932,9 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
     """
 
     @staticmethod
-    def _summary(never_rows=(), explained_rows=(), phase_rows=(), pass_run=None):
-        """``pass_run`` stands in for the durable per-pass row (#2803/CERT-819).
-
-        Defaults to "never published", the state production was measured in.
-        """
-        from unittest.mock import patch
-
-        from app.utils.matcher_pass_runs import PassRunFact
-
-        fact = pass_run or PassRunFact(
-            phase=mr.PHASE_PASS3_BACKLOG, has_run=False, status="missing",
-        )
-
-        db = _FakeDB(
+    def _coverage_db(never_rows=(), explained_rows=(), phase_rows=()):
+        """The six result sets the endpoint reads, in the order it reads them."""
+        return _FakeDB(
             [
                 _FakeResult([]),                       # reason histogram
                 _FakeResult([_Row(receipts=0, linked=0, oldest=None, newest=None)]),
@@ -957,7 +946,28 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
             scalar=0,
         )
 
-        async def _fake_read(_db, _phase, **_kw):
+    @staticmethod
+    def _summary(never_rows=(), explained_rows=(), phase_rows=(), pass_run=None):
+        """``pass_run`` stands in for the durable per-pass row (#2803/CERT-819).
+
+        Defaults to "no durable row", the state production was measured in —
+        which is published as ``null``, not ``false`` (CERT-824).
+        """
+        from unittest.mock import patch
+
+        from app.utils.matcher_pass_runs import STATUS_NO_RECORD, PassRunFact
+
+        fact = pass_run or PassRunFact(
+            phase=mr.PHASE_PASS3_BACKLOG, has_run=None, status=STATUS_NO_RECORD,
+        )
+        witness_seen: list = []
+
+        db = TestTheCoverageNumberIsHonestAboutItsOwnDenominator._coverage_db(
+            never_rows, explained_rows, phase_rows
+        )
+
+        async def _fake_read(_db, _phase, **kw):
+            witness_seen.append(kw.get("receipt_witness"))
             return fact
 
         with patch("app.utils.matcher_pass_runs.read_pass_run", _fake_read):
@@ -965,6 +975,7 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
                 db=db, market_id=None, external_id=None, event_id=None,
                 reject_reason=None, source=None, limit=50,
             )
+        db.witness_seen = witness_seen
         return out["coverage"], db
 
     def test_the_denominator_is_pass3s_own_eligibility_set_row_for_row(self):
@@ -1069,7 +1080,10 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
             never_rows=[_Row(source="kalshi", n=7480)],
             phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
         )
-        assert cov["backlog_pass_has_run"] is False
+        # Null, not false: no durable row and no receipt witnessing a run means
+        # no evidence, and CERT-824 blocked publishing that as "never ran".
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == "no_record"
         assert cov["receipt_phase_labels_now"] == {mr.PHASE_PASS1_TICKER: 138676}
 
         cov, _ = self._summary(
@@ -1113,6 +1127,85 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
         assert (mr.PHASE_PASS3_BACKLOG in phases_seen) is False, (
             "the old label-census derivation is supposed to be wrong here; if "
             "it is right, this fixture no longer reproduces the erasure"
+        )
+
+    def test_a_lost_record_write_never_reaches_the_admin_as_never_ran(self):
+        """CERT-824 AT THE PUBLISHED SURFACE, with the real reader.
+
+        Every other test in this class stubs ``read_pass_run`` and so proves
+        what the endpoint does with a fact, not which fact it gets. This one
+        runs the real ``record_pass_run`` into a store that refuses the write —
+        the supported non-fatal path — then serves the endpoint through the real
+        ``read_pass_run`` against a healthy store with no row. That is the
+        sequence CERT-824 walked to print ``ran=True, record_stage='error',
+        reported_has_run=False``, and the response must not say ``false``.
+        """
+        from unittest.mock import patch
+
+        from app.utils import matcher_pass_runs as pr
+        from app.utils.durable_state import EnvelopeRead
+
+        async def _write_fails(_envelope):
+            return {"status": "error", "error_class": "OperationalError"}
+
+        async def _healthy_but_empty(_db, _identity, **_kw):
+            return EnvelopeRead(status="missing", tier="durable")
+
+        with patch.multiple(
+            "app.services.durable_snapshots",
+            publish_snapshot_standalone=_write_fails,
+            read_snapshot=_healthy_but_empty,
+        ):
+            stage = asyncio.run(
+                pr.record_pass_run(
+                    phase=mr.PHASE_PASS3_BACKLOG, ran_at=NOW, rows_attempted=3000,
+                )
+            )
+            assert stage["status"] == "error", (
+                "this arm has to exercise a failed record write"
+            )
+            out = _call(
+                db=self._coverage_db(
+                    never_rows=[_Row(source="kalshi", n=7480)],
+                    # Pass 1 has since relabelled every receipt, so the census
+                    # cannot witness the run either. Nothing is left to save it
+                    # except refusing to answer.
+                    phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+                ),
+                market_id=None, external_id=None, event_id=None,
+                reject_reason=None, source=None, limit=50,
+            )
+
+        cov = out["coverage"]
+        assert cov["backlog_pass_has_run"] is not False, (
+            "the backlog pass ran, its record write failed, and the admin was "
+            "told nothing is driving the coverage number down — CERT-824"
+        )
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == pr.STATUS_NO_RECORD
+
+    def test_the_endpoint_hands_the_label_census_over_as_the_witness(self):
+        """The recovery that makes the null above rare rather than permanent.
+
+        The census is already computed for ``receipt_phase_labels_now``; the
+        witness is that same dict, read in the only direction it is sound in.
+        If the endpoint stops passing it, a lost write goes back to being
+        unrecoverable until the next cycle — so this checks the wiring, which
+        no assertion about ``read_pass_run``'s own behaviour can.
+        """
+        _cov, db = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS3_BACKLOG, n=3000)],
+        )
+        assert db.witness_seen == [True], (
+            "a live pass3_backlog label was not offered as a witness"
+        )
+
+        _cov, db = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+        )
+        assert db.witness_seen == [False], (
+            "the witness must be passed as False, not omitted — an absent "
+            "keyword and 'no label' are the same value here only by luck"
         )
 
     def test_a_durable_store_that_does_not_answer_is_not_a_no(self):

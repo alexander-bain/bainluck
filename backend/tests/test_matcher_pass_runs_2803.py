@@ -111,9 +111,11 @@ def _record(store, phase, *, at=NOW, rows=100, eligible=None):
         )
 
 
-def _read(store, phase, *, now=NOW):
+def _read(store, phase, *, now=NOW, witness=None):
     with store.install():
-        return asyncio.run(pr.read_pass_run(object(), phase, now=now))
+        return asyncio.run(
+            pr.read_pass_run(object(), phase, now=now, receipt_witness=witness)
+        )
 
 
 class TestARunThatHappenedStaysHavingHappened:
@@ -211,10 +213,58 @@ class TestItRefusesToTurnNotKnowingIntoNo:
     """``false`` is a claim about the matcher. Everything else is a claim about
     the store, and must not be published as the first."""
 
-    def test_a_pass_that_never_ran_is_false(self):
+    def test_no_row_is_no_evidence_not_a_no(self):
+        """CERT-824. This used to answer ``False`` and call it "genuinely never
+        published". It is not: the failed-write path below lands in exactly this
+        state, so the read cannot tell "never ran" from "ran, write errored"."""
         fact = _read(_FakeDurableStore(), mr.PHASE_PASS3_BACKLOG)
-        assert fact.has_run is False
-        assert fact.status == "missing"
+        assert fact.has_run is None
+        assert fact.status == pr.STATUS_NO_RECORD
+
+    def test_false_is_not_reachable_from_any_read_state(self):
+        """The property stated directly, over every state the store can be in.
+
+        A per-case assertion can be satisfied one case at a time while a new
+        branch quietly adds a sixth that answers ``False``."""
+        from app.utils.durable_state import DurableEnvelope
+
+        identity = pr.pass_run_identity(mr.PHASE_PASS3_BACKLOG)
+        states = {}
+
+        empty = _FakeDurableStore()
+        states["missing"] = _read(empty, mr.PHASE_PASS3_BACKLOG)
+        states["missing+witness"] = _read(
+            empty, mr.PHASE_PASS3_BACKLOG, witness=True
+        )
+
+        down = _FakeDurableStore()
+        down.fail = True
+        states["unavailable"] = _read(down, mr.PHASE_PASS3_BACKLOG)
+
+        wrong = _FakeDurableStore()
+        wrong.upsert(
+            DurableEnvelope.build(
+                identity=identity, schema_version="from-the-future",
+                generated_at=NOW, payload={"phase": mr.PHASE_PASS3_BACKLOG},
+            )
+        )
+        states["wrong_version"] = _read(wrong, mr.PHASE_PASS3_BACKLOG)
+
+        recorded = _FakeDurableStore()
+        _record(recorded, mr.PHASE_PASS3_BACKLOG)
+        states["ok"] = _read(recorded, mr.PHASE_PASS3_BACKLOG)
+
+        for name, fact in states.items():
+            assert fact.has_run is not False, (
+                f"the {name} read published 'the backlog pass never ran', a "
+                "claim no read state can support (CERT-824)"
+            )
+        # …and not vacuous: the states really are distinct, and one is a true.
+        assert {f.status for f in states.values()} >= {
+            pr.STATUS_NO_RECORD, pr.STATUS_WITNESSED, "unavailable",
+            "wrong_version", "ok",
+        }
+        assert states["ok"].has_run is True
 
     def test_a_store_that_does_not_answer_is_unknown(self):
         store = _FakeDurableStore()
@@ -258,6 +308,69 @@ class TestItRefusesToTurnNotKnowingIntoNo:
         store.fail = True
         stage = _record(store, mr.PHASE_PASS3_BACKLOG)
         assert stage["status"] == "error"
+
+    def test_a_run_whose_write_failed_is_not_a_no_once_the_store_recovers(self):
+        """CERT-824'S EXACT SEQUENCE: run -> write error -> recovery -> read.
+
+        The test above is the reason this one has to exist. Because recording is
+        non-fatal — and it must stay non-fatal, a telemetry row cannot be
+        allowed to stop the backlog pass — an errored write is a SUPPORTED
+        outcome that leaves no row. A later healthy read then finds the same
+        empty store a pass that never ran would leave, and the blocked version
+        published that as ``false``: CERT-824 reproduced ``ran=True,
+        record_stage='error', has_run=False``. There is no read that can undo
+        this, so the only repair is that ``false`` is never the answer.
+        """
+        store = _FakeDurableStore()
+
+        store.fail = True                       # the durable store is down…
+        stage = _record(store, mr.PHASE_PASS3_BACKLOG, rows=3000)
+        assert stage["status"] == "error", "this arm must exercise a failed write"
+        assert store.rows == {}, "the failed write must really have left no row"
+
+        store.fail = False                      # …and comes back, healthy.
+        fact = _read(store, mr.PHASE_PASS3_BACKLOG)
+
+        assert fact.has_run is not False, (
+            "a pass that ran was published as 'never ran' because its non-fatal "
+            "record write failed — CERT-824"
+        )
+        assert fact.has_run is None
+        assert fact.status == pr.STATUS_NO_RECORD
+        assert "not 'never ran'" in fact.as_dict(NOW)["note"]
+
+    def test_a_live_receipt_label_witnesses_the_run_the_lost_write_dropped(self):
+        """The same sequence, with the recovery the endpoint actually has.
+
+        Pass 3's flush is the only writer of ``phase=pass3_backlog``, so a live
+        label is proof of a run even with no durable row. Absence of the label
+        proves nothing (that is CERT-819), which is why the witness can only
+        ever turn a null into a true."""
+        store = _FakeDurableStore()
+        store.fail = True
+        assert _record(store, mr.PHASE_PASS3_BACKLOG)["status"] == "error"
+        store.fail = False
+
+        witnessed = _read(store, mr.PHASE_PASS3_BACKLOG, witness=True)
+        assert witnessed.has_run is True
+        assert witnessed.status == pr.STATUS_WITNESSED
+        # It reports no run time, because it does not have one to report.
+        assert witnessed.last_run_at is None
+
+        # And it cannot invent one: no row, no label, still not a claim.
+        assert _read(store, mr.PHASE_PASS3_BACKLOG, witness=False).has_run is None
+
+    def test_the_witness_never_overrides_the_durable_row(self):
+        """The census is the fallback, not the source. If it could outrank the
+        durable row, CERT-819's mutable label would be back in the answer."""
+        store = _FakeDurableStore()
+        _record(store, mr.PHASE_PASS3_BACKLOG, rows=3000)
+
+        for witness in (True, False, None):
+            fact = _read(store, mr.PHASE_PASS3_BACKLOG, witness=witness)
+            assert fact.has_run is True
+            assert fact.status == "ok", "the witness displaced the durable read"
+            assert fact.rows_attempted == 3000
 
 
 class _FakeResult:
@@ -316,8 +429,11 @@ class TestPass3RecordsItsOwnRun:
         assert stats["funnel"]["backlog_run_recorded"] == "ok"
 
     def test_a_pass_skipped_for_budget_records_nothing(self):
-        """It did not run, so it must not say it did. The whole value of the
-        flag is that ``false`` is trustworthy."""
+        """It did not run, so it must not say it did.
+
+        Since CERT-824 removed ``false``, ``true`` is the only falsifiable thing
+        this flag says — which makes this guard the one holding the whole block
+        up, not a symmetry check beside a stronger one."""
         from app.tasks.prediction_market_matching import (
             _BACKLOG_MIN_SECONDS_REMAINING,
         )
@@ -370,3 +486,59 @@ class TestPass3RecordsItsOwnRun:
             "the pass ran, threw, and left no record that it had run"
         )
         assert recorded[0]["phase"] == mr.PHASE_PASS3_BACKLOG
+
+    def test_the_real_pass_survives_a_failed_write_and_is_still_not_a_no(self):
+        """CERT-824 END TO END, through the real functions rather than a fake.
+
+        The two arms above stub ``record_pass_run``, so they prove the call site
+        and nothing about what the call does when the store is down. This one
+        runs the real ``_phase1_pass3_backlog_scan`` against a real
+        ``record_pass_run`` writing into a broken store, lets the store recover,
+        and reads the real ``read_pass_run``. That is the whole path the cert
+        walked to print ``ran=True, record_stage='error', has_run=False``.
+        """
+        from app.tasks import prediction_market_matching as pmm
+
+        store = _FakeDurableStore()
+        store.fail = True
+        stats = {"funnel": {}, "errors": []}
+
+        with store.install():
+            asyncio.run(
+                pmm._phase1_pass3_backlog_scan(
+                    _FakeSession(eligible=36966), stats, NOW, set(), [],
+                    lambda: 700,
+                )
+            )
+
+        # The pass ran (it reported an eligibility count and was not skipped)
+        # and its record write really did fail.
+        assert stats["funnel"].get("backlog_skipped_budget") is not True
+        assert stats["funnel"]["backlog_eligible_total"] == 36966
+        assert stats["funnel"]["backlog_run_recorded"] == "error", (
+            "this arm has to exercise the failed write, not a healthy one"
+        )
+
+        store.fail = False
+        fact = _read(store, mr.PHASE_PASS3_BACKLOG)
+        assert fact.has_run is not False, (
+            "the backlog pass ran, its record write failed, the store came "
+            "back, and the endpoint would have told an admin nothing is "
+            "driving the coverage number down — CERT-824"
+        )
+        assert fact.status == pr.STATUS_NO_RECORD
+
+        # THE CONTROL. Same path, healthy store: the run IS recorded and read
+        # back as true, so the assertion above is not passing because Pass 3
+        # never reaches its recorder.
+        healthy = _FakeDurableStore()
+        clean = {"funnel": {}, "errors": []}
+        with healthy.install():
+            asyncio.run(
+                pmm._phase1_pass3_backlog_scan(
+                    _FakeSession(eligible=36966), clean, NOW, set(), [],
+                    lambda: 700,
+                )
+            )
+        assert clean["funnel"]["backlog_run_recorded"] == "ok"
+        assert _read(healthy, mr.PHASE_PASS3_BACKLOG).has_run is True

@@ -38,11 +38,28 @@ MONOTONE BY CONSTRUCTION, three ways:
 * Nothing deletes these rows. ``publish_snapshot`` is an upsert with no delete
   path, so once true, true.
 
-AND IT REFUSES TO GUESS. ``read_pass_run`` distinguishes "genuinely never
-published" (False) from "the database did not answer" (None/unknown). A
-coverage flag that says ``false`` because a read timed out is the original bug
-with a different cause, so the unknown case is a third value and is published
-as one.
+AND IT REFUSES TO GUESS — INCLUDING ABOUT ITSELF (CERT-824). The first version
+called an absent row "genuinely never published" and answered ``False``. It is
+not. ``record_pass_run`` never fails the matcher, and that rule is not
+negotiable: a telemetry store must never be able to stop the backlog pass. So a
+failed record write is an ACCEPTED path, and it leaves the store in exactly the
+state a pass that never ran leaves it in. A later healthy read cannot tell the
+two apart, and CERT-824 reproduced it end to end — ``pass_actually_ran=True``,
+``record_stage='error'``, ``reported_has_run=False`` — which is the CERT-819
+false negative arriving by a third route. So absence is now published as
+``None``/``no_record``. ``has_run`` is only ever ``True`` (we hold positive
+evidence) or ``None`` (we do not), and ``status`` says which kind of nothing we
+are holding.
+
+THE POSITIVE EVIDENCE THAT SURVIVES A FAILED WRITE is the receipt label census
+the endpoint already computes. That census is unusable as a run history in the
+ABSENT direction — that is CERT-819, and the reason this module exists — but it
+is sound in the PRESENT direction: nothing writes ``phase=pass3_backlog`` except
+``_phase1_pass3_backlog_scan``'s own flush, so a live ``pass3_backlog`` label
+means Pass 3 ran, whatever the durable store says. Callers pass it as
+``receipt_witness`` and an absent row is upgraded to ``True``
+(``witnessed_by_receipts``) instead of guessed at. It can only ever ADD a
+``True``; it cannot manufacture a ``False``, because there are none left.
 """
 
 from __future__ import annotations
@@ -74,6 +91,14 @@ _IDENTITY_PREFIX = "matcher:pass_run:"
 #: ``stale`` and turn "ran in July" into "never ran".
 _NO_AGE_BOUND = float("inf")
 
+#: No durable row, and nothing else witnessing a run. NOT "never ran" — a run
+#: whose non-fatal record write failed looks identical from here (CERT-824).
+STATUS_NO_RECORD = "no_record"
+
+#: No durable row, but a live ``pass3_backlog`` receipt label proves a run
+#: happened. Sound because only Pass 3's own flush writes that label.
+STATUS_WITNESSED = "witnessed_by_receipts"
+
 
 def pass_run_identity(phase: str) -> str:
     """The durable identity for one matcher pass.
@@ -87,9 +112,10 @@ def pass_run_identity(phase: str) -> str:
 class PassRunFact:
     """What we can honestly say about whether ``phase`` has ever run.
 
-    ``has_run`` is deliberately tri-state. ``None`` means the durable store did
-    not answer, which is NOT the same claim as "never ran" and must not be
-    published as one.
+    ``has_run`` is ``True`` or ``None``, and never ``False``. ``None`` means we
+    hold no evidence of a run — because the store did not answer, or because
+    there is no row and nothing else witnesses one. Neither is the claim "it
+    never ran", and CERT-824 blocked publishing them as one.
     """
 
     phase: str
@@ -122,8 +148,14 @@ class PassRunFact:
             "note": (
                 "Durable and monotone: read from durable_state_snapshots, one "
                 "identity per pass, so a later Pass 1/2 attempt overwriting the "
-                "receipt's phase label cannot unmake it. has_run null means the "
-                "durable store did not answer — that is not 'never ran'."
+                "receipt's phase label cannot unmake it. has_run is true or "
+                "null, NEVER false: recording a run is non-fatal by design, so "
+                "a run whose record write failed leaves the store looking "
+                "exactly like a pass that never ran, and null is the only "
+                "honest answer to that. null means no evidence of a run — that "
+                "is not 'never ran'; read status for which kind of nothing it "
+                "is, and the matcher's funnel.backlog_run_recorded for whether "
+                "the last write errored."
             ),
         }
 
@@ -207,9 +239,20 @@ def _payload_int(payload: Any, key: str) -> Optional[int]:
 
 
 async def read_pass_run(
-    db: AsyncSession, phase: str, *, now: Optional[datetime] = None
+    db: AsyncSession,
+    phase: str,
+    *,
+    now: Optional[datetime] = None,
+    receipt_witness: Optional[bool] = None,
 ) -> PassRunFact:
-    """Has ``phase`` ever run? Tri-state, and it says which state and why."""
+    """Has ``phase`` ever run? ``True`` or ``None``, and it says why.
+
+    ``receipt_witness`` is the caller's answer to "is a receipt carrying this
+    phase's label alive right now?". Pass it when you already have the census —
+    it is the one signal that survives a failed durable write. Presence proves a
+    run; absence proves nothing (CERT-819), so ``False``/``None`` here changes
+    nothing.
+    """
     from app.services.durable_snapshots import read_snapshot
 
     # NOTE ON THE CALL'S SHAPE: the closing paren is kept on the last argument
@@ -233,8 +276,14 @@ async def read_pass_run(
         )
 
     if read.missing:
-        # The one case that is genuinely a "no": the row was never written.
-        return PassRunFact(phase=phase, has_run=False, status=read.status)
+        # NO ROW IS NOT A NO (CERT-824). `record_pass_run` returns an `error`
+        # stage instead of raising — on purpose, a record must never be a
+        # constraint on the matcher — so "ran, write failed" and "never ran"
+        # both land here and are indistinguishable. The census is the only
+        # thing that can still tell us, and only when it says yes.
+        if receipt_witness:
+            return PassRunFact(phase=phase, has_run=True, status=STATUS_WITNESSED)
+        return PassRunFact(phase=phase, has_run=None, status=STATUS_NO_RECORD)
 
     if not read.ok or read.envelope is None:
         # unavailable / malformed / wrong_version / wrong_type. We do not know,

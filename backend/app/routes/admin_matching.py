@@ -4730,7 +4730,9 @@ async def match_receipts(
     refusal ``not_game_level``. ``by_source`` publishes the composition
     (``explained_no_game_here``) rather than narrowing the denominator to hide
     it, and ``backlog_pass_has_run`` says whether the pass that drives the
-    number down has ever written a row.
+    number down is known to have run — ``true`` or ``null``, never ``false``,
+    because a run whose record write failed leaves no more trace than a run that
+    never happened (CERT-824).
 
     This is a RECORD, not a simulation. ``/prediction-markets/match-trace`` next
     door re-runs the matching logic against today's data and answers "what would
@@ -5090,9 +5092,17 @@ async def match_receipts(
     # 3 runs, so "has the mechanism run" is the fact that makes it actionable;
     # deriving it from a mutable label meant Pass 1/2 re-attempting the same
     # markets could report "never ran" minutes after it ran (CERT-819).
-    # Tri-state on purpose: null is "the durable store did not answer", which is
-    # not the same claim as false.
-    backlog_run = await read_pass_run(db, PHASE_PASS3_BACKLOG)
+    # NEVER FALSE (CERT-824): recording a run is non-fatal by design, so an
+    # absent row is "ran, and the write failed" as much as it is "never ran".
+    # null is the honest answer, and the census above is handed over as the one
+    # witness that survives a failed write — a live pass3_backlog label proves a
+    # run even with no durable row. Only Pass 3's flush writes that label, so
+    # the witness can add a true and cannot invent one.
+    backlog_run = await read_pass_run(
+        db,
+        PHASE_PASS3_BACKLOG,
+        receipt_witness=PHASE_PASS3_BACKLOG in phases_seen,
+    )
 
     return {
         "totals": {
@@ -5156,8 +5166,13 @@ async def match_receipts(
                 "this as a count of missing links. Split by source because one "
                 "source's zero can be a fact about the writer rather than about "
                 "coverage. It can only fall while the backlog pass runs: "
-                "backlog_pass_has_run false means no mechanism is driving it, "
-                "and null means we could not find out — do not read null as no."
+                "backlog_pass_has_run true means the mechanism driving it down "
+                "has run at least once. It is never false — recording a run is "
+                "non-fatal, so a run whose record write failed leaves no trace "
+                "a pass that never ran would not also leave — and null means we "
+                "found no evidence of one. DO NOT READ NULL AS NO: read "
+                "backlog_pass.status, and the matcher's "
+                "funnel.backlog_run_recorded, before concluding nothing ran."
             ),
         },
         "by_reason": [
