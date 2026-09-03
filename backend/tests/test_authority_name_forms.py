@@ -70,8 +70,10 @@ from app.utils.authority_id_collisions import (
 from app.utils.authority_name_forms import (
     CLUB_INITIALISMS,
     CONTESTED_RESIDUALS,
+    EXPECTED_COLLISIONS,
     canonical_forms,
     composed_forms,
+    synonym_forms,
 )
 from app.utils.name_normalization import normalize_team_name_for_matching
 
@@ -79,66 +81,21 @@ CORPUS = (
     Path(__file__).parent / "fixtures" / "authority_team_name_corpus_20260903.json.gz"
 )
 
-#: Canonical forms reached by more than one spelling in the real corpus.
-#: EVERY ONE IS THE SAME CLUB WRITTEN TWO WAYS — that is what makes them the
-#: rule working rather than the rule failing. Judged by hand, once, from the
-#: sweep's output; a new entry appearing here is a claim that two more spellings
-#: are one team, and it must be judged the same way before it is added.
-EXPECTED_COLLISIONS = {
-    "aguilas": {"aguilas", "aguilas fc"},
-    "al anwar": {"al anwar", "al-anwar"},
-    "al ittihad": {"al ittihad", "al-ittihad"},
-    "al shabab": {"al shabab", "al-shabab"},
-    "alianza": {"alianza", "alianza fc"},
-    "andorra": {"andorra", "andorra cf"},
-    "arkansas pine bluff": {"arkansas pine bluff", "arkansas-pine bluff"},
-    "atalanta": {"atalanta", "atalanta bc"},
-    "augsburg": {"augsburg", "fc augsburg"},
-    "austin": {"austin", "austin fc"},
-    "brighton and hove albion": {"brighton & hove albion", "brighton and hove albion"},
-    "cadiz": {"cadiz", "cadiz cf"},
-    "charlotte": {"charlotte", "charlotte fc"},
-    "chelsea": {"chelsea", "chelsea fc"},
-    "chicago fire": {"chicago fire", "chicago fire fc"},
-    "cincinnati": {"cincinnati", "fc cincinnati"},
-    "columbus crew": {"columbus crew", "columbus crew sc"},
-    "dallas": {"dallas", "fc dallas"},
-    "deportivo de la coruna": {"deportivo de la coruna", "rc deportivo de la coruna"},
-    "elche": {"elche", "elche cf"},
-    "everton": {"everton", "everton fc"},
-    "freiburg": {"freiburg", "sc freiburg"},
-    "fulham": {"fulham", "fulham fc"},
-    "hawaii": {"hawai'i", "hawaii"},
-    "hong kong": {"hong kong", "hong kong fc"},
-    "houston dynamo": {"houston dynamo", "houston dynamo fc"},
-    "le havre": {"le havre", "le havre ac"},
-    "le mans": {"le mans", "le mans fc"},
-    "lens": {"lens", "rc lens"},
-    "loneer kavanagh": {"lone'er kavanagh", "loneer kavanagh"},
-    "maryland eastern shore": {"maryland eastern shore", "maryland-eastern shore"},
-    "milan": {"ac milan", "milan"},
-    "montreal": {"cf montreal", "montreal"},
-    "nashville": {"nashville", "nashville sc"},
-    "nautico": {"nautico", "nautico fc"},
-    "new york city": {"new york city", "new york city fc"},
-    "orlando city": {"orlando city", "orlando city sc"},
-    "osasuna": {"ca osasuna", "osasuna"},
-    "paderborn": {"paderborn", "sc paderborn"},
-    "paris saint germain": {"paris saint germain", "paris saint-germain"},
-    "police": {"police", "police fc"},
-    "porto": {"fc porto", "porto"},
-    "saint etienne": {"saint etienne", "saint-etienne"},
-    "sevilla": {"sevilla", "sevilla fc"},
-    "siu edwardsville cougars": {
-        "siu edwardsville cougars",
-        "siu-edwardsville cougars",
-    },
-    "toronto": {"toronto", "toronto fc"},
-    "ut arlington mavericks": {"ut arlington mavericks", "ut-arlington mavericks"},
-    "valencia": {"valencia", "valencia cf"},
-    "vancouver whitecaps": {"vancouver whitecaps", "vancouver whitecaps fc"},
-    "vasco da gama": {"vasco da gama", "vasco da gama ac"},
-}
+#: The affix list as this suite expects to find it, declared HERE as a literal
+#: rather than read from the module under test.
+#:
+#: A GUARD MAY NOT ITERATE THE THING IT IS GUARDING. The first version of
+#: ``test_the_affix_list_is_observable`` looped over ``CLUB_INITIALISMS``
+#: itself, so emptying that constant emptied the loop, the body never ran, and
+#: the test PASSED — measured, not supposed: with ``CLUB_INITIALISMS =
+#: frozenset()`` the guard written to catch exactly that exited 0. The mutation
+#: battery scored the mutant killed only because a different test caught it.
+#:
+#: Iterating this literal fixes it twice over: the loop body runs whatever the
+#: production constant says, and the equality assertion below fails the moment
+#: the two lists differ in either direction — an affix deleted, or one added
+#: without a real row to justify it (see the constant's own comment).
+EXPECTED_CLUB_INITIALISMS = frozenset({"fc", "sc", "ac", "bc", "cf", "ca", "rc"})
 
 
 def _record(home: dict, away: dict, **kwargs) -> AuthorityRecord:
@@ -484,13 +441,13 @@ def test_no_new_fusion_across_the_real_corpus():
     ), "the fixture is the guard; a short one proves nothing"
 
     found: dict[str, set[str]] = defaultdict(set)
-    for names in corpus.values():
+    for sport, names in corpus.items():
         buckets: dict[str, set[str]] = defaultdict(set)
         for name in names:
             base = normalize_team_name_for_matching(name)
             if not base:
                 continue
-            for form in canonical_forms(name):
+            for form in canonical_forms(name) | synonym_forms(name, sport):
                 buckets[form].add(base)
         for form, bases in buckets.items():
             if len(bases) > 1:
@@ -518,8 +475,17 @@ def test_the_affix_list_is_observable():
     that gives both sides the same affix agrees whether or not the affix is
     listed. Emptying ``CLUB_INITIALISMS`` must fail this test; it would survive
     a suite of symmetric cases untouched.
+
+    The iteration is over :data:`EXPECTED_CLUB_INITIALISMS`, the test file's own
+    literal, and NOT over the production constant — see that literal's comment
+    for the vacuity this avoids and for the measurement that found it.
     """
-    for affix in CLUB_INITIALISMS:
+    assert CLUB_INITIALISMS == EXPECTED_CLUB_INITIALISMS, (
+        "the shipped affix list no longer matches the one this suite proves. "
+        "Every entry needs a production row that exercises it — re-derive with "
+        "scripts/audit_authority_name_forms.py, then update the literal here"
+    )
+    for affix in EXPECTED_CLUB_INITIALISMS:
         assert canonical_forms(f"{affix.upper()} Rovers") & canonical_forms(
             "Rovers"
         ), affix

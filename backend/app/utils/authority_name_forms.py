@@ -37,15 +37,23 @@ O'Connell`` compare equal to ``Oleksandra Oliynykova``.  ``Ohio State
 Buckeyes`` reduces only to itself, so no reduction can walk it toward ``Texas
 State Bobcats``.
 
-**3. What this module will NOT do: synonyms.**  Ten of the 52 disagreements are
-genuine vocabulary differences — ``App State``/``Appalachian State``,
-``Southern Miss``/``Southern Mississippi``, ``Athletic Bilbao``/``Athletic
-Club``, ``Nicholls``/``Nicholls State``, and ``Houston Baptist``/``Houston
-Christian``, which is not even an alias but a university that renamed itself.
-No structural rule reaches those, and the rule that would — token overlap, or
-accepting a prefix — is precisely the rule that also concludes ``Ohio State``
-and ``Texas State`` are the same school.  They stay ``teams_disagree``, they
-stay safe (nothing is written), and they are filed rather than guessed.
+**3. Synonyms, as a table and never as a rule** (:func:`synonym_forms`, #2823).
+The rest of the disagreements are genuine vocabulary differences — ``App
+State``/``Appalachian State``, ``Athletic Bilbao``/``Athletic Club``,
+``Sporting Lisbon``/``Sporting CP``.  No structural rule reaches those, and the
+rule that would — token overlap, or accepting a prefix — is precisely the rule
+that also concludes ``Ohio State`` and ``Texas State`` are the same school.
+
+So this module does not widen for them; it simply *knows* about twelve named
+clubs, in an exact directional ``(sport, our name) -> their name`` lookup.  The
+distinction is the whole safety argument and it is not a stylistic one: a rule
+extrapolates to names nobody has judged, and a lookup cannot.  Adding an entry
+is a claim about one club, and it is checked against the whole corpus by the
+same sweep as everything else.
+
+``Houston Baptist``/``Houston Christian`` is deliberately NOT in that table: the
+university renamed itself in 2022, so an alias would preserve a stale name we
+are also showing to users.  That one is a data correction.
 
 ═══ HOW THE WIDENING IS PROVED NOT TO FUSE ═══
 
@@ -70,11 +78,14 @@ from typing import Any
 from app.utils.name_normalization import normalize_team_name_for_matching
 
 __all__ = [
+    "AUTHORITY_SYNONYMS",
     "CLUB_INITIALISMS",
     "COMPOSABLE_KEYS",
     "CONTESTED_RESIDUALS",
+    "EXPECTED_COLLISIONS",
     "canonical_forms",
     "composed_forms",
+    "synonym_forms",
 ]
 
 #: Standalone initialisms that prefix or suffix a club's name without being part
@@ -122,6 +133,148 @@ CLUB_INITIALISMS = frozenset({"fc", "sc", "ac", "bc", "cf", "ca", "rc"})
 CONTESTED_RESIDUALS = frozenset(
     {"barcelona", "paris", "rangers", "lusitania", "al ahli"}
 )
+
+#: Canonical forms reached by more than one spelling in the real corpus, and
+#: judged BENIGN: every one is the same club written two ways, which is the rule
+#: working rather than the rule failing. The exact sibling of
+#: :data:`CONTESTED_RESIDUALS` above — that list is the forms two DIFFERENT clubs
+#: reach, which are refused; this one is the forms two spellings of ONE club
+#: reach, which are the point.
+#:
+#: Judged by hand, once, from ``scripts/audit_authority_name_forms.py``'s output.
+#: A new entry is a claim that two more spellings are one team and must be judged
+#: the same way before it is added.
+#:
+#: **It lives here, in the module whose behaviour it describes, so that the guard
+#: test and the production sweep cannot disagree about what is already known.**
+#: Both import it. Forking it would let the script call a collision new that the
+#: test calls known, which is the failure mode that made the script's exit code
+#: meaningless in the first place: it returned ``1`` for any collision at all, so
+#: a perfectly healthy corpus exited ``1`` and nobody could read the code.
+EXPECTED_COLLISIONS = {
+    "aguilas": {"aguilas", "aguilas fc"},
+    "al anwar": {"al anwar", "al-anwar"},
+    "al ittihad": {"al ittihad", "al-ittihad"},
+    "al shabab": {"al shabab", "al-shabab"},
+    "alianza": {"alianza", "alianza fc"},
+    "andorra": {"andorra", "andorra cf"},
+    "arkansas pine bluff": {"arkansas pine bluff", "arkansas-pine bluff"},
+    "atalanta": {"atalanta", "atalanta bc"},
+    "augsburg": {"augsburg", "fc augsburg"},
+    "austin": {"austin", "austin fc"},
+    "brighton and hove albion": {"brighton & hove albion", "brighton and hove albion"},
+    "cadiz": {"cadiz", "cadiz cf"},
+    "charlotte": {"charlotte", "charlotte fc"},
+    "chelsea": {"chelsea", "chelsea fc"},
+    "chicago fire": {"chicago fire", "chicago fire fc"},
+    "cincinnati": {"cincinnati", "fc cincinnati"},
+    "columbus crew": {"columbus crew", "columbus crew sc"},
+    "dallas": {"dallas", "fc dallas"},
+    "deportivo de la coruna": {"deportivo de la coruna", "rc deportivo de la coruna"},
+    "elche": {"elche", "elche cf"},
+    "everton": {"everton", "everton fc"},
+    "freiburg": {"freiburg", "sc freiburg"},
+    "fulham": {"fulham", "fulham fc"},
+    "hawaii": {"hawai'i", "hawaii"},
+    "hong kong": {"hong kong", "hong kong fc"},
+    "houston dynamo": {"houston dynamo", "houston dynamo fc"},
+    "le havre": {"le havre", "le havre ac"},
+    "le mans": {"le mans", "le mans fc"},
+    "lens": {"lens", "rc lens"},
+    "loneer kavanagh": {"lone'er kavanagh", "loneer kavanagh"},
+    "maryland eastern shore": {"maryland eastern shore", "maryland-eastern shore"},
+    "milan": {"ac milan", "milan"},
+    "montreal": {"cf montreal", "montreal"},
+    "nashville": {"nashville", "nashville sc"},
+    "nautico": {"nautico", "nautico fc"},
+    "new york city": {"new york city", "new york city fc"},
+    "orlando city": {"orlando city", "orlando city sc"},
+    "osasuna": {"ca osasuna", "osasuna"},
+    "paderborn": {"paderborn", "sc paderborn"},
+    "paris saint germain": {"paris saint germain", "paris saint-germain"},
+    "police": {"police", "police fc"},
+    "porto": {"fc porto", "porto"},
+    "saint etienne": {"saint etienne", "saint-etienne"},
+    "sevilla": {"sevilla", "sevilla fc"},
+    "siu edwardsville cougars": {
+        "siu edwardsville cougars",
+        "siu-edwardsville cougars",
+    },
+    "toronto": {"toronto", "toronto fc"},
+    "ut arlington mavericks": {"ut arlington mavericks", "ut-arlington mavericks"},
+    "valencia": {"valencia", "valencia cf"},
+    "vancouver whitecaps": {"vancouver whitecaps", "vancouver whitecaps fc"},
+    "vasco da gama": {"vasco da gama", "vasco da gama ac"},
+    # ── Reached by :data:`AUTHORITY_SYNONYMS` rather than by a reduction ──
+    # These five fire because we hold BOTH spellings as event rows, so the alias
+    # makes our own two names meet. That is the table working, and it is why the
+    # sweep runs over the synonyms too: an alias is a hand-written claim that two
+    # spellings are one club, and this is where the claim is checked against the
+    # corpus instead of taken on trust. The other seven aliases do not appear
+    # here only because we never stored ESPN's spelling of those clubs.
+    "athletic club": {"athletic bilbao", "athletic club"},
+    "hamburg sv": {"hamburg sv", "hamburger sv"},
+    "red bull new york": {"new york red bulls", "red bull new york"},
+    "slavia prague": {"slavia prague", "slavia praha"},
+    "sporting cp": {"sporting cp", "sporting lisbon"},
+}
+
+#: Names the authority writes differently from us, where no structural rule
+#: reaches the difference and none safely could. #2823.
+#:
+#: **DIRECTIONAL AND EXACT**: ``(sport_key, our normalized name) -> the
+#: authority's normalized name``, and nothing else. It is a table of statements
+#: about named clubs, not a rule — which is the entire point. Every *rule* that
+#: reaches these (token overlap, a shared prefix, "drop a common word") also
+#: concludes ``Ohio State`` and ``Texas State`` are one school, and that fusion
+#: is E416569, the row #2792 is titled for, sitting in the very same 17
+#: disagreements these 12 entries come from. A lookup cannot generalise, so it
+#: cannot generalise wrongly.
+#:
+#: Directional because the reverse is not implied: knowing ESPN calls our
+#: ``Sporting Lisbon`` ``Sporting CP`` does not license reading every
+#: ``Sporting`` as Lisbon. Only OUR side is widened, and only into the one
+#: spelling named here.
+#:
+#: **Keyed on sport, and each key earned by a row the rail actually refused.**
+#: Measured 2026-09-03 over the whole 685-row anchored window: these 12 entries
+#: clear 16 of the 17 ``teams_disagree`` rows, and the 17th is E416569, which
+#: must keep disagreeing forever.
+#:
+#: The sport key costs coverage, deliberately. Every club here also appears
+#: under other sport keys — ``Sporting Lisbon`` has 26 rows in
+#: ``soccer_portugal_primeira_liga`` against the 5 in the Champions League that
+#: earned its entry, and ``Athletic Bilbao`` has 12 in ``soccer_other``. None of
+#: those rows produced a refusal in the census, so an entry for them would be a
+#: guess, and this module's standing rule is that a list nobody can point at a
+#: row for is a list that grows until it collides. Re-run
+#: ``scripts/audit_anchor_schedule.py --verdict teams_disagree`` when a new one
+#: appears and add the pair it names.
+#:
+#: NOT HERE: ``Houston Baptist Huskies`` -> ``Houston Christian Huskies``. The
+#: university renamed itself in 2022, so our stored name is four years stale and
+#: an alias would preserve it — including on every surface a user reads. That
+#: one is a data correction, not a synonym.
+AUTHORITY_SYNONYMS: dict[tuple[str, str], str] = {
+    # NCAAF — an abbreviation ESPN writes as a word, or a dropped "State".
+    ("americanfootball_ncaaf", "appalachian state mountaineers"): (
+        "app state mountaineers"
+    ),
+    ("americanfootball_ncaaf", "southern mississippi golden eagles"): (
+        "southern miss golden eagles"
+    ),
+    ("americanfootball_ncaaf", "southeastern louisiana lions"): "se louisiana lions",
+    ("americanfootball_ncaaf", "nicholls state colonels"): "nicholls colonels",
+    ("americanfootball_ncaaf", "sam houston state bearkats"): "sam houston bearkats",
+    # Soccer — genuine aliases, a language difference, and a word reorder.
+    ("soccer_spain_la_liga", "athletic bilbao"): "athletic club",
+    ("soccer_spain_la_liga", "real racing club de santander"): "racing santander",
+    ("soccer_usa_mls", "new york red bulls"): "red bull new york",
+    ("soccer_uefa_champs_league", "lask"): "lask linz",
+    ("soccer_uefa_champs_league", "sporting lisbon"): "sporting cp",
+    ("soccer_uefa_champs_league", "slavia praha"): "slavia prague",
+    ("soccer_germany_bundesliga", "hamburger sv"): "hamburg sv",
+}
 
 #: The ESPN competitor fields that hold a *part* of a club's name — a place, a
 #: mascot, or a short form of either. ``displayName`` is excluded on purpose: it
@@ -226,6 +379,29 @@ def canonical_forms(name: Any) -> frozenset[str]:
         if stripped:
             forms.add(stripped)
     return frozenset(forms)
+
+
+def synonym_forms(name: Any, sport_key: Any) -> frozenset[str]:
+    """The authority's own spelling of ``name``, if the table names one.
+
+    **Deliberately NOT part of :func:`canonical_forms`.** That helper is applied
+    to both sides and its whole safety argument is that it reduces them
+    identically; a synonym is asymmetric — it is a claim about what the
+    AUTHORITY calls a team we hold — so folding it in would make that docstring
+    a lie and would also, applied to the authority's side, let a mapping run
+    backwards. Call sites union the two explicitly, ours-side only.
+
+    One hop, never a chain: the target is expanded through
+    :func:`canonical_forms`, which does not itself consult the table, so
+    ``A -> B`` and ``B -> C`` can never combine into ``A -> C``.
+    """
+    if not isinstance(name, str) or not isinstance(sport_key, str):
+        return frozenset()
+    base = normalize_team_name_for_matching(name)
+    if not base:
+        return frozenset()
+    target = AUTHORITY_SYNONYMS.get((sport_key, base))
+    return canonical_forms(target) if target else frozenset()
 
 
 def composed_forms(block: dict[str, Any]) -> frozenset[str]:
