@@ -20,6 +20,7 @@ import { getCategoryForLeague } from "@/lib/sportCategories";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import { admittedPropStripRows } from "@/lib/sports/propStripAdmission";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
@@ -109,6 +110,16 @@ export default function SportsPage() {
     groupedFeedKey(user?.uid),
     () => fetchGroupedFeed({ limit: 20, sportsOnly: true }),
     { refreshInterval: 120000, keepPreviousData: true }
+  );
+
+  // UX-P276 (#2710) — the rows the strip will actually put on screen. Every
+  // consumer below reads THIS, not `groupedData.feed`: the section gate, the
+  // count beside the heading, the "markets below" claim in the empty slate, and
+  // the renderer itself. Counting arrived rows while rendering admitted ones is
+  // the #2646 class — a page stating a number bigger than what it ships.
+  const admittedPropRows = useMemo(
+    () => admittedPropStripRows(groupedData?.feed),
+    [groupedData?.feed],
   );
 
   // =========================================================================
@@ -604,7 +615,7 @@ export default function SportsPage() {
               <SportsEmptySlate
                 mode="no-games"
                 hasMarketsBelow={
-                  !!marketsSection || (!!groupedData && groupedData.feed.length > 0)
+                  !!marketsSection || admittedPropRows.length > 0
                 }
                 onRefresh={() => refreshFeed()}
               />
@@ -618,7 +629,7 @@ export default function SportsPage() {
             {/* Player Props & Progressions strip — BELOW the games feed (#1102).
                 Renders the shared Quantity kernel (QuantityGroup) per question,
                 never a naked pooled strip without its context. */}
-            {groupedData && groupedData.feed.length > 0 && (
+            {admittedPropRows.length > 0 && (
               <section>
                 {gameSections.length > 0 && (
                   <div className="border-t border-surface-border/30 -mt-1 mb-5" />
@@ -634,10 +645,10 @@ export default function SportsPage() {
                     Player Props & Progressions
                   </h2>
                   <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                    {groupedData.feed.length}
+                    {admittedPropRows.length}
                   </span>
                 </motion.div>
-                <GroupedFeedRenderer items={groupedData.feed} compact />
+                <GroupedFeedRenderer items={admittedPropRows} compact />
               </section>
             )}
 

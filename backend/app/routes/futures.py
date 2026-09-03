@@ -5,6 +5,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from statistics import mean, median
 from typing import Optional
 
@@ -1846,6 +1847,57 @@ async def get_playoff_grid(
     }
 
 
+def _market_has_priced_outcome(market: dict) -> bool:
+    """Does this grouped-feed market carry a probability the card can print?
+
+    #2710. The strip renders one card per row with no admission of its own, so a
+    market with no outcomes, or with outcomes that are all unpriced, becomes a
+    card whose body is the words "No outcomes available" or a column of dashes.
+
+    `Decimal` IS THE NORMAL CASE HERE AND MUST BE ACCEPTED EXPLICITLY.
+    `FuturesOutcome.probability` is a property returning `current_probability`,
+    whose column is `Numeric(7, 6)`, so SQLAlchemy hands back a
+    `decimal.Decimal` — the `Mapped[Optional[float]]` annotation on that column
+    describes the intent, not the runtime type. `isinstance(x, (int, float))`
+    is False for a Decimal, and so is `isinstance(x, numbers.Real)` (verified in
+    the interpreter, not recalled: Decimal registers as `numbers.Number` only).
+    Either of those spellings would have dropped EVERY ungrouped market and
+    emptied the strip. This is the same Decimal-on-this-endpoint seam as #2554.
+
+    A truthiness test would be wrong in the other direction: it discards a
+    genuine 0.0, which is a real and printable "0%". `bool` is excluded because
+    `isinstance(True, int)` is True, and a string is refused outright — a
+    stringified probability (#2554's shape) is not something the card can
+    render, so it must not readmit a row by merely looking truthy.
+    """
+    for outcome in market.get("outcomes") or ():
+        probability = outcome.get("probability")
+        if isinstance(probability, bool):
+            continue
+        if isinstance(probability, (int, float, Decimal)):
+            return True
+    return False
+
+
+def select_ungrouped_markets(
+    market_dicts: list, grouped_market_ids: set, limit: int
+) -> list:
+    """The ungrouped markets the grouped feed will ship, at most ``limit``.
+
+    #2710. Exists as a named function rather than an inline comprehension so the
+    ONE property that makes it a fix is testable: the priceless rows come out
+    BEFORE the truncation, so their slots are backfilled from the ``limit * 5``
+    rows the route already loaded. Filtering after the slice would leave the
+    reader short — 18 cards where 20 were asked for — which is a different and
+    worse outcome than the bug it replaces.
+    """
+    return [
+        m
+        for m in market_dicts
+        if m["id"] not in grouped_market_ids and _market_has_priced_outcome(m)
+    ][:limit]
+
+
 async def _read_grouped_feed_cache(cache_key: str):
     """Fresh-then-stale read of the shared grouped-feed entry.
 
@@ -2152,10 +2204,26 @@ async def grouped_feed(
             "outcome_count": len(outcomes),
         })
 
-    ungrouped = [
-        m for m in market_dicts
-        if m["id"] not in grouped_market_ids
-    ][:limit]
+    # #2710 — DROP THE PRICELESS ONES BEFORE TRUNCATING, NOT AFTER.
+    #
+    # Alex, on mobile /sports: "every outcome is a dash … a card with no number
+    # is not shown." A market whose outcomes are all unpriced (or absent
+    # entirely) renders a full card reading "No outcomes available" or a column
+    # of dashes. Measured on the served payload at the page's own limit of 20 on
+    # 2026-09-03: 2 of 20 rows carried `outcomes: []`.
+    #
+    # The filter goes HERE, above the slice, because the slice is what makes it
+    # worth doing: dropping these after `[:limit]` would leave the reader with
+    # 18 cards, while dropping them before backfills the two slots from the
+    # `limit * 5` rows already loaded. Same reason #2789 sorted above its own
+    # truncation rather than below it.
+    #
+    # `status` is filtered to active/open at the top of this route, so there is
+    # no settled arm to preserve here — an unpriced open market has nothing to
+    # put on a card. (The Discover futures arm keeps a zero-outcome card when it
+    # carries an authoritative result; that rule lives in
+    # `contracts/feed_card_admission.json` and governs a different endpoint.)
+    ungrouped = select_ungrouped_markets(market_dicts, grouped_market_ids, limit)
 
     for m in ungrouped:
         feed_items.append({

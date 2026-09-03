@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { marketCategoryLabel } from "@/lib/marketCategoryLabel";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -104,6 +105,10 @@ export default function FuturesCard({
   }));
   const topOutcomes = leaderFirstSlice(labelled, 5);
   const isResolved = market.status === "resolved";
+  // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
+  // truthiness gate and the text it renders are the same value — a chip that
+  // tests `market.category` and prints a derived label can render an empty pill.
+  const categoryLabel = marketCategoryLabel(market.category);
 
   const handlePinClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -137,9 +142,15 @@ export default function FuturesCard({
                   {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
                 </span>
               )}
-              {market.category && (
+              {/* UX-P276 (#2710): the chip says "Game Props", never `game_prop`.
+                  This printed `FuturesMarket.category` straight through, so the
+                  reader got the column value beside the sport name — measured on
+                  the live /sports strip, 16 of 20 rendered cards. The helper's
+                  title-case fallback is what makes an unknown future category
+                  unable to arrive here raw. */}
+              {categoryLabel && (
                 <span className="text-[10px] bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded">
-                  {market.category}
+                  {categoryLabel}
                 </span>
               )}
               {market.source_count && market.source_count > 1 && (
