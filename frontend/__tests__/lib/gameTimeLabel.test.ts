@@ -519,6 +519,51 @@ describe("the live clock — ESPN's PRE-GAME sentence is not a period", () => {
         gameClock: "8:42",
       });
     });
+
+    /**
+     * live/055 (#2815) — the third rule, and the case the shape gate above could
+     * not see.
+     *
+     * The rule-2 dedup is gated on CLOCK_TOKEN_RE precisely so it cannot delete
+     * "1" out of "Bottom 1st" (the test directly above). That gate is correct
+     * and it is also why a settled game slipped through: production event
+     * 15293206 ships `period: "Final"` with `game_clock: "Final"` — identical,
+     * and neither of them clock-shaped — so the event page's chart footer
+     * printed "Final Final 3 - 8".
+     *
+     * Exact equality needs no shape gate: two fields carrying the same string
+     * cannot be two facts. Nothing wider than equality, deliberately — a
+     * substring test over arbitrary strings would re-open the false positive
+     * the gate above exists to prevent, which is why that test runs beside this.
+     */
+    test("a clock that merely repeats the period verbatim is dropped", () => {
+      expect(trustedLiveClock("Final", "Final")).toEqual({
+        period: "Final",
+        gameClock: "",
+      });
+      // Trimmed and case-insensitive: the same word is the same word.
+      expect(trustedLiveClock("Final", " final ")).toEqual({
+        period: "Final",
+        gameClock: "",
+      });
+      expect(trustedLiveClock("Halftime", "Halftime")).toEqual({
+        period: "Halftime",
+        gameClock: "",
+      });
+    });
+
+    test("the verbatim-repeat rule does not fire on a merely similar clock", () => {
+      // "Final/OT" is not "Final". Two different strings are two facts, and this
+      // rule is equality only — it must leave them both standing.
+      expect(trustedLiveClock("Final/OT", "Final")).toEqual({
+        period: "Final/OT",
+        gameClock: "Final",
+      });
+      expect(trustedLiveClock("Final", "0:00")).toEqual({
+        period: "Final",
+        gameClock: "0:00",
+      });
+    });
   });
 
   /**
@@ -666,6 +711,54 @@ describe("anti-drift: one home for the live-clock trust rule", () => {
       // A comment explaining the rule is not a second implementation of it.
       .filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line));
     expect(offenders.map((o) => `${rel}:${o.n}`)).toEqual([]);
+  });
+
+  /**
+   * live/055 (#2815) — WHY THE SCAN ABOVE COULD NOT SEE THE EIGHTH COPY.
+   *
+   * `RAW_FIELD_RE` keys on `espn?.period` / `espn?.game_clock`, which is the
+   * shape the four CARD surfaces read. `components/GamePlayCard.tsx` — the
+   * event page's chart footer — reads the same two facts off a different
+   * carrier: `ActiveChartPoint.period` / `.clock`, assembled by `OddsChart`
+   * from the snapshot series. It was therefore never in scope of the guard,
+   * and it duly grew its own raw `[period, clock].join(" ")`, which printed
+   * "Final Final 3 - 8" on every settled game.
+   *
+   * The lesson is about the guard, not the card: an anti-drift scan pinned to
+   * ONE field name only protects the callers that spell it that way. This
+   * covers the chart-point carrier so a ninth copy cannot arrive through it.
+   */
+  const CHART_POINT_SITES = ["components/GamePlayCard.tsx"];
+  /** `point.period` / `point.clock` — but never `point.clockApprox`, a real separate fact. */
+  const CHART_CLOCK_RE = /\bpoint\??\.\s*(?:period|clock)\b/;
+
+  test.each(CHART_POINT_SITES)("%s imports the shared module", (rel) => {
+    expect(read(rel)).toMatch(/from ["']@\/lib\/gameTimeLabel["']/);
+  });
+
+  test.each(CHART_POINT_SITES)("%s only reads the raw chart clock to delegate it", (rel) => {
+    const offenders = read(rel)
+      .split("\n")
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ line }) => CHART_CLOCK_RE.test(line) && !DELEGATES_RE.test(line))
+      .filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+    expect(offenders.map((o) => `${rel}:${o.n}`)).toEqual([]);
+  });
+
+  /**
+   * The scan above is only worth its line count if it can FAIL. It reads real
+   * files, so a typo'd path or a renamed field would make it pass over nothing
+   * at all — the vacuous-guard trap. This asserts the matcher actually fires on
+   * the pre-fix expression, which is the exact text `GamePlayCard` used to hold.
+   */
+  test("the chart-clock matcher fires on the shape it is meant to catch", () => {
+    const preFix = [
+      "  const periodDisplay = formatPeriod(point.period);",
+      '  const clockText = point.clock ? `${point.clockApprox ? "~" : ""}${point.clock}` : "";',
+    ];
+    expect(preFix.filter((l) => CHART_CLOCK_RE.test(l) && !DELEGATES_RE.test(l))).toHaveLength(2);
+    // ...and does NOT fire on the approximate-clock flag, a genuinely separate field.
+    expect(CHART_CLOCK_RE.test("point.clockApprox ? 1 : 0")).toBe(false);
   });
 
   test("the length heuristic that guessed at this is gone", () => {
