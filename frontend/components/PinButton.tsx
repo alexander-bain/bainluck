@@ -33,7 +33,28 @@
  * and DISCOVER look, and leaves the surfaces that were already right alone.
  */
 
-import { cn } from "@/lib/utils";
+/**
+ * ═══ WHY THIS FILE DOES NOT IMPORT `cn` (LAT-P211) ═══
+ *
+ * `cn` is `twMerge(clsx(...))`, and `tailwind-merge` is 26,985 raw / 7,398 brotli.
+ * This component was the ONLY module in the Discover landing page's eager import
+ * graph that reached `lib/utils`, so `/` downloaded a Tailwind class-conflict
+ * resolver for one button — measured, not assumed: `lib/utils.ts` had exactly one
+ * eager importer on `/`, this file, via `components/discover/shared.tsx`.
+ *
+ * The resolver was doing real work: the Discover caller passed
+ * `className="text-text-muted hover:text-text-secondary"` and relied on `twMerge`
+ * to drop this component's own `text-text-secondary hover:text-text-primary` (and,
+ * when pinned, its `text-amber-600`). LAT-P201 counted exactly those two
+ * divergences here.
+ *
+ * So the override is expressed as a `tone` prop instead of as a class conflict, and
+ * the colour classes are a total lookup table — the component can no longer emit two
+ * classes that fight, so nothing has to resolve them. **There is deliberately no
+ * `className` prop:** re-adding one would let a caller reintroduce the conflict that
+ * `twMerge` used to absorb, silently, and this file no longer has a resolver. Add a
+ * `tone` entry instead.
+ */
 
 export function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
   if (filled) {
@@ -74,6 +95,28 @@ export function pinAriaLabel(pinned: boolean, noun: string): string {
 export const PIN_ICON_SIZE = { labelled: "w-4 h-4", icon: "w-3.5 h-3.5" } as const;
 
 /**
+ * Every colour this button can wear, keyed by `${tone}-${variant}-${pinned}`.
+ *
+ * A total table rather than nested ternaries plus a caller override, so that the
+ * class list can never contain two classes from the same Tailwind group. That is
+ * what makes `twMerge` unnecessary here — see the note at the top of the file.
+ *
+ * `muted` reproduces, exactly, what the Discover ActionBar rendered when it passed
+ * `className="text-text-muted hover:text-text-secondary"` through `twMerge`: the
+ * background still changes when pinned, the text colour does not.
+ */
+export const PIN_TONE = {
+  "default-labelled-true": "bg-amber-500/10 text-amber-600",
+  "default-labelled-false": "bg-surface-elevated text-text-secondary hover:text-text-primary",
+  "default-icon-true": "text-accent-warning",
+  "default-icon-false": "text-text-muted hover:text-text-secondary hover:bg-surface-elevated",
+  "muted-labelled-true": "bg-amber-500/10 text-text-muted hover:text-text-secondary",
+  "muted-labelled-false": "bg-surface-elevated text-text-muted hover:text-text-secondary",
+  "muted-icon-true": "text-text-muted hover:text-text-secondary",
+  "muted-icon-false": "text-text-muted hover:text-text-secondary hover:bg-surface-elevated",
+} as const;
+
+/**
  * What a pin click does, as a pure function — extracted ONLY so it can be tested.
  *
  * There is no `@testing-library/react` in this project; component guards are
@@ -104,7 +147,11 @@ interface PinButtonProps {
   noun?: string;
   /** `icon` for a dense card corner; `labelled` where there is room for the word. */
   variant?: "icon" | "labelled";
-  className?: string;
+  /**
+   * `muted` for a Discover ActionBar, where the pin sits beside share/dismiss and
+   * must not shout. Replaces the old `className` override — see the file header.
+   */
+  tone?: "default" | "muted";
   /** Discover cards live inside a swipe handler — see the note on the click guard. */
   stopPropagation?: boolean;
 }
@@ -115,7 +162,7 @@ export function PinButton({
   atMax = false,
   noun = "market",
   variant = "icon",
-  className,
+  tone = "default",
   stopPropagation = false,
 }: PinButtonProps) {
   const disabled = atMax && !pinned;
@@ -138,19 +185,14 @@ export function PinButton({
       aria-pressed={pinned}
       title={pinTitle(pinned, disabled)}
       aria-label={pinAriaLabel(pinned, noun)}
-      className={cn(
+      className={[
         "inline-flex items-center gap-1.5 rounded-lg transition-colors",
         variant === "labelled" ? "px-3 py-1.5 text-sm font-medium" : "p-1",
-        pinned
-          ? variant === "labelled"
-            ? "bg-amber-500/10 text-amber-600"
-            : "text-accent-warning"
-          : variant === "labelled"
-            ? "bg-surface-elevated text-text-secondary hover:text-text-primary"
-            : "text-text-muted hover:text-text-secondary hover:bg-surface-elevated",
-        disabled && "cursor-not-allowed opacity-30",
-        className,
-      )}
+        PIN_TONE[`${tone}-${variant}-${pinned}`],
+        disabled ? "cursor-not-allowed opacity-30" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       <PinIcon filled={pinned} className={PIN_ICON_SIZE[variant]} />
       {variant === "labelled" && <span>{pinned ? "Pinned" : "Pin"}</span>}

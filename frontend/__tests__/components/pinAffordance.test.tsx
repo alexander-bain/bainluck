@@ -39,7 +39,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-import { PinButton, pinTitle, pinAriaLabel, pinClickAction, PIN_ICON_SIZE } from "../../components/PinButton";
+// The resolver this ship took off the landing page. Imported HERE, in the test,
+// precisely because the shipped component must no longer import it: the guard
+// needs `twMerge` to prove the component does not need it.
+import { twMerge } from "tailwind-merge";
+
+import { PinButton, pinTitle, pinAriaLabel, pinClickAction, PIN_ICON_SIZE, PIN_TONE } from "../../components/PinButton";
 import { ActionBar } from "../../components/discover/shared";
 
 /**
@@ -355,5 +360,131 @@ describe("UX-P234: item 16 — Discover cards can be pinned, and every variant s
     // This ship deliberately wires futures only — the half that pairs with item
     // 15 — and they must be byte-identical rather than sprouting a dead button.
     expect(SHARED).toContain("{pin && (");
+  });
+});
+
+/**
+ * LAT-P211 — THIS BUTTON IS WHY THE LANDING PAGE DOWNLOADED `tailwind-merge`.
+ *
+ * `cn` is `twMerge(clsx(...))` and `tailwind-merge` is 26,985 raw / 7,398 brotli.
+ * Eleven components use `cn`, and exactly ONE of them was in the eager import
+ * graph of `/`: this file, via `components/discover/shared.tsx`. So the Discover
+ * landing page shipped a Tailwind class-conflict resolver for one button.
+ *
+ * It was doing real work. The ActionBar passed
+ * `className="text-text-muted hover:text-text-secondary"` and relied on `twMerge`
+ * to drop this button's own conflicting `text-text-secondary hover:text-text-primary`
+ * (and, when pinned, its `text-amber-600`) — two of the 1,299 load-bearing
+ * divergences LAT-P201 counted app-wide. So the fix is NOT "drop `twMerge` and hope":
+ * the override became a `tone` prop and the colours became a total lookup table, so
+ * the component cannot emit two classes that fight and there is nothing to resolve.
+ *
+ * ═══ WHY THE INVARIANT AND NOT A SNAPSHOT OF THE COLOURS ═══
+ *
+ * The tempting guard is "these 16 states render exactly the strings they rendered on
+ * 2026-09-02". That reds on any intended restyle, so it would be edited away the
+ * first time a designer touches the pin — and the thing that actually matters would
+ * go with it. The durable property is the one that makes the resolver unnecessary:
+ * **`twMerge` is a no-op on everything this component emits.** That survives a colour
+ * change and reds precisely when someone reintroduces a conflict — which is the
+ * moment `/` would silently need `tailwind-merge` back.
+ *
+ * Its artifact-level twin is the `tailwind-merge` entry in
+ * `__tests__/lib/emittedEntryGraph.test.ts`, which fails if the package returns to
+ * the landing page's `<script>` set by any route at all. This one says why it left.
+ */
+describe("LAT-P211: the pin needs no class-conflict resolver", () => {
+  /** Every state the component can be asked for: 2 tones × 2 variants × 2 pinned. */
+  const STATES = (["default", "muted"] as const).flatMap((tone) =>
+    (["icon", "labelled"] as const).flatMap((variant) =>
+      [true, false].map((pinned) => ({ tone, variant, pinned })),
+    ),
+  );
+
+  /**
+   * The classes on the BUTTON, not on the icon inside it.
+   *
+   * 🔴 NOT `attrs(html).class`. `attrs` walks every `name="value"` pair in the
+   * whole string into one record, so a later match overwrites an earlier one and
+   * `.class` is the `<svg>`'s `w-3.5 h-3.5` — two classes, none of them the ones
+   * under test. The control below is what caught it: every assertion here is
+   * "twMerge changed nothing", and twMerge changes nothing about `w-3.5 h-3.5`,
+   * so the real test would have passed green while reading the wrong element.
+   */
+  const classesOf = (html: string): string[] => {
+    const tag = html.match(/<button\b[^>]*>/)?.[0] ?? "";
+    return (tag.match(/\sclass="([^"]*)"/)?.[1] ?? "").split(" ").filter(Boolean);
+  };
+
+  const asSet = (classes: string[]): string =>
+    [...new Set(classes)].sort().join("|");
+
+  test("control — the assertion below can actually fail", () => {
+    // Every check in this describe is "twMerge changed nothing", which is
+    // vacuously true of an empty or unparsed class list. So first: prove the
+    // comparison catches a class list that DOES need resolving, using exactly
+    // the conflict this ship removed.
+    const conflicted = "px-3 text-text-secondary hover:text-text-primary text-text-muted hover:text-text-secondary";
+    expect(asSet(twMerge(conflicted).split(" "))).not.toBe(asSet(conflicted.split(" ")));
+
+    // And that the reader below finds a real, non-trivial class list.
+    const html = renderToStaticMarkup(<PinButton pinned={false} onToggle={() => {}} variant="labelled" />);
+    expect(classesOf(html).length).toBeGreaterThan(5);
+  });
+
+  test("🔴 twMerge is a no-op on every state this button renders", () => {
+    const offenders: string[] = [];
+    for (const { tone, variant, pinned } of STATES) {
+      // `disabled` is `atMax && !pinned`, so both reachable values of atMax are
+      // covered here and the unreachable pinned+disabled state is not invented.
+      for (const atMax of [true, false]) {
+        const html = renderToStaticMarkup(
+          <PinButton pinned={pinned} onToggle={() => {}} variant={variant} tone={tone} atMax={atMax} />,
+        );
+        const emitted = classesOf(html);
+        const resolved = twMerge(emitted.join(" ")).split(" ").filter(Boolean);
+        if (asSet(emitted) !== asSet(resolved)) {
+          offenders.push(
+            `tone=${tone} variant=${variant} pinned=${pinned} atMax=${atMax}: ` +
+              `twMerge dropped [${emitted.filter((c) => !resolved.includes(c)).join(", ")}]`,
+          );
+        }
+      }
+    }
+    // A non-empty list means the pin is relying on class-conflict resolution
+    // again, and `/` now needs `tailwind-merge` on its first load to render this
+    // button correctly. Fix the class list, do not re-import `cn`.
+    expect(offenders).toEqual([]);
+  });
+
+  test("PIN_TONE is the ONLY source of colour, so a conflict cannot be hand-written back in", () => {
+    // The invariant above is about the OUTPUT. This is about the shape that keeps
+    // it true: every colour class comes from one table, so there is one place to
+    // check. A hardcoded `text-*` beside a `PIN_TONE[...]` lookup is exactly how
+    // the conflict would come back.
+    for (const { tone, variant, pinned } of STATES) {
+      const html = renderToStaticMarkup(
+        <PinButton pinned={pinned} onToggle={() => {}} variant={variant} tone={tone} />,
+      );
+      const expected = PIN_TONE[`${tone}-${variant}-${pinned}`].split(" ");
+      const emitted = classesOf(html);
+      for (const cls of expected) expect(emitted).toContain(cls);
+      // Nothing colour-shaped that the table did not put there.
+      const colourish = emitted.filter((c) => /(^|:)(text-(?!sm\b|xs\b|base\b|lg\b)|bg-)/.test(c));
+      expect(asSet(colourish)).toBe(asSet(expected));
+    }
+  });
+
+  test("the override that used to need the resolver is gone from BOTH ends", () => {
+    // The caller stopped passing a conflicting className …
+    const BAR = readFileSync(join(__dirname, "../../components/discover/shared.tsx"), "utf8");
+    expect(codeOnly(BAR)).toContain('tone="muted"');
+    expect(codeOnly(BAR)).not.toContain('className="text-text-muted hover:text-text-secondary"');
+    // … and the component no longer accepts one, so it cannot come back by prop.
+    // TypeScript is the real gate here; this states the intent where it is read.
+    const BUTTON = readFileSync(join(__dirname, "../../components/PinButton.tsx"), "utf8");
+    expect(codeOnly(BUTTON)).not.toContain("className?: string;\n  /** Discover");
+    // And the import that pulls 7,398 brotli onto whatever route renders this.
+    expect(codeOnly(BUTTON)).not.toContain('from "@/lib/utils"');
   });
 });

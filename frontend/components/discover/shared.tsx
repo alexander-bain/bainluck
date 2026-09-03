@@ -324,7 +324,7 @@ export function ActionBar({ liked, setLiked, shareUrl, shareTitle, shareText, co
           noun={pin.noun}
           variant="labelled"
           stopPropagation
-          className="text-text-muted hover:text-text-secondary"
+          tone="muted"
         />
       )}
       <button

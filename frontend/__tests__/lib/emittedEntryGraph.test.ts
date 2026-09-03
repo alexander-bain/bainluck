@@ -267,7 +267,84 @@ const DEFERRED = [
       "sports.html",
     ],
   },
+  // ─── LAT-P211: the Tailwind class-conflict resolver ───────────────────────
+  //
+  // The first entry whose deferred module is a PACKAGE, not one of our files,
+  // and that is why `packageSource` exists — see the note on control 5.
+  //
+  // `cn` is `twMerge(clsx(...))`. `tailwind-merge` is 26,985 raw / 7,398 brotli
+  // and eleven components use it, so it is not deferrable app-wide — LAT-P201
+  // measured that properly and the answer has not changed: 1,299 of 1,530 `cn`
+  // calls have a genuinely conflicting class that `twMerge` resolves, and
+  // dropping it changes the padding and background of every card in the app.
+  //
+  // What LAT-P201 did not ask is whether the LANDING page needs it. It did not.
+  // Exactly one module in `/`'s eager graph reached `lib/utils`:
+  // `components/PinButton.tsx`, via `components/discover/shared.tsx` — two of
+  // those 1,530 calls. The Discover ActionBar passed
+  // `className="text-text-muted hover:text-text-secondary"` and leaned on
+  // `twMerge` to drop the button's own conflicting colour; that override is now
+  // a `tone` prop and a total lookup table, so no conflict is emitted and
+  // nothing has to resolve one. `/` went 21 scripts → 20, −26,708 raw /
+  // −7,414 brotli, with byte-identical prerendered markup.
+  //
+  // ═══ WHY `exceptRoutes` HERE WHEN LAT-P208 USED `onlyRoutes` ═══
+  //
+  // By LAT-P209's rule: pick by which side is the default. `lib/api.ts` was
+  // eager on 17 of 40, so an exemption list was the majority of the app. This
+  // is eager on 5 of 40 and absent from 35, so default-deny is what we want —
+  // a NEW route that puts a class-conflict resolver on its cold path should
+  // red and be a visible act, not be silently unchecked.
+  {
+    what: "tailwind-merge (the Tailwind class-conflict resolver behind `cn`)",
+    // Not a class-group key like `bg-blend`: those are real Tailwind class
+    // prefixes, so app source could legitimately grow one (`bg-blend-multiply`)
+    // and control 5 would then red on a string that is not this package's
+    // alone. This is tailwind-merge's own v3 config key, it cannot appear in a
+    // Tailwind class name, and terser does not mangle properties.
+    marker: "orderSensitiveModifiers",
+    packageSource: join(
+      "node_modules",
+      "tailwind-merge",
+      "dist",
+      "bundle-mjs.mjs",
+    ),
+    // The five routes that legitimately render a `cn`-based card on their first
+    // load. Measured on the emitted artifact, not from the import graph.
+    exceptRoutes: [
+      "daily.html",
+      "my-stuff.html",
+      "preferences.html",
+      "search.html",
+      "sports.html",
+    ],
+  },
 ] as const;
+
+/**
+ * The file a marker is anchored to for control 3, and whether that anchor is
+ * one of ours or a package's.
+ *
+ * Everything above LAT-P211 defers a module we wrote, so "the marker still
+ * lives in the component it stands in for" and "the marker names exactly one
+ * source file" are the same claim. A package has no file under `app/`,
+ * `components/`, `lib/` or `hooks/`, so control 5's one-holder rule would
+ * report zero holders and fail on a perfectly good marker.
+ *
+ * The honest translation is not to exempt package entries from control 5 but to
+ * INVERT it: for a package the requirement is that the marker appears in
+ * **zero** app source files. That is strictly stronger evidence of uniqueness
+ * than one-holder is — it says the app cannot emit this string by itself, so a
+ * chunk carrying it is carrying the package.
+ */
+function anchor(entry: (typeof DEFERRED)[number]): {
+  path: string;
+  isPackage: boolean;
+} {
+  return "packageSource" in entry
+    ? { path: entry.packageSource, isPackage: true }
+    : { path: entry.source, isPackage: false };
+}
 
 const buildPresent = existsSync(PRERENDER_DIR) && existsSync(CHUNKS_DIR);
 
@@ -397,8 +474,10 @@ describeBuild("LAT-P201 the parse sees a real artifact", () => {
     const chunks = allChunks();
     expect(chunks.length).toBeGreaterThan(50);
 
-    for (const { what, marker, source } of DEFERRED) {
-      // Control 3: still anchored to the component it stands in for.
+    for (const entry of DEFERRED) {
+      const { what, marker } = entry;
+      const { path: source } = anchor(entry);
+      // Control 3: still anchored to the module it stands in for.
       const sourcePath = join(FRONTEND_ROOT, source);
       expect(existsSync(sourcePath)).toBe(true);
       if (!readFileSync(sourcePath, "utf8").includes(marker)) {
@@ -453,10 +532,28 @@ describeBuild("LAT-P201 the parse sees a real artifact", () => {
     for (const root of roots) walk(join(FRONTEND_ROOT, root));
     expect(sources.length).toBeGreaterThan(100);
 
-    for (const { what, marker, source } of DEFERRED) {
+    for (const entry of DEFERRED) {
+      const { what, marker } = entry;
+      const { path: source, isPackage } = anchor(entry);
       const holders = sources
         .filter((f) => readFileSync(f, "utf8").includes(marker))
         .map((f) => f.slice(FRONTEND_ROOT.length + 1));
+
+      // A package marker is inverted: the app must not be able to emit the
+      // string on its own, so ANY app-source holder makes the marker ambiguous.
+      if (isPackage) {
+        if (holders.length !== 0) {
+          throw new Error(
+            `Marker ${JSON.stringify(marker)} for ${what} comes from ` +
+              `${source} and must appear in NO app source file, but appears ` +
+              `in ${holders.length}: ${holders.join(", ")}. A chunk carrying ` +
+              `it would no longer prove the package is there. Pick a marker ` +
+              `only the package has.`,
+          );
+        }
+        continue;
+      }
+
       if (holders.length !== 1 || holders[0] !== source) {
         throw new Error(
           `Marker ${JSON.stringify(marker)} for ${what} should appear in ` +
