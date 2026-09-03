@@ -69,6 +69,30 @@ the version has moved, and the failure is re-raised for a human instead. A guard
 written against the invariant ("nothing was committed") outlives one written
 against the migrations that existed when it was written.
 
+A DEADLOCK IS THE OTHER WAY THE SAME CONTENTION ARRIVES (#2782)
+
+Bounding the wait converts one failure mode into another. On 2026-09-02
+``link_loss_receipts`` locked ``market_match_receipts`` and then reached for
+``futures_markets``, while the receipt writer holds those two the other way
+round — a lock-order inversion. At the default ``lock_timeout`` the ``ALTER``
+simply never won the lock; raised to 12s it waited long enough to ENTER the
+cycle and died ``DeadlockDetected`` instead. Four releases failed, and
+production sat on stale code for ~50 minutes.
+
+The real fix is the order, and it is enforced separately by
+:mod:`app.utils.migration_lock_order`. But a deadlock also belongs in the
+retry, for the same reason a lock timeout does and with the same safety
+argument: Postgres breaks a cycle by rolling the victim's **whole transaction**
+back, so nothing was committed, and the ``alembic_version``-unchanged check
+still proves it independently. It costs nothing in budget either — a deadlock is
+detected in about a second, well inside the wait :func:`max_total_wait_s`
+already accounts for.
+
+What it is NOT is a licence to invert an order. A retry against
+``match_prediction_markets`` — heavy queue, every 15 minutes, 337s p50, holding
+``futures_markets`` almost continuously — is a coin flip, not a cure. The retry
+buys the deploy a chance; the ordering guard is what removes the cycle.
+
 THE BUDGET HAS TO FIT THE RELEASE PHASE
 
 Heroku's release phase is where this runs, and gotcha #31 already records that
@@ -85,7 +109,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping, Optional, TypeVar
 
-from app.utils.repair_lock_budget import is_lock_timeout
+from app.utils.repair_lock_budget import is_deadlock, is_lock_timeout
 
 T = TypeVar("T")
 
@@ -276,6 +300,21 @@ def max_total_wait_s(settings: MigrationLockSettings) -> float:
     return lock_waits + backoffs
 
 
+def contention_kind(exc: BaseException) -> Optional[str]:
+    """Which flavour of lock contention ``exc`` is, or ``None`` if it is not one.
+
+    Named rather than boolean because the retry log has to say which happened:
+    "gave up waiting" and "was killed to break a cycle" call for different
+    follow-up — the first is a straggler, the second is an order inversion and
+    a bug in the migration (#2782).
+    """
+    if is_lock_timeout(exc):
+        return "lock_timeout"
+    if is_deadlock(exc):
+        return "deadlock"
+    return None
+
+
 def should_retry(
     exc: BaseException,
     attempt: int,
@@ -288,14 +327,16 @@ def should_retry(
     Every clause is a reason NOT to retry, and each one is separately load
     bearing:
 
-    * not a lock timeout — a genuine migration bug must surface on attempt one,
-      not four times over;
+    * not lock contention — a genuine migration bug must surface on attempt
+      one, not four times over. Contention is exactly two SQLSTATEs, ``55P03``
+      and ``40P01``; see :func:`contention_kind`. Both abort the transaction
+      whole, which is what makes re-running them sound;
     * no attempts left;
     * ``alembic_version`` moved — part of the batch committed, so re-running it
       would replay committed work. See the module docstring for the three
       migrations that make this reachable.
     """
-    if not is_lock_timeout(exc):
+    if contention_kind(exc) is None:
         return False
     if attempt >= settings.attempts:
         return False
@@ -307,9 +348,9 @@ def run_with_lock_retry(
     settings: MigrationLockSettings,
     read_version: Callable[[], Optional[str]],
     sleep: Callable[[float], None] = time.sleep,
-    on_retry: Optional[Callable[[int, Optional[str]], None]] = None,
+    on_retry: Optional[Callable[[int, Optional[str], BaseException], None]] = None,
 ) -> T:
-    """Run ``attempt_once``, retrying only a lock timeout that committed nothing.
+    """Run ``attempt_once``, retrying only lock contention that committed nothing.
 
     ``read_version`` must open its OWN connection: it is called after a failure,
     when the migration's connection is in an aborted transaction and cannot
@@ -330,7 +371,10 @@ def run_with_lock_retry(
             if not should_retry(exc, attempt, settings, version_before, version_after):
                 raise
             if on_retry is not None:
-                on_retry(attempt, version_after)
+                # The exception is handed over, not just the attempt number: a
+                # retry line that cannot say WHICH contention it hit is the log
+                # of a deploy nobody can diagnose afterwards.
+                on_retry(attempt, version_after, exc)
             sleep(settings.backoff_s)
 
     # Unreachable: `attempts` is clamped to >= 1, so the loop body always runs,
