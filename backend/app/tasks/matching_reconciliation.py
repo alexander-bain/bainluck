@@ -422,8 +422,54 @@ def fingerprint_for(key: str) -> str:
     return hashlib.sha256(f"matching-reconciliation:{key}".encode()).hexdigest()[:12]
 
 
+#: One stable, COUNT-FREE subject per check — the same per-subject principle as
+#: ``fingerprint_for``, applied to the title. A new check must add its key here;
+#: ``build_title`` refuses an unknown one rather than inventing a title.
+SUBJECTS = {
+    "golden": "adjudicated pairs from the 709-pair baseline have regressed",
+    "anchor_collision": "one anchor key names more than one event",
+    "event_espn_id_collision": "one ESPN event id is worn by more than one events row",
+    "market_multi_event": "an open market is linked to more than one event",
+    "receipt_coverage": "open unlinked markets have never been attempted",
+    "linked_unsourced": "near-term linked events have written no win-prob snapshot",
+    "receipt_contradicts_link": (
+        "links are being lost to a sibling market's rolled-back failure"
+    ),
+}
+
+
 def build_title(finding: dict) -> str:
-    return f"[Matching Drift] {finding['key']}: {finding['detail']}"[:256]
+    """The SUBJECT, never the count.
+
+    THE RAIL NEVER REFRESHES A TITLE. ``reconcile_issue``'s RED path comments and
+    re-points the BODY at the current observation; the title is written once, at
+    creation, and is then frozen for the life of the issue. So a title built from
+    ``finding['detail']`` — which carries the live count — is a snapshot that
+    silently rots while the body moves on beneath it.
+
+    Measured 2026-09-03, every open drift issue's title disagreed with its own
+    body: ``golden`` was titled "1 of 709 adjudicated pairs regressed" while the
+    body said 39, ``linked_unsourced`` said 30 against 110, and
+    ``receipt_contradicts_link`` said 5 against 75. A board is triaged by title,
+    so three of the four alerts understated themselves to the only reader they
+    have — the ``golden`` one by 39x.
+
+    The count is not lost: ``build_body`` carries it as ``**Count:**`` and the
+    body IS refreshed every cycle. What the title carries instead is the thing
+    that does not change while the issue is open — which is also why the
+    fingerprint is per-subject (see ``fingerprint_for``). Same argument, same
+    conclusion, one layer up.
+    """
+    key = finding["key"]
+    try:
+        subject = SUBJECTS[key]
+    except KeyError:  # pragma: no cover - the guard test is the coverage
+        raise KeyError(
+            f"matching_reconciliation: check {key!r} has no SUBJECTS entry. Add "
+            "one — a title built from the finding's detail freezes a count the "
+            "rail can never refresh."
+        ) from None
+    return f"[Matching Drift] {key}: {subject}"[:256]
 
 
 def build_body(finding: dict, receipts_hint: str | None = None) -> str:

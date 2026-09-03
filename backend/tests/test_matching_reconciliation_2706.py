@@ -34,6 +34,8 @@ import asyncio
 import json
 from unittest.mock import patch
 
+import pytest
+
 # NOTE: ``from app.tasks import matching_reconciliation`` resolves to the CELERY
 # TASK of that name, not to this module — the repo names each sentinel's task
 # after its module. ``import a.b.c as x`` binds the module itself.
@@ -272,6 +274,62 @@ def test_every_check_has_a_distinct_fingerprint():
     assert len(fps) == len(keys)
 
 
+def test_the_title_is_per_subject_too_because_the_rail_never_refreshes_it():
+    """The fingerprint's argument, one layer up.
+
+    ``reconcile_issue`` comments and re-points the BODY on a still-RED subject;
+    the title is written once at creation and frozen. A title built from the
+    finding's detail therefore freezes a count that keeps moving. Measured
+    2026-09-03: #2728 was titled "1 of 709 adjudicated pairs regressed" while
+    its body said 39.
+    """
+    a = mrec._finding("golden", True, 1, "1 of 709 adjudicated pairs regressed")
+    b = mrec._finding("golden", True, 39, "39 of 709 adjudicated pairs regressed")
+    assert mrec.build_title(a) == mrec.build_title(b)
+
+
+def test_no_drift_title_carries_a_count():
+    """The general form: no title may contain a digit from any observation.
+
+    Asserted over every check, not just ``golden``, because the defect was in
+    the shared title builder and showed up on three subjects at once.
+    """
+    for check_key in mrec.SUBJECTS:
+        low = mrec.build_title(mrec._finding(check_key, True, 1, "1 thing"))
+        high = mrec.build_title(mrec._finding(check_key, True, 4242, "4242 things"))
+        assert low == high, f"{check_key} title moves with the count: {low!r} vs {high!r}"
+        assert "4242" not in high, f"{check_key} title carries the count: {high}"
+
+
+def test_every_check_key_has_a_stable_subject():
+    """Class guard: a new check that forgets ``SUBJECTS`` must redden here.
+
+    The key set is scanned out of the module source because the keys are
+    string literals at the ``_finding`` call sites and do not match the check
+    function names (``check_golden_pairs`` emits ``golden``). The scan asserts
+    its own yield first — a regex that silently matched nothing would make this
+    test vacuously green, which is the failure mode a source-scanning guard has.
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(mrec)
+    keys = set(re.findall(r'_finding\(\s*"([a-z_0-9]+)"', src))
+    assert len(keys) == len(mrec.CHECKS), (
+        f"source scan found {len(keys)} check key(s) {sorted(keys)} for "
+        f"{len(mrec.CHECKS)} checks — the scan is broken, not the map"
+    )
+    assert keys == set(mrec.SUBJECTS), (
+        f"checks without a subject: {sorted(keys - set(mrec.SUBJECTS))}; "
+        f"subjects with no check: {sorted(set(mrec.SUBJECTS) - keys)}"
+    )
+
+
+def test_an_unknown_check_key_raises_rather_than_inventing_a_title():
+    with pytest.raises(KeyError, match="no SUBJECTS entry"):
+        mrec.build_title(mrec._finding("a_check_nobody_declared", True, 1, "x"))
+
+
 def test_the_body_declares_the_dedupe_key_in_the_form_the_rail_parses():
     """The shared rail only OWNS a fingerprint when the declaration matches its
     parser. A body that declares it any other way is a body the GREEN path can
@@ -452,7 +510,14 @@ def test_a_seeded_violation_files_one_issue_with_the_receipt_and_the_label(monke
     )
     issue = created[0]
     assert mrec.DRIFT_LABEL in issue["labels"]
-    assert "4503" in issue["title"]
+    # The count lives in the BODY, which the rail refreshes every cycle — never
+    # in the title, which is written once and then frozen for the issue's life.
+    assert "**Count:** 4503" in issue["body"]
+    assert "4503" not in issue["title"]
+    assert issue["title"] == (
+        "[Matching Drift] receipt_coverage: open unlinked markets have never "
+        "been attempted"
+    )
     assert "match-receipts" in issue["body"], "the alert must carry the receipt query"
     assert not closed
 
