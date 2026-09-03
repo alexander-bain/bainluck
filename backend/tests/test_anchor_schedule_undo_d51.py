@@ -538,11 +538,38 @@ class TestTheRestorePutsTheClocksBack:
         compiled = str(
             session.statements[0].compile(compile_kwargs={"literal_binds": True})
         )
-        assert "commence_time" in compiled and "espn_id" in compiled
-        assert str(THEIRS.year) in compiled, (
-            "the restore's WHERE does not name the clock the apply wrote, so it "
-            "would overwrite a row that has moved on"
+        # Split the halves. Asserting the written clock appears *somewhere* is
+        # vacuous — both timestamps are in 2026, and the prior value is in the
+        # SET clause of every restore — so the assertion has to be about WHICH
+        # half each one is in. (Found by mutation: deleting the whole `after`
+        # compare left a loose "is 2026 in the statement" check green.)
+        setter, _, where = compiled.partition(" WHERE ")
+        assert "2026-12-18" in where, (
+            "the restore's WHERE does not name the clock the apply WROTE, so it "
+            "would drag back a row that something else has moved since"
         )
+        assert "events.espn_id = '401873124'" in where
+        assert "2026-09-11" in setter, "the restore is not putting the prior clock back"
+        assert "2026-09-11" not in where, (
+            "the WHERE compares on the PRIOR clock, which no row wears after the "
+            "apply — this restore would match nothing, ever"
+        )
+
+    async def test_the_compare_covers_EVERY_column_the_apply_wrote(self, monkeypatch):
+        """Not just the clock. A column restored without being compared is a
+        column this rail would overwrite blind."""
+        monkeypatch.setattr(rail, "_read_undo", _reader([RECORD_ROW]))
+        session = _Session(rowcount=1)
+        await rail.restore(session, "repair:anchor_schedule:undo:x", apply=True)
+
+        _, _, where = str(
+            session.statements[0].compile(compile_kwargs={"literal_binds": True})
+        ).partition(" WHERE ")
+        for column in RECORD_ROW["after"]:
+            assert f"events.{column} =" in where, (
+                f"{column} is written by the restore but not compared, so a row "
+                f"whose {column} changed since the apply is overwritten blind"
+            )
 
     async def test_a_restore_is_a_DRY_RUN_unless_apply_is_passed(self, monkeypatch):
         monkeypatch.setattr(rail, "_read_undo", _reader([RECORD_ROW]))
