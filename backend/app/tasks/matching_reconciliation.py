@@ -579,7 +579,16 @@ def fingerprint_for(key: str) -> str:
 #: ``fingerprint_for``, applied to the title. A new check must add its key here;
 #: ``build_title`` refuses an unknown one rather than inventing a title.
 SUBJECTS = {
-    "golden": "adjudicated pairs from the 709-pair baseline have regressed",
+    # Names BOTH classes the golden check files RED, because since L1B-019 it
+    # files two: a pair that lost a known-correct answer (regressed), and a
+    # negative pair that later attached to an event no schedule provider
+    # anchors (self-answered). A subject naming only the first would send a
+    # triager looking for regressions on a board where, measured 2026-09-03,
+    # all 34 RED rows are the second kind and 0 are regressions.
+    "golden": (
+        "adjudicated pairs have regressed, or sit on an event no schedule "
+        "provider vouches for"
+    ),
     "anchor_collision": "one anchor key names more than one event",
     "event_espn_id_collision": "one ESPN event id is worn by more than one events row",
     "market_multi_event": "an open market is linked to more than one event",

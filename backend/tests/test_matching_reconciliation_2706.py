@@ -540,6 +540,29 @@ def test_every_check_key_has_a_stable_subject():
     )
 
 
+def test_the_golden_subject_names_both_red_classes_not_just_regressions():
+    """A subject may not describe a strictly narrower condition than it files.
+
+    Since L1B-019 the golden check files two kinds of RED: a pair that lost a
+    known-correct answer (*regressed*), and a negative pair that later attached
+    to an event no schedule provider anchors (*self-answered*). Measured against
+    production 2026-09-03, all 34 RED rows were the second kind and 0 were
+    regressions — so a subject saying only "have regressed" sends the one reader
+    a board has looking for the class that is not there.
+
+    A tripwire, not a proof: it cannot check that the words match the code, only
+    that neither class was dropped from the sentence. That is the regression it
+    exists for — the subject being quietly narrowed back to regressions-only
+    while the check keeps filing both.
+    """
+    subject = mrec.SUBJECTS["golden"]
+    assert "regress" in subject, f"golden subject dropped the regression class: {subject!r}"
+    assert "vouches for" in subject, (
+        f"golden subject names only regressions, but the check also files "
+        f"self-answered pairs: {subject!r}"
+    )
+
+
 def test_an_unknown_check_key_raises_rather_than_inventing_a_title():
     with pytest.raises(KeyError, match="no SUBJECTS entry"):
         mrec.build_title(mrec._finding("a_check_nobody_declared", True, 1, "x"))
