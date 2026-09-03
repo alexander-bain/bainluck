@@ -143,6 +143,9 @@ struct OddsChartView: View {
     var refreshCountdown: Int = 0
     /// Total refresh interval in seconds
     var refreshInterval: Int = 30
+    /// True while the live push stream is delivering, in which case the poll is
+    /// stood down and there is no next update to count down to (#2687).
+    var refreshStreaming: Bool = false
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
     /// Binding to expose the selected game play point (for GamePlayCardView)
@@ -190,6 +193,7 @@ struct OddsChartView: View {
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          refreshCountdown: Int = 0, refreshInterval: Int = 30,
+         refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil) {
@@ -205,6 +209,7 @@ struct OddsChartView: View {
         self.awayTeamAbbrev = awayTeamAbbrev
         self.refreshCountdown = refreshCountdown
         self.refreshInterval = refreshInterval
+        self.refreshStreaming = refreshStreaming
         self.forcedDomain = forcedDomain
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
@@ -495,7 +500,20 @@ struct OddsChartView: View {
 
     // MARK: - Refresh Countdown Ring
 
+    @ViewBuilder
     private var refreshCountdownRing: some View {
+        // While the stream delivers there is no scheduled request, so a ring
+        // counting to zero and stopping is chrome describing something that is
+        // not happening — the same C43 defect the countdown was introduced to
+        // fix, arriving from the push side.
+        if refreshStreaming {
+            LivePushDot(diameter: 22)
+        } else {
+            countdownRing
+        }
+    }
+
+    private var countdownRing: some View {
         let total = max(refreshInterval, 1)
         let progress = Double(total - refreshCountdown) / Double(total)
         let ringColor: Color = status == "live" ? Color(hex: "#10B981") : .secondary
