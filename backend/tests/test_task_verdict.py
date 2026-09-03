@@ -405,6 +405,17 @@ class TestEnforcementScope:
             # old behaviour", so a permanently failing backfill breaks nothing
             # visible and would simply never finish, quietly, forever.
             "backfill_image_dims",
+            # CAL-P998 / D47 (#2771): the Kalshi resolution-window sweep,
+            # enrolled at BIRTH in the same change that schedules it and the
+            # same change that gives it a terminal. Two of this module's
+            # founding shapes at once: the population EXPIRES upstream (Kalshi
+            # purges market data at >=74/<86 days), and the sweep's own
+            # zero-yield has two opposite meanings — nothing eligible, versus a
+            # whole batch spent on rows the venue would not resolve. What would
+            # rot: this sweep is the ONLY thing that can correct a row Kalshi
+            # has already finalized (gotcha #33), so an inert beat breaks
+            # nothing visible and just lets dead prices keep rendering as live.
+            "kalshi_resolution_window",
         }
 
     def test_enforced_task_partial_blocks_success(self):

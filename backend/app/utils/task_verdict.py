@@ -386,6 +386,26 @@ ENFORCED_TASKS = frozenset({
     # behaviour", so a permanently failing backfill breaks nothing visible and
     # would simply never finish, quietly, forever.
     "backfill_image_dims",             # terminal + urls + measured + failed
+    # CAL-P998 / D47 (#2771): the Kalshi resolution-window sweep, enrolled AT
+    # BIRTH and — per the trap this file spends thirty lines on — in the same
+    # change that gives it a terminal, because enrolment without one is a no-op.
+    #
+    # It has this module's founding shape twice over. Its population EXPIRES
+    # (Kalshi purges market data at >=74/<86 days), so a batch that resolved
+    # nothing at the venue and a batch with nothing left to resolve return the
+    # same tidy counter dict and mean opposite things. And its own zero-yield is
+    # a normal return value with two meanings: `complete` when the eligible set
+    # is genuinely empty, `partial` when rows WERE selected and none could be
+    # written — the batch spent its whole slot on rows the venue would not
+    # resolve, the population did not move, and the next run selects the same
+    # head. `failed` is reserved for every selected row erroring, which is an
+    # outage and must not read as a drained population.
+    #
+    # What would rot without this: the sweep is the only thing that can correct
+    # a row Kalshi has already finalized (gotcha #33 — the open-market poll can
+    # never re-enumerate one), so a permanently inert beat breaks nothing
+    # visible and simply lets dead last-trade prices keep rendering as live.
+    "kalshi_resolution_window",        # terminal + candidates + writes_applied
 })
 
 

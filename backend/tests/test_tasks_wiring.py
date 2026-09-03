@@ -323,6 +323,9 @@ class TestBeatScheduleCompleteness:
         "board-sentinel-daily",
         "sentry-snapshot-15min",
         "backfill-kalshi-settled-events",
+        # CAL-P998 / D47 (#2771): the resolution-window sweep stops being
+        # attended. Daily 04:20 UTC, one bounded batch of 500.
+        "sweep-kalshi-resolution-window",
         "backfill-kalshi-trade-history",
         "backfill-settled-gap-creation",
         "backfill-polymarket-matchups",
