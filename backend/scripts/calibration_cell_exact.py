@@ -1273,6 +1273,48 @@ CASE WHEN lower(btrim(d.outcome_name)) = 'over' THEN 'over'
 || '|' || COALESCE(d.market_type, 'null')
 """
 
+#: CAL-P995 — WHERE THE PUBLISHED PRICE CAME FROM, crossed with whether the
+#: producer thinks it moved. The separator for `kalshi/entertainment` bin 9.
+#:
+#: The curve price is ``COALESCE(calibration_probability, opening_probability)``
+#: — a coalesce, not an exclusion (gotcha #144 / ruling 103), and 13.3% of
+#: markets are served by the fallback arm globally
+#: (``closing_line_coverage``: 16,172 has / 2,472 needs / 18,644 total). Bin 9
+#: of that cell is 1,104 legs priced at a mean 95.4% that win 78.7% — its single
+#: largest error contributor, and one candidate for it is that the bin is
+#: measuring STALE OPENINGS on markets that moved.
+#:
+#: 🔴 **``price_moved`` cannot answer this, and that is the whole reason this
+#: dimension exists.** The producer projects
+#: ``price_moved = (calibration_probability IS NOT NULL AND ... IS DISTINCT FROM
+#: opening_probability)``, so its FALSE arm pools two unrelated populations: a
+#: leg with no closing price at all, and a leg whose closing price is genuinely
+#: equal to its opening. CAL-P994 read ``price_moved`` on this cell (True 7.15
+#: on n 6,570, False 6.73 on n 2,352), concluded it "does not split it", and
+#: could not have concluded anything else — the split it needed was inside the
+#: FALSE arm.
+#:
+#: The cross is deliberate and it makes the fold SELF-CHECKING: the four keys
+#: are orthogonal, and ``fallback_opening|moved`` is structurally impossible,
+#: because ``price_moved`` requires ``calibration_probability IS NOT NULL``. If
+#: that key is ever non-empty, the producer's flag and the raw column disagree
+#: about the same row and THAT is the finding — read it before reading the
+#: numbers. The plain two-way share the question asks for is recovered by
+#: summing over the suffix.
+#:
+#: The join is to the PRIMARY KEY (``fo.id = d.outcome_id``), so it is strictly
+#: 1:1 and cannot fan the fold out. ``deduped`` is ``SELECT ro.*`` over
+#: ``normalized``, which projects ``fo.id AS outcome_id``, so the key is present.
+#: Nothing here reads a realized winner.
+FALLBACK_JOIN = """
+JOIN futures_outcomes fbk ON fbk.id = d.outcome_id
+"""
+FALLBACK_EXPR = """
+CASE WHEN fbk.calibration_probability IS NULL THEN 'fallback_opening'
+     ELSE 'has_closing' END
+|| '|' || CASE WHEN d.price_moved THEN 'moved' ELSE 'flat' END
+"""
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
 PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
@@ -1284,6 +1326,17 @@ PER_CHUNK_CONTEXT = {"ladder": ladder_context, "mono": mono_context,
                      "truth": truth_context}
 
 #: name -> (key expression, extra JOINs, extra CTEs appended to the chain)
+#:
+#: 🔴 **ADDING AN ENTRY HERE IS TWO EDITS, NOT ONE.** A pinned copy of this table
+#: lives in ``tests/test_calibration_cluster_sigma_p121.py::SHIPPED_DIMENSIONS``,
+#: and a dimension registered without one turns
+#: ``test_this_module_adds_exactly_one_dimension_and_no_more`` red against
+#: ``calibration_cluster_sigma`` — a guard accusing a file that did nothing. It
+#: has happened six times (CAL-P127, P130, P131, P132, P991, P995) and it is
+#: issue **#2779**. The pin is deliberate and must NOT be derived from this
+#: table: a version that read the value back out and compared it to itself
+#: survived mutation M2. So the copy stays hand-maintained, and this note exists
+#: because the recurrence's real cause is that its author never saw the guard.
 DIMENSIONS = {
     "none": ("'all'", "", ""),
     "age": (AGE_EXPR, AGE_JOIN, ""),
@@ -1303,6 +1356,7 @@ DIMENSIONS = {
     "price_moved": ("CASE WHEN d.price_moved THEN 'moved' ELSE 'unmoved' END", "", ""),
     "market_type": ("COALESCE(d.market_type, 'null')", "", ""),
     "ouside": (OUSIDE_EXPR, OUSIDE_JOIN, ""),
+    "fallback": (FALLBACK_EXPR, FALLBACK_JOIN, ""),
 }
 
 
