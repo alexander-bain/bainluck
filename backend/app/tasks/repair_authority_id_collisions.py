@@ -327,6 +327,62 @@ async def _read_plan() -> tuple[Optional[dict[str, Any]], str]:
     return payload, "ok"
 
 
+def index_blocker_note(
+    *,
+    contested_ids: int,
+    examined: int,
+    slice_unresolved: int,
+    sport: Optional[str],
+    truncated: bool,
+) -> str:
+    """The index sentence, scoped to the table it is a statement about.
+
+    #2839: this sentence used to be built from ``summary.groups_unresolved``,
+    which counts only the groups THIS call examined.  A bounded call therefore
+    printed, over a payload carrying ``before.contested_ids: 164``:
+
+        ?sport=icehockey_nhl -> "cannot be created while 0 group(s) remain
+                                 unresolved."
+
+    An all-clear for the index, handed to an operator who had merely scoped to
+    a quiet sport.  It is CERT-825's shape one file over — a slice-scoped count
+    read as the answer to a table-scoped question — so the two numbers are kept
+    apart here by construction: ``group(s)`` is spoken only of the census, and
+    the slice's own count never carries that word.  A bounded call says it is
+    bounded in the same breath, because a count nobody knows the scope of is
+    the thing that misled.
+    """
+    if contested_ids:
+        blocker = (
+            f"The unique index on events.espn_id cannot be created while "
+            f"{contested_ids} group(s) in events wear a contested espn_id."
+        )
+    else:
+        blocker = (
+            "The unique index on events.espn_id has no remaining blocker: "
+            "0 group(s) in events wear a contested espn_id."
+        )
+
+    bounds = []
+    if sport:
+        bounds.append(f"sport={sport}")
+    if truncated:
+        bounds.append("truncated at limit")
+
+    scope = (
+        f" This call examined {examined} of them and leaves "
+        f"{slice_unresolved} of those unresolved"
+    )
+    if bounds:
+        scope += (
+            f"; it is bounded ({', '.join(bounds)}), so its own counts do not "
+            "speak for the table."
+        )
+    else:
+        scope += "."
+    return blocker + scope
+
+
 async def _derive(session, sport: Optional[str], limit: Optional[int]) -> dict[str, Any]:
     from app.services.espn_api import espn_authority_state, get_espn_service
 
@@ -424,8 +480,13 @@ async def _derive(session, sport: Optional[str], limit: Optional[int]) -> dict[s
         "groups": detail,
         "note": (
             "Nothing was written. Re-run with ?apply=true&plan_hash=<plan_hash> to "
-            "unstamp exactly these rows. The unique index on events.espn_id cannot be "
-            f"created while {stats['groups_unresolved']} group(s) remain unresolved."
+            "unstamp exactly these rows. " + index_blocker_note(
+                contested_ids=before["contested_ids"],
+                examined=len(ordered),
+                slice_unresolved=stats["groups_unresolved"],
+                sport=sport,
+                truncated=truncated,
+            )
         ),
     }
 
