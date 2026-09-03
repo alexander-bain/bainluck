@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app.utils.game_state import normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
+from app.utils.prematch_reading import resolve_prematch_reading
 
 
 # Tag-based scoring boosts (LLM taxonomy enrichment)
@@ -255,6 +256,7 @@ def format_event_data(
     raw_ei: float | None,
     inline_tags: list[str],
     ended_at: datetime | None,
+    prematch_by_source: dict[str, tuple] | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
@@ -321,6 +323,44 @@ def format_event_data(
             "home_probability": opening_home_prob,
             "away_probability": opening_away_prob,
             "favorite": opening_favorite,
+        }
+
+    # ── THE PER-TEAM PRE-MATCH READING (ux/1036 Tier A) ─────────────────────
+    #
+    # `opening_odds` above is the SPORTSBOOK number and nothing else — the only
+    # writer of `Event.opening_*` is `_maybe_set_opening_odds`, a median across
+    # the books still quoting. It is served unlabelled, and the card printed it
+    # as a bare "Opened 40/60" footnote that does not say which team is the 40.
+    #
+    # This is the same number when the books are all we hold, plus the two
+    # prediction-market rungs above them, plus the one thing the card cannot
+    # work out for itself: WHICH VENUE said it. `opening_odds` is left exactly as
+    # it was — the highlight/upset logic, the confidence signal and three
+    # clients read it, and none of them are asking this question.
+    #
+    # Emitted whenever a reading exists, for any status. A live card still shows
+    # "Opened X/Y" and does not read this key; the reason to send it anyway is
+    # that a status is a moment and the payload is cached, so a card that turns
+    # FINAL between two feed pulls must not lose its prior in the process.
+    prematch = resolve_prematch_reading(
+        by_source=prematch_by_source,
+        books_home=opening_home_prob,
+        books_away=opening_away_prob,
+    )
+    if prematch is not None:
+        # UX-P114's rule, third instance: the settled card prints BOTH of these
+        # in fixed positions beside the two team names, so they are one duel and
+        # they are rounded once, here, rather than independently on each of the
+        # surfaces that draw them.
+        pre_away_pct, pre_home_pct = rendered_duel_percents(
+            prematch["away_probability"], prematch["home_probability"]
+        )
+        data["prematch_odds"] = {
+            "home_probability": prematch["home_probability"],
+            "away_probability": prematch["away_probability"],
+            "home_rendered_percent": pre_home_pct,
+            "away_rendered_percent": pre_away_pct,
+            "source": prematch["source"],
         }
 
     if ended_at:

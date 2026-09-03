@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
+import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -86,12 +87,22 @@ export default function FuturesCard({
   personalizationReasons,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
-  const topOutcomes = outcomes.slice(0, 5);
   // #2662: some markets name every outcome with this market's own full title plus a
   // suffix, so the rows read identically once truncated. Evaluate the all-or-nothing
   // predicate over the WHOLE shipped set, not the sliced five — a market whose first
   // five happen to be prefixed must not be stripped on the strength of a sample.
   const outcomeLabels = outcomeDisplayNames(market.name, outcomes.map((o) => o.name));
+  // #2789: the rows below carry `rank={index + 1}` and a highlighted leader, so the
+  // array must be leader-first BEFORE it is truncated — `/api/futures/grouped-feed`
+  // shipped an unordered five and this card stamped ranks on it. Pair each outcome
+  // with its #2662 label FIRST: `outcomeLabels` is positional over the unsorted
+  // array, so sorting without re-pairing hands row i's label to a different entrant.
+  const labelled = outcomes.map((outcome, index) => ({
+    outcome,
+    displayName: outcomeLabels[index],
+    probability: outcome.probability,
+  }));
+  const topOutcomes = leaderFirstSlice(labelled, 5);
   const isResolved = market.status === "resolved";
 
   const handlePinClick = (e: React.MouseEvent) => {
@@ -184,7 +195,7 @@ export default function FuturesCard({
             initial="hidden"
             animate="visible"
           >
-            {topOutcomes.map((outcome, index) => (
+            {topOutcomes.map(({ outcome, displayName }, index) => (
               <motion.div key={outcome.id} variants={staggerItem}>
                 <OutcomeRow
                   outcome={outcome}
@@ -192,7 +203,7 @@ export default function FuturesCard({
                   isLeader={index === 0}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
-                  displayName={outcomeLabels[index]}
+                  displayName={displayName}
                 />
               </motion.div>
             ))}
