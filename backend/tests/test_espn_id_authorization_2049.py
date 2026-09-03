@@ -779,6 +779,29 @@ class TestNoUngatedEspnIdStampSurvives:
             "answer for that event id, and the compare IS the WHERE clause "
             "(`AND espn_id = :contested`), so it cannot clear a row whose id "
             "moved after the plan was reviewed.",
+        ("app/tasks/repair_authority_id_collisions.py", "<module>",
+         "UPDATE events SET espn_id = :prior"):
+            "The UNDO of the CLEAR above (D51), and the only entry in this "
+            "registry that puts an id ON a row. It is here rather than behind "
+            "`authorize_espn_pair` because the gate answers 'may this fixture "
+            "be given this id?', and a restore is not asking that question: "
+            "the value does not come from a name, a match or any fresh "
+            "derivation, it comes from the dated undo record this same rail "
+            "wrote in the same transaction it cleared the row — so the only id "
+            "it can ever write onto a row is the one that row was already "
+            "wearing before we touched it. Routing it through the gate would "
+            "be strictly WORSE: a name-derived verdict could refuse to give "
+            "back a value the row demonstrably held, stranding a repair that "
+            "an operator is trying to reverse. Two things bound it instead. "
+            "(1) The compare is in the write — `AND espn_id IS NULL` — so it "
+            "can only touch a row this repair left blank, and a row that "
+            "`espn_sync` has re-anchored since keeps its current, correct id "
+            "and is reported ESPN_ID_REOCCUPIED. (2) It is unreachable except "
+            "by naming one specific stored record by identity; there is no "
+            "derive path into it. It DOES re-create the collision the apply "
+            "removed and therefore raises the `uq_event_espn_id` pre-check — "
+            "that is what an undo is for, it is stated in the response, and it "
+            "manufactures no identity that did not exist an hour earlier.",
         ("app/tasks/repair_event_espn_id.py", "<module>",
          "SET espn_id = :true_espn_id"):
             "The attended repair rail (SPEC-Q370): the value comes from a "

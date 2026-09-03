@@ -38,8 +38,19 @@ not smuggled: if a reviewer wants the population proven still first, the audit
 script re-derives the whole census in one call.
 
 **Correction, never deletion** (ruling 079) holds in the strong sense here —
-not one row is removed, and every prior value is in the plan artifact, so the
-entire repair reverses with an UPDATE that reads the artifact back.
+not one row is removed, and every prior value is written to a durable record
+BEFORE the first unstamp, so the entire repair reverses:
+
+    POST …/authority-id-collisions?undo_identity=<id>            # dry run
+    POST …/authority-id-collisions?undo_identity=<id>&apply=true # put them back
+    python3 scripts/restore_authority_id_collisions.py --identity <id> --apply
+
+The apply REFUSES to write if that record cannot be persisted (D51: a repair is
+applyable unattended because it is reversible, so the reversibility is a
+precondition of the write, not a property claimed afterwards). Until 2026-09-03
+this docstring said the prior values were "in the plan artifact" — they were,
+but that artifact is one rotating slot with a 24h life, so draining MLS and then
+planning MLB destroyed MLS's undo. See ``UNDO_IDENTITY_PREFIX``.
 
 ═══ THE TWO-CALL CONTRACT ═══
 
@@ -106,6 +117,43 @@ REASON_PLAN_UNREADABLE = "PLAN_UNREADABLE"
 #: Per-row apply outcomes. Closed set.
 APPLY_OUTCOMES = ("UNSTAMPED", "ESPN_ID_MOVED")
 
+# ═══ THE UNDO RECORD (D51) ═══
+#
+# `PLAN_IDENTITY` is ONE slot. That is right for a plan — a stale artifact must
+# fail loudly rather than be found lying around and applied — and it is exactly
+# wrong for an undo: the next slice's `?apply=false` overwrites the slot, and
+# `PLAN_MAX_AGE_S` retires it after a day regardless. So for nine sessions this
+# rail's response has closed with
+#
+#     "Reversible: every prior value is in the plan artifact <one slot>."
+#
+# while running MLS then MLB destroyed MLS's undo before anyone could use it.
+# The claim was true of one apply in isolation and false of the sequence the
+# note itself recommends — the same false-completeness shape as #2839's
+# zero-blocker all-clear and CERT-843's cursor that never resumed: prose
+# asserting a property the code does not have.
+#
+# An undo therefore gets its OWN dated identity per apply, never reused and
+# never rotated, and the apply REFUSES to write until that record is on disk.
+UNDO_IDENTITY_PREFIX = "repair:authority_id_collisions:undo"
+UNDO_SCHEMA = "authority-id-collisions-undo/v1"
+
+#: An undo must outlive the incident that needs it, not the day. Deliberately
+#: far longer than `PLAN_MAX_AGE_S`: the two artifacts have opposite duties —
+#: a plan going stale is a safety feature, an undo going stale is the loss of
+#: the only record that a repair can be taken back.
+UNDO_MAX_AGE_S = 365 * 86400
+
+REASON_UNDO_UNWRITTEN = "UNDO_NOT_PERSISTED"
+REASON_UNDO_MISSING = "UNDO_MISSING"
+REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
+REASON_UNDO_UNREADABLE = "UNDO_UNREADABLE"
+
+#: Per-row undo outcomes. Closed set. `ESPN_ID_REOCCUPIED` is not a failure —
+#: it is the undo declining to overwrite a fresher truth, and it is named so a
+#: reader can tell "restored 3 of 3" from "restored 1 and left 2 alone".
+UNDO_OUTCOMES = ("RESTAMPED", "ESPN_ID_REOCCUPIED")
+
 COLLISION_SQL = text(
     """
     SELECT e.espn_id, e.id, s.key, e.home_team_name, e.away_team_name,
@@ -143,6 +191,19 @@ UNSTAMP_SQL = text(
     """
     UPDATE events SET espn_id = NULL
     WHERE id = :event_id AND espn_id = :contested
+    RETURNING id
+    """
+)
+
+RESTAMP_SQL = text(
+    # The undo's compare is IN the write too, and it is `IS NULL` rather than
+    # the prior value: the only row an undo may touch is one this repair left
+    # blank. A row that has since been re-anchored by `espn_sync` wears a
+    # CURRENT truth, and putting yesterday's id back over it would be the undo
+    # causing the very corruption it exists to reverse.
+    """
+    UPDATE events SET espn_id = :prior
+    WHERE id = :event_id AND espn_id IS NULL
     RETURNING id
     """
 )
@@ -324,6 +385,74 @@ async def _read_plan() -> tuple[Optional[dict[str, Any]], str]:
     payload = got.envelope.payload
     if not isinstance(payload, dict) or not isinstance(payload.get("rows"), list):
         return None, REASON_PLAN_CORRUPT
+    return payload, "ok"
+
+
+def undo_identity_for(plan_hash: str, *, at: datetime) -> str:
+    """A dated, one-per-apply identity for the undo record.
+
+    Carries the timestamp AND the plan hash because both questions get asked:
+    "what did I run at 4pm" and "what did that plan do". Second-resolution is
+    enough — two applies of the same plan inside one second would be the same
+    write twice, and the `AND espn_id = :contested` compare already makes the
+    second a no-op.
+    """
+    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{str(plan_hash)[:12]}"
+
+
+async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]:
+    """Persist one apply's undo record. ``superseded`` is a FAILURE here.
+
+    `_save_plan` counts ``superseded`` as success, and for a plan that is
+    right: it means a good copy of a NEWER plan is on disk, so the durability
+    contract holds. For an undo it is the opposite — the row at that identity
+    holds somebody else's content, so the undo on file is not this apply's, and
+    accepting it would hand an operator a restore command that puts back the
+    wrong rows. Only ``ok`` means "your record is the one stored".
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    envelope = DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="repair:authority-id-collisions:undo",
+    )
+    try:
+        result = await publish_snapshot_standalone(envelope)
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        logger.warning("%s undo persist raised: %s", ISSUE, type(exc).__name__)
+        return False, f"undo persist raised: {type(exc).__name__}"
+    status = result.get("status")
+    if status == "ok":
+        return True, "ok"
+    if status == "superseded":
+        return False, (
+            f"undo persist SUPERSEDED: identity {identity} already holds a newer "
+            f"row, so the record on file is not this apply's"
+        )
+    return False, f"undo persist rejected: {status}"
+
+
+async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
+    """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        got = await read_snapshot_standalone(
+            identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
+        )
+    except Exception as exc:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
+        logger.warning("%s undo read raised: %s", ISSUE, type(exc).__name__)
+        return None, REASON_UNDO_UNREADABLE
+    if not got.ok or got.envelope is None:
+        return None, REASON_UNDO_MISSING
+    payload = got.envelope.payload
+    if not isinstance(payload, dict) or not isinstance(payload.get("rows"), list):
+        return None, REASON_UNDO_CORRUPT
     return payload, "ok"
 
 
@@ -523,6 +652,48 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         }
 
     before = await _census(session)
+
+    # ── BACKUP BEFORE WRITE (D51) ────────────────────────────────────────────
+    # Not one row is unstamped until this apply's own dated undo record is on
+    # disk. The order is the whole point: a backup written afterwards is a
+    # backup that does not exist for exactly the run that crashed halfway.
+    undo_at = datetime.now(timezone.utc)
+    undo_identity = undo_identity_for(str(plan_hash), at=undo_at)
+    undo_saved, undo_note = await _save_undo(undo_identity, {
+        "issue": ISSUE,
+        "plan_hash": str(plan_hash),
+        "taken_at": undo_at.isoformat(),
+        "sport": stored.get("sport"),
+        # Every row the apply is ABOUT to attempt, with the value it is about
+        # to clear. Recorded from the plan rather than re-read, so the undo
+        # names the same rows the reviewer read.
+        "rows": [
+            {
+                "event_id": int(r["event_id"]),
+                "prior_espn_id": str(r["contested_espn_id"]),
+                "sport": r.get("sport"),
+                "matchup": r.get("matchup"),
+                "verdict": r.get("verdict"),
+            }
+            for r in stored["rows"]
+        ],
+    })
+    if not undo_saved:
+        return {
+            "issue": ISSUE, "apply": True, "refused": True,
+            "reason_codes": [REASON_UNDO_UNWRITTEN],
+            "undo_identity": undo_identity,
+            "undo_note": undo_note,
+            "rows_in_plan": len(stored["rows"]),
+            "unstamped": 0,
+            "note": (
+                "NOTHING WAS WRITTEN. The undo record for this apply could not be "
+                "persisted, and an unstamp that cannot be taken back is not a "
+                "repair this rail performs unattended (D51). Fix the durable "
+                "snapshot write and re-present the same plan_hash."
+            ),
+        }
+
     applied: list[int] = []
     moved: list[dict[str, Any]] = []
     by_verdict: dict[str, int] = {}
@@ -560,11 +731,96 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         "unstamped": len(applied),
         "unstamped_by_verdict": dict(sorted(by_verdict.items())),
         "moved": moved,
+        # The undo is quoted as an IDENTITY and a runnable line, not as a
+        # reassurance. An operator who has to go and find out how to reverse a
+        # write does not have a reversible write.
+        "undo_identity": undo_identity,
+        "undo_command": (
+            f"python3 scripts/restore_authority_id_collisions.py "
+            f"--identity {undo_identity} --apply"
+        ),
         "note": (
             f"contested ids {before['contested_ids']} -> {after['contested_ids']}; "
             f"rows wearing a contested id {before['rows_wearing']} -> "
-            f"{after['rows_wearing']}. Reversible: every prior value is in the plan "
-            f"artifact {PLAN_IDENTITY}."
+            f"{after['rows_wearing']}. Reversible: this apply's prior values are in "
+            f"its OWN dated record {undo_identity}, which no later plan or apply "
+            f"overwrites. Restore with undo_command."
+        ),
+    }
+
+
+async def _undo(session, undo_identity: str, apply: bool) -> dict[str, Any]:
+    """Put back exactly the ids one apply cleared. Dry-run unless ``apply``.
+
+    The mirror of `_apply`, with the same two properties: it acts on a stored
+    artifact rather than a re-derivation, and its compare is in the write.
+    """
+    stored, reason = await _read_undo(undo_identity)
+    if stored is None:
+        return {
+            "issue": ISSUE, "undo": True, "apply": apply, "refused": True,
+            "undo_identity": undo_identity,
+            "reason_codes": [reason],
+            "note": (
+                "MISSING means no undo record is stored under that identity; "
+                "UNREADABLE means the read failed right now; CORRUPT means one is "
+                "there and cannot be trusted. Do not re-derive to route around it."
+            ),
+        }
+
+    rows = stored["rows"]
+    before = await _census(session)
+    if not apply:
+        return {
+            "issue": ISSUE, "undo": True, "apply": False,
+            "undo_identity": undo_identity,
+            "plan_hash": stored.get("plan_hash"),
+            "taken_at": stored.get("taken_at"),
+            "before": before,
+            "rows_in_record": len(rows),
+            "rows": rows,
+            "note": (
+                f"Nothing was written. Re-run with apply=true to put these "
+                f"{len(rows)} id(s) back. A row that has since been re-anchored is "
+                f"reported ESPN_ID_REOCCUPIED and left alone."
+            ),
+        }
+
+    restamped: list[int] = []
+    reoccupied: list[dict[str, Any]] = []
+    for row in rows:
+        event_id = int(row["event_id"])
+        prior = str(row["prior_espn_id"])
+        result = (await session.execute(
+            RESTAMP_SQL, {"event_id": event_id, "prior": prior}
+        )).first()
+        if result is None:
+            reoccupied.append({
+                "event_id": event_id,
+                "prior_espn_id": prior,
+                "reason_code": "ESPN_ID_REOCCUPIED",
+            })
+            continue
+        restamped.append(event_id)
+        # Same per-row commit posture as the apply — `events` is hot.
+        await session.commit()
+
+    after = await _census(session)
+    return {
+        "issue": ISSUE, "undo": True, "apply": True,
+        "undo_identity": undo_identity,
+        "plan_hash": stored.get("plan_hash"),
+        "before": before,
+        "after": after,
+        "rows_in_record": len(rows),
+        "restamped": len(restamped),
+        "reoccupied": reoccupied,
+        "note": (
+            f"contested ids {before['contested_ids']} -> {after['contested_ids']}; "
+            f"rows wearing a contested id {before['rows_wearing']} -> "
+            f"{after['rows_wearing']}. Putting ids back RE-CREATES the collisions "
+            f"this apply removed — that is what an undo is — so the unique index "
+            f"pre-check will rise by the number restored."
         ),
     }
 
@@ -575,6 +831,7 @@ async def repair(
     plan_hash: Optional[str] = None,
     sport: Optional[str] = None,
     limit: Optional[int] = None,
+    undo_identity: Optional[str] = None,
 ) -> dict[str, Any]:
     """Hand back every authority id worn by a row that is not its game.
 
@@ -586,7 +843,12 @@ async def repair(
             ``baseball_ncaa`` (123 of the 196 contested ids).
         limit: bound the derive to N contested ids. The derive makes one ESPN
             call per id, so an unbounded run over 196 takes ~60s.
+        undo_identity: put one earlier apply's ids BACK. Takes precedence over
+            every other argument — an undo is never also a derive — and is
+            itself dry-run unless ``apply`` is true.
     """
+    if undo_identity:
+        return await _undo(session, undo_identity, apply)
     if apply:
         return await _apply(session, plan_hash)
     return await _derive(session, sport, limit)
