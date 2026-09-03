@@ -179,7 +179,12 @@ export default function EventPage({ params }: EventPageProps) {
         liveDetailRefreshInterval({
           streamConnected: streamConnectedRef.current,
           status: data?.status,
-          hasLinescore: Boolean(data?.linescore),
+          // `sport` AND the whole `linescore` (CERT-858): a live tennis page
+          // whose first response predates the poller's first write has no
+          // linescore to point at, and it is exactly the page that must keep
+          // asking. The sport says a line is coming; the payload alone cannot.
+          sport: data?.sport,
+          linescore: data?.linescore,
         }),
       onSuccess: () => setLastRefresh(Date.now()),
     }
