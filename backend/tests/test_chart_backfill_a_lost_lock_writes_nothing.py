@@ -233,7 +233,16 @@ def test_the_re_open_and_the_retry_are_one_transaction():
     """The mechanism behind the first test, asserted directly. The invariant
     could also hold by luck of ordering, and luck is not a repair: the `hset`
     and the `delete` must go out inside ONE MULTI, so no reader can land between
-    them and see the contradictory pair the cert reproduced."""
+    them and see the contradictory pair the cert reproduced.
+
+    live/055 (#2766) — THE BLOCK NOW OPENS WITH THE LEASE RENEWAL, and that is
+    the repair rather than noise in the assertion. The renewal used to be a
+    separate `EXPIRE` round trip issued beside the token check, before this
+    transaction was opened; it is now queued inside the very block it protects,
+    so the lease refresh and the writes it authorises land together or not at
+    all. The `hset`/`delete` adjacency this test was written for is asserted
+    unchanged, on the tail.
+    """
     drain = _drain()
     redis = _redis(drain, done=drain.DONE_CLEAN)
 
@@ -242,7 +251,12 @@ def test_the_re_open_and_the_retry_are_one_transaction():
     assert len(redis.transactions) == 1, "one block, not a command per round trip"
     transactional, names = redis.transactions[0]
     assert transactional, "a pipeline without MULTI is batching, not atomicity"
-    assert names == ["hset", "delete"], names
+    assert names[0] == "expire", (
+        "the lease renewal belongs INSIDE the fenced block — issued outside it, "
+        "it is a third round trip that a sibling can land between (#2766), and "
+        "issued while watching it would abort the pass's own transaction"
+    )
+    assert names[1:] == ["hset", "delete"], names
     contradictory = [
         s for s in redis.visible_states(TIER) if s.done and s.retry
     ]
@@ -251,12 +265,34 @@ def test_the_re_open_and_the_retry_are_one_transaction():
     )
 
 
-def test_giving_up_does_not_re_open_the_tier():
-    """CONTROL for the re-open's scope. Deleting the marker is right when the
-    pass ADDS an owed retry. A pass that only EMPTIES the hash (the event blew
-    its budget and was counted) has not created new work and must leave the
-    marker alone — otherwise a tier that legitimately ended with failures would
-    be re-opened forever by its own last write."""
+def test_giving_up_clears_the_marker_and_the_settlement_re_derives_it():
+    """🔴 THIS CONTROL'S PREMISE WAS OVERTURNED BY CERT-836, and the change is
+    the point rather than an inconvenience.
+
+    It used to assert that a pass which only EMPTIES the retry hash must LEAVE
+    the terminal marker alone — the marker deletion was scoped to the `added`
+    branch, on the reasoning that a tier which legitimately ended with failures
+    would otherwise be "re-opened forever by its own last write".
+
+    That scoping is exactly what made a lost reopen permanent. `_with_redis`
+    fails open, so a Redis blip lasting only the reopen transaction returns
+    `held=True` with nothing deleted; the retry is then successfully REMOVED by
+    the next write, and because removal did not clear the marker, the tier was
+    left `drained` beside an empty hash — self-consistent, so nothing would ever
+    detect it again, and every later trigger skipped the rest of the tier.
+
+    The old worry does not survive contact with the runner, which is why the
+    assertion moves rather than being deleted. `_settle_tier` runs in the SAME
+    pass, immediately after, and re-derives `drained_with_failures` from the
+    monotone give-up counter. So the ending still stands — it is just produced
+    by the settlement that decides it rather than by a marker that happened to
+    survive. That is the same principle as CERT-764: one decision, not two
+    writers each preserving their own idea of the verdict.
+
+    Asserted THROUGH the settlement, because the intermediate Redis state
+    between the two writes is not a state any reader can act on (the tier is
+    locked for the whole pass) and asserting on it is what pinned the bug.
+    """
     drain = _drain()
     redis = _redis(
         drain, done=drain.DONE_WITH_FAILURES,
@@ -270,9 +306,30 @@ def test_giving_up_does_not_re_open_the_tier():
 
     assert _retry_of(drain, redis) == {}, "the event was given up on"
     assert outcome.gave_up_total == 1
-    assert _done_of(drain, redis) == drain.DONE_WITH_FAILURES, (
-        "the failure ending stands — nothing new is owed"
+    assert _done_of(drain, redis) is None, (
+        "the marker is cleared by the write that records attempts — CERT-836"
     )
+
+    # …and the pass then settles, which is the half that makes the above safe.
+    original = drain._with_redis
+    drain._with_redis = lambda tier, apply: apply(redis)
+    try:
+        settled = drain._settle_tier(
+            TIER,
+            drain.DrainPage([], None, True, 0),
+            {},
+            owed=outcome.owed,
+            gave_up=outcome.gave_up_total,
+            dry_run=False,
+        )
+    finally:
+        drain._with_redis = original
+
+    assert settled == drain.DONE_WITH_FAILURES, (
+        "the failure ending must be RE-DERIVED from the monotone give-up "
+        "counter — if it is not, deleting the marker really would lose it"
+    )
+    assert _done_of(drain, redis) == drain.DONE_WITH_FAILURES
 
 
 # ---------------------------------------------------------------------------
