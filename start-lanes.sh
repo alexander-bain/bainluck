@@ -118,7 +118,9 @@ launch "$R $HOME/bainluck integrator lane1"
 launch "$R $HOME/bainluck-dev/ux ux"
 launch "$R $HOME/bainluck-dev/latency latency"
 launch "$R $HOME/bainluck-dev/calibration calibration"
+# authority (D50, 9/3): StatPal-as-canonical, built dark, one sport at a time.
+launch "$R $HOME/bainluck-dev/authority authority"
 
-echo "Four Terminal windows opened — one per lane, streaming live."
+echo "One Terminal window opened per lane, streaming live."
 echo "If a lane is already running in another window, close the duplicate:"
 echo "the runners take queues atomically, so duplicates waste nothing but a window."

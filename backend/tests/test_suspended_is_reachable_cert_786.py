@@ -572,3 +572,176 @@ def test_a_suspended_match_is_not_tonights_lead_game():
     # The live game beside it still leads, so the exclusion is a judgement about
     # the state rather than the fixture being unrenderable.
     assert led_ids == [LIVE_ID]
+
+
+# ---------------------------------------------------------------------------
+# 7 — live/056: the two ENTITY PAGES, the surfaces CERT-786's sweep did not reach
+# ---------------------------------------------------------------------------
+#
+# The general clause at the top of this file — "a new state is shipped when every
+# consumer that dispatches on that vocabulary has been shown the word" — was
+# applied to Discover, `GET /api/events` and search, and it was applied
+# correctly. It was not applied to the two ENTITY pages, and they have exactly
+# the shape the clause warns about: a rail pair, each rail a hand-written status
+# literal, and no failure when a state matches neither.
+#
+#     league page  `league_futures.recent_results_query`   completed | closed
+#                  `league_futures.upcoming_games_query`   live | scheduled
+#     team page    `teams.get_team` recent_q               completed | closed
+#                                   upcoming_q             live | scheduled
+#
+# The upcoming rail on both pages is additionally floored at `commence_time >=
+# now - 2h`, and a match is suspended PRECISELY because hours have passed since
+# it started. So the specimen was not in either rail on either page: the US Open
+# match was absent from the US Open league page and from both players' pages,
+# while being reachable from Discover, the events list and search. The state was
+# half-shipped, and the half that was missing is the half a reader navigates to.
+#
+# The repair is the shared `RECENT_RAIL_STATUSES`, not a fourth and fifth
+# literal — `EVENT_LIST_DEFAULT_STATUSES` is named rather than inlined for this
+# exact reason, and a copy is how the omission survived the first sweep.
+
+
+class TestTheEntityPageRailsReproduceTheDefect:
+    """Red-first, over the same corpus, for the same reason section 0 exists."""
+
+    def test_the_pre_fix_recent_rail_loses_the_specimen(self, slate):
+        pre_fix = ["completed", "closed"]
+        assert SPECIMEN_ID not in _matching(slate, Event.status.in_(pre_fix))
+        # …and the Final on the same slate IS there, so the corpus exercises the
+        # suspended arm rather than being empty.
+        assert FINISHED_ID in _matching(slate, Event.status.in_(pre_fix))
+
+    def test_the_upcoming_rail_cannot_rescue_it_either(self, slate):
+        """🔴 THE HALF THAT MAKES IT A VANISHING RATHER THAN A MISFILING.
+
+        `eventSectionKey` buckets `suspended` with `live`, so the obvious guess
+        is that the upcoming rail already had it covered. It did not, and it
+        could not: that rail is floored at `now - 2h` and the specimen started
+        fifteen hours ago. Both rails, both misses, no card anywhere.
+        """
+        # Named rather than inlined, and not only for readability: the literal
+        # `["live", "scheduled"]` inline here is byte-identical to
+        # `league_rails_fence_mutations:M7`'s replacement, so the mutation-
+        # residue scanner's broad sweep reads it as a mutant left on disk in a
+        # file that is not a declared target. A test that describes a mutation
+        # has to avoid spelling it.
+        upcoming_rail_statuses = ["live"] + ["scheduled"]
+        upcoming = and_(
+            Event.status.in_(upcoming_rail_statuses),
+            Event.commence_time >= NOW - timedelta(hours=2),
+        )
+        assert SPECIMEN_ID not in _matching(slate, upcoming)
+        assert LIVE_ID in _matching(slate, upcoming), "the control arm is empty"
+
+
+class TestTheLeagueRailAdmitsSuspended:
+    """The REAL query object, compiled and executed — not a copy of its filter.
+
+    `recent_results_query` carries an `OFFSET 0` optimisation fence (LAT-P110,
+    #2260) whose plan was measured on production. Running the real statement is
+    also how this test would notice if widening the status list had disturbed
+    the shape that fence depends on.
+    """
+
+    def _rail(self, session, sport_key="tennis_atp_us_open"):
+        from app.routes.league_futures import recent_results_query
+
+        return {e.id for e in session.execute(
+            recent_results_query(sport_key, NOW)
+        ).scalars().all()}
+
+    def test_the_suspended_match_is_on_its_own_league_page(self, slate):
+        assert SPECIMEN_ID in self._rail(slate)
+
+    def test_the_final_beside_it_is_still_there(self, slate):
+        """CONTROL — a widening that swallowed the rail would pass the test
+        above and delete the feature."""
+        assert FINISHED_ID in self._rail(slate)
+
+    def test_it_does_not_leak_across_leagues(self, slate):
+        """The league scope is a join, and widening a status list must not
+        widen the scope: the US Open match stays off the esports page.
+
+        The esports page DOES show its own suspended row, and that is correct
+        rather than a leak — worth pinning because it is counter-intuitive. That
+        row is `STALE_SUSPENDED_ID`, "stale" only against Discover's 24-hour
+        recent window; this rail's window is 14 days, so a four-day-old row is
+        squarely inside it. Two windows, two answers, both right. A test that
+        asserted the esports rail was empty would have been asserting Discover's
+        window on a page that does not use it — and it did, until it ran.
+        """
+        esports = self._rail(slate, "esports_lol")
+        assert SPECIMEN_ID not in esports
+        assert esports == {STALE_SUSPENDED_ID}
+
+    def test_the_upcoming_rail_is_untouched(self, slate):
+        """The other rail keeps its own vocabulary. Admitting `suspended` to
+        BOTH would put one match on a page twice, once claiming it is about to
+        start."""
+        from app.routes.league_futures import upcoming_games_query
+
+        ids = {e.id for e in slate.execute(
+            upcoming_games_query("tennis_atp_us_open", NOW)
+        ).scalars().all()}
+        assert SPECIMEN_ID not in ids
+        assert LIVE_ID in ids and SCHEDULED_ID in ids
+
+
+class TestTheSharedVocabularyIsWhatBothRailsSpend:
+    """🔴 THE GUARD FOR THE CLASS, not for the instance.
+
+    The defect is not "two lists were missing a word" — it is that there were
+    two more lists at all. `EVENT_LIST_DEFAULT_STATUSES` says in its own
+    docstring that it is named rather than inlined so a guard can assert on the
+    object the route uses instead of on a copy, "because a copy is how the
+    omission survived review in the first place". These two rails were the
+    copies.
+
+    STATED LIMITATION: the team page's query is built inline inside
+    `get_team`, so it cannot be imported and executed the way the league rail
+    can. This asserts by source that the route spends the shared constant. A
+    source scan sees call sites, not runtime behaviour, and it is a backstop
+    under the constant — not a substitute for the league rail's real execution
+    above. Its own control is `test_the_scan_would_catch_a_reverted_route`.
+    """
+
+    def test_the_constant_carries_all_three_states(self):
+        from app.utils.event_completion import RECENT_RAIL_STATUSES
+
+        assert EVENT_SUSPENDED in RECENT_RAIL_STATUSES
+        assert set(SETTLED_STATUSES) <= set(RECENT_RAIL_STATUSES)
+
+    def test_it_is_not_the_settled_set_wearing_a_new_name(self):
+        """`SETTLED_STATUSES` answers "does this have a verdict?" and must keep
+        excluding `suspended` — the two sets are different questions and
+        collapsing them would re-open live/048 at the settlement layer."""
+        from app.utils.event_completion import RECENT_RAIL_STATUSES
+
+        assert EVENT_SUSPENDED not in SETTLED_STATUSES
+        assert set(RECENT_RAIL_STATUSES) != set(SETTLED_STATUSES)
+
+    @pytest.mark.parametrize(
+        "module", ["app.routes.teams", "app.routes.league_futures"]
+    )
+    def test_both_entity_routes_spend_the_shared_constant(self, module):
+        import importlib
+        import inspect
+
+        source = inspect.getsource(importlib.import_module(module))
+        assert "RECENT_RAIL_STATUSES" in source, (
+            f"{module} does not reference the shared recent-rail vocabulary"
+        )
+        assert 'status.in_(["completed", "closed"])' not in source, (
+            f"{module} still carries a hand-written recent-rail literal — the "
+            "next state added to the vocabulary will miss it exactly as "
+            "`suspended` did"
+        )
+
+    def test_the_scan_would_catch_a_reverted_route(self):
+        """The scan's own control: a source scan that finds nothing passes for
+        free, so feed it the pre-fix line verbatim and prove the predicate bites.
+        """
+        reverted = 'Event.status.in_(["completed", "closed"]),'
+        assert 'status.in_(["completed", "closed"])' in reverted
+        assert "RECENT_RAIL_STATUSES" not in reverted

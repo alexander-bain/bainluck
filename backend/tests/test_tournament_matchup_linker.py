@@ -445,7 +445,7 @@ async def test_task_publishes_links_and_reports_its_counters(monkeypatch):
         written[slug] = payload
         return True
 
-    async def _fake_candidates(session, series):
+    async def _fake_candidates(session, series, *, now=None):
         assert series == ("KXATPMATCH",)
         return [_candidate()]
 
@@ -483,7 +483,7 @@ async def test_task_reports_needy_and_resolved_separately_when_it_resolves_nothi
     """"It ran" is not "it worked" — the zero-yield case must be loud."""
     from app.tasks import tournament_matchup_linker as linker
 
-    async def _none(session, series):
+    async def _none(session, series, *, now=None):
         return []
 
     class _Session:
@@ -519,7 +519,7 @@ async def test_one_broken_tournament_does_not_starve_its_siblings(monkeypatch):
             raise RuntimeError("poison")
         return _register()
 
-    async def _cands(session, series):
+    async def _cands(session, series, *, now=None):
         return [_candidate()]
 
     async def _write(slug, payload):

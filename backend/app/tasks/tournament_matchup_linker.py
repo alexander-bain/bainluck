@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -75,10 +75,40 @@ WATCHED: tuple[dict[str, Any], ...] = (
     },
 )
 
-#: Hard cap on candidate market rows per tournament. The series filter already
-#: bounds this to the low hundreds; the cap is here so a series rename upstream
-#: cannot quietly turn this into a table scan.
+#: Hard cap on candidate market rows per tournament. The recency window below
+#: already bounds this to the high hundreds; the cap is here so a series rename
+#: upstream cannot quietly turn this into a table scan.
 MAX_CANDIDATE_MARKETS = 2000
+
+#: How far back a candidate match market may have been ingested (ux/1033).
+#:
+#: ═══ THE CAP WAS TRUNCATING THE WRONG END, AND SILENTLY ═══
+#:
+#: ``KXATPMATCH``/``KXWTAMATCH`` is not "the low hundreds": measured on
+#: production 2026-09-02, the two series hold **5,113 rows going back to
+#: 2026-02-19**.  The predicate above had no ``ORDER BY``, so ``LIMIT 2000`` took
+#: whichever 2,000 the scan reached first — physical order, which is insertion
+#: order, which is OLDEST FIRST.  Measured against the live table, the surviving
+#: pool's newest ticker date was ``26MAR20``: **not one September market was in
+#: it**, and the resolver's one-day window then refused every fixture of the
+#: tournament actually being played.  Both halves of this task were affected —
+#: the register's ``missing`` blocks and the authority links alike — and the
+#: symptom was the one lane1/047 named as the worst a probability product has: a
+#: card reading "nobody is quoting this match" over a market we hold open.
+#:
+#: That is gotcha #41 exactly: an unordered sweep over a growing population
+#: processes the dead first.  The fix is a bound with a MEANING rather than a
+#: bigger number — the resolver only ever matches a candidate within one day of
+#: the fixture, so a market ingested a fortnight ago cannot be the answer to any
+#: question this task asks.  Measured on the same table: 546 rows in the last 7
+#: days, 589 in 14, 1,122 in 30 — so 14 days sits an order of magnitude inside
+#: the cap while covering, four times over, the two-day lead Kalshi actually
+#: publishes a slam's match markets on (26AUG30's tickers were created 26AUG28).
+#:
+#: The cap survives as the backstop it was meant to be, and hitting it is now
+#: LOUD (gotcha #53): a truncated pool is reported and logged, never inferred
+#: from a resolver that quietly refused everything.
+CANDIDATE_WINDOW_DAYS = 14
 
 #: Inner deadline, comfortably under the task's soft limit so the run always
 #: reaches its own terminal rather than being SIGKILLed untracked (#966).
@@ -106,8 +136,48 @@ def _match_date(external_id: Optional[str]):
     return parsed.date() if parsed is not None else None
 
 
+def candidate_query(series: tuple[str, ...], *, now: datetime):
+    """The one statement that decides which markets this task can ever see.
+
+    Extracted from ``_load_candidates`` by ux/1033 so a guard can assert on the
+    statement that RUNS rather than on a stubbed row list. Every existing test of
+    this task monkeypatches ``_load_candidates`` whole, which is exactly why an
+    unordered ``LIMIT`` over a 5,113-row table went six months unnoticed: no test
+    had ever looked at the query, and every symptom downstream of it — refusals,
+    ``resolved: 0``, an unpriced card — is indistinguishable from "the market
+    does not exist".
+
+    Three clauses and each is load-bearing:
+
+    * the series prefix, which is the explicit pool ``WATCHED`` names;
+    * ``created_at`` inside ``CANDIDATE_WINDOW_DAYS``, which is the bound with a
+      MEANING — the resolver only matches within one day of the fixture, so an
+      older row cannot be an answer;
+    * ``ORDER BY id DESC``, so that if the cap ever does fire it truncates the
+      dead tail and not the live head (gotcha #41).
+    """
+    from sqlalchemy import or_
+
+    from app.models import FuturesMarket
+
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            FuturesMarket.name,
+        )
+        .where(
+            FuturesMarket.source == "kalshi",
+            or_(*[FuturesMarket.external_id.like(f"{name}-%") for name in series]),
+            FuturesMarket.created_at >= now - timedelta(days=CANDIDATE_WINDOW_DAYS),
+        )
+        .order_by(FuturesMarket.id.desc())
+        .limit(MAX_CANDIDATE_MARKETS)
+    )
+
+
 async def _load_candidates(
-    session, series: tuple[str, ...]
+    session, series: tuple[str, ...], *, now: datetime
 ) -> list[dict[str, Any]]:
     """Kalshi match markets for these series, as plain resolver candidates.
 
@@ -120,28 +190,21 @@ async def _load_candidates(
     neither exclude finished matches nor include all live ones — it would just
     make the query look careful. The resolver's date window is the real bound
     and it is applied where it can be tested.
+
+    What IS in the predicate, since ux/1033: a recency window, and an ordering.
+    See ``CANDIDATE_WINDOW_DAYS`` for the measurement — without both, the row cap
+    silently kept the oldest 2,000 of 5,113 rows and the pool ended six months
+    before the tournament being played. ``ORDER BY id DESC`` is belt-and-braces
+    behind the window: if a series ever does put more than the cap inside a
+    fortnight, the rows that survive are the ones nearest today rather than an
+    arbitrary slice, and the caller says so out loud.
     """
-    from app.models import FuturesMarket, FuturesOutcome
+    from app.models import FuturesOutcome
 
     if not series:
         return []
 
-    conditions = [
-        FuturesMarket.external_id.like(f"{name}-%") for name in series
-    ]
-    from sqlalchemy import or_
-
-    market_rows = (
-        await session.execute(
-            select(
-                FuturesMarket.id,
-                FuturesMarket.external_id,
-                FuturesMarket.name,
-            )
-            .where(FuturesMarket.source == "kalshi", or_(*conditions))
-            .limit(MAX_CANDIDATE_MARKETS)
-        )
-    ).all()
+    market_rows = (await session.execute(candidate_query(series, now=now))).all()
     if not market_rows:
         return []
 
@@ -294,6 +357,9 @@ async def _link_tournament_matchups(
         "authority_resolved": 0,
         "authority_published": 0,
         "written": 0,
+        # How many tournaments loaded a TRUNCATED candidate pool (ux/1033).
+        # Zero is the healthy state and it is a measured one, not an assumption.
+        "candidates_capped": 0,
         "deadline_hit": False,
         "by_tournament": {},
         **{code: 0 for code in REFUSAL_CODES},
@@ -322,7 +388,20 @@ async def _link_tournament_matchups(
 
             async with get_task_session() as session:
                 candidates = await _load_candidates(
-                    session, tuple(entry.get("kalshi_series") or ())
+                    session, tuple(entry.get("kalshi_series") or ()), now=now
+                )
+            # A TRUNCATED POOL IS NOT A QUIET POOL (ux/1033, gotcha #53). The
+            # cap fired for six months without a word, and every downstream
+            # signal — refusals, `resolved: 0`, an unpriced card — reads exactly
+            # the same whether the market is absent or merely unloaded. Only
+            # this line can tell those apart.
+            capped = len(candidates) >= MAX_CANDIDATE_MARKETS
+            if capped:
+                logger.warning(
+                    "matchup linker: %s hit the %d-candidate cap inside a "
+                    "%d-day window — the pool is truncated and some fixtures "
+                    "cannot resolve",
+                    slug, MAX_CANDIDATE_MARKETS, CANDIDATE_WINDOW_DAYS,
                 )
 
             outcome = resolve_matchup_links(register, candidates, now=now)
@@ -350,6 +429,7 @@ async def _link_tournament_matchups(
                     "season": season,
                     "generated_at": now.isoformat(),
                     "candidates": len(candidates),
+                    "candidates_capped": capped,
                     "counters": counters,
                     "links": links,
                     # A SEPARATE KEY, NOT MERGED INTO `links`. `apply_resolved_
@@ -371,10 +451,12 @@ async def _link_tournament_matchups(
             stats["authority_resolved"] += authority["counters"].get("resolved", 0)
             stats["authority_published"] += len(authority_links)
             stats["written"] += 1 if published else 0
+            stats["candidates_capped"] += 1 if capped else 0
             for code in REFUSAL_CODES:
                 stats[code] += counters.get(code, 0)
             stats["by_tournament"][slug] = {
                 "candidates": len(candidates),
+                "candidates_capped": capped,
                 "written": published,
                 "authority_competitions": len(competitions),
                 "authority": authority["counters"],
@@ -422,9 +504,11 @@ async def read_links(slug: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "CANDIDATE_WINDOW_DAYS",
     "LINKS_PREFIX",
     "LINKS_TTL_SECONDS",
     "MAX_CANDIDATE_MARKETS",
+    "candidate_query",
     "WATCHED",
     "_link_tournament_matchups",
     "apply_resolved_links",

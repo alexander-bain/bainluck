@@ -56,6 +56,7 @@ class StatPalFixture:
     league: Optional[str] = None
     season: Optional[str] = None
     round_info: Optional[str] = None
+    tournament_id: Optional[str] = None  # StatPal tournament id (tennis daily/livescores)
 
 
 @dataclass
@@ -211,6 +212,10 @@ class StatPalAPIService(BaseAPIClient):
     # v1 sports (NBA/NFL/NHL/MLB) use "season-schedule".
     # Soccer v2 uses "matches/daily" with an offset param.
     # Golf/F1 use "schedule". Cricket uses "upcoming-schedule".
+    # Tennis has NO season-schedule (that path 404s, measured 2026-09-03) — its
+    # forward schedule is "daily/{day}", one call per day token (see
+    # TENNIS_DAILY_OFFSETS). "{day}" in a value means the endpoint needs a day
+    # token, which get_fixtures() cannot supply — get_schedule_fixtures() does.
     _SCHEDULE_ENDPOINTS: dict[str, str] = {
         "nba": "season-schedule",
         "nfl": "season-schedule",
@@ -221,6 +226,7 @@ class StatPalAPIService(BaseAPIClient):
         "pga": "schedule",
         "f1": "schedule",
         "cricket": "upcoming-schedule",
+        "tennis": "daily/{day}",
     }
 
     async def get_fixtures(
@@ -242,6 +248,18 @@ class StatPalAPIService(BaseAPIClient):
             List of StatPalFixture objects.
         """
         endpoint = self._SCHEDULE_ENDPOINTS.get(sport, "season-schedule")
+
+        # Day-token endpoints (tennis) cannot be fetched without a day: this
+        # method has no offset argument. Return empty rather than requesting a
+        # literal "{day}" path — callers that want tennis schedules must use
+        # get_schedule_fixtures(sport, day_offset=N).
+        if "{day}" in endpoint:
+            logger.debug(
+                f"StatPal: {sport} schedule needs a day token — "
+                f"use get_schedule_fixtures('{sport}', day_offset=N)"
+            )
+            return []
+
         params = {}
         if season:
             params["season"] = season
@@ -283,6 +301,240 @@ class StatPalAPIService(BaseAPIClient):
             return []
 
         return self._parse_fixtures(data, sport)
+
+    # -------------------------------------------------------------------------
+    # Authority schedules (D50) — a DARK read path
+    # -------------------------------------------------------------------------
+    #
+    # StatPal-as-canonical is built dark: this method exists so the authority
+    # program can READ tennis and NFL schedules that get_fixtures() cannot see,
+    # WITHOUT changing what the ingestion tasks receive. Nothing calls it yet.
+    #
+    # Why a separate method rather than fixing get_fixtures(): both sports are in
+    # STATPAL_SPORT_MAPPING, so sync_statpal_schedules() already asks for them
+    # every cycle and gets [] back (NFL because season-schedule nests its games
+    # three levels deeper than the parser walks; tennis because season-schedule
+    # 404s). Teaching the shared parser those two shapes would turn 374 NFL and
+    # 68 tennis fixtures into event writes on the next beat — which is step 2 of
+    # this program and needs its own review, not a side effect of step 1.
+
+    # /v1/tennis/daily/{token}: d-7…d-1 and d1…d7. There is no d0 — today's play
+    # lives on livescores. The spec refreshes these every 12h, so a poller gains
+    # nothing from a tighter cadence.
+    TENNIS_DAILY_REFRESH_SECONDS = 12 * 3600
+    TENNIS_DAILY_OFFSETS: tuple[int, ...] = tuple(
+        [d for d in range(-7, 0)] + [d for d in range(1, 8)]
+    )
+
+    async def get_schedule_fixtures(
+        self,
+        sport: str,
+        day_offset: Optional[int] = None,
+    ) -> list[StatPalFixture]:
+        """Read a sport's forward schedule for the authority program (D50).
+
+        Dark by construction: no caller writes from this yet.
+
+        Args:
+            sport: "tennis" or "nfl" (other sports fall through to get_fixtures).
+            day_offset: Required for tennis — a day token in TENNIS_DAILY_OFFSETS
+                (-7…-1, 1…7). Ignored by season-schedule sports.
+
+        Returns:
+            List of StatPalFixture objects (empty on any API error).
+
+        Raises:
+            ValueError: tennis called with a missing or out-of-range day_offset.
+                That is a caller bug, not an upstream absence, and the two must
+                not arrive as the same empty list.
+        """
+        if sport == "tennis":
+            if day_offset not in self.TENNIS_DAILY_OFFSETS:
+                raise ValueError(
+                    f"tennis day_offset must be one of {self.TENNIS_DAILY_OFFSETS} "
+                    f"(there is no d0 — today's play is on livescores); got {day_offset!r}"
+                )
+            data = await self._get(sport, f"daily/d{day_offset}")
+            return self._parse_tennis_daily(data) if data else []
+
+        if sport == "nfl":
+            data = await self._get(sport, "season-schedule")
+            return self._parse_nfl_season_schedule(data) if data else []
+
+        return await self.get_fixtures(sport)
+
+    def _parse_tennis_daily(self, data: dict) -> list[StatPalFixture]:
+        """Parse a tennis daily/livescores payload into fixtures.
+
+        Shape (measured 2026-09-03):
+          {"scores": {"sport": "tennis", "tournament": [
+              {"id": "13440", "name": "Atp - Singles: Us Open (Usa), Hard",
+               "match": [{"id": "2631263", "date": "03.09.2026", "time": "23:00",
+                          "status": "1", "player": [{...}, {...}]}]}]}}
+
+        Note "tournament" is a LIST here (it is a dict for NBA/NHL/MLB), and the
+        two sides are a two-element "player" array, not home/away objects — which
+        is why the shared fixture parser returns nothing for tennis.
+        """
+        fixtures: list[StatPalFixture] = []
+        if not isinstance(data, dict):
+            return fixtures
+
+        section = data.get("scores") or data.get("livescores")
+        if not isinstance(section, dict):
+            return fixtures
+
+        tournaments = section.get("tournament", [])
+        if isinstance(tournaments, dict):
+            tournaments = [tournaments]
+        if not isinstance(tournaments, list):
+            return fixtures
+
+        for tournament in tournaments:
+            if not isinstance(tournament, dict):
+                continue
+            matches = tournament.get("match", [])
+            if isinstance(matches, dict):
+                matches = [matches]
+            if not isinstance(matches, list):
+                continue
+            for item in matches:
+                try:
+                    fixture = self._parse_tennis_match(item, tournament)
+                    if fixture:
+                        fixtures.append(fixture)
+                except Exception as e:
+                    logger.debug(f"StatPal: skipping tennis match parse error: {e}")
+                    continue
+
+        return fixtures
+
+    # Tennis daily codes a not-yet-played match as the digit "1"; every other
+    # status it serves is a word ("Not Started", "Finished", "Set 3", "Retired",
+    # "Cancelled"). Measured on d1/d-1/d-2 and livescores, 2026-09-03.
+    _TENNIS_STATUS_CODES: dict[str, str] = {"1": "scheduled"}
+
+    def _parse_tennis_match(self, item: dict, tournament: dict) -> Optional[StatPalFixture]:
+        """Parse one tennis match. The first listed player is the 'home' side."""
+        if not isinstance(item, dict):
+            return None
+
+        players = item.get("player", [])
+        if not isinstance(players, list) or len(players) < 2:
+            return None
+        home, away = players[0], players[1]
+        if not isinstance(home, dict) or not isinstance(away, dict):
+            return None
+
+        home_name = home.get("name", "")
+        away_name = away.get("name", "")
+        if not home_name or not away_name:
+            return None
+
+        raw_status = str(item.get("status", ""))
+        status = self._TENNIS_STATUS_CODES.get(raw_status) or _normalize_status(raw_status)
+
+        start_time = None
+        date_str = item.get("date", "")
+        time_str = item.get("time", "")
+        if date_str and time_str:
+            start_time = _parse_datetime(f"{date_str} {time_str}")
+        if not start_time:
+            start_time = _parse_datetime(date_str)
+
+        return StatPalFixture(
+            fixture_id=str(item.get("id", "")),
+            home_team=home_name,
+            away_team=away_name,
+            home_team_id=str(home.get("id", "")) or None,
+            away_team_id=str(away.get("id", "")) or None,
+            start_time=start_time,
+            status=status,
+            raw_status=raw_status if status == "live" else None,
+            home_score=_safe_int(home.get("totalscore")),
+            away_score=_safe_int(away.get("totalscore")),
+            home_q_scores=_tennis_set_scores(home),
+            away_q_scores=_tennis_set_scores(away),
+            league=tournament.get("name"),
+            tournament_id=str(tournament.get("id", "")) or None,
+        )
+
+    def _parse_nfl_season_schedule(self, data: dict) -> list[StatPalFixture]:
+        """Parse the NFL season-schedule payload into fixtures.
+
+        Shape (measured 2026-09-03 — 374 games, Pre/Regular/Post season):
+          {"scores": {"tournament": {"name": "USA: NFL", "stage": [
+              {"id": "1501", "name": "Regular Season", "week": [
+                  {"name": "Week 1", "matches": [
+                      {"date": "Wednesday, September 9, 2026",
+                       "match": {"contestid": "280445",
+                                 "datetime_utc": "10.09.2026 00:20", ...}}]}]}]}}
+
+        Three differences from NBA/NHL/MLB, all handled here:
+          - games hang off stage → week → matches → match, two levels below where
+            the shared extractor looks;
+          - the day wrapper's "match" can be a dict (one game that day) or a list;
+          - the game has NO "id" — its key is "contestid" (Week 1's 16 games were
+            listed 6–11 days early as 280445–280460).
+        """
+        fixtures: list[StatPalFixture] = []
+        if not isinstance(data, dict):
+            return fixtures
+
+        section = data.get("scores")
+        if not isinstance(section, dict):
+            return fixtures
+        tournament = section.get("tournament")
+        if not isinstance(tournament, dict):
+            return fixtures
+
+        league_name = tournament.get("name")
+        stages = tournament.get("stage", [])
+        if isinstance(stages, dict):
+            stages = [stages]
+        if not isinstance(stages, list):
+            return fixtures
+
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            weeks = stage.get("week", [])
+            if isinstance(weeks, dict):
+                weeks = [weeks]
+            if not isinstance(weeks, list):
+                continue
+            for week in weeks:
+                if not isinstance(week, dict):
+                    continue
+                days = week.get("matches", [])
+                if isinstance(days, dict):
+                    days = [days]
+                if not isinstance(days, list):
+                    continue
+                round_info = " / ".join(
+                    part for part in (stage.get("name"), week.get("name")) if part
+                ) or None
+                for day in days:
+                    if not isinstance(day, dict):
+                        continue
+                    games = day.get("match")
+                    if isinstance(games, dict):
+                        games = [games]
+                    if not isinstance(games, list):
+                        continue
+                    for game in games:
+                        try:
+                            fixture = self._parse_single_fixture(game)
+                        except Exception as e:
+                            logger.debug(f"StatPal: skipping NFL match parse error: {e}")
+                            continue
+                        if not fixture:
+                            continue
+                        fixture.league = fixture.league or league_name
+                        fixture.round_info = fixture.round_info or round_info
+                        fixtures.append(fixture)
+
+        return fixtures
 
     def _parse_fixtures(self, data: dict, sport: str) -> list[StatPalFixture]:
         """Parse fixture/livescore/season-schedule response into StatPalFixture objects.
@@ -443,11 +695,17 @@ class StatPalAPIService(BaseAPIClient):
         if away_score is None and item.get("away_score") is not None:
             away_score = _safe_int(item.get("away_score"))
 
-        # Parse start time — StatPal uses "date" (DD.MM.YYYY) + "time" (HH:MM)
+        # Parse start time — StatPal uses "date" (DD.MM.YYYY) + "time" (HH:MM).
+        # NFL is the exception: its "date" is prose ("Wednesday, September 9,
+        # 2026") and its "time" is venue-local ("7:20 PM"), so neither parses and
+        # the two together would be an hours-wrong answer if they did. It ships
+        # "datetime_utc" (DD.MM.YYYY HH:MM, UTC) instead — prefer it wherever it
+        # appears. NBA/NHL/MLB/soccer carry no such field (measured 2026-09-03),
+        # so this changes nothing for them.
         date_str = item.get("date", "")
         time_str = item.get("time", "")
-        start_time = None
-        if date_str and time_str:
+        start_time = _parse_datetime(item.get("datetime_utc"))
+        if not start_time and date_str and time_str:
             start_time = _parse_datetime(f"{date_str} {time_str}")
         if not start_time:
             start_time = _parse_datetime(
@@ -486,7 +744,13 @@ class StatPalAPIService(BaseAPIClient):
             if qs:
                 away_q_scores = qs
 
-        fixture_id = str(item.get("id", item.get("fixture_id", "")))
+        # NFL games have no "id" at all — the key is "contestid" (374/374 games,
+        # measured 2026-09-03). A blank fixture_id is not an absence, it is an
+        # unusable linkage: 8,272 rows once carried '' for exactly this reason
+        # (backend/scripts/repair_statpal_fixture_id_blanks.py).
+        fixture_id = str(
+            item.get("id") or item.get("contestid") or item.get("fixture_id") or ""
+        )
 
         # Venue — can be a string or a dict
         venue = item.get("venue")
@@ -844,6 +1108,20 @@ def _safe_int(val) -> Optional[int]:
         return None
 
 
+def _tennis_set_scores(player: dict) -> Optional[dict]:
+    """Per-set games for one tennis player: {"s1": 6, "s2": 4, ...}.
+
+    Unplayed sets come back as "" and are omitted, so a scheduled match yields
+    None rather than a dict of nothing.
+    """
+    sets = {}
+    for key in ("s1", "s2", "s3", "s4", "s5"):
+        val = _safe_int(player.get(key))
+        if val is not None:
+            sets[key] = val
+    return sets or None
+
+
 def _parse_datetime(val) -> Optional[datetime]:
     """Parse a datetime string from the API, returning None on failure."""
     if not val:
@@ -892,14 +1170,19 @@ def _normalize_status(status: str) -> str:
              "round 7", "round 8", "round 9", "round 10", "round 11", "round 12",
              "1st innings", "2nd innings", "3rd innings", "4th innings"):
         return "live"
+    # "retired" and "walkover" are tennis's other two ways of saying the match is
+    # over and has a winner — a settled result, not an abandonment.
     if s in ("finished", "final", "ft", "aet", "pen", "completed", "game over",
-             "after over time", "after overtime", "after extra time"):
+             "after over time", "after overtime", "after extra time",
+             "retired", "ret", "walkover", "w.o.", "wo"):
         return "finished"
     if s in ("postponed", "pst", "delayed"):
         return "postponed"
     if s in ("cancelled", "canc", "abandoned", "abn"):
         return "cancelled"
-    if s in ("suspended", "susp", "int"):
+    # "pause" is esports' word for it and the only explicit interrupted state
+    # StatPal served on any sport on 2026-09-03 (ARTIFACT-M-20260903-B).
+    if s in ("suspended", "susp", "int", "interrupted", "pause", "paused"):
         return "suspended"
 
     # Default: pass through

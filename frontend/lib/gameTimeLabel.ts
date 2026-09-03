@@ -560,6 +560,20 @@ const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
  *    "10:00 - 1st Quarter · 10:00" the whole time; a third only escaped it
  *    because its character-count heuristic threw the period away instead. Joining
  *    them unconditionally would have spread the duplicate rather than fixed it.
+ *
+ * 3. WHEN THE GAME IS OVER, THE CLOCK IS NOT A CLOCK — IT IS THE PERIOD AGAIN
+ *    (live/055, #2815). Rule 2 is gated on {@link CLOCK_TOKEN_RE}, deliberately,
+ *    so a bare "1" cannot match the "1" in "Bottom 1st" and delete a real field
+ *    on a coincidence. That gate is why it could not see the settled case:
+ *    production event 15293206 ships `period: "Final"` with `game_clock:
+ *    "Final"` — the same word in both fields, neither of them clock-shaped — and
+ *    the event page's chart footer printed **"Final Final 3 - 8"**.
+ *
+ *    An exact repeat needs no shape gate because it has no coincidence to guard
+ *    against: two fields carrying the identical string can never be two facts.
+ *    Compared case-insensitively and trimmed, and nothing wider than equality —
+ *    a substring test over arbitrary strings would re-open exactly the false
+ *    positive rule 2's gate exists to prevent.
  */
 export function trustedLiveClock(
   period: string | null | undefined,
@@ -572,9 +586,12 @@ export function trustedLiveClock(
     trimmedClock !== "" &&
     CLOCK_TOKEN_RE.test(trimmedClock) &&
     trimmedPeriod.includes(trimmedClock);
+  const repeatsPeriod =
+    trimmedClock !== "" &&
+    trimmedClock.toLowerCase() === trimmedPeriod.toLowerCase();
   return {
     period: trimmedPeriod,
-    gameClock: alreadySpelledOut ? "" : trimmedClock,
+    gameClock: alreadySpelledOut || repeatsPeriod ? "" : trimmedClock,
   };
 }
 

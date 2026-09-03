@@ -1,6 +1,7 @@
 "use client";
 
 import { format, parseISO } from "date-fns";
+import { trustedLiveClock } from "@/lib/gameTimeLabel";
 import type { ActiveChartPoint } from "@/lib/types";
 
 interface GamePlayCardProps {
@@ -57,13 +58,27 @@ export default function GamePlayCard({
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeam.split(" ").pop() || awayTeam;
 
-  const periodDisplay = formatPeriod(point.period);
+  // live/055 (#2815) — THE EIGHTH INSTANCE OF THE #1620 SHAPE, and the first one
+  // this card noticed. It composed `[period, clock].join(" ")` raw, so it never
+  // had the trust rules the other four surfaces share: on production event
+  // 15293206 the wire ships `period: "Final"` AND `game_clock: "Final"`, and the
+  // footer read **"Final Final  3 - 8"**. `trustedLiveClock` is the authority for
+  // "which of ESPN's two clock fields may be painted"; adopting it fixes the
+  // duplicate here and means the next surface cannot re-acquire it.
+  //
+  // `formatPeriod` still runs FIRST and is still this card's own: the numeric
+  // "3" -> "Q3" rendering is a display choice no other surface makes. The trust
+  // decision is taken over the string the reader will actually see, which is the
+  // only string a duplicate can be visible in.
+  const trusted = trustedLiveClock(formatPeriod(point.period), point.clock);
   // Game clock is shown only when genuinely observed; a value carried forward from
   // an earlier snapshot is marked approximate ("~") rather than shown as exact, and
   // when there's no clock at all we fall back to the period, then to "—" (#925).
-  const clockText = point.clock ? `${point.clockApprox ? "~" : ""}${point.clock}` : "";
+  const clockText = trusted.gameClock
+    ? `${point.clockApprox ? "~" : ""}${trusted.gameClock}`
+    : "";
   const gameState =
-    [periodDisplay, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
+    [trusted.period, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
   let timeOfDay = "";
   try {
     timeOfDay = format(parseISO(point.timestamp), "h:mm a");

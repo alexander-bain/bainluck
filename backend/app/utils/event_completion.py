@@ -213,6 +213,43 @@ SETTLEABLE_STATUSES = frozenset({"live", EVENT_SUSPENDED})
 #: delay is the ordinary case this state exists to survive.
 RESUMABLE_STATUSES = frozenset({"scheduled", EVENT_SUSPENDED})
 
+#: The RECENT rail's vocabulary — "what has already happened and is worth
+#: showing", which is a DIFFERENT question from :data:`SETTLED_STATUSES`' "what
+#: has a verdict". A list, not a frozenset, because it is spent on ``IN`` and
+#: the emitted SQL should be stable across processes.
+#:
+#: 🔴 WHY ``suspended`` IS HERE, live/056. The note above says the retrieval
+#: surfaces are the hand-written literal lists and that they will not fail
+#: loudly. Two of them were still missed after CERT-786 swept the feed and
+#: ``GET /api/events``: the league page's RECENT RESULTS rail
+#: (``league_futures.recent_results_query``) and the team page's recent games
+#: (``teams``). A suspended match is in NEITHER of those pages' rails — the
+#: other rail on both pages is ``live``/``scheduled`` gated on
+#: ``commence_time >= now - 2h``, and a match is suspended precisely because
+#: hours have passed since it started. So the match does not appear on its own
+#: league page or on either team's page at all. Vanishing is a worse answer to
+#: "where did my match go" than the false Final live/048 removed, which is the
+#: exact sentence :data:`EVENT_LIST_DEFAULT_STATUSES` was written to stop being
+#: true a second time.
+#:
+#: 🔴 AND IT RIDES THE RECENT RAIL RATHER THAN THE UPCOMING ONE, which is the
+#: half worth arguing rather than asserting.
+#: ``eventState.eventSectionKey`` buckets ``suspended`` with ``live`` on the
+#: surfaces that GROUP events, and that is right there: those three buckets
+#: answer "has this happened yet?". These two rails are not those buckets. They
+#: are a time-ordered pair, and the upcoming rail's ``now - 2h`` floor would
+#: exclude essentially every suspended row while the recent rail's lookback is
+#: the same shape as the finished window ``event_list_window_condition`` already
+#: gives it — so it ages off exactly where the Final it replaced would have,
+#: rather than sitting on an open floor forever.
+#:
+#: The rail's TITLE says "Recent Results" and a suspended match has none. The
+#: card corrects it in the only place a reader looks: both pages render the
+#: shared card, which prints ``No result reported · last score 1-2`` and
+#: suppresses the chips, the bar and the projection (CERT-799). A rail heading
+#: over a card that states its own state is not the lie; an absent match is.
+RECENT_RAIL_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
+
 
 def authority_may_settle(status) -> bool:
     """May a terminal verdict be written onto a row in this state? (live/048)
