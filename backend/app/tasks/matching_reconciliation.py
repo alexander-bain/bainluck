@@ -473,7 +473,12 @@ def receipts_hint_for(finding: dict) -> str | None:
             "Coverage summary: `GET /api/admin/match-receipts` — "
             "`coverage.open_unlinked_without_receipt` is this number, and "
             "`funnel.backlog_dropped` on the matcher's last run says how many "
-            "eligible markets that cycle did not reach."
+            "eligible markets that cycle did not reach. Read "
+            "`coverage.by_source` and `coverage.explained_no_game_here` before "
+            "reading it as missing links (#2803): what clears this number is a "
+            "receipt, and for most of the population that receipt is a refusal. "
+            "`coverage.backlog_pass_has_run` false means nothing is driving it "
+            "down at all."
         )
     if finding["key"] == "linked_unsourced" and finding["rows"]:
         eid = finding["rows"][0]["event_id"]
