@@ -112,11 +112,27 @@ function text(html: string): string {
 }
 
 // #2786 — ONE sentence, and the side order each card already uses for its own
-// scores. `FeedCard` renders `{home_score} - {away_score}` into the very slot
-// this string occupies; the Discover card paints `away_score` to the left of
-// `home_score` in its hero. So the two constants differ by exactly the flip,
-// and that is the fix rather than a loosening: away_score=1, home_score=2.
-const EXPECTED_FEED = suspendedSummary(1, 2, "home-away"); // "… last score 2-1"
+// scores. The Discover card paints `away_score` to the left of `home_score` in
+// its hero, so it is away-home.
+//
+// ux/1041 (#2752) — `EXPECTED_FEED` WAS `"home-away"`, AND IT IS THE ONE
+// CONSTANT HERE THAT WAS NEVER MEASURED AGAINST THE CARD. The sentence this
+// comment used to carry — "`FeedCard` renders `{home_score} - {away_score}` into
+// the very slot this string occupies" — was true, and that render was itself the
+// defect: the card lists the AWAY team above the HOME team, stacks its chips
+// away-over-home and labels itself "{away} at {home}", so its live score was the
+// only away-first card's only home-first element. #2786's rule ("the suspended
+// score reads in the CARD'S own order") is unchanged and is why this constant
+// moves: the card is away-first, so both arms of that slot are away-home now.
+// Reversed rather than deleted, because the flip is the ship and a reader should
+// be able to see which claim changed.
+//
+// SAID PLAINLY: the two constants below are now EQUAL, so this file no longer
+// discriminates the `suspendedSummary` order parameter. It never was the file
+// that did — `suspendedSharedEventCardCert792` pins the home-away caller and
+// `suspendedScoreOrderFollowsTheCard2786` compares each card against its own
+// renders. Both still hold, and the shared card is still home-away.
+const EXPECTED_FEED = suspendedSummary(1, 2, "away-home"); // "… last score 1-2"
 const EXPECTED_DISCOVER = suspendedSummary(1, 2, "away-home"); // "… last score 1-2"
 
 // ---------------------------------------------------------------------------
