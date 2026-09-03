@@ -66,6 +66,14 @@ logger = logging.getLogger(__name__)
 # pregame consensus rather than a stale hours-out price.
 _PREGAME_MARK_LEAD_MINUTES = 15
 
+# live/035: the cadence floor this 120s poll enforces on a LIVE event's chart.
+# The WS fast lane (`live_blend_refresh`, 45s worst case) is the primary
+# guarantee; this is the backstop for the sources and dynos it does not cover,
+# so it is derived from the poll's OWN 120s period rather than from the WS one.
+# 60s here would be observed 180s late — see `live_blend_refresh.heartbeat_deadline`
+# for why a deadline must be the target minus the sampling period.
+_LIVE_SNAPSHOT_HEARTBEAT_S = 60.0
+
 # ── Matching receipts (#2705) ───────────────────────────────────────────────
 # Group/container rows: a parent describes a set of sub-markets, and it is the
 # SUB-markets that attach to an event (see the group_id propagation in
@@ -4456,6 +4464,18 @@ async def _poll_live_prediction_market_prices():
                         "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
                         "poll_type": "live_fast",
                     },
+                    # live/035: on a LIVE event a flat price must still gain a
+                    # point. The poll's own period is 120s, so the deadline is
+                    # derived from it the same way the WS lane derives its own —
+                    # a deadline equal to the period is first noticed one period
+                    # late. Scheduled (pre-game) events are excluded: their
+                    # prices genuinely sit still for hours and a heartbeat there
+                    # buys a longer table and no visible line.
+                    max_gap_seconds=(
+                        _LIVE_SNAPSHOT_HEARTBEAT_S
+                        if (event.status or "").lower() == "live"
+                        else None
+                    ),
                 )
 
                 if is_new:
@@ -4650,12 +4670,21 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 return stats
 
-            # Fetch price history
-            history = await service.get_prices_history(
-                token_id=token_id,
-                interval=interval,
-                fidelity=fidelity,
-            )
+            # Fetch price history. `get_prices_history` raises when the venue
+            # could not be asked at all and returns [] only when it answered and
+            # holds nothing — the two must not land in the same bucket, or an
+            # outage reads as a market with no history (gotcha #53).
+            from app.services.polymarket_api import PolymarketHistoryUnavailable
+
+            try:
+                history = await service.get_prices_history(
+                    token_id=token_id,
+                    interval=interval,
+                    fidelity=fidelity,
+                )
+            except PolymarketHistoryUnavailable as exc:
+                stats["errors"].append(f"price history unavailable: {str(exc)[:120]}")
+                return stats
             if not history:
                 stats["errors"].append("empty price history")
                 return stats

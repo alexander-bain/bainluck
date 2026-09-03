@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+#: live/035 — how many events `/backfill-event-chart` will redraw inside one
+#: request. Each event costs 1-3 upstream calls per source; eight keeps the
+#: worst case comfortably inside the dyno's request timeout, and anything bigger
+#: is a sweep, which is what the `queue=true` path and the nightly beat are for.
+_INLINE_EVENT_CAP = 8
+
 
 @router.post("/snapshots/collapse")
 async def trigger_snapshot_collapse(
@@ -5039,6 +5045,121 @@ async def trigger_backfill_espn_win_prob(
         "app.tasks.backfill_espn_win_prob", args=[limit]
     )
     return {"status": "queued", "task_id": str(result.id), "limit": limit}
+
+
+@router.post("/backfill-event-chart")
+async def trigger_backfill_event_chart(
+    request: Request, secret: str = Query(None),
+    event_ids: str = Query(None, description="Comma-separated event ids"),
+    limit: int = Query(40),
+    queue: bool = Query(False, description="Dispatch to Celery instead of running inline"),
+    dry_run: bool = Query(False),
+):
+    """live/035: redraw an event's win-prob chart from the venues' own price history.
+
+    Runs INLINE by default and returns the per-source verdict, because the point
+    of a named repair is to see whether it worked. `_safe_send_task` would hand
+    back a task id and nothing else, and the background queue is a known
+    congestion point — a repair you cannot read the result of is a repair you
+    cannot certify.
+
+    Inline runs are bounded to `_INLINE_EVENT_CAP` events so the request cannot
+    outlive the dyno's request timeout; pass `queue=true` for anything larger.
+    """
+    _check_admin_secret(secret, request=request)
+
+    ids: list[int] = []
+    if event_ids:
+        for chunk in str(event_ids).split(","):
+            chunk = chunk.strip()
+            if chunk:
+                try:
+                    ids.append(int(chunk))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400, detail=f"not an event id: {chunk}"
+                    )
+
+    if queue or len(ids) > _INLINE_EVENT_CAP or (not ids and limit > _INLINE_EVENT_CAP):
+        result = _safe_send_task(
+            "app.tasks.backfill_event_chart_history",
+            kwargs={"event_ids": ids or None, "limit": limit, "dry_run": dry_run},
+        )
+        return {"status": "queued", "task_id": str(result.id), "event_ids": ids}
+
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+
+    return await run_event_chart_backfill(
+        ids or None, limit=min(limit, _INLINE_EVENT_CAP), dry_run=dry_run
+    )
+
+
+@router.post("/backfill-30d-charts")
+async def trigger_backfill_thirty_day_charts(
+    request: Request, secret: str = Query(None),
+    limit: int = Query(200, description="Fillable events to drain this call"),
+    queue: bool = Query(True, description="Dispatch to Celery (default) or run inline"),
+    dry_run: bool = Query(False),
+    min_period_minutes: int = Query(
+        None, description="Force a granularity floor; omit to derive from event age"
+    ),
+    only_tier: str = Query(None, description="us_open | reachable | remainder"),
+    reset: bool = Query(False, description="Forget every tier checkpoint first"),
+):
+    """live/039: the one-time 30-day drain. Re-call until the verdict is terminal.
+
+    Two verdicts end the loop and they are NOT the same: `drained` means every
+    event in scope was asked and answered, and `drained_with_failures` means it
+    gave up on events the venue would not serve after `MAX_EVENT_RETRIES`
+    attempts each (`gave_up` per tier names how many). Anything else — including
+    `awaiting_retries`, which is a tier that reached the end of its scan while
+    still owing retries — means re-call.
+
+    Queued by DEFAULT, the opposite of `/backfill-event-chart` above, and for the
+    opposite reason: that one is a named repair whose whole point is reading the
+    verdict, and this one is a network sweep over thousands of events that cannot
+    fit inside a request. `queue=false` runs a small page inline for a spot check.
+
+    `reset=true` clears the per-tier checkpoints so the next call starts from the
+    top of the window. It writes nothing itself — re-drained events are skipped
+    minute-by-minute inside `backfill_event_chart`, so a reset costs scan time
+    rather than duplicate rows.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.chart_backfill_thirty_day import (
+        TIERS, reset_checkpoints, run_thirty_day_chart_drain,
+    )
+
+    if only_tier and only_tier not in {tier.name for tier in TIERS}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown tier {only_tier!r}; expected one of "
+                   f"{sorted(tier.name for tier in TIERS)}",
+        )
+
+    reset_report = reset_checkpoints() if reset else None
+
+    if queue:
+        result = _safe_send_task(
+            "app.tasks.backfill_thirty_day_charts",
+            kwargs={
+                "limit": limit, "dry_run": dry_run,
+                "min_period_minutes": min_period_minutes, "only_tier": only_tier,
+            },
+        )
+        return {
+            "status": "queued", "task_id": str(result.id),
+            "limit": limit, "only_tier": only_tier, "reset": reset_report,
+        }
+
+    verdict = await run_thirty_day_chart_drain(
+        limit=min(limit, _INLINE_EVENT_CAP), dry_run=dry_run,
+        min_period_minutes=min_period_minutes, only_tier=only_tier,
+    )
+    if reset_report:
+        verdict["reset"] = reset_report
+    return verdict
 
 
 @router.get("/coverage-trends")
