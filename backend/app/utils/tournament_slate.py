@@ -677,6 +677,50 @@ def build_match_row(
     }, None
 
 
+def first_round_size(reg: TournamentRegister, draw: Any) -> Optional[int]:
+    """How many players this draw's knockout started with, per the REGISTER.
+
+    ``R128`` in the register's own round vocabulary means a 128-slot draw, so
+    the largest ``R<n>`` round it carries for a draw names that draw's size.
+    Read from the register rather than assumed, because this module serves any
+    tournament and "a slam singles draw is 128" is a fact about one tournament
+    wearing the shape of a rule.
+
+    ``None`` where the register holds no numbered round for the draw — the
+    qualifying bucket has no ``R<n>`` and neither does a draw we have not
+    ingested. The caller then publishes no round rather than guessing one.
+    """
+    sizes = [
+        int(str(m.get("round"))[1:])
+        for m in reg.matchups
+        if m.get("draw") == draw
+        and str(m.get("round") or "").startswith("R")
+        and str(m.get("round"))[1:].isdigit()
+    ]
+    return max(sizes) if sizes else None
+
+
+def authority_round(listed: dict[str, Any], draw_size: Optional[int]) -> Optional[str]:
+    """ESPN's round display name as a REGISTER round key, or ``None``.
+
+    ``"Round 2"`` is meaningless without the draw's size — it is ``R64`` in a
+    128-draw and ``R32`` in a 64-draw — so the size is required and a missing one
+    yields no round at all.  ``espn_round_key`` is the draw ingest's own reader,
+    reused rather than reimplemented: two answers to "which round is this" is how
+    a fixture comes to sit under one pill on the card and another in the bracket.
+
+    Publishing ESPN's raw ``"Round 2"`` instead was the tempting shortcut and it
+    is a defect: the client's ``slateRoundKey`` recognises the register's
+    vocabulary and files anything else under **Qualifying**, so 43 second-round
+    fixtures would have arrived on the card labelled as qualifiers.
+    """
+    from app.services.espn_tennis import espn_round_key
+
+    if not draw_size:
+        return None
+    return espn_round_key(listed.get("espn_round"), draw_size=draw_size)
+
+
 def authority_match_row(
     matchup: dict[str, Any],
     listed: dict[str, Any],
@@ -684,6 +728,8 @@ def authority_match_row(
     now: datetime,
     link: Optional[dict[str, Any]] = None,
     prices: Optional[dict[int, dict[str, Any]]] = None,
+    draw_size: Optional[int] = None,
+    pairing_source: str = "authority",
 ) -> Optional[dict[str, Any]]:
     """The fixture as the AUTHORITY names it, or ``None``.
 
@@ -743,11 +789,37 @@ def authority_match_row(
     render the fabricated pairing on the detail page (Q503 carry-forward 1).  A
     dead-ended honest card is better than a live link to the lie.
 
+    ═══ ux/1033: AND THE REGISTER DOES NOT HAVE TO KNOW THE FIXTURE AT ALL ═══
+
+    Everything above is about a fixture the register carries and names WRONG.
+    The larger population is the fixture the register does not carry at ALL, and
+    it is why this card was empty during a night session.
+
+    THE REGISTER IS A CEREMONY ARTEFACT.  ``ingest_tournament_draw`` runs once,
+    at the draw, and pins the FIRST ROUND: 96 US Open R128 fixtures plus 28
+    qualifiers.  It has no round two.  Measured on production 2026-09-03T00:28Z
+    with nine second-round matches on court, the slate published ``count: 0,
+    in_progress: 0, dropped {DECIDED: 96, ALREADY_PLAYED: 28}`` — and every one
+    of those drops was CORRECT.  The card was not dropping the matches being
+    played; it had never heard of them, and there was no round of this
+    tournament after the first that it could ever have shown.
+
+    So ``matchup`` is now optional in substance as well as in shape.  Passed
+    ``{}``, every fact on the row comes from the scoreboard — the same authority
+    whose word is already good enough to overrule the register's own pairing —
+    and ``draw_size`` lets the round be published in the register's vocabulary
+    rather than ESPN's (see ``authority_round``).  ``pairing_source`` names which
+    population a row came from, because they are different backlogs:
+    ``authority`` is a register row to repair, ``scoreboard`` is a round the
+    register was never going to have.
+
     ``None`` when the scoreboard does not name two identified people for this
     competition: doubles competitions name a team and no athlete, and a
     qualifier slot names "TBD" with a non-positive id.  A half-read is silence,
     and silence leaves Q503's plain withhold in place — the caller must not
-    invent a side.
+    invent a side.  On the ux/1033 path that same silence is what keeps 126
+    doubles competitions and every unfilled later-round slot off the card
+    without one extra rule being written for them.
     """
     competitors = listed.get("competitors")
     if not isinstance(competitors, list) or len(competitors) != 2:
@@ -910,9 +982,18 @@ def authority_match_row(
         "event_id": None,
         # Facts about the FIXTURE, which is correctly anchored — see the
         # docstring. Only the pairing was ever in dispute.
-        "draw": matchup.get("draw"),
-        "draw_label": draw_label(str(matchup.get("draw") or "")),
-        "round": matchup.get("round"),
+        #
+        # THE SCOREBOARD ANSWERS BOTH WHEN THE REGISTER CANNOT (ux/1033). On the
+        # Q505 path the register holds this fixture and its draw and round are
+        # the same two facts read from the committed file, so these fall back to
+        # exactly what they were. On the scoreboard path there is no matchup at
+        # all, and ESPN names the draw it filed the competition under and the
+        # round it is playing.
+        "draw": matchup.get("draw") or listed.get("draw"),
+        "draw_label": draw_label(
+            str(matchup.get("draw") or listed.get("draw") or "")
+        ),
+        "round": matchup.get("round") or authority_round(listed, draw_size),
         "scheduled_date": started.isoformat(),
         "live_state": str(listed.get("state") or "") or None,
         "status_detail": listed.get("status_detail"),
@@ -967,7 +1048,14 @@ def authority_match_row(
         # consumer that has never heard of this field cannot mistake one for
         # the other, and a guard can assert the substitution actually happened
         # rather than inferring it from a missing price.
-        "pairing_source": "authority",
+        #
+        # ux/1033 gives it a second value, `scoreboard`, and the two are kept
+        # apart because they are different backlogs. `authority` counts register
+        # rows naming somebody who is not in the draw — every one of them is a
+        # repair somebody owes. `scoreboard` counts fixtures the register was
+        # never going to hold, which is not a defect in anything and must not
+        # inflate a repair queue.
+        "pairing_source": pairing_source,
     }
 
 
@@ -1009,7 +1097,25 @@ def build_slate(
     It earns the payload slot for the reason CERT-517 named.  A short slate under
     a partial fetch and a short slate on a quiet day are otherwise the same
     bytes, and only one of them is somebody's emergency.
+
+    ═══ ux/1033: THE SLATE IS THE SCOREBOARD'S CARD, NOT THE CEREMONY'S ═══
+
+    Every rule above governs a fixture the REGISTER holds, and the register holds
+    one round — the one the draw ceremony pinned.  So this function could not
+    show a second-round match however healthy every rule in it was, and on
+    2026-09-03T00:28Z it published ``count: 0`` with nine matches on court and an
+    open Kalshi market against each of them.
+
+    So a second pass walks the scoreboard itself and builds a row for every
+    competition the register does not claim, through the same
+    ``authority_match_row`` Q505 already trusts to name two people.  It adds no
+    new authority and no new matching: the ids come from the scoreboard, the
+    prices come from links a beat resolved against the two names the scoreboard
+    published, and a competition that does not name two identified people yields
+    nothing at all.
     """
+    from app.services.espn_tennis import DECIDED_SLATE_STATE
+
     reg = TournamentRegister(register)
     cutoff = now - timedelta(hours=max_stale_hours)
 
@@ -1082,7 +1188,70 @@ def build_slate(
             continue
         rows.append(row)
 
-    rows.sort(key=lambda r: (r["scheduled_date"], r["matchup_key"] or ""))
+    # ═══ ux/1033: EVERY COMPETITION THE REGISTER DOES NOT CLAIM ═══
+    #
+    # `claimed` is comp ids, not matchup keys, and it is taken over ALL the
+    # register's matchups rather than over the rows that survived. That is the
+    # load-bearing choice: a register fixture dropped DECIDED, ALREADY_PLAYED or
+    # PAIRING_DISAGREES is still a fixture we hold an opinion about, and adding
+    # a second row for it here would put the same match on the card twice —
+    # under two keys, with two states, which is doctrine rule 1's "every match
+    # exactly once" broken in the direction that looks like a data bug.
+    claimed = {espn_competition_id(matchup) for matchup in reg.matchups}
+    claimed.discard(None)
+
+    # The register's own answer to "how big is this draw", per draw, computed
+    # once. See `first_round_size`.
+    draw_sizes = {
+        str(draw): first_round_size(reg, draw)
+        for draw in {m.get("draw") for m in reg.matchups}
+        if draw
+    }
+
+    for comp_id, listed in sorted((order_of_play or {}).items()):
+        if not isinstance(listed, dict) or comp_id in claimed:
+            continue
+        # DECIDED BELONGS TO `build_results`, ON THE SAME WORD AND FOR THE SAME
+        # REASON as a register fixture's (CERT-517). Absence is not consulted
+        # here at all — this loop only ever reads competitions the map names.
+        if listed.get("state") == DECIDED_SLATE_STATE:
+            continue
+        row = authority_match_row(
+            {},
+            listed,
+            now=now,
+            link=(authority_links or {}).get(f"espn:{comp_id}|kalshi"),
+            prices=prices,
+            draw_size=draw_sizes.get(str(listed.get("draw") or "")),
+            pairing_source="scoreboard",
+        )
+        if row is not None:
+            rows.append(row)
+
+    # LIVE FIRST, THEN THE CLOCK (ux/1033 item 2).
+    #
+    # `scheduled_date` alone was right while every row was a register fixture
+    # with a real start, and it is wrong the moment a row is live. Two ways:
+    #
+    #   * A five-setter that began at 11:00 sorts above the 19:00 match that
+    #     has not started, which is correct — but a REFUTED row (lane1/054:
+    #     ESPN still says `pre` while games are on the board) keeps ESPN's
+    #     scheduled start, and that start can be in the FUTURE. Five such rows
+    #     were measured at 2026-09-02T18:50Z. Each one sorted below matches
+    #     nobody had walked on court for.
+    #   * A start is a guess and a state is an observation. Ordering "what is
+    #     on" by the guess when the observation is right there is the same
+    #     category error the whole module refuses elsewhere.
+    #
+    # Only the live/not-live split is hoisted. Within each half the clock still
+    # orders, so the card reads as a schedule and not as a shuffle.
+    rows.sort(
+        key=lambda r: (
+            0 if r.get("live_state") == "in_progress" else 1,
+            r["scheduled_date"],
+            r["matchup_key"] or "",
+        )
+    )
 
     # Slate-level, like the board's: the newest thing anyone has seen. Reads
     # `freshest_observed_at` because `observed_at` is now the governing side's.
@@ -1139,6 +1308,24 @@ def build_slate(
             1
             for r in rows
             if r.get("pairing_source") == "authority" and r.get("priced")
+        ),
+        # HOW MANY ROWS THE REGISTER NEVER HELD AT ALL (ux/1033). Kept apart
+        # from `authority_pairings` because that number is a repair backlog and
+        # this one is not: a round after the first is not a register defect,
+        # it is a round the ceremony could not have known about. On a slam this
+        # is the whole card from day four onward, so a zero here while
+        # `order_of_play_listed` is in the hundreds is the empty-card alarm.
+        "scoreboard_pairings": sum(
+            1 for r in rows if r.get("pairing_source") == "scoreboard"
+        ),
+        # And how many carry a number. The gap is the live one — every row in
+        # it is a reader being told nobody quotes a match we may well hold, and
+        # the six-month candidate-pool truncation ux/1033 found made that gap
+        # the whole population.
+        "scoreboard_priced": sum(
+            1
+            for r in rows
+            if r.get("pairing_source") == "scoreboard" and r.get("priced")
         ),
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,

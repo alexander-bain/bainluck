@@ -393,6 +393,12 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # two is the population that reads "nobody is quoting this match" while
         # we may well hold its market.
         "authority_priced": 0,
+        # ux/1033: and how many rows came off the scoreboard because the
+        # register never held the fixture — the whole card from the second
+        # round of a tournament onward. Zero here because there is no
+        # scoreboard to read, which is a different zero from "nothing is on".
+        "scoreboard_pairings": 0,
+        "scoreboard_priced": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
