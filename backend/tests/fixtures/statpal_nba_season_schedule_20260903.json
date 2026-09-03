@@ -1,0 +1,265 @@
+{
+  "scores": {
+    "sport": "basketball",
+    "tournament": {
+      "country": "usa",
+      "id": "2545",
+      "league": "NBA",
+      "season": "2026/2027",
+      "match": [
+        {
+          "date": "03.10.2026",
+          "id": "1043639",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Scotiabank Arena",
+          "home": {
+            "id": "2711",
+            "name": "Toronto Raptors",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2696",
+            "name": "Miami Heat",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "04.10.2026",
+          "id": "1059386",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Intuit Dome",
+          "home": {
+            "id": "2670",
+            "name": "Los Angeles Clippers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2676",
+            "name": "Golden State Warriors",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "05.10.2026",
+          "id": "1041739",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "State Farm Arena",
+          "home": {
+            "id": "2681",
+            "name": "Atlanta Hawks",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2705",
+            "name": "Memphis Grizzlies",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "22.11.2026",
+          "id": "1051990",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "01:00",
+          "venue": "American Airlines Center",
+          "home": {
+            "id": "2688",
+            "name": "Dallas Mavericks",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2670",
+            "name": "Los Angeles Clippers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "09.01.2027",
+          "id": "1052264",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "22:00",
+          "venue": "Rocket Arena",
+          "home": {
+            "id": "2682",
+            "name": "Cleveland Cavaliers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2727",
+            "name": "Denver Nuggets",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "18.02.2027",
+          "id": "1052555",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "02:30",
+          "venue": "Paycom Center",
+          "home": {
+            "id": "2704",
+            "name": "Oklahoma City Thunder",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2566",
+            "name": "Boston Celtics",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "04.04.2027",
+          "id": "1052854",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "21:00",
+          "venue": "Delta Center",
+          "home": {
+            "id": "2679",
+            "name": "Utah Jazz",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "3049",
+            "name": "Portland Trail Blazers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "04.04.2027",
+          "id": "1052855",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "22:00",
+          "venue": "Golden",
+          "home": {
+            "id": "2724",
+            "name": "Sacramento Kings",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2676",
+            "name": "Golden State Warriors",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "04.04.2027",
+          "id": "1052856",
+          "stats_id": "",
+          "status": "Not Started",
+          "time": "23:30",
+          "venue": "Madison Square Garden",
+          "home": {
+            "id": "2712",
+            "name": "New York Knicks",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2566",
+            "name": "Boston Celtics",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+          }
+        }
+      ]
+    }
+  }
+}

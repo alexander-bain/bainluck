@@ -36,6 +36,19 @@ STATPAL_V1_BASE = "https://statpal.io/api/v1"
 STATPAL_V2_BASE = "https://statpal.io/api/v2"
 
 
+class StatPalUpstreamError(RuntimeError):
+    """StatPal did not answer, or answered with something that is not data.
+
+    Raised only by the authority read path (`get_schedule_fixtures`). The
+    ingestion path keeps returning `[]`, because a task that dies on a bad
+    upstream day is worse than a task that skips a cycle.
+
+    The authority path is the opposite: it exists to decide whether StatPal
+    knows about a game. "StatPal has no games" and "we could not ask StatPal"
+    are different answers and an empty list says both (gotcha #53).
+    """
+
+
 @dataclass
 class StatPalFixture:
     """A scheduled or completed game from StatPal."""
@@ -57,6 +70,13 @@ class StatPalFixture:
     season: Optional[str] = None
     round_info: Optional[str] = None
     tournament_id: Optional[str] = None  # StatPal tournament id (tennis daily/livescores)
+    # StatPal's SECOND id for the same game, served alongside "id" by the v1
+    # season-schedule endpoints. It is not a synonym and it is not universal:
+    # measured 2026-09-03, NHL fills it on 1404/1404 games and NBA on 0/1206.
+    # Carried, never substituted — which of the two anchors a game is step 5's
+    # question (the MLB three-id problem), and it cannot be answered by a
+    # reader that throws one of them away.
+    stats_id: Optional[str] = None
 
 
 @dataclass
@@ -192,7 +212,30 @@ class StatPalAPIService(BaseAPIClient):
                 logger.warning(f"StatPal API {sport}/{endpoint}: HTTP {response.status_code}")
                 return None
 
-            return response.json()
+            try:
+                payload = response.json()
+            except ValueError:
+                # `invalid-request` is served as a bare unquoted body, so it
+                # never reaches the JSON branch below.
+                logger.error(
+                    f"StatPal API {sport}/{endpoint}: HTTP 200 with a "
+                    f"non-JSON body: {response.text[:120]!r}"
+                )
+                return None
+
+            complaint = _error_body(payload)
+            if complaint:
+                # A 200 that carries a complaint instead of data. Measured
+                # 2026-09-03: the vendor's spec documents a bare
+                # `invalid-request` body, and its live 401/500 replies are
+                # `{"error": "..."}`. Both must reach callers as a failure,
+                # never as an empty section a parser reads as "no games".
+                logger.error(
+                    f"StatPal API {sport}/{endpoint}: HTTP 200 but the body is "
+                    f"an error, not data: {complaint}"
+                )
+                return None
+            return payload
 
         except httpx.TimeoutException:
             logger.warning(f"StatPal API timeout: {sport}/{endpoint}")
@@ -317,6 +360,14 @@ class StatPalAPIService(BaseAPIClient):
     # 404s). Teaching the shared parser those two shapes would turn 374 NFL and
     # 68 tennis fixtures into event writes on the next beat — which is step 2 of
     # this program and needs its own review, not a side effect of step 1.
+    #
+    # NBA and NHL (step 3) joined for a different reason. The shared parser is
+    # not blind to them — it reads all 1206 and 1404 games — so they are already
+    # ingested and this changes nothing about that. They are here so that every
+    # sport the authority program reasons about arrives through one door, with
+    # the tournament wrapper (league, season, tournament id) and the second id
+    # (`stats_id`) intact, and with a failed read raising instead of arriving as
+    # an empty schedule.
 
     # /v1/tennis/daily/{token}: d-7…d-1 and d1…d7. There is no d0 — today's play
     # lives on livescores. The spec refreshes these every 12h, so a poller gains
@@ -325,6 +376,15 @@ class StatPalAPIService(BaseAPIClient):
     TENNIS_DAILY_OFFSETS: tuple[int, ...] = tuple(
         [d for d in range(-7, 0)] + [d for d in range(1, 8)]
     )
+
+    # Sports whose whole season arrives in one flat `scores.tournament.match`
+    # array — the shape NFL is the exception to. Measured 2026-09-03:
+    #   nba  1206 games, 03.10.2026 → 04.04.2027, season "2026/2027"
+    #   nhl  1404 games, 19.09.2026 → 10.04.2027, season "2026/2027"
+    # MLB is deliberately absent. It serves the same shape, but its ids do not
+    # survive between endpoints (three id spaces, docs/statpal-capabilities.md
+    # §2) and program step 5 says resolve that before reading it as authority.
+    V1_SEASON_SCHEDULE_SPORTS: frozenset[str] = frozenset({"nba", "nhl"})
 
     async def get_schedule_fixtures(
         self,
@@ -341,12 +401,17 @@ class StatPalAPIService(BaseAPIClient):
                 (-7…-1, 1…7). Ignored by season-schedule sports.
 
         Returns:
-            List of StatPalFixture objects (empty on any API error).
+            List of StatPalFixture objects. Empty means StatPal has no games —
+            never that we failed to ask.
 
         Raises:
             ValueError: tennis called with a missing or out-of-range day_offset.
                 That is a caller bug, not an upstream absence, and the two must
                 not arrive as the same empty list.
+            StatPalUpstreamError: StatPal did not answer, or answered with an
+                error body. The ingestion path swallows this into `[]`; the
+                authority path must not, because "no games" is the finding it
+                exists to report and a swallowed failure forges it.
         """
         if sport == "tennis":
             if day_offset not in self.TENNIS_DAILY_OFFSETS:
@@ -354,14 +419,142 @@ class StatPalAPIService(BaseAPIClient):
                     f"tennis day_offset must be one of {self.TENNIS_DAILY_OFFSETS} "
                     f"(there is no d0 — today's play is on livescores); got {day_offset!r}"
                 )
-            data = await self._get(sport, f"daily/d{day_offset}")
-            return self._parse_tennis_daily(data) if data else []
+            endpoint = f"daily/d{day_offset}"
+            data = await self._get(sport, endpoint)
+            self._require_answer(sport, endpoint, data)
+            return self._parse_tennis_daily(data)
 
         if sport == "nfl":
             data = await self._get(sport, "season-schedule")
-            return self._parse_nfl_season_schedule(data) if data else []
+            self._require_answer(sport, "season-schedule", data)
+            return self._parse_nfl_season_schedule(data)
+
+        if sport in self.V1_SEASON_SCHEDULE_SPORTS:
+            data = await self._get(sport, "season-schedule")
+            self._require_answer(sport, "season-schedule", data)
+            return self._parse_v1_season_schedule(data, sport)
 
         return await self.get_fixtures(sport)
+
+    @staticmethod
+    def _require_answer(sport: str, endpoint: str, data) -> None:
+        """Turn `_get`'s None into a raise on the authority read path.
+
+        `_get` returns None for every failure it knows about — timeout, 401,
+        404, 429, 500, and a 200 whose body is an error. Every one of those
+        reaching a caller as `[]` is gotcha #53: a response shape read as an
+        absence.
+        """
+        if data is None:
+            raise StatPalUpstreamError(
+                f"StatPal {sport}/{endpoint} did not answer with data "
+                f"(see the preceding StatPal API log line for the cause)"
+            )
+
+    def _parse_v1_season_schedule(self, data: dict, sport: str) -> list[StatPalFixture]:
+        """Parse an NBA/NHL season-schedule payload for the authority program.
+
+        Shape (measured 2026-09-03):
+          {"scores": {"sport": "basketball", "tournament": {
+              "country": "usa", "id": "2545", "league": "NBA",
+              "season": "2026/2027",
+              "match": [{"date": "03.10.2026", "time": "23:00",
+                         "id": "1043639", "stats_id": "",
+                         "status": "Not Started", "venue": "Scotiabank Arena",
+                         "home": {...}, "away": {...}}]}}}
+
+        The shared `_parse_fixtures` already reads the games out of this — NBA
+        and NHL were never blind the way NFL and tennis were. What it throws
+        away is everything OUTSIDE the match array, and the authority program
+        needs all three of those things:
+
+          - `league` and `season`, which name which competition and which year
+            the fixture belongs to. `_extract_match_items` flattens the
+            tournament wrapper away, so every fixture the ingestion path builds
+            for NBA/NHL has league=None and season=None (verified against both
+            live payloads).
+          - `id`, the tournament id, the same field tennis carries.
+          - `stats_id` on the match, StatPal's second id for the same game.
+
+        And it raises where the shared parser shrugs. `time` is UTC on both
+        sports (Toronto's 03.10.2026 opener reads 23:00, which is 7:00 PM ET);
+        neither serves `datetime_utc`.
+        """
+        section = data.get("scores") if isinstance(data, dict) else None
+        if not isinstance(section, dict):
+            raise StatPalUpstreamError(
+                f"StatPal {sport}/season-schedule: no 'scores' section in the response"
+            )
+
+        tournaments = section.get("tournament")
+        if isinstance(tournaments, dict):
+            tournaments = [tournaments]
+        if not tournaments or not isinstance(tournaments, list):
+            # HTTP 200, well-formed, and empty: `{"scores": {"sport":
+            # "basketball"}}` is exactly what /nba/daily/d1 served on
+            # 2026-09-03. For a DAY that is a legitimate "no games". For a
+            # SEASON it is not an answer — 1206 games do not go quiet — so the
+            # authority reader treats a vanished season as a failure to read,
+            # not as a season that stopped existing.
+            raise StatPalUpstreamError(
+                f"StatPal {sport}/season-schedule: HTTP 200 with no tournament "
+                f"section — an entire season is missing, which is a read "
+                f"failure, not an empty schedule"
+            )
+
+        fixtures: list[StatPalFixture] = []
+        for tournament in tournaments:
+            if not isinstance(tournament, dict):
+                continue
+            league_name = tournament.get("league") or tournament.get("name")
+            season = tournament.get("season")
+            tournament_id = str(tournament.get("id", "")) or None
+
+            for item in self._season_schedule_matches(tournament):
+                try:
+                    fixture = self._parse_single_fixture(item)
+                except Exception as e:
+                    logger.debug(f"StatPal: skipping {sport} match parse error: {e}")
+                    continue
+                if not fixture:
+                    continue
+                fixture.league = fixture.league or league_name
+                fixture.season = fixture.season or season
+                fixture.tournament_id = fixture.tournament_id or tournament_id
+                fixture.stats_id = str(item.get("stats_id", "")) or None
+                fixtures.append(fixture)
+
+        return fixtures
+
+    @staticmethod
+    def _season_schedule_matches(tournament: dict) -> list:
+        """Games in one tournament: the flat `match` array plus playoff `week`s.
+
+        Same two places `_extract_match_items` looks, kept here so the authority
+        reader does not depend on the ingestion extractor's traversal — the two
+        answer different questions and must be free to diverge.
+        """
+        items: list = []
+        matches = tournament.get("match", [])
+        if isinstance(matches, dict):
+            matches = [matches]
+        if isinstance(matches, list):
+            items.extend(m for m in matches if isinstance(m, dict))
+
+        weeks = tournament.get("week", [])
+        if isinstance(weeks, dict):
+            weeks = [weeks]
+        if isinstance(weeks, list):
+            for week in weeks:
+                if not isinstance(week, dict):
+                    continue
+                week_matches = week.get("match", [])
+                if isinstance(week_matches, dict):
+                    week_matches = [week_matches]
+                if isinstance(week_matches, list):
+                    items.extend(m for m in week_matches if isinstance(m, dict))
+
+        return items
 
     def _parse_tennis_daily(self, data: dict) -> list[StatPalFixture]:
         """Parse a tennis daily/livescores payload into fixtures.
@@ -1106,6 +1299,33 @@ def _safe_int(val) -> Optional[int]:
         return int(val)
     except (ValueError, TypeError):
         return None
+
+
+# The vendor's documented way of saying "that call was malformed", served as
+# the whole body with HTTP 200 (docs/statpal-capabilities.md §1). Twelve probes
+# on 2026-09-03 could not make it appear — the live API answered 404, 401 or
+# 500 instead — so this is guarded on the vendor's word, not on a reproduction.
+_INVALID_REQUEST_BODY = "invalid-request"
+
+
+def _error_body(payload) -> Optional[str]:
+    """Return a complaint string if a 200 body is an error, else None.
+
+    Two shapes, both measured or documented on 2026-09-03:
+      - the bare string `invalid-request` (spec; not reproduced live)
+      - `{"error": "Invalid access key or sport. ..."}` (live, 401 and 500)
+
+    An empty section such as `{"scores": {"sport": "basketball"}}` is NOT an
+    error here — the endpoint answered, it simply has nothing for that day.
+    Telling those apart is the schedule parser's job, not the transport's.
+    """
+    if isinstance(payload, str):
+        return payload if _INVALID_REQUEST_BODY in payload.lower() else None
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if err:
+            return str(err)
+    return None
 
 
 def _tennis_set_scores(player: dict) -> Optional[dict]:
