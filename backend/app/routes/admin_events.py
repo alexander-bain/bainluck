@@ -496,6 +496,40 @@ async def reconcile_unanchored_events_endpoint(
     return {**result, "operator_line": summarize_for_operator(result)}
 
 
+@router.post("/events/reconcile-anchor-schedule")
+async def reconcile_anchor_schedule_endpoint(
+    request: Request,
+    secret: str = Query(None),
+    apply: bool = Query(False),
+    limit: int = Query(200, ge=1, le=1000),
+    sport: Optional[str] = Query(None, description="Restrict to one sport key"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """#2693/#2697 — does each anchored row agree with its own anchor's kickoff?
+
+    Dereferences ``events.espn_id`` BY ID (one ``summary?event=`` call per row)
+    rather than looking for the row on today's scoreboard, which is the blind
+    spot that let two NFL rows sit in Week 1 wearing anchors for Week 6 and
+    Week 15. The rule and the argument are ``app/utils/anchor_schedule``.
+
+    ``apply`` moves ``commence_time`` (and stamps its provenance) on rows whose
+    teams match the authority exactly and whose clock does not. It writes no
+    other column, and it never writes when the teams disagree — that is an
+    identity defect for ``authority-id-collisions``, not a clock one. Gated on
+    the destructive check because it is a write, not merely a read.
+    """
+    _check_admin_secret(secret, request=request)
+    if apply:
+        _check_admin_destructive(request=request)
+
+    from app.tasks.reconcile_anchor_schedule import reconcile, summarize_for_operator
+
+    result = await reconcile(db, apply=apply, limit=limit, sport=sport)
+    if apply:
+        await db.commit()
+    return {**result, "operator_line": summarize_for_operator(result)}
+
+
 @router.get("/events/duplicates")
 async def list_duplicate_events(
     request: Request, secret: str = Query(None),
