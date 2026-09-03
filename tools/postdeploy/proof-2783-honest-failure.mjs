@@ -72,7 +72,12 @@ if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>
 const eventId = URL.split('/').pop();
 // Only the event's OWN detail call. The sibling rails are left alone so the page fails the way
 // it does in life, with one call down rather than the whole API blacked out.
-const TARGET = new RegExp(`/api/events/${eventId}(\\?|$)`);
+//
+// An exact pathname comparison, NOT a regex built from `eventId`. `eventId` comes from argv, so
+// a regex made from it is both injectable and — because `.` is a metacharacter — quietly wider
+// than it reads (CodeQL js/regex-injection + js/incomplete-hostname-regexp, both correct). A
+// string equality cannot be either, and it is what the check actually means.
+const TARGET_PATH = `/api/events/${eventId}`;
 
 let failures = 0;
 
@@ -87,7 +92,9 @@ for (const arm of ARMS) {
   let intercepted = 0;
 
   await page.route('**/api/events/**', async (route) => {
-    if (!TARGET.test(new global.URL(route.request().url()).pathname + (new global.URL(route.request().url()).search || ''))) {
+    // Query strings are ignored on purpose: `?hours=48` is the history rail, a different call
+    // on a path of its own, so pathname equality already excludes it.
+    if (new global.URL(route.request().url()).pathname !== TARGET_PATH) {
       return route.continue();
     }
     intercepted += 1;
