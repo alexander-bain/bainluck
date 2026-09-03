@@ -177,8 +177,19 @@ describe("the rendered card — the markup a reader actually got", () => {
   it("says its own emptiness rather than rendering nothing", () => {
     // Kept from the suite this replaces: the failure mode BEFORE the wording
     // defect was an empty list rendering no card at all.
+    //
+    // Asserted against the state object's own strings rather than by stripping
+    // tags out of the markup. A `replace(/<[^>]+>/g, "")` here is a
+    // tag-stripper CodeQL correctly flags as incomplete sanitization
+    // (`js/incomplete-multi-character-sanitization`, high) — it is only a test
+    // assertion and sanitizes nothing, but a pattern that reads as sanitization
+    // does not belong in the tree where the next reader can copy it somewhere
+    // it matters.
+    const state = slateEmptyState({ drawReleased: true, orderOfPlayListed: 0 });
     const html = renderToStaticMarkup(<TournamentMatches entries={[]} />);
-    expect(html).toMatch(/<section[^>]*data-testid="matches-empty"/);
-    expect(html.replace(/<[^>]+>/g, "").trim().length).toBeGreaterThan(20);
+    expect(html).toContain('data-testid="matches-empty"');
+    expect(state.headline.length).toBeGreaterThan(10);
+    expect(state.detail.length).toBeGreaterThan(20);
+    expect(html).toContain(state.headline);
   });
 });
