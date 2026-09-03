@@ -172,3 +172,9 @@ _to_delete/
 # tracked; deliberate evidence can still be committed with `git add -f`.
 /artifacts-ux-*/
 .env*
+
+# CAL-P992: a LIVE append-only cursor, not a bankable artifact — a watcher is still
+# writing to it every ~3 minutes, so tracking it leaves every worktree permanently
+# dirty. The evidence CAL-P989 cites (after-needle.json, first-published-payload.json,
+# PUBLISHED.marker, the PNGs) is committed; the moving tail is not.
+artifacts/cal-p989/bank-cursor.jsonl
