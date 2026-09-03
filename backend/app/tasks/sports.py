@@ -14,6 +14,7 @@ from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.event_child_repoint import repoint_event_children
+from app.utils.match_receipts import record_twin_merge_receipts
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import select_espn_candidate
 from app.utils.espn_id_stamp import (
@@ -720,6 +721,11 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
         child_moves: dict[str, dict[str, int]] = {
             "repointed": {}, "dropped_as_duplicate": {}
         }
+        # LINKLOSS-02: how many of the moved market links this run could
+        # EXPLAIN afterwards. Reported, not just written, because a receipt
+        # write that silently stops is worse than none — every consumer reads
+        # the resulting silence as "no links moved" (gotcha #53).
+        market_receipts_written = 0
 
         for row in pairs:
             # R6: the SQL above already required a shared provider id, and this
@@ -851,12 +857,23 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                 moved = await repoint_event_children(
                     session, keep_id=keep_id, orphan_id=orphan_id
                 )
+                # Popped before folding: `markets` is a list of rows, not a
+                # per-table count, and _merge_child_moves takes counts.
+                moved_markets = moved.pop("markets", [])
                 _merge_child_moves(child_moves, moved)
                 await session.execute(
                     sa_text("DELETE FROM events WHERE id = :orphan"),
                     {"orphan": orphan_id},
                 )
                 await session.commit()
+                # AFTER the commit, on the receipts' own session (LINKLOSS-02).
+                # Each claim is re-read against the committed row before it is
+                # published, and the write can never fail the merge.
+                market_receipts_written += await record_twin_merge_receipts(
+                    moved_markets,
+                    previous_event_id=orphan_id,
+                    new_event_id=keep_id,
+                )
                 delete_ids.append(orphan_id)
 
             merged_count += 1
@@ -885,6 +902,10 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             # they are deleted deliberately, so they are reported deliberately.
             "child_rows_repointed": child_moves["repointed"],
             "child_rows_dropped_as_duplicate": child_moves["dropped_as_duplicate"],
+            # LINKLOSS-02: markets whose move onto the survivor is now on the
+            # record as `superseded_by_twin_merge`, not as an unexplained
+            # link loss.
+            "market_link_receipts_written": market_receipts_written,
         }
 
 
@@ -972,6 +993,11 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
         child_moves: dict[str, dict[str, int]] = {
             "repointed": {}, "dropped_as_duplicate": {}
         }
+        # LINKLOSS-02: how many of the moved market links this run could
+        # EXPLAIN afterwards. Reported, not just written, because a receipt
+        # write that silently stops is worse than none — every consumer reads
+        # the resulting silence as "no links moved" (gotcha #53).
+        market_receipts_written = 0
 
         for d in degen_rows:
             # R6 → R7 (#1801): DELETION REQUIRES EVIDENCE OF THE ARTIFACT, not
@@ -1072,12 +1098,23 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
                 moved = await repoint_event_children(
                     session, keep_id=keep_id, orphan_id=orphan_id
                 )
+                # Popped before folding: `markets` is a list of rows, not a
+                # per-table count, and _merge_child_moves takes counts.
+                moved_markets = moved.pop("markets", [])
                 _merge_child_moves(child_moves, moved)
                 await session.execute(
                     sa_text("DELETE FROM events WHERE id = :orphan"),
                     {"orphan": orphan_id},
                 )
                 await session.commit()
+                # AFTER the commit, on the receipts' own session (LINKLOSS-02).
+                # Each claim is re-read against the committed row before it is
+                # published, and the write can never fail the merge.
+                market_receipts_written += await record_twin_merge_receipts(
+                    moved_markets,
+                    previous_event_id=orphan_id,
+                    new_event_id=keep_id,
+                )
             merged += 1
 
         if not dry_run and merged:
@@ -1101,4 +1138,8 @@ async def _merge_degenerate_combat_events_impl(dry_run: bool = True, limit: int 
             # R4: see the same two keys on _merge_duplicate_events_impl.
             "child_rows_repointed": child_moves["repointed"],
             "child_rows_dropped_as_duplicate": child_moves["dropped_as_duplicate"],
+            # LINKLOSS-02: markets whose move onto the survivor is now on the
+            # record as `superseded_by_twin_merge`, not as an unexplained
+            # link loss.
+            "market_link_receipts_written": market_receipts_written,
         }

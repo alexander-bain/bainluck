@@ -4941,7 +4941,8 @@ async def fix_market_status(
     result = await db.execute(
         text("""
             UPDATE futures_markets
-            SET status = 'resolved'
+            SET status = 'resolved',
+                settled_at = COALESCE(settled_at, NOW())
             WHERE id IN (
                 SELECT DISTINCT fm.id
                 FROM futures_outcomes fo
@@ -4991,7 +4992,8 @@ async def fix_datagolf_market_status(
         result = await db.execute(
             text("""
                 UPDATE futures_markets
-                SET status = 'resolved'
+                SET status = 'resolved',
+                    settled_at = COALESCE(settled_at, NOW())
                 WHERE source = 'datagolf'
                   AND status = 'closed'
             """)

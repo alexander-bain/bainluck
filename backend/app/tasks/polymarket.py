@@ -1087,6 +1087,15 @@ async def _process_event_batch(
                     "commence_time": commence_time,
                     "resolution_date": resolution_date,
                     "status": "open" if event.active else "resolved",
+                    # LINKLOSS-02: the stamp is coupled to the status in the
+                    # SAME statement. This poll rewrites `status` every hour and
+                    # can flip a market back to 'open', so a stamp written
+                    # anywhere else would survive the reopen. Resolved keeps the
+                    # FIRST observation; open clears it.
+                    "settled_at": (
+                        None if event.active
+                        else func.coalesce(FuturesMarket.settled_at, func.now())
+                    ),
                     "category_tags": tags,
                     "group_id": poly_group_id,
                     "group_type": poly_group_type,
@@ -1245,6 +1254,13 @@ async def _process_event_batch(
                             "name": sub_name,
                             "market_tier": sub_tier,
                             "status": "open" if event.active else "resolved",
+                            # Same coupling as the parent above (LINKLOSS-02).
+                            "settled_at": (
+                                None if event.active
+                                else func.coalesce(
+                                    FuturesMarket.settled_at, func.now()
+                                )
+                            ),
                             "event_id": parent_event_id,
                             "updated_at": func.now(),
                             "volume_24h": sub_volume_24h,
@@ -2414,6 +2430,7 @@ async def _sync_polymarket_resolved_status():
                         text("""
                             UPDATE futures_markets
                             SET status = 'resolved',
+                                settled_at = COALESCE(settled_at, NOW()),
                                 market_metadata =
                                     COALESCE(market_metadata, '{}'::jsonb)
                                     || CASE WHEN (

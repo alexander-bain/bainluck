@@ -29,8 +29,12 @@ from app.utils.event_fk_inventory import derive_event_child_tables
 
 
 class _Result:
-    def __init__(self, rowcount=0):
+    def __init__(self, rowcount=0, rows=()):
         self.rowcount = rowcount
+        self._rows = list(rows)
+
+    def all(self):
+        return self._rows
 
 
 class _RecordingSession:
@@ -263,7 +267,7 @@ class TestTheMovesAreReported:
         session = _RecordingSession(rowcount=3)
         out = await repoint_event_children(session, keep_id=1, orphan_id=2)
 
-        assert set(out) == {"repointed", "dropped_as_duplicate"}
+        assert set(out) == {"repointed", "dropped_as_duplicate", "markets"}
         assert out["repointed"]["game_moments"] == 3
         assert out["repointed"]["ranking_judgments"] == 3
         assert out["dropped_as_duplicate"]["game_moments"] == 3
@@ -275,7 +279,9 @@ class TestTheMovesAreReported:
         """A response full of zeroes is a response nobody reads."""
         session = _RecordingSession(rowcount=0)
         out = await repoint_event_children(session, keep_id=1, orphan_id=2)
-        assert out == {"repointed": {}, "dropped_as_duplicate": {}}
+        assert out == {
+            "repointed": {}, "dropped_as_duplicate": {}, "markets": [],
+        }
 
     @pytest.mark.asyncio
     async def test_a_missing_rowcount_does_not_break_the_merge(self):
@@ -289,8 +295,13 @@ class TestTheMovesAreReported:
 
         session = _NoRowcountSession()
         out = await repoint_event_children(session, keep_id=1, orphan_id=2)
-        assert out == {"repointed": {}, "dropped_as_duplicate": {}}
-        assert len(session.statements) == len(event_fk_tables()) + len(
+        assert out == {
+            "repointed": {}, "dropped_as_duplicate": {}, "markets": [],
+        }
+        # +1 for the futures_markets pre-read (LINKLOSS-02): the markets whose
+        # link this merge is about to move, read before the UPDATE erases where
+        # they came from.
+        assert len(session.statements) == 1 + len(event_fk_tables()) + len(
             EVENT_SCOPED_UNIQUE_KEYS
         )
 

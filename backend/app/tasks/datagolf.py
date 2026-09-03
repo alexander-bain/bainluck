@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy import func as sa_func, select, and_, or_, update
 
 from app.tasks.base import get_task_session
+from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,11 @@ async def _poll_datagolf_markets() -> dict:
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date > restore_now,
                 )
-                .values(status="open")
+                # The stamp is cleared with the status, not left behind. A row
+                # that is open again did not settle, and a `settled_at` sitting
+                # on an open market would be counted by the link-loss census as
+                # a market that left the open population — while it is in it.
+                .values(status="open", settled_at=None)
             )
             if restore_result.rowcount:
                 await session.commit()
@@ -408,7 +413,10 @@ async def _poll_datagolf_markets() -> dict:
                                         FuturesMarket.resolution_date <= resolve_now,
                                     ),
                                 )
-                                .values(status="resolved")
+                                .values(
+                                    status="resolved",
+                                    **settled_values(FuturesMarket.settled_at),
+                                )
                             )
                             resolved_count += resolve_result.rowcount
                         if resolved_count:
@@ -479,7 +487,10 @@ async def _poll_datagolf_live() -> dict:
                                                 FuturesMarket.resolution_date <= resolve_now,
                                             ),
                                         )
-                                        .values(status="resolved")
+                                        .values(
+                                            status="resolved",
+                                            **settled_values(FuturesMarket.settled_at),
+                                        )
                                     )
                                     if resolve_result.rowcount:
                                         logger.info(
@@ -772,6 +783,12 @@ async def _poll_datagolf_live() -> dict:
                                     skipped_future += 1
                                     continue
                                 market.status = "resolved"
+                                # LINKLOSS-02: the transition timestamp, kept
+                                # at the first observation. The live poll can
+                                # see the same completed field on consecutive
+                                # ticks.
+                                if market.settled_at is None:
+                                    market.settled_at = now
                                 resolved += 1
                         if skipped_future:
                             logger.warning(

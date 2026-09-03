@@ -754,7 +754,7 @@ def _receipt_row(**kw):
         market_id=59669077, source="polymarket", external_id="0xabc",
         market_name="Ann Li vs Donna Vekic", phase=mr.PHASE_PASS3_BACKLOG,
         outcome=mr.OUTCOME_REJECTED, reject_reason=mr.REJECT_OUTSIDE_TIME_WINDOW,
-        linked_event_id=None,
+        linked_event_id=None, previous_event_id=None, actor=None,
         candidates=[{"event_id": 15299723, "verdict": "outside_time_window"}],
         detail={"team_a": "Ann Li", "team_b": "Donna Vekic"},
         attempt_count=41, first_attempted_at=NOW - timedelta(days=5),
@@ -770,14 +770,24 @@ def _call(**kw):
     from app.routes.admin_matching import match_receipts as endpoint
 
     db = kw.pop("db")
+    # Called as a plain coroutine, so every Query() default has to be supplied
+    # by hand — an unsupplied one arrives as the Query object itself, not its
+    # default, and fails inside whatever arithmetic first touches it.
+    kw.setdefault("since_hours", 24)
     with patch("app.routes.admin_matching._check_admin_secret", lambda *a, **k: None):
         return asyncio.run(endpoint(request=None, secret="x", db=db, **kw))
 
 
 def test_one_call_answers_why_a_market_is_unattached():
-    """The bus's acceptance test, in the shape the bus will run it."""
+    """The bus's acceptance test, in the shape the bus will run it.
+
+    Two results are queued because the single-market answer is two questions
+    since LINKLOSS-03: what the last attempt decided (the receipt, which the
+    next attempt overwrites) and what has actually happened to this market's
+    link (the append-only history, which nothing overwrites).
+    """
     out = _call(
-        db=_FakeDB([_FakeResult([_receipt_row()])]),
+        db=_FakeDB([_FakeResult([_receipt_row()]), _FakeResult([])]),
         market_id=59669077, external_id=None, event_id=None,
         reject_reason=None, source=None, limit=50,
     )
@@ -786,6 +796,7 @@ def test_one_call_answers_why_a_market_is_unattached():
     assert r["candidates"][0]["event_id"] == 15299723
     assert r["attempt_count"] == 41
     assert r["detail"]["team_a"] == "Ann Li"
+    assert out["link_changes"] == []
 
 
 def test_a_market_with_no_receipt_is_reported_as_never_attempted_not_as_empty():
@@ -842,8 +853,18 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     """open unlinked markets with NO receipt — ARTIFACT-M-20260902-O's hole."""
     reason_rows = [_Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="polymarket", n=6626)]
     totals = _Row(receipts=31433, linked=10021, oldest=NOW - timedelta(hours=2), newest=NOW)
+    change_rows = [
+        _Row(outcome=mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+             actor=mr.ACTOR_TWIN_CLEANUP, phase=mr.PHASE_TWIN_MERGE, n=261),
+        _Row(outcome=mr.OUTCOME_UNLINKED, actor=mr.ACTOR_MATCHER_PASS,
+             phase=mr.PHASE_PHASE15_REVALIDATE, n=4),
+    ]
     out = _call(
-        db=_FakeDB([_FakeResult(reason_rows), _FakeResult([totals])], scalar=0),
+        db=_FakeDB(
+            [_FakeResult(reason_rows), _FakeResult([totals]),
+             _FakeResult(change_rows)],
+            scalar=0,
+        ),
         market_id=None, external_id=None, event_id=None,
         reject_reason=None, source=None, limit=50,
     )
@@ -852,6 +873,40 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     assert out["totals"]["rejected"] == 31433 - 10021
     assert out["by_reason"][0]["count"] == 6626
     assert sorted(mr.REJECT_REASONS) == out["valid_reasons"]
+
+
+def test_the_summary_answers_the_question_that_had_no_answer():
+    """LINKLOSS-02: "did tonight's merge drop 261 links?" is one GROUP BY.
+
+    The census must separate the merge from the matcher — one is expected
+    bookkeeping and the other is a bug — and must publish the settlement
+    subtraction beside it, because a settlement wave and a link loss look
+    identical in a count of open linked markets.
+    """
+    change_rows = [
+        _Row(outcome=mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+             actor=mr.ACTOR_TWIN_CLEANUP, phase=mr.PHASE_TWIN_MERGE, n=261),
+        _Row(outcome=mr.OUTCOME_UNLINKED, actor=mr.ACTOR_MATCHER_PASS,
+             phase=mr.PHASE_PHASE2_LINKED, n=4),
+    ]
+    totals = _Row(receipts=1, linked=1, oldest=NOW, newest=NOW)
+    out = _call(
+        db=_FakeDB(
+            [_FakeResult([]), _FakeResult([totals]), _FakeResult(change_rows)],
+            scalar=17,
+        ),
+        market_id=None, external_id=None, event_id=None,
+        reject_reason=None, source=None, limit=50, since_hours=6,
+    )
+    census = out["link_changes"]
+    assert census["since_hours"] == 6
+    assert census["ended_total"] == 265
+    by_actor = {(r["outcome"], r["actor"]): r["count"] for r in census["by_actor"]}
+    assert by_actor[(mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE, mr.ACTOR_TWIN_CLEANUP)] == 261
+    assert by_actor[(mr.OUTCOME_UNLINKED, mr.ACTOR_MATCHER_PASS)] == 4
+    # The subtraction. Without it the 261 above is uninterpretable.
+    assert census["linked_markets_settled"] == 17
+    assert sorted(mr.ACTORS) == census["valid_actors"]
 
 
 def test_the_backlog_pass_holds_a_reserve_for_the_snapshot_phase():

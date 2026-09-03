@@ -68,9 +68,14 @@ is an effect nobody reviews.
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from sqlalchemy import text as sa_text
 
 from app.utils.event_fk_inventory import derive_event_child_tables
+
+logger = logging.getLogger(__name__)
 
 #: Children whose UNIQUE constraint INCLUDES ``event_id``, mapped to the OTHER columns
 #: in that constraint. A repoint into an occupied key violates these, so they take the
@@ -125,11 +130,35 @@ async def repoint_event_children(
     only non-zero tables. ``dropped_as_duplicate`` is the count the keeper already had
     an equivalent row for; it is returned so the caller can surface it, because both
     collision tables are ones whose loss would otherwise be invisible.
+
+    ``markets`` IS NOT A COUNT, AND COVERS ONLY ONE TABLE (LINKLOSS-02). Every other
+    child moved here is internal bookkeeping whose parent id nobody asks about after
+    the merge. ``futures_markets.event_id`` is different in kind: it is the reason a
+    Kalshi or Polymarket price appears on a game card, so a merge that moves 261 of
+    them changes what 261 cards show — and with no record of the move, that is
+    indistinguishable from outside from the matcher having dropped 261 links. It was
+    indistinguishable on 2026-09-02. The rows are read BEFORE the update, because the
+    previous event id does not survive it, and handed back for the caller to receipt
+    AFTER its commit. Nothing is written here: a merge must not be able to fail on
+    its own bookkeeping.
     """
     repointed: dict[str, int] = {}
     dropped: dict[str, int] = {}
+    markets: list[dict[str, Any]] = []
 
     for table in event_fk_tables():
+        if table == "futures_markets":
+            markets = _rows(
+                await session.execute(
+                    sa_text(
+                        "SELECT id, source, external_id, name FROM futures_markets "
+                        "WHERE event_id = :orphan"
+                    ),
+                    {"orphan": orphan_id},
+                ),
+                orphan_id,
+            )
+
         extra_key = EVENT_SCOPED_UNIQUE_KEYS.get(table)
         if extra_key is None:
             result = await session.execute(
@@ -176,7 +205,38 @@ async def repoint_event_children(
         if removed:
             dropped[table] = removed
 
-    return {"repointed": repointed, "dropped_as_duplicate": dropped}
+    return {
+        "repointed": repointed,
+        "dropped_as_duplicate": dropped,
+        "markets": markets,
+    }
+
+
+def _rows(result, orphan_id: int) -> list[dict[str, Any]]:
+    """The pre-move market rows, tolerating a result that cannot supply them.
+
+    Same posture as :func:`_rowcount` immediately below, and for the same
+    reason: this runs one statement before a DELETE, and a merge must not fail
+    because its *bookkeeping* could not read a row set. It is LOUD rather than
+    silent, though — an empty list here means the census will under-report link
+    moves, and gotcha #53 is precisely that a consumer reads that silence as
+    "nothing happened".
+    """
+    try:
+        return [
+            {
+                "id": r.id, "source": r.source,
+                "external_id": r.external_id, "name": r.name,
+            }
+            for r in result.all()
+        ]
+    except Exception as exc:  # pragma: no cover - driver/mock without .all()
+        logger.warning(
+            "Could not read the markets on event %s before repointing them "
+            "(%s) — their move will be missing from the link-loss census",
+            orphan_id, type(exc).__name__,
+        )
+        return []
 
 
 def _rowcount(result) -> int:
