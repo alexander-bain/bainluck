@@ -1,0 +1,121 @@
+# CAL-P991 D1 (`incoherent_binaries`) — RESCUED, NOT SHIPPABLE AS-IS
+#
+# Found uncommitted in the `program/calibration-991` worktree by CAL-P992 and banked here
+# rather than committed or deleted (gotcha #52: no orphan WIP in a shared tree; never
+# reconstruct lost work by archaeology). CAL-P991's report says the working tree was
+# reverted — for C1/C2 it was; this change was not.
+#
+# It is complete and wired (CTE, flag column, LEFT JOIN, and the `AND NOT
+# ro.is_incoherent_binary` in the published-set filter). Split from CAL-P992's C2 change by
+# reconstruction, verified: C2-only patch + this patch = the worktree, byte for byte.
+#
+# TWO THINGS IT OWES BEFORE IT CAN SHIP, both measured by CAL-P992:
+#
+#  1. IT REDS AN EXISTING GUARD, and not cosmetically.
+#     tests/test_calibration_horizon_honest_263.py::TestFieldSumThresholdIsPriceExpression
+#     ::test_candidate_detection_no_longer_carries_terminal_sum_gate
+#     asserts that `SUM(COALESCE(fo.calibration_probability, fo.opening_probability)) > 1.15`
+#     no longer appears in candidate detection. The `incoherent_binaries` CTE puts it back.
+#     That is a collision with #263's ruling about candidate detection, not a stale pin —
+#     it needs a decision, not an edit.
+#
+#  2. It adds 2 SQL-shaping inputs the calibration fingerprint does not hash
+#     (`INCOHERENT_BINARY_SUM_MIN`, `INCOHERENT_BINARY_EXCLUDED_CELLS`), so it needs
+#     `test_calibration_fingerprint_coverage.py`'s hard-coded 22 -> 24 and the 48-based
+#     cross-module count bumped, plus the derived-map fixture regenerated. CAL-P992's C2
+#     adds ZERO such inputs, which is why C2 was collapsed back to a single constant.
+#
+# Also frozen: `precompute_calibration.py` is under ruling 009, score 5/24 NOT_MET.
+#
+--- a/backend/app/tasks/precompute_calibration.py
++++ b/backend/app/tasks/precompute_calibration.py
+@@ -1141,6 +1141,24 @@
+ # durable normalization (stamp at capture) is follow-up scope on #1012.
+ MEX_NORMALIZE_THRESHOLD = 1.15
+ 
++# CAL-P991 D1 (#1978) RANK 1 — the LOW side of the same threshold. `polymarket/
++# baseball/quantity` publishes two-leg Over/Under run-total markets whose two
++# published prices sum to 0.002-0.87 instead of ~1 ("Cincinnati Reds vs. New
++# York Yankees: O/U 7.5", Over 0.0010 / Under 0.0010, Under wins). Exactly one
++# leg of a two-leg mex market wins, always, so the honest sum is 1.0.
++#
++# The reciprocal of MEX_NORMALIZE_THRESHOLD rather than a second magic number:
++# "sums to ~1" already has a definition in this file and a rule that invented a
++# different one could not be read against the census that uses it.
++INCOHERENT_BINARY_SUM_MIN = round(1 / MEX_NORMALIZE_THRESHOLD, 4)
++
++# Cell-scoped for the reason NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS is: a shape rule
++# measured on one cell is not thereby measured on twenty. Cells enter this tuple
++# only with their own fold on record.
++INCOHERENT_BINARY_EXCLUDED_CELLS: tuple[tuple[str, str], ...] = (
++    ("polymarket", "baseball"),
++)
++
+ MEX_NORMALIZE_RULE_TEXT = (
+     "Normalizes resolved mutually-exclusive markets with >=3 outcomes and exactly "
+     "one winner whose per-market probability sum exceeds 1.15 — each outcome's "
+@@ -3321,7 +3339,39 @@
+                   -- normalized partition still sums to ~1.0 (a phantom's price can
+                   -- never inflate the divisor). Replaces the volume proxy.
+                   AND {kalshi_liquidity_exists_sql(source='mi.source')}
++                GROUP BY fo.market_id
++            ),
++            -- CAL-P991 D1 (#1978) RANK 1: the two-leg market whose two published
++            -- prices do not sum to ~1. ``malformed_binaries`` already condemns a
++            -- 2-outcome mex market on its WINNER count; nothing in this chain has
++            -- ever read a binary's PRICE sum, and ``mex_normalization`` reads a
++            -- price sum only for >=3 outcomes and only UPWARD. This is the same
++            -- sentence as malformed_binaries, applied to the price side and in
++            -- both directions.
++            --
++            -- Bounds are MEX_NORMALIZE_THRESHOLD and its reciprocal, so the rule
++            -- inherits the producer's own definition of "sums to ~1" rather than
++            -- inventing a second one, and is symmetric in log space (lesson 13: a
++            -- correction expected to run one way must be able to run both).
++            --
++            -- BOTH legs must carry a price. A pair only one of whose legs was
++            -- captured has no pair sum to judge — its low sum is the capture's,
++            -- not the writer's, and condemning it would delete rows for a reason
++            -- this rule never measured.
++            incoherent_binaries AS (
++                SELECT fo.market_id
++                FROM futures_outcomes fo
++                JOIN market_result_shape mrs ON mrs.market_id = fo.market_id
++                JOIN market_info mi ON mi.market_id = fo.market_id
++                {curve_price_join}
++                WHERE mi.mutually_exclusive = true
++                  AND mrs.n_outcomes = 2
++                  AND (mi.source, mi.category)
++                      IN {_sql_pair_tuple(INCOHERENT_BINARY_EXCLUDED_CELLS)}
+                 GROUP BY fo.market_id
++                HAVING COUNT(*) FILTER (WHERE {curve_price} IS NOT NULL) = 2
++                   AND (SUM({curve_price}) < {INCOHERENT_BINARY_SUM_MIN}
++                     OR SUM({curve_price}) > {MEX_NORMALIZE_THRESHOLD})
+             ),
+ {_virtual_market_ctes(frozen_vm_roster)}
+             vm_stats AS (
+@@ -3511,6 +3561,8 @@
+                     -- 0 = void, or 2 = impossible). mb.win_count carries which.
+                     (mb.market_id IS NOT NULL) AS is_malformed_binary,
+                     mb.win_count AS malformed_win_count,
++                    -- CAL-P991 D1: malformed_binary's price-side sibling.
++                    (icb.market_id IS NOT NULL) AS is_incoherent_binary,
+                     -- Queue #159 (#1010): esports match-bundle exclusion flag.
+                     (emb.market_id IS NOT NULL) AS is_esports_bundle,
+                     -- CAL-P168 (#1978) RANK 1: K' = R1 + R2 + R3 + M1.
+@@ -3669,6 +3721,7 @@
+                  AND cv.mutually_exclusive IS NOT DISTINCT FROM vm.mutually_exclusive
+                 {curve_price_join}
+                 LEFT JOIN malformed_binaries mb ON mb.market_id = fo.market_id
++                LEFT JOIN incoherent_binaries icb ON icb.market_id = fo.market_id
+                 LEFT JOIN esports_multi_bundles emb ON emb.market_id = fo.market_id
+                 LEFT JOIN player_props_placeholder_markets ppp
+                     ON ppp.market_id = fo.market_id
+@@ -3845,6 +3898,7 @@
+                   AND mp.mode_price = ro.adj_opening_probability
+                 WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                     AND NOT ro.is_malformed_binary
++                    AND NOT ro.is_incoherent_binary
+                     AND NOT ro.is_esports_bundle
+                     -- CAL-P168 (#1978) RANK 1: K' leaves the published curve.
+                     -- Read-side only (gotcha #21) — the rows are dropped, never
