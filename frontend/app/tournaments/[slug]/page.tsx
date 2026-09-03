@@ -155,7 +155,11 @@ import TournamentResults from "@/components/tournament/TournamentResults";
 import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
 import { fetchTournament } from "@/lib/api";
 import HubBootScript from "@/components/tournament/HubBootScript";
-import type { TournamentPayload } from "@/lib/tournament";
+import {
+  HUB_SECTIONS_FIRST,
+  HUB_SECTIONS_REST,
+} from "@/lib/tournament/hubBoot";
+import { mergeTournamentSections, type TournamentPayload } from "@/lib/tournament";
 
 type Tab = "tournament" | "bracket";
 
@@ -195,23 +199,68 @@ export default function TournamentPage() {
    */
   const [selection, setSelection] = useState<string[] | null>(null);
 
+  /**
+   * Has the second half landed? (latency/135.)
+   *
+   * Not `data.grids !== undefined`: a hub whose `rest` request FAILED and one
+   * still waiting for it are different states, and the Bracket tab must not
+   * tell a reader "who gets how far fills in once the draw is made" — a
+   * sentence about a ceremony that already happened — while a request is in
+   * flight. `false` here means "still coming"; the failure path sets it true
+   * with no grid, which is the honest empty the component already renders.
+   */
+  const [restLoaded, setRestLoaded] = useState(false);
+
   useEffect(() => {
     if (!slug) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setRestLoaded(false);
 
-    fetchTournament(slug)
+    /**
+     * TWO REQUESTS, AND THE ORDER IS THE SHIP (latency/135).
+     *
+     * Measured on production 2026-09-03: the whole payload is 902,423 bytes
+     * (86,838 gzipped) and 76% of it is the playoff grid and the finished
+     * list — one behind a tab tap, the other below the day's card on every
+     * viewport we render. The first screen needs 20 KB.
+     *
+     * The `rest` request is chained off the first rather than issued beside
+     * it, deliberately: on Slow 4G these two would otherwise share one
+     * bandwidth-bound pipe and the 67 KB half would slow the 20 KB half down
+     * — which is the whole defect, re-created one layer up. Nothing on the
+     * first screen waits for it.
+     */
+    fetchTournament(slug, HUB_SECTIONS_FIRST)
       .then((payload) => {
-        if (!cancelled) setData(payload);
+        if (cancelled) return;
+        setData(payload);
+        setLoading(false);
+
+        return fetchTournament(slug, HUB_SECTIONS_REST)
+          .then((rest) => {
+            if (cancelled) return;
+            setData((current) =>
+              current ? mergeTournamentSections(current, rest) : current
+            );
+          })
+          .catch(() => {
+            // The second half failing is NOT a page failure. The reader keeps
+            // the chart, the day's card and every live number; the two
+            // sections it carries render their own honest empties, which they
+            // already had to do for a server that predates them.
+          })
+          .finally(() => {
+            if (!cancelled) setRestLoaded(true);
+          });
       })
       .catch(() => {
         // No partial page assembled from whatever loaded. A tournament hub that
         // half-renders is worse than one that says it could not load.
-        if (!cancelled) setError("We could not load this tournament right now.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (cancelled) return;
+        setError("We could not load this tournament right now.");
+        setLoading(false);
       });
 
     return () => {
@@ -471,6 +520,9 @@ export default function TournamentPage() {
                     falls back to the 7-round ladder the pills already assume. */}
                 <TournamentResults
                   results={data.results}
+                  /* latency/135: "not loaded" and "still loading" are different
+                     sentences, and only one of them is true here. */
+                  pending={!restLoaded}
                   draw={draw}
                   roundCount={rounds.length > 0 ? rounds.length : undefined}
                   /* #2568: the finished half of this page was 89 of its 100
@@ -522,6 +574,10 @@ export default function TournamentPage() {
                   ordered by, not whether there is a grid. */}
               <TournamentBracket
                 grid={grid}
+                /* latency/135: the grid arrives on the second request. Until it
+                   lands, say so — the pre-draw notice underneath is a sentence
+                   about a ceremony that already happened. */
+                pending={!restLoaded}
                 drawReleased={data.draw_released}
                 preDrawBoards={data.boards}
                 drawLabel={board?.label}

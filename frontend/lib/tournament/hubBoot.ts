@@ -41,18 +41,38 @@ import { BOOT_AUTH_KEY_PREFIX, type FeedBootRecord } from "@/lib/discover/feedBo
 export const HUB_BOOT_GLOBAL = "__blHubBoot";
 
 /**
+ * THE TWO HALVES OF THE HUB PAYLOAD (latency/135).
+ *
+ * Measured on production 2026-09-03: the full response is 902,423 bytes (86,838 gzipped) and 76% of
+ * it renders nothing on the first screen — `grids` is the Bracket tab, `results` is the finished list
+ * below the day's card. `first` is 207,193 bytes (19,822 gzipped) — 77.2% off the wire.
+ *
+ * The names are the SERVER's (`app/routes/tournaments.py`, `SECTION_FIRST` / `SECTION_REST`) and an
+ * unknown one is a 400, not a full payload — so a typo here fails loudly on the first render rather
+ * than quietly shipping none of the saving.
+ */
+export const HUB_SECTIONS_FIRST = "first";
+export const HUB_SECTIONS_REST = "rest";
+
+/**
  * The path `fetchTournament` puts on the wire. Exported and CONSUMED by `fetchTournament` itself, so
  * the boot URL and the real URL are one expression rather than two that must be kept equal —
  * LAT-P184's URL-identity failure mode (a silent duplicate request while every test still passes)
  * cannot arise if there is only one builder.
+ *
+ * `sections` is part of the path for exactly that reason. `claimHubBoot` matches on the whole URL, so
+ * a boot that parked `?sections=first` and a page effect that asked for the full payload would not be
+ * a wasted claim — it would be TWO requests, the slow one on the critical path. One builder, one
+ * argument, and the jest suite pins that the boot script and the fetcher produce the same string.
  */
-export function hubBootPath(slug: string): string {
-  return `/api/tournaments/${encodeURIComponent(slug)}`;
+export function hubBootPath(slug: string, sections?: string): string {
+  const path = `/api/tournaments/${encodeURIComponent(slug)}`;
+  return sections ? `${path}?sections=${encodeURIComponent(sections)}` : path;
 }
 
 /** The absolute URL for `hubBootPath()` against an API origin. */
-export function hubBootUrl(apiBase: string, slug: string): string {
-  return `${apiBase}${hubBootPath(slug)}`;
+export function hubBootUrl(apiBase: string, slug: string, sections?: string): string {
+  return `${apiBase}${hubBootPath(slug, sections)}`;
 }
 
 /**
@@ -77,7 +97,12 @@ export function hubBootEligibleFromKeys(keys: readonly string[]): boolean {
  * missing `performance` must leave the page exactly as it is today.
  */
 export function hubBootScript(apiBase: string, slug: string): string {
-  const url = JSON.stringify(hubBootUrl(apiBase, slug));
+  // THE FIRST SCREEN, NOT THE PAGE (latency/135). The parked request is the one the reader is
+  // waiting on, so it asks for the 20 KB half rather than the 87 KB one. The `rest` request is
+  // issued from the page's own effect after the first render and is deliberately NOT booted: it is
+  // off the critical path by construction, and parking a second promise would put 67 KB back on the
+  // wire beside the bytes this change exists to get out of the way.
+  const url = JSON.stringify(hubBootUrl(apiBase, slug, HUB_SECTIONS_FIRST));
   const authPrefix = JSON.stringify(BOOT_AUTH_KEY_PREFIX);
   const slot = JSON.stringify(HUB_BOOT_GLOBAL);
   return (
