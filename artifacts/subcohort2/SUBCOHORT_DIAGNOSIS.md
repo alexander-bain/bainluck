@@ -191,6 +191,72 @@ The separating query — fallback share and win rate per price bin for this cell
 or `EXPLAIN`-shaped rewrite, and under LANE ROLES it belongs to the measurement lane. Parked in
 `.claude/handoff/PARKED-MEASUREMENTS.md` with the ship it would unblock named.
 
+#### ✅ CAL-P995 — the separator is BUILT and runnable. It has NOT been run, deliberately.
+
+The measurement was parked in a shape that had already failed, so the measurement lane would have
+hit the same wall. That is a build problem, and CAL-P995 fixed it as one: **`--by fallback`, a new
+dimension on the shared `calibration_cell_exact.DIMENSIONS` registry — run on the WHOLE-VM rail.**
+
+```bash
+python3 backend/scripts/calibration_whole_vm_fold.py \
+    --source kalshi --category entertainment --by fallback \
+    --out artifacts/cal-p995/fallback-kalshi-entertainment.json
+```
+
+🔴 **Run it on `calibration_whole_vm_fold.py`, NOT on `calibration_cell_exact.py`, even though the
+dimension is registered on the latter's table.** This entry's own PARKED amendment says why and it
+is the second parallel-rail trap on this page: `calibration_cell_exact` shards on `fm.id`, and
+`virtual_market` counts group and event sizes over `market_info`, so a shard holding 2 of an
+event's 4 markets fails the `>= 3` gate and re-assigns them `e:` → `m:`. That changes `is_grouped`,
+the dedup, the `mex_field_divisor` and the normalization gate — so it changes which BIN a leg lands
+in, which is the entire axis of this question. CAL-P124 measured the damage at **−35.85% of
+published rows** on `polymarket/basketball`. `calibration_whole_vm_fold` (CAL-P125) freezes the
+generation once and replays it per unit through `frozen_vm_roster=True` and the producer's own
+`plan_units`, so a `vm_id` is never split; it reads `cce.DIMENSIONS` directly, which is why
+registering on the shared table is what makes `--by fallback` available there.
+`test_the_dimension_is_admissible_on_the_whole_vm_rail` is the guard that keeps that true.
+
+It answers the parked question exactly and in the rail's existing output shape: the fold is keyed
+`(k, b)` where `b` is the ten-bin price bucket the table above is built from, so bin 9's fallback
+share is `n['fallback_opening|flat'][9] / n[*][9]` and the two halves' win rates are `w/n` on each
+key. Four things it does NOT inherit from the parked form:
+
+* **It cannot time out the way the parked query did.** A unit that truncates or times out is SPLIT
+  rather than retried, so the row path's hard 10 s budget — which the amendment proves cannot be
+  raised, because `timeout_ms` is refused outside `explain` — stops being a wall and becomes a
+  chunk width.
+* **It is not a parallel rail, which is what disqualified candidate 2 above.** The dimension hangs
+  off `_calibration_population_ctes()` imported from the producer, so it folds the published
+  population with all thirteen exclusion filters and `mex_normalization` intact.
+* **It separates what `price_moved` pools — the reason the parked question was the right one.**
+  `price_moved`'s FALSE arm holds both "no closing price at all" and "a closing price that equalled
+  its opening", which is why CAL-P994's `--by price_moved` read `True 7.15 / False 6.73` and could
+  not have read anything else. The key crosses price ORIGIN with the producer's flag, so the two
+  come apart.
+* **It self-checks.** `fallback_opening|moved` is structurally impossible (`price_moved` requires
+  `calibration_probability IS NOT NULL`). If the sweep prints that key, the producer's flag and the
+  raw column disagree about the same row, and that is the finding — read it before the numbers.
+
+**Zero producer change — stated precisely, because the loose version is false here.**
+`git diff a3c06334 HEAD -- backend/app frontend` is EMPTY at this commit: it adds nothing under
+`backend/app`. The BRANCH does change the producer, in the two certified commits below it
+(CERT-829 / CERT-830) under D45's narrow ruling-009 exception, so "`git diff origin/master --
+backend/app` is empty on this branch" — the phrasing `calibration_whole_vm_fold`'s own docstring
+uses, correctly, for the branch that carried it — would be wrong on this one. What matters for the
+bank is the narrower claim and it holds: no edit here reaches a function
+`_main_input_fingerprint` hashes, so the digest does not move and the 128-unit staged bank
+survives. Guarded by
+`tests/test_calibration_cell_exact_p995_fallback.py`, 8 tests executing the shipped expression
+against a seeded table; red-first at 3 failed / 52 passed with the key written off `price_moved`.
+
+🔴 **Still NOT DIAGNOSED, and this page does not promote the cell.** An instrument is not a
+mechanism. The sweep is measurement and CAL-P995 did not run it — under LANE ROLES that is the
+measurement lane's, and the parked entry is updated from *"needs a chunked rewrite"* to *"runnable,
+here is the command"*. What the run buys, when it happens: candidate 1 is named and predicts a
+number if bin 9's fallback share is far above the payload's global 13.3% AND the fallback half is
+the losing one; candidate 1 is dead and the next probe is the grading authority if the two halves
+win at the same rate.
+
 ### The board row should be re-written, and here is the correction
 
 The row reads **"WENT THE WRONG WAY: 5.09 → 6.29"**. On the only instrument with a stored history —

@@ -206,6 +206,15 @@ SHIPPED_DIMENSIONS = {
     # `calibration_cluster_sigma` still contributes exactly `marketid`, which
     # remains the thing being guarded.
     "ouside": ("OUSIDE_EXPR", "OUSIDE_JOIN", ""),
+    # Added to the RAIL by CAL-P995 (the price-origin separator for
+    # `kalshi/entertainment` bin 9). SIXTH time; written in the same commit as
+    # the registration, per #2779, which owns the recurrence itself. The one new
+    # thing CAL-P995 did about it is upstream: `calibration_cell_exact.py`'s
+    # DIMENSIONS table now names this constant, so the next author is told
+    # where the pinned copy lives at the moment they touch the table rather
+    # than three minutes into a sibling suite.
+    # `calibration_cluster_sigma` still contributes exactly `marketid`.
+    "fallback": ("FALLBACK_EXPR", "FALLBACK_JOIN", ""),
 }
 
 
