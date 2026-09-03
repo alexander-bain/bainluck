@@ -46,10 +46,12 @@ from app.utils.tournament_match import build_match_detail
 from app.utils.tournament_register import TournamentRegister, load_register
 from app.utils.tournament_slate import (
     apply_books_prematch,
+    apply_espn_event_links,
     build_bracket,
     build_props,
     build_results,
     build_slate,
+    slate_competition_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -857,14 +859,30 @@ async def _hub_payload(
     # `espn_id` on the US Open events there is now a row to dereference it to.
     # Resolved AFTER `build_results` because the ids come off its rows, and
     # bounded by the spec's own `sport_keys` — see `resolve_espn_competition_events`.
+    #
+    # AND TODAY'S ROWS RESOLVE THROUGH THE SAME QUERY (ux/1048). ux/1033 made
+    # the day's matches appear — the slate now walks the order of play, so a
+    # second-round match reaches the card the ceremony register could never hold
+    # — and every one of those rows carried `event_id: None`. Replayed over the
+    # live scoreboard at 2026-09-03T20:16Z: **40 rows, 8 in play, 0 linked**.
+    # The reader would have been shown the live match they were watching and
+    # then refused the tap.
+    #
+    # One id list, not two calls: the resolver is bounded by the ids handed to
+    # it and a second round trip would buy nothing but a second chance to
+    # disagree with the first about which event a fixture is.
     espn_links = await resolve_espn_competition_events(
         db,
         [
             match.get("espn_competition_id")
             for match in (payload["results"].get("matches") or [])
-        ],
+        ]
+        + slate_competition_ids(payload["slate"]),
         spec.get("sport_keys") or (),
     )
+    # Stamped straight away, so nothing between here and the response can read a
+    # slate row's `event_id` and get the pre-link answer.
+    apply_espn_event_links(payload["slate"], espn_links["by_espn"])
     # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).
     #
     # Alex: "opening = Kalshi -> Polymarket -> sportsbook blend, labelled by
@@ -877,7 +895,25 @@ async def _hub_payload(
     # reason (#2693 step 2, the finished list's dead-end links). Nothing new is
     # queried to FIND the events; this loads the two opening columns off the ids
     # that channel already resolved, bounded by them.
-    _opening_ids = sorted({int(v) for v in espn_links["by_espn"].values()})
+    #
+    # BOUNDED BY THE RESULTS' OWN IDS, NOT THE WHOLE MAP (ux/1048). `by_espn`
+    # now answers for the slate too, and `apply_books_prematch` below reads it
+    # only for `results.matches` — so taking `.values()` wholesale would load
+    # ~40 more event rows per request that nothing reads, and would keep
+    # growing with the card. The map is a lookup table here; the population is
+    # the finished list.
+    _result_comps = {
+        str(match.get("espn_competition_id"))
+        for match in (payload["results"].get("matches") or [])
+        if match.get("espn_competition_id")
+    }
+    _opening_ids = sorted(
+        {
+            int(event_id)
+            for comp_id, event_id in espn_links["by_espn"].items()
+            if comp_id in _result_comps
+        }
+    )
     _openings: dict[int, dict[str, Any]] = {}
     if _opening_ids:
         _rows = await db.execute(
@@ -935,6 +971,13 @@ async def _hub_payload(
         "by_espn": espn_links["by_espn"],
         "espn_linked": len(espn_links["by_espn"]),
         "espn_unresolved": espn_links["reason_counts"],
+        # HOW MANY OF TODAY'S ROWS THAT CHANNEL ACTUALLY OPENED (ux/1048).
+        # `espn_linked` counts the map, and the map is resolved for the finished
+        # list AND the slate together — so it can be healthy while every row on
+        # the card still dead-ends. This is the one that answers the reader's
+        # question, and `slate.scoreboard_pairings` is its denominator: the two
+        # far apart during play is the alarm.
+        "slate_linked": payload["slate"].get("scoreboard_linked", 0),
     }
 
     await _cache_set(slug, payload)
