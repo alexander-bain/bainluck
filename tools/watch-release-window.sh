@@ -29,10 +29,14 @@
 # **Every window is banked.** A failed release is not a missing measurement, it is the measurement.
 #
 # ── THE REQUEST BUDGET IS PART OF THE INSTRUMENT ───────────────────────────────────────────────────
-# Production caps a client at 60 requests/minute and one `/events/{id}` cold load fires ~22 of them.
-# An unpaced burst measures its own 429s and renders `Rate limit exceeded` — 673 body chars, which is
-# indistinguishable from a blank page in every column the felt rig used to have (that is how #2783 was
-# filed). So the sampling budget is spent deliberately:
+# Production caps a client at 60 requests/minute. An unpaced burst measures its own 429s and renders
+# `Rate limit exceeded` — 673 body chars, indistinguishable from a blank page in every column the felt
+# rig used to have (that is how #2783 was filed). So the sampling budget is spent deliberately.
+#
+# How many requests a load costs is NOT settled: live/054 counted ~22 for an event page while hunting
+# #2783; this rig counts 7 against api.bainluck.com on the settled fixture (`apiStatus {"200":7}`,
+# measured 2026-09-03). The budget below uses the WORSE figure, because being wrong the other way is
+# what poisons a verdict.
 #
 #   prober        1 request  / PROBE_S (6 s default)   =  10 /min
 #   browser load ~22 requests / LOAD_S (45 s default)  = ~29 /min

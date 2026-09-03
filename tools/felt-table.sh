@@ -4,8 +4,10 @@
 # WHY THIS EXISTS RATHER THAN A FOR-LOOP IN A TRANSCRIPT. Three things kept going wrong by hand and
 # each of them silently changes the numbers rather than failing:
 #
-#  1. **The 60/min cap is shared by the whole machine.** An `/events/{id}` cold load fires ~22
-#     requests. Eight surfaces back to back at the rig's default 3 s pace runs at roughly twice the
+#  1. **The 60/min cap is shared by the whole machine.** An `/events/{id}` cold load costs between 7
+#     and ~22 requests (this rig measures 7 against api.bainluck.com on the settled fixture; live/054
+#     counted ~22 hunting #2783 — unresolved, so pace on the worse one). Eight surfaces back to back
+#     at the rig's default 3 s pace runs at roughly twice the
 #     budget, so the tail of the table measures its own 429s — and until LAT-P218 added a status
 #     column there was no way to see that had happened. This paces to the budget and then PROVES it
 #     by refusing to publish a row whose `throttledRuns` is not zero.
