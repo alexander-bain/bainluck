@@ -830,7 +830,9 @@ export default function EventPage({ params }: EventPageProps) {
                 {/* CERT-786 — the shared summary, so the hero says exactly what
                     the card the reader tapped said. The page-level sentence
                     stays on the `title`, which has room for it. */}
-                {suspendedSummary(event?.away_score, event?.home_score)}
+                {/* #2786 — HOME-AWAY, matching this page's own hero, which
+                    stacks the home score above the away score. */}
+                {suspendedSummary(event?.away_score, event?.home_score, "home-away")}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">

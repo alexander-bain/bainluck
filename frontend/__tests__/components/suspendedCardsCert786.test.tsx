@@ -111,7 +111,13 @@ function text(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-const EXPECTED = suspendedSummary(1, 2); // "No result reported · last score 1-2"
+// #2786 — ONE sentence, and the side order each card already uses for its own
+// scores. `FeedCard` renders `{home_score} - {away_score}` into the very slot
+// this string occupies; the Discover card paints `away_score` to the left of
+// `home_score` in its hero. So the two constants differ by exactly the flip,
+// and that is the fix rather than a loosening: away_score=1, home_score=2.
+const EXPECTED_FEED = suspendedSummary(1, 2, "home-away"); // "… last score 2-1"
+const EXPECTED_DISCOVER = suspendedSummary(1, 2, "away-home"); // "… last score 1-2"
 
 // ---------------------------------------------------------------------------
 // FeedCard — /sports, the category grids, My Stuff
@@ -119,7 +125,7 @@ const EXPECTED = suspendedSummary(1, 2); // "No result reported · last score 1-
 
 describe("FeedCard renders the suspended state", () => {
   it("prints the shared summary", () => {
-    expect(text(renderFeedCard(makeData()))).toContain(EXPECTED);
+    expect(text(renderFeedCard(makeData()))).toContain(EXPECTED_FEED);
   });
 
   it("drops the live probability chips", () => {
@@ -164,7 +170,7 @@ describe("FeedCard renders the suspended state", () => {
 
 describe("the Discover card renders the suspended state", () => {
   it("prints the shared summary", () => {
-    expect(text(renderDiscoverCard(makeData()))).toContain(EXPECTED);
+    expect(text(renderDiscoverCard(makeData()))).toContain(EXPECTED_DISCOVER);
   });
 
   it("prints no NEGATIVE countdown", () => {
@@ -216,12 +222,25 @@ describe("the Discover card renders the suspended state", () => {
 // ---------------------------------------------------------------------------
 
 it("both cards print the SAME words for the same row", () => {
-  // "with the same words" is the acceptance test. Asserted as an equality
-  // between two rendered surfaces rather than as two independent `toContain`s,
-  // so a future edit to one card's copy fails here instead of drifting.
+  // "with the same words" is the acceptance test, and #2786 narrowed WORDS to
+  // exactly that: the sentence is shared, the digits follow the surface. This
+  // is asserted by extracting each card's rendered sentence and comparing the
+  // parts either side of the score, so a future edit to one card's copy still
+  // fails here instead of drifting.
   const data = makeData();
-  expect(text(renderFeedCard(data))).toContain(EXPECTED);
-  expect(text(renderDiscoverCard(data))).toContain(EXPECTED);
+  const sentence = (rendered: string) =>
+    rendered.match(/No result reported · last score \d+-\d+/)?.[0] ?? "";
+
+  const feed = sentence(text(renderFeedCard(data)));
+  const discover = sentence(text(renderDiscoverCard(data)));
+
+  expect(feed).toBe(EXPECTED_FEED);
+  expect(discover).toBe(EXPECTED_DISCOVER);
+  // Same prose, same two numbers, one flip.
+  expect(feed.replace(/\d/g, "#")).toBe(discover.replace(/\d/g, "#"));
+  expect(feed.match(/\d+/g)?.slice().sort()).toEqual(
+    discover.match(/\d+/g)?.slice().sort(),
+  );
 });
 
 it("both cards fall back to the bare badge when no score was ever captured", () => {

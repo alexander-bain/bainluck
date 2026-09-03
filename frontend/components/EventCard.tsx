@@ -277,9 +277,16 @@ export default function EventCard({
                   than of four editors remembering. Not uppercased: the settled
                   sibling below uppercases the single word "Final", and shouting
                   a whole sentence is a different register. */}
+              {/* #2786 — HOME-AWAY, because that is what this component does
+                  everywhere else: the FINAL block below prints home then away,
+                  both live score slots put home above away, and the `Proj`
+                  footer is home-away. The away-home default made this the only
+                  numeric pair on the card reading the other way, and it shipped
+                  an inverted score on production (event 15293347: "last score
+                  6-3" for a 3-6 match, directly under the HOME team's name). */}
               {isSuspended && (
                 <span className="text-micro-xs text-text-muted">
-                  {suspendedSummary(event.away_score, event.home_score)}
+                  {suspendedSummary(event.away_score, event.home_score, "home-away")}
                 </span>
               )}
               {!isLive && !isFinished && !isSuspended && hasGameTime && (
