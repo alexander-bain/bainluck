@@ -24,6 +24,7 @@
  */
 
 import { probabilityHeat } from "@/lib/probabilityColors";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 
 export interface QuantityRung {
   /** Stable key (outcome id or the threshold string). */
@@ -36,6 +37,13 @@ export interface QuantityRung {
   highlighted?: boolean;
   /** Numeric value used for ascending sort when `sort` is on. */
   value?: number;
+  /**
+   * UX-1052 item 4 — 24h movement as a wire fraction, rendered as a small
+   * ± points chip beside the label. Alex, on the date-bucket card: "the leader
+   * marked and the mover marked". Absent or sub-rounding movement prints
+   * nothing (`isRenderedMove`), so a 0.003-point drift never becomes a badge.
+   */
+  movement?: number | null;
 }
 
 /** A single bar in the "where it lands" distribution heat-strip. */
@@ -189,6 +197,21 @@ export default function QuantityGroup({
               >
                 {rung.label}
               </span>
+              {/* UX-1052 item 4 — "the mover marked". Rendered only when the
+                  movement actually PRINTS as a move, so a rounding residue
+                  cannot become an arrow (UX-P275). */}
+              {isRenderedMove(rung.movement) && (
+                <span
+                  className={[
+                    "shrink-0 font-mono text-[11px] font-bold tabular-nums",
+                    (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary",
+                  ].join(" ")}
+                  aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
+                >
+                  {(rung.movement ?? 0) > 0 ? "▲" : "▼"}
+                  {formatMovementPoints(rung.movement)}
+                </span>
+              )}
               <span className="flex-1 h-[18px] rounded-md bg-surface-elevated overflow-hidden">
                 <span
                   className={`block h-full rounded-md ${heat.bar}`}

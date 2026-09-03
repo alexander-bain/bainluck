@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { BarChart3 } from "lucide-react";
-import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
+import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
@@ -176,6 +176,26 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     const shownCells = heatmapRows.slice(0, 8);
     const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
     const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
+    // UX-1052 item 4 — the leader is the highest-probability rung, marked in
+    // place. On a date ladder the rows are chronological, so "the answer" is
+    // not the top row and had nothing pointing at it.
+    const leaderCell = shownCells.reduce<HeatmapRow | null>(
+      (best, r) =>
+        r.probability == null ? best
+        : best == null || r.probability > (best.probability ?? -1) ? r
+        : best,
+      null,
+    );
+    const leaderCellKey = leaderCell?.key ?? null;
+    // UX-1052 item 4 — the share text gets the same treatment as the card.
+    // Alex on the old one: "Before 2027 is at 15% in When will Apple…" — it
+    // reads backwards, and it hands the reader the single number the card was
+    // criticised for. One sentence, question first, and it says the ladder has
+    // more than one rung.
+    const ladderShareText =
+      leaderCell && leaderCell.probability != null
+        ? buildLadderShareText(data.name, leaderCell.label, leaderCell.probability, shownCells.length)
+        : shareText;
 
     return (
       <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow" aria-label={data.name} data-card-format="heatmap">
@@ -209,6 +229,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               highest-probability rung); with every bucket often below 50% there
               is no footer summary to carry a cropped rung, so a 5-bucket card
               must show all 5 — not just the first 4. */}
+          {/* UX-1052 item 4 — "outcomes as ordered bars … with the leader
+              marked and the mover marked" (Alex, on the iPhone-18 date-bucket
+              card). Chronological order is `sort={false}` over the backend's
+              already-ordered rungs; the leader is the highlighted rung; the
+              mover prints its own chip. Nothing here re-derives a number — both
+              marks read what the payload sent. */}
           <QuantityGroup
             bare
             compact
@@ -220,6 +246,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               label: row.label,
               probability: row.probability,
               value: row.sortValue,
+              movement: row.movement,
+              highlighted: leaderCellKey != null && row.key === leaderCellKey,
             }))}
           />
 
@@ -242,7 +270,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             </div>
           )}
 
-          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={shareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
+          <ActionBar liked={liked} setLiked={setLiked} shareUrl={shareUrl} shareTitle={data.name} shareText={ladderShareText} contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
         </div>
       </article>
     );
@@ -654,7 +682,9 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
     const matchedOutcome = outcomesByName.get(key);
     const existing = byLabel.get(key);
     const probability = point.probability ?? matchedOutcome?.probability ?? null;
-    const movement = matchedOutcome?.movement ?? null;
+    // UX-1052 item 4: `top_outcomes` is the top THREE, so a ladder rung outside
+    // it had no movement to show. Date-bucket rungs now carry their own.
+    const movement = matchedOutcome?.movement ?? point.movement ?? null;
     const sortValue = existing
       ? Math.min(existing.sortValue, point.value)
       : point.value;

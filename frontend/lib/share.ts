@@ -97,3 +97,30 @@ export async function shareContent(
 
   return null;
 }
+
+/**
+ * The share sentence for a date-bucket / "by WHEN" ladder card — UX-1052 item 4.
+ *
+ * Alex, on the old one: *"the share text ('Before 2027 is at 15% in When will
+ * Apple…') gets the same treatment."* Two things were wrong with it. It reads
+ * backwards — the answer arrives before the question — and it hands the reader
+ * the single number the card itself had just been criticised for showing,
+ * saying nothing about the ladder the card now draws.
+ *
+ * One sentence, question first, leader named, and the number of windows so the
+ * reader knows there is a distribution behind it. Exported rather than inlined
+ * because `ActionBar` passes share text to a handler and never renders it, so a
+ * render test cannot see it — this is the only way the wording is actually
+ * asserted rather than assumed.
+ */
+export function buildLadderShareText(
+  marketName: string,
+  leaderLabel: string,
+  leaderProbability: number,
+  windowCount: number,
+): string {
+  return (
+    `${marketName} — ${leaderLabel} leads at ${formatShareProbability(leaderProbability)} ` +
+    `across ${windowCount} window${windowCount === 1 ? "" : "s"} on Bain Luck.`
+  );
+}

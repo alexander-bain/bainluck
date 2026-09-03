@@ -441,28 +441,107 @@ export function feedContextSnippet(item: FeedItem): string {
   return item.headline || item.reason || "";
 }
 
+/** Words for the overlap test: lowercase, punctuation stripped.
+ *
+ * UX-1052 item 4. Splitting on whitespace alone made "opening;" and "opening"
+ * different words, which is how the iPhone-18 card came to print its own
+ * clause twice — see `feedExpandedContext`. */
+function contextWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}%.$-]+/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/** Split copy into the clauses a reader hears as separate statements. */
+function contextClauses(text: string): string[] {
+  return text
+    .split(/\s*[;—]\s*|(?<=[.!?])\s+/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+/** Fraction of `candidate`'s words that already appear in `known`. */
+function overlapRatio(candidate: string[], known: Set<string>): number {
+  if (candidate.length === 0) return 1;
+  return candidate.filter((w) => known.has(w)).length / candidate.length;
+}
+
+/**
+ * Strip a trailing " in <market name>" tail.
+ *
+ * UX-1052 item 4: `generate_futures_reason` ends with the market name ("…
+ * moved down 30.5 points from opening in When will Apple release the iPhone
+ * 18?"), which the card already prints as its heading two lines above. On the
+ * overlap test that tail is a wall of words the snippet does not contain, so it
+ * dragged the ratio under the threshold and admitted a clause the reader had
+ * just read. Removing it makes the comparison about the CLAIM.
+ */
+function stripMarketNameTail(text: string, marketName?: string | null): string {
+  const name = (marketName ?? "").trim();
+  if (!name) return text;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`\\s+in\\s+${escaped}\\s*[.?!]?\\s*$`, "i"), "").trim();
+}
+
+/**
+ * The full context for "See more" — a superset of the snippet, never a repeat
+ * of it.
+ *
+ * UX-1052 item 4. Alex, on the "When will Apple release the iPhone 18?" card:
+ * "a sentence that says the same thing twice" —
+ *
+ *     "Before October down 30.5 points from opening; Before 2027 leads at 15%
+ *      — Before October moved down 30.5 points from opening in When will…"
+ *
+ * Both halves came from here. The old test compared the candidate against a
+ * whitespace-split bag of the WHOLE snippet, which failed twice over: the
+ * snippet's "opening;" never matched the candidate's "opening", and the
+ * candidate's trailing market name contributed a dozen unmatched words that
+ * pushed the ratio below the 70% bar on its own.
+ *
+ * Now the comparison is clause-wise and punctuation-blind, and the market-name
+ * tail is dropped first. Alex's rule for this queue: **one sentence that never
+ * repeats a clause.** The 0.7 bar is unchanged — this is a better duplicate
+ * detector, not a stricter one.
+ */
 export function feedExpandedContext(item: FeedItem): string {
   const snippet = feedContextSnippet(item);
   const candidates: string[] = [];
 
+  let marketName: string | null = null;
   if (item.type === "futures") {
     const data = item.data as FeedFuturesData;
+    marketName = data.name ?? null;
     if (data.hook_description) candidates.push(data.hook_description);
   }
   if (item.reason) candidates.push(item.reason);
 
-  // Expanded must be a superset: start with the full snippet text,
-  // then append any distinct additional context that isn't already
-  // contained within the snippet (near-duplicate check via word overlap).
-  const snippetWords = new Set(snippet.trim().replace(/\s+/g, " ").toLowerCase().split(/\s+/));
-  const extras = candidates.filter((c) => {
-    const norm = c.trim().replace(/\s+/g, " ").toLowerCase();
-    if (norm.length <= 10) return false;
-    const candidateWords = norm.split(/\s+/);
-    const overlap = candidateWords.filter((w) => snippetWords.has(w)).length;
-    const ratio = overlap / Math.max(candidateWords.length, 1);
-    return ratio < 0.7; // less than 70% word overlap = genuinely distinct
-  });
+  const snippetClauses = contextClauses(snippet).map(contextWords);
+  const snippetWordSet = new Set(snippetClauses.flat());
+
+  const extras = candidates
+    .map((c) => stripMarketNameTail(c, marketName))
+    .filter((c) => {
+      if (c.trim().length <= 10) return false;
+      // Every clause of the candidate must add something. A candidate whose
+      // opening clause merely restates one the reader has already seen is a
+      // repeat, however much new text trails behind it.
+      return contextClauses(c).every((clause) => {
+        const words = contextWords(clause);
+        if (words.length === 0) return false;
+        if (overlapRatio(words, snippetWordSet) >= 0.7) return false;
+        return snippetClauses.every((sc) => {
+          const known = new Set(sc);
+          return (
+            overlapRatio(words, known) < 0.7 &&
+            overlapRatio(sc, new Set(words)) < 0.7
+          );
+        });
+      });
+    });
 
   if (extras.length > 0) {
     return snippet + " — " + extras[0];
