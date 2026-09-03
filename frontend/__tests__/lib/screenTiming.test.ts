@@ -381,6 +381,70 @@ describe("the lab rig and the field rail measure the same thing", () => {
       expect(swift).toContain(`"${key}"`);
     }
   });
+
+  it("the native rail claims cold/warm at ARM time, not when the card finally lands", () => {
+    // 🔴 CERT-782's first finding, ratcheted from the CI-reachable side. The
+    // label used to come from a DEFAULT ARGUMENT on the bridge factory, which is
+    // evaluated at the call site — and the call site is the first render. A cold
+    // launch whose first card took 21 s therefore fell outside the 20 s cold
+    // window and filed itself as `warm`. Making the argument mandatory is what
+    // makes the wrong moment unexpressible; a default creeping back is exactly
+    // the regression this watches for.
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const swift = fs.readFileSync(
+      path.join(__dirname, "../../../ios/Bain Luck/Bain Luck/Services/ScreenTiming.swift"),
+      "utf8",
+    );
+    expect(swift).not.toMatch(/entry:\s*String\s*=\s*ScreenTimingSession\.nextEntry\(\)/);
+    expect(swift).toMatch(/public static func armScreen\(/);
+  });
+
+  it("a native screen that never renders reports no_card on a stated deadline", () => {
+    // CERT-782's second finding: the bridge only fires from a real first render,
+    // so a top-tab load that showed NOTHING emitted no row at all — and 3 of the
+    // 40 cold loads in the 2026-09-02 battery were exactly that. The deadline is
+    // pinned by value here so it cannot quietly become "eventually".
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const swift = fs.readFileSync(
+      path.join(__dirname, "../../../ios/Bain Luck/Bain Luck/Services/ScreenTiming.swift"),
+      "utf8",
+    );
+    expect(swift).toMatch(/noCardDeadlineSeconds:\s*TimeInterval\s*=\s*10\b/);
+    expect(swift).toMatch(/outcome:\s*"no_card"/);
+  });
+
+  it("every outcome the native rail can emit is one the web type declares", () => {
+    // One table, two producers. A native-only outcome value would be a column
+    // the web half's union type cannot hold, and the promised single table would
+    // quietly become two again.
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const root = path.join(__dirname, "../../..");
+    const swift = fs.readFileSync(
+      path.join(root, "ios/Bain Luck/Bain Luck/Services/ScreenTiming.swift"),
+      "utf8",
+    );
+    const types = fs.readFileSync(path.join(root, "frontend/lib/analytics/types.ts"), "utf8");
+    const declared = /outcome_class:\s*((?:'[a-z_]+'\s*\|?\s*)+)/.exec(types);
+    expect(declared).not.toBeNull();
+    const allowed = new Set((declared as RegExpExecArray)[1].match(/'([a-z_]+)'/g)!.map((s) => s.slice(1, -1)));
+    expect(allowed.size).toBeGreaterThanOrEqual(4);
+
+    const emitted = new Set(
+      [...swift.matchAll(/(?:outcome|outcomeClass|resolved):\s*"([a-z_]+)"/g)].map((m) => m[1]),
+    );
+    // The Swift also builds outcomes with a ternary; catch those literals too.
+    for (const m of swift.matchAll(/cardCount\s*>\s*0\s*\?\s*"([a-z_]+)"\s*:\s*"([a-z_]+)"/g)) {
+      emitted.add(m[1]);
+      emitted.add(m[2]);
+    }
+    expect(emitted.size).toBeGreaterThan(0);
+    for (const outcome of emitted) {
+      expect([...allowed]).toContain(outcome);
+    }
+  });
 });
 
 function samplePacket(): ScreenTimingParams {

@@ -242,7 +242,11 @@ enum AnalyticsService {
             "app_build": appBuild(),
             "surface": "discover",
         ])
-        trackScreenTiming(surface: "discover", firstRenderMs: firstRenderMs, itemCount: itemCount)
+        trackScreenTiming(
+            surface: ScreenTimingSurface.discover,
+            firstRenderMs: firstRenderMs,
+            itemCount: itemCount
+        )
     }
 
     // MARK: - Screen timing (latency/121)
@@ -258,17 +262,23 @@ enum AnalyticsService {
     /// gets one by attaching `.screenTiming(_:)` and `.firstRealCard()`, which
     /// also fills in the `fold_ms` / `interactive_ms` columns this bridge cannot
     /// know.
+    ///
+    /// 🔴 IT DOES NOT LOG DIRECTLY, and that is the CERT-782 repair. Emission is
+    /// owned by `ScreenTimingSession`, because the row this call produces is not
+    /// the only row the screen entry can produce: the SAME entry also emits when
+    /// the deadline expires with nothing on screen, and exactly one of the two
+    /// may win. A screen that renders nothing renders FAST, so the losing case is
+    /// the one worth reporting and it has no first render to hang a call on.
     nonisolated static func trackScreenTiming(
         surface: String,
         firstRenderMs: Double,
         itemCount: Int
     ) {
-        let packet = ScreenTimingPacket.bridged(
+        ScreenTimingSession.reportBridged(
             surface: surface,
             firstCardMs: Int(firstRenderMs.rounded()),
             cardCount: itemCount
         )
-        log("screen_timing", packet.parameters)
     }
 
     /// Non-PII build reachability tag for latency traces (L2-206 Item 3): the
@@ -349,7 +359,11 @@ enum AnalyticsService {
             "app_build": appBuild(),
             "surface": "sports",
         ])
-        trackScreenTiming(surface: "sports", firstRenderMs: firstRenderMs, itemCount: itemCount)
+        trackScreenTiming(
+            surface: ScreenTimingSurface.sports,
+            firstRenderMs: firstRenderMs,
+            itemCount: itemCount
+        )
     }
 
     // MARK: - My Stuff Latency (L2-217 / C88 — identity boundary + first team card)
@@ -398,7 +412,11 @@ enum AnalyticsService {
             "app_build": appBuild(),
             "surface": "my_stuff",
         ])
-        trackScreenTiming(surface: "my_stuff", firstRenderMs: firstRenderMs, itemCount: itemCount)
+        trackScreenTiming(
+            surface: ScreenTimingSurface.myStuff,
+            firstRenderMs: firstRenderMs,
+            itemCount: itemCount
+        )
     }
 
     // MARK: - Push
