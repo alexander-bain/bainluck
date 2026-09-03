@@ -7,12 +7,17 @@ import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isNonSportsCategory } from "@/lib/images";
+// UX-P276 (#2710). Placed here rather than beside `leaderFirstSlice` at the end
+// of the import block on purpose: PR #2836 (#2831, same lane, ungraded) adds its
+// own import against that exact anchor, and two new lines sharing one context
+// window is a textual conflict that would strand whichever of the two merges
+// second. Nothing else about the position matters.
+import { marketCategoryLabel } from "@/lib/marketCategoryLabel";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
-import { marketCategoryLabel } from "@/lib/marketCategoryLabel";
 
 interface FuturesCardProps {
   market: FuturesMarket;
