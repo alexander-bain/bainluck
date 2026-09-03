@@ -21,6 +21,56 @@ import { eventPath } from "@/lib/eventKey";
  */
 const RENDERABLE = new Set(["event", "futures", "concept"]);
 
+/**
+ * ═══ ux/1034 B6: "MORE TENNIS" IS A CARD GRID NOW ═══
+ *
+ * Alex, on `/events/15293830` during the US Open: the section at the bottom of
+ * the page is *"formatted horribly"*, and *"make it the same card grid the hub
+ * uses."*
+ *
+ * He was looking at two full-width 44px strips — a 12px market name on the left,
+ * a name and a percentage crushed against the right edge, nothing else. At
+ * desktop width that put ~900px of empty space between the question and its
+ * answer, which is why the eye cannot pair them. It also threw away everything
+ * the payload carries: `top_outcomes` holds a whole field, and the strip printed
+ * one of them.
+ *
+ * The hub's grammar, adopted here verbatim rather than approximated (see
+ * `components/tournament/TournamentProps`'s `PropCard`):
+ *
+ *   - a section heading in the site's small-caps rule, with a COUNT;
+ *   - one bordered `rounded-2xl` card per item, two-up from `sm`;
+ *   - the question at `text-[14px] font-semibold`, the answer beneath it as
+ *     ranked rows — name left, probability right, `tabular-nums` so the column
+ *     is a column.
+ *
+ * Two properties are deliberate and are guarded:
+ *
+ * - **The card is the same shape whatever the item is.** An event, a futures
+ *   market and a concept are three different rows in the feed and one kind of
+ *   thing to a reader — "something else worth looking at". Three layouts here
+ *   would make the section read as three sections.
+ * - **A card never invents a number.** A missing probability prints nothing;
+ *   the row simply names the subject. The old strip's `formatProbability`
+ *   already returned `-` for absent data and that is kept, but a card with no
+ *   priced outcome at all shows its title and no field rather than a list of
+ *   dashes.
+ */
+const CARD =
+  "flex flex-col rounded-2xl border border-surface-border bg-surface-card px-3.5 py-3 " +
+  "transition-colors hover:border-text-muted/40 hover:bg-surface-elevated/40";
+
+const CARD_TITLE = "min-w-0 text-[14px] font-semibold leading-snug text-text-primary";
+
+const FIELD_ROW = "flex items-baseline justify-between gap-3 text-[12px]";
+
+const FIELD_NAME = "min-w-0 truncate text-text-secondary";
+
+const FIELD_VALUE = "shrink-0 tabular-nums font-semibold text-text-primary";
+
+/** The most outcomes a card lists. Beyond four the card stops being a card. */
+const MAX_FIELD_ROWS = 4;
+
 interface RelatedByTagProps {
   /** Tag queries to filter by, e.g. ["sport:basketball"] */
   tags: string[];
@@ -67,40 +117,68 @@ export default function RelatedByTag({
   if (items.length === 0) return null;
 
   return (
-    <section className="mt-8">
-      <h3 className="text-sm font-semibold text-text-secondary mb-3">
+    <section className="mt-8" data-testid="related-by-tag" data-count={items.length}>
+      {/* The hub's section rule, not this component's old `text-sm font-semibold`
+          — every other section on an event page is set in it, and this one was
+          the odd heading out. The count comes with it for the same reason the
+          hub's does: a list that stops at four should say it is four. */}
+      <h3
+        className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
+        data-testid="related-by-tag-heading"
+      >
         {title}
+        <span className="ml-1.5 font-normal normal-case tracking-normal">
+          · {items.length}
+        </span>
       </h3>
-      <div className="space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2" data-testid="related-by-tag-grid">
         {items.map((item) => {
           if (item.type === "event") {
             const d = item.data as FeedEventData;
+            /* A game's field is its two sides. Away first, matching the title,
+               so the two lines below read in the order the title names them. */
+            const sides: { name: string; probability: number | null | undefined }[] = [
+              { name: d.away_team, probability: d.current_odds?.away_probability },
+              { name: d.home_team, probability: d.current_odds?.home_probability },
+            ];
+            const priced = sides.some(
+              (side) => side.probability !== null && side.probability !== undefined
+            );
             return (
               <Link
                 key={`rel-event-${d.id}`}
                 href={`/events/${d.id}`}
-                className="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors"
+                className={CARD}
+                data-testid="related-card"
+                data-kind="event"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    {d.status === "live" && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-accent-live shrink-0" />
-                    )}
-                    <span className="text-xs font-medium text-text-primary truncate">
-                      {d.away_team} @ {d.home_team}
-                    </span>
-                  </div>
-                  {d.status === "live" && d.home_score !== null && (
-                    <span className="text-micro text-text-muted">
-                      {d.away_score} - {d.home_score}
-                    </span>
+                <span className="flex items-baseline gap-1.5">
+                  {d.status === "live" && (
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-accent-live"
+                    />
                   )}
-                </div>
-                {d.current_odds && (
-                  <div className="text-xs text-text-muted shrink-0 ml-2">
-                    {formatProbability(d.current_odds.home_probability)} /{" "}
-                    {formatProbability(d.current_odds.away_probability)}
-                  </div>
+                  <span className={CARD_TITLE}>
+                    {d.away_team} @ {d.home_team}
+                  </span>
+                </span>
+                {d.status === "live" && d.home_score !== null && (
+                  <span className="mt-px text-[11.5px] tabular-nums text-text-muted">
+                    {d.away_score} - {d.home_score}
+                  </span>
+                )}
+                {priced && (
+                  <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
+                    {sides.map((side) => (
+                      <li key={side.name} className={FIELD_ROW}>
+                        <span className={FIELD_NAME}>{side.name}</span>
+                        <span className={FIELD_VALUE}>
+                          {formatProbability(side.probability)}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
                 )}
               </Link>
             );
@@ -121,15 +199,20 @@ export default function RelatedByTag({
               <Link
                 key={`rel-concept-${d.key}`}
                 href={eventPath(d.key)}
-                className="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors"
+                className={CARD}
+                data-testid="related-card"
+                data-kind="concept"
               >
-                <span className="text-xs font-medium text-text-primary truncate flex-1 min-w-0">
-                  {d.name}
-                </span>
+                <span className={CARD_TITLE}>{d.name}</span>
                 {leader && (
-                  <span className="text-xs text-text-muted shrink-0 ml-2">
-                    {leader.name} {formatProbability(leader.probability)}
-                  </span>
+                  <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
+                    <li className={FIELD_ROW}>
+                      <span className={FIELD_NAME}>{leader.name}</span>
+                      <span className={FIELD_VALUE}>
+                        {formatProbability(leader.probability)}
+                      </span>
+                    </li>
+                  </ol>
                 )}
               </Link>
             );
@@ -137,19 +220,45 @@ export default function RelatedByTag({
 
           // Futures
           const d = item.data as FeedFuturesData;
-          const leader = d.top_outcomes?.[0];
+          /* THE WHOLE FIELD, not just the leader (ux/1034 B6). `top_outcomes`
+             has always been in this payload and the strip printed one row of
+             it — on `US Open Men's Singles Winner` that is Alcaraz and nothing
+             else, which is the least interesting true thing the card could say.
+             Unpriced outcomes are dropped rather than printed as `-`: a rank
+             with no number in it is not a rank. */
+          const field = (d.top_outcomes ?? [])
+            .filter((outcome) => typeof outcome.probability === "number")
+            .slice(0, MAX_FIELD_ROWS);
           return (
             <Link
               key={`rel-futures-${d.id}`}
               href={`/futures/${d.id}`}
-              className="flex items-center justify-between p-3 rounded-lg bg-surface-card border border-surface-border hover:border-text-muted transition-colors"
+              className={CARD}
+              data-testid="related-card"
+              data-kind="futures"
             >
-              <span className="text-xs font-medium text-text-primary truncate flex-1 min-w-0">
-                {d.name}
-              </span>
-              {leader && (
-                <span className="text-xs text-text-muted shrink-0 ml-2">
-                  {leader.name} {formatProbability(leader.probability)}
+              <span className={CARD_TITLE}>{d.name}</span>
+              {field.length > 0 && (
+                <ol className="mt-1.5 space-y-0.5" data-testid="related-card-field">
+                  {field.map((outcome) => (
+                    <li key={outcome.name} className={FIELD_ROW}>
+                      <span className={FIELD_NAME}>{outcome.name}</span>
+                      <span className={FIELD_VALUE}>
+                        {formatProbability(outcome.probability)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {/* How much of the field is NOT on the card. The hub's list says
+                  this too; without it a four-row card over a 128-player draw
+                  reads as the whole answer. */}
+              {d.outcome_count > field.length && field.length > 0 && (
+                <span
+                  className="mt-1.5 text-[11px] text-text-muted"
+                  data-testid="related-card-more"
+                >
+                  +{d.outcome_count - field.length} more
                 </span>
               )}
             </Link>
