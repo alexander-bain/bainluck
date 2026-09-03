@@ -33,10 +33,13 @@ is also what covers a warm Redis entry written before this deploy. A backend
 filter for the other three is a follow-up, not a silent omission.
 """
 
+import ast
+import inspect
 from decimal import Decimal
 
 import pytest
 
+import app.routes.futures as futures_module
 from app.routes.futures import (
     _market_has_priced_outcome,
     select_ungrouped_markets,
@@ -147,3 +150,72 @@ class TestSelectionHappensBeforeTruncation:
         markets = [market(i, Decimal("0.5")) for i in range(1, 6)]
         selected = select_ungrouped_markets(markets, set(), 20)
         assert [m["id"] for m in selected] == [1, 2, 3, 4, 5]
+
+
+class TestTheRouteActuallyUsesIt:
+    """Without this class the suite is green on the bug, and I measured that.
+
+    Reverting only the route's call site — leaving the two helpers in place and
+    tested — left the other 17 tests **all passing**, because they exercise a
+    pure function nothing was obliged to call. That is a guard stopping one step
+    short of the thing the reader sees. This is the arm that goes red.
+
+    Read by AST rather than by grepping `inspect.getsource`: the route's comment
+    block names `select_ungrouped_markets` in prose, so a substring scan is
+    satisfied by the explanation of the fix even when the fix is not wired in.
+    """
+
+    @staticmethod
+    def _grouped_feed_ast() -> ast.AST:
+        tree = ast.parse(inspect.getsource(futures_module))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == "grouped_feed"
+            ):
+                # Drop the docstring so prose about the fix cannot satisfy a
+                # check about the code (the #2038-family trap).
+                body = list(node.body)
+                if (
+                    body
+                    and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)
+                ):
+                    body = body[1:]
+                return ast.Module(body=body, type_ignores=[])
+        raise AssertionError("grouped_feed route not found in app.routes.futures")
+
+    def test_the_route_calls_the_selector(self):
+        called = {
+            n.func.id
+            for n in ast.walk(self._grouped_feed_ast())
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "select_ungrouped_markets" in called, (
+            "grouped_feed no longer routes its ungrouped markets through the "
+            "priced-outcome selector — the strip is free to ship cards with no "
+            "number again (#2710)."
+        )
+
+    def test_the_route_does_not_re_derive_the_selection_inline(self):
+        """The old shape was an inline comprehension over `grouped_market_ids`.
+
+        If one reappears in the route body, the selection has been restated
+        rather than called, and the two can drift — which is how the filter
+        would silently end up below the truncation again.
+        """
+        inline = [
+            n
+            for n in ast.walk(self._grouped_feed_ast())
+            if isinstance(n, ast.ListComp)
+            and any(
+                isinstance(sub, ast.Name) and sub.id == "grouped_market_ids"
+                for sub in ast.walk(n)
+            )
+        ]
+        assert inline == [], (
+            "the ungrouped selection is spelled inline in the route again; it "
+            "belongs in select_ungrouped_markets so the filter cannot drift "
+            "below the truncation"
+        )
