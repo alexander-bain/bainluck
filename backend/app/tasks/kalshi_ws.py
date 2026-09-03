@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 
 from app.utils.kalshi_market_status import is_terminal
+from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,10 @@ async def _run_kalshi_ws_consumer():
                 await session.execute(
                     update(FuturesMarket)
                     .where(FuturesMarket.id == market_id)
-                    .values(status="resolved")
+                    .values(
+                        status="resolved",
+                        **settled_values(FuturesMarket.settled_at),
+                    )
                 )
 
                 if result in ("yes", "no"):

@@ -9,6 +9,7 @@ from sqlalchemy import func
 
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
+from app.utils.market_settlement import settled_values
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 
 logger = logging.getLogger(__name__)
@@ -1032,6 +1033,7 @@ async def _mark_resolved_impl():
                 )
                 .values(
                     status="resolved",
+                    **settled_values(FuturesMarket.settled_at),
                     # `||` merges, so a sibling metadata key is never clobbered.
                     market_metadata=func.coalesce(
                         FuturesMarket.market_metadata,

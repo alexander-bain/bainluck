@@ -753,6 +753,24 @@ class FuturesMarket(Base):
         String(20), default="open", index=True
     )  # open, suspended, resolved
 
+    # WHEN status became 'resolved' — the transition timestamp this table has
+    # never had (LINKLOSS-02). `created_at` is ingest, `updated_at` is any write
+    # and is not even bumped by the raw-SQL settlement writers, and
+    # `resolution_date` is a SCHEDULE ("when this market is due to close"), not
+    # an observation. So "how many linked markets left the open population last
+    # night" — the number that has to be subtracted before a drop in linked
+    # markets can be called a link loss — was unanswerable.
+    #
+    # NULL MEANS UNKNOWN AND IS NEVER BACKFILLED. Every row resolved before this
+    # column existed stays NULL; stamping them with the migration's clock would
+    # assert that ~400k markets settled the moment the release ran, which is the
+    # fabricated-timestamp failure the column was added to end. Consumers must
+    # treat NULL as "we did not see it settle", never as "not settled" — the
+    # status column already answers that.
+    settled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+
     # Cross-source event grouping (e.g., "NBA Championship 2025-26" from multiple sources)
     group_id: Mapped[Optional[str]] = mapped_column(String(200), index=True)
     group_type: Mapped[Optional[str]] = mapped_column(
@@ -2366,8 +2384,10 @@ class MarketMatchReceipt(Base):
     #: the ordinary scans never get to — that is a finding, not noise.
     phase: Mapped[str] = mapped_column(String(32), nullable=False)
 
-    #: ``linked`` | ``rejected``.
-    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: ``linked`` | ``rejected`` | ``unlinked`` | ``superseded_by_twin_merge``.
+    #: The last two arrived with LINKLOSS-02 and are the only ones that describe
+    #: a link that ENDED rather than an attempt to make one.
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
 
     #: One of ``app.utils.match_receipts.REJECT_REASONS``, or NULL when linked.
     #: Indexed because every question the reconciliation job asks is a GROUP BY
@@ -2379,6 +2399,18 @@ class MarketMatchReceipt(Base):
     #: deleted 15299648 — that is exactly the forensic the Li–Vekic ghost-twin
     #: case needed.
     linked_event_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+    #: Where the link pointed BEFORE this attempt, on the attempts that ended or
+    #: moved one. Read with ``linked_event_id``: ``(prev=42, linked=NULL)`` is a
+    #: loss, ``(42, 91)`` a move, ``(NULL, 91)`` a first attach. Plain integer,
+    #: no FK — for a twin merge the previous event is usually about to be
+    #: deleted, and a receipt that vanishes with it is the forensic gone.
+    previous_event_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+    #: One of ``app.utils.match_receipts.ACTORS`` — who ended or moved the link
+    #: (``matcher_pass`` | ``twin_cleanup`` | ``settlement`` | ``admin_repair``).
+    #: NULL when this attempt neither ended nor moved one.
+    actor: Mapped[Optional[str]] = mapped_column(String(24))
 
     #: The candidates considered, best score first, with a per-candidate
     #: verdict. Capped at ``MAX_TRACE_CANDIDATES``.
@@ -2408,4 +2440,12 @@ class MarketMatchReceipt(Base):
         # "Which markets did the matcher put on this event, and why" — the
         # by-event-id half of the admin lookup.
         Index("ix_match_receipt_event", "linked_event_id"),
+        # The link-loss census: "what ended links tonight, and who did it".
+        # Leading on ``outcome`` because the census always scopes to the two
+        # ending outcomes first — ``actor`` alone would sit at low cardinality
+        # over a table that is overwhelmingly ``rejected``.
+        Index("ix_match_receipt_outcome_actor", "outcome", "actor"),
+        # "Which markets came OFF this event" — the mirror of the lookup above,
+        # and the one the merge question is asked in.
+        Index("ix_match_receipt_prev_event", "previous_event_id"),
     )

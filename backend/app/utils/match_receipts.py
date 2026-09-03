@@ -34,6 +34,17 @@ would turn that 996 into 996 different strings and the invariant would stay
 uncountable. Every reject reason here is a value the reconciliation job (#2706)
 can GROUP BY.
 
+A LINK THAT ENDS IS ALSO A THING THAT HAPPENED (LINKLOSS-02, added 2026-09-02).
+The first version of this table could only describe an ATTEMPT to attach, which
+left the reverse — a link that existed and stopped existing — with no record
+anywhere in the system. The night the bus asked "did that merge drop 261
+links?", the answer was not uncertain, it was unavailable: a lost link, a moved
+link, and a market that had simply settled out of the open population all
+looked identical from outside. ``unlinked`` and ``superseded_by_twin_merge``,
+``previous_event_id``, ``actor``, and ``futures_markets.settled_at`` are the
+four pieces that make that one question a ``GROUP BY``. The full argument for
+each is at its definition below.
+
 NOT A SIMULATION. ``/api/admin/prediction-markets/match-trace`` re-runs the
 matching logic *now*, against today's events, with a partial copy of the window
 arithmetic. It answers "what would happen if we tried". It cannot answer "what
@@ -46,7 +57,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import func
@@ -54,8 +65,81 @@ from sqlalchemy import func
 from app.utils.name_normalization import normalize_name
 
 # ── Outcomes ────────────────────────────────────────────────────────────────
+#
+# A LINK THAT ENDS IS AN EVENT, NOT AN ABSENCE. Until LINKLOSS-02 the receipt
+# vocabulary was ``linked`` | ``rejected`` — both of them statements about an
+# ATTEMPT to attach. Neither can say anything about a link that already existed
+# and stopped existing, so a market that had a price on a game card yesterday
+# and has none today produces the same evidence as a market that was never
+# linked at all: the last receipt still reads ``linked``, and the row underneath
+# it sits at NULL.
+#
+# The night of 2026-09-02 the bus asked "did a merge drop 261 links?" and the
+# answer was unavailable — not uncertain, unavailable. There are four ways a
+# ``futures_markets.event_id`` stops pointing where it pointed, and before this
+# change exactly zero of them left a record:
+#
+# * the matcher's own re-validation unlinks a mislinked market;
+# * the matcher relinks it to a better event;
+# * a twin cleanup merges two events and repoints the market onto the survivor;
+# * the market settles, leaves the open population, and the link stops being
+#   maintained — which is not a loss at all, and is the one that has to be
+#   subtractable before the other three can be counted.
+
 OUTCOME_LINKED = "linked"
 OUTCOME_REJECTED = "rejected"
+
+#: The market WAS linked and now is not, and no replacement was chosen. The
+#: previous event is on ``previous_event_id`` and ``actor`` says who did it.
+#: This is the outcome that makes "we lost 261 links tonight" a countable claim
+#: instead of a diff between two snapshots.
+OUTCOME_UNLINKED = "unlinked"
+
+#: The market's event was merged into another event and the row was repointed
+#: onto the survivor. NOT a matching decision: nothing re-examined the market,
+#: the ground moved under it. It is its own outcome rather than a ``linked``
+#: with a different id because the two answer different questions — "the
+#: matcher changed its mind" and "the event this was attached to stopped being
+#: the canonical one" have different fixes, and a merge that repoints 261 rows
+#: must not read as 261 matching decisions.
+OUTCOME_SUPERSEDED_BY_TWIN_MERGE = "superseded_by_twin_merge"
+
+OUTCOMES: frozenset[str] = frozenset({
+    OUTCOME_LINKED,
+    OUTCOME_REJECTED,
+    OUTCOME_UNLINKED,
+    OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+})
+
+# ── Actors ──────────────────────────────────────────────────────────────────
+# WHO ended the link. Closed, for the same reason the reject enum is closed: the
+# bus's question is a GROUP BY, and a free-text actor makes it uncountable.
+
+#: One of the matcher's own passes decided it — Phase 1.5 re-validation or the
+#: Phase 2 wrong-game/date sweeps. A bug lives here if the count is not ~0.
+ACTOR_MATCHER_PASS = "matcher_pass"
+
+#: An event merge repointed the row (``repoint_event_children``). Expected in
+#: bulk: one merge moves every child of the loser at once.
+ACTOR_TWIN_CLEANUP = "twin_cleanup"
+
+#: The market settled. The link is not wrong and usually is not even removed —
+#: the market simply leaves the open population that ``link-rate`` counts, which
+#: is why a settlement wave looks exactly like a link loss until you can
+#: subtract it. See ``futures_markets.settled_at``.
+ACTOR_SETTLEMENT = "settlement"
+
+#: A human ran an admin repair endpoint. Rare, deliberate, and the one class
+#: that has no automated re-examination behind it — so an unexplained unlink
+#: that turns out to be this is a different investigation entirely.
+ACTOR_ADMIN_REPAIR = "admin_repair"
+
+ACTORS: frozenset[str] = frozenset({
+    ACTOR_MATCHER_PASS,
+    ACTOR_TWIN_CLEANUP,
+    ACTOR_SETTLEMENT,
+    ACTOR_ADMIN_REPAIR,
+})
 
 # ── The closed reject enum ──────────────────────────────────────────────────
 # Add a value here and to REJECT_REASONS in the same edit, or the guard test
@@ -121,16 +205,20 @@ REJECT_ATTEMPT_ERROR = "attempt_error"
 #: at low rates (gotcha #13); a spike is its own signal.
 REJECT_DEADLOCK = "deadlock"
 
-#: The attempt CHOSE an event, and the link is not in the database. The matcher
-#: rolled back before the write became durable — a sibling market in the same
-#: pass raised, or the commit itself failed.
+#: The receipt's claim about the link and the database disagree. The attempt
+#: CHOSE an event and the row is not on it; or the attempt UNLINKED and the row
+#: is still attached; or a merge claimed to repoint and the row did not move.
+#: The matcher rolled back before the write became durable — a sibling market in
+#: the same pass raised, or the commit itself failed.
 #:
 #: This value exists because the alternative is a receipt that LIES. Publishing
 #: `linked_event_id=42` for a market sitting at NULL would make the one-query
 #: answer report the opposite of the state it is meant to explain, and would
 #: hide the row from every coverage check that treats "has a receipt" as
-#: "accounted for". A nonzero count here is itself the finding: the matcher is
-#: losing links to sibling failures. Target 0.
+#: "accounted for". The unlink half is worse, not better: an ``unlinked`` row
+#: that did not happen is a fabricated link loss, and link losses are exactly
+#: what this vocabulary was added to count. A nonzero count here is itself the
+#: finding. Target 0.
 REJECT_LINK_NOT_DURABLE = "link_not_durable"
 
 REJECT_REASONS: frozenset[str] = frozenset({
@@ -161,8 +249,32 @@ PHASE_PASS2_GENERAL = "pass2_general"
 #: can sit behind a newer wave forever.
 PHASE_PASS3_BACKLOG = "pass3_backlog"
 
+# The phases below never attach a market that was unattached. They only END or
+# MOVE a link that already existed, which is why they arrived with the
+# ``unlinked`` / ``superseded_by_twin_merge`` outcomes and not before.
+
+#: Phase 1.5 re-validation — the pass that re-reads every open linked market and
+#: unlinks or relinks the ones whose event no longer agrees with them.
+PHASE_PHASE15_REVALIDATE = "phase15_revalidate"
+#: Phase 2's two wrong-game sweeps: the multi-game group unlink and the
+#: ticker-date-vs-event-date unlink.
+PHASE_PHASE2_LINKED = "phase2_linked"
+#: ``_relink_collapsed_game_markets`` (#944) — the bulk SQL pass that moves a
+#: game market off the last game's event onto its own date's event.
+PHASE_RELINK_COLLAPSED = "relink_collapsed"
+#: ``_reconcile_kalshi_match_segments`` (Q435) — converges every Kalshi market
+#: of one tennis match onto one event.
+PHASE_SEGMENT_RECONCILE = "segment_reconcile"
+#: ``repoint_event_children`` — a merge moved the children of a losing twin.
+PHASE_TWIN_MERGE = "twin_merge"
+#: A human ran an admin repair. Named separately from the matcher's passes
+#: because "a person did this on purpose" is the answer, not a detail of it.
+PHASE_ADMIN_REPAIR = "admin_repair"
+
 PHASES: frozenset[str] = frozenset({
     PHASE_PASS1_TICKER, PHASE_PASS2_GENERAL, PHASE_PASS3_BACKLOG,
+    PHASE_PHASE15_REVALIDATE, PHASE_PHASE2_LINKED, PHASE_TWIN_MERGE,
+    PHASE_ADMIN_REPAIR, PHASE_RELINK_COLLAPSED, PHASE_SEGMENT_RECONCILE,
 })
 
 #: Cap on the candidate trace stored per receipt. The scoring queries take 20
@@ -374,6 +486,22 @@ class CandidateTrace:
         }
 
 
+def _validated_actor(actor: Optional[str]) -> str:
+    """The actor, or a loud failure. Same contract as the reject enum.
+
+    An unknown actor string is worse than an unknown reject reason: the reject
+    enum's consumers at least see a row they can eyeball, while the link-loss
+    census is a ``GROUP BY actor`` whose whole output is the enum. One typo and
+    a class of losses becomes its own silent bucket.
+    """
+    if actor not in ACTORS:
+        raise ValueError(
+            f"unknown link-change actor {actor!r} — add it to "
+            f"app/utils/match_receipts.ACTORS"
+        )
+    return actor
+
+
 @dataclass
 class MatchReceipt:
     """What one matching attempt saw and decided, for one market."""
@@ -387,6 +515,14 @@ class MatchReceipt:
     outcome: str = OUTCOME_REJECTED
     reject_reason: Optional[str] = None
     linked_event_id: Optional[int] = None
+    #: Where the link pointed BEFORE this attempt, when this attempt changed or
+    #: ended it. NULL on an ordinary attach and on every reject. Reading it
+    #: together with ``linked_event_id`` is the whole point: ``(42, None)`` is a
+    #: loss, ``(42, 91)`` is a move, ``(None, 91)`` is an attach.
+    previous_event_id: Optional[int] = None
+    #: One of :data:`ACTORS` — who ended or moved the link. NULL when nothing
+    #: was ended or moved.
+    actor: Optional[str] = None
     candidates: list[CandidateTrace] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -410,11 +546,65 @@ class MatchReceipt:
             self.detail.update(detail)
         return self
 
-    def link(self, event_id: int, **detail: Any) -> "MatchReceipt":
-        """Mark this attempt linked to ``event_id``."""
+    def link(
+        self,
+        event_id: int,
+        *,
+        previous_event_id: Optional[int] = None,
+        actor: Optional[str] = None,
+        **detail: Any,
+    ) -> "MatchReceipt":
+        """Mark this attempt linked to ``event_id``.
+
+        A RELINK is still a link, and passing ``previous_event_id`` is what
+        makes it one that can be counted. Phase 1.5 moving a market from event
+        42 to event 91 leaves the link count unchanged and event 42's card one
+        source poorer; without the previous id the receipt reads identically to
+        a market attaching for the first time, and the card that went quiet has
+        no explanation anywhere in the system.
+        """
         self.outcome = OUTCOME_LINKED
         self.reject_reason = None
         self.linked_event_id = event_id
+        if previous_event_id is not None and previous_event_id != event_id:
+            self.previous_event_id = previous_event_id
+            self.actor = _validated_actor(actor or ACTOR_MATCHER_PASS)
+        if detail:
+            self.detail.update(detail)
+        return self
+
+    def unlink(
+        self, previous_event_id: int, actor: str = ACTOR_MATCHER_PASS, **detail: Any
+    ) -> "MatchReceipt":
+        """Mark a link that existed and now does not.
+
+        ``previous_event_id`` is required and not optional-with-a-default: an
+        unlink receipt that cannot name what it detached from answers none of
+        the questions it exists for. "261 links went away" is a number; "261
+        links went away from these 12 events" is a diagnosis.
+        """
+        self.outcome = OUTCOME_UNLINKED
+        self.reject_reason = None
+        self.linked_event_id = None
+        self.previous_event_id = previous_event_id
+        self.actor = _validated_actor(actor)
+        if detail:
+            self.detail.update(detail)
+        return self
+
+    def supersede(
+        self,
+        previous_event_id: int,
+        new_event_id: int,
+        actor: str = ACTOR_TWIN_CLEANUP,
+        **detail: Any,
+    ) -> "MatchReceipt":
+        """Mark a link the ground moved under — an event merge repointed it."""
+        self.outcome = OUTCOME_SUPERSEDED_BY_TWIN_MERGE
+        self.reject_reason = None
+        self.linked_event_id = new_event_id
+        self.previous_event_id = previous_event_id
+        self.actor = _validated_actor(actor)
         if detail:
             self.detail.update(detail)
         return self
@@ -441,6 +631,8 @@ class MatchReceipt:
             "outcome": self.outcome,
             "reject_reason": self.reject_reason,
             "linked_event_id": self.linked_event_id,
+            "previous_event_id": self.previous_event_id,
+            "actor": self.actor,
             "candidates": self.candidate_payload(),
             "detail": _jsonable(self.detail),
             "first_attempted_at": self.attempted_at,
@@ -460,28 +652,46 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-async def verify_links_are_durable(session, receipts: list[MatchReceipt]) -> int:
-    """Downgrade any receipt claiming a link the database does not hold (CERT-771).
+#: Every outcome that asserts something about ``futures_markets.event_id`` and
+#: therefore has to be checked against it before publication. ``rejected`` is
+#: absent by design: it asserts nothing about the column, only about an attempt.
+_STATEFUL_OUTCOMES: frozenset[str] = frozenset({
+    OUTCOME_LINKED, OUTCOME_UNLINKED, OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+})
 
-    THE INVARIANT: a receipt never asserts a link that is not committed. The
-    matcher now commits each link before claiming it, so in the normal path this
-    finds nothing — but the guarantee must not rest on that, because the failure
-    it prevents is the worst one this table can have. A receipt reading
+
+async def verify_links_are_durable(session, receipts: list[MatchReceipt]) -> int:
+    """Downgrade any receipt whose claim the database does not hold (CERT-771).
+
+    THE INVARIANT: a receipt never asserts a link state that is not committed.
+    The matcher now commits each link before claiming it, so in the normal path
+    this finds nothing — but the guarantee must not rest on that, because the
+    failure it prevents is the worst one this table can have. A receipt reading
     ``linked_event_id=42`` for a market sitting at NULL does not merely lose
     information: it reports the OPPOSITE of the state it exists to explain, and
     it hides the row from every coverage check that treats "has a receipt" as
     "accounted for".
 
-    So the claim is checked against the database, in the receipt session, right
-    before publication. One indexed primary-key read per flush. Returns the
-    number downgraded — nonzero means the matcher is losing links, which is a
-    finding in its own right and is counted as ``link_not_durable``.
+    ALL THREE STATEFUL CLAIMS ARE CHECKED, not just the attach. ``unlinked``
+    asserts the column is NULL and ``superseded_by_twin_merge`` asserts it moved
+    to a named survivor, and both are read by the link-loss census — so a
+    rolled-back unlink republished as fact would *invent* the very link loss the
+    census exists to find, which is a worse failure than the one CERT-771
+    caught. Every stateful outcome is one comparison against the same row, so
+    covering them costs nothing beyond the comparison.
+
+    The claim is checked in the receipt session, right before publication. One
+    indexed primary-key read per flush. Returns the number downgraded — nonzero
+    means the matcher's writes are not landing, which is a finding in its own
+    right and is counted as ``link_not_durable``.
     """
     from sqlalchemy import select
 
     from app.models.models import FuturesMarket
 
-    claimed = {r.market_id: r for r in receipts if r.outcome == OUTCOME_LINKED}
+    claimed = {
+        r.market_id: r for r in receipts if r.outcome in _STATEFUL_OUTCOMES
+    }
     if not claimed:
         return 0
 
@@ -493,15 +703,131 @@ async def verify_links_are_durable(session, receipts: list[MatchReceipt]) -> int
 
     downgraded = 0
     for market_id, receipt in claimed.items():
-        if durable.get(market_id) == receipt.linked_event_id:
+        observed = durable.get(market_id)
+        # For every stateful outcome the assertion is the same shape: after this
+        # attempt the row sits on ``linked_event_id`` (NULL for an unlink).
+        if observed == receipt.linked_event_id:
             continue
         receipt.reject(
             REJECT_LINK_NOT_DURABLE,
+            claimed_outcome=receipt.outcome,
             claimed_event_id=receipt.linked_event_id,
-            observed_event_id=durable.get(market_id),
+            previous_event_id=receipt.previous_event_id,
+            observed_event_id=observed,
         )
         downgraded += 1
     return downgraded
+
+
+async def record_link_change_receipts(
+    market_rows,
+    *,
+    previous_event_id: int,
+    new_event_id: Optional[int],
+    actor: str,
+    phase: str,
+    now: Optional[datetime] = None,
+    session_factory=None,
+) -> int:
+    """Receipt a link change made OUTSIDE the matcher. Returns rows written.
+
+    For the merge rails and the admin repairs — the writers that end or move a
+    link without running a matching pass, and so have no receipt list of their
+    own to flush.
+
+    CALL AFTER THE CHANGE HAS COMMITTED. :func:`verify_links_are_durable`
+    re-reads each market on a fresh session, so a claim published before the
+    commit would be read against the pre-change row and downgraded as
+    un-durable — the receipt would then report a link the merge really did move
+    as one it failed to move, which is a worse answer than none.
+
+    NEVER RAISES. A merge that has already deleted the losing event must not
+    then fail because its explanation could not be written; the failure is
+    logged and reported as ``0``, and the caller counts what it got back. Same
+    contract as ``_flush_pass_receipts`` in the matcher, for the same reason:
+    the record must never be able to cost the thing it records.
+
+    ``market_rows`` is a list of dicts carrying ``id``/``source``/
+    ``external_id``/``name`` — the shape ``repoint_event_children`` returns
+    under ``markets``, read before its update because the previous event id does
+    not survive it.
+    """
+    if not market_rows:
+        return 0
+
+    import logging
+
+    from app.tasks.base import get_task_session
+
+    logger = logging.getLogger(__name__)
+    attempted_at = now or datetime.now(timezone.utc)
+
+    def _build(row) -> MatchReceipt:
+        receipt = MatchReceipt(
+            market_id=row["id"],
+            source=row.get("source") or "",
+            external_id=row.get("external_id"),
+            market_name=row.get("name"),
+            phase=phase,
+            attempted_at=attempted_at,
+        )
+        if new_event_id is None:
+            return receipt.unlink(previous_event_id, actor)
+        # THE OUTCOME FOLLOWS FROM THE ACTOR, and only for this one actor.
+        # ``superseded_by_twin_merge`` means the market did not move — its event
+        # stopped existing under it. Every other actor moving a link made a
+        # decision about the market, which is a ``linked`` carrying where it
+        # came from. Collapsing the two would make a merge read as hundreds of
+        # matching decisions, which is the misreading the outcome exists to
+        # prevent.
+        if actor == ACTOR_TWIN_CLEANUP:
+            return receipt.supersede(previous_event_id, new_event_id, actor)
+        return receipt.link(
+            new_event_id, previous_event_id=previous_event_id, actor=actor,
+        )
+
+    receipts = [_build(row) for row in market_rows]
+
+    factory = session_factory or get_task_session
+    try:
+        async with factory() as session:
+            await verify_links_are_durable(session, receipts)
+            written = await flush_receipts(session, receipts)
+            await session.commit()
+        return written
+    except Exception as exc:  # pragma: no cover - defensive, see docstring
+        logger.warning(
+            "Link-change receipts failed for %d market(s) moved %s -> %s "
+            "(%s/%s): %s",
+            len(receipts), previous_event_id, new_event_id, actor, phase,
+            str(exc)[:200],
+        )
+        return 0
+
+
+async def record_twin_merge_receipts(
+    market_rows,
+    *,
+    previous_event_id: int,
+    new_event_id: int,
+    now: Optional[datetime] = None,
+    session_factory=None,
+) -> int:
+    """Receipt every market an event merge repointed. Returns rows written.
+
+    The merge rails' spelling of :func:`record_link_change_receipts`, so a call
+    site cannot get the actor/phase pair wrong for the one case there are three
+    callers of.
+    """
+    return await record_link_change_receipts(
+        market_rows,
+        previous_event_id=previous_event_id,
+        new_event_id=new_event_id,
+        actor=ACTOR_TWIN_CLEANUP,
+        phase=PHASE_TWIN_MERGE,
+        now=now,
+        session_factory=session_factory,
+    )
 
 
 async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500) -> int:
@@ -545,6 +871,8 @@ async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500
                 "outcome": stmt.excluded.outcome,
                 "reject_reason": stmt.excluded.reject_reason,
                 "linked_event_id": stmt.excluded.linked_event_id,
+                "previous_event_id": stmt.excluded.previous_event_id,
+                "actor": stmt.excluded.actor,
                 "candidates": stmt.excluded.candidates,
                 "detail": stmt.excluded.detail,
                 "last_attempted_at": stmt.excluded.last_attempted_at,
