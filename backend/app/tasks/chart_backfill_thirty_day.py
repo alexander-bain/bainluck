@@ -49,6 +49,14 @@ import logging
 from datetime import datetime, timezone
 from typing import NamedTuple, Optional, Sequence
 
+#: live/055 (#2766). The abort signal of an optimistic fence. Imported at module
+#: scope deliberately: `redis` is a hard dependency of this app (the Procfile's
+#: release phase imports `app.main`, and Celery cannot start without it), and a
+#: lazily-imported exception class inside an `except` clause is a way to have the
+#: handler quietly not exist. There is no fallback for the same reason — a
+#: fallback class would silently turn "the lease moved" into an unhandled error.
+from redis.exceptions import WatchError
+
 logger = logging.getLogger(__name__)
 
 
@@ -509,12 +517,14 @@ def _write_cursor(
     if cursor is None:
         return True
     stamp, event_id = cursor
-    return _fenced(
-        tier, token,
-        lambda client: client.set(
-            CHECKPOINT_KEY.format(tier=tier), f"{stamp.isoformat()}|{int(event_id)}"
-        ),
-    )
+
+    def _apply(pipe, _observed):
+        pipe.set(
+            CHECKPOINT_KEY.format(tier=tier),
+            f"{stamp.isoformat()}|{int(event_id)}",
+        )
+
+    return _fenced(tier, token, _apply)
 
 
 def _mark_done(
@@ -565,15 +575,29 @@ def _mark_done(
     it no longer owns. A fenced-out settlement reports :data:`LOCK_LOST`.
     """
     key = TIER_DONE_KEY.format(tier=tier)
+    retry_key = RETRY_KEY.format(tier=tier)
     in_force: list = []
 
-    def _apply(client):
+    def _read(pipe):
+        """The retry-hash check, in the watch phase. live/055 (#2766).
+
+        This is a READ the write then branches on, so the key it reads has to be
+        WATCHED as well — otherwise the repair simply moves CERT-794's race one
+        key over: a sibling could add a retry between this `HLEN` and our `SET
+        NX`, and the clean marker would land on a tier that owes work after all.
+        `_fenced(watch=...)` below is doing that, and it is not optional.
+        """
         if marker == DONE_WITH_FAILURES:
-            client.set(key, marker)
+            return 0
+        return pipe.hlen(retry_key)
+
+    def _apply(pipe, owed):
+        if marker == DONE_WITH_FAILURES:
+            pipe.set(key, marker)
             in_force.append(marker)
-            return
+            return None
         # 🔴 CERT-794/795: no clean `drained` while anything is owed.
-        if client.hlen(RETRY_KEY.format(tier=tier)):
+        if owed:
             logger.warning(
                 "30d chart drain: tier %s proposed %s but the retry hash is NOT "
                 "empty — a sibling owes work on this tier, so it has not "
@@ -581,19 +605,34 @@ def _mark_done(
                 tier, marker, AWAITING_RETRIES,
             )
             in_force.append(AWAITING_RETRIES)
-            return
-        if client.set(key, marker, nx=True):
-            in_force.append(marker)
-            return
-        # Refused: something terminal is already there and it is not ours to
-        # replace. A legacy bare "1" reads as the clean verdict it meant, the
-        # same way `_read_checkpoint` reads it.
-        existing = _decode(client.get(key))
-        in_force.append(
-            DONE_WITH_FAILURES if existing == DONE_WITH_FAILURES else DONE_CLEAN
-        )
+            return None
 
-    held = _fenced(tier, token, _apply)
+        # 🔴 THE NX AND THE READ-BACK ARE NOW ONE TRANSACTION (live/055, #2766).
+        # `SET NX` refusing means a sibling already recorded the truer verdict,
+        # and the caller reports what is actually in force rather than what it
+        # proposed (CERT-764). That read-back used to be a SEPARATE round trip
+        # after the refusal, so it could return a value written by a THIRD
+        # writer in between — reporting a verdict that was never the one that
+        # refused us. Queued in the same MULTI, the `GET` observes the state the
+        # `SET NX` just declined to change.
+        pipe.set(key, marker, nx=True)
+        pipe.get(key)
+
+        def _settle(results):
+            won, existing_raw = results[0], results[1]
+            if won:
+                in_force.append(marker)
+                return
+            # A legacy bare "1" reads as the clean verdict it meant, the same
+            # way `_read_checkpoint` reads it.
+            existing = _decode(existing_raw)
+            in_force.append(
+                DONE_WITH_FAILURES if existing == DONE_WITH_FAILURES else DONE_CLEAN
+            )
+
+        return _settle
+
+    held = _fenced(tier, token, _apply, read=_read, watch=(retry_key,))
     if not held:
         return LOCK_LOST
     # Nothing persisted (Redis unreachable) still reports what was DECIDED — the
@@ -672,7 +711,7 @@ def _record_attempts(
     computed_total = int(prior_gave_up) + len(gave_up)
     persisted: list = []
 
-    def _apply(client):
+    def _apply(pipe, _observed):
         key = RETRY_KEY.format(tier=tier)
         dropped = [e for e in prior if e not in still_owed]
         added = {
@@ -706,17 +745,28 @@ def _record_attempts(
         # COUNTER is untouched and monotone, so when this tier settles again it
         # reads that counter back and ends `drained_with_failures` exactly as
         # before. The marker is re-derivable; the abandoned retry is not.
-        with client.pipeline(transaction=True) as pipe:
-            if dropped:
-                pipe.hdel(key, *[str(e) for e in dropped])
-            if added:
-                pipe.hset(key, mapping=added)
-                pipe.delete(TIER_DONE_KEY.format(tier=tier))
-            if gave_up:
-                pipe.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
-            results = pipe.execute()
-        if gave_up and results:
-            persisted.append(results[-1])
+        #
+        # 🔴 live/055 (#2766): this block used to open its OWN
+        # `client.pipeline(transaction=True)` INSIDE the fence, which meant the
+        # lease check and this transaction were two separate instants — the
+        # transaction was atomic with itself but not with the check that
+        # authorised it. It now queues onto the fence's transaction, so the
+        # token comparison, the lease renewal and every write below are one
+        # block that either all lands or none does. Same commands, same order,
+        # one fewer seam.
+        if dropped:
+            pipe.hdel(key, *[str(e) for e in dropped])
+        if added:
+            pipe.hset(key, mapping=added)
+            pipe.delete(TIER_DONE_KEY.format(tier=tier))
+        if gave_up:
+            pipe.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
+
+        def _settle(results):
+            if gave_up and results:
+                persisted.append(results[-1])
+
+        return _settle
 
     held = _fenced(tier, token, _apply)
 
@@ -742,24 +792,23 @@ def _with_redis(tier: str, apply) -> None:
 
 
 def _still_holds(client, tier: str, token: Optional[str]) -> bool:
-    """Do we still own this tier — and if so, RENEW the lease. CERT-794/795.
+    """Do we still own this tier? CERT-794/795, narrowed by live/055 (#2766).
 
-    Called immediately before every state write, on the same client and the same
-    connection the write goes out on, so the check is as close to the write as it
-    can be without a server-side script.
+    🔴 THIS NO LONGER RENEWS, AND THAT IS THE FIX, NOT A REGRESSION. It used to
+    `GET` and then `EXPIRE`, and the renewal is precisely what could not stay
+    here: in real Redis `EXPIRE` calls `signalModifiedKey`, so a renewal issued
+    while :func:`_fenced` is watching the lock would invalidate the pass's OWN
+    watch and abort every write it was fencing. The renewal moved into the
+    transaction (see :func:`_fenced`), where it is atomic with the writes it is
+    protecting instead of being a third round trip beside them.
 
-    🔴 RENEWING IS THE POINT, not the check. CERT-794's race needs the older
-    runner's lease to have expired while it was still working, and a fixed
-    1800-second TTL guarantees that eventually happens to a long enough pass. A
-    lease that is refreshed on every write expires only when the holder has done
-    nothing at all for half an hour — a stalled or dead worker, which is exactly
-    who the TTL is meant to evict. So the renewal removes the race's precondition
-    and the fence removes its consequence.
+    What remains is the pure question — is the token in Redis still ours — used
+    by :func:`_fenced`'s watch phase and available on its own to callers that
+    want the answer without a write.
 
     🔴 A DRY RUN ALWAYS HOLDS. It took no lock because it writes nothing, and
     :data:`_DRY_RUN_LOCK` keeps `None` meaning one thing (locked out) rather than
-    two. Since a dry run reaches no write, this answer is never load-bearing;
-    saying so here is cheaper than a second branch at every call site.
+    two. It must not issue a lock read to discover that.
 
     🔴 UNREACHABLE REDIS ANSWERS TRUE, matching :func:`_acquire_tier_lock`'s
     documented FAIL OPEN. If the server cannot be reached there is no lock, no
@@ -773,20 +822,17 @@ def _still_holds(client, tier: str, token: Optional[str]) -> bool:
         return True
     key = TIER_LOCK_KEY.format(tier=tier)
     try:
-        if _decode(client.get(key)) != token:
-            return False
-        client.expire(key, TIER_LOCK_TTL_SECONDS)
+        return _decode(client.get(key)) == token
     except Exception:  # noqa: BLE001 — see FAIL OPEN above
         logger.warning(
             "30d chart drain: tier %s lease could not be checked; proceeding "
             "(nothing persists while Redis is unreachable)", tier, exc_info=True,
         )
         return True
-    return True
 
 
-def _fenced(tier: str, token: Optional[str], apply) -> bool:
-    """Run `apply(client)` only while we still hold the tier. CERT-794/795.
+def _fenced(tier: str, token: Optional[str], apply, *, read=None, watch=()) -> bool:
+    """Run the caller's writes only while we still hold the tier, ATOMICALLY.
 
     Returns whether this pass STILL OWNS the tier. `False` is a REAL answer the
     caller must act on — it means the lease is gone, everything this write was
@@ -794,26 +840,125 @@ def _fenced(tier: str, token: Optional[str], apply) -> bool:
     persist the NEXT thing either. Silently continuing is how a fenced pass still
     advances a cursor past a failure it was not allowed to record.
 
-    🔴 IT IS NOT A "DID REDIS WORK" FLAG. An unreachable Redis returns `True`:
-    nothing persisted, but the tier was not taken from us, and reporting that as
-    a lost lease would turn a blip into an aborted drain. That is the same
-    fail-open the lock itself documents, and it is why the refusal is recorded by
-    the fence rather than inferred from the write's absence.
+    ── live/055 (#2766): WHY THIS IS NOW A WATCH, AND WHAT THAT BUYS ──────────
+
+    CERT-798 shipped this fence as `GET` the lock, compare, then `EXPIRE`, then
+    write. Its grader named the residual seam `CHART-LEASE-ATOMIC-COMPARE-RENEW`
+    and I agreed with the finding: three separate round trips are three separate
+    instants, so between the compare and the write the lease could expire and be
+    taken by a sibling, and the write would land anyway. The window was
+    microseconds rather than CERT-794's thirty minutes. Microseconds is not zero,
+    and "narrow" is not a property a correctness argument can rest on — it is a
+    statement about how often you will see the bug, not about whether it exists.
+
+    So the compare and the writes are now ONE optimistic transaction:
+
+        WATCH lock (+ any key the caller must read before deciding)
+        GET lock, compare to our token        <- immediate, pre-MULTI
+        read(pipe)                            <- the caller's read phase, if any
+        MULTI
+          EXPIRE lock                         <- the renewal, INSIDE the block
+          apply(pipe, observed)               <- the caller's writes, queued
+        EXEC                                  <- aborts if anything watched moved
+
+    If the lock key is touched at ANY point after the WATCH — retaken, released,
+    or expired out from under us — `EXEC` refuses and nothing lands. There is no
+    longer an instant between the check and the write for a sibling to occupy.
+
+    🔴 THE RENEWAL HAD TO MOVE INSIDE THE BLOCK. `EXPIRE` signals a watch in real
+    Redis, so renewing in the watch phase would have aborted the pass's own
+    transaction every single time. Queued inside the MULTI it is atomic with the
+    writes it protects, which is strictly better than where it was.
+
+    🔴 A LOST WATCH IS A REFUSAL, NOT A RETRY. The optimistic idiom usually loops
+    on `WatchError`, and that is wrong here. The watched key is the lease itself:
+    if it moved, the overwhelmingly likely reason is that we no longer hold it,
+    and a retry would re-read, find a different token, and refuse anyway. In the
+    rare benign case (our own release racing a shutdown) a refusal costs one
+    re-trigger and never a wrong verdict, which is the direction this whole
+    module errs in. Looping would add a way to spin.
+
+    🔴 IT IS STILL NOT A "DID REDIS WORK" FLAG. An unreachable Redis returns
+    `True`: nothing persisted, but the tier was not taken from us, and reporting
+    that as a lost lease would turn a blip into an aborted drain. That is the
+    same fail-open the lock itself documents.
+
+    :param apply: `apply(pipe, observed)` — queues writes on a pipeline already
+        in MULTI mode. It MUST NOT read: a read queued here answers at `EXEC`,
+        not now. It may return a `settle(results)` callable, which is handed the
+        replies to ITS OWN commands (the renewal's reply is stripped first).
+    :param read: `read(pipe)` — an optional read phase run while watching and
+        before `MULTI`, for a caller that must branch on current state. Its
+        return value is passed to `apply` as `observed`.
+    :param watch: extra keys whose movement must also abort the transaction. A
+        caller that READS a key in `read` and branches on it has to watch it, or
+        it has re-created this very bug one key over.
     """
     refused: list = []
+    lost_watch: list = []
 
     def _guarded(client):
-        if not _still_holds(client, tier, token):
+        if token is None:
             refused.append(True)
             return
-        apply(client)
+
+        lock_key = TIER_LOCK_KEY.format(tier=tier)
+        # A dry run holds no lock, so there is no lease to watch or renew. It
+        # still runs its writes in a transaction — the atomicity between the
+        # writes themselves is CERT-773's guarantee and is not the lock's.
+        fencing = token != _DRY_RUN_LOCK
+
+        with client.pipeline(transaction=True) as pipe:
+            watched = ([lock_key] if fencing else []) + list(watch)
+            # 🔴 A READ PHASE IS ONLY A READ PHASE WHILE WATCHING. redis-py puts
+            # a pipeline into IMMEDIATE mode on `watch()` and not before, so a
+            # `read` issued on an unwatched pipeline would be QUEUED — it would
+            # answer with the pipeline object rather than a value, which is
+            # truthy, and `_mark_done` would silently report `awaiting_retries`
+            # for every tier forever. That is a wrong verdict arriving through a
+            # mode error, so it is refused loudly here instead of being possible.
+            # Unreachable from the three current callers (the only one with a
+            # read phase also passes `watch`); this exists for the fourth.
+            if read is not None and not watched:
+                raise AssertionError(
+                    "_fenced: a read phase requires at least one watched key — "
+                    "a read the write branches on is part of the write"
+                )
+            if watched:
+                pipe.watch(*watched)
+            if fencing and _decode(pipe.get(lock_key)) != token:
+                pipe.unwatch()
+                refused.append(True)
+                return
+
+            observed = read(pipe) if read is not None else None
+
+            pipe.multi()
+            if fencing:
+                pipe.expire(lock_key, TIER_LOCK_TTL_SECONDS)
+            settle = apply(pipe, observed)
+            try:
+                results = pipe.execute()
+            except WatchError:
+                lost_watch.append(True)
+                refused.append(True)
+                return
+
+        if settle is not None:
+            # Strip the renewal's own reply so the caller indexes its own
+            # commands — `results[-1]`, `results[0]` and friends must mean what
+            # they meant when the writes were in a pipeline of their own.
+            settle(results[1:] if fencing else results)
 
     _with_redis(tier, _guarded)
     if refused:
         logger.warning(
             "30d chart drain: tier %s write REFUSED — this pass no longer holds "
-            "the tier (lease expired and a sibling took it). Nothing was "
-            "written; the tier belongs to whoever holds it now.", tier,
+            "the tier (%s). Nothing was written; the tier belongs to whoever "
+            "holds it now.", tier,
+            "the lease moved between our check and our write, and the watch "
+            "aborted the transaction" if lost_watch
+            else "lease expired and a sibling took it",
         )
     return not refused
 
@@ -859,19 +1004,42 @@ def _release_tier_lock(tier: str, token: Optional[str]) -> None:
     """Hand the tier back, but only if we still hold it.
 
     The token check is what stops a pass that overran :data:`TIER_LOCK_TTL_SECONDS`
-    from deleting the lock a DIFFERENT trigger has since taken. It is a
-    read-then-delete rather than a compare-and-delete script, so a vanishingly
-    narrow window remains where the lock is re-taken between the two — and that
-    window costs a redundant concurrent pass, never a wrong verdict, because the
-    verdict's monotonicity lives in :func:`_mark_done`'s write and not here.
+    from deleting the lock a DIFFERENT trigger has since taken.
+
+    🔴 live/055 (#2766) — IT IS NOW A COMPARE-AND-DELETE, not a read-then-delete.
+    This function's own previous docstring admitted the seam: "a vanishingly
+    narrow window remains where the lock is re-taken between the two". The cost
+    was correctly described as a redundant concurrent pass rather than a wrong
+    verdict — but a redundant concurrent pass is exactly the state CERT-773 and
+    CERT-794 were both about, so leaving a hole that manufactures one was a poor
+    trade for two round trips. WATCH closes it: if the lock moves between the
+    read and the delete, `EXEC` aborts and we delete nothing, which is the right
+    answer because the lock is no longer ours to hand back.
+
+    A lost watch is silence, deliberately. Someone else owning the lease is the
+    normal end of an overrun pass, not an error, and the caller is already on its
+    way out — there is nothing for it to do differently.
     """
     if not token:
         return
     key = TIER_LOCK_KEY.format(tier=tier)
 
     def _apply(client):
-        if _decode(client.get(key)) == token:
-            client.delete(key)
+        with client.pipeline(transaction=True) as pipe:
+            pipe.watch(key)
+            if _decode(pipe.get(key)) != token:
+                pipe.unwatch()
+                return
+            pipe.multi()
+            pipe.delete(key)
+            try:
+                pipe.execute()
+            except WatchError:
+                logger.info(
+                    "30d chart drain: tier %s lock was re-taken between our "
+                    "check and our release; leaving it with its new holder.",
+                    tier,
+                )
 
     _with_redis(tier, _apply)
 

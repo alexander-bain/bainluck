@@ -233,7 +233,16 @@ def test_the_re_open_and_the_retry_are_one_transaction():
     """The mechanism behind the first test, asserted directly. The invariant
     could also hold by luck of ordering, and luck is not a repair: the `hset`
     and the `delete` must go out inside ONE MULTI, so no reader can land between
-    them and see the contradictory pair the cert reproduced."""
+    them and see the contradictory pair the cert reproduced.
+
+    live/055 (#2766) — THE BLOCK NOW OPENS WITH THE LEASE RENEWAL, and that is
+    the repair rather than noise in the assertion. The renewal used to be a
+    separate `EXPIRE` round trip issued beside the token check, before this
+    transaction was opened; it is now queued inside the very block it protects,
+    so the lease refresh and the writes it authorises land together or not at
+    all. The `hset`/`delete` adjacency this test was written for is asserted
+    unchanged, on the tail.
+    """
     drain = _drain()
     redis = _redis(drain, done=drain.DONE_CLEAN)
 
@@ -242,7 +251,12 @@ def test_the_re_open_and_the_retry_are_one_transaction():
     assert len(redis.transactions) == 1, "one block, not a command per round trip"
     transactional, names = redis.transactions[0]
     assert transactional, "a pipeline without MULTI is batching, not atomicity"
-    assert names == ["hset", "delete"], names
+    assert names[0] == "expire", (
+        "the lease renewal belongs INSIDE the fenced block — issued outside it, "
+        "it is a third round trip that a sibling can land between (#2766), and "
+        "issued while watching it would abort the pass's own transaction"
+    )
+    assert names[1:] == ["hset", "delete"], names
     contradictory = [
         s for s in redis.visible_states(TIER) if s.done and s.retry
     ]
