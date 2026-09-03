@@ -77,6 +77,7 @@ from app.utils.feed_event_candidates import (
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
 from app.utils.graded_card import card_sum_reason, rendered_card_percents
+from app.utils.prematch_reading import PREDICTION_MARKET_SOURCES
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
@@ -5981,6 +5982,57 @@ async def _score_events(
         for row in fb_result.all():
             snapshot_fallbacks[row.event_id] = round(float(row.home_win_probability), 6)
 
+    # ── WHAT EACH PREDICTION MARKET SAID BEFORE THE MATCH (ux/1036 Tier A) ──
+    #
+    # Alex, on /sports "Just Happened" at phone width: "How come none of these
+    # show pre-event probability?" The card had one grey "Opened 40/60" footnote
+    # and nothing else, and that number is the SPORTSBOOK median — the only
+    # writer of `Event.opening_*`. His ladder (#2747, given for the tennis hub
+    # the same day and reused verbatim): Kalshi -> Polymarket -> books.
+    #
+    # The two upper rungs live only here, in the snapshot table. `captured_at <=
+    # commence_time` is the whole guard: the same table holds the in-play and
+    # post-settlement readings, and a settled market prices the winner at ~100%,
+    # so an unfiltered "latest snapshot" would render the result back as a
+    # forecast on every card.
+    #
+    # Bounded and index-shaped exactly like the fallback query above — an
+    # `event_id = ANY(:ids)` over `ix_winprob_event_source`, no scan. Measured on
+    # production 2026-09-03 over 40 finished events: 41ms, 12 of the 40 carrying
+    # a prediction-market prior against 36 carrying a books one. Restricted to
+    # settled events because a scheduled or live card does not print this.
+    prematch_by_event: dict[int, dict[str, tuple]] = {}
+    settled_ids = [
+        e.id for e in events if e.status in ("completed", "closed")
+    ]
+    if settled_ids:
+        from sqlalchemy import text
+
+        pm_result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (s.event_id, s.source)
+                       s.event_id, s.source,
+                       s.home_win_probability, s.away_win_probability
+                FROM win_prob_snapshots s
+                JOIN events e ON e.id = s.event_id
+                WHERE s.event_id = ANY(:ids)
+                  AND s.source = ANY(:sources)
+                  AND s.home_win_probability IS NOT NULL
+                  AND s.captured_at <= e.commence_time
+                ORDER BY s.event_id, s.source, s.captured_at DESC
+            """),
+            {"ids": settled_ids, "sources": list(PREDICTION_MARKET_SOURCES)},
+        )
+        for row in pm_result.all():
+            prematch_by_event.setdefault(row.event_id, {})[row.source] = (
+                float(row.home_win_probability),
+                (
+                    float(row.away_win_probability)
+                    if row.away_win_probability is not None
+                    else None
+                ),
+            )
+
     # Score each event using aggregate probabilities from all available sources
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
@@ -6265,6 +6317,7 @@ async def _score_events(
                 raw_ei=float(event.raw_ei) if event.raw_ei else None,
                 inline_tags=inline_tags,
                 ended_at=ended_at,
+                prematch_by_source=prematch_by_event.get(event.id),
             )
             event_data["temporal_badge"] = _compute_temporal_badge(
                 status=event.status,

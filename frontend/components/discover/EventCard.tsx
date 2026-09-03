@@ -20,6 +20,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
+import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -78,6 +79,16 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // (mlb 34%, stat_model 27%, espn 68%, polymarket 72%) with
   // `sources_agree: false`, and painted a bold, full-strength 68 / 32.
   const authorityClass = probabilityAuthorityClass(data.confidence_tier);
+  // ux/1036 — the settled card's pre-match pair, resolved server-side down
+  // Alex's ladder (Kalshi → Polymarket → books) and labelled when it is not a
+  // prediction market. `lib/prematchReading.ts` carries the argument.
+  const prematch = isDone ? prematchReading(data) : null;
+  // The spoken sentence names its rung, exactly as the visible label beside it
+  // does — "the market gave" is false of a sportsbook median. Same helper, so
+  // the two can never disagree about what this number is.
+  const prematchSaid = isPredictionMarketSource(prematch?.source)
+    ? "Before the game, the market gave"
+    : "Before the game, sportsbooks opened";
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 
@@ -238,6 +249,57 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   own scores really are away-first: the hero above paints
                   `away_score` on the left and `home_score` on the right. */}
               {suspendedSummary(data.away_score, data.home_score, "away-home")}
+            </span>
+          </div>
+        )}
+
+        {/* ═══ WHAT THE MARKET THOUGHT BEFORE IT (ux/1036 Tier A) ═══
+
+            Alex found this on /sports, but the defect is the card grammar and
+            not the page: a settled Discover card told a reader who won and said
+            nothing whatever about what was expected — on a probability product,
+            the half of the story that is ours.
+
+            THE LIVE STRIP'S LAYOUT, DELIBERATELY. Away on the left, home on the
+            right, caption between — the same three slots, in the same order as
+            the two crests above and the `Away @ Home` heading, so the number a
+            reader picks up is unambiguously the one beside the name they read.
+
+            WHAT IT DOES NOT KEEP is the split BAR and the full-authority
+            colour. A settled card that draws a live-style coloured bar reads as
+            a live one (L2-112 Item 2), and this figure is history: muted, and
+            captioned with the tense that makes it history. */}
+        {isDone && prematch && prematch.awayPercent !== null && prematch.homePercent !== null && (
+          <div
+            className="mt-2 flex items-center justify-between text-sm"
+            data-testid="event-card-prematch"
+            data-prematch-source={prematch.source}
+          >
+            <span
+              className="font-mono tabular-nums text-text-muted"
+              data-testid="event-card-prematch-away"
+              data-prematch={prematch.awayProbability}
+            >
+              <span className="sr-only">
+                {prematchSaid} {data.away_team}{" "}
+              </span>
+              {prematch.awayPercent}%
+            </span>
+            <span className="text-text-muted text-[10px]">
+              {/* Alex: label it when it is not a prediction market. A books
+                  median is a different claim from a prediction-market opening
+                  and must not be printed as one — ux/1034 A3's lesson. */}
+              Pre-match{prematch.label ? ` · ${prematch.label}` : ""}
+            </span>
+            <span
+              className="font-mono tabular-nums text-text-muted"
+              data-testid="event-card-prematch-home"
+              data-prematch={prematch.homeProbability}
+            >
+              <span className="sr-only">
+                {prematchSaid} {data.home_team}{" "}
+              </span>
+              {prematch.homePercent}%
             </span>
           </div>
         )}
