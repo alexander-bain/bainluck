@@ -83,6 +83,7 @@ class _Session:
     def __init__(self, rowcount=1):
         self.statements = []
         self.commits = 0
+        self.rollbacks = 0
         self._rowcount = rowcount
 
     async def execute(self, statement):
@@ -91,6 +92,32 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+def _wire_saves(monkeypatch, save):
+    """Patch BOTH persistence seams from one fake, and make them behave.
+
+    Since CERT-851 the receipt is not written on its own session: it is staged
+    inside the apply's transaction and one commit ends both. So a test that
+    patched only ``_save_undo`` would leave the real co-commit running against a
+    fake session — which is how this file first found the change, loudly. The
+    adapter mirrors the real helper's contract exactly, including that a failure
+    ROLLS BACK, because that rollback is what un-writes the data.
+    """
+    monkeypatch.setattr(rail, "_save_undo", save)
+
+    async def _co_commit(session, identity, payload):
+        ok, note = await save(identity, payload)
+        if ok:
+            await session.commit()
+        else:
+            await session.rollback()
+        return ok, note
+
+    monkeypatch.setattr(rail, "_save_undo_co_commit", _co_commit)
 
 
 def _writes(session):
@@ -118,7 +145,7 @@ def wired(monkeypatch):
         )
         monkeypatch.setattr("app.services.espn_api.get_espn_service", lambda: object())
         if save is not None:
-            monkeypatch.setattr(rail, "_save_undo", save)
+            _wire_saves(monkeypatch, save)
         return _Session(rowcount=rowcount)
 
     return _wire
@@ -315,12 +342,19 @@ class TestTheRecordReceiptsWhatMoved:
             "restored"
         )
 
-    async def test_the_commit_happens_before_the_receipt_is_sealed(self, wired):
-        """The receipt is a statement about DURABLE rows.
+    async def test_the_receipt_is_staged_BEFORE_the_only_commit(self, wired):
+        """CERT-851. The receipt and the moves land in ONE transaction.
 
-        Sealing before the commit would let the record claim moves the database
-        could still discard — the same class of lie as receipting the plan, and
-        it points the wrong way: over-claiming, not under-claiming.
+        This replaces a guard that pinned ``save:0 -> commit -> save:1`` — the
+        order the block found unsafe. Committing the batch and then sealing
+        leaves a window in which every move is durable and the record of them is
+        empty; a crash there is a repair that cannot be taken back, which is
+        exactly what D51 forbids. There is no safe ordering of two transactions
+        here, so there is now only one.
+
+        Asserted as the whole sequence rather than as "a commit happened
+        somewhere": position is the property. A `commit` appearing before the
+        staged receipt would satisfy any presence check and be the bug.
         """
         order: list[str] = []
 
@@ -333,10 +367,57 @@ class TestTheRecordReceiptsWhatMoved:
                 order.append("commit")
                 return await super().commit()
 
-        wired([_row()], {ESPN_ID: _record()}, save=_save)
-        await rail.reconcile(_OrderingSession(), apply=True)
+            async def rollback(self):
+                order.append("rollback")
+                return await super().rollback()
 
-        assert order == ["save:0", "commit", "save:1"]
+        wired([_row()], {ESPN_ID: _record()}, save=_save)
+        session = _OrderingSession()
+        await rail.reconcile(session, apply=True)
+
+        assert order == ["save:0", "save:1", "commit"], (
+            "the receipt naming the move must be staged in the same transaction "
+            "as the move, and the single commit must come last"
+        )
+        assert session.commits == 1, "one transaction, one commit"
+
+    async def test_a_receipt_that_cannot_be_COMMITTED_rolls_the_moves_back(
+        self, wired
+    ):
+        """The regression CERT-851 asked for, in its own words: force the seal
+        to fail and prove no landed move is left unrestorable.
+
+        Under co-commit the answer is stronger than "the undo still works" — the
+        moves never land at all, so there is nothing to restore and nothing to
+        get wrong. What must NOT happen is the old behaviour: clocks moved, an
+        empty record, and a response calling itself complete.
+        """
+        async def _fail_the_seal(identity, payload):
+            # The pre-write record persists; the receipt-bearing write does not.
+            return (True, "ok") if not payload["rows"] else (False, "store is down")
+
+        session = wired([_row()], {ESPN_ID: _record()}, save=_fail_the_seal)
+        result = await rail.reconcile(session, apply=True)
+
+        assert session.commits == 0, "a move was committed with no receipt"
+        assert session.rollbacks == 1, "the batch was not rolled back"
+        assert result["terminal"] == "refused"
+        assert result["moved"] == 0, "the response claimed a move that was undone"
+        assert result["rows_receipted"] == 0
+        assert result["reason_codes"] == [rail.REASON_UNDO_UNRECEIPTED]
+        # No restore is offered, because offering one would imply a write.
+        assert "undo_command" not in result
+
+    async def test_CONTROL_the_same_move_lands_when_the_receipt_commits(self, wired):
+        """The other arm. Without this, a rail that refused every apply would
+        pass the guard above."""
+        session = wired([_row()], {ESPN_ID: _record()}, save=_capturing_save([]))
+        result = await rail.reconcile(session, apply=True)
+
+        assert session.commits == 1
+        assert session.rollbacks == 0
+        assert result["terminal"] == "complete"
+        assert (result["moved"], result["rows_receipted"]) == (1, 1)
 
     async def test_a_mixed_page_receipts_only_the_row_it_moved(self, wired):
         """What a real slice looks like. Two movers, the session reports one
@@ -396,6 +477,59 @@ class TestSupersededIsNotASuccessfulBackup:
 
         assert ok is False
         assert "RuntimeError" in note
+
+    async def test_the_co_commit_helper_rolls_back_rather_than_commit_unreceipted(
+        self,
+    ):
+        """CERT-851, against the real helper.
+
+        The apply-level guards stub this seam, so on their own they prove only
+        that the rail believes a reported failure. That the helper reports one,
+        and that it takes the moves back out when it does, is the property the
+        whole D51 claim rests on — and a batch is what is at stake here, not one
+        row.
+        """
+        import app.services.durable_snapshots as ds
+
+        for status, commits, rollbacks in (("ok", 1, 0), ("superseded", 0, 1),
+                                           ("error", 0, 1)):
+            async def _fake(db, envelope, _s=status):
+                return {"status": _s, "identity": envelope.identity}
+
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(ds, "publish_snapshot_in_txn", _fake)
+                session = _Session()
+                ok, note = await rail._save_undo_co_commit(
+                    session, "repair:anchor_schedule:undo:x", {"rows": []}
+                )
+
+            assert ok is (status == "ok"), f"{status} was graded wrongly"
+            assert (session.commits, session.rollbacks) == (commits, rollbacks), (
+                f"on {status} the batch was committed without a receipt"
+            )
+            if status == "superseded":
+                assert "SUPERSEDED" in note
+
+    async def test_the_co_commit_stages_on_the_SAME_session_it_commits(self):
+        """Staging elsewhere would still return ok and still commit, and every
+        assertion above would pass with the two writes in separate
+        transactions — the defect, restored."""
+        import app.services.durable_snapshots as ds
+
+        seen: list[object] = []
+
+        async def _fake(db, envelope):
+            seen.append(db)
+            return {"status": "ok", "identity": envelope.identity}
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ds, "publish_snapshot_in_txn", _fake)
+            session = _Session()
+            await rail._save_undo_co_commit(
+                session, "repair:anchor_schedule:undo:x", {"rows": []}
+            )
+
+        assert seen == [session], "the receipt was staged on a different session"
 
     def test_the_record_outlives_a_days_worth_of_plans(self):
         """An undo going stale is the loss of the only proof a repair can be

@@ -121,7 +121,16 @@ class TestTheWrite:
         async def _saved(identity, payload):
             return True, "ok"
 
+        async def _saved_co_commit(session, identity, payload):
+            # Each row's receipt is co-committed with its unstamp since
+            # CERT-851, so this is the seam the loop actually reaches. It must
+            # still COMMIT: `test_it_commits_per_row_because_events_is_hot`
+            # counts commits, and a stub that skipped it would measure the stub.
+            await session.commit()
+            return True, "ok"
+
         monkeypatch.setattr(rail, "_save_undo", _saved)
+        monkeypatch.setattr(rail, "_save_undo_co_commit", _saved_co_commit)
 
     def _plan(self, monkeypatch, rows, digest="hash1"):
         async def _plan_reader():

@@ -52,6 +52,7 @@ class _FakeSession:
         self._script = list(script)
         self.executed = []
         self.commits = 0
+        self.rollbacks = 0
 
     async def execute(self, statement, params=None):
         self.executed.append((str(statement), params))
@@ -59,6 +60,32 @@ class _FakeSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+def _wire_saves(monkeypatch, save):
+    """Patch BOTH persistence seams from one fake, and make them behave.
+
+    Since CERT-851 each row's receipt is staged inside the SAME transaction as
+    its unstamp, so the apply no longer reaches the standalone writer per row —
+    only for the pre-write record and the final seal. Patching one seam and not
+    the other would leave the real co-commit talking to a fake session. The
+    adapter mirrors the real helper, rollback included: that rollback is what
+    takes the unstamp back out.
+    """
+    monkeypatch.setattr(rail, "_save_undo", save)
+
+    async def _co_commit(session, identity, payload):
+        ok, note = await save(identity, payload)
+        if ok:
+            await session.commit()
+        else:
+            await session.rollback()
+        return ok, note
+
+    monkeypatch.setattr(rail, "_save_undo_co_commit", _co_commit)
 
 
 CENSUS_BEFORE = [(164, 352)]
@@ -127,7 +154,7 @@ class TestNothingIsUnstampedWithoutAnUndoRecord:
         async def _fails(identity, payload):
             return False, "undo persist rejected: error"
 
-        monkeypatch.setattr(rail, "_save_undo", _fails)
+        _wire_saves(monkeypatch, _fails)
         session = _FakeSession([CENSUS_BEFORE])
         out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
@@ -150,7 +177,7 @@ class TestNothingIsUnstampedWithoutAnUndoRecord:
         async def _ok(identity, payload):
             return True, "ok"
 
-        monkeypatch.setattr(rail, "_save_undo", _ok)
+        _wire_saves(monkeypatch, _ok)
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
@@ -169,7 +196,7 @@ class TestNothingIsUnstampedWithoutAnUndoRecord:
             order.append("undo-saved")
             return True, "ok"
 
-        monkeypatch.setattr(rail, "_save_undo", _ok)
+        _wire_saves(monkeypatch, _ok)
 
         class _OrderingSession(_FakeSession):
             async def execute(self, statement, params=None):
@@ -205,7 +232,7 @@ class TestNothingIsUnstampedWithoutAnUndoRecord:
             calls.append({"identity": identity, "payload": payload})
             return True, "ok"
 
-        monkeypatch.setattr(rail, "_save_undo", _capture)
+        _wire_saves(monkeypatch, _capture)
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
@@ -270,6 +297,102 @@ class TestSupersededIsNotASuccessfulBackup:
         assert rail.UNDO_MAX_AGE_S > rail.PLAN_MAX_AGE_S * 30
 
 
+class TestTheCoCommitHelperItself:
+    """CERT-851. The apply-level guards patch this seam, so it needs its own.
+
+    A guard that only ever sees a stubbed co-commit proves the RAIL reacts
+    correctly to a reported failure — not that the helper reports one, and not
+    that it takes the data write back out when it does. Those are the properties
+    the atomicity claim actually rests on, so they are pinned here directly
+    against the real function.
+    """
+
+    def _stage(self, monkeypatch, status):
+        import app.services.durable_snapshots as ds
+
+        async def _fake(db, envelope):
+            return {"status": status, "identity": envelope.identity}
+
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _fake)
+
+    def test_ok_commits_exactly_once_and_never_rolls_back(self, monkeypatch):
+        self._stage(monkeypatch, "ok")
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert (ok, note) == (True, "ok")
+        assert (session.commits, session.rollbacks) == (1, 0)
+
+    def test_superseded_rolls_the_write_back_and_does_NOT_commit(self, monkeypatch):
+        """A record that is not ours is not a backup — and here it must also
+        cost the write it was supposed to be a backup OF."""
+        self._stage(monkeypatch, "superseded")
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert ok is False
+        assert "SUPERSEDED" in note
+        assert session.commits == 0, "an unreceipted write was committed"
+        assert session.rollbacks == 1
+
+    def test_an_error_status_rolls_the_write_back_and_does_NOT_commit(
+        self, monkeypatch
+    ):
+        self._stage(monkeypatch, "error")
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert ok is False
+        assert session.commits == 0, "an unreceipted write was committed"
+        assert session.rollbacks == 1
+
+    def test_a_raise_rolls_back_and_is_never_swallowed(self, monkeypatch):
+        import app.services.durable_snapshots as ds
+
+        async def _boom(db, envelope):
+            raise RuntimeError("database is gone")
+
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _boom)
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert ok is False
+        assert "RuntimeError" in note
+        assert session.commits == 0
+        assert session.rollbacks == 1
+
+    def test_the_receipt_is_staged_on_the_SAME_session_it_commits(self, monkeypatch):
+        """The one fact that makes this atomic rather than merely sequential.
+
+        Staging on any other session would still return ``ok`` and still commit,
+        and every assertion above would pass while the two writes sat in
+        different transactions — which is the defect, restored.
+        """
+        import app.services.durable_snapshots as ds
+
+        seen: list[object] = []
+
+        async def _fake(db, envelope):
+            seen.append(db)
+            return {"status": "ok", "identity": envelope.identity}
+
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _fake)
+        session = _FakeSession([])
+        asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert seen == [session], "the receipt was staged on a different session"
+
+
 # ---------------------------------------------------------------------------
 # 3. One apply, one identity — never the rotating slot the old note named.
 # ---------------------------------------------------------------------------
@@ -319,7 +442,7 @@ class TestTheApplyNoteNamesTheRealUndo:
         async def _ok(identity, payload):
             return True, "ok"
 
-        monkeypatch.setattr(rail, "_save_undo", _ok)
+        _wire_saves(monkeypatch, _ok)
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         return asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
@@ -508,7 +631,7 @@ class TestAMovedRowIsNeverInTheReceipt:
         """
         monkeypatch.setattr(rail, "_read_plan", _plan_reader(rows=[PLAN_ROWS[0]]))
         calls: list[dict] = []
-        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+        _wire_saves(monkeypatch, _capturing_save(calls))
 
         # `[]` from the unstamp = rowcount 0 = ESPN_ID_MOVED.
         apply_session = _FakeSession([CENSUS_BEFORE, [], CENSUS_BEFORE])
@@ -551,7 +674,7 @@ class TestAMovedRowIsNeverInTheReceipt:
         """
         monkeypatch.setattr(rail, "_read_plan", _plan_reader(rows=[PLAN_ROWS[0]]))
         calls: list[dict] = []
-        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+        _wire_saves(monkeypatch, _capturing_save(calls))
 
         apply_session = _FakeSession([CENSUS_BEFORE, [(11,)], CENSUS_AFTER])
         applied = asyncio.run(
@@ -579,7 +702,7 @@ class TestAMovedRowIsNeverInTheReceipt:
         """The mixed case, which is what a real slice looks like."""
         monkeypatch.setattr(rail, "_read_plan", _plan_reader())
         calls: list[dict] = []
-        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+        _wire_saves(monkeypatch, _capturing_save(calls))
 
         # Row 11 moved, row 22 cleared.
         session = _FakeSession([CENSUS_BEFORE, [], [(22,)], CENSUS_AFTER])
@@ -600,7 +723,7 @@ class TestAMovedRowIsNeverInTheReceipt:
         """
         monkeypatch.setattr(rail, "_read_plan", _plan_reader())
         calls: list[dict] = []
-        monkeypatch.setattr(rail, "_save_undo", _capturing_save(calls))
+        _wire_saves(monkeypatch, _capturing_save(calls))
 
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
@@ -614,10 +737,20 @@ class TestAMovedRowIsNeverInTheReceipt:
         assert sizes[-1] == 2
         assert sizes == sorted(sizes), "a receipt may only grow"
 
-    def test_a_failed_receipt_STOPS_the_apply(self, monkeypatch):
-        """Clearing a row you cannot name is the thing D51 forbids.
+    def test_a_failed_receipt_ROLLS_BACK_its_own_row_and_STOPS_the_apply(
+        self, monkeypatch
+    ):
+        """CERT-851. Clearing a row you cannot name is the thing D51 forbids.
 
-        The first row's receipt fails, so the second row is never touched.
+        This guard used to assert ``unstamped == 1`` — the row was cleared, its
+        receipt was lost, and the apply stopped. That is precisely the hole the
+        block found: a durable unstamp with an empty record, which the restore
+        can never put back. The receipt is now staged in the same transaction as
+        the UPDATE, so a receipt that cannot be written takes its own row down
+        with it and the count is 0.
+
+        The `first` row is used deliberately: it is the case where the receipt
+        has nothing else in it, which is where an empty-list bug hides.
         """
         monkeypatch.setattr(rail, "_read_plan", _plan_reader())
         saves = {"n": 0}
@@ -627,7 +760,7 @@ class TestAMovedRowIsNeverInTheReceipt:
             # 1 = the pre-write record, 2 = the first row's receipt.
             return (False, "undo persist rejected: error") if saves["n"] == 2 else (True, "ok")
 
-        monkeypatch.setattr(rail, "_save_undo", _fail_after_first)
+        _wire_saves(monkeypatch, _fail_after_first)
         # One unstamp answer only: the apply must stop before asking for a
         # second, so a rail that carried on would read a census tuple as an
         # unstamp result and blow up rather than quietly pass.
@@ -635,9 +768,89 @@ class TestAMovedRowIsNeverInTheReceipt:
         out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 
         assert len(_unstamps(session)) == 1, "the apply kept clearing after a lost receipt"
-        assert out["unstamped"] == 1
+        assert session.commits == 0, "a row was committed without its receipt"
+        assert session.rollbacks == 1, "the unreceipted unstamp was not rolled back"
+        assert out["unstamped"] == 0, (
+            "the response claims a cleared row whose receipt was never written — "
+            "the restore cannot put that row back"
+        )
+        assert out["rows_receipted"] == 0
         assert out["reason_codes"] == [rail.REASON_UNDO_RECEIPT_FAILED]
         assert out["receipt_complete"] is False
+
+    def test_a_receipt_that_fails_LATER_keeps_every_earlier_row_restorable(
+        self, monkeypatch
+    ):
+        """The block's own regression: prove a landed write stays restorable.
+
+        Row one's receipt commits; row two's fails. The first row must remain
+        cleared AND named in the durable record — losing it would be the
+        opposite over-correction, throwing away good work because a later row
+        failed — while row two is rolled back and named by nothing.
+        """
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+        calls: list[dict] = []
+        saves = {"n": 0}
+
+        async def _fail_on_the_second_row(identity, payload):
+            saves["n"] += 1
+            # 1 = pre-write, 2 = row one's receipt, 3 = row two's receipt.
+            if saves["n"] == 3:
+                return False, "undo persist rejected: error"
+            calls.append({"rows": [dict(r) for r in payload["rows"]]})
+            return True, "ok"
+
+        _wire_saves(monkeypatch, _fail_on_the_second_row)
+        session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+
+        assert session.commits == 1, "exactly the one receipted row is durable"
+        assert session.rollbacks == 1, "the unreceipted row was not rolled back"
+        assert out["unstamped"] == 1
+        assert out["rows_receipted"] == 1
+        # The surviving durable record still names row one, so the restore has
+        # everything it needs to reverse what actually landed.
+        assert [r["event_id"] for r in calls[-1]["rows"]] == [11]
+        assert out["reason_codes"] == [rail.REASON_UNDO_RECEIPT_FAILED]
+
+    def test_the_response_never_reports_more_cleared_than_it_can_restore(
+        self, monkeypatch
+    ):
+        """The invariant behind both guards above, stated once.
+
+        `unstamped` counting above `rows_receipted` is the exact shape of the
+        defect: rows cleared that no record can name. Swept across the failure
+        point rather than asserted at one, because the interesting value is
+        whichever row the receipt dies on.
+        """
+        for failing_save in (2, 3, 4):
+            monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+            saves = {"n": 0}
+
+            async def _fail_at(identity, payload, _target=failing_save):
+                saves["n"] += 1
+                if saves["n"] == _target:
+                    return False, "undo persist rejected: error"
+                return True, "ok"
+
+            _wire_saves(monkeypatch, _fail_at)
+            # The script must run out exactly when the apply does: save #2 is
+            # row one's receipt, so the apply stops after ONE unstamp and a
+            # third scripted answer would be read as the closing census.
+            unstamp_answers = [[(11,)]] if failing_save == 2 else [[(11,)], [(22,)]]
+            session = _FakeSession([CENSUS_BEFORE, *unstamp_answers, CENSUS_AFTER])
+            out = asyncio.run(
+                rail.repair(session, apply=True, plan_hash="abc123def456")
+            )
+
+            assert out["unstamped"] == out["rows_receipted"], (
+                f"receipt failing at save #{failing_save} left "
+                f"{out['unstamped']} row(s) cleared and "
+                f"{out['rows_receipted']} receipted"
+            )
+            assert out["unstamped"] == session.commits, (
+                "a row is durable only if its transaction committed"
+            )
 
     def test_CONTROL_receipts_that_all_succeed_run_the_whole_plan(self, monkeypatch):
         monkeypatch.setattr(rail, "_read_plan", _plan_reader())
@@ -645,7 +858,7 @@ class TestAMovedRowIsNeverInTheReceipt:
         async def _ok(identity, payload):
             return True, "ok"
 
-        monkeypatch.setattr(rail, "_save_undo", _ok)
+        _wire_saves(monkeypatch, _ok)
         session = _FakeSession([CENSUS_BEFORE, [(11,)], [(22,)], CENSUS_AFTER])
         out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
 

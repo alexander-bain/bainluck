@@ -87,17 +87,19 @@ _SELECT_SQL = text(
 )
 
 
-async def publish_snapshot(db: AsyncSession, envelope: DurableEnvelope) -> dict:
-    """Atomically replace ``envelope.identity`` if ours is the newer generation.
+async def publish_snapshot_in_txn(db: AsyncSession, envelope: DurableEnvelope) -> dict:
+    """Stage the row in the CALLER'S open transaction. Never commits, never
+    rolls back.
 
-    Returns a stage dict — ``{"status": "ok"|"superseded"|"error", ...}``.
-    ``superseded`` means a newer generation already sits there: the durability
-    requirement IS satisfied (a good copy exists), so it counts as success for
-    the publication contract; it is reported distinctly so an operator can see
-    a writer racing behind.
+    Same stage dict as :func:`publish_snapshot`, and the same never-raises
+    contract — the difference is only who ends the transaction. A caller that
+    has just written data and needs the record of that write to be durable
+    *with* it uses this and then commits ONCE: the data and its receipt then
+    land together or not at all, so no crash can leave a durable change whose
+    undo record is empty (CERT-851).
 
-    Never raises: the caller decides what a failed durable write means for task
-    success via ``durable_state.evaluate_publication``.
+    The caller owns the rollback on a non-``ok`` status, because only the caller
+    knows what else is in the transaction.
     """
     try:
         await db.execute(
@@ -117,16 +119,11 @@ async def publish_snapshot(db: AsyncSession, envelope: DurableEnvelope) -> dict:
             },
         )
         written = result.scalar_one_or_none()
-        await db.commit()
     except Exception as exc:  # noqa: BLE001 — classified for the caller, not swallowed
         logger.warning(
             "durable publish failed for %s (generation %s): %s",
             envelope.identity, envelope.generation, exc,
         )
-        try:
-            await db.rollback()
-        except Exception:  # noqa: BLE001 — rollback failure must not mask the cause
-            pass
         return {
             "status": "error",
             "identity": envelope.identity,
@@ -146,6 +143,47 @@ async def publish_snapshot(db: AsyncSession, envelope: DurableEnvelope) -> dict:
         "identity": envelope.identity,
         "generation": envelope.generation,
     }
+
+
+async def publish_snapshot(db: AsyncSession, envelope: DurableEnvelope) -> dict:
+    """Atomically replace ``envelope.identity`` if ours is the newer generation.
+
+    Returns a stage dict — ``{"status": "ok"|"superseded"|"error", ...}``.
+    ``superseded`` means a newer generation already sits there: the durability
+    requirement IS satisfied (a good copy exists), so it counts as success for
+    the publication contract; it is reported distinctly so an operator can see
+    a writer racing behind.
+
+    Never raises: the caller decides what a failed durable write means for task
+    success via ``durable_state.evaluate_publication``.
+    """
+    stage = await publish_snapshot_in_txn(db, envelope)
+    if stage["status"] == "error":
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001 — rollback failure must not mask the cause
+            pass
+        return stage
+
+    try:
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — classified for the caller, not swallowed
+        logger.warning(
+            "durable publish failed for %s (generation %s): %s",
+            envelope.identity, envelope.generation, exc,
+        )
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001 — rollback failure must not mask the cause
+            pass
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+    return stage
 
 
 async def publish_snapshot_standalone(envelope: DurableEnvelope) -> dict:

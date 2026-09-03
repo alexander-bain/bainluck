@@ -513,6 +513,55 @@ async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]
     return False, f"undo persist rejected: {status}"
 
 
+async def _save_undo_co_commit(
+    session, identity: str, payload: dict[str, Any]
+) -> tuple[bool, str]:
+    """Stage the receipt in the caller's OPEN transaction and commit both.
+
+    This is the whole answer to CERT-851. ``_save_undo`` above writes on its own
+    session, so it can only run before or after the data write, and either order
+    is a lie waiting for a crash: before, the record claims rows that may roll
+    back; after, a durable row may have no record. Staging the receipt beside
+    the data write and committing once removes the window rather than choosing
+    which side of it to fall on.
+
+    Anything short of ``ok`` rolls the transaction back, which takes the data
+    write with it — the caller is left with nothing written and nothing claimed,
+    which is the only state that needs no reconciliation.
+    """
+    from app.services.durable_snapshots import publish_snapshot_in_txn
+    from app.utils.durable_state import DurableEnvelope
+
+    envelope = DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="repair:authority-id-collisions:undo",
+    )
+    try:
+        stage = await publish_snapshot_in_txn(session, envelope)
+        status = stage.get("status")
+        if status != "ok":
+            await session.rollback()
+            if status == "superseded":
+                return False, (
+                    f"undo persist SUPERSEDED: identity {identity} already holds "
+                    f"a newer row, so the record on file is not this apply's; "
+                    f"the accompanying write was rolled back"
+                )
+            return False, f"undo persist rejected: {status}; write rolled back"
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        logger.warning("%s undo co-commit raised: %s", ISSUE, type(exc).__name__)
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001 — rollback failure must not mask the cause
+            pass
+        return False, f"undo co-commit raised: {type(exc).__name__}"
+    return True, "ok"
+
+
 async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
     """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
     from app.services.durable_snapshots import read_snapshot_standalone
@@ -793,38 +842,45 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
                 "reason_code": "ESPN_ID_MOVED",
             })
             continue
-        # Said out loud before the commit so the single row that a crash could
-        # leave cleared-but-unreceipted is recoverable from the log rather than
-        # from archaeology.
+        # Said out loud before the commit so the row is traceable from the log
+        # even if the process dies between the UPDATE and the commit.
         logger.info(
             "%s unstamping event %s (prior espn_id %s) under undo %s",
             ISSUE, event_id, contested, undo_identity,
         )
-        # `events` is hot — commit per row, the same posture Phase 2 matching
-        # takes for deadlock avoidance (gotcha #13).
-        await session.commit()
+        # CO-COMMIT, per row (CERT-851). The receipt naming this row is staged
+        # in the SAME transaction as the UPDATE that cleared it, and one commit
+        # ends both. The old order — commit, then receipt — left a one-row
+        # window in which a durable unstamp had no record: a crash there cleared
+        # an id the restore would never offer to put back. There is now no
+        # ordering to get wrong: either both land or neither does.
+        #
+        # `events` is hot, so this is still one commit per row, the same posture
+        # Phase 2 matching takes for deadlock avoidance (gotcha #13).
+        candidate = receipted + [undo_row]
+        ok, note = await _save_undo_co_commit(
+            session, undo_identity, _record(candidate, complete=False)
+        )
+        if not ok:
+            # The rollback inside the helper took this row's UPDATE with it, so
+            # nothing was cleared and there is nothing to be sorry about — the
+            # apply simply stops short of the rows it has not reached.
+            receipt_failure = note
+            logger.warning(
+                "%s receipt write failed at event %s after %s row(s); that "
+                "unstamp was rolled back and the apply stops: %s",
+                ISSUE, event_id, len(receipted), note,
+            )
+            break
         applied.append(event_id)
-        receipted.append(undo_row)
+        receipted = candidate
         verdict = str(row.get("verdict") or "UNKNOWN")
         by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
 
-        # Receipt AFTER the commit, per row. The window this leaves is one row
-        # wide and it under-claims: a crash here leaves a row cleared that the
-        # restore will not offer to put back. That is the safe direction — the
-        # opposite order would let the record claim a row the transaction then
-        # rolled back, which is the class of lie being fixed.
-        ok, note = await _save_undo(undo_identity, _record(receipted, complete=False))
-        if not ok:
-            receipt_failure = note
-            logger.warning(
-                "%s receipt write failed after %s row(s); stopping the apply: %s",
-                ISSUE, len(receipted), note,
-            )
-            break
-
     # Seals the record: a reader can now tell a finished apply from one that
-    # stopped part-way. A failure here costs the seal, never the receipt — the
-    # per-row writes above already carry every row that was cleared.
+    # stopped part-way. A failure here costs the SEAL and nothing else — every
+    # row that was cleared was co-committed with the receipt naming it, so an
+    # unsealed record here is still a complete and exact list of what landed.
     sealed, seal_note = await _save_undo(
         undo_identity, _record(receipted, complete=receipt_failure is None)
     )
@@ -842,8 +898,11 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
         "moved": moved,
         # The number the operator should compare against `unstamped`, and the
         # reason this rail can call itself reversible: rows the undo record can
-        # prove this apply cleared. `unstamped` and `rows_receipted` differ only
-        # if a receipt write failed, and then the apply has already stopped.
+        # prove this apply cleared. Since the receipt is co-committed with the
+        # unstamp, these two can no longer disagree — a row enters both lists in
+        # one transaction or neither. They are still both printed, because the
+        # day they DO disagree is the day this invariant broke and the operator
+        # needs to see it rather than be told a single reassuring number.
         "rows_receipted": len(receipted),
         "receipt_complete": receipt_failure is None and sealed,
         **(
@@ -871,8 +930,10 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
             f"undo_command."
             + (
                 f" WARNING: the apply STOPPED after {len(receipted)} row(s) because a "
-                f"receipt could not be written ({receipt_failure}); the rows it names "
-                f"are still exactly reversible, and the rest of the plan was not run."
+                f"receipt could not be written ({receipt_failure}). The row it failed "
+                f"on was rolled back with its receipt and was NOT cleared; the rows "
+                f"named above are still exactly reversible, and the rest of the plan "
+                f"was not run."
                 if receipt_failure
                 else ""
             )

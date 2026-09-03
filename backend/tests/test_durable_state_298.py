@@ -463,6 +463,51 @@ class TestPublishSnapshot:
         db.commit.assert_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "written", [ds.generation_for(NOW), None], ids=["ok", "superseded"]
+    )
+    async def test_the_in_txn_write_NEVER_ends_the_callers_transaction(self, written):
+        """CERT-851. This is the whole contract of the in-txn variant.
+
+        A caller uses it to put a data write and the record of that write in ONE
+        transaction, then commits once. A commit or rollback added here — the
+        obvious "tidy-up" a later refactor reaches for — would split them again
+        and silently restore the gap in which a durable change has an empty undo
+        record. Swept over BOTH terminal statuses, because a commit hidden on
+        the superseded path is just as fatal and is the one a single-status test
+        would miss.
+        """
+        from app.services.durable_snapshots import publish_snapshot_in_txn
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = written
+        db.execute.return_value = result
+
+        stage = await publish_snapshot_in_txn(db, self._envelope())
+
+        assert stage["status"] == ("ok" if written is not None else "superseded")
+        db.commit.assert_not_awaited()
+        db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_in_txn_write_leaves_a_RAISE_for_the_caller_to_roll_back(self):
+        """It still must not raise — the caller reads the status — but it must
+        also not roll back, because only the caller knows what else is in the
+        transaction it would be discarding."""
+        from app.services.durable_snapshots import publish_snapshot_in_txn
+
+        db = AsyncMock()
+        db.execute.side_effect = RuntimeError("durable store is down")
+
+        stage = await publish_snapshot_in_txn(db, self._envelope())
+
+        assert stage["status"] == "error"
+        assert stage["error_class"] == "RuntimeError"
+        db.commit.assert_not_awaited()
+        db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_losing_the_generation_race_is_superseded_not_an_error(self):
         """A newer copy already sits there: durability IS satisfied."""
         from app.services.durable_snapshots import publish_snapshot

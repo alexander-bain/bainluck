@@ -101,7 +101,16 @@ def wired(monkeypatch):
             # and each of these tests would pass for the wrong reason.
             return True, "ok"
 
+        async def _save_undo_co_commit(session, identity, payload):
+            # The receipt is co-committed with the moves since CERT-851, so this
+            # is the seam the apply actually reaches. Stubbed to succeed for the
+            # same reason as above — and it must still COMMIT, or every test
+            # below that counts commits would measure the stub, not the rail.
+            await session.commit()
+            return True, "ok"
+
         monkeypatch.setattr(rail, "_save_undo", _save_undo)
+        monkeypatch.setattr(rail, "_save_undo_co_commit", _save_undo_co_commit)
         monkeypatch.setattr(rail, "_load_rows", _load_rows)
         monkeypatch.setattr(rail, "_count_eligible", _count_eligible)
         monkeypatch.setattr(

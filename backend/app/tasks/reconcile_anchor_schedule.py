@@ -156,6 +156,10 @@ UNDO_SCHEMA = "anchor-schedule-undo/v1"
 UNDO_MAX_AGE_S = 365 * 86400
 
 REASON_UNDO_UNWRITTEN = "UNDO_NOT_PERSISTED"
+#: The receipt could not be committed WITH the moves, so the moves were rolled
+#: back. Distinct from UNDO_NOT_PERSISTED, which fires before anything is
+#: written at all: this one says a batch was attempted and abandoned intact.
+REASON_UNDO_UNRECEIPTED = "UNDO_RECEIPT_NOT_COMMITTED"
 REASON_UNDO_MISSING = "UNDO_MISSING"
 REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
 REASON_UNDO_UNREADABLE = "UNDO_UNREADABLE"
@@ -500,6 +504,57 @@ async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]
     return False, f"undo persist rejected: {status}"
 
 
+async def _save_undo_co_commit(
+    session, identity: str, payload: dict[str, Any]
+) -> tuple[bool, str]:
+    """Stage the receipt in the caller's OPEN transaction and commit both.
+
+    The answer to CERT-851 on this rail. ``_save_undo`` writes on its own
+    session, so sealing the receipt could only happen before the moves committed
+    (claiming moves the database might still discard) or after (leaving a whole
+    committed BATCH with an empty record). Staging the receipt beside the moves
+    and committing once removes the choice: the moves and the list of them land
+    together or not at all.
+
+    Anything short of ``ok`` rolls the transaction back, which takes every move
+    in the batch with it. That is the D51 posture stated plainly — a schedule
+    move that cannot be taken back is not a move this rail makes unattended.
+    """
+    from app.services.durable_snapshots import publish_snapshot_in_txn
+    from app.utils.durable_state import DurableEnvelope
+
+    envelope = DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="repair:anchor-schedule:undo",
+    )
+    try:
+        stage = await publish_snapshot_in_txn(session, envelope)
+        status = stage.get("status")
+        if status != "ok":
+            await session.rollback()
+            if status == "superseded":
+                return False, (
+                    f"undo persist SUPERSEDED: identity {identity} already holds "
+                    f"a newer row, so the record on file is not this apply's; the "
+                    f"moves were rolled back"
+                )
+            return False, f"undo persist rejected: {status}; moves rolled back"
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        logger.warning(
+            "anchor-schedule undo co-commit raised: %s", type(exc).__name__
+        )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001 — rollback failure must not mask the cause
+            pass
+        return False, f"undo co-commit raised: {type(exc).__name__}"
+    return True, "ok"
+
+
 async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
     """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
     from app.services.durable_snapshots import read_snapshot_standalone
@@ -829,24 +884,45 @@ async def reconcile(
                 )
 
         if undo_identity is not None:
-            # Commit BEFORE the receipt is sealed. This rail is one transaction
-            # per run (the route commits after this returns), so committing here
-            # is what makes the receipt a statement about durable rows rather
-            # than about a transaction that could still roll back. Sealing after
-            # the commit under-claims across a crash, which is the safe
-            # direction — the opposite order would let the record claim moves
-            # the database then discarded.
-            await session.commit()
-            sealed, seal_note = await _save_undo(
-                undo_identity, _record(receipted, complete=True)
+            # CO-COMMIT the receipt with the batch (CERT-851). Neither order of
+            # two separate transactions is safe here: sealing first claims moves
+            # the database might still discard, and sealing after leaves a
+            # window in which the WHOLE batch is durable and its record is
+            # empty. One transaction carries both, so the receipt is a statement
+            # about exactly the rows that landed — never fewer, never more.
+            sealed, seal_note = await _save_undo_co_commit(
+                session, undo_identity, _record(receipted, complete=True)
             )
             if not sealed:
+                # The rollback took every move with it. Nothing is on the
+                # clocks, so the honest report is that this apply moved nothing
+                # — not a `complete` carrying a receipt that does not exist.
                 logger.warning(
-                    "anchor-schedule: moves committed but the receipt could not be "
-                    "sealed (%s); the pre-write record still names the planned "
-                    "moves under %s",
-                    seal_note, undo_identity,
+                    "anchor-schedule: the receipt could not be co-committed (%s); "
+                    "all %d move(s) in this batch were rolled back under %s",
+                    seal_note, moved, undo_identity,
                 )
+                return {
+                    "measured": True,
+                    "terminal": "refused",
+                    "applied": True,
+                    "moved": 0,
+                    "stale": stale,
+                    "reason_codes": [REASON_UNDO_UNRECEIPTED],
+                    "undo_identity": undo_identity,
+                    "undo_note": seal_note,
+                    "rows_receipted": 0,
+                    "eligible": eligible,
+                    "remaining": remaining,
+                    "reason": (
+                        "NOTHING WAS WRITTEN. The receipt for these moves could "
+                        "not be committed alongside them, so the whole batch was "
+                        "rolled back rather than left on the clocks with no way "
+                        "back (D51). No restore is needed and none is offered. "
+                        "Fix the durable snapshot write and re-run."
+                    ),
+                    **summary,
+                }
 
     pending = summary["by_verdict"][AUTHORITY_MOVES_US]
     # A cursored call did not see the window: it deliberately skipped everything
