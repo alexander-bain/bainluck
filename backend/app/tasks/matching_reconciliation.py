@@ -131,43 +131,108 @@ def load_golden_baseline() -> tuple[list[dict], dict[int, bool]]:
 
 
 async def check_golden_pairs(session) -> dict:
-    """Re-check every adjudicated pair against production's current ``event_id``."""
+    """Re-check every adjudicated pair against production's current ``event_id``.
+
+    A NEGATIVE PAIR'S ``None`` IS NOT A PROMISE THAT NOTHING MAY EVER ATTACH.
+    548 of the 709 were adjudicated ``correct_event_id: None`` because no correct
+    event *existed at capture time* — ``a-no-event``'s note is literally "global
+    2+-token check; titles batch-read", i.e. the adjudicator swept the event
+    titles and found no candidate. That is a statement about the world on
+    2026-09-02, not a property of the market. This check used to read it as
+    "must remain attached to nothing" and count every later attachment as a
+    regression, which put "we broke it" and "we fixed it" under one RED number.
+
+    Measured on production 2026-09-03, all 39 of the RED rows were negative
+    pairs, and five of them had attached to a **provider-anchored** fixture that
+    simply did not exist when the pair was adjudicated — "Hamburg vs Mainz" onto
+    the real Bundesliga ``Hamburger SV v FSV Mainz 05``, "Ipswich Town vs
+    Liverpool: Spread" onto the real EPL fixture. The check was reporting the
+    matcher's successes as its failures.
+
+    So a later attachment is judged by WHAT IT ATTACHED TO:
+
+    * **provider-anchored** (``events.external_id`` present) — an outside source
+      carries this fixture now. The matcher is corroborated, the baseline row is
+      merely stale, and it is reported as ``baseline_stale`` and never RED.
+    * **id-less** (``external_id IS NULL``) — nothing outside the matcher says
+      this event exists; the matcher created it and then matched to its own
+      creation. There is no corroboration to promote it out of RED, and the
+      id-less-claim rule (gotcha #32 / ruling 048) means such a row can never be
+      absorbed or reconciled later, so it is permanent. RED, as ``self_answered``.
+
+    A POSITIVE pair — one the audit adjudicated onto a specific event — is
+    unchanged: it had a known-correct answer, and losing it is a regression with
+    no ambiguity at all.
+    """
     pairs, baseline = load_golden_baseline()
     by_market = {int(p["market_id"]): p for p in pairs}
     ids = sorted(by_market)
     if not ids:
         return _finding("golden", False, 0, "no golden pairs loaded")
 
+    # LEFT JOIN, not a second query: an unlinked market must still come back as a
+    # row, or it reads as vanished (the deleted-market bucket) and the check
+    # accuses the twin cleanup of being a matcher failure.
     rows = (await session.execute(
-        text("SELECT id, event_id FROM futures_markets WHERE id = ANY(:ids)"),
+        text(
+            "SELECT fm.id, fm.event_id, (e.external_id IS NULL) AS event_is_idless "
+            "FROM futures_markets fm "
+            "LEFT JOIN events e ON e.id = fm.event_id "
+            "WHERE fm.id = ANY(:ids)"
+        ),
         {"ids": ids},
     )).all()
-    current = {int(r[0]): (int(r[1]) if r[1] is not None else None) for r in rows}
+    current = {
+        int(r[0]): (int(r[1]) if r[1] is not None else None, r[2]) for r in rows
+    }
 
-    regressed, recovered, vanished = [], [], []
+    regressed, self_answered, baseline_stale = [], [], []
+    recovered, vanished = [], []
     for mid, was_ok in baseline.items():
         if mid not in current:
             vanished.append(mid)
             continue
+        actual, event_is_idless = current[mid]
         expected = by_market[mid]["correct_event_id"]
-        now_ok = current[mid] == expected
+        now_ok = actual == expected
         if was_ok and not now_ok:
             p = by_market[mid]
-            regressed.append({
+            row = {
                 "market_id": mid,
                 "title": p["title"],
                 "failure_class": p["failure_class"],
                 "expected_event_id": expected,
-                "actual_event_id": current[mid],
-            })
+                "actual_event_id": actual,
+            }
+            if expected is not None:
+                # The audit knew the right answer and the market left it.
+                row["verdict"] = "regressed"
+                regressed.append(row)
+            elif event_is_idless is False:
+                # A provider anchors this fixture now. Not the matcher's error.
+                row["verdict"] = "baseline_stale"
+                baseline_stale.append(row)
+            else:
+                # id-less, or an event_id whose events row we could not read —
+                # either way nothing outside the matcher corroborates it.
+                row["verdict"] = "self_answered"
+                self_answered.append(row)
         elif not was_ok and now_ok:
             recovered.append(mid)
 
+    red_rows = regressed + self_answered
     detail = (
-        f"{len(regressed)} of {len(baseline)} adjudicated pairs regressed "
-        f"({len(recovered)} recovered, {len(vanished)} markets no longer exist)"
+        f"{len(regressed)} adjudicated pairs regressed and {len(self_answered)} "
+        f"negative pairs attached to an id-less event the matcher created "
+        f"itself, of {len(baseline)} pairs ({len(baseline_stale)} attached to a "
+        f"provider-anchored fixture that did not exist at capture — baseline "
+        f"stale, not a regression; {len(recovered)} recovered, "
+        f"{len(vanished)} markets no longer exist)"
     )
-    out = _finding("golden", bool(regressed), len(regressed), detail, regressed)
+    out = _finding("golden", bool(red_rows), len(red_rows), detail, red_rows)
+    out["regressed"] = len(regressed)
+    out["self_answered"] = len(self_answered)
+    out["baseline_stale"] = len(baseline_stale)
     out["recovered"] = len(recovered)
     out["vanished"] = len(vanished)
     return out
