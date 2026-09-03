@@ -16,7 +16,11 @@ at all:
   and `now` advances during the sweep, so an OFFSET would shift under the sweep
   (gotcha #41). A keyset names a position, not a count.
 * **Calling the end of a cursor an empty population.** `no_work` on the last page
-  of a sweep reads as an all-clear for the whole window.
+  of a sweep reads as an all-clear for the whole window. It is not enough to
+  infer "this was a page" from `eligible > examined`: `eligible` is recounted
+  against a moving `now`, so the rows a cursor skipped can age out of the window
+  between two calls and leave the counts agreeing on a page that skipped rows.
+  Cursor presence has to decide it (CERT-825).
 * And the preservation obligation: an UNPAGED call must return exactly what it
   returned before this file existed. `truncated` and `eligible` mean what
   lane1/067 made them mean.
@@ -352,6 +356,64 @@ class TestAPagedRunNeverSaysNoWork:
         assert result["has_more"] is False, "nothing follows this page"
         assert result["truncated"] is True, "yet it saw 1 of 685"
         assert result["terminal"] == "partial"
+
+    async def test_a_resumed_cursor_whose_window_shrank_to_its_own_page(
+        self, monkeypatch
+    ):
+        """The case `eligible > examined` cannot see, because it does not remember.
+
+        `eligible` is recounted against `now` on every call; the cursor was
+        minted against an earlier one. Rows this cursor skipped can age out
+        through the moving `now - lookback` floor between two calls of one
+        sweep, and then the current window is only this page: `eligible == 1`,
+        `examined == 1`, nothing behind and nothing after. Every count says
+        "you saw all of it" and every one of them is answering the wrong
+        question — the call still skipped rows, it just cannot count them any
+        more. Inferring paging from the counts hands this an all-clear.
+        """
+        self._wire(monkeypatch, [self._row()], eligible=1, remaining=1)
+
+        result = await rail.reconcile(
+            object(), cursor=rail.encode_cursor(TIE - timedelta(days=1), 1)
+        )
+
+        assert result["eligible"] == result["examined"] == 1, "the counts agree"
+        assert result["has_more"] is False
+        assert result["by_verdict"]["agrees"] == 1, "and the one row is clean"
+
+        # The ship first, so a regression names the symptom and not the
+        # mechanism: on the parent this is `no_work`, and the operator line
+        # opens with the one word that means the window is clean.
+        assert result["terminal"] != "no_work", "a paged call may not say all-clear"
+        line = rail.summarize_for_operator(result)
+        assert not line.startswith("no_work"), line
+
+        assert result["terminal"] == "partial"
+        assert result["truncated"] is True, "because a cursor was passed"
+        assert line.startswith("partial: examined=1/1"), line
+
+    async def test_a_paged_call_over_a_dark_authority_still_says_so(self, monkeypatch):
+        """The preserved arm. `authority_dark` outranks paging, as it must.
+
+        A cursor makes `no_work` unreachable. It must not also make a silent
+        ESPN unreportable — that would trade one false all-clear for a quieter
+        one.
+        """
+        self._wire(monkeypatch, [self._row()], eligible=1, remaining=1)
+
+        async def _no_answer(service, sport_keys, authority_id):
+            return None
+
+        monkeypatch.setattr(
+            "app.tasks.repair_authority_id_collisions._fetch_record", _no_answer
+        )
+
+        result = await rail.reconcile(
+            object(), cursor=rail.encode_cursor(TIE - timedelta(days=1), 1)
+        )
+
+        assert result["by_verdict"]["no_answer"] == 1
+        assert result["terminal"] == "authority_dark"
 
 
 class TestTheUnpagedReadingIsUnchanged:

@@ -341,15 +341,24 @@ async def reconcile(
                    on every call that does not page.
     ``examined``   what THIS call looked at.
 
-    **``truncated`` stays ``eligible > examined``, and that is what stops a page
-    from reporting an all-clear.** Any call carrying a cursor has rows behind it
-    by construction, so ``examined`` is always short of ``eligible`` and the
-    terminal is always ``partial`` — including on the final page, which really
-    did examine only its own tail. ``no_work`` and ``complete`` remain reachable
-    only from a single unpaged call that saw the entire window, which is the
-    only situation in which either is true. Whether a *sweep* finished is the
-    driver's finding to report, not any one page's; ``has_more`` is what the
-    driver loops on.
+    **``truncated`` is ``eligible > examined`` OR carrying a cursor at all, and
+    that is what stops a page from reporting an all-clear.** The second half is
+    not redundant. It is tempting to argue that a cursor has rows behind it by
+    construction and so ``examined`` is always short of ``eligible`` — but
+    ``eligible`` is recounted against ``now`` on every call, while the cursor
+    was minted against an earlier one. Rows the cursor skipped can age out
+    through the moving ``now - lookback`` floor between two calls of the same
+    sweep, and then ``eligible`` no longer counts them: a resumed cursor over a
+    one-row current tail measures ``eligible == examined == 1`` and the count
+    comparison alone would hand it ``no_work``. So cursor presence decides the
+    terminal directly rather than being inferred from a count that does not
+    remember it. ``no_work`` and ``complete`` remain reachable only from a
+    single unpaged call that saw the entire window, which is the only situation
+    in which either is true. Whether a *sweep* finished is the driver's finding
+    to report, not any one page's; ``has_more`` is what the driver loops on.
+
+    This is the same rule the empty-page branch above already applies with
+    ``bool(cursor)``; the two branches agree because it is one rule, not two.
     """
     from app.services.espn_api import get_espn_service
     from app.tasks.repair_authority_id_collisions import _fetch_record
@@ -426,7 +435,11 @@ async def reconcile(
                 )
 
     pending = summary["by_verdict"][AUTHORITY_MOVES_US]
-    truncated = eligible > summary["examined"]
+    # A cursored call did not see the window: it deliberately skipped everything
+    # before the cursor, whether or not `eligible` still counts those rows now.
+    # `eligible` is recounted against a moving `now`, so it is not a record of
+    # what this call skipped and cannot be asked to stand in for one.
+    truncated = bool(cursor) or eligible > summary["examined"]
     # `has_more` is about the CURSOR's tail; `truncated` is about the whole
     # window. On the last page of a sweep they disagree — nothing follows, yet
     # this call still saw a minority of the window — and both readings are true.
