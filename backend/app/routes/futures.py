@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.leader_order import leader_first_outcomes
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
     get_stages_for_sport,
@@ -2142,7 +2143,14 @@ async def grouped_feed(
                 "source": m["source"],
                 "category": m.get("category"),
                 "sport": m.get("sport"),
-                "outcomes": m["outcomes"][:5],
+                # #2789: leader-first BEFORE the truncation. `FuturesMarket.outcomes`
+                # declares no `order_by=`, so `m["outcomes"]` arrives in whatever order
+                # the selectinload returned, and taking five off the front of that is a
+                # uniform random sample the card then stamps `1 2 3 4 5` on. Measured on
+                # the live /sports shape: 0 of 5 five-outcome cards led with their
+                # favourite, and the 192-golfer Winner market shipped a top row of 0.09%
+                # while the true leader (11.8%) was not on the card at all.
+                "outcomes": leader_first_outcomes(m["outcomes"])[:5],
             },
         })
 
