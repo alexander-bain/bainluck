@@ -54,6 +54,8 @@ from app.routes.league_futures import (
     RESULTS_LIMIT,
     RESULTS_LOOKBACK_DAYS,
     UPCOMING_GAMES_LIMIT,
+    _recent_results_filters,
+    _upcoming_games_filters,
     build_league,
     recent_results_query,
     upcoming_games_query,
@@ -106,22 +108,110 @@ def test_the_fence_is_a_literal_zero_not_a_bind():
     )
 
 
-def test_order_by_and_limit_sit_outside_the_fence():
-    """The whole mechanism. A fence with the sort still inside it is not a fence:
-    the planner would push the LIMIT back down and the 39,605-block walk returns."""
-    inside, outside = _split_on_fence(_sql(recent_results_query("baseball_mlb", NOW)))
+def _sorts_outside_windows(sql: str) -> str:
+    """``sql`` with every ``OVER ( … )`` clause removed.
 
-    assert "ORDER BY" not in inside.upper(), (
-        "the ORDER BY was pushed inside the fenced subquery — that is the "
-        "index-ordered walk this fence exists to prevent"
+    A window's own ``ORDER BY`` is not a sort the planner can satisfy from an
+    index and stop early — the window must see its whole partition before it can
+    emit anything — so it has to come out before the assertion below means what
+    it says.
+
+    Written as a paren MATCHER rather than a regex on purpose: the collapse's
+    ``PARTITION BY`` contains a ``CASE WHEN (… IS NULL OR … IS NULL)``, so the
+    clause nests two deep, and the obvious one-level regex silently fails to
+    strip it — leaving the test asserting on text it believes it removed.
+    """
+    out = []
+    i = 0
+    while i < len(sql):
+        j = sql.find("OVER (", i)
+        if j == -1:
+            out.append(sql[i:])
+            break
+        out.append(sql[i:j])
+        depth = 0
+        k = j + len("OVER ") - 1
+        while k < len(sql):
+            if sql[k] == "(":
+                depth += 1
+            elif sql[k] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        assert depth == 0, "unbalanced OVER( in the compiled statement"
+        out.append(" ")
+        i = k + 1
+    return "".join(out)
+
+
+def test_the_window_stripper_actually_strips_the_nested_clause():
+    """The instrument, before the test that leans on it. A stripper that quietly
+    matched nothing would make its sibling vacuous — and the first version of it
+    did exactly that (a one-level regex against a two-level PARTITION BY)."""
+    inside, _ = _split_on_fence(_sql(recent_results_query("baseball_mlb", NOW)))
+    assert "OVER (" in inside, "no window to strip — the corpus changed"
+    assert "OVER (" not in _sorts_outside_windows(inside)
+    assert "row_number()" in _sorts_outside_windows(
+        inside
+    ), "the stripper ate more than the OVER clause"
+
+
+def test_the_rails_sort_is_never_expressed_on_the_base_TABLE_column():
+    """The whole mechanism, restated for the shape the rails now have (#2057).
+
+    ⚠️ **THIS ASSERTION CHANGED, AND A GRADER SHOULD LOOK HERE FIRST.** It used
+    to read "no ORDER BY anywhere inside the fenced subquery". That is no longer
+    a statement about the hazard, because the duplicate collapse legitimately
+    puts two sorts inside the fence: each window function's own ``ORDER BY``,
+    and the ``ORDER BY … LIMIT 9`` that caps the COLLAPSED pool.
+
+    The hazard was never "a sort exists". It is a sort PostgreSQL can satisfy
+    from ``ix_events_commence_time`` by walking it until nine rows fall out —
+    and that requires the sort to be expressed on ``events.commence_time``, the
+    base table's own column. Once the sort reads a subquery alias sitting above
+    a ``row_number() OVER (PARTITION BY …)``, no index can serve it and no row
+    can be emitted before its partition is complete. That is a STRICTLY STRONGER
+    barrier than the ``OFFSET 0`` node the planner declines to pull up.
+
+    So: window ``ORDER BY``s are excused by name, and every remaining sort must
+    name a subquery. Measured consequence on production, `tennis_atp`: the plan
+    is a Bitmap Heap Scan feeding two WindowAggs at 402 blocks, not an index
+    walk — full table in `recent_results_query`'s docstring.
+    """
+    sql = _sql(recent_results_query("baseball_mlb", NOW))
+    inside, outside = _split_on_fence(sql)
+
+    bare = _sorts_outside_windows(inside)
+    assert "ORDER BY events.commence_time" not in bare, (
+        "the rail's sort is expressed on the base table's own column inside the "
+        "fence — that is exactly the index-ordered walk the fence exists to "
+        "prevent, and it is reachable again"
     )
-    assert "LIMIT %(param" not in inside, "the LIMIT was pushed inside the fence"
+    for match in re.finditer(r"ORDER BY ([A-Za-z0-9_]+)\.", bare):
+        assert match.group(1) != "events", match.group(0)
 
-    assert "ORDER BY" in outside.upper()
+    # The outer sort is unchanged and still outside.
     assert re.search(
         r"ORDER BY anon_\d+\.commence_time DESC", outside
     ), "the outer sort must be on the SUBQUERY's commence_time column"
     assert "LIMIT" in outside.upper()
+
+
+def test_the_collapse_stands_between_the_scan_and_every_sort():
+    """The negative half of the test above: the barrier has to BE there.
+
+    Excusing window ``ORDER BY``s is only safe while a window is what the sorts
+    sit on top of. Delete the collapse and the excuse becomes a hole, so this
+    asserts the window is present inside the fence — one test for the exemption,
+    one for the thing that earns it.
+    """
+    inside, _ = _split_on_fence(_sql(recent_results_query("baseball_mlb", NOW)))
+    assert "row_number() OVER (PARTITION BY" in inside, (
+        "the duplicate collapse is gone from inside the fence — without it the "
+        "sibling test's 'window ORDER BYs are excused' rule guards nothing"
+    )
+    assert "lag(events.commence_time) OVER (PARTITION BY" in inside
 
 
 def test_the_fence_does_not_change_what_the_rail_asks_for():
@@ -130,7 +220,13 @@ def test_the_fence_does_not_change_what_the_rail_asks_for():
     sql = _sql(recent_results_query("icehockey_nhl", NOW), literal=True)
 
     assert "sports.key = 'icehockey_nhl'" in sql
-    assert "JOIN sports ON sports.id = events.sport_id" in sql
+    # The join moved INSIDE the collapse subquery (#2057) and SQLAlchemy renders
+    # it with the operands the other way round there. The claim is that the rail
+    # is scoped to one league through `sports`, not that one spelling survives.
+    assert re.search(
+        r"JOIN sports ON (sports\.id = events\.sport_id|events\.sport_id = sports\.id)",
+        sql,
+    ), "the league scope no longer joins through `sports`"
     # 'closed' as well as 'completed' — #1204's doubleheader lesson.
     assert "'completed'" in sql and "'closed'" in sql
     # SQLAlchemy renders a datetime literal space-separated, not ISO 'T'.
@@ -164,16 +260,118 @@ def test_upcoming_games_query_is_deliberately_not_fenced():
     assert upcoming_games_query("basketball_ncaab", NOW)._limit_clause is not None
 
 
-def test_the_two_rails_ask_for_different_statuses():
-    """A live/scheduled rail and a completed/closed rail. Cheap, but it is the
-    assertion that catches a copy-paste between the two builders."""
-    upcoming = _sql(upcoming_games_query("soccer_epl", NOW), literal=True)
-    results = _sql(recent_results_query("soccer_epl", NOW), literal=True)
+def test_the_two_rails_FILTER_on_different_statuses():
+    """A live/scheduled rail and a completed/closed rail — the copy-paste guard.
+
+    ⚠️ **THIS ASSERTION CHANGED TOO.** It used to read "`'completed'` does not
+    appear anywhere in the upcoming rail's SQL". Since #2057 both rails carry
+    the shared collapse, and the collapse carries `status_tier_expr()` — a CASE
+    that MENTIONS `'completed'` and `'closed'` to LABEL a row's tier. The
+    literal is now present in the upcoming rail's SQL and says nothing about
+    what the rail selects, so a substring test can no longer tell a filter from
+    a label and would pass or fail for the wrong reason either way.
+
+    The claim is about the WHERE. It is asserted here on the filter clauses the
+    rails are actually built from, and — because a clause list is not a rail —
+    driven end to end against a corpus holding every status in
+    `test_league_rails_dedup_2057.py::test_each_rail_admits_only_its_own_statuses`.
+    That executing test is the real guard; this one keeps the cheap version
+    honest about which side of the query it is reading.
+    """
+    upcoming = " ".join(
+        str(
+            c.compile(
+                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+        for c in _upcoming_games_filters("soccer_epl", NOW)
+    )
+    results = " ".join(
+        str(
+            c.compile(
+                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+        for c in _recent_results_filters("soccer_epl", NOW)
+    )
 
     assert "'live'" in upcoming and "'scheduled'" in upcoming
     assert "'completed'" not in upcoming and "'closed'" not in upcoming
     assert "'completed'" in results and "'closed'" in results
     assert "'live'" not in results and "'scheduled'" not in results
+
+
+@pytest.mark.parametrize(
+    "query,cap",
+    [
+        (upcoming_games_query, UPCOMING_GAMES_LIMIT),
+        (recent_results_query, RESULTS_LIMIT),
+    ],
+)
+def test_the_inner_cap_breaks_ties_on_id(query, cap):
+    """🔴 THE INNER SELECT DECIDES WHICH ROWS SURVIVE THE CAP, so its ordering
+    needs the tiebreak just as much as the outer one — and this is a STATEMENT
+    test on purpose, because the executing suite cannot see the difference.
+
+    A mutation that dropped `collapsed.c.id.asc()` from the inner cap survived
+    the whole behavioural suite: SQLite resolves the remaining tie by rowid, so
+    the result stayed sorted and looked deterministic. PostgreSQL makes no such
+    promise — that is the whole reason the tiebreak is there — and no test in
+    this repository runs against it. The claim can only be asserted on the SQL.
+
+    Anchored on the LAST ORDER BY term before the inner `LIMIT`, so it fails if
+    the tiebreak is deleted OR demoted above `commence_time`.
+    """
+    sql = _sql(query("baseball_mlb", NOW), literal=True)
+    stripped = _sorts_outside_windows(sql)
+
+    inner = re.search(rf"ORDER BY ([^\n]*?)\s*\n?\s*LIMIT {cap + 1}\b", stripped)
+    assert inner, f"no inner ORDER BY … LIMIT {cap + 1} found in the statement"
+    terms = [t.strip() for t in inner.group(1).split(",")]
+    assert terms[-1].endswith(".id ASC"), (
+        "the inner cap's ordering does not END on an ascending id — tied rows "
+        f"are cut by the plan's whim. Terms were: {terms}"
+    )
+
+
+@pytest.mark.parametrize(
+    "query,cap",
+    [
+        (upcoming_games_query, UPCOMING_GAMES_LIMIT),
+        (recent_results_query, RESULTS_LIMIT),
+    ],
+)
+def test_EVERY_cap_in_the_statement_is_the_declared_constant_plus_one(query, cap):
+    """Both LIMITs, not just one — and the second one is a COST claim.
+
+    Since #2057 each rail carries two: the inner cap on the collapsed pool, and
+    the outer cap on the hydrated rows. Only the outer one is visible in the
+    result, so the executing suite cannot tell whether the inner one is right —
+    two mutations that widened it to 10,000 returned identical rows and survived
+    the entire behavioural band.
+
+    The inner cap is nonetheless the whole reason this change is affordable.
+    Widening it puts the plan back to hydrating every survivor before the sort
+    discards them: measured on production, `tennis_atp`'s results rail runs
+    `Index Scan events_pkey loops=9 blk=36` with the cap and `loops=968
+    blk=3,882` without it. That is invisible to every test in this repository —
+    there is no local Postgres — so it is pinned HERE, on the statement.
+
+    `LIMIT ALL` (the fence's own) is excused by name; every other limit must be
+    the declared constant.
+    """
+    sql = _sql(query("baseball_mlb", NOW), literal=True)
+    limits = [m for m in re.findall(r"LIMIT (ALL|\d+)", sql) if m != "ALL"]
+
+    assert len(limits) == 2, (
+        f"expected exactly two caps (inner on the collapsed pool, outer on the "
+        f"hydrated rows); found {limits}"
+    )
+    assert all(int(v) == cap + 1 for v in limits), (
+        f"a cap is not the declared constant + 1 ({cap + 1}): {limits}. If the "
+        f"inner one was widened, see this test's docstring — it is a plan "
+        f"regression that no behavioural test can see."
+    )
 
 
 def test_the_caps_are_the_declared_constants_plus_one():

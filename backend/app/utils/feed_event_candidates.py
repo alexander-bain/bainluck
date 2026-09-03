@@ -59,7 +59,9 @@ SQLAlchemy but not Postgres would otherwise pass every gate.
 
 from __future__ import annotations
 
-from sqlalchemy import Select, String, and_, case, func, or_, select
+from sqlalchemy import Numeric, Select, String, and_, case, func, or_, select
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 
 from app.models import Event, Sport
 from app.utils.event_completion import EVENT_SUSPENDED
@@ -116,6 +118,87 @@ TIER_QUOTAS = {
     TIER_SCHEDULED: 150,
     TIER_SUSPENDED: 50,
 }
+
+#: How far two rows' ``commence_time`` may disagree and still be the SAME
+#: fixture for display purposes.
+#:
+#: WHY THIS IS NOT ZERO (#2057).  The original collapse partitioned on
+#: ``commence_time`` **exactly**, because every duplicate it was built for
+#: shared one: #2065's esports rows were byte-identical restatements, and
+#: #2213's Red Sox pair was measured as "identical ``sport_id``,
+#: ``home_team_name``, ``away_team_name`` and ``commence_time``".  That stopped
+#: being true.  Measured on production 2026-08-31, over every duplicate group in
+#: a five-day window:
+#:
+#: =====================  ============
+#: gap between the rows   groups
+#: =====================  ============
+#: 0s                                3
+#: **60s**                      **12**  ← the whole MLB slate
+#: 1,784s                            1
+#: ≥17,098s (4.7h+)                 39
+#: =====================  ============
+#:
+#: Twelve MLB games — the entire slate — carry a StatPal row and an Odds-API row
+#: exactly **one minute** apart, so the exact-equality key was inert against all
+#: of them while catching only three groups all week.  Discover was serving four
+#: of those pairs as eight cards at the moment this was written.
+#:
+#: WHY 300 SECONDS, AND WHY NOT LARGER.  This is deliberately the SMALLEST
+#: number that covers the measured fault, not the largest that could be
+#: defended.  It is 5× the 60s skew it exists for, ~6× below the nearest
+#: non-60s group in the same census (1,784s, a lone ``soccer_other`` pair that
+#: therefore stays uncollapsed), and ~36× below
+#: ``espn_candidate_selection.MAX_SAME_GAME_SECONDS`` (3h), the repository's
+#: measured *identity* bound.  A doubleheader is hours apart and cannot come
+#: near it.
+#:
+#: THE ASYMMETRY THAT PICKS THE DIRECTION.  Failing to collapse shows a visible
+#: duplicate — today's behaviour, no regression.  Over-collapsing HIDES a real
+#: game, which is both worse and invisible.  So every judgement call here is
+#: resolved toward the smaller number, and every edge case below fails toward
+#: leaving two cards rather than one.
+#:
+#: This does not touch ruling 048.  It is still a DISPLAY collapse of two rows
+#: into one CARD, mutating nothing and leaving both rows addressable at
+#: ``/api/events/{id}``; absorption still needs an id-anchored correspondence.
+#: Measurement says none exists for these pairs either — the StatPal row carries
+#: only ``statpal_fixture_id`` and the Odds-API row only ``external_id`` /
+#: ``espn_id``, so no provider id is shared and the registry correctly declines
+#: to merge them.  That merge stays behind the anchor channel (#1946).
+SAME_FIXTURE_SECONDS = 300
+
+
+class _EpochSeconds(FunctionElement):
+    """``commence_time`` as seconds, on both dialects this code runs against.
+
+    There is no dialect-portable spelling of "seconds since the epoch" in
+    SQLAlchemy, and the tolerance comparison below needs one: production is
+    PostgreSQL, while the executing tests in
+    ``tests/test_feed_event_candidates.py`` run on in-memory SQLite so that the
+    collapse is proven by *running* it and not only by compiling it.  A
+    PostgreSQL-only ``EXTRACT(EPOCH ...)`` would silently downgrade every one of
+    those tests to a shape assertion.
+
+    The test module already carries the same pattern for ``JSONB`` and ``ARRAY``
+    DDL; this is that shim moved next to the expression that needs it, so there
+    is one definition rather than one per caller.
+    """
+
+    type = Numeric()
+    inherit_cache = True
+
+
+@compiles(_EpochSeconds)
+def _epoch_seconds_default(element, compiler, **kw):  # pragma: no cover - PG path
+    (inner,) = element.clauses
+    return "EXTRACT(EPOCH FROM %s)" % compiler.process(inner, **kw)
+
+
+@compiles(_EpochSeconds, "sqlite")
+def _epoch_seconds_sqlite(element, compiler, **kw):
+    (inner,) = element.clauses
+    return "CAST(strftime('%%s', %s) AS REAL)" % compiler.process(inner, **kw)
 
 
 def candidate_window_conditions(
@@ -304,6 +387,24 @@ def survivor_order():
     ``test_feed_event_candidates.py`` (their fixtures set no opening odds), which
     is the check that it widens the order rather than reordering it.
     """
+    return [signal.desc() for _, signal in _survivor_signals()] + [Event.id.asc()]
+
+
+#: Label carried by each survivor signal into the collapse subquery, in the
+#: certified order.  The outer window orders by these labels, so the ordering
+#: and the columns it reads cannot drift into two different definitions.
+SURVIVOR_SIGNAL_NAMES = ("has_sources", "has_score", "has_opening")
+
+
+def _survivor_signals():
+    """The survivor signals as ``(label, expression)``, most significant first.
+
+    Split out of :func:`survivor_order` so the two-level collapse can carry the
+    same three expressions through its inner subquery and order by them
+    outside, without restating them.  The order of this tuple IS the certified
+    order documented above, and ``test_the_survivor_keys_are_in_the_certified_order``
+    still reads it through :func:`survivor_order`.
+    """
     sources_text = func.cast(Event.win_probability_sources, String)
     has_sources = case(
         (
@@ -315,19 +416,30 @@ def survivor_order():
         ),
         else_=0,
     )
-    has_opening = case(
-        (Event.opening_home_probability.isnot(None), 1),
-        else_=0,
-    )
     has_score = case(
         (or_(Event.home_score.isnot(None), Event.away_score.isnot(None)), 1),
         else_=0,
     )
+    has_opening = case(
+        (Event.opening_home_probability.isnot(None), 1),
+        else_=0,
+    )
+    return tuple(zip(SURVIVOR_SIGNAL_NAMES, (has_sources, has_score, has_opening)))
+
+
+def fixture_identity_partition():
+    """The columns that say "these rows are claims about the same fixture".
+
+    Everything except the clock.  ``commence_time`` used to sit here as an
+    exact key; it is now applied as a bounded window
+    (:data:`SAME_FIXTURE_SECONDS`) in :func:`_collapsed_subquery`, because two
+    providers disagree about the minute a game starts (#2057).
+    """
     return [
-        has_sources.desc(),
-        has_score.desc(),
-        has_opening.desc(),
-        Event.id.asc(),
+        Event.sport_id,
+        Event.home_team_name,
+        Event.away_team_name,
+        case((identity_incomplete_expr(), Event.id), else_=None),
     ]
 
 
@@ -337,33 +449,151 @@ def _collapsed_subquery(where_clauses, name: str):
     Factored out for :func:`deduplicated_event_ids` (My Stuff) so the two
     surfaces cannot drift into two different definitions of "the same fixture".
     A second, subtly different partition key is a second set of duplicates.
-    """
-    dedup_partition = [
-        Event.sport_id,
-        Event.home_team_name,
-        Event.away_team_name,
-        Event.commence_time,
-        case((identity_incomplete_expr(), Event.id), else_=None),
-    ]
 
-    return (
+    TWO LEVELS, BECAUSE THE FIXTURE KEY IS NO LONGER A COLUMN (#2057)
+    -----------------------------------------------------------------
+    A window function cannot be nested inside another window function's
+    ``PARTITION BY``, and the fixture key is now itself a windowed value: each
+    row looks at the previous row for the same teams and adopts its start time
+    when the two are within :data:`SAME_FIXTURE_SECONDS`.  So the scan computes
+    ``prev_commence_time`` with ``lag()``, and the collapse partitions on the
+    derived ``fixture_start`` one level up.
+
+    WHY ``lag()`` AND NOT A BUCKET.  Rounding ``commence_time`` to a grid is one
+    expression instead of two, and it was rejected: every bucket has an edge,
+    and a pair straddling one silently stops collapsing.  Today's data would
+    survive a 10-minute floor only because MLB start times happen to sit on a
+    5-minute grid — a property of this season's schedule, not of the fault.
+    ``lag()`` compares the rows to *each other*, so there is no edge to straddle.
+
+    THE CHAIN CASE, STATED.  Three rows each 4 minutes apart collapse as
+    ``{1,2}`` and ``{3}`` rather than as one group, because row 3 adopts row 2's
+    time and not row 1's.  That is the fail-safe direction (an extra card, never
+    a hidden game) and no such chain exists in the measured data — every
+    duplicate group in the census is exactly two rows.
+    """
+    fixture_partition = fixture_identity_partition()
+
+    scanned = (
         select(
             Event.id.label("id"),
             status_tier_expr().label("tier"),
             Event.commence_time.label("commence_time"),
-            func.row_number()
-            .over(partition_by=dedup_partition, order_by=survivor_order())
-            .label("dup_rn"),
+            # Carried so a caller can ORDER the collapsed pool without a second
+            # visit to ``events`` (#2057, LANE1-Q475).  It is a passenger: no
+            # partition, no survivor key and no filter reads it here.
+            Event.status.label("status"),
+            Event.sport_id.label("sport_id"),
+            Event.home_team_name.label("home_team_name"),
+            Event.away_team_name.label("away_team_name"),
+            case((identity_incomplete_expr(), Event.id), else_=None).label(
+                "identity_key"
+            ),
+            func.lag(Event.commence_time)
+            .over(partition_by=fixture_partition, order_by=Event.commence_time.asc())
+            .label("prev_commence_time"),
+            *(signal.label(label) for label, signal in _survivor_signals()),
         )
         .select_from(Event)
         .join(Sport, Event.sport_id == Sport.id)
         .where(and_(*where_clauses))
+        .subquery(f"{name}_scanned")
+    )
+
+    # The previous row's start time when it is close enough to be the same
+    # fixture, this row's own otherwise — so both halves of a pair carry one
+    # value and a doubleheader's second leg starts a new group.
+    fixture_start = case(
+        (
+            and_(
+                scanned.c.prev_commence_time.isnot(None),
+                (
+                    _EpochSeconds(scanned.c.commence_time)
+                    - _EpochSeconds(scanned.c.prev_commence_time)
+                )
+                <= SAME_FIXTURE_SECONDS,
+            ),
+            scanned.c.prev_commence_time,
+        ),
+        else_=scanned.c.commence_time,
+    )
+
+    return (
+        select(
+            scanned.c.id,
+            scanned.c.tier,
+            scanned.c.commence_time,
+            scanned.c.status,
+            func.row_number()
+            .over(
+                partition_by=[
+                    scanned.c.sport_id,
+                    scanned.c.home_team_name,
+                    scanned.c.away_team_name,
+                    scanned.c.identity_key,
+                    fixture_start,
+                ],
+                order_by=[scanned.c[label].desc() for label in SURVIVOR_SIGNAL_NAMES]
+                + [scanned.c.id.asc()],
+            )
+            .label("dup_rn"),
+        )
+        .select_from(scanned)
         .subquery(name)
     )
 
 
-def deduplicated_event_ids(where_clauses) -> Select:
+def deduplicated_events(where_clauses, name: str):
+    """The collapsed pool as a SUBQUERY — ``id``, ``tier``, ``commence_time``,
+    ``status``, ``dup_rn`` — for a caller that must ORDER and CAP it.
+
+    WHY A SECOND ENTRY POINT (#2057, LANE1-Q475), AND WHY IT IS NOT A LUXURY
+    -----------------------------------------------------------------------
+    :func:`deduplicated_event_ids` hands back a bare ``SELECT id``, which a
+    caller can only consume as ``Event.id.IN (…)``.  That shape was fine for My
+    Stuff, whose pool is already bounded to one user's teams, and it is the
+    wrong shape for a rail that shows the EIGHT most imminent games out of
+    hundreds.  Measured on production 2026-08-31 with ``EXPLAIN (ANALYZE,
+    BUFFERS)`` over the exact statement the results rail compiles, the semi-join
+    form cost ``tennis_atp`` **1,946 -> 7,199 blocks** and the eight leagues in
+    ``recent_results_query``'s table **10,572 -> 69,575** — because PostgreSQL
+    drove the plan FROM the subquery and paid an ``events_pkey`` lookup plus a
+    ``sports_pkey`` lookup for every one of 968 survivors, to return nine rows.
+
+    The collapse itself was never the expense: that same plan attributes **402
+    blocks** to the whole two-window scan.  What cost was hydrating every
+    survivor before the ``LIMIT``.  Exposing the subquery lets the caller order
+    and cap the collapsed pool FIRST and hydrate only the nine rows it will
+    render.
+
+    The ``dup_rn == 1`` filter is deliberately left to the caller.  Applying it
+    here would make this a different function with the same body as
+    :func:`deduplicated_event_ids`, and the point of exposing the subquery is
+    that the caller composes.
+    """
+    return _collapsed_subquery(where_clauses, f"{name}_collapsed")
+
+
+def deduplicated_event_ids(where_clauses, name: str = "my_stuff_candidates") -> Select:
     """A SELECT of event ids with duplicates collapsed and NO tier quotas.
+
+    ``name`` labels the emitted subquery and nothing else — it does not change a
+    row.  It exists because more than one surface calls this now, and a plan
+    read off production that says ``my_stuff_candidates_collapsed`` names the
+    wrong surface to the next person debugging it.  The default is the original
+    string, so My Stuff's alias is unchanged.
+
+    ⚠️ **My Stuff's emitted SQL is NOT byte-identical, and the difference is one
+    projected column.**  ``status`` was added to the scan for the league rails
+    (#2057, LANE1-Q475).  Diffed statement against statement, that column and
+    its restatement one level up are the ONLY changes: no partition key, no
+    survivor key, no filter, no row.  Measured on the real Discover-shaped pool
+    on production 2026-08-31, warm best of three: **1,568 root blocks and 357
+    rows on both trees, identical.**  Stated rather than asserted, because "a
+    projection is free" is a belief until someone runs it.
+
+    A caller that must ORDER or CAP the collapsed pool wants
+    :func:`deduplicated_events` instead — see the cost measured there.
 
     WHY THIS EXISTS SEPARATELY (#2213)
     ----------------------------------
@@ -397,7 +627,7 @@ def deduplicated_event_ids(where_clauses) -> Select:
     exist — 0 of 41 duplicate MLB pairs share any provider id (#2213).  That
     merge stays the registry's, behind the anchor channel.
     """
-    collapsed = _collapsed_subquery(where_clauses, "my_stuff_candidates_collapsed")
+    collapsed = deduplicated_events(where_clauses, name)
     return select(collapsed.c.id).where(collapsed.c.dup_rn == 1)
 
 

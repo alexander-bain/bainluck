@@ -39,6 +39,7 @@ from app.utils.event_concept_cache import (
     cache_keys,
     release_refresh_lock,
 )
+from app.utils.feed_event_candidates import deduplicated_events
 from app.utils.sport_keys import SPORT_HIERARCHY
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,74 @@ UPCOMING_GAMES_LIMIT = 8
 RESULTS_LIMIT = 8
 
 
+def _upcoming_games_filters(sport_key: str, now: datetime) -> list:
+    """The UPCOMING GAMES rail's population, as a reusable clause list.
+
+    Named once because it is now read TWICE — by the rail itself and by the
+    duplicate collapse the rail filters through. A collapse computed over a
+    different population than the rail it feeds would rank the wrong rows
+    against each other (memory: a repair's bound measured on the wrong
+    population), so the two cannot be allowed to drift.
+    """
+    return [
+        Sport.key == sport_key,
+        Event.status.in_(["live", "scheduled"]),
+        Event.commence_time >= now - timedelta(hours=2),
+    ]
+
+
+def _recent_results_filters(sport_key: str, now: datetime) -> list:
+    """The RECENT RESULTS rail's population, as a reusable clause list.
+
+    See `_upcoming_games_filters`. The two rails deliberately keep SEPARATE
+    populations, and the collapse runs inside each one rather than across both:
+    a row can only ever suppress a row on its own rail, so nothing this function
+    returns can make a finished game shadow an upcoming one, or vice versa.
+    """
+    return [
+        Sport.key == sport_key,
+        # 'closed' as well as 'completed' — #1204's lesson: a settled
+        # doubleheader (and every source that closes rather than completes)
+        # is orphaned from a recents rail that only looks for 'completed'.
+        Event.status.in_(["completed", "closed"]),
+        Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+    ]
+
+
+def _surviving_rail_ids(collapsed, order_by, cap: int):
+    """The ids this rail will actually render: duplicates gone, ordered, capped.
+
+    🔴 **THE CAP GOES HERE, NOT AROUND THE HYDRATED ROWS, AND THAT IS THE WHOLE
+    PERFORMANCE STORY.** The first form of this queue expressed the collapse as
+    `Event.id.IN (surviving ids)` on the existing rail query and left the ORDER
+    BY / LIMIT outside it. It is correct and it is expensive: PostgreSQL drove
+    the plan FROM the subquery and paid an `events_pkey` lookup plus a
+    `sports_pkey` lookup for EVERY survivor before the sort could discard them.
+    Measured on production 2026-08-31, `tennis_atp`'s results rail:
+
+        Nested Loop  rows=968              <- 968 survivors hydrated
+          Unique  rows=968  blk=402        <- the collapse itself
+          Index Scan events_pkey  loops=968  blk=3,882
+        Index Scan sports_pkey  loops=968   blk=2,904
+
+    …to return **nine rows**. The collapse was never the cost: 402 of those
+    blocks are the entire two-window scan and the other ~6,800 were pointless
+    hydrations. Capping first turns those two per-row index scans into
+    `loops=9  blk=36`.
+
+    The `dup_rn == 1` filter lives here rather than in `deduplicated_events` so
+    that the collapse and the rail's own ordering are visible in one place: they
+    have to agree about which row survives and which row sorts, and splitting
+    them across two modules is how they would stop agreeing.
+    """
+    return (
+        select(collapsed.c.id)
+        .where(collapsed.c.dup_rn == 1)
+        .order_by(*order_by)
+        .limit(cap)
+    )
+
+
 def upcoming_games_query(sport_key: str, now: datetime):
     """The UPCOMING GAMES rail, scoped to one league.
 
@@ -232,21 +301,87 @@ def upcoming_games_query(sport_key: str, now: datetime):
     pushdown to prevent, and adding the fence measured strictly WORSE:
     `basketball_ncaab` went 56 blocks to 5,130 when it was applied here.
     A fence is a claim about one plan, not a house style.
+
+    ── THE DUPLICATE COLLAPSE (#2057, LANE1-Q475) ──
+
+    THE RAIL COUNTED ROWS AND CALLED THEM GAMES. Measured on production
+    2026-08-31, `GET /api/leagues/baseball_mlb` returned **eight upcoming games
+    that were five**: Reds–Padres, Rays–Mets and Nationals–Marlins each arrived
+    twice, one row from StatPal and one from the Odds API, disagreeing about the
+    start by exactly sixty seconds. The duplicates do not merely repeat — they
+    **spend the cap**, so three real games that existed and were priced never
+    reached the rail at all. The page was not showing a person too much; it was
+    showing them too little, and dressing the loss up as a full list.
+
+    Discover has been collapsing these since #2065 and My Stuff since #2213.
+    The league page is the third surface and got neither, for the same reason My
+    Stuff did not: nobody wired it. So this calls the SHARED
+    `deduplicated_event_ids` rather than growing a fourth partition key —
+    `feed_event_candidates` says it plainly, and it is the load-bearing reason
+    this is four lines instead of forty: *"A second, subtly different partition
+    key is a second set of duplicates."*
+
+    WHY IT FILTERS RATHER THAN POST-PROCESSES. The collapse has to happen
+    BEFORE `LIMIT`, which is the whole defect: dedeuplicating nine fetched rows
+    down to six would replace three duplicate cards with three empty slots and
+    leave the real games exactly as unreachable as they are today.
+
+    WHAT THIS IS NOT. A DISPLAY collapse of two rows into one CARD — ruling 048
+    is untouched, nothing is mutated, and both rows stay addressable at
+    `/api/events/{id}`. It is deliberately blind to the 39 duplicate cards
+    measured across the other rails' leagues whose rows disagree about the start
+    by HOURS (`cricket_test_match` 8 cards for 2 matches, `soccer_epl`
+    six rows for one fixture at a `00:00` placeholder). Those are registry
+    duplicates, they need an id-anchored correspondence, and they belong to the
+    anchor channel (#1946) — not to a display filter that would have to guess.
+    Parked in PARKED-MEASUREMENTS.md rather than quietly widened into here.
     """
+    filters = _upcoming_games_filters(sport_key, now)
+    collapsed = deduplicated_events(filters, "league_upcoming_games")
+    # The rail's ordering, stated ONCE against the collapsed pool and once
+    # against the hydrated rows. Both are needed and they must agree: the inner
+    # one decides WHICH nine ids survive the cap, the outer one decides what
+    # order they arrive in (a bare `IN` returns no order at all).
+    surviving = _surviving_rail_ids(
+        collapsed,
+        [
+            case((collapsed.c.status == "live", 0), else_=1),
+            collapsed.c.commence_time.asc(),
+            collapsed.c.id.asc(),
+        ],
+        UPCOMING_GAMES_LIMIT + 1,
+    )
     return (
         select(Event)
-        .join(Sport, Sport.id == Event.sport_id)
-        .where(
-            Sport.key == sport_key,
-            Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=2),
-        )
+        .where(Event.id.in_(surviving))
         .order_by(
             case((Event.status == "live", 0), else_=1),
             Event.commence_time.asc(),
+            # THE RAIL WAS NOT DETERMINISTIC, AND THAT IS ITS OWN SMALL DEFECT.
+            # An NFL Sunday puts ten games on one kickoff, the cap is eight, and
+            # with no key after `commence_time` PostgreSQL was free to return a
+            # different eight for the same data — so *which* two games a person
+            # did not see was decided by the plan. Measured while proving the
+            # collapse above: the two arms returned stable but DIFFERENT top-nines
+            # for `americanfootball_nfl`, `icehockey_nhl`, `basketball_wnba`,
+            # `tennis_wta`, `soccer_spain_la_liga`, `soccer_uefa_champs_league`,
+            # `soccer_usa_mls` and `mma_mixed_martial_arts` — eight leagues where
+            # the collapse provably removed NO rows at all (NFL: pool 270 -> 270).
+            #
+            # It is fixed here rather than filed because it is two lines and
+            # because without it this queue's own evidence is unreadable: a game
+            # swapping out of the visible eight is indistinguishable from the
+            # collapse having hidden it. `id` ascending is the tiebreak
+            # `feed_event_candidates.survivor_order` already uses, so this is the
+            # repository's existing convention and not a new policy.
+            Event.id.asc(),
         )
         # +1 so the cap can be DECLARED rather than silently applied. A full
         # COUNT would be a second round trip to say the same thing.
+        #
+        # `has_more` now counts DISTINCT games rather than rows, which is the
+        # only reading of it that was ever true: before this, an MLB rail could
+        # report "more games" on the strength of a duplicate.
         .limit(UPCOMING_GAMES_LIMIT + 1)
     )
 
@@ -301,25 +436,86 @@ def recent_results_query(sport_key: str, now: datetime):
     `literal_column("0")` rather than `.offset(0)`: a bind renders `OFFSET $1`,
     which fences just as well but makes the emitted statement differ from the
     one every number above was measured on.
+
+    ── THE DUPLICATE COLLAPSE, AND WHAT IT DID TO THE FENCE (#2057, LANE1-Q475) ──
+
+    The same fix as `upcoming_games_query` — see that docstring for why the rail
+    was counting rows and calling them games. What is specific to this rail is
+    that the collapse **subsumes the `OFFSET 0` fence, and the `OFFSET 0` is
+    kept anyway.**
+
+    The fence's job is to stop PostgreSQL satisfying `ORDER BY commence_time
+    DESC` from `ix_events_commence_time` and walking it until nine rows fall
+    out. The collapsed pool cannot be consumed that way at all: `dup_rn` is a
+    `row_number()` over a partition keyed on team names, so every matching row
+    must be read before any row's rank is known. That is a strictly stronger
+    barrier than a node the planner declines to pull up, and it sits in the same
+    place — around the filter, under the sort.
+
+    Two reasons `OFFSET 0` stays regardless. It is free; and #2260's measurement
+    was taken against a statement whose shape has now changed, so removing the
+    old guard in the same commit that changes what it guards would leave nothing
+    standing if the new argument is wrong. A fence that is merely redundant
+    costs a reader one paragraph. One that was needed costs 4.9 seconds.
+
+    **Re-measured, because a docstring quoting blocks from before a change is a
+    docstring about a query that no longer exists.** Same `EXPLAIN (ANALYZE,
+    BUFFERS)`, same eight leagues, warm best-of-three, 2026-08-31 — the table
+    above is #2260's and this is the fenced form before and after the collapse:
+
+        league                 before   after   delta   rows
+        americanfootball_cfl      153     185     +32      8
+        basketball_ncaab          155     155      +0      0
+        baseball_ncaa             276     276      +0      0
+        soccer_epl                192     230     +38      9
+        basketball_wncaab         152     152      +0      0
+        americanfootball_nfl      209     245     +36      9
+        baseball_mlb              398     436     +38      9
+        tennis_atp                402     438     +36      9
+        TOTAL                   1,937   2,117    +180
+
+    The delta is a FLAT ~36 blocks wherever the rail returns rows and **zero**
+    wherever it returns none, because the only new work is hydrating nine ids
+    through `events_pkey` (4 blocks each). The collapse is free: it consumes the
+    same bitmap scan over `ix_events_sport_id` + `ix_events_status_commence`
+    that the fence already paid for. Nothing here approaches the 41,495-block
+    flat form the fence exists to prevent.
+
+    ⚠️ **READ THE ROOT NODE, NOT A SUM OVER THE TREE.** PostgreSQL's per-node
+    `Shared Hit Blocks` is CUMULATIVE over that node's children, so adding them
+    up multiplies by depth — and this change makes the plan tree deeper. Summing
+    reported this same measurement as **10,572 -> 34,535, a 3.3x regression**,
+    which is an artifact of the instrument and not a fact about the query. The
+    numbers above are the root node's.
     """
+    filters = _recent_results_filters(sport_key, now)
+    collapsed = deduplicated_events(filters, "league_recent_results")
+    surviving = _surviving_rail_ids(
+        collapsed,
+        [collapsed.c.commence_time.desc(), collapsed.c.id.asc()],
+        RESULTS_LIMIT + 1,
+    )
     inner = (
         select(Event)
-        .join(Sport, Sport.id == Event.sport_id)
-        .where(
-            Sport.key == sport_key,
-            # 'closed' as well as 'completed' — #1204's lesson: a settled
-            # doubleheader (and every source that closes rather than completes)
-            # is orphaned from a recents rail that only looks for 'completed'.
-            Event.status.in_(["completed", "closed"]),
-            Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
-        )
+        .where(Event.id.in_(surviving))
         .offset(literal_column("0"))
         .subquery()
     )
     fenced_event = aliased(Event, inner)
     return (
         select(fenced_event)
-        .order_by(fenced_event.commence_time.desc())
+        .order_by(
+            fenced_event.commence_time.desc(),
+            # Same non-determinism, same fix, same convention — see the sibling
+            # rail. A Saturday's results share a kick-off just as a Sunday's
+            # fixtures do. The tiebreak stays ASCENDING on both rails even though
+            # this one reads newest-first: it is breaking a tie between DISTINCT
+            # games (duplicates are gone by now), so no ordering of it is more
+            # true than another and one convention is worth more than a local
+            # argument. It sits OUTSIDE the fence with the rest of the ORDER BY,
+            # which `test_league_rails_query_plan.py` asserts.
+            fenced_event.id.asc(),
+        )
         .limit(RESULTS_LIMIT + 1)
     )
 
