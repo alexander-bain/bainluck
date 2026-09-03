@@ -4715,6 +4715,14 @@ async def match_receipts(
     reason histogram plus the coverage numbers — which is the shape the bus
     re-derives the INVARIANTS-2026-09-02 query (c) baseline from.
 
+    THE REASON HISTOGRAM IS ORDERED BY WHAT CAN STILL BE FIXED. Each row
+    carries ``still_linkable`` (the market is still ``open``) beside the flat
+    ``count``, and the list is sorted on the former. Measured 2026-09-03: 7,854
+    of 8,032 rejects sit on already-resolved markets, so a reader sorting on
+    ``count`` picks the largest bucket in the table and finds it is settled ITF
+    tennis nobody ingests events for. Nothing is dropped — ``settled`` is
+    published beside it.
+
     This is a RECORD, not a simulation. ``/prediction-markets/match-trace`` next
     door re-runs the matching logic against today's data and answers "what would
     happen if we tried now"; it holds a partial copy of the window arithmetic
@@ -4894,16 +4902,34 @@ async def match_receipts(
             "receipts": [_serialize(r) for r in rows],
         }
 
+    # The reason histogram, split by whether the market CAN still link (#2782
+    # follow-up, measured 2026-09-03). Counted flat, this histogram is 97.8%
+    # dead: 7,854 of 8,032 rejected receipts sit on markets that have already
+    # resolved, so the top bucket — no_candidate, 6,843 — is overwhelmingly
+    # settled ITF tennis whose events were never ingested and never will be.
+    # Hill-climbing on it is hill-climbing on a number no fix can move. The
+    # actionable population is the 178 rejects on markets a reader can still
+    # open, and that is what this orders on. Gotcha #53: a rate needs a
+    # denominator where 100% is structurally achievable.
+    #
+    # NOTHING IS EXCLUDED. The settled count is published beside the live one,
+    # per the standing doctrine that read-side scoping protects a metric and
+    # never closes an issue — a settled reject is still evidence about the pass
+    # that made it, and the fact that the matcher is still re-attempting those
+    # rows every 15 minutes is its own finding, filed under #2693.
+    still_linkable = func.count().filter(FuturesMarket.status == "open")
     reason_rows = (
         await db.execute(
             select(
                 MarketMatchReceipt.reject_reason,
                 MarketMatchReceipt.source,
                 func.count().label("n"),
+                still_linkable.label("still_linkable"),
             )
+            .join(FuturesMarket, FuturesMarket.id == MarketMatchReceipt.market_id)
             .where(MarketMatchReceipt.outcome == "rejected")
             .group_by(MarketMatchReceipt.reject_reason, MarketMatchReceipt.source)
-            .order_by(func.count().desc())
+            .order_by(still_linkable.desc(), func.count().desc())
         )
     ).all()
 
@@ -5007,9 +5033,33 @@ async def match_receipts(
             ),
         },
         "by_reason": [
-            {"reject_reason": r.reject_reason, "source": r.source, "count": r.n}
+            {
+                "reject_reason": r.reject_reason,
+                "source": r.source,
+                "count": r.n,
+                # The two numbers a fix decision needs. `still_linkable` is the
+                # one to hill-climb; `settled` is history, and no matcher change
+                # can move it.
+                "still_linkable": int(r.still_linkable or 0),
+                "settled": r.n - int(r.still_linkable or 0),
+            }
             for r in reason_rows
         ],
+        "reject_totals": {
+            "still_linkable": sum(int(r.still_linkable or 0) for r in reason_rows),
+            "settled": sum(
+                r.n - int(r.still_linkable or 0) for r in reason_rows
+            ),
+            "note": (
+                "Ordered by still_linkable, not by count. A reject on a market "
+                "that has already resolved is history: it records what the pass "
+                "saw, and no matching fix can move it. Read the flat count and "
+                "the top bucket is settled ITF tennis whose events were never "
+                "ingested. Nothing is excluded — the settled column is right "
+                "here, because read-side scoping protects a metric and never "
+                "closes an issue."
+            ),
+        },
         "valid_reasons": sorted(REJECT_REASONS),
     }
 
