@@ -44,6 +44,10 @@ from app.dependencies.auth import get_optional_user
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
 from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenance
+# The state vocabulary has ONE definition (live/048). Discovery imports the name
+# rather than spelling the literal so a widened vocabulary is a rename here, not
+# a string this route silently stops matching (CERT-786).
+from app.utils.event_completion import EVENT_SUSPENDED
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -67,6 +71,7 @@ from app.utils.aggregation import (
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.feed_event_candidates import (
     EVENT_CANDIDATE_BUDGET,
+    candidate_window_conditions,
     deduplicated_event_ids,
     event_candidate_ids,
 )
@@ -1189,6 +1194,25 @@ def _filter_discover_event_noise(feed_items: list[dict]) -> list[dict]:
         # never empties. Obscure no-media live games (e.g. minor-league fixtures)
         # still fall through to the score/media checks below and are removed.
         if status == "live" and has_team_media:
+            filtered.append(item)
+            continue
+
+        # live/048 + CERT-786 — a suspended game with real team media survives
+        # for the same reason a live one does, and it needs the arm MORE.
+        #
+        # Events are demoted to a score of 35 above, and the `< 45` check below
+        # is what removes them; the live arm is the only thing that keeps a game
+        # card on Discover at all. So a live match that goes into a rain delay
+        # crossed from "kept by the live arm" to "dropped by the score check"
+        # with no branch in between — the card vanished from the surface it was
+        # already on, at the exact moment it had something true and unusual to
+        # say. It is the same card, one honest badge different.
+        #
+        # `has_team_media` is doing real work here, not ceremony: the measured
+        # suspended population is 89% esports fixtures with no linked teams and
+        # therefore no media, and those keep falling through to the checks
+        # below. This admits the match a reader was watching, not the mass.
+        if status == EVENT_SUSPENDED and has_team_media:
             filtered.append(item)
             continue
 
@@ -5787,23 +5811,33 @@ async def _score_events(
     # per-tier-quota pass below can be computed over exactly the rows this
     # request asked for (#2065). Quotas taken over an unfiltered pool would hand
     # a filtered request the wrong slice.
-    candidate_conditions = [
-        or_(
-            and_(
-                Event.status == "live",
-                Event.commence_time <= live_start_cutoff,
-            ),
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time >= now,
-                Event.commence_time <= upcoming_cutoff,
-            ),
-            and_(
-                Event.status.in_(["completed", "closed"]),
-                Event.commence_time >= recent_cutoff,
-            ),
-        )
-    ]
+    # SUSPENDED IS ADMITTED, ON THE FINISHED WINDOW (live/048, CERT-786).
+    #
+    # Without that arm the ship inverted itself: live/048 stopped a rain-delayed
+    # match printing a false Final, and the row then matched no arm of this
+    # predicate, so the match left Discover entirely the moment the staleness
+    # net touched it. A reader looking for the US Open match that was 1-2 in
+    # sets found nothing at all, which is not an improvement on finding a wrong
+    # Final — it is the same wrong answer with no card to argue with.
+    #
+    # It takes `recent_cutoff` rather than the live arm's unbounded lower bound
+    # DELIBERATELY. A suspended row is exactly as recent as a just-finished one
+    # and occupies the same band of interest, so the two share a window; the
+    # live arm's open floor would have carried every suspended row forward
+    # forever, and the measured population (~500/day, 89% esports whose only
+    # source went dark) never resumes and never settles. Same window as the
+    # Final it replaced: the card stops lying, and it ages out where that Final
+    # would have.
+    #
+    # The predicate itself lives in `feed_event_candidates` because the
+    # executing test needs the SAME object, not a copy of it — see that
+    # function's docstring for why a copy could not have caught this.
+    candidate_conditions = candidate_window_conditions(
+        now=now,
+        live_start_cutoff=live_start_cutoff,
+        upcoming_cutoff=upcoming_cutoff,
+        recent_cutoff=recent_cutoff,
+    )
 
     if sport_filter:
         candidate_conditions.append(Sport.key.ilike(f"%{sport_filter}%"))
@@ -5900,7 +5934,17 @@ async def _score_events(
         query = query.order_by(
             case(
                 (Event.status == "live", 0),
-                (Event.status.in_(["completed", "closed"]), 1),
+                # live/048 — `suspended` rides with the finished tier, not with
+                # the `else_` that holds `scheduled`. Tier 2 is sorted by
+                # commence_time DESC over rows whose times are in the FUTURE, so
+                # a suspended row (commence_time in the past, by construction)
+                # would have sorted to the very bottom of it and been the first
+                # thing the candidate budget cut. Same tier as the Final it
+                # replaced, so the budget treats it the same way.
+                (
+                    Event.status.in_(["completed", "closed", EVENT_SUSPENDED]),
+                    1,
+                ),
                 else_=2,
             ),
             Event.commence_time.desc(),
@@ -6009,9 +6053,17 @@ async def _score_events(
             #   sports where only StatPal has schedules but no odds coverage.
             if current_home_prob is None and event.status == "scheduled":
                 continue
+            # live/048 — `suspended` joins this skip, and admitting it to the
+            # candidate query above is exactly why it has to. A row with no
+            # probability AND no score has nothing to render in either state:
+            # the finished version is an empty chart, the suspended version is a
+            # badge saying no result was reported beside no score and no line,
+            # which tells a reader nothing they did not know from the match
+            # being absent. That is most of the 89% esports mass, and this is
+            # where it stops — on having no data, not on being suspended.
             if (
                 current_home_prob is None
-                and event.status in ("completed", "closed")
+                and event.status in ("completed", "closed", EVENT_SUSPENDED)
                 and not event.home_score
                 and not event.away_score
             ):
@@ -9880,7 +9932,13 @@ async def get_tag_counts(
             WHERE (
                 (e.status = 'live')
                 OR (e.status = 'scheduled' AND e.commence_time <= :upcoming AND e.commence_time >= :now)
-                OR (e.status IN ('completed', 'closed') AND e.commence_time >= :recent)
+                -- live/048 + CERT-786: `suspended` on the same window it is
+                -- admitted on in `candidate_conditions`. This count is a promise
+                -- about what the category page will show, so the two predicates
+                -- are one predicate written twice and must widen together —
+                -- otherwise `/categories` advertises a tennis count of 4 and the
+                -- page renders 5.
+                OR (e.status IN ('completed', 'closed', 'suspended') AND e.commence_time >= :recent)
             )
             GROUP BY 1
         """),

@@ -20,6 +20,7 @@ from app.tasks.kalshi_ws import (
     SUBSCRIPTION_REFRESH_SECONDS,
 )
 from app.tasks.polymarket import _poly_book_is_untradeable
+from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     await session.execute(
         update(FuturesMarket)
         .where(FuturesMarket.id == market_id)
-        .values(status="resolved")
+        .values(status="resolved", **settled_values(FuturesMarket.settled_at))
     )
 
     written = 0

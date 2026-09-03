@@ -10,6 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update as _sql_update
 
+# live/048 — the state ladder's two doors (EVENT-GRAPH-DOCTRINE §R). Safe to
+# import here: `event_completion` imports nothing but `datetime`.
+from app.utils.event_completion import authority_may_settle, play_resumes
 from app.utils.name_normalization import names_match as _canonical_names_match
 from app.utils.espn_candidate_selection import (
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
@@ -404,7 +407,15 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     # BR76: without this, events stayed "live" for hours because
     # find_or_create_event ignores identity.status for existing events,
     # and no other code path updated event.status from ESPN data.
-    if ee.status in ("post", "final") and event.status == "live":
+    #
+    # live/048: it is now the ONLY mechanism, not the primary one. The fallback
+    # stopped being allowed to end a match (EVENT-GRAPH-DOCTRINE §R — silence is
+    # below the lowest rung of the state ladder), so this branch also has to
+    # reach the state the fallback leaves behind. `authority_may_settle` admits
+    # `live` and `suspended` and refuses a row already settled; a match that
+    # went quiet, was suspended, and is then reported `post` settles here in one
+    # hop, which is exactly the path the six US Open rows in CERT-752 needed.
+    if ee.status in ("post", "final") and authority_may_settle(event.status):
         _completed_at = event.completed_at or datetime.now(timezone.utc)
         # #190 guard: don't stamp a completion that predates the event's own
         # commence_time (the earlier-game-folded-onto-later-sibling class). A
@@ -430,11 +441,19 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
             event.status = "completed"
             changed = True
             stats["espn_completed"] = stats.get("espn_completed", 0) + 1
-    elif ee.status == "in" and event.status == "scheduled":
+    elif ee.status == "in" and play_resumes(event.status):
         # #1207 premature-live guard: ESPN can report a game "in" (and publish a
         # pregame win-prob) hours before first pitch. Don't flip the event live
         # until its own commence_time has actually arrived (commence correction
         # above already re-aligned commence_time to ESPN's date when they diverge).
+        #
+        # live/048: `play_resumes` widens this from `scheduled` to also admit
+        # `suspended` — the authority reporting a match in progress is the
+        # strongest possible answer to "did play resume?", and a suspended row is
+        # by construction one that carries no completion, so nothing has to be
+        # revoked to let it back. A row the authority ALREADY settled is a bigger
+        # claim and stays with `espn_replay_unsettles` below, which clears
+        # `completed_at` in the same write (#1201).
         _now = datetime.now(timezone.utc)
         if espn_live_write_is_premature(event.commence_time, _now):
             logger.warning(

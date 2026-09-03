@@ -20,6 +20,14 @@ from app.tasks.prune_unanchored_duplicates import (
 )
 from app.utils.event_absorption_guard import assert_absorbable_now
 from app.utils.event_merge_invariant import assert_mergeable, shared_provider_id_sql
+from app.utils.match_receipts import (
+    ACTOR_ADMIN_REPAIR,
+    ACTOR_TWIN_CLEANUP,
+    PHASE_ADMIN_REPAIR,
+    PHASE_TWIN_MERGE,
+    link_loss_rows as _market_rows,
+    record_link_losses,
+)
 
 router = APIRouter()
 
@@ -364,13 +372,33 @@ async def delete_duplicate_events(
     for table in fk_tables:
         await db.execute(text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"), {"ids": ids})
 
+    # Read the markets BEFORE the unlink: the previous event id does not
+    # survive the UPDATE, and this endpoint then deletes the event itself, so
+    # nothing afterwards can reconstruct which card lost which price
+    # (LINKLOSS-03 / CERT-791).
+    losing_markets = _market_rows(await db.execute(text(
+        "SELECT id, source, external_id, name, event_id FROM futures_markets "
+        "WHERE event_id = ANY(:ids)"
+    ), {"ids": ids}))
+
     await db.execute(text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"), {"ids": ids})
     await db.execute(text("UPDATE user_pins SET target_id = NULL WHERE pin_type = 'event' AND target_id = ANY(:ids)"), {"ids": ids})
 
     result = await db.execute(text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids})
     await db.commit()
 
-    return {"deleted": result.rowcount, "event_ids": ids}
+    # AFTER the commit and on its own session: the receipt is verified against
+    # the committed row, and a repair must never fail on its own bookkeeping.
+    receipted = await record_link_losses(
+        losing_markets, actor=ACTOR_ADMIN_REPAIR, phase=PHASE_ADMIN_REPAIR,
+    )
+
+    return {
+        "deleted": result.rowcount,
+        "event_ids": ids,
+        "markets_unlinked": len(losing_markets),
+        "link_change_receipts": receipted,
+    }
 
 
 @router.post("/events/prune-unanchored-duplicates")
@@ -759,7 +787,17 @@ async def merge_duplicate_events_sql(
                 text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"),
                 {"ids": orphan_ids},
             )
-        # futures_markets has nullable event_id -- NULL it instead of deleting
+        # futures_markets has nullable event_id -- NULL it instead of deleting.
+        # THIS RAIL DROPS THE LINK, IT DOES NOT MOVE IT: every market on a
+        # loser leaves the merge attached to nothing, and the keeper's card
+        # shows no Kalshi/Polymarket price until the matcher re-attaches it on
+        # its next pass. That is a real, if temporary, loss of a price from a
+        # card, so it is receipted as one — read the rows first, because the
+        # event they name is deleted four statements from here.
+        losing_markets = _market_rows(await db.execute(text(
+            "SELECT id, source, external_id, name, event_id FROM futures_markets "
+            "WHERE event_id = ANY(:ids)"
+        ), {"ids": orphan_ids}))
         await db.execute(
             text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
             {"ids": orphan_ids},
@@ -772,10 +810,21 @@ async def merge_duplicate_events_sql(
         )
 
         await db.commit()
+
+        # After the commit, on its own session, and never fatal: a merge that
+        # has already deleted its losers must not fail because it could not
+        # write its own explanation. `twin_cleanup`, not `admin_repair` — the
+        # actor answers "what kind of thing did this", and this is a merge that
+        # a human happened to trigger, not a hand repair of one market.
+        receipted = await record_link_losses(
+            losing_markets, actor=ACTOR_TWIN_CLEANUP, phase=PHASE_TWIN_MERGE,
+        )
         return {
             "dry_run": False,
             "merged": len(pairs),
             "deleted": len(orphan_ids),
+            "markets_unlinked": len(losing_markets),
+            "link_change_receipts": receipted,
         }
     except Exception as e:
         await db.rollback()

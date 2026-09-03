@@ -56,22 +56,30 @@ final class SportCategoryViewModel: ObservableObject {
         loadingMore = false
     }
 
+    /// live/048 + CERT-786 — the three buckets read ONE ladder
+    /// (`EventState.section`). Written as three independent comparisons they
+    /// were never a partition: `suspended` matched none of them, so the match
+    /// did not land in the wrong section, it landed in no section and left the
+    /// screen. The one place that shows is a bug report saying "my match is
+    /// gone", which is a harder thing to notice than a wrong badge.
     var liveNow: [FeedItem] {
-        items.filter { $0.event?.status == "live" }
+        items.filter { EventState.section($0.event?.status) == .live }
+    }
+
+    /// True when the live bucket is holding a match nobody is watching, so the
+    /// section header can say so instead of claiming "Live Now" over it.
+    var liveNowHasSuspended: Bool {
+        liveNow.contains { EventState.isSuspended($0.event?.status) }
     }
 
     var justHappened: [FeedItem] {
-        items.filter {
-            let s = $0.event?.status
-            return s == "completed" || s == "closed"
-        }
+        items.filter { EventState.section($0.event?.status) == .finished }
     }
 
     var upcoming: [FeedItem] {
         items.filter {
             guard $0.type == "event" else { return false }
-            let s = $0.event?.status
-            return s == "scheduled" || s == nil
+            return EventState.section($0.event?.status) == .upcoming
         }
     }
 
