@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, distinct, and_, or_, func, update as _sql_update
+from sqlalchemy import select, distinct, and_, or_, func
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -1195,6 +1195,14 @@ async def _backfill_espn_ids(limit: int = 1000):
                 date_str = event.commence_time.strftime("%Y%m%d")
                 by_sport_date[(sport_key, date_str)].append(event)
 
+            # `stamp_espn_id_if_unheld`'s in-pass set (#2017). The DB check
+            # alone is nearly sufficient, and "nearly" is the word that makes a
+            # guard accidental: this pass groups by (sport, date), so the two
+            # halves of a same-day twin pair are stamped inside one uncommitted
+            # transaction and only this set sees the first one.
+            from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+            claimed_espn_ids: set = set()
+
             espn = ESPNAPIService()
             try:
                 for (sport_key, date_str), date_events in list(by_sport_date.items())[:200]:
@@ -1238,13 +1246,42 @@ async def _backfill_espn_ids(limit: int = 1000):
                             anchor_espn_id=getattr(event, "espn_id", None),
                         )
                         if matched is not None:
-                            event.espn_id = matched.espn_id
-                            stats["events_matched"] += 1
-                            logger.info(
-                                f"ESPN ID backfill: matched event {event.id} "
-                                f"({event.home_team_name} vs {event.away_team_name}) "
-                                f"→ ESPN {matched.espn_id}"
+                            # #2693 CERT-784: this used to be a raw
+                            # `event.espn_id = matched.espn_id` with no holder
+                            # check — the one authorized writer that still
+                            # bypassed the #2017 guard. It is the writer that
+                            # makes the step-2 repair non-durable: the repair
+                            # unstamps a twin, this task runs six hours later,
+                            # selects it (`espn_id IS NULL`), name-matches the
+                            # same ESPN fixture and hands the contested id
+                            # straight back. A unique index would then be
+                            # uninstallable again and the hub's Finished link
+                            # would correctly go dead a second time.
+                            verdict, holder_id = await stamp_espn_id_if_unheld(
+                                session, event, matched.espn_id,
+                                context="espn_id backfill",
+                                claimed=claimed_espn_ids,
                             )
+                            if verdict == STAMPED:
+                                stats["events_matched"] += 1
+                                logger.info(
+                                    f"ESPN ID backfill: matched event {event.id} "
+                                    f"({event.home_team_name} vs {event.away_team_name}) "
+                                    f"→ ESPN {matched.espn_id}"
+                                )
+                            else:
+                                # COUNTED. A guard whose refusals are invisible
+                                # reads exactly like a guard that never fired.
+                                stats["events_id_held"] = (
+                                    stats.get("events_id_held", 0) + 1
+                                )
+                                stats.setdefault("held_examples", [])
+                                if len(stats["held_examples"]) < 20:
+                                    stats["held_examples"].append({
+                                        "event_id": event.id,
+                                        "espn_id": matched.espn_id,
+                                        "holder_event_id": holder_id,
+                                    })
                         elif reason != "no-name-match":
                             stats["events_refused"] = stats.get("events_refused", 0) + 1
                             logger.info(
@@ -1287,6 +1324,22 @@ def _apply_final_pm_win_prob(wp_sources: dict | None, resolved_home: float) -> d
     ``updated_at``. Carrying an old stamp forward onto a new number is worse
     than having no stamp at all: it is a wrong answer to "how old is this?",
     and the hero's recency decay believes it.
+
+    ── NO CALLER, AND SAID OUT LOUD (live/048) ──
+
+    Its ONLY caller was the staleness net's ``live → closed`` arm, and CERT-752
+    is the record of what that caller did: it resolved the blend to 1.0/0.0 off
+    a partial score on a suspended match. Removing it is the repair, so this is
+    left correct and tested but unreferenced rather than quietly deleted,
+    because what it does is right and only its trigger was wrong.
+
+    The gap it leaves is REAL and is not this change's to close: nothing now
+    resolves prediction-market sources when the AUTHORITY settles an event
+    either. That was already true before this change — measured 2026-09-02, only
+    20 of 1,267 authority-``completed`` scored events in a 14-day window carry a
+    ``final_result`` stamp, because a row ESPN settles never reached the net's
+    arm in the first place. Wiring this to the authority's own post/final write
+    is the right home for it and is carried forward, not smuggled in here.
     """
     from app.utils.aggregation import stamp_source_reading
 
@@ -1323,6 +1376,11 @@ def _is_bogus_future_settled(status, commence_time, home_score, away_score, now)
     return (home_score in (None, 0)) and (away_score in (None, 0))
 
 
+#: How far back the ``suspended → live`` arm looks. See the query for why it is
+#: not the 24 hours the ``scheduled → live`` arm uses.
+SUSPENDED_RESUME_WINDOW = timedelta(hours=48)
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -1333,20 +1391,53 @@ async def _transition_event_statuses_impl() -> dict:
 
     Transitions:
     - scheduled → live: commence_time <= now (game has started)
-    - live → closed: commence_time + max_duration has passed AND no source has
-      captured a post-commence snapshot in the last 30 min (likely ended, no
-      data source caught it)
+    - live → suspended: commence_time + max_duration has passed AND no source
+      that REPORTS ON the game has captured a post-commence snapshot in the last
+      30 min. Non-terminal, deliberately — see below.
+    - suspended → live: a source that reports on the game is captured again.
 
     That second condition was claimed here for a long time but never actually
     implemented, which made this the producer of the CAL-P002 frozen-final-score
     class: a game running long is closed while still being played, its mid-game
     score becomes the permanent final, and the blend below is graded off it.
+
+    ═══ THIS NET NO LONGER ENDS A MATCH (live/048, CERT-752) ═══
+
+    It used to write ``closed`` here, stamp a ``completed_at`` derived from the
+    last snapshot, and resolve the prediction-market blend to 1.0/0.0 off
+    whatever score the row happened to be carrying. Every one of those three is
+    a claim that a game is OVER, made on the strength of nobody having said
+    anything — and ``EVENT-GRAPH-DOCTRINE`` §R puts silence below the lowest
+    rung of the state ladder. Only the authority's ``post`` or a venue
+    settlement ends a match; this net has neither, so it now writes
+    :data:`~app.utils.event_completion.EVENT_SUSPENDED` and grades nothing.
+
+    MEASURED, why it had to change (CERT-752, production 2026-09-02). Six US
+    Open matches were suspended mid-match with partial scores — 0-1, 2-1, 1-2,
+    0-0, not one a legal completed tennis result — and ESPN had all six
+    scheduled to RESUME that afternoon. Fixing the hold guard (a Kalshi price
+    tick is not evidence of play) correctly stopped them reading LIVE forever,
+    and then handed them straight to this fallback, which produced
+    ``status='closed'``, ``pm_resolved=1`` and a blend graded off 1-2. A false
+    LIVE traded for a false FINAL, and only one of the two grades.
+
+    MEASURED, what it costs (same date, 14-day window). The prediction-market
+    resolution removed from this arm had stamped ``final_result`` on **6** rows
+    in fourteen days — 6 of the 1,470 scored settled events in the window, and
+    the 6 likeliest of all to have been graded off a partial score, since a row
+    the authority settled never reaches this arm at all. The wider
+    reclassification is ~500 rows a day moving from ``closed`` to ``suspended``,
+    89% of them esports: a category with no schedule-of-record (doctrine rule 8)
+    where 47,615 of 48,390 such rows carry no venue market either, so no rung of
+    the ladder has ever spoken about them. They stop claiming a Final nobody
+    reported. Rows already ``closed`` are left alone — this changes the producer,
+    not the history.
     """
     from app.tasks.base import get_task_session
     from app.tasks.config import SPORT_MAX_DURATIONS
     from app.utils.event_completion import commence_time_is_a_reported_start
 
-    stats = {"scheduled_to_live": 0, "live_to_closed": 0}
+    stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
 
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
@@ -1386,13 +1477,17 @@ async def _transition_event_statuses_impl() -> dict:
             event.status = "live"
             stats["scheduled_to_live"] += 1
 
-        # --- live → closed (fallback staleness) ---
+        # --- live → suspended (fallback staleness) ---
         # For events that have been "live" longer than their sport's max
         # duration. This is a safety net; the primary mechanism is ESPN
         # sync setting status="completed" when it sees post/final.
         # BR76: previously used a 5-hour hardcoded minimum, causing NBA
         # games (~2.5h) to stay "live" for 2.5+ hours after ending when
         # ESPN sync missed the transition.
+        #
+        # live/048: the arm still FIRES on exactly the same rows — the change is
+        # in what it is entitled to conclude. It stops the row claiming to be
+        # live, which is the real defect a stuck row has, and it stops there.
 
         # Find the minimum max_duration across all sports so we only
         # fetch events that could possibly qualify for transition.
@@ -1419,12 +1514,16 @@ async def _transition_event_statuses_impl() -> dict:
         # derived winner inverted. One batched query answers both "is it still
         # running?" and "when did it end?" (gotcha #22 — completed_at is a
         # game-end time, never a backend processing timestamp).
+        from sqlalchemy import text as _sql_text
+
+        from app.utils.event_completion import (
+            EVENT_SUSPENDED,
+            LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            game_may_still_be_running,
+        )
+
         last_snaps: dict = {}
         if live_events:
-            from sqlalchemy import text as _sql_text
-
-            from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
-
             last_snaps = {
                 row.event_id: row.last_snap
                 for row in (await session.execute(
@@ -1432,11 +1531,6 @@ async def _transition_event_statuses_impl() -> dict:
                     {"event_ids": [e.id for e in live_events]},
                 )).all()
             }
-
-        from app.utils.event_completion import (
-            derive_completed_at,
-            game_may_still_be_running,
-        )
 
         stats["held_still_running"] = 0
 
@@ -1457,36 +1551,95 @@ async def _transition_event_statuses_impl() -> dict:
                     stats["held_still_running"] += 1
                     continue
 
-                event.status = "closed"
-                if not event.completed_at:
-                    # None when we have no post-commence snapshot: a visible gap
-                    # the repair can fill beats a wrong value nothing questions.
-                    event.completed_at = derive_completed_at(
-                        last_snap, event.commence_time
-                    )
-                stats["live_to_closed"] += 1
+                # SUSPENDED, NOT CLOSED — and nothing else written (live/048).
+                #
+                # Three writes used to happen here and all three are gone,
+                # because each one is a claim that the match is OVER made on the
+                # strength of silence:
+                #
+                #   1. `status = "closed"`. Every client renders closed as
+                #      Final. The row is now `suspended`: still wrong to call it
+                #      live, still not a claim that anybody won.
+                #   2. `completed_at = derive_completed_at(...)`. A game-end
+                #      time for a game we cannot say has ended. Leaving it NULL
+                #      is the same argument `derive_completed_at` already makes
+                #      about `now()` — a visible gap beats a plausible-looking
+                #      wrong value nothing will ever question (gotcha #22) — and
+                #      it is load-bearing here: `venue_live_write_is_a_
+                #      resurrection` reads a NULL `completed_at` as "not
+                #      settled", which is what lets the scores feed put a
+                #      resumed match straight back to live.
+                #   3. The prediction-market resolution to 1.0/0.0 off
+                #      `home_score`/`away_score`. This is the one CERT-752
+                #      named: those scores are whatever the last poll wrote,
+                #      and on a suspended match that is a PARTIAL score. 1-2 in
+                #      sets graded as a loss. A score is only a result when
+                #      something reported it as one, and silence never does.
+                #      Measured cost of removing it: 6 rows in fourteen days.
+                event.status = EVENT_SUSPENDED
+                stats["live_to_suspended"] += 1
+                logger.info(
+                    "live/048 suspended event %s (%s vs %s): %.1fh since start "
+                    "exceeds the %.1fh %s maximum and no play-reporting source "
+                    "has been captured. Not closed, not graded — only an "
+                    "authority post or a venue settlement ends a match.",
+                    event.id, event.home_team_name, event.away_team_name,
+                    hours_since_start, max_hours, sport_key or "default",
+                )
 
-                # Write resolved win probability for prediction market sources.
-                # Without this, Kalshi/Polymarket stay at their last mid-game
-                # probability instead of resolving to 1.0/0.0.
-                if (event.home_score is not None
-                        and event.away_score is not None):
-                    if event.home_score > event.away_score:
-                        resolved_home = 1.0
-                    elif event.home_score < event.away_score:
-                        resolved_home = 0.0
-                    else:
-                        resolved_home = 0.5
-                    wp_sources = _apply_final_pm_win_prob(
-                        event.win_probability_sources, resolved_home
+        # --- suspended → live (the door back) ---
+        #
+        # The mirror of the hold above, and what stops `suspended` being a
+        # quieter way of stranding a match: the same evidence that would have
+        # HELD a live row — a source that reports on the game, captured inside
+        # STILL_ACTIVE_MINUTES — puts a suspended row back on court.
+        #
+        # This is rung 3 of the ladder reaching a row rung 1 cannot. The
+        # authority already has its own doors (`espn_helpers` settles or resumes
+        # an anchored row directly, and since lane1/057 that includes tennis),
+        # but most of the suspended population is in categories no
+        # schedule-of-record covers, and for those this is the only way home.
+        # It is deliberately the SAME predicate and the SAME venue-price
+        # exclusion, so a Kalshi tick cannot resume a match any more than it
+        # could hold one.
+        suspended_result = await session.execute(
+            select(Event).where(
+                Event.status == EVENT_SUSPENDED,
+                # 48h, NOT the 24h the scheduled→live arm above uses, and the
+                # difference is the whole reason this state exists. The
+                # canonical case is a US Open match suspended after dark and
+                # resumed the following AFTERNOON — the CERT-752 specimen was
+                # already 15h past its recorded start when the net first saw it,
+                # so a 24h window would have expired on exactly the fixtures
+                # this arm is for. 48h covers an overnight suspension plus a
+                # full day's slip and still bounds the scan to about a thousand
+                # rows at the measured rate, on an indexed column.
+                #
+                # The bound only limits the NON-authority path. An anchored row
+                # — every US Open match, since lane1/057 — is reached by
+                # `espn_helpers` directly off its espn_id with no window at all.
+                Event.commence_time >= now - SUSPENDED_RESUME_WINDOW,
+            )
+        )
+        suspended_events = suspended_result.scalars().all()
+
+        if suspended_events:
+            resume_snaps = {
+                row.event_id: row.last_snap
+                for row in (await session.execute(
+                    _sql_text(LAST_POST_COMMENCE_SNAPSHOT_SQL),
+                    {"event_ids": [e.id for e in suspended_events]},
+                )).all()
+            }
+            for event in suspended_events:
+                if game_may_still_be_running(resume_snaps.get(event.id), now):
+                    event.status = "live"
+                    stats["suspended_to_live"] += 1
+                    logger.info(
+                        "live/048 resumed event %s (%s vs %s): a play-reporting "
+                        "source captured it again.",
+                        event.id, event.home_team_name, event.away_team_name,
                     )
-                    await session.execute(
-                        _sql_update(Event)
-                        .where(Event.id == event.id)
-                        .values(win_probability_sources=wp_sources)
-                    )
-                    stats.setdefault("pm_resolved", 0)
-                    stats["pm_resolved"] += 1
 
         # --- Repair: completed with 0-0 → scheduled/live ---
         # The Odds API occasionally returns completed=true for games that
@@ -1543,19 +1696,21 @@ async def _transition_event_statuses_impl() -> dict:
         # declines silently reads as "there was nothing to do", and this one
         # holds ~40 rows a night on its own. Same reason `detect_and_close_stale_
         # events` logs its three held_* counters beside its closed count.
-        if (stats["scheduled_to_live"] > 0 or stats["live_to_closed"] > 0
+        if (stats["scheduled_to_live"] > 0 or stats["live_to_suspended"] > 0
+                or stats["suspended_to_live"] > 0
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
                 or stats["held_derived_start"] > 0):
             logger.info(
-                "Status transitions: %d scheduled→live, %d live→closed, "
-                "%d repaired, %d un-settled-future-commence, "
-                "%d held (derived start) (pm_resolved=%d)",
-                stats["scheduled_to_live"], stats["live_to_closed"],
+                "Status transitions: %d scheduled→live, %d live→suspended, "
+                "%d suspended→live, %d repaired, %d un-settled-future-commence, "
+                "%d held (derived start), %d held (still running)",
+                stats["scheduled_to_live"], stats["live_to_suspended"],
+                stats["suspended_to_live"],
                 stats["repaired_bogus_completed"],
                 stats["unsettled_future_commence"],
                 stats["held_derived_start"],
-                stats.get("pm_resolved", 0),
+                stats["held_still_running"],
             )
 
     return stats
@@ -1779,6 +1934,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     from app.utils.espn_tennis_anchor import (
         anchor_receipt,
         anchorable_sport_keys,
+        authority_score_write,
         authority_write,
         state_contradiction,
     )
@@ -1797,6 +1953,15 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "status_writes": 0,
         "completions_revoked": 0,
         "commence_writes": 0,
+        # lane1/064: the score half. `score_writes` counts rows the authority
+        # moved; `score_blanks_filled` is the SHIP — a settled row that printed
+        # nothing and now prints the result; `score_corrections` is a row whose
+        # existing score the authority overruled. `score_refused` is keyed by
+        # reason, because "no score" is four different findings.
+        "score_writes": 0,
+        "score_blanks_filled": 0,
+        "score_corrections": 0,
+        "score_refused": {},
         "contradictions": {},
         "row_errors": 0,
         "stamp_refused": 0,
@@ -2048,6 +2213,58 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     event.commence_time = changes["commence_time"]
                     stats["commence_writes"] += 1
 
+                # ═══ THE SCORE, THROUGH THE SAME ANCHOR AND THE SAME READ ═══
+                #
+                # 37 anchored US Open rows were `closed` with no score at all
+                # while ESPN held the full result — Alcaraz over Safiullin
+                # 6-4, 6-4, 6-4, closed blank by a wall-clock net on an Odds API
+                # session-start default. A search for "Safiullin" returned seven
+                # cards saying FINAL with nothing under them.
+                #
+                # Deliberately AFTER the state block and unconditional on it: a
+                # `decided` row that is already settled gets NO status change
+                # (`closed` and `completed` are both settled and churning one
+                # into the other rewrites history for no reader) — which is
+                # exactly the population that has been blank for four days. A
+                # score write gated on a status write would have skipped all 37.
+                was_blank = event.home_score is None and event.away_score is None
+                score = authority_score_write(
+                    ours=ours,
+                    our_home_score=event.home_score,
+                    our_away_score=event.away_score,
+                    competition=competition,
+                )
+                if score["reason"] is not None:
+                    stats["score_refused"][score["reason"]] = (
+                        stats["score_refused"].get(score["reason"], 0) + 1
+                    )
+                elif score["changes"]:
+                    # BOTH NUMBERS READ BEFORE EITHER IS WRITTEN — the log below
+                    # is a before/after and would print the same pair twice if
+                    # the assignment came first.
+                    before = (event.home_score, event.away_score)
+                    event.home_score = score["changes"].get(
+                        "home_score", event.home_score
+                    )
+                    event.away_score = score["changes"].get(
+                        "away_score", event.away_score
+                    )
+                    stats["score_writes"] += 1
+                    if was_blank:
+                        stats["score_blanks_filled"] += 1
+                    else:
+                        # THE AUTHORITY OVERRULING A SCORE FEED (§R rung 1 over
+                        # rung 3). Logged at WARNING with both numbers: a
+                        # correction is a claim that something else was wrong,
+                        # and it should be readable without a database.
+                        stats["score_corrections"] += 1
+                        logger.warning(
+                            "Tennis score CORRECTED: event %s (%s v %s) %s-%s -> %s-%s",
+                            event.id, ours[0], ours[1],
+                            before[0], before[1],
+                            event.home_score, event.away_score,
+                        )
+
             except Exception as exc:  # noqa: BLE001 — one row never costs the pass
                 stats["row_errors"] += 1
                 logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
@@ -2056,9 +2273,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
 
     logger.info(
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
-        "%d status writes, %d closes revoked, %d contradictions",
+        "%d status writes, %d closes revoked, %d contradictions, "
+        "%d score writes (%d blanks filled, %d corrected), %d scores refused",
         stats["events_considered"], stats["anchored"], stats["already_anchored"],
         sum(stats["refused"].values()), stats["status_writes"],
         stats["completions_revoked"], sum(stats["contradictions"].values()),
+        stats["score_writes"], stats["score_blanks_filled"],
+        stats["score_corrections"], sum(stats["score_refused"].values()),
     )
     return {"status": "ok", **stats}

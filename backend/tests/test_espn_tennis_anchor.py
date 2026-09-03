@@ -35,13 +35,16 @@ from app.utils.espn_tennis_anchor import (
 from app.utils.player_names import names_agree, shares_substantial_token
 
 
-def _competitor(name, linescores=None):
-    return {
+def _competitor(name, linescores=None, winner=None):
+    competitor = {
         "id": "3203",
         "type": "athlete",
         "linescores": linescores or [],
         "athlete": {"displayName": name, "id": "3203"},
     }
+    if winner is not None:
+        competitor["winner"] = winner
+    return competitor
 
 
 def _competition(
@@ -53,10 +56,12 @@ def _competition(
     short_detail="",
     date="2026-09-02T16:40Z",
     linescores=None,
+    winners=None,
     status_name="STATUS_SCHEDULED",
 ):
     """A competition in ESPN's real shape — see 182712 in the module docstring."""
     lines = linescores or [[], []]
+    flags = winners or [None] * len(names)
     return {
         "id": comp_id,
         "date": date,
@@ -70,7 +75,8 @@ def _competition(
             },
         },
         "competitors": [
-            _competitor(name, line) for name, line in zip(names, lines)
+            _competitor(name, line, flag)
+            for name, line, flag in zip(names, lines, flags)
         ],
     }
 
@@ -89,6 +95,29 @@ def _payload(competitions, slug="mens-singles", event_name="US Open"):
 
 def _games(*values):
     return [{"value": float(v)} for v in values]
+
+
+# ── lines that carry ESPN's own per-set winner flag (lane1/064) ──
+#
+# `_games` predates the score write and deliberately keeps its flagless shape:
+# it exists to prove `play_refutes_upcoming` fires on a game being on the board,
+# which is a question about the VALUE. The score is counted off the FLAG, so the
+# fixtures that exercise it have to carry one.
+
+
+def _won(*values):
+    """A side's line where it took every set listed."""
+    return [{"value": float(v), "winner": True} for v in values]
+
+
+def _lost(*values):
+    return [{"value": float(v), "winner": False} for v in values]
+
+
+def _mixed(*pairs):
+    """``(games, won)`` per set — a retirement's line, where the abandoned set
+    is flagged for nobody."""
+    return [{"value": float(v), "winner": w} for v, w in pairs]
 
 
 # ═══════════════════════════ the board read ═══════════════════════════
@@ -628,7 +657,7 @@ class _Event:
     """Just enough of an `events` row for the write path."""
 
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
-                 espn_id=None):
+                 espn_id=None, home_score=None, away_score=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -636,6 +665,12 @@ class _Event:
         self.commence_time = commence_time
         self.completed_at = completed_at
         self.espn_id = espn_id
+        # lane1/064: the score half of the authority write. Present on the stub
+        # because the task READS them before deciding, so a row without them
+        # would be swallowed by the per-row `except` and counted as a row error
+        # rather than exercising anything.
+        self.home_score = home_score
+        self.away_score = away_score
 
 
 class _Result:
@@ -726,6 +761,112 @@ class TestTennisSyncTask:
         assert event.completed_at is None
         assert stats["completions_revoked"] == 1
         assert stats["contradictions"] == {"settled-but-in-play": 1}
+
+    async def test_the_blank_final_gets_its_score(self, monkeypatch):
+        """END TO END for lane1/064's ship: a settled US Open row that printed
+        nothing comes out holding the result, WITHOUT its status being churned.
+
+        Shaped on 15293821 / ESPN 182705 — Alcaraz d. Safiullin 6-4, 6-4, 6-4,
+        one of 37 rows on production `closed` and blank while the authority held
+        the full result. Note the orientation: ESPN lists the WINNER first and
+        our row has Safiullin at home, so a straight read publishes 3-0 to the
+        man who lost.
+        """
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15293821, "Roman Safiullin", "Carlos Alcaraz", "closed",
+            _at("2026-08-30T15:00Z"), completed_at=_at("2026-08-30T19:42Z"),
+            espn_id="182705",
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182705", ["Carlos Alcaraz", "Roman Safiullin"], state="post",
+                status_name="STATUS_FINAL", period=3,
+                date="2026-08-30T19:30Z",
+                linescores=[
+                    _won(6, 6, 6),      # Alcaraz took all three
+                    _lost(4, 4, 4),
+                ],
+                winners=[True, False],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert (event.home_score, event.away_score) == (0, 3)
+        assert event.status == "closed"       # settled stays settled
+        assert stats["score_writes"] == 1
+        assert stats["score_blanks_filled"] == 1
+        assert stats["score_corrections"] == 0
+        assert stats["status_writes"] == 0
+
+    async def test_a_row_that_already_agrees_is_left_alone(self, monkeypatch):
+        """THE CONTROL for the test above — 122 of the 202 anchored rows are
+        already right, and this pass runs every ten minutes."""
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15293821, "Roman Safiullin", "Carlos Alcaraz", "completed",
+            _at("2026-08-30T19:30Z"), completed_at=_at("2026-08-30T22:00Z"),
+            espn_id="182705", home_score=0, away_score=3,
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182705", ["Carlos Alcaraz", "Roman Safiullin"], state="post",
+                status_name="STATUS_FINAL", period=3,
+                date="2026-08-30T19:30Z",
+                linescores=[_won(6, 6, 6), _lost(4, 4, 4)],
+                winners=[True, False],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert (event.home_score, event.away_score) == (0, 3)
+        assert stats["score_writes"] == 0
+        assert stats["score_refused"] == {}
+
+    async def test_a_retirement_the_authority_cannot_score_is_reported(
+        self, monkeypatch
+    ):
+        """A refusal is a finding.  Shaped on 184685: the side ESPN flags as the
+        winner holds NO set flags, so a set count published here names the man
+        who lost as ahead."""
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            1, "Christopher O'Connell", "Zsombor Piros", "closed",
+            _at("2026-08-26T15:00Z"), espn_id="184685",
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "184685", ["Christopher O'Connell", "Zsombor Piros"],
+                state="post", status_name="STATUS_RETIRED", period=2,
+                date="2026-08-26T15:30Z",
+                linescores=[_mixed((7, True), (6, False)),
+                            _mixed((5, False), (7, False))],
+                winners=[False, True],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert event.home_score is None and event.away_score is None
+        assert stats["score_writes"] == 0
+        assert stats["score_refused"] == {"not-a-completed-result": 1}
 
     async def test_a_contested_competition_anchors_nobody(self, monkeypatch):
         """Writing the id on both twins would ARM `merge-duplicate-events`, which

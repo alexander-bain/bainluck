@@ -17,6 +17,11 @@ import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  isFinishedStatus,
+  isSuspendedStatus,
+  suspendedSummary,
+} from "@/lib/eventState";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -114,7 +119,7 @@ export default function EventCard({
   let homeProb: number | null;
   let awayProb: number | null;
 
-  if ((event.status === "completed" || event.status === "closed") && opening) {
+  if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
   } else if (shouldWithholdProbability(event)) {
@@ -133,9 +138,8 @@ export default function EventCard({
 
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
   const isLive = event.status === "live" && hasStarted;
-  const isCompleted = event.status === "completed";
-  const isClosed = event.status === "closed";
-  const isFinished = isCompleted || isClosed;
+  const isFinished = isFinishedStatus(event.status);
+  const isSuspended = isSuspendedStatus(event.status);
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
   // Format time and date compactly
@@ -237,7 +241,23 @@ export default function EventCard({
                   {formatLiveClockLabel(event.espn?.period, event.espn?.game_clock) || highlightLabel || "LIVE"}
                 </span>
               )}
-              {!isLive && !isFinished && hasGameTime && (
+              {/* live/048: a suspended match must not advertise a start time.
+                  Its commence_time is in the PAST and the clock has run out —
+                  printing "Today 7:00 PM" beside it is the upcoming-branch
+                  fall-through this state exists to avoid. */}
+              {/* CERT-786 — one shared summary, not the bare badge this
+                  originally carried. Four surfaces render this state and they
+                  now render one string, so "the card says the same thing
+                  wherever you meet it" is a property of the function rather
+                  than of four editors remembering. Not uppercased: the settled
+                  sibling below uppercases the single word "Final", and shouting
+                  a whole sentence is a different register. */}
+              {isSuspended && (
+                <span className="text-micro-xs text-text-muted">
+                  {suspendedSummary(event.away_score, event.home_score)}
+                </span>
+              )}
+              {!isLive && !isFinished && !isSuspended && hasGameTime && (
                 <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (
@@ -338,8 +358,13 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only; a FINAL card drops the
-                  live-style chip for the settled score block above (L2-112 Item 2). */}
-              {!isLive && !isFinished && (
+                  live-style chip for the settled score block above (L2-112 Item 2),
+                  and so does a SUSPENDED one (live/048, CERT-792). `suspended` is
+                  neither live nor finished, so it fell through to the pregame chip
+                  and printed a confident 72%/28% two lines under "No result
+                  reported" — the card contradicting itself in one glance. The
+                  suspended summary above is the whole statement. */}
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
                   value={homeProb}
                   className={cn(
@@ -356,8 +381,10 @@ export default function EventCard({
               )}
             </div>
 
-            {/* Team-colored probability bar — hidden on FINAL (settled score above) */}
-            {!isFinished && (
+            {/* Team-colored probability bar — hidden on FINAL (settled score
+                above) and on SUSPENDED (CERT-792): a filled bar is the loudest
+                claim on the card, and there is no live price behind it. */}
+            {!isFinished && !isSuspended && (
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
@@ -410,7 +437,7 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only (see home team above). */}
-              {!isLive && !isFinished && (
+              {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
                   value={awayProb}
                   className={cn(
@@ -428,8 +455,10 @@ export default function EventCard({
             </div>
           </div>
 
-          {/* Footer — contextual info (hide for finished games) */}
-          {!isFinished && (
+          {/* Footer — contextual info (hide for finished games, and for
+              suspended ones: "Proj 6-4" is a pregame promise and the match is
+              stopped, not upcoming — CERT-792). */}
+          {!isFinished && !isSuspended && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
               {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
                   strict test with `undefined !== null` → true, and the card then

@@ -155,29 +155,29 @@ class TestAttachClaim:
 
     def test_attach_odds_api(self):
         event = MagicMock(external_id=None, statpal_fixture_id=None, espn_id=None)
-        _attach_claim(event, EventClaim("odds_api", "abc123"))
+        _attach_claim(event, EventClaim("odds_api", "abc123"), espn_id_is_held=False)
         assert event.external_id == "abc123"
 
     def test_attach_statpal(self):
         event = MagicMock(external_id=None, statpal_fixture_id=None, espn_id=None)
-        _attach_claim(event, EventClaim("statpal", "fix789"))
+        _attach_claim(event, EventClaim("statpal", "fix789"), espn_id_is_held=False)
         assert event.statpal_fixture_id == "fix789"
 
     def test_attach_espn(self):
         event = MagicMock(external_id=None, statpal_fixture_id=None, espn_id=None)
-        _attach_claim(event, EventClaim("espn", "401866758"))
+        _attach_claim(event, EventClaim("espn", "401866758"), espn_id_is_held=False)
         assert event.espn_id == "401866758"
 
     def test_no_overwrite_existing(self):
         """Should NOT overwrite an existing source ID."""
         event = MagicMock(external_id="existing", statpal_fixture_id=None, espn_id=None)
-        _attach_claim(event, EventClaim("odds_api", "new_id"))
+        _attach_claim(event, EventClaim("odds_api", "new_id"), espn_id_is_held=False)
         assert event.external_id == "existing"
 
     def test_attach_kalshi_noop(self):
         """Kalshi claims don't set any column on Event directly."""
         event = MagicMock(external_id=None, statpal_fixture_id=None, espn_id=None)
-        _attach_claim(event, EventClaim("kalshi", "KXNBA123"))
+        _attach_claim(event, EventClaim("kalshi", "KXNBA123"), espn_id_is_held=False)
         # No columns changed
         assert event.external_id is None
 

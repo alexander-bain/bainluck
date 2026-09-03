@@ -31,6 +31,10 @@ struct Bain_LuckApp: App {
 
 
     init() {
+        // Pin the launch reference as early as app code can run, so "cold" means
+        // time since launch rather than time since whichever screen happened to
+        // measure itself first (latency/121).
+        AppLaunchClock.touch()
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
         // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /

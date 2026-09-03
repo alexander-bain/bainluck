@@ -62,6 +62,7 @@ import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
 import { sportVocab } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
+import { chartSourceChips } from "@/lib/chartSourceChips";
 import {
   useAnalytics,
   usePageTracking,
@@ -72,6 +73,12 @@ import {
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  SUSPENDED_DESCRIPTION,
+  isFinishedStatus,
+  isSuspendedStatus,
+  suspendedSummary,
+} from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
@@ -198,9 +205,10 @@ export default function EventPage({ params }: EventPageProps) {
   // Only consider "live" if the status is "live" AND the game has actually started
   // This guards against cases where the backend status might be incorrect
   const isLive = event?.status === "live" && hasStarted;
-  const isCompleted = event?.status === "completed";
-  const isClosed = event?.status === "closed";
-  const isFinished = isCompleted || isClosed;
+  const isFinished = isFinishedStatus(event?.status);
+  // live/048 — non-terminal, and it must not fall through to either branch:
+  // not Final (nothing reported a result) and not upcoming (it already began).
+  const isSuspended = isSuspendedStatus(event?.status);
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   // Effectively live = event is live status
@@ -373,7 +381,10 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive || isFinished) {
+    // live/048: `isSuspended` joins the suppression list. A suspended match has
+    // a commence_time in the PAST, so counting down to it is counting down to
+    // something that already happened.
+    if (!event?.commence_time || isLive || isFinished || isSuspended) {
       setGameCountdown("");
       return;
     }
@@ -383,7 +394,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isFinished]);
+  }, [event?.commence_time, isLive, isFinished, isSuspended]);
 
   const {
     data: historyData,
@@ -498,6 +509,22 @@ export default function EventPage({ params }: EventPageProps) {
     return () => clearTimeout(timer);
   }, [eventLoading]);
 
+  /**
+   * The win-probability sources the chart actually DREW, as legend chips
+   * (ux/1034 B7). The rules and the measurement live in `chartSourceChips` —
+   * a Next.js page may not carry named exports, so the seam a guard can hold
+   * has to be a module.
+   *
+   * ABOVE THE LOADING/ERROR RETURNS, with every other hook on this page: a
+   * `useMemo` after an early return is a rules-of-hooks error and the ESLint
+   * gate fails the build on it — which is how this landed here rather than
+   * beside the strip it feeds.
+   */
+  const sourceChips = useMemo(
+    () => chartSourceChips(historyData?.win_prob_sources, historyData?.win_prob_history),
+    [historyData]
+  );
+
   if (eventLoading) {
     if (loadingTimedOut) {
       return (
@@ -605,14 +632,25 @@ export default function EventPage({ params }: EventPageProps) {
   // nothing>unhelpful ruling). Suppress it entirely until the game is in-game
   // or later; the pregame odds-movement story lives in the Win Probability
   // timeline above (time x-axis, with its own clean "tracking will begin" state).
+  //
+  // ux/1034 B5: the scoreboard half counts toward this gate only where the
+  // scoreboard counts the thing the chart's axis is in. For a tennis match it
+  // reports SETS against a GAMES projection, so the chart will not draw an
+  // actual line from it — and a gate that still admitted it would open the
+  // card on an event with nothing but a suppressed series inside it, which is
+  // the empty-chrome failure the L2-157 note above exists to prevent.
+  const scoreboardCountsTheUnit = sportVocab(event?.sport || undefined)
+    .scoreboardCountsTheUnit;
   const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
     (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
     ) ||
-    (historyData.score_history?.length ?? 0) > 0 ||
-    (historyData.espn_history ?? []).some(
-      (p) => p.home_score != null && p.away_score != null
-    )
+    (scoreboardCountsTheUnit && (
+      (historyData.score_history?.length ?? 0) > 0 ||
+      (historyData.espn_history ?? []).some(
+        (p) => p.home_score != null && p.away_score != null
+      )
+    ))
   );
 
   return (
@@ -778,6 +816,22 @@ export default function EventPage({ params }: EventPageProps) {
               </span>
             ) : isFinished ? (
               <span className="text-[10px] font-semibold text-text-muted">Final</span>
+            ) : isSuspended ? (
+              /* live/048 — the branch that did not exist. Without it a
+                 suspended match fell through to "Pregame", which is the same
+                 lie as "Final" told in the other direction: this one already
+                 started. It gets its own badge and no start time, and the hero
+                 says why in a sentence below. */
+              <span
+                className="text-[10px] font-semibold text-text-muted"
+                title={SUSPENDED_DESCRIPTION}
+                data-testid="event-hero-suspended"
+              >
+                {/* CERT-786 — the shared summary, so the hero says exactly what
+                    the card the reader tapped said. The page-level sentence
+                    stays on the `title`, which has room for it. */}
+                {suspendedSummary(event?.away_score, event?.home_score)}
+              </span>
             ) : (
               <span className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
@@ -1202,12 +1256,40 @@ export default function EventPage({ params }: EventPageProps) {
                     <span className="text-[10px] text-text-muted">{sourceLabel("betting")}</span>
                   </div>
                 )}
-                {historyData?.win_prob_sources && Object.keys(historyData.win_prob_sources).some(k => k.toLowerCase().includes('kalshi')) && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-4 h-[2px] rounded bg-violet-400" />
-                    <span className="text-[10px] text-text-muted">Kalshi</span>
+                {/* ═══ ux/1034 B7: THE LEGEND READS THE PAYLOAD ═══
+
+                    Alex asked this to be VERIFIED, not built: "the legend must
+                    pick [Polymarket] up without a deploy." It could not, and
+                    that is why this changed.
+
+                    The chip beside this one was
+
+                      Object.keys(win_prob_sources).some(k => k contains 'kalshi')
+                        -> a hard-coded <span>Kalshi</span> in violet
+
+                    — one hard-coded venue, present or absent. There was no
+                    branch for a second source at all, so no attachment could
+                    ever reach this strip. Measured on `/events/15293830` at
+                    2026-09-03T02:00Z: Polymarket had been attached since
+                    20:26Z the previous evening (145 points in
+                    `win_prob_history`, a full entry in `win_prob_sources`), the
+                    chart above was drawing its line, and the strip still read
+                    "BainLuck · Sportsbooks · Kalshi".
+
+                    It also disagreed with the chart on COLOUR. `SOURCE_COLORS`
+                    is the one registry (L2-155: "same source, same colour,
+                    everywhere") and it puts Kalshi at #22c55e; this strip drew
+                    it violet, which matched nothing above it. Both facts now
+                    come from the same place the chart's own legend reads. */}
+                {sourceChips.map((chip) => (
+                  <div key={chip.key} className="flex items-center gap-1.5">
+                    <div
+                      className="w-4 h-[2px] rounded"
+                      style={{ backgroundColor: chip.color }}
+                    />
+                    <span className="text-[10px] text-text-muted">{chip.label}</span>
                   </div>
-                )}
+                ))}
               </div>
               <button
                 onClick={() => setSourcesOpen(!sourcesOpen)}
@@ -1274,6 +1356,10 @@ export default function EventPage({ params }: EventPageProps) {
             sharedTicks={sharedChartDomain?.ticks}
             externalTimeRange={chartTimeRange}
             onTimeRangeChange={handleChartTimeRangeChange}
+            /* ux/1034 B5: the same key the market maps below already take, so
+               the three widgets on this page cannot disagree about whether
+               `home_score` counts the thing the projection is quoted in. */
+            sportKey={event.sport || undefined}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>

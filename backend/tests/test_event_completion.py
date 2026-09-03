@@ -98,17 +98,22 @@ class TestSnapshotEvidenceQuery:
     def test_only_post_commence_snapshots_count(self):
         from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
 
-        # A pregame line says nothing about when play ended, so both halves of
-        # the union must be anchored to the event's own commence_time.
+        # A pregame line says nothing about when play ended, so the surviving
+        # arm must be anchored to the event's own commence_time. It used to be
+        # two arms; live/042 dropped the `odds_snapshots` one entirely.
         assert LAST_POST_COMMENCE_SNAPSHOT_SQL.count(
             "captured_at >= e.commence_time"
-        ) == 2
+        ) == 1
 
-    def test_both_snapshot_sources_are_consulted(self):
+    def test_the_bookmaker_arm_is_gone_rather_than_filtered(self):
         from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
 
+        # live/042: every row in `odds_snapshots` is a bookmaker line, which is
+        # the "betting" venue by definition. There is no play-reporting arm of
+        # it left to keep, so it is removed rather than source-filtered — a
+        # filter would have read as though some of it still counted.
         assert "win_prob_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
-        assert "odds_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
+        assert "odds_snapshots" not in LAST_POST_COMMENCE_SNAPSHOT_SQL
 
     def test_it_is_batched(self):
         from sqlalchemy import text
@@ -141,22 +146,70 @@ class TestBothProducersAreWired:
         assert "game_may_still_be_running" in src
         assert "held_still_running" in src
 
-    def test_espn_sync_no_longer_stamps_now_as_the_end_time(self):
+    def test_espn_sync_stamps_no_end_time_at_all(self):
         import inspect
 
         from app.tasks.espn_sync import _transition_event_statuses_impl
 
-        src = inspect.getsource(_transition_event_statuses_impl)
-        assert "derive_completed_at" in src
-        assert "event.completed_at = now" not in src
+        # This asserted `"derive_completed_at" in src` — the right guard while
+        # this net still wrote a completion, since the alternative it displaced
+        # was `now()`. live/048 removed the write, so the guard has to invert or
+        # it pins a call that must no longer exist.
+        #
+        # It is asserted BEHAVIOURALLY, not by `getsource`: the removal is
+        # explained in a comment that names `derive_completed_at`, so a
+        # substring check would pass on the prose alone (the vacuous-getsource
+        # trap this file's own class docstring warns about). The AST sees calls,
+        # not comments.
+        import ast
 
-    def test_odds_polling_no_longer_stamps_now_as_the_end_time(self):
+        tree = ast.parse(inspect.getsource(_transition_event_statuses_impl))
+        called = {
+            n.func.id for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "derive_completed_at" not in called
+        assert "event.completed_at = now" not in inspect.getsource(
+            _transition_event_statuses_impl
+        )
+
+    def test_espn_sync_suspends_rather_than_closes(self):
+        # The load-bearing half of the CERT-752 repair, asserted on the value
+        # the net actually assigns. `TestStalenessNetEndToEnd` proves the
+        # behaviour; this proves nobody reintroduced the literal.
+        import ast
+        import inspect
+
+        from app.tasks.espn_sync import _transition_event_statuses_impl
+
+        tree = ast.parse(inspect.getsource(_transition_event_statuses_impl))
+        assigned = {
+            n.value.value for n in ast.walk(tree)
+            if isinstance(n, ast.Assign)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+            and any(
+                isinstance(t, ast.Attribute) and t.attr == "status"
+                for t in n.targets
+            )
+        }
+        assert "closed" not in assigned, (
+            "the staleness net may not write a terminal state — only an "
+            "authority post or a venue settlement ends a match"
+        )
+
+    def test_odds_polling_no_longer_stamps_any_end_time_on_a_quiet_book(self):
         import inspect
 
         from app.tasks.odds_polling import detect_and_close_stale_events
 
+        # live/048 went one further than the original assertion. This arm used
+        # to derive a `completed_at`; now it writes none at all, because a quiet
+        # bookmaker is not a report that the game ended and there is no honest
+        # end time to derive. The only completion this function still writes is
+        # StatPal's, pinned by the test below.
         src = inspect.getsource(detect_and_close_stale_events)
-        assert "derive_completed_at" in src
+        assert "derive_completed_at" not in src
         assert 'close_values["completed_at"] = now' not in src
 
     def test_the_statpal_end_time_is_still_preferred_when_we_have_one(self):
@@ -223,8 +276,16 @@ class _Ev:
 
 
 class _NetSession:
-    def __init__(self, live, snapshots):
-        self._selects = [[], live, [], []]  # scheduled, live, bogus, future-settled
+    def __init__(self, live, snapshots, suspended=None):
+        # live/048 added the `suspended → live` arm, which selects between the
+        # live sweep and the bogus-completed repair.
+        self._selects = [
+            [],                 # scheduled → live
+            live,               # live → suspended
+            suspended or [],    # suspended → live
+            [],                 # bogus completed
+            [],                 # future-settled
+        ]
         self._snapshots = snapshots
         self.blend_updates = []
 
@@ -248,11 +309,11 @@ class _NetSession:
         pass
 
 
-async def _run_net(live, snapshots, now):
+async def _run_net(live, snapshots, now, suspended=None):
     import contextlib
     from unittest.mock import patch
 
-    session = _NetSession(live, snapshots)
+    session = _NetSession(live, snapshots, suspended)
 
     @contextlib.asynccontextmanager
     async def _fake_session():
@@ -289,44 +350,58 @@ class TestStalenessNetEndToEnd:
         assert ev.status == "live"
         assert ev.completed_at is None
         assert stats["held_still_running"] == 1
-        assert stats["live_to_closed"] == 0
+        assert stats["live_to_suspended"] == 0
         # And critically: the blend was NOT graded off the halftime score.
         assert session.blend_updates == []
 
     @pytest.mark.asyncio
-    async def test_a_genuinely_finished_game_still_closes(self):
-        # The net must keep working — this is what it is for.
+    async def test_a_game_nothing_reports_on_is_suspended_not_closed(self):
+        # live/048 — THE REPAIR, and the inversion of what this test used to
+        # assert. It read `test_a_genuinely_finished_game_still_closes` and
+        # asserted `status == "closed"` plus a resolved blend, which is exactly
+        # the shape CERT-752 blocked: the net cannot tell a finished game from a
+        # suspended one, because in BOTH cases all it has is silence.
         ended = NOW - timedelta(hours=3)
         ev = _Ev(2, "basketball_nba", _LATE, home_score=109, away_score=87,
                  win_probability_sources={"kalshi": {"home_win_probability": 0.8}})
         session, stats = await _run_net([ev], {2: ended}, NOW)
-        assert ev.status == "closed"
-        assert stats["live_to_closed"] == 1
+        assert ev.status == "suspended"
+        assert stats["live_to_suspended"] == 1
         assert stats["held_still_running"] == 0
-        assert session.blend_updates, "a real final must still resolve the blend"
+        assert session.blend_updates == [], (
+            "silence may not grade a blend — the score on the row is whatever "
+            "the last poll wrote, and on a suspended match that is partial"
+        )
 
     @pytest.mark.asyncio
-    async def test_the_close_stamps_the_game_end_not_the_processing_time(self):
-        # gotcha #22. The old code wrote now(), which is wrong by however long
-        # the net took to notice — and it is what chart domains stand on.
+    async def test_suspending_stamps_no_completion_time(self):
+        # gotcha #22 read one step harder. The old net derived `completed_at`
+        # from the last snapshot, which is an honest END TIME only if the game
+        # ended — and the whole point of this state is that we cannot say it
+        # did. A NULL is a visible gap; a plausible timestamp is a wrong value
+        # nothing questions. It is also load-bearing: the scores writer reads a
+        # NULL `completed_at` as "not settled", which is what lets a resumed
+        # match go straight back to live.
         ended = NOW - timedelta(hours=3)
         ev = _Ev(3, "basketball_nba", _LATE, home_score=4, away_score=2)
         await _run_net([ev], {3: ended}, NOW)
-        assert ev.completed_at == ended
-        assert ev.completed_at != NOW
+        assert ev.status == "suspended"
+        assert ev.completed_at is None
 
     @pytest.mark.asyncio
-    async def test_an_event_nothing_ever_reported_on_closes_with_a_null_end(self):
-        # Silence is not evidence of activity, so it must still close; but we
-        # have no honest end time, so the gap stays visible for the repair.
+    async def test_an_event_nothing_ever_reported_on_suspends_with_a_null_end(self):
+        # Silence is not evidence of activity, so the row must still come OFF
+        # the live board — that half of the net is unchanged and is what it is
+        # for. What changed is that coming off the live board is no longer the
+        # same act as being declared over.
         ev = _Ev(4, "basketball_nba", _LATE, home_score=3, away_score=1)
         _, stats = await _run_net([ev], {}, NOW)
-        assert ev.status == "closed"
+        assert ev.status == "suspended"
         assert ev.completed_at is None
-        assert stats["live_to_closed"] == 1
+        assert stats["live_to_suspended"] == 1
 
     @pytest.mark.asyncio
-    async def test_held_and_closed_events_are_handled_independently(self):
+    async def test_held_and_suspended_events_are_handled_independently(self):
         # One bad/held item must never suppress its healthy siblings (gotcha #42).
         held = _Ev(5, "basketball_nba", _LATE, home_score=45, away_score=56)
         done = _Ev(6, "basketball_nba", _LATE, home_score=109, away_score=87)
@@ -335,8 +410,34 @@ class TestStalenessNetEndToEnd:
             {5: NOW - timedelta(minutes=2), 6: NOW - timedelta(hours=2)},
             NOW,
         )
-        assert (held.status, done.status) == ("live", "closed")
-        assert (stats["held_still_running"], stats["live_to_closed"]) == (1, 1)
+        assert (held.status, done.status) == ("live", "suspended")
+        assert (stats["held_still_running"], stats["live_to_suspended"]) == (1, 1)
+
+    @pytest.mark.asyncio
+    async def test_a_suspended_row_returns_to_live_when_play_is_reported_again(self):
+        # The door back, and the reason `suspended` is not a quieter way of
+        # stranding a match. Same predicate and same venue-price exclusion as
+        # the hold: a source that REPORTS ON the game, captured inside
+        # STILL_ACTIVE_MINUTES.
+        resumed = _Ev(7, "basketball_nba", _LATE)
+        resumed.status = "suspended"
+        _, stats = await _run_net(
+            [], {7: NOW - timedelta(minutes=3)}, NOW, suspended=[resumed]
+        )
+        assert resumed.status == "live"
+        assert stats["suspended_to_live"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_suspended_row_with_no_fresh_evidence_stays_suspended(self):
+        # The control for the test above: without it, an arm that promoted
+        # unconditionally would pass the resume test and go unnoticed.
+        quiet = _Ev(8, "basketball_nba", _LATE)
+        quiet.status = "suspended"
+        _, stats = await _run_net(
+            [], {8: NOW - timedelta(hours=4)}, NOW, suspended=[quiet]
+        )
+        assert quiet.status == "suspended"
+        assert stats["suspended_to_live"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +546,10 @@ async def _run_odds_net(live, evidence, now=NOW):
 
     session = _OddsNetSession(live, evidence)
     with patch.object(mod, "datetime", _FrozenNow):
-        closed = await mod.detect_and_close_stale_events(session)
-    return session, closed
+        # live/048: two outcomes, not one — `{"closed": n, "suspended": m}`.
+        # StatPal's end time closes; quiet books only suspend.
+        outcome = await mod.detect_and_close_stale_events(session)
+    return session, outcome
 
 
 def _stale(total=12, last_snap_hours_ago=3):
@@ -470,20 +573,24 @@ class TestOddsNetSportDuration:
         # sixth inning. The old closer stamped this FINAL; event 14877917
         # (BOS@NYY, 463 outcomes) was closed 0-0 ninety minutes in.
         ev = _OddsEv(1, "baseball_mlb", NOW - timedelta(hours=2))
-        session, closed = await _run_odds_net([ev], {1: _stale()})
+        session, outcome = await _run_odds_net([ev], {1: _stale()})
         assert ev.status == "live"
         assert ev.completed_at is None
-        assert (closed, session.updates) == (0, [])
+        assert (outcome, session.updates) == ({"closed": 0, "suspended": 0}, [])
 
     @pytest.mark.asyncio
-    async def test_a_baseball_game_closes_after_five_and_a_half_hours(self):
+    async def test_a_baseball_game_suspends_after_five_and_a_half_hours(self):
         # And the net must keep working. SPORT_MAX_DURATIONS["baseball"] is 5.0
-        # ("extra innings possible"); past that, silent books are evidence.
+        # ("extra innings possible"); past that, silent books mean the row
+        # comes off the live board. live/048: silent books are evidence the
+        # BOOKS stopped, never evidence the GAME did, so the row is suspended
+        # rather than stamped Final.
         ev = _OddsEv(2, "baseball_mlb", NOW - timedelta(hours=5.5))
-        session, closed = await _run_odds_net([ev], {2: _stale()})
-        assert ev.status == "closed"
-        assert closed == 1
-        assert session.updates[0][1]["status"] == "closed"
+        session, outcome = await _run_odds_net([ev], {2: _stale()})
+        assert ev.status == "suspended"
+        assert outcome == {"closed": 0, "suspended": 1}
+        assert session.updates[0][1]["status"] == "suspended"
+        assert "completed_at" not in session.updates[0][1]
 
     @pytest.mark.asyncio
     async def test_the_boundary_is_the_sports_own_maximum(self):
@@ -492,7 +599,7 @@ class TestOddsNetSportDuration:
         past = _OddsEv(4, "baseball_mlb", NOW - timedelta(hours=5, minutes=1))
         await _run_odds_net([at], {3: _stale()})
         await _run_odds_net([past], {4: _stale()})
-        assert (at.status, past.status) == ("live", "closed")
+        assert (at.status, past.status) == ("live", "suspended")
 
     @pytest.mark.asyncio
     async def test_the_gate_is_per_sport_and_not_one_new_constant(self):
@@ -506,7 +613,9 @@ class TestOddsNetSportDuration:
         atp = _OddsEv(8, "tennis_atp", NOW - timedelta(hours=4))
         live = [nba, nhl, mlb, atp]
         await _run_odds_net(live, {e.id: _stale() for e in live})
-        assert [e.status for e in live] == ["closed", "closed", "live", "live"]
+        assert [e.status for e in live] == [
+            "suspended", "suspended", "live", "live",
+        ]
 
     @pytest.mark.asyncio
     async def test_no_sport_is_closeable_at_ninety_minutes(self):
@@ -519,8 +628,8 @@ class TestOddsNetSportDuration:
             _OddsEv(100 + i, f"{prefix}_x", NOW - timedelta(minutes=90))
             for i, prefix in enumerate(SPORT_MAX_DURATIONS)
         ]
-        _, closed = await _run_odds_net(live, {e.id: _stale() for e in live})
-        assert closed == 0
+        _, outcome = await _run_odds_net(live, {e.id: _stale() for e in live})
+        assert outcome == {"closed": 0, "suspended": 0}
         assert {e.status for e in live} == {"live"}
 
     @pytest.mark.asyncio
@@ -530,7 +639,7 @@ class TestOddsNetSportDuration:
         late = _OddsEv(10, "kabaddi_pkl", NOW - timedelta(hours=5))
         await _run_odds_net([early], {9: _stale()})
         await _run_odds_net([late], {10: _stale()})
-        assert (early.status, late.status) == ("live", "closed")
+        assert (early.status, late.status) == ("live", "suspended")
 
 
 class TestOddsNetEvidenceRules:
@@ -543,11 +652,11 @@ class TestOddsNetEvidenceRules:
         # closing unconditionally, which is why every orphan closed on its first
         # eligible pass. Gotcha #53: an empty read is not a fact.
         ev = _OddsEv(11, "baseball_mlb", NOW - timedelta(hours=8))
-        session, closed = await _run_odds_net(
+        session, outcome = await _run_odds_net(
             [ev], {11: {"recent": 0, "total": 0, "last_snap": None}}
         )
         assert ev.status == "live"
-        assert (closed, session.updates) == (0, [])
+        assert (outcome, session.updates) == ({"closed": 0, "suspended": 0}, [])
 
     @pytest.mark.asyncio
     async def test_the_sibling_net_still_owns_that_population(self):
@@ -566,34 +675,41 @@ class TestOddsNetEvidenceRules:
         # two minutes ago. Books go quiet on a long game too; closing here is
         # the CAL-P002 producer, freezing a mid-game score as the final.
         ev = _OddsEv(12, "baseball_mlb", NOW - timedelta(hours=6))
-        session, closed = await _run_odds_net(
+        session, outcome = await _run_odds_net(
             [ev], {12: {"recent": 0, "total": 40,
                         "last_snap": NOW - timedelta(minutes=2)}}
         )
         assert ev.status == "live"
-        assert (closed, session.updates) == (0, [])
+        assert (outcome, session.updates) == ({"closed": 0, "suspended": 0}, [])
 
     @pytest.mark.asyncio
-    async def test_the_close_stamps_the_game_end_not_the_processing_time(self):
-        # gotcha #22, on the path that now actually reaches a write.
+    async def test_suspending_stamps_no_completion_at_all(self):
+        # This used to assert that the write stamped the last snapshot as the
+        # game-end time (gotcha #22, correctly, against a `now()` that was
+        # worse). live/048 removes the write entirely: the last snapshot is an
+        # honest END time only if the game ended, and quiet books never said
+        # it did. A NULL is also what keeps the row readable as un-settled, so
+        # the scores feed may put it straight back to live.
         ended = NOW - timedelta(hours=1, minutes=30)
         ev = _OddsEv(13, "baseball_mlb", NOW - timedelta(hours=6))
-        await _run_odds_net(
+        session, _ = await _run_odds_net(
             [ev], {13: {"recent": 0, "total": 40, "last_snap": ended}}
         )
-        assert ev.status == "closed"
-        assert ev.completed_at == ended
-        assert ev.completed_at != NOW
+        assert ev.status == "suspended"
+        assert ev.completed_at is None
+        assert "completed_at" not in session.updates[0][1]
 
     @pytest.mark.asyncio
     async def test_fresh_odds_never_close_however_long_the_game_runs(self):
         # The maximum duration is a necessary condition, never a sufficient one.
         ev = _OddsEv(14, "baseball_mlb", NOW - timedelta(hours=9))
-        _, closed = await _run_odds_net(
+        _, outcome = await _run_odds_net(
             [ev], {14: {"recent": 6, "total": 60,
                         "last_snap": NOW - timedelta(minutes=1)}}
         )
-        assert (ev.status, closed) == ("live", 0)
+        assert (ev.status, outcome["closed"], outcome["suspended"]) == (
+            "live", 0, 0,
+        )
 
     @pytest.mark.asyncio
     async def test_a_statpal_end_time_still_closes_inside_the_maximum(self):
@@ -603,16 +719,22 @@ class TestOddsNetEvidenceRules:
         ended = NOW - timedelta(minutes=10)
         ev = _OddsEv(15, "baseball_mlb", NOW - timedelta(hours=2),
                      statpal_end_time=ended)
-        _, closed = await _run_odds_net([ev], {15: _stale()})
-        assert (ev.status, ev.completed_at, closed) == ("closed", ended, 1)
+        # AND IT IS THE CONTRAST THAT MAKES THE RULE LEGIBLE (live/048).
+        # StatPal WATCHES the match, so its end time is a positive statement
+        # on rung 3 of the state ladder, not an inference from silence. This
+        # is the one arm of this function that still writes Final, and a
+        # change that suspended everything indiscriminately would fail here.
+        _, outcome = await _run_odds_net([ev], {15: _stale()})
+        assert (ev.status, ev.completed_at) == ("closed", ended)
+        assert outcome == {"closed": 1, "suspended": 0}
 
     @pytest.mark.asyncio
     async def test_a_held_event_never_suppresses_a_closeable_sibling(self):
         # gotcha #42 — one item's fate must not decide another's.
         held = _OddsEv(16, "baseball_mlb", NOW - timedelta(hours=2))
         done = _OddsEv(17, "basketball_nba", NOW - timedelta(hours=6))
-        _, closed = await _run_odds_net(
+        _, outcome = await _run_odds_net(
             [held, done], {16: _stale(), 17: _stale()}
         )
-        assert (held.status, done.status) == ("live", "closed")
-        assert closed == 1
+        assert (held.status, done.status) == ("live", "suspended")
+        assert outcome == {"closed": 0, "suspended": 1}

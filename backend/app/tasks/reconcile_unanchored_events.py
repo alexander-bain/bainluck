@@ -310,6 +310,7 @@ async def reconcile(
     *,
     apply: bool = False,
     limit: int = DEFAULT_LIMIT,
+    market_moves: list[tuple[int, int, list]] | None = None,
 ) -> dict[str, Any]:
     """Census the unanchored population and drain what an arrived id licenses.
 
@@ -318,6 +319,13 @@ async def reconcile(
     ``no_work`` with the dispositions that explain the zero, because "it returned"
     is not "it worked" and a drain with nothing drainable is exactly the shape that
     reported SUCCESS every 6h for ten weeks in #683.
+
+    ``market_moves`` collects ``(keep, drop, rows)`` for every absorb that moved
+    a prediction market off the loser (LINKLOSS-02). It is COLLECTED here and
+    WRITTEN by the caller after its commit: a receipt is verified against the
+    committed row before publication, so one written inside this transaction
+    would be re-read as un-durable and downgraded — reporting a link the merge
+    really did move as a link the merge failed to move.
     """
     census: dict[str, int] = {
         DISPOSITION_DRAINABLE: 0,
@@ -410,7 +418,11 @@ async def reconcile(
                 # own pair and nothing else — neither the pairs already drained in
                 # this run, nor the pairs after it.
                 async with session.begin_nested():
-                    await _absorb(session, keep=twin["id"], drop=row.id)
+                    _moved = await _absorb(
+                        session, keep=twin["id"], drop=row.id,
+                    )
+                if market_moves is not None and _moved:
+                    market_moves.append((twin["id"], row.id, _moved))
                 drained.append({**pair, "applied": True})
             except UnanchoredMergeRefused as exc:
                 # #1947: the in-transaction guard refused on the FRESH rows. That
@@ -475,8 +487,13 @@ async def reconcile(
     }
 
 
-async def _absorb(session, *, keep: int, drop: int) -> None:
+async def _absorb(session, *, keep: int, drop: int) -> list:
     """Repoint every event FK from ``drop`` to ``keep``, then delete ``drop``.
+
+    Returns the prediction markets whose ``event_id`` this absorb moved, as read
+    BEFORE the update (LINKLOSS-02) — the caller receipts them once the
+    transaction has committed. Everything else this moves is bookkeeping; a
+    market link is a price on a game card.
 
     R4: the repoint step used to be a loop here over ``sports._EVENT_FK_TABLES`` — a
     THIRD consumer of the hand-written eight-tuple that SQLAlchemy metadata said was
@@ -502,8 +519,9 @@ async def _absorb(session, *, keep: int, drop: int) -> None:
         context="reconcile_unanchored_events",
     )
 
-    await repoint_event_children(session, keep_id=keep, orphan_id=drop)
+    moved = await repoint_event_children(session, keep_id=keep, orphan_id=drop)
     await session.execute(text("DELETE FROM events WHERE id = :drop"), {"drop": drop})
+    return moved.get("markets") or []
 
 
 class _Row:
@@ -544,11 +562,26 @@ async def run_reconcile_unanchored(
     """
     from app.tasks.base import get_task_session
 
+    from app.utils.match_receipts import record_twin_merge_receipts
+
+    market_moves: list[tuple[int, int, list]] = []
     async with get_task_session() as session:
-        result = await reconcile(session, apply=apply, limit=limit)
+        result = await reconcile(
+            session, apply=apply, limit=limit, market_moves=market_moves,
+        )
         if apply:
             await session.commit()
-        return result
+
+    # After the commit, on the receipts' own session. Reported rather than
+    # merely done: a receipt writer that quietly stops makes every later
+    # link-loss census read the silence as "no links moved" (gotcha #53).
+    written = 0
+    for keep, drop, rows in market_moves:
+        written += await record_twin_merge_receipts(
+            rows, previous_event_id=drop, new_event_id=keep,
+        )
+    result["market_link_receipts_written"] = written
+    return result
 
 
 def summarize_for_operator(result: dict[str, Any]) -> str:

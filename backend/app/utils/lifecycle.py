@@ -56,10 +56,15 @@ def enforce_live_requires_start(
 
 
 #: The ``events`` table's own vocabulary, which is NOT the card vocabulary above.
-#: A row is ``scheduled``/``live``/``completed``/``closed``; a card is
-#: ``upcoming``/``live``/``settled``. Downgrading an event row to ``"upcoming"``
-#: would emit a status no client parses, so the two need different fallbacks and
-#: this is the one place that difference is written down.
+#: A row is ``scheduled``/``live``/``suspended``/``completed``/``closed``; a card
+#: is ``upcoming``/``live``/``settled``. Downgrading an event row to
+#: ``"upcoming"`` would emit a status no client parses, so the two need different
+#: fallbacks and this is the one place that difference is written down.
+#:
+#: ``suspended`` (live/048) passes through here VERBATIM, and that is the correct
+#: behaviour rather than an omission: this rule only ever downgrades a premature
+#: ``live``, and a suspended row makes no claim about being played, so there is
+#: nothing for the invariant to catch.
 EVENT_NOT_STARTED = "scheduled"
 
 

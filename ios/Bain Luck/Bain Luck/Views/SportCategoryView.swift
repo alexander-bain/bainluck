@@ -104,7 +104,8 @@ struct SportCategoryView: View {
     private var categoryList: some View {
         List {
             if !viewModel.liveNow.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: viewModel.liveNow)
+                // live/048 — the header reads the bucket. See `EventState`.
+                feedSection(title: EventState.liveSectionTitle(hasSuspended: viewModel.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: viewModel.liveNow)
             }
             if !viewModel.justHappened.isEmpty {
                 feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: viewModel.justHappened)

@@ -295,13 +295,29 @@ struct MyStuffView: View {
             // re-appearance supersedes (cancels + joins) the prior load rather than
             // running an overlapping one (L2-217 Item 2 / C88).
             vm.viewDidStart()
+            if vm.items.isEmpty {
+                // 🔴 Arm the felt-number rail on tab activation with an empty
+                // screen (CERT-782). This branch only renders for a signed-in,
+                // onboarded reader, so the sign-in and onboarding screens — which
+                // legitimately show no cards — are never armed and can never
+                // manufacture a `no_card` row.
+                ScreenTimingSession.armScreen(surface: ScreenTimingSurface.myStuff)
+            }
             await vm.startLoad()
+        }
+        .onChange(of: vm.loading) { _, loading in
+            guard !loading, vm.items.isEmpty else { return }
+            ScreenTimingSession.reportOutcome(
+                surface: ScreenTimingSurface.myStuff,
+                outcome: vm.error == nil ? "empty" : "error"
+            )
         }
         .onDisappear {
             // Real termination, not just a discard: cancels the owned load and its
             // optional futures sibling, stops the refresh timer, and invalidates the
             // generation so a request that outraces cancellation cannot publish.
             vm.viewDidStop()
+            ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.myStuff)
         }
     }
 
@@ -378,7 +394,8 @@ struct MyStuffView: View {
                 feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
             }
             if !vm.liveNow.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
+                // live/048 — the header reads the bucket. See `EventState`.
+                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
             }
             if !vm.justHappened.isEmpty {
                 feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)
