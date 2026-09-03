@@ -2020,6 +2020,7 @@ async def grouped_feed(
     even if the beat is broken.
     """
     from ..utils.market_grouping import (
+        detect_exact_score_groups,
         detect_stat_prop_groups,
         detect_playoff_progression_groups,
         detect_threshold_groups,
@@ -2112,6 +2113,12 @@ async def grouped_feed(
     stat_prop_groups = detect_stat_prop_groups(market_dicts)
     playoff_groups = detect_playoff_progression_groups(market_dicts)
     threshold_groups = detect_threshold_groups(outcome_dicts)
+    # UX-1052 item 2 — exact-score outcomes are a discrete distribution over
+    # scorelines. `extract_threshold` now refuses them, so without this they
+    # would simply vanish from the strip; with it they keep their card and gain
+    # rung labels that are the actual outcomes ("2–3"), which is what Alex
+    # asked for: "show the real scorelines or the real thresholds."
+    exact_score_groups = detect_exact_score_groups(outcome_dicts)
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
@@ -2166,11 +2173,7 @@ async def grouped_feed(
             "market_count": len(group_markets),
         })
 
-    for scope, outcomes in threshold_groups.items():
-        if len(outcomes) < 2:
-            continue
-        for o in outcomes:
-            grouped_outcome_ids.add(o["id"])
+    def _group_title(outcomes: list[dict], scope: str) -> str:
         # #1102: build a context-carrying title from the parent market name
         # (strip the specific numeric threshold, preserve case for the entity),
         # falling back to the shared stem for legacy/context-free groups.
@@ -2184,12 +2187,50 @@ async def grouped_feed(
             title = re.sub(r"\s{2,}", " ", title).strip(" :–-·?")
             if not title:
                 title = market_name
-        else:
-            title = scope.replace("#", "").strip()
+            return title
+        return scope.replace("#", "").strip()
+
+    for scope, outcomes in exact_score_groups.items():
+        if len(outcomes) < 2:
+            continue
+        for o in outcomes:
+            grouped_outcome_ids.add(o["id"])
         feed_items.append({
             "type": "threshold",
+            # UX-1052 item 2 — the discriminator the renderer reads. Kept
+            # inside the `threshold` row type on purpose: the strip's
+            # fail-closed admission (`propStripAdmission`) refuses any row type
+            # it does not recognise, so a brand-new type would have silently
+            # dropped every exact-score card instead of relabelling it.
+            "kind": "exact_score",
+            "group_key": f"exact_score:{scope}",
+            "title": _group_title(outcomes, scope),
+            "points": [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "probability": o.get("probability"),
+                    # The rung label IS the outcome. No threshold is claimed.
+                    "label": o["score_label"],
+                    "threshold_value": 0,
+                    "threshold_unit": "",
+                    "threshold_direction": "exact",
+                }
+                for o in outcomes
+            ],
+            "outcome_count": len(outcomes),
+        })
+
+    for scope, outcomes in threshold_groups.items():
+        if len(outcomes) < 2:
+            continue
+        for o in outcomes:
+            grouped_outcome_ids.add(o["id"])
+        feed_items.append({
+            "type": "threshold",
+            "kind": "threshold",
             "group_key": f"threshold:{scope}",
-            "title": title,
+            "title": _group_title(outcomes, scope),
             "points": [
                 {
                     "id": o["id"],
@@ -2253,6 +2294,7 @@ async def grouped_feed(
             "stat_prop": len(stat_prop_groups),
             "playoff_progression": len(playoff_groups),
             "threshold": len(threshold_groups),
+            "exact_score": len(exact_score_groups),
         },
     }
 

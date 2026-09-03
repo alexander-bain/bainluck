@@ -49,9 +49,25 @@ _THRESHOLD_SIMPLE_RE = re.compile(
     \s*
     (°[FCK]|%|points?|goals?|runs?|yards?|mph|mm|inches|feet|degrees?)?  # optional unit
     \s*
-    (?:or\s+(?:more|above|higher|greater|less|below|lower|fewer)|\+|-|\s+and\s+above|\s+and\s+below)
+    (?:or\s+(?:more|above|higher|greater|less|below|lower|fewer)|\+|-(?!\s*\d)|\s+and\s+above|\s+and\s+below)
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+
+# UX-1052 item 2 — an exact SCORELINE: two integers joined by a dash, with a
+# non-digit on each side so a decimal ("2.5-3.5") or a longer run of digits
+# cannot masquerade as one. Kept deliberately narrow: this pattern's only job
+# is to tell "0 - 3" apart from a threshold, and a false positive here silently
+# deletes a real threshold rung.
+_SCORELINE_RE = re.compile(
+    r"""
+    (?<![\d.])       # not the tail of a longer number or a decimal
+    (\d{1,2})        # home goals
+    \s*[-–—]\s*      # hyphen, en dash or em dash
+    (\d{1,2})        # away goals
+    (?![\d.])        # not the head of a longer number or a decimal
+    """,
+    re.VERBOSE,
 )
 
 # Player stat props: "PlayerName: 25+ Points" or "PlayerName: Points Over 25.5"
@@ -297,6 +313,35 @@ def _normalize_playoff_stage(stage: str, action: str) -> tuple[str, int]:
     return (f"{action} {stage.title()}", 1)
 
 
+def extract_scoreline(name: str) -> Optional[tuple[int, int]]:
+    """
+    Extract an exact SCORELINE from an outcome name, e.g.
+
+        "AC Milan 0 - 3 Sport Lisboa e Benfica"  → (0, 3)
+        "FC Emmen 1 - 1 FC Volendam"             → (1, 1)
+
+    Returns (home_goals, away_goals) in the order they appear, or None.
+
+    UX-1052 item 2. This exists because ``_THRESHOLD_SIMPLE_RE`` accepts a bare
+    ``-`` as a threshold suffix, so every Polymarket "Exact Score" outcome
+    parsed as a threshold on its FIRST number: "AC Milan 0 - 3 Benfica" became
+    ``≥ 0``, "3 - 1" and "3 - 2" both became ``≥ 3``. Alex, shopping /sports on
+    2026-09-03: the ladder showed "≥ 0, ≥ 1, ≥ 2, ≥ 2" — "rung labels are not
+    the outcomes."
+
+    A scoreline is not a threshold in either direction, so the parser must
+    REFUSE it rather than pick one of its two numbers. The refusal is enforced
+    at the top of `extract_threshold`; the parsed pair is what
+    `detect_exact_score_groups` labels the rungs with.
+    """
+    if not name:
+        return None
+    m = _SCORELINE_RE.search(name)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
+
+
 def extract_threshold(name: str) -> Optional[tuple[float, str, str]]:
     """
     Extract a numeric threshold from a market outcome or title name.
@@ -308,6 +353,12 @@ def extract_threshold(name: str) -> Optional[tuple[float, str, str]]:
         - direction: "above" or "below" or "exact"
     """
     if not name:
+        return None
+
+    # UX-1052 item 2 — a SCORELINE is not a threshold. "2 - 1" carries two
+    # numbers and no direction; reading either one as "≥ N" invents a claim the
+    # market never made. Refuse before any pattern gets a chance to guess.
+    if extract_scoreline(name):
         return None
 
     # Try primary pattern first
@@ -476,6 +527,83 @@ def detect_threshold_groups(
     for scope, group in by_scope.items():
         if len(group) >= 2:
             group.sort(key=lambda x: x["threshold_value"])
+            result[scope] = group
+
+    return result
+
+
+def detect_exact_score_groups(
+    outcomes: list[dict],
+) -> dict[str, list[dict]]:
+    """
+    Detect EXACT SCORE groups among a list of outcomes — UX-1052 item 2.
+
+    An exact-score market ("AC Milan vs. Benfica - Exact Score") is a discrete
+    distribution over scorelines, not a ladder of cumulative thresholds. Before
+    this existed the outcomes fell into `detect_threshold_groups`, which read
+    the first integer of "AC Milan 2 - 3 Benfica" as a threshold and printed
+    "≥ 2" — a label that is not the outcome, and that collides with every other
+    scoreline sharing a home score.
+
+    Each outcome dict should have at minimum:
+        - id: int
+        - name: str (e.g. "AC Milan 2 - 3 Sport Lisboa e Benfica")
+        - market_id: int
+    Optionally (strongly preferred, same scoping rules as thresholds):
+        - market_name: str
+        - group_id: str
+        - probability: float | None
+
+    Returns:
+        Dict mapping scope_key → list of outcome dicts, MOST LIKELY FIRST
+        (only groups with 2+ scoreline outcomes). Each dict gains:
+        - score_home: int
+        - score_away: int
+        - score_label: str  — the rung label, e.g. "2–3" (en dash)
+
+    Ordering is by probability descending, not by scoreline. On a 16-rung
+    exact-score market the glance card shows the first four rungs, and the four
+    most likely scorelines are the story; the first four in scoreline order are
+    "0–0, 0–1, 0–2, 0–3", which is an alphabetisation, not a reading.
+    """
+    by_scope: dict[str, list[dict]] = {}
+
+    for o in outcomes:
+        name = o.get("name", "")
+        score = extract_scoreline(name)
+        if not score:
+            continue
+
+        group_id = o.get("group_id")
+        market_name = o.get("market_name")
+        if group_id:
+            scope = f"group:{group_id}"
+        elif market_name:
+            scope = market_name.strip().lower()
+        else:
+            # No parent context: a bare scoreline cannot be scoped to a game,
+            # and pooling scorelines across unrelated matches is the #1102
+            # defect. Refuse rather than guess.
+            continue
+
+        home, away = score
+        by_scope.setdefault(scope, []).append({
+            **o,
+            "score_home": home,
+            "score_away": away,
+            "score_label": f"{home}–{away}",
+        })
+
+    result = {}
+    for scope, group in by_scope.items():
+        if len(group) >= 2:
+            group.sort(
+                key=lambda x: (
+                    -(x.get("probability") or 0.0),
+                    x["score_home"],
+                    x["score_away"],
+                )
+            )
             result[scope] = group
 
     return result

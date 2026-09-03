@@ -582,10 +582,21 @@ export interface ThresholdPoint {
   threshold_value: number;
   threshold_unit: string;
   threshold_direction: string;
+  /**
+   * UX-1052 item 2 — an explicit rung label supplied by the backend, used
+   * verbatim when present. Exact-score rows carry the scoreline ("2–3"); a
+   * threshold row omits it and the client formats "≥ N" from the numbers.
+   */
+  label?: string | null;
 }
 
 export interface ThresholdFeedItem {
   type: "threshold";
+  /**
+   * UX-1052 item 2 — what KIND of question this ladder is. Absent on rows
+   * served by an older backend, which are thresholds by construction.
+   */
+  kind?: "threshold" | "exact_score";
   group_key: string;
   title: string;
   points: ThresholdPoint[];

@@ -124,6 +124,12 @@ function ThresholdItem({
   // cumulative threshold; the ladder reads top-down and never wraps its columns
   // (the old pooled sparkline hid the shape). Always title it: the kernel
   // discipline forbids a naked ladder without its question context.
+  //
+  // UX-1052 item 2 — an EXACT SCORE row is the same kernel asking a different
+  // question. It is a discrete distribution, so it reads most-likely-first, its
+  // rungs are labelled with the scoreline the market actually offers, and a
+  // capped ladder says how many scorelines it left off instead of just ending.
+  const isExactScore = item.kind === "exact_score";
   const rungs = buildThresholdRungs(
     item.points.map((p) => ({
       outcome_id: p.id,
@@ -132,13 +138,23 @@ function ThresholdItem({
       threshold_value: p.threshold_value,
       threshold_unit: p.threshold_unit,
       threshold_direction: p.threshold_direction,
+      label: p.label,
     })),
   );
+  if (rungs.length === 0) return null;
+  const cap = compact ? 4 : undefined;
+  const hidden = cap == null ? 0 : Math.max(0, rungs.length - cap);
   return (
     <QuantityGroup
       title={formatThresholdTitle(item.title)}
       rungs={rungs}
       compact={compact}
+      sortBy={isExactScore ? "probability" : "value"}
+      footnote={
+        isExactScore && hidden > 0
+          ? `${hidden} more scoreline${hidden === 1 ? "" : "s"}`
+          : undefined
+      }
       onRungSelect={onClick ? () => onClick() : undefined}
     />
   );

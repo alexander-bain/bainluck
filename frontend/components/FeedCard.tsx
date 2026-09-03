@@ -16,6 +16,7 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
+import { conceptDomainEmoji } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -1160,8 +1161,16 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
                 {item.headline}
               </span>
             )}
+            {/* UX-1052 item 1: the glyph follows the DOMAIN. It used to be a
+                hardcoded 🥊, which printed "🥊 CYCLING" over the Vuelta on
+                /sports Live Now. An unmapped domain renders its label alone —
+                no glyph is better than the wrong sport. */}
             <span className="text-[11px] text-text-muted tracking-wide truncate">
-              <span className="mr-0.5">🥊</span>
+              {conceptDomainEmoji(data.domain) && (
+                <span className="mr-0.5" aria-hidden>
+                  {conceptDomainEmoji(data.domain)}
+                </span>
+              )}
               {data.domain?.toUpperCase() || "EVENT"}
             </span>
           </div>
