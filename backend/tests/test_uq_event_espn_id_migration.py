@@ -31,7 +31,9 @@ unique index has the same NULL semantics Postgres gives it.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import os
 import sqlite3
 from pathlib import Path
 
@@ -60,6 +62,31 @@ def _ddl_from(recorder) -> str:
     )
 
 
+LOCK_STATEMENT = "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"
+
+#: Substrings that identify each statement the migration can emit, so the
+#: ordering assertions below turn on WHICH statement ran WHEN and not on
+#: whitespace or on the exact spelling of a SELECT.
+_SHAPE_MARKERS = (
+    "SET LOCAL lock_timeout",
+    LOCK_STATEMENT,
+    "count(*) FROM (",
+    "espn_id, count(*)",
+)
+
+
+def _shape(recorder) -> list[tuple[str, str]]:
+    """The one interleaved log, each entry reduced to its identifying marker."""
+    shaped = []
+    for kind, payload in recorder.ops:
+        if kind in ("create", "drop"):
+            shaped.append((kind, payload))
+            continue
+        flat = " ".join(payload.split())
+        shaped.append((kind, next((m for m in _SHAPE_MARKERS if m in flat), flat)))
+    return shaped
+
+
 def _load_migration():
     spec = importlib.util.spec_from_file_location("uq_event_espn_id", MIGRATION_PATH)
     mod = importlib.util.module_from_spec(spec)
@@ -82,14 +109,17 @@ class _StubResult:
 class _StubBind:
     """Answers the two queries `upgrade()` asks, and records that it asked."""
 
-    def __init__(self, contested: int, sample=()):
+    def __init__(self, contested: int, sample=(), ops=None):
         self.contested = contested
         self.sample = sample
         self.executed: list[str] = []
+        #: Shared with the `_RecordingOp` wrapping this bind — see its `ops`.
+        self.ops: list[tuple[str, str]] = [] if ops is None else ops
 
     def execute(self, statement, *args, **kwargs):
         text = str(statement)
         self.executed.append(text)
+        self.ops.append(("query", text))
         # The count query wraps the GROUP BY in a subselect; the sample query
         # selects the ids themselves. Distinguished by the aggregate.
         if "count(*) FROM (" in text:
@@ -104,11 +134,19 @@ class _RecordingOp:
         self._bind = bind
         self.created: list[tuple] = []
         self.dropped: list[tuple] = []
-        #: One INTERLEAVED log, because `created` and `dropped` read separately
-        #: cannot see ordering. `downgrade()` swapping its two statements leaves
-        #: both of those lists identical and is a real defect: it opens a window
-        #: with no index on `espn_id` at all.
-        self.ops: list[tuple[str, str]] = []
+        #: ONE INTERLEAVED log of everything the migration does — statements it
+        #: executes, queries it asks through the bind, indexes it creates and
+        #: drops — because separate lists cannot see ordering, and ordering is
+        #: what two different defects in this file turn on:
+        #:
+        #: * `downgrade()` swapping its two DDL statements leaves `created` and
+        #:   `dropped` identical, and opens a window with no index on `espn_id`.
+        #: * The table lock arriving anywhere but first (#2782) leaves every
+        #:   list identical, and is the whole of the lock-discipline fix.
+        #:
+        #: The bind appends to this same list, so a query cannot hide between
+        #: two recorded ops.
+        self.ops: list[tuple[str, str]] = bind.ops
 
     @property
     def executed(self) -> list[str]:
@@ -117,6 +155,9 @@ class _RecordingOp:
 
     def get_bind(self):
         return self._bind
+
+    def execute(self, statement, *args, **kwargs):
+        self.ops.append(("execute", str(statement)))
 
     def create_index(self, name, table, columns, **kwargs):
         self.created.append((name, table, tuple(columns), kwargs))
@@ -204,7 +245,10 @@ class TestTheDDLShape:
         recorder = _run(monkeypatch, contested=0)
         # Same interleaving argument as the downgrade: the unique index is
         # created BEFORE the loose one goes, so the column is never unindexed.
-        assert recorder.ops == [
+        assert _shape(recorder) == [
+            ("execute", "SET LOCAL lock_timeout"),
+            ("execute", "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"),
+            ("query", "count(*) FROM ("),
             ("create", "uq_events_espn_id"),
             ("drop", "ix_events_espn_id"),
         ]
@@ -219,7 +263,9 @@ class TestTheDDLShape:
         # which it has no index at all. Asserted on the INTERLEAVED log —
         # checking `created` and `dropped` separately passes just as happily
         # when the two statements are swapped, which is the defect.
-        assert recorder.ops == [
+        assert _shape(recorder) == [
+            ("execute", "SET LOCAL lock_timeout"),
+            ("execute", "LOCK TABLE events IN ACCESS EXCLUSIVE MODE"),
             ("create", "ix_events_espn_id"),
             ("drop", "uq_events_espn_id"),
         ]
@@ -228,6 +274,146 @@ class TestTheDDLShape:
         # Going back must always be possible, whatever the data says.
         recorder = _run(monkeypatch, contested=999, direction="downgrade")
         assert recorder.executed == []
+
+
+class TestLockDiscipline:
+    """One table, one acquisition, strongest mode, first (#2782).
+
+    #2782 killed four releases on 2026-09-02 because a migration took two hot
+    tables in the opposite order to the application and deadlocked, and
+    `migration_lock_budget.should_retry` — correctly — will not retry a
+    deadlock. This migration is NOT in that cross-table class; it touches only
+    `events`. What it had was the single-table form of the same mistake: three
+    progressively stronger locks on one table, peak mode reached LAST, after the
+    heap pass. These tests hold the fix in place.
+    """
+
+    def test_the_lock_is_taken_before_any_statement_that_touches_events(
+        self, monkeypatch
+    ):
+        """The load-bearing one, and the reason the pre-check can be trusted.
+
+        Before the fix the pre-check `SELECT` ran first, on an unlocked table.
+        A writer inserting a colliding row between that count and the
+        `CREATE UNIQUE INDEX` would make Postgres raise `duplicate key` — the
+        exact unhelpful error the pre-check exists to replace — and the
+        Procfile's `|| echo` (#2741) would swallow it. Under the lock the count
+        is an answer about the table the index is actually built over.
+        """
+        ops = _shape(_run(monkeypatch, contested=0))
+
+        positions = [i for i, (_, marker) in enumerate(ops) if marker == LOCK_STATEMENT]
+        assert positions, (
+            "upgrade() never takes an explicit lock on `events`; every statement "
+            "acquires its own, in increasing strength, which is the defect"
+        )
+
+        # Only arming the timeout may precede it. Not `ops[0] == lock`: that
+        # would fail for the right reason and the wrong one indistinguishably.
+        before = ops[: positions[0]]
+        assert all(
+            marker == "SET LOCAL lock_timeout" for _, marker in before
+        ), f"these ran before the table lock: {before}"
+
+    def test_it_takes_exactly_one_lock_so_there_is_nothing_to_upgrade(
+        self, monkeypatch
+    ):
+        # A second acquisition is an upgrade by definition, and an upgrade is
+        # the shape that deadlocks. One is the whole policy.
+        ops = _shape(_run(monkeypatch, contested=0))
+        assert [m for _, m in ops if "LOCK TABLE" in m] == [LOCK_STATEMENT]
+
+    def test_it_touches_exactly_one_table(self, monkeypatch):
+        """#2782's cross-table inversion needs a pair. This migration has none.
+
+        Asserted rather than asserted-in-prose: a later edit that adds, say, an
+        index on `futures_markets` to "save a deploy" reintroduces the exact
+        defect that cost the four releases, and the one-table claim in the
+        docstring is what stops being true.
+        """
+        recorder = _run(monkeypatch, contested=0)
+        tables = {table for _, table, _, _ in recorder.created}
+        tables |= {kwargs["table_name"] for _, kwargs in recorder.dropped}
+        assert tables == {"events"}
+
+    def test_the_lock_timeout_comes_from_the_shared_budget_not_a_literal(
+        self, monkeypatch
+    ):
+        """Two copies of this number could drift, and one of them is the deploy.
+
+        `alembic/env.py` arms `lock_timeout` as a connect-time libpq option from
+        `resolve_settings`. If this file hardcoded a different number the
+        migration would quietly run under a policy nobody configured — so it
+        reads the same function, and `ALEMBIC_LOCK_TIMEOUT_MS` still moves both.
+        """
+        from app.utils.migration_lock_budget import resolve_settings
+
+        def _timeout_statements():
+            # The raw log, not `_shape`: the marker deliberately hides the value.
+            return [
+                p for _, p in _run(monkeypatch, contested=0).ops if "lock_timeout" in p
+            ]
+
+        monkeypatch.delenv("ALEMBIC_LOCK_TIMEOUT_MS", raising=False)
+        default = resolve_settings(os.environ).lock_timeout_ms
+        assert _timeout_statements() == [f"SET LOCAL lock_timeout = '{default}ms'"]
+
+        # A literal would survive the assertion above and fail this one. 7000 is
+        # inside the module's floor/ceiling, so it is passed through unclamped.
+        monkeypatch.setenv("ALEMBIC_LOCK_TIMEOUT_MS", "7000")
+        assert _timeout_statements() == ["SET LOCAL lock_timeout = '7000ms'"]
+
+    def test_the_batch_retry_still_covers_this_migration(self):
+        """A bare mid-migration commit in this FILE would silently disarm it.
+
+        `env.py` drops the retry to a single attempt for the whole batch if any
+        pending script contains one of `NON_TRANSACTIONAL_MARKERS` — and it
+        scans SOURCE TEXT, so the marker landing in a docstring counts just as
+        much as in code. The lock-timeout policy above is only useful because a
+        timed-out attempt is retried; this asserts it still is.
+        """
+        from app.utils.migration_lock_budget import batch_is_retryable
+
+        assert batch_is_retryable([MIGRATION_PATH.read_text(encoding="utf-8")])
+
+    def test_there_is_no_second_retry_loop_inside_the_migration(self):
+        """Nested budgets multiply rather than add.
+
+        `env.py` already retries the batch 4 times at 5s. A loop in here would
+        make the worst case 4 x 4 x 5s of lock waiting plus backoff against a
+        120s `RELEASE_PHASE_BUDGET_S` that also has to import the app and stamp
+        a version — a deploy that can never land.
+
+        Asserted against the PARSED module rather than the source text: the
+        docstring explains this policy by name, and a substring scan would fire
+        on the explanation instead of on a retry.
+        """
+        tree = ast.parse(MIGRATION_PATH.read_text(encoding="utf-8"))
+
+        imported = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        assert "run_with_lock_retry" not in imported
+
+        # A hand-rolled loop is the other spelling. Comprehensions are
+        # `ast.comprehension`, not `ast.For`, so the sample-formatting genexp in
+        # `upgrade()` is not a false positive.
+        loops = [
+            node
+            for function in tree.body
+            if isinstance(function, ast.FunctionDef)
+            for node in ast.walk(function)
+            if isinstance(node, (ast.For, ast.While))
+        ]
+        assert loops == []
+
+    def test_downgrade_takes_the_lock_first_too(self, monkeypatch):
+        ops = _shape(_run(monkeypatch, contested=0, direction="downgrade"))
+        assert ops[0] == ("execute", "SET LOCAL lock_timeout")
+        assert ops[1] == ("execute", LOCK_STATEMENT)
 
 
 class TestTheInvariantBites:
