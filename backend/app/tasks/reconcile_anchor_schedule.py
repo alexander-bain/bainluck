@@ -46,7 +46,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.utils.anchor_schedule import (
     AUTHORITY_MOVES_US,
@@ -70,9 +70,74 @@ DEFAULT_LOOKBACK = timedelta(days=1)
 #: defect hides at horizons no scoreboard pass reaches.
 DEFAULT_HORIZON = timedelta(days=120)
 
-#: One ESPN call per row, so the default bound is an ESPN-politeness bound as
-#: much as a database one.
-DEFAULT_LIMIT = 200
+#: One ESPN call per row, so the bound is a *wall-clock* bound before it is
+#: anything else — and the wall clock that matters is Heroku's 30-second router
+#: timeout, because the only caller today is an admin endpoint.
+#:
+#: Measured 2026-09-03: ~0.2s per ``summary?event=`` call, so the original 200
+#: would have spent ~45s and been killed with an H12 *after the writes had
+#: already committed* — the worst shape a destructive endpoint can have. 100 is
+#: ~20s, inside the window with room for the query and the JSON.
+#:
+#: It is SMALLER THAN THE POPULATION and that is the point of ``eligible``:
+#: the window held 685 anchored rows that day (239 NFL alone), so even an
+#: unfiltered run at any router-safe limit sees a minority of them. Scope with
+#: ``sport`` rather than raising this. See :func:`_count_eligible` for why the
+#: shortfall is reported rather than left for the reader to notice.
+DEFAULT_LIMIT = 100
+
+
+def _window(
+    *,
+    lookback: timedelta,
+    horizon: timedelta,
+    now: Optional[datetime] = None,
+):
+    """The predicates that define "an anchored row this rail may consider".
+
+    One definition, used by both the count and the fetch. Two copies of a
+    population filter is how a census comes to disagree with the thing it is
+    counting.
+    """
+    from app.models.models import Event
+
+    now = now or datetime.now(timezone.utc)
+    return (
+        Event.espn_id.isnot(None),
+        Event.completed_at.is_(None),
+        Event.status.notin_(tuple(SETTLED_STATUSES)),
+        Event.commence_time >= now - lookback,
+        Event.commence_time < now + horizon,
+    )
+
+
+async def _count_eligible(
+    session,
+    *,
+    sport: Optional[str],
+    lookback: timedelta,
+    horizon: timedelta,
+    now: Optional[datetime] = None,
+) -> int:
+    """How many rows the window holds, ignoring ``limit``.
+
+    ``examined`` alone cannot tell a complete pass from a truncated one: a run
+    that saw all 34 rows and a run that saw the first 200 of 685 both report a
+    number and both look finished. That is gotcha #53 in its second form —
+    not an empty answer read as health, but a *partial* one. So the shortfall
+    is measured and named, and a truncated run may not terminate ``complete``.
+    """
+    from app.models.models import Event, Sport
+
+    query = (
+        select(func.count())
+        .select_from(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(*_window(lookback=lookback, horizon=horizon, now=now))
+    )
+    if sport:
+        query = query.where(Sport.key == sport)
+    return int((await session.execute(query)).scalar() or 0)
 
 
 async def _load_rows(
@@ -94,7 +159,6 @@ async def _load_rows(
     """
     from app.models.models import Event, Sport
 
-    now = now or datetime.now(timezone.utc)
     query = (
         select(
             Event.id,
@@ -108,13 +172,7 @@ async def _load_rows(
             Sport.key,
         )
         .join(Sport, Sport.id == Event.sport_id)
-        .where(
-            Event.espn_id.isnot(None),
-            Event.completed_at.is_(None),
-            Event.status.notin_(tuple(SETTLED_STATUSES)),
-            Event.commence_time >= now - lookback,
-            Event.commence_time < now + horizon,
-        )
+        .where(*_window(lookback=lookback, horizon=horizon, now=now))
         .order_by(Event.commence_time)
         .limit(limit)
     )
@@ -182,6 +240,9 @@ async def reconcile(
     from app.services.espn_api import get_espn_service
     from app.tasks.repair_authority_id_collisions import _fetch_record
 
+    eligible = await _count_eligible(
+        session, sport=sport, lookback=lookback, horizon=horizon
+    )
     rows = await _load_rows(
         session, sport=sport, limit=limit, lookback=lookback, horizon=horizon
     )
@@ -191,6 +252,8 @@ async def reconcile(
             "terminal": "no_work",
             "reason": "no anchored, unfinished rows inside the window",
             "applied": apply,
+            "eligible": eligible,
+            "truncated": False,
             **summarize_decisions([]),
         }
 
@@ -226,10 +289,18 @@ async def reconcile(
                 )
 
     pending = summary["by_verdict"][AUTHORITY_MOVES_US]
+    truncated = eligible > summary["examined"]
     # An authority that answered for nothing is not a clean population. The
     # terminal has to be able to say so, or a dark ESPN reads as "all agree".
     if summary["by_verdict"]["no_answer"] == summary["examined"]:
         terminal = "authority_dark"
+    elif truncated:
+        # A run that did not see the whole window has not finished, whatever it
+        # found in the part it saw — and "no_work" would be the worst of the
+        # three readings, because it is the one that sounds like an all-clear.
+        # `partial` is chosen over a new word so `task_verdict` keeps reading it
+        # as PARTIAL rather than UNKNOWN.
+        terminal = "partial"
     elif not pending:
         terminal = "no_work"
     elif apply:
@@ -243,17 +314,34 @@ async def reconcile(
         "applied": apply,
         "moved": moved,
         "stale": stale,
+        "eligible": eligible,
+        "truncated": truncated,
         **summary,
     }
 
 
 def summarize_for_operator(result: dict[str, Any]) -> str:
-    """One line an operator can act on. Never reads a dark authority as clean."""
+    """One line an operator can act on. Never reads a dark authority as clean.
+
+    ``examined`` is printed against ``eligible`` because the two differ far more
+    often than they look like they should — the default limit is 200 and the
+    window held 685 rows the day this was measured. A reviewer who is told only
+    the first number will read a truncated pass as the whole story.
+    """
     if not result.get("measured"):
         return f"UNMEASURED — {result.get('reason')}"
     verdicts = result.get("by_verdict") or {}
     counts = " ".join(f"{name}={verdicts.get(name, 0)}" for name in SCHEDULE_VERDICTS)
+    examined = result.get("examined")
+    eligible = result.get("eligible")
+    reach = (
+        f"examined={examined}/{eligible}"
+        if eligible is not None
+        else f"examined={examined}"
+    )
+    if result.get("truncated"):
+        reach += f" TRUNCATED (raise limit above {eligible} to see the rest)"
     return (
-        f"{result.get('terminal')}: examined={result.get('examined')} "
+        f"{result.get('terminal')}: {reach} "
         f"moved={result.get('moved', 0)} stale={result.get('stale', 0)} · {counts}"
     )

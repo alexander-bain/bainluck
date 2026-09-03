@@ -365,8 +365,19 @@ class TestRefusals:
         )
         assert decision.outcome == "AUTHORITY_UNAVAILABLE"
 
-    def test_401882924_a_vocabulary_gap_refuses_rather_than_reaching_for_a_score(self):
-        """ESPN publishes "Osasuna"; we hold "CA Osasuna". Both rows refuse."""
+    def test_401882924_now_resolves_because_the_vocabulary_gap_closed(self):
+        """ESPN publishes "Osasuna"; we hold "CA Osasuna". #2792 closed that gap.
+
+        This case used to assert ``NO_ROW_AGREES``, and that refusal was the
+        DEFECT rather than the rule: two rows wore one id, ESPN said which date
+        the game is, and the only thing stopping the rail resolving it was a
+        leading club initialism. With ``canonical_forms`` both rows now agree on
+        teams, the clock separates them, and the row on ESPN's date keeps the id
+        while the other hands it back.
+
+        Unstamped, never deleted (ruling 079) — the loser gives up its claim to
+        the id, not its existence.
+        """
         espn = record({"celta vigo"}, {"osasuna"}, starts_at=utc("2026-08-31T19:00:00"))
         decision = decide_group(
             espn,
@@ -375,6 +386,25 @@ class TestRefusals:
                 row(15198264, "Celta Vigo", "CA Osasuna", at=utc("2026-08-31T19:00:00")),
             ],
             authority_id="401882924",
+        )
+        assert decision.outcome == "RESOLVED_ONE"
+        assert decision.keep_event_id == 15198264
+        assert decision.unstamp_event_ids == (14970077,)
+
+    def test_a_vocabulary_gap_no_structural_rule_reaches_still_refuses(self):
+        """The refusal this class is really about, on a gap #2792 does NOT close.
+
+        ESPN calls them "Athletic Club"; we hold "Athletic Bilbao". That is a
+        genuine synonym, not punctuation or an affix, and no reduction reaches
+        it — deliberately, because the rule that would is the rule that also
+        concludes Ohio State and Texas State are one school. It stays a refusal
+        and writes nothing, which is the safe direction.
+        """
+        espn = record({"athletic club"}, {"elche"}, starts_at=utc("2026-08-31T19:00:00"))
+        decision = decide_group(
+            espn,
+            [row(15298237, "Athletic Bilbao", "Elche CF", at=utc("2026-08-31T19:00:00"))],
+            authority_id="401882925",
         )
         assert decision.outcome == "NO_ROW_AGREES"
         assert decision.unstamp_event_ids == ()
