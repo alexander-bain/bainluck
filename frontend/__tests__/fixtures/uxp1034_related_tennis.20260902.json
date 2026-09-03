@@ -1,0 +1,298 @@
+{
+ "items": [
+  {
+   "type": "futures",
+   "score": 80,
+   "reason": "Carlos Alcaraz shifted up 14.5 points from opening in US Open Men's Singles Winner",
+   "headline": "Carlos Alcaraz up 14.5 points from opening",
+   "context_summary": "Carlos Alcaraz up 14.5 points from opening",
+   "data": {
+    "id": 34277822,
+    "name": "US Open Men's Singles Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "tennis",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-09-28T02:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 152600805,
+      "name": "Carlos Alcaraz",
+      "probability": 0.3115,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 31
+     },
+     {
+      "id": 152600808,
+      "name": "Alexander Zverev",
+      "probability": 0.1844,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 18
+     },
+     {
+      "id": 152600813,
+      "name": "Ben Shelton",
+      "probability": 0.0779,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 8
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 33,
+    "canonical_market_key": "tennis::championship:2026",
+    "group_id": "kalshi:KXATP-26USO",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Carlos Alcaraz",
+       "probability": 0.3115,
+       "movement": null
+      },
+      {
+       "label": "Alexander Zverev",
+       "probability": 0.1844,
+       "movement": null
+      },
+      {
+       "label": "Ben Shelton",
+       "probability": 0.0779,
+       "movement": null
+      },
+      {
+       "label": "Taylor Fritz",
+       "probability": 0.0697,
+       "movement": null
+      },
+      {
+       "label": "Daniil Medvedev",
+       "probability": 0.0451,
+       "movement": null
+      },
+      {
+       "label": "Felix Auger-Aliassime",
+       "probability": 0.0287,
+       "movement": null
+      },
+      {
+       "label": "Lorenzo Musetti",
+       "probability": 0.0205,
+       "movement": null
+      },
+      {
+       "label": "Frances Tiafoe",
+       "probability": 0.0205,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 25,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/5739200/pexels-photo-5739200.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": null,
+    "image_height": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "sports",
+     "subtopic": "tennis",
+     "archetype": "other",
+     "audience_scope": "broad",
+     "salience_score": 4,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "interestingness_score": 58.2,
+    "interestingness_reasons": [
+     "multi_source",
+     "fresh",
+     "trading_volume"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:tennis",
+     "tier:1"
+    ],
+    "story_key": "story:grand_slam_tennis"
+   }
+  },
+  {
+   "type": "futures",
+   "score": 78,
+   "reason": "Multiple ranking changes in US Open Women's Singles Winner",
+   "headline": "Multiple ranking changes",
+   "context_summary": "Multiple ranking changes; Aryna Sabalenka leads at 20%",
+   "data": {
+    "id": 34277839,
+    "name": "US Open Women's Singles Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "tennis",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-09-27T02:00:00+00:00",
+    "top_outcomes": [
+     {
+      "id": 152600872,
+      "name": "Aryna Sabalenka",
+      "probability": 0.2017,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 20
+     },
+     {
+      "id": 152600880,
+      "name": "Coco Gauff",
+      "probability": 0.1588,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 16
+     },
+     {
+      "id": 206838394,
+      "name": "Iga Swiatek",
+      "probability": 0.133,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 13
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 23,
+    "canonical_market_key": "tennis::championship:2026",
+    "group_id": "kalshi:KXWTA-26USO",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "distribution_outcomes": [
+      {
+       "label": "Aryna Sabalenka",
+       "probability": 0.2017,
+       "movement": null
+      },
+      {
+       "label": "Coco Gauff",
+       "probability": 0.1588,
+       "movement": null
+      },
+      {
+       "label": "Iga Swiatek",
+       "probability": 0.133,
+       "movement": null
+      },
+      {
+       "label": "Jessica Pegula",
+       "probability": 0.0815,
+       "movement": null
+      },
+      {
+       "label": "Naomi Osaka",
+       "probability": 0.0558,
+       "movement": null
+      },
+      {
+       "label": "Karolina Muchova",
+       "probability": 0.0472,
+       "movement": null
+      },
+      {
+       "label": "Mirra Andreeva",
+       "probability": 0.0472,
+       "movement": null
+      },
+      {
+       "label": "Elena Rybakina",
+       "probability": 0.0472,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 15,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/38377403/pexels-photo-38377403.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": null,
+    "image_height": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "interestingness_score": 60.73,
+    "interestingness_reasons": [
+     "decisive_but_not_settled",
+     "multi_source",
+     "fresh",
+     "trading_volume"
+    ],
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:tennis",
+     "tier:1"
+    ],
+    "story_key": "story:grand_slam_tennis"
+   }
+  }
+ ],
+ "total": 2,
+ "limit": 9,
+ "offset": 0,
+ "has_more": false,
+ "cache": {
+  "status": "miss",
+  "built_at": 1788401499.116779,
+  "ttl_seconds": 60,
+  "stale_ttl_seconds": 300,
+  "live": false
+ },
+ "_provenance": "GET https://api.bainluck.com/api/feed?limit=9&tags=[\"sport:tennis\"] \u2014 the exact request RelatedByTag builds for the 'More Tennis' section on /events/15293830. Read 2026-09-02T19:0xZ PT. Verbatim; nothing assembled."
+}

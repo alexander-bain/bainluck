@@ -912,6 +912,7 @@ async def sync_espn_live_events(
 
     from app.services import get_espn_service, llm
     from app.models import Venue
+    from app.utils.espn_id_stamp import REFUSED, STAMPED, stamp_espn_id_if_unheld
 
     espn = get_espn_service()
 
@@ -944,6 +945,11 @@ async def sync_espn_live_events(
     #: fact from no name hit at all, and an operator reading only "matched: 0"
     #: cannot tell a coverage gap from a suppressed manufacture.
     refused: list[dict] = []
+    #: #2693 CERT-784 — the OTHER refusal, and it is a different fact again: the
+    #: pair was authorized and the id is already worn by another row. Counted
+    #: separately because it names a collision this rail declined to recreate,
+    #: which is the number that says the step-2 repair is holding.
+    id_refusals: list[dict] = []
 
     def names_match(our_names: list, espn_name: str) -> bool:
         """Check if any of our name variations match the ESPN name."""
@@ -1051,10 +1057,23 @@ async def sync_espn_live_events(
             if not dry_run:
                 changed = False
 
-                # Update ESPN ID
-                if espn_event.espn_id and event.espn_id != espn_event.espn_id:
-                    event.espn_id = espn_event.espn_id
+                # Update ESPN ID.
+                #
+                # #2693 CERT-784: through the #2017 holder check, not raw. The
+                # pair is authorized (same game, time-gated) but that says
+                # nothing about whether ANOTHER row already wears this id, and
+                # an admin sync that recreates a collision undoes the step-2
+                # repair as surely as a scheduled one does.
+                verdict, holder_id = await stamp_espn_id_if_unheld(
+                    db, event, espn_event.espn_id, context="admin sync-espn-live",
+                )
+                if verdict == STAMPED:
                     changed = True
+                elif verdict == REFUSED:
+                    id_refusals.append(
+                        {"event_id": event.id, "espn_id": espn_event.espn_id,
+                         "holder_event_id": holder_id}
+                    )
 
                 # Update game clock
                 if espn_event.clock and event.game_clock != espn_event.clock:
@@ -1133,6 +1152,8 @@ async def sync_espn_live_events(
         "llm_matches": llm_matched[:10] if llm_matched else [],
         "refused_count": len(refused),
         "refused": refused[:10],
+        "espn_id_held_count": len(id_refusals),
+        "espn_id_held": id_refusals[:10],
     }
 
 
@@ -1386,6 +1407,8 @@ async def backfill_espn_ids(
         groups[(sport_key, prev_date)].append(event)
 
     # Fetch ESPN schedules and match
+    from app.utils.espn_id_stamp import REFUSED, stamp_espn_id_if_unheld
+
     espn = ESPNAPIService()
     matched = 0
     scanned = 0
@@ -1393,6 +1416,9 @@ async def backfill_espn_ids(
     #: #2049 / gotcha #53 — see the sibling rail above: a refused stamp must be
     #: reported, not folded into "unmatched".
     refused: list[dict] = []
+    #: #2693 CERT-784 — the id is already worn by another row. See the sibling
+    #: rail above for why this is its own count.
+    id_refusals: list[dict] = []
 
     try:
         for (sport_key, date_str), group_events in groups.items():
@@ -1464,7 +1490,19 @@ async def backfill_espn_ids(
                 })
 
                 if not dry_run:
-                    event.espn_id = ee.espn_id
+                    # #2693 CERT-784: holder-checked (#2017). See the sibling
+                    # writer above — this rail selects on `espn_id IS NULL`, so
+                    # every row it touches is one the step-2 repair may just
+                    # have cleared, and a raw stamp hands the contested id
+                    # straight back.
+                    verdict, holder_id = await stamp_espn_id_if_unheld(
+                        db, event, ee.espn_id, context="admin backfill-espn-ids",
+                    )
+                    if verdict == REFUSED:
+                        id_refusals.append(
+                            {"event_id": event.id, "espn_id": ee.espn_id,
+                             "holder_event_id": holder_id}
+                        )
                     # Also update win prob if ESPN has it
                     if ee.home_win_probability is not None:
                         event.espn_win_prob_home = ee.home_win_probability
@@ -1513,6 +1551,8 @@ async def backfill_espn_ids(
         "unmatched": unmatched[:30],
         "refused_count": len(refused),
         "refused": refused[:20],
+        "espn_id_held_count": len(id_refusals),
+        "espn_id_held": id_refusals[:20],
     }
 
 

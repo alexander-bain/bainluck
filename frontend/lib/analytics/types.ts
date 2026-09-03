@@ -10,6 +10,10 @@
  */
 
 import type { MarketShape } from '@/lib/marketShape';
+// The event state vocabulary has ONE definition (live/048). Analytics had
+// its own copy, so a new status was a type error here before it was ever a
+// reporting gap — which is the right failure, but only once.
+import type { EventStatus } from '@/lib/types';
 
 // ============================================================================
 // User Properties (set once per session/user change)
@@ -78,7 +82,7 @@ export interface PageViewParams {
   event_id?: number;
   sport?: string;
   league?: string;
-  event_status?: 'scheduled' | 'live' | 'completed' | 'closed';
+  event_status?: EventStatus;
   /** Referrer info */
   referrer?: string;
   /** Internal navigation source */
@@ -134,7 +138,7 @@ export interface EventCardClickParams {
   league_tier: 1 | 2 | 3;
   home_team: string;
   away_team: string;
-  status: 'scheduled' | 'live' | 'completed' | 'closed';
+  status: EventStatus;
   home_probability: number | null;
   away_probability: number | null;
   /** Is this a close game (<10% difference)? */
@@ -163,7 +167,7 @@ export interface EventDetailViewParams {
   league: string;
   home_team: string;
   away_team: string;
-  status: 'scheduled' | 'live' | 'completed' | 'closed';
+  status: EventStatus;
   home_probability: number | null;
   away_probability: number | null;
   is_close_game: boolean;
@@ -388,6 +392,66 @@ export interface WebVitalParams {
   navigation_type?: string;
   /** Route path the metric was measured on (no query string / ids). */
   page_path: string;
+}
+
+/**
+ * SCREEN TIMING — the felt number, on every surface, on every platform.
+ *
+ * One packet per screen arrival. It answers the only latency question a reader
+ * has: *how long until I could see a real card, and how long until I could use
+ * the screen*. Deliberately identical in name and parameter shape to the iOS /
+ * iPadOS / macOS / watchOS packet (`Services/ScreenTiming.swift`), so web and
+ * native land in ONE table rather than two that have to be reconciled by hand.
+ *
+ * WHY NOT WEB VITALS. FCP fires when the SKELETON paints — a grey placeholder
+ * grid is contentful — so a screen can post a 0.4 s FCP and still be showing the
+ * reader nothing they came for. LCP names the largest element, which on a card
+ * surface is usually a hero photograph. Neither is the felt number, and no
+ * amount of aggregation turns them into it. `first_card_ms` is measured from a
+ * real card actually being in the DOM, unskeletoned.
+ *
+ * CONVENTIONS, matching `MyStuffLoadParams` above so the two rails read alike:
+ * every duration is milliseconds, and **-1 means "not measurable / did not
+ * happen"** — never 0, which is a real and very different claim.
+ *
+ * Carries no uid, email, token, session id, item id, market text or URL. The
+ * only free-ish string is `surface`, which is a bounded route slug derived from
+ * `pathname` with every dynamic segment replaced (`/events/:id`), so a packet
+ * cannot smuggle an entity id in the surface name.
+ */
+export interface ScreenTimingParams {
+  /** Bounded route slug, dynamic segments masked — e.g. "discover", "events/:id". */
+  surface: string;
+  /**
+   * `cold` = a document load (or a native cold app launch). `warm` = an in-app
+   * transition to this screen with the runtime already up. Averaging the two
+   * hides the only distinction the target is written in terms of (<3 s cold,
+   * <1 s warm), so it is a dimension, never a blend.
+   */
+  entry: 'cold' | 'warm';
+  /** Time to first contentful paint (web) / first frame (native). -1 if n/a. */
+  shell_ms: number;
+  /** 🔴 THE NEEDLE. Time until the first real, non-skeleton card was on screen. */
+  first_card_ms: number;
+  /** Time until the last above-the-fold real card appeared (first screen settled). */
+  fold_ms: number;
+  /** Time until the screen stopped blocking input / finished its critical work. */
+  interactive_ms: number;
+  /** Real cards above the fold when the first screen settled. */
+  card_count: number;
+  /** Coarse hardware class. `watch` exists so the Watch surface is not invisible. */
+  device_class: 'phone' | 'tablet' | 'desktop' | 'watch' | 'unknown';
+  /** Coarse network label from the Network Information API / native reachability. */
+  network_class: string;
+  /** Deploy tag (short commit sha, or "web") — never user data. */
+  app_build: string;
+  /**
+   * Bounded outcome class. `ok` = a real card appeared. `empty` = the screen
+   * legitimately had nothing to show. `no_card` = the budget expired with
+   * neither — the failure that a timing-only rail reports as a FAST result,
+   * because a page that renders nothing paints quickly (LAT-P202).
+   */
+  outcome_class: 'ok' | 'empty' | 'no_card' | 'error';
 }
 
 /**
@@ -987,6 +1051,9 @@ export interface AnalyticsEventMap {
 
   // My Stuff first-card attribution (L2-217 / C88)
   my_stuff_load: MyStuffLoadParams;
+
+  // The felt number, every surface, web + native (latency/121)
+  screen_timing: ScreenTimingParams;
 
   // Launch instrumentation (Queue 310)
   session_open: SessionOpenParams;

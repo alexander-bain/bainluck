@@ -39,7 +39,11 @@ import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
-import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import {
+  matchEventHref,
+  type EspnEventIds,
+  type MatchupEventIds,
+} from "./tournamentEventLink";
 
 export interface ResultPlayer {
   entity_key: string;
@@ -89,6 +93,15 @@ export interface TournamentResult {
   /** ESPN's own round wording — finer than ours, kept beside it. */
   source_round: string | null;
   source: string;
+  /**
+   * ESPN's own id for this competition (#2693 step 2), on every row.
+   *
+   * The key of `event_links.by_espn`, and the only channel that can route a
+   * finished match the register no longer carries. Optional so a payload
+   * cached before the field existed still renders — absent simply means the
+   * row falls back to the market channel, which is what it did before.
+   */
+  espn_competition_id?: string | null;
 }
 
 export interface TournamentResults {
@@ -545,16 +558,108 @@ export function completionNote(matches: TournamentResult[]): string | null {
   return `${clauses.join("; ")}.`;
 }
 
-/** How many of these results carry a prior — the ratio the section states. */
-export function prematchCoverage(
-  matches: TournamentResult[]
-): { withPrior: number; total: number } {
-  return {
-    withPrior: matches.filter((match) =>
-      match.players.some((player) => typeof player.prematch_probability === "number")
-    ).length,
-    total: matches.length,
-  };
+/**
+ * The prefix `build_results` gives a row whose PAIRING the draw register does
+ * not carry — `espn:182730` rather than
+ * `mens-singles:ben-shelton-vs-tallon-griekspoor:2026-08-30`.
+ *
+ * `matchup_by_pair.get(..., f"espn:{comp_id}")` is the exact line, and the
+ * fallback is reached only when the register has no matchup for the two
+ * players. Both players ARE registered on such a row — a result with an
+ * unregistered player never reaches this list at all; it is counted in
+ * `unregistered_pairs`. So the prefix means precisely: *we know both these
+ * people and we could not tie this fixture to a market of ours*.
+ */
+const SCOREBOARD_MATCHUP_PREFIX = "espn:";
+
+export interface PrematchCoverage {
+  /** Rows that print a prior. */
+  withPrior: number;
+  total: number;
+  /**
+   * Rows the register carries a matchup for, that still print no prior.
+   *
+   * We hold this fixture. A market for it was registered or it was not, and
+   * either way no OPENING price was captured before play — which is a
+   * different fact from the one below and the reason ux/1034 A3 exists.
+   */
+  heldWithoutOpening: number;
+  /** Rows whose pairing the register does not carry — see the prefix note. */
+  untied: number;
+}
+
+/**
+ * How many of these results carry a prior, and WHY THE REST DO NOT (ux/1034 A3).
+ *
+ * ═══ THE SENTENCE THAT WAS WRONG ═══
+ *
+ * Alex, on the live hub: Shelton–Hurkacz shows no pre-match number, and the
+ * footnote under it said *"The rest are matches nobody ran a market on"*. That
+ * is false for that row, measurably: Polymarket had a market on it, its price
+ * history simply starts at 17:38Z and the match started at 17:08Z — so what we
+ * lack is an OPENING, not a market. He was explicit: *"say 'no pre-match
+ * reading captured' when a market exists but no opening snapshot does.
+ * Distinguish the two cases honestly."*
+ *
+ * The two cases the payload CAN distinguish are counted here. What it cannot
+ * distinguish is a third: whether a venue ran a market on a fixture our
+ * register never tied to one. Nothing in this payload knows that, so the
+ * footnote stops claiming it — a sentence about what Kalshi and Polymarket
+ * chose to list is a claim about a venue, and it was being made from a field
+ * that only ever described US.
+ */
+export function prematchCoverage(matches: TournamentResult[]): PrematchCoverage {
+  let withPrior = 0;
+  let heldWithoutOpening = 0;
+  let untied = 0;
+
+  for (const match of matches) {
+    if (match.players.some((player) => typeof player.prematch_probability === "number")) {
+      withPrior += 1;
+    } else if (String(match.matchup_key ?? "").startsWith(SCOREBOARD_MATCHUP_PREFIX)) {
+      untied += 1;
+    } else {
+      heldWithoutOpening += 1;
+    }
+  }
+
+  return { withPrior, total: matches.length, heldWithoutOpening, untied };
+}
+
+/**
+ * Why the rows without a prior have not got one — the replacement for
+ * *"The rest are matches nobody ran a market on"* (ux/1034 A3).
+ *
+ * Two counts, each said in the terms the payload can actually support, and a
+ * closing clause that refuses the third. On the men's list as served on
+ * 2026-09-03 this reads: *"Of the rest, 55 are fixtures we could not tie to a
+ * market of ours and 3 are matches we hold but caught no price on before play
+ * started — neither is a statement about whether a venue listed one."*
+ *
+ * Empty string when every row has a prior; the caller only prints it in the
+ * branch where some row does not.
+ */
+export function prematchAbsenceNote(coverage: PrematchCoverage): string {
+  const clauses: string[] = [];
+  if (coverage.untied > 0) {
+    clauses.push(
+      `${coverage.untied} ${
+        coverage.untied === 1 ? "is a fixture" : "are fixtures"
+      } we could not tie to a market of ours`
+    );
+  }
+  if (coverage.heldWithoutOpening > 0) {
+    clauses.push(
+      `${coverage.heldWithoutOpening} ${
+        coverage.heldWithoutOpening === 1 ? "is a match" : "are matches"
+      } we hold but caught no price on before play started`
+    );
+  }
+  if (clauses.length === 0) return "";
+  return (
+    `Of the rest, ${clauses.join(" and ")} — neither is a statement about ` +
+    `whether a venue listed one.`
+  );
 }
 
 /** Newest first — a results list is read from the top for what just happened. */
@@ -622,9 +727,15 @@ export function resultsEmptyReason(
  */
 export function resultEventHref(
   result: TournamentResult,
-  eventIds: MatchupEventIds
+  eventIds: MatchupEventIds,
+  espnEventIds?: EspnEventIds
 ): string | null {
-  return matchupEventHref(result.matchup_key, eventIds);
+  return matchEventHref(
+    result.matchup_key,
+    result.espn_competition_id,
+    eventIds,
+    espnEventIds
+  );
 }
 
 /**
@@ -637,11 +748,13 @@ export function resultEventHref(
  */
 export function resultLinkCoverage(
   matches: TournamentResult[],
-  eventIds: Record<string, number> | null | undefined
+  eventIds: Record<string, number> | null | undefined,
+  espnEventIds?: EspnEventIds
 ): { linked: number; total: number } {
   return {
-    linked: matches.filter((match) => resultEventHref(match, eventIds) !== null)
-      .length,
+    linked: matches.filter(
+      (match) => resultEventHref(match, eventIds, espnEventIds) !== null
+    ).length,
     total: matches.length,
   };
 }

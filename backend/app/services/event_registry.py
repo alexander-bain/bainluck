@@ -56,6 +56,7 @@ from app.services.anchor_channel import (
     record_anchor,
 )
 from app.utils.espn_helpers import commence_correction_inverts_completion
+from app.utils.espn_id_stamp import espn_id_holder
 from app.utils.event_completion import settlement_is_a_staleness_artifact
 from app.utils.name_normalization import names_match
 
@@ -373,7 +374,12 @@ async def find_or_create_event(
                 # next caller rather than a live defect; it is closed by ordering
                 # rather than by a comment telling people to be careful.
                 same_record = claim_is_same_record(event, identity.claim)
-                attached_new = _attach_claim(event, identity.claim)
+                attached_new = _attach_claim(
+                    event, identity.claim,
+                    espn_id_is_held=await _espn_claim_id_is_held(
+                        session, identity.claim, event
+                    ),
+                )
                 _update_fields_by_priority(
                     event, identity, same_record=same_record,
                 )
@@ -435,7 +441,15 @@ async def find_or_create_event(
                 status=status,
                 event_tags=tags,
             )
-            _attach_claim(event, identity.claim)
+            # The CREATE path reaches the same arm, and it is the one #2017
+            # photographed: "the duplicate is BORN carrying the collision".
+            # `event` is unflushed and has no id, so nothing is excluded.
+            _attach_claim(
+                event, identity.claim,
+                espn_id_is_held=await _espn_claim_id_is_held(
+                    session, identity.claim, None
+                ),
+            )
             session.add(event)
             await session.flush()
 
@@ -772,7 +786,7 @@ async def _find_by_structured_match(
     return None
 
 
-def _attach_claim(event: Event, claim: EventClaim) -> bool:
+def _attach_claim(event: Event, claim: EventClaim, *, espn_id_is_held: bool) -> bool:
     """Attach a source's ID to an event. Idempotent — won't overwrite existing IDs.
 
     Returns True when this call ESTABLISHED a binding that did not exist before —
@@ -794,10 +808,38 @@ def _attach_claim(event: Event, claim: EventClaim) -> bool:
             event.statpal_fixture_id = claim.source_id
             return True
     elif claim.source == "espn":
-        if not event.espn_id:
+        # `not event.espn_id` asks whether THIS row has one. `espn_id_is_held`
+        # is the other half — does another row already wear it — and #2017's
+        # whole finding is that the first question alone lets a duplicate be
+        # BORN carrying the collision, because the create path below reaches
+        # this same arm. Required, not defaulted: a permissive default is a
+        # guard the next caller can forget, and forgetting it re-opens #2693.
+        if not event.espn_id and not espn_id_is_held:
             event.espn_id = claim.source_id
             return True
     return False
+
+
+async def _espn_claim_id_is_held(session, claim: "EventClaim", event: Event | None) -> bool:
+    """Is this ESPN claim's id already worn by some OTHER row? (#2017/#2693)
+
+    ``False`` for every non-ESPN claim and for a claim with no id — there is
+    nothing to contest. ``event`` is excluded from the search (and may be
+    ``None`` on the create path, where no row exists yet to exclude).
+    """
+    if claim.source != "espn" or not claim.source_id:
+        return False
+
+    holder = await espn_id_holder(
+        session, claim.source_id, exclude_event_id=getattr(event, "id", None)
+    )
+    if holder is not None:
+        logger.warning(
+            "registry: ESPN claim %s NOT stamped — event %s already holds it. "
+            "The row keeps its NULL rather than a contradicted id (#2017/#2693).",
+            claim.source_id, holder,
+        )
+    return holder is not None
 
 
 #: Per-provider id column on ``events``, for the providers that have one. The

@@ -110,6 +110,7 @@ const EVENT_NAME_REGISTRY: Record<AnalyticsEventName, true> = {
   feed_telemetry: true,
   web_vital: true,
   my_stuff_load: true,
+  screen_timing: true,
   session_open: true,
   feed_exit: true,
   search_no_results: true,
@@ -391,6 +392,29 @@ const PERF_EVENT_KEYS: Record<string, ReadonlySet<string>> = {
     'item_count',
     'app_build',
     'surface',
+    'outcome_class',
+  ]),
+  // latency/121 — the felt number. Exact-key form for the same reason
+  // `my_stuff_load` uses one: the contract is "durations, counts and bounded
+  // enums, nothing else", and the global allowlist can only say a key is legal
+  // SOMEWHERE. `surface` and `card_count` are both legal elsewhere and carry
+  // content there; here they may not.
+  //
+  // ⚠️ The enrichment keys are deliberately NOT included. This packet must be
+  // poolable across web and native into one p50/p95 table, and a web-only
+  // `session_id`/`platform` pair would make the two halves differently shaped.
+  // `device_class` carries the distinction that actually matters.
+  screen_timing: new Set([
+    'surface',
+    'entry',
+    'shell_ms',
+    'first_card_ms',
+    'fold_ms',
+    'interactive_ms',
+    'card_count',
+    'device_class',
+    'network_class',
+    'app_build',
     'outcome_class',
   ]),
   // Queue 310 — `feed_exit` is declared content-free BY CONSTRUCTION, so it is

@@ -62,35 +62,135 @@ from __future__ import annotations
 from sqlalchemy import Select, String, and_, case, func, or_, select
 
 from app.models import Event, Sport
+from app.utils.event_completion import EVENT_SUSPENDED
 
-# Status tiers, in the priority order the feed has always used.
+# Status tiers.  These integers are PARTITION LABELS and quota keys, not a
+# display order — the caller applies its own `ORDER BY` after this pass — which
+# is why `TIER_SUSPENDED` can be appended at 3 without claiming that a suspended
+# match is less interesting than a scheduled one.
 TIER_LIVE = 0
 TIER_RECENT = 1
 TIER_SCHEDULED = 2
+#: live/048 + CERT-786 — see :data:`TIER_QUOTAS` for why this is its own tier
+#: rather than a fourth member of :data:`RECENT_STATUSES`.
+TIER_SUSPENDED = 3
 
 RECENT_STATUSES = ("completed", "closed")
 
 #: Total rows the candidate pass may return.  Deliberately UNCHANGED from the
 #: single ``LIMIT 500`` this replaces — the fix is how the budget is *divided*,
-#: not how big it is, so no latency claim rides on it.
+#: not how big it is, so no latency claim rides on it.  Still unchanged through
+#: live/048: the suspended tier is funded by re-dividing, not by growing.
 EVENT_CANDIDATE_BUDGET = 500
 
 #: Per-tier hard caps.  They sum to :data:`EVENT_CANDIDATE_BUDGET`, and each one
 #: sits above the deduplicated tier size measured on production 2026-08-21
 #: (live 39, recent 144, scheduled 96) — so on a real slate nothing is cut and
 #: the quotas are inert.  They bind only under a flood, which is the whole point.
+#:
+#: ── WHY `suspended` GOT ITS OWN FLOOR (live/048, CERT-786) ──
+#:
+#: The obvious move was to add it to :data:`RECENT_STATUSES`, and that would
+#: have reintroduced #2065 in miniature.  A suspended row IS recent, but its
+#: measured population is a flood with a flood's shape — ~500 rows/day, 89% of
+#: them esports fixtures whose only source went dark — while the recent tier's
+#: deduplicated size on a real slate is 144 against a quota of 150.  Six slots
+#: of slack is not a floor.  A quiet night of esports outages would have taken
+#: "Just Happened" away from real finished games, which is precisely the
+#: starvation this module exists to prevent, arriving through the door the
+#: module left open.
+#:
+#: So it gets a tier, and the module's own rule applies unchanged: *each tier
+#: gets a floor that no sibling can take.*
+#:
+#: THE 50 IS FUNDED FROM `TIER_LIVE`, 200 → 150, and that is the safest of the
+#: three places it could have come from.  Measured deduplicated tier sizes leave
+#: live with 161 slots of headroom, recent with 6 and scheduled with 54, so live
+#: is the only tier that can pay without moving its floor near its measurement —
+#: 150 is still 3.8× the 39 rows live actually carries.  It is also the tier a
+#: suspended row COMES FROM: a live match going into a rain delay moves between
+#: exactly these two tiers, so the budget follows the row.
 TIER_QUOTAS = {
-    TIER_LIVE: 200,
+    TIER_LIVE: 150,
     TIER_RECENT: 150,
     TIER_SCHEDULED: 150,
+    TIER_SUSPENDED: 50,
 }
 
 
+def candidate_window_conditions(
+    *,
+    now,
+    live_start_cutoff,
+    upcoming_cutoff,
+    recent_cutoff,
+):
+    """The status × time window the game-event candidate pass selects on.
+
+    ONE DEFINITION, AND IT IS NEW (live/048, CERT-786).  This predicate used to
+    live inline in ``_score_events`` with a hand-written copy of it in
+    ``tests/test_feed_event_candidates.py`` — a copy whose docstring said "the
+    exact predicate ``_score_events`` accumulates", which was true when it was
+    written and is exactly the kind of claim that stops being true silently.
+    When ``suspended`` was added to the vocabulary the route was one of the
+    places that had to learn the word and did not; a test holding its own copy
+    of the predicate could not have caught that, because the copy would have
+    been just as wrong and just as green.  So the copy is gone: the route calls
+    this, the executing test calls this, and there is nothing left to diverge.
+
+    The windows are passed in rather than computed here because the caller
+    widens them for ``my_teams_only`` (72h back / 7d forward instead of 24h /
+    12h), and that choice belongs to the request, not to the predicate.
+
+    Arms, in order:
+
+    * ``live`` — no lower bound; a long game is still a game.  The upper bound
+      is a small clock-drift buffer against rows stuck ``live`` with a future
+      start (see :func:`app.utils.lifecycle.served_event_status`).
+    * ``scheduled`` — ahead of us, inside the upcoming window.
+    * ``completed`` / ``closed`` — recently finished.
+    * ``suspended`` — recently *not* finished, on the same window as the Final
+      it replaced.  See the route-side comment for why it shares that window
+      rather than the live arm's open floor.
+    """
+    return [
+        or_(
+            and_(
+                Event.status == "live",
+                Event.commence_time <= live_start_cutoff,
+            ),
+            and_(
+                Event.status == "scheduled",
+                Event.commence_time >= now,
+                Event.commence_time <= upcoming_cutoff,
+            ),
+            and_(
+                Event.status.in_(RECENT_STATUSES),
+                Event.commence_time >= recent_cutoff,
+            ),
+            and_(
+                Event.status == EVENT_SUSPENDED,
+                Event.commence_time >= recent_cutoff,
+            ),
+        )
+    ]
+
+
 def status_tier_expr():
-    """SQL tier of an event row — live (0) → recent (1) → scheduled (2)."""
+    """SQL tier of an event row — live (0), recent (1), scheduled (2), suspended (3).
+
+    The suspended arm sits ABOVE the ``else_`` deliberately.  Before live/048
+    the ``else_`` meant "scheduled", and it was right, because the four states
+    it dispatched over were exhaustive.  A fifth state made the ``else_`` a
+    catch-all that silently filed an already-played match into the tier for
+    matches that have not started — sorted by ``commence_time DESC`` within a
+    tier whose other rows are all in the FUTURE, so the suspended rows landed at
+    the bottom and were the first thing the quota cut.
+    """
     return case(
         (Event.status == "live", TIER_LIVE),
         (Event.status.in_(RECENT_STATUSES), TIER_RECENT),
+        (Event.status == EVENT_SUSPENDED, TIER_SUSPENDED),
         else_=TIER_SCHEDULED,
     )
 
@@ -332,6 +432,10 @@ def event_candidate_ids(where_clauses) -> Select:
     quota_expr = case(
         (ranked.c.tier == TIER_LIVE, TIER_QUOTAS[TIER_LIVE]),
         (ranked.c.tier == TIER_RECENT, TIER_QUOTAS[TIER_RECENT]),
+        # live/048 — named, not left to the `else_`. The `else_` is the
+        # scheduled quota, and a new tier inheriting another tier's number is
+        # how a floor gets shared by accident.
+        (ranked.c.tier == TIER_SUSPENDED, TIER_QUOTAS[TIER_SUSPENDED]),
         else_=TIER_QUOTAS[TIER_SCHEDULED],
     )
 

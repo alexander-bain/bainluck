@@ -31,7 +31,10 @@ class TestSelfHealingRestore:
         # Restore query: source=datagolf, status=resolved, resolution_date in future -> open
         assert 'FuturesMarket.status == "resolved"' in src
         assert "FuturesMarket.resolution_date > restore_now" in src
-        assert '.values(status="open")' in src
+        # settled_at rides the status back (LINKLOSS-02): a market that is open
+        # again did not settle, and a stamp left behind would be counted as a
+        # market that left the open population while it is in it.
+        assert '.values(status="open", settled_at=None)' in src
         assert "markets_restored" in src
 
     def test_restore_references_issue(self):
