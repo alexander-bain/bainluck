@@ -5,7 +5,7 @@ missing was a caller, and the defect that gap produced is specific: #2804's
 wrong kickoff sat on a team page for days because the only thing that could have
 seen it ran when a person remembered to run it.
 
-So these guards are about the DRIVER's four ways to be wrong, not about the
+So these guards are about the DRIVER's five ways to be wrong, not about the
 rail's arithmetic (``test_reconcile_anchor_schedule_paging`` owns that):
 
 * **Writing.** The rail can apply moves. This driver must never reach that path,
@@ -17,6 +17,12 @@ rail's arithmetic (``test_reconcile_anchor_schedule_paging`` owns that):
   ``reconcile`` already handles it per page.
 * **Running forever.** Two different runaway shapes — every page slow (deadline)
   and every page fast (page cap) — so two bounds, and a guard for each.
+* **Bounding without continuing (CERT-843).** The one the first presentation got
+  wrong. A budget whose every run restarts at the oldest row is not a bound, it
+  is a blind spot: the tail is never examined, the front is rescanned nightly,
+  and the morning report looks *finished*. Guarded as the two-run reproduction
+  the block asked for — run one truncates, run two begins after its cursor, and
+  drift planted in the tail is detected only because of it.
 * **Asking about tennis.** #2852: ESPN answers for no tennis anchor (20/20
   ``no_answer`` measured), so a tennis page terminates ``authority_dark`` — the
   rail's word for an ESPN OUTAGE. A nightly sentinel that cries outage every
@@ -124,6 +130,39 @@ def _page(
     }
 
 
+class _FakeRedis:
+    """The three calls the continuation store makes. Bytes on the way out,
+    because the real client returns bytes and a `str` stub would hide a decode
+    bug that only shows up in production."""
+
+    def __init__(self):
+        self.data: dict[str, bytes] = {}
+        self.deletes = 0
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def setex(self, key, ttl, value):
+        self.data[key] = value.encode() if isinstance(value, str) else value
+
+    def delete(self, key):
+        self.deletes += 1
+        self.data.pop(key, None)
+
+
+class _BrokenRedis:
+    """Every call raises — the outage arm."""
+
+    def get(self, key):
+        raise RuntimeError("redis is down")
+
+    def setex(self, key, ttl, value):
+        raise RuntimeError("redis is down")
+
+    def delete(self, key):
+        raise RuntimeError("redis is down")
+
+
 def _move(event_id: int = 7):
     return {
         "event_id": event_id,
@@ -225,6 +264,164 @@ class TestAnUnfinishedSweepIsNotAnAllClear:
         )
         assert state["complete"] is False
         assert state["filing"]["red"] is True
+
+
+class TestConsecutiveNightsContinueEachOther:
+    """CERT-843. A budget without a continuation is not a bound, it is a blind
+    spot: every night restarts at the oldest row, the tail is never examined,
+    and the morning report looks finished. These are the guards for that."""
+
+    @pytest.mark.asyncio
+    async def test_run_one_truncates_run_two_begins_after_its_cursor(self, monkeypatch):
+        """The reproduction the BLOCK asked for, as a guard: two runs sharing one
+        store, asserting the SECOND starts where the first stopped."""
+        redis = _FakeRedis()
+
+        night_one_cursors: list = []
+        await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=True, next_cursor="after-page-1", eligible=999)],
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            seen_cursors=night_one_cursors,
+        )
+        assert night_one_cursors == [None], "night one starts at the oldest row"
+
+        night_two_cursors: list = []
+        await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            seen_cursors=night_two_cursors,
+        )
+        assert night_two_cursors == [
+            "after-page-1"
+        ], "night two must resume, not rescan the front slice"
+
+    @pytest.mark.asyncio
+    async def test_tail_drift_is_detected_on_the_resumed_run(self, monkeypatch):
+        """The point of the whole mechanism: a bad anchor sitting behind night
+        one's cutoff is reported on night two. Before the repair it never was.
+
+        The drift lives at a POSITION, not on a call count — the window answers
+        clean at the front and dirty past `tail`. So this fails if night two
+        rescans the front, which a page-ordered stub could not detect.
+        """
+        redis = _FakeRedis()
+
+        def window(cursor):
+            if cursor is None:  # the front slice: clean, and there is more
+                return _page(has_more=True, next_cursor="tail", eligible=999)
+            return _page(moves=[_move(4242)], has_more=False, eligible=999)
+
+        first = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert first["moves"] == [], "night one sees only the clean front slice"
+        assert first["continuation"] == "tail"
+
+        # Night two is budgeted exactly as tightly as night one — ONE page. That
+        # is the whole discrimination: with the continuation it lands on the
+        # tail and sees 4242; without it, it spends its single page re-reading
+        # the clean front and reports nothing, forever.
+        second = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert [m["event_id"] for m in second["moves"]] == [4242]
+        assert second["filing"]["red"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_finished_sweep_clears_the_continuation(self, monkeypatch):
+        """Otherwise every later night resumes from a stale tail and the FRONT of
+        the window stops being examined — the same blind spot, mirrored."""
+        redis = _FakeRedis()
+        redis.setex(sentinel.CURSOR_STATE_KEY, 1, "stale")
+
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=redis,
+        )
+        assert state["continuation"] is None
+        assert sentinel.CURSOR_STATE_KEY not in redis.data
+        assert redis.deletes >= 1, "cleared by DELETE, not by writing an empty value"
+
+    @pytest.mark.asyncio
+    async def test_a_resumed_run_that_finishes_still_does_not_close(self, monkeypatch):
+        """It reached the end of the window having examined only the TAIL.
+        Everything before its cursor went unlooked-at tonight, so `complete` must
+        stay False and the issue must not be closed."""
+        redis = _FakeRedis()
+        redis.setex(sentinel.CURSOR_STATE_KEY, 1, "somewhere-in-the-middle")
+
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=redis,
+        )
+        assert state["resumed_from"] == "somewhere-in-the-middle"
+        assert state["complete"] is False
+        assert state["filing"] is None, "a tail-only run may not close the issue"
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_cursor_restarts_instead_of_stalling(self, monkeypatch):
+        """A saved position points into a MOVING window and can age out entirely.
+        A driver that just stopped on the empty page would report `partial`
+        having examined nothing, every night, silently — worse than the bug it
+        was added to fix."""
+        redis = _FakeRedis()
+        redis.setex(sentinel.CURSOR_STATE_KEY, 1, "long-past-the-window")
+        seen: list = []
+
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[
+                _page(examined=0, has_more=False),  # the cursor is off the end
+                _page(examined=5, has_more=False),  # the restart from the front
+            ],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=redis,
+            seen_cursors=seen,
+        )
+        assert seen == [
+            "long-past-the-window",
+            None,
+        ], "it restarted from the oldest row"
+        assert state["restarted_from_exhausted_cursor"] is True
+        assert state["examined"] == 5
+
+    @pytest.mark.asyncio
+    async def test_a_redis_outage_degrades_to_a_full_restart(self, monkeypatch):
+        """Losing the place is survivable; refusing to run is not. A fault must
+        leave the rail doing exactly what it did before continuations existed."""
+        seen: list = []
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=_BrokenRedis(),
+            seen_cursors=seen,
+        )
+        assert seen == [None]
+        assert state["measured"] is True
+        assert state["complete"] is True
 
 
 class TestTheBudgetActuallyBounds:
@@ -401,30 +598,46 @@ async def _run_with_stub_session(
     pages: list | None = None,
     max_pages: int,
     deadline_seconds: float,
+    redis: "_FakeRedis | None" = None,
+    seen_cursors: list | None = None,
+    resume: bool = True,
+    page_for=None,
 ):
-    """Drive ``_run_anchor_schedule_sentinel`` with the DB and GitHub stubbed.
+    """Drive ``_run_anchor_schedule_sentinel`` with the DB, Redis and GitHub stubbed.
 
     ``pages`` is consumed in order; once exhausted the last page repeats, which
     is what lets the budget guards run against an endless window.
+
+    Redis is stubbed at the CLIENT, not at ``_load_continuation`` /
+    ``_save_continuation`` — so the shipped persistence code is what runs. Pass
+    the same ``_FakeRedis`` to two calls to model two consecutive nights.
     """
     import contextlib
 
     supplied = list(pages or [_page(has_more=True, next_cursor="c", eligible=999)])
 
     async def fake_reconcile(session, **kwargs):
+        if seen_cursors is not None:
+            seen_cursors.append(kwargs.get("cursor"))
+        if page_for is not None:
+            return page_for(kwargs.get("cursor"))
         return supplied.pop(0) if len(supplied) > 1 else supplied[0]
 
     @contextlib.asynccontextmanager
     async def fake_session():
         yield object()
 
-    filed = {}
-
     def fake_reconcile_issue(**kwargs):
-        filed.update(kwargs)
         return dict(kwargs)
 
+    store = redis if redis is not None else _FakeRedis()
+
     monkeypatch.setattr(sentinel, "reconcile", fake_reconcile)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "app.tasks.redis_state",
+        type("M", (), {"get_redis_client": staticmethod(lambda: store)}),
+    )
     monkeypatch.setitem(
         __import__("sys").modules,
         "app.tasks.sentinel_filing",
@@ -441,4 +654,5 @@ async def _run_with_stub_session(
         max_pages=max_pages,
         deadline_seconds=deadline_seconds,
         now=NOW,
+        resume=resume,
     )

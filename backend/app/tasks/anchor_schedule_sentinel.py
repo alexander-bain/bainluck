@@ -56,8 +56,24 @@ tail that lives upstream, outside our control.
 
 So the bound is a deadline plus a page cap, and a run that hits either stops and
 says ``partial`` — it does not keep going and it does not call a short sweep
-clean. The cursor makes tomorrow's run resume rather than restart, so a window
-too big for one night is still covered; nothing is silently skipped.
+clean.
+
+**And a bounded run that stops must hand on WHERE it stopped, or the bound turns
+into a blind spot (CERT-843).** A budget alone, with every night starting at the
+oldest row, means a window bigger than one night's budget has a tail that is
+never examined at all: the rail rescans the same front slice forever, reports a
+clean census of it every morning, and a bad anchor sitting behind the cutoff
+stays on a team page indefinitely. That is strictly worse than not paging,
+because the report looks finished. So the continuation is persisted between runs
+(``CURSOR_STATE_KEY``) and cleared when a sweep actually reaches the end.
+
+Two consequences that are easy to get wrong and are guarded:
+
+  * a **resumed** run that reaches the end of the window has seen only the tail,
+    so it is not ``complete`` and may not close the issue; and
+  * a saved cursor points into a **moving** window, so it can age out entirely —
+    an exhausted resume restarts from the oldest row inside the same run rather
+    than stalling silently on zero rows every night.
 """
 
 from __future__ import annotations
@@ -98,6 +114,64 @@ MARKER_KEY = "anchor-schedule-sentinel-fingerprint"
 TITLE_PREFIX = "Anchor-schedule drift"
 
 
+#: Where the continuation between nights lives (CERT-843). Redis, not a column:
+#: it is scheduling scratch, it is worthless the moment the window moves past
+#: it, and a migration for it would outlive its usefulness by years.
+CURSOR_STATE_KEY = "anchor_schedule_sentinel:continuation"
+
+#: Long enough to survive a few missed nights, short enough that a cursor from a
+#: dead era expires instead of being resumed into a window that no longer holds
+#: it. The exhausted-resume restart handles the case anyway; this is the belt.
+CURSOR_STATE_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _load_continuation() -> Optional[str]:
+    """Last night's position, or ``None`` to start at the oldest row.
+
+    A Redis fault degrades to ``None`` — a full restart from the front, which is
+    exactly the pre-CERT-843 behaviour. That is the right way to fail: the rail
+    still runs and still reports, it just loses its place. Raising here would
+    trade a partial sweep for no sweep at all.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(CURSOR_STATE_KEY)
+    except Exception:  # pragma: no cover - defensive, exercised by the fault test
+        logger.warning(
+            "anchor-schedule sentinel: could not read the saved continuation; "
+            "starting from the oldest row",
+            exc_info=True,
+        )
+        return None
+    if not raw:
+        return None
+    return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+
+
+def _save_continuation(cursor: Optional[str]) -> None:
+    """Hand tonight's position to tomorrow, or clear it on a finished sweep.
+
+    ``None`` DELETES rather than writing an empty string: a stale key that reads
+    as falsy-but-present is the kind of state that survives a fix and confuses
+    the next reader.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        if cursor:
+            client.setex(CURSOR_STATE_KEY, CURSOR_STATE_TTL_SECONDS, cursor)
+        else:
+            client.delete(CURSOR_STATE_KEY)
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "anchor-schedule sentinel: could not persist the continuation; "
+            "tomorrow's run will restart from the oldest row",
+            exc_info=True,
+        )
+
+
 def _blind_spots_note() -> str:
     """The paragraph that keeps a green night from being read as a clean graph."""
     return (
@@ -116,8 +190,13 @@ def _summarize(state: dict[str, Any]) -> str:
     counts = " ".join(
         f"{name}={state['by_verdict'].get(name, 0)}" for name in SCHEDULE_VERDICTS
     )
+    # Whether this run continued another one changes what its counts MEAN, so it
+    # belongs on the line a reviewer reads, not only in the payload.
+    where = " RESUMED" if state.get("resumed_from") else ""
+    if state.get("continuation"):
+        where += " CONTINUES-TOMORROW"
     return (
-        f"{state['terminal']}: examined={state['examined']}/{state['eligible']} "
+        f"{state['terminal']}:{where} examined={state['examined']}/{state['eligible']} "
         f"pages={state['pages']} drift={len(state['moves'])} · {counts}"
     )
 
@@ -131,6 +210,7 @@ async def _sweep(
     horizon: timedelta,
     deadline_seconds: float,
     max_pages: int,
+    resume_from: Optional[str] = None,
 ) -> dict[str, Any]:
     """Page the rail read-only until the window ends or a bound is hit.
 
@@ -139,6 +219,22 @@ async def _sweep(
     ``reconcile``'s paging docstring), so the per-page ``partial`` is expected
     and is not propagated — what matters is whether we reached the end of the
     window before a bound stopped us.
+
+    ═══ RESUMING, AND THE STALL IT MUST NOT CAUSE (CERT-843) ═══
+
+    ``resume_from`` is last night's continuation. Without it a bounded run
+    restarts at the oldest slice every night, so a window bigger than one
+    night's budget means the TAIL IS NEVER EXAMINED — the rail rescans the same
+    front rows forever while a bad anchor behind them stays on a team page. That
+    is the defect this parameter exists to close, and it is worse than not
+    paging at all, because the census each night looks clean and complete.
+
+    But a saved cursor is a position in a MOVING window: the floor advances with
+    ``now``, so a continuation can end up past the last row (every row it named
+    aged out). ``reconcile`` answers that with zero rows, and a driver that
+    simply stopped there would stall permanently — a *silent* stall, reporting
+    ``partial`` every night having examined nothing. So an exhausted resume
+    restarts from the oldest row inside the same run rather than ending it.
     """
     start = _time.monotonic()
     by_verdict: dict[str, int] = {name: 0 for name in SCHEDULE_VERDICTS}
@@ -146,9 +242,14 @@ async def _sweep(
     examined = 0
     eligible = 0
     pages = 0
-    cursor: Optional[str] = None
+    cursor: Optional[str] = resume_from
     stopped_by: Optional[str] = None
     dark_pages = 0
+    resumed = resume_from is not None
+    restarted_from_exhausted_cursor = False
+    # The continuation to hand to tomorrow. Only meaningful when this run stops
+    # early; a run that reached the end of the window has nothing to continue.
+    continuation: Optional[str] = None
 
     while True:
         if pages >= max_pages:
@@ -172,6 +273,25 @@ async def _sweep(
             exclude_sports=EXCLUDED_SPORT_KEYS,
         )
         pages += 1
+
+        # A resume that named a position the window has moved past. Restart at
+        # the oldest row now rather than ending the run: the alternative is a
+        # sentinel that reports `partial` every night having examined nothing,
+        # and nothing about that failure is loud.
+        if (
+            cursor is not None
+            and page.get("examined", 0) == 0
+            and not restarted_from_exhausted_cursor
+        ):
+            logger.info(
+                "anchor-schedule sentinel: saved cursor is past the window; "
+                "restarting from the oldest row"
+            )
+            restarted_from_exhausted_cursor = True
+            resumed = False
+            cursor = None
+            continue
+
         # `eligible` is the whole window and is recounted per page against a
         # moving `now`; the LAST reading is the freshest, so take it rather than
         # summing (summing would multiply the window by the page count).
@@ -201,8 +321,24 @@ async def _sweep(
             # has_more with no cursor would loop forever on the same page.
             stopped_by = "no_cursor"
             break
+        # Where tomorrow starts if a bound stops us before the window ends. Held
+        # per page rather than read off the last one, because the loop can exit
+        # from the top (deadline/page cap) with `cursor` already advanced.
+        continuation = cursor
 
-    complete = stopped_by is None
+    # A run that stopped early hands its position on. A run that reached the end
+    # clears it, so the next night starts at the oldest row again — the window
+    # is a moving front and yesterday's tail is not a useful place to begin a
+    # fresh pass.
+    if stopped_by is None:
+        continuation = None
+
+    # `complete` gates the GREEN close, so it has to mean "this run saw the
+    # whole window" — not merely "this run was not interrupted". A resumed run
+    # that reaches the end has seen only the TAIL; everything before its cursor
+    # went unexamined tonight, and closing the issue on that would resolve a
+    # defect nobody looked for.
+    complete = stopped_by is None and not resumed
     if stopped_by == "authority_dark":
         terminal = "authority_dark"
     elif not complete:
@@ -217,6 +353,9 @@ async def _sweep(
         "terminal": terminal,
         "complete": complete,
         "stopped_by": stopped_by,
+        "resumed_from": resume_from,
+        "restarted_from_exhausted_cursor": restarted_from_exhausted_cursor,
+        "continuation": continuation,
         "applied": False,
         "pages": pages,
         "examined": examined,
@@ -270,18 +409,26 @@ async def _run_anchor_schedule_sentinel(
     deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
     max_pages: int = DEFAULT_MAX_PAGES,
     now: Optional[datetime] = None,
+    resume: bool = True,
 ) -> dict[str, Any]:
     """Sweep the anchored near-future window read-only and report what drifted.
 
     RED (file) when the sweep found drift. GREEN (close) **only from a COMPLETE
-    sweep that found none** — a truncated or authority-dark run has not earned
-    the word, and closing on one would resolve a real issue because the budget
-    ran out. That is the same discipline ``reconcile`` applies per page, held one
-    level up (gotcha #53: a partial answer read as an all-clear).
+    sweep that found none** — a truncated, resumed or authority-dark run has not
+    earned the word, and closing on one would resolve a real issue because the
+    budget ran out. That is the same discipline ``reconcile`` applies per page,
+    held one level up (gotcha #53: a partial answer read as an all-clear).
+
+    Consecutive nights CONTINUE each other (CERT-843): a run stopped by its
+    budget saves where it got to, and the next one starts after it, so a window
+    bigger than one night's budget is still covered end to end instead of the
+    front slice being rescanned forever. ``resume=False`` forces a run to start
+    at the oldest row — for an operator who wants a front-of-window read now.
     """
     from app.tasks.base import get_task_session
 
     now = now or datetime.now(timezone.utc)
+    resume_from = _load_continuation() if resume else None
 
     async with get_task_session() as session:
         state = await _sweep(
@@ -292,7 +439,12 @@ async def _run_anchor_schedule_sentinel(
             horizon=horizon,
             deadline_seconds=deadline_seconds,
             max_pages=max_pages,
+            resume_from=resume_from,
         )
+
+    # Hand the position on (or clear it on a finished sweep) BEFORE filing, so a
+    # GitHub fault cannot cost us the place we got to.
+    _save_continuation(state["continuation"])
 
     # One canonical issue for this rail. The fingerprint deliberately does NOT
     # hash the drifting ids: if it did, every night with a different set of bad
