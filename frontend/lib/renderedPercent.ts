@@ -165,6 +165,44 @@ export function renderedDuelPercents(
   return [awayPct, homePct];
 }
 
+// ── A MARKET's own outcome rows, when there are exactly two of them (#2831) ──
+//
+// UX-P114 fixed the duel for surfaces that print a GAME's two teams. It reached
+// none that print a MARKET's Yes/No, and that is precisely why no event card has
+// ever summed to 101 while a two-outcome futures card always could.
+//
+// MEASURED 2026-09-03 over every open two-outcome market whose sides fall inside
+// the complement band — 876 distinct pairs covering 17,125 markets, a COMPLETE
+// census rather than a sample, replayed through the functions below in JS float
+// semantics because Postgres `numeric` is half-away-from-zero and the browser is
+// what the reader sees:
+//
+//     rendered today   100: 10,030   101: 6,954   99: 104   102: 37
+//     through here     100: 17,125   (everything else: 0)
+//
+// and no side moves by more than one point. Note the 99s and the 102s: the issue
+// that found this reported "101, never 99", which is true of an EXACT complement
+// and not of the band this predicate actually uses. `0.5/0.49` prints 99 today.
+//
+// WHY THE DUEL HELPER AND NOT `renderedCardPercents` DIRECTLY: the futures detail
+// page lets the reader sort the rows, so index 0 is whatever they last clicked.
+// `renderedCardPercents` rounds index 0 and derives index 1, so on `0.925/0.075`
+// it prints 93/7 sorted by probability and 8/92 sorted by name — the same market,
+// two answers, one click apart. `renderedDuelPercents` picks the FAVOURITE
+// whatever position it arrives in, so the printed pair cannot depend on the sort.
+//
+// Any arity other than two yields all-nulls, meaning "no override" — the caller
+// keeps `formatProbabilityPercent`'s own rounding and renders exactly as before.
+// It is not a claim that the list was checked and found fine.
+
+export function renderedOutcomeRowPercents(
+  probabilities: Array<number | null | undefined> | null | undefined,
+): Array<number | null> {
+  const values = probabilities ?? [];
+  if (values.length !== 2) return values.map(() => null);
+  return renderedDuelPercents(values[0], values[1]);
+}
+
 // ── The HEADLINE percent, so two surfaces cannot headline one market twice ───
 //
 // UX-P162. `renderedCardPercents` answers for a LIST; a card's hero prints ONE

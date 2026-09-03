@@ -26,6 +26,7 @@ import {
 } from "@/lib/eventKey";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -369,6 +370,26 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       market.status === "resolved",
     );
   }, [market?.outcomes, market?.status, sortField, sortDirection]);
+
+  // #2831: a two-outcome market prints both sides of one question, so the pair is
+  // decided ONCE — here, over `market.outcomes` — and looked up per row by id.
+  //
+  // Derived from the UNSORTED market set on purpose. The rows below are sortable,
+  // and a rule anchored on display order would print 93/7 by probability and 8/92
+  // by name for the same market. `renderedOutcomeRowPercents` picks the favourite
+  // whatever position it arrives in, and the id lookup means re-ordering the rows
+  // cannot re-assign a number to a different outcome.
+  //
+  // Both price columns get it: the current pair and the OPENING pair are each two
+  // sides of one question, exactly as `EventCard` treats its `opened` pair.
+  const renderedById = useMemo(() => {
+    const outs = market?.outcomes ?? [];
+    const current = renderedOutcomeRowPercents(outs.map((o) => o.probability));
+    const opening = renderedOutcomeRowPercents(outs.map((o) => o.opening_probability));
+    return new Map(
+      outs.map((o, i) => [o.id, { current: current[i] ?? null, opening: opening[i] ?? null }]),
+    );
+  }, [market?.outcomes]);
 
   // The leader is always the outcome with highest probability (independent of sort)
   const leader = useMemo(() => {
@@ -1044,6 +1065,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               marketCategory={market?.llm_sport_category}
               marketName={market?.name}
               isResolved={isResolved}
+              rendered={renderedById.get(outcome.id)?.current ?? null}
+              renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
             />
           ))}
         </div>
@@ -1111,6 +1134,8 @@ function OutcomeRow({
   marketCategory,
   marketName,
   isResolved = false,
+  rendered,
+  renderedOpening,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -1121,6 +1146,12 @@ function OutcomeRow({
   marketCategory?: string | null;
   marketName?: string;
   isResolved?: boolean;
+  /** The card-level integers for this row's two price columns, or null for "no
+   *  override" (#2831). Both REQUIRED, with no default: the pair decision needs the
+   *  whole outcome set, so only the caller can make it, and a default would compile
+   *  at the next call site while quietly printing 101 again. */
+  rendered: number | null;
+  renderedOpening: number | null;
 }) {
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
@@ -1235,7 +1266,7 @@ function OutcomeRow({
             Open
           </div>
           <div data-testid="outcome-open">
-            {formatProbability(outcome.opening_probability)}
+            {formatProbability(outcome.opening_probability, { rendered: renderedOpening })}
           </div>
         </div>
       )}
@@ -1309,7 +1340,7 @@ function OutcomeRow({
                 isLeader ? "font-bold text-text-primary" : "font-semibold text-text-primary"
               }`}
             >
-              {formatProbability(outcome.probability)}
+              {formatProbability(outcome.probability, { rendered })}
             </div>
             {/* #883/L2-48: American moneyline (+9900) removed — probability only.
                 The standing no-odds thesis: "60% vs 40%", never "-150/+130". */}
