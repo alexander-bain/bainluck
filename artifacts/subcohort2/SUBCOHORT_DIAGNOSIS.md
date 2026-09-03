@@ -71,7 +71,7 @@ the next queue picks the top row rather than the most recently discussed one.
 
 | # | cell | class | ece | n | gap | bar | excess-outcomes | σ | mechanism |
 |---:|---|:-:|---:|---:|---:|---:|---:|---:|---|
-| 1 | kalshi/entertainment | C | 6.29 | 8,922 | +3.44 | 3.0 | **29,353** | 6.2 | — 🔴 **WENT THE WRONG WAY**: 5.09 → 6.29 at q269. Now the board's largest cell. Undiagnosed |
+| 1 | kalshi/entertainment | C | 6.29 | 8,922 | +3.44 | 3.0 | **29,353** | 6.2 | — **LOCALIZED, NOT DIAGNOSED** (CAL-P994, page below). Three bins of ten carry 67% of it: bin 9 `95.4%→78.7%` n 1,104, bin 4 `46.4%→27.2%` n 837, bin 5 `52.4%→64.0%` n 899. Bundle-shape exclusion **REFUTED** by the payload's own census; the raw `field` probe **rejected** as a parallel rail. ⚠️ The old text here read `5.09 → 6.29, went the wrong way`: the same instrument reads **5.87 (q267) → 5.09 (q268) → 6.29 (q269)** — an oscillation, not a trend |
 | 2 | odds_api_bookmaker/basketball_nba | A | 5.18 | 10,186 | +1.03 | 2.5 | 27,298 | 5.4 | — |
 | 3 | kalshi/golf | B | 4.10 | 21,085 | +4.00 | 3.0 | 23,194 | 3.2 | — |
 | 4 | odds_api_bookmaker/baseball_mlb_preseason | A | 8.24 | 3,253 | −7.67 | 2.5 | 18,672 | 6.5 | — |
@@ -94,6 +94,120 @@ at once and **none of them may be claimed by a single cert**.
 **`measured_sigma`: 0 of 14 queued cells measured.** No queued cell is currently refuted by the
 sigma ledger, so `cells_at_bar_if_applied` equals `cells_at_bar` — the overlay is not flattering
 this board.
+
+---
+
+## CELL 1 — `kalshi/entertainment` — LOCALIZED, NOT DIAGNOSED (CAL-P994, 2026-09-03)
+
+> **Board contract check: this page does NOT promote the cell to column 1.** A mechanism is one
+> that predicts a number before the fold is run. Nothing here does. What this page buys is three
+> bins to aim at, two candidate mechanisms killed, and a correction to how the row is written.
+
+**Instrument:** the published payload itself (`/api/calibration`, `generated_at
+2026-09-03T04:33:51Z`, `q269`), folded the way `calibration_scorecard.py` folds it — ten bins per
+cell, pooled over `price_moved`. Reproduces the board's `ece 6.29 / n 8,922` to the printed digit.
+
+### Where the 6.29 actually is: three bins of ten carry 67% of it
+
+| bin | n | predicted | actual | err (pp) | error-outcomes |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 3,298 | 3.4% | 2.6% | 0.81 | 27 |
+| 1 | 882 | 13.6% | 10.7% | 2.93 | 26 |
+| 2 | 435 | 24.2% | 18.2% | 6.08 | 26 |
+| 3 | 307 | 34.5% | 30.9% | 3.58 | 11 |
+| **4** | **837** | **46.4%** | **27.2%** | **19.17** | **160** |
+| **5** | **899** | **52.4%** | **64.0%** | **11.55** | **104** |
+| 6 | 292 | 64.6% | 66.4% | 1.86 | 5 |
+| 7 | 403 | 74.6% | 78.7% | 4.04 | 16 |
+| 8 | 465 | 84.7% | 85.2% | 0.42 | 2 |
+| **9** | **1,104** | **95.4%** | **78.7%** | **16.64** | **184** |
+
+Bins 4, 5 and 9 are 448 of the 671 error-points. Two facts worth more than the total:
+
+* **Bin 9 is the single largest contributor and it is the cleanest signal on the page.** 1,104 legs
+  priced at a mean 95.4% win 78.7%. A one-in-five failure rate on a 95% price is not a binning
+  artifact at that n, and it is the same direction as the cell's signed `gap` (+3.44 — the cell
+  over-predicts).
+* **Bins 4 and 5 straddle 0.50 and point in OPPOSITE directions.** Pooled, the pair is n 1,736 at
+  49.4% predicted / 45.9% actual — a 3.5 pp error. Split at the bin boundary they contribute 264
+  error-points instead of ~61. Some of this cell's ECE is the bin edge, not the prices, and any fix
+  measured only on the total will be credited for arithmetic it did not do.
+
+The cell is strongly established either way: `sigma 6.2` on the scorecard is `excess_pp / se`, i.e.
+6.2 standard errors over the 3.0 bar, second only to `baseball_mlb_preseason` on the queue.
+`price_moved` does not split it (True 7.15 on n 6,570, False 6.73 on n 2,352).
+
+### Candidate 1 — the non-exclusive bundle shape. **REFUTED, by the payload's own census.**
+
+`nonexclusive_bundle_filter` currently applies to `esports, kalshi/crypto, kalshi/economics,
+polymarket/baseball` and not to entertainment, so "add entertainment to the exclusion" is the
+obvious first move. The payload's own `nonexclusive_bundle_census` says it would make the cell
+WORSE:
+
+```
+entertainment  published_n 12,330
+               would_exclude_n 5,872   would_exclude_ece 4.26
+               remainder_n     6,458   remainder_ece     9.49
+```
+
+The bundle cohort is the BETTER-calibrated half. Excluding it leaves a remainder at 9.49 pp. Do not
+queue this fix. (The census is category-scoped across sources, so it is evidence about the
+direction, not a prediction of the kalshi-only cell's post-fix number.)
+
+### Candidate 2 — `market_type='field'` legs priced at ~0.49. **REJECTED AS A PARALLEL RAIL.**
+
+A direct probe of `futures_outcomes` for this cell, restricted to legs priced 0.40–0.60, reads:
+
+| market_type | legs | winners | win rate | mean raw price |
+|---|---:|---:|---:|---:|
+| quantity | 2,348 | 742 | 31.6% | 0.4984 |
+| **field** | **1,577** | **186** | **11.8%** | **0.4908** |
+| unshaped | 528 | 187 | 35.4% | 0.4915 |
+| duel | 91 | 37 | 40.7% | 0.4942 |
+
+A 37 pp miss on `field` looks like the answer and **is not admissible as one.** That probe reads
+raw `COALESCE(calibration_probability, opening_probability)` with none of the curve's thirteen live
+exclusion filters and, decisively, without `mex_normalization` — which divides a resolved
+mutually-exclusive market's outcomes by their sum whenever it exceeds 1.15. A `field` leg at a raw
+0.49 inside an eight-way market may publish at 0.12. This is the parallel-rail trap
+`calibration_scorecard.py`'s own docstring is written about, and it is recorded here so the next
+reader does not re-find it and believe it.
+
+### What is actually owed, and it is a measurement, not a build
+
+Bin 9 has three live candidate mechanisms and one query separates them:
+
+1. **the coalesce fallback** (gotcha #144 / ruling 103) — the curve price is
+   `COALESCE(calibration_probability, opening_probability)`, and the payload's global
+   `closing_line_coverage` is `has_closing 16,172 / needs_closing 2,472 / total 18,644` — 13.3% of
+   markets are priced by an OPENING price standing in for a closing one. If that 13.3% is
+   concentrated in this cell's top bin, bin 9 is measuring stale openings on markets that moved;
+2. **a grading defect** — an entertainment market (awards, chart position, box office) resolved
+   against the wrong authority;
+3. **genuine Kalshi over-confidence on entertainment favourites**, which is a finding, not a bug.
+
+The separating query — fallback share and win rate per price bin for this cell — **timed out on
+`db-query` at the default budget** and is not retried here: it is measurement, it needs a chunked
+or `EXPLAIN`-shaped rewrite, and under LANE ROLES it belongs to the measurement lane. Parked in
+`.claude/handoff/PARKED-MEASUREMENTS.md` with the ship it would unblock named.
+
+### The board row should be re-written, and here is the correction
+
+The row reads **"WENT THE WRONG WAY: 5.09 → 6.29"**. On the only instrument with a stored history —
+`artifacts/calibration-scorecard/history.jsonl`, the same `calibration_scorecard.py --live` fold —
+the cell reads:
+
+| population | ece | n |
+|---|---:|---:|
+| q267 (2026-08-02) | **5.87** | 9,489 |
+| q268 (2026-09-02, `ARTIFACT-M-R-NEEDLES-20260902-01.md`) | **5.09** | — |
+| q269 (2026-09-03) | **6.29** | 8,922 |
+
+Three readings, not two: **5.87 → 5.09 → 6.29.** The cell oscillates by ±0.6–1.2 pp between
+rebuilds over a population that moved 9,489 → 8,922. "Went the wrong way" is one leg of an
+oscillation stated as a trend, and it was produced by picking the lower of the two prior readings
+as the baseline. The cell is still the board's largest by excess-outcomes and still 6.2σ over bar —
+its RANK is right and its NARRATIVE is not.
 
 ---
 

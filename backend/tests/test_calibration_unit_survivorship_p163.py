@@ -422,7 +422,7 @@ class _Runner:
     async def apply_statement_timeout(self, _db, phase) -> int:
         return self.ledger.statement_timeout_for(phase, elapsed_ms=self._elapsed)
 
-    async def apply_unit_statement_timeout(self, _db, phase, *, unit_ms=None) -> int:
+    async def apply_unit_statement_timeout(self, _db, phase, *, unit_ms=None, deferred_rebuild=False) -> int:
         armed = self.ledger.statement_timeout_for_unit(
             phase, elapsed_ms=self._elapsed, unit_ms=unit_ms
         )

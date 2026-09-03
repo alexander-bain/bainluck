@@ -5,6 +5,7 @@ data volumes (500K+ snapshot rows). Running them as background Celery tasks
 with results cached in Redis lets the API endpoints serve instantly.
 """
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -4579,7 +4580,7 @@ def _record_convergence_projection(
     )
 
 
-async def _run_staged_futures(db, runner, sql_builder):
+async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     """Read the futures population one chunk of whole virtual questions at a time.
 
     Queue 300D Item 0. Three stages, in the order C126's consumption note fixed:
@@ -4600,6 +4601,33 @@ async def _run_staged_futures(db, runner, sql_builder):
     Returns the merged row list on completion, or ``None`` when the generation
     is still incomplete. ``None`` is not an error: it is a beat's honest report
     that it made progress and the next one will finish.
+
+    **CAL-P994 / D45(A) — the two passes.** Stage 2 used to be the only thing
+    standing between the start of a beat and its publish, and it is ~87% of the
+    window (measured: published beats median 1,268 s, of which a beat that
+    banked zero units took 360 s end to end). That window is the exposure a
+    ``worker-heavy`` restart kills, and 21 of the 23 mid-unit deaths in the
+    168-beat ring had a Heroku release inside it. So when there is already a
+    complete SERVED bank to publish from, this function runs TWICE in one beat:
+
+    * the **publish pass** (``rebuild_only=False``, the futures phase) freezes
+      the generation, retains the plan, and — finding the served bank complete —
+      skips Stage 2 entirely, going straight to Stage 3, which folds the served
+      bank exactly as it already did. The curve publishes at ~6 min.
+    * the **rebuild pass** (``rebuild_only=True``, called by
+      :func:`_run_deferred_rebuild` AFTER the publish) runs Stage 2 on whatever
+      is left of the window and returns ``None`` without finalizing. Its product
+      is banked units, not a payload.
+
+    What this does NOT change: which bank publishes (the served one, as before),
+    how much window the rebuild is allowed (the same beat deadline), or what
+    Stage 2 does with a unit. The rebuild is still funded — it is funded second.
+
+    The one real cost, named rather than buried: a generation that would have
+    COMPLETED during this beat's unit loop now completes after the publish, so
+    its census reaches readers on the next beat instead of this one. Against a
+    served bank that is 100% drifted within four hours either way, one beat of
+    freshness is the cheaper side of the trade — but it is a cost, not nothing.
     """
     from app.tasks.calibration_main_build import (
         STAGED_FUTURES_BUCKETS,
@@ -4718,6 +4746,37 @@ async def _run_staged_futures(db, runner, sql_builder):
             len(dropped), len(dropped) + len(cursor.committed_units),
         )
 
+    # -- CAL-P994 / D45(A): publish first, rebuild with what is left ----------
+    #
+    # The whole reorder is this predicate. Both clauses are load-bearing:
+    #
+    # * ``served_covers`` — there must ALREADY be a complete census to publish.
+    #   Without it, skipping Stage 2 would publish nothing at all, which is the
+    #   opposite of the ship. On a cold cursor this is False and the beat runs
+    #   exactly as it did before.
+    # * ``not covers`` — if the bank being BUILT is already complete, Stage 2
+    #   has no units to run, so there is nothing to defer and deferring would
+    #   only cost a second roster read. ``collect_unit_results`` prefers the
+    #   built bank in that case and this must not take that away from it.
+    #
+    # ``rebuild_only`` short-circuits it because the rebuild pass IS the
+    # deferred work: it must never defer itself a second time.
+    defer_rebuild = (
+        not rebuild_only
+        and cursor.served_covers(chunks)
+        and not cursor.covers(chunks)
+    )
+    if defer_rebuild:
+        runner.defer_rebuild()
+        runner.ledger.record_stage("staged:rebuild_deferred", 0)
+        logger.info(
+            "calibration staged futures: generation %s — %d/%d units banked and a "
+            "complete served bank of %d units; publishing from it FIRST and running "
+            "the unit loop after the publish (D45(A))",
+            gen_digest, len(cursor.committed_units), len(chunks),
+            len(cursor.served_units),
+        )
+
     # -- Stage 2: process whole units -----------------------------------------
     chunk_sql = text(sql_builder(frozen=True))
     done = 0
@@ -4736,7 +4795,11 @@ async def _run_staged_futures(db, runner, sql_builder):
         # Ruling 075, second clause: "we have no carried cost" must not render
         # identically to "the carried cost is zero".
         runner.ledger.record_gauge("staged:prior_unit_reason:unmeasured", 1)
-    for chunk in chunks:
+    # D45(A): an EMPTY iterable, not a `break` inside the loop and not a `return`
+    # above it. The loop body is untouched by this queue — every line of it still
+    # runs, on the rebuild pass, exactly as it did — and Stage 3 below still gets
+    # reached, which is what lets the publish pass fold the served bank.
+    for chunk in (() if defer_rebuild else chunks):
         if cursor.has(chunk.key):
             done += 1
             continue
@@ -4768,7 +4831,15 @@ async def _run_staged_futures(db, runner, sql_builder):
         # every case, so it can only stop a unit outliving its measured cost —
         # never let one outlive the beat.
         await runner.apply_unit_statement_timeout(
-            db, PHASE_FUTURES, unit_ms=worst_unit_ms or prior_unit_ms or None
+            db,
+            PHASE_FUTURES,
+            unit_ms=worst_unit_ms or prior_unit_ms or None,
+            # D45(A). On the rebuild pass the ``futures`` phase has already
+            # completed — in the ~35 s a roster read and a fold take — so its
+            # budget describes the fold, not this loop. Keeping it would cancel
+            # every unit at ~50 s against a 70 s mean, a few beats after the
+            # reorder shipped and without a word in the ledger about why.
+            deferred_rebuild=rebuild_only,
         )
         # Three PARALLEL arrays, one entry per market, unnest-ed back into the
         # (market_id, vm_id, is_grouped) roster the chunk statement joins to.
@@ -4859,14 +4930,37 @@ async def _run_staged_futures(db, runner, sql_builder):
         # unit that then gets cancelled.
         worst_unit_ms = max(worst_unit_ms, unit_ms)
 
-    _record_convergence_projection(
-        runner,
-        done=done,
-        planned=len(chunks),
-        ran_this_beat=ran_this_beat,
-        unit_ms_this_beat=unit_ms_this_beat,
-        worst_unit_ms=worst_unit_ms,
-    )
+    if defer_rebuild:
+        # NOT the projection. This pass ran no unit loop, so every input it takes
+        # is structurally zero, and a projection built from them would report the
+        # reorder as a build that has stopped converging — the false-RED twin of
+        # the false-GREEN ``task_verdict.py`` exists to prevent. The rebuild pass
+        # records the real one a few minutes later, from real units. What IS
+        # recorded here is the fact that the projection is owed, so an absent
+        # projection cannot read as "fine" (gotcha #53).
+        runner.ledger.record_gauge("staged:projection_deferred", 1)
+    else:
+        _record_convergence_projection(
+            runner,
+            done=done,
+            planned=len(chunks),
+            ran_this_beat=ran_this_beat,
+            unit_ms_this_beat=unit_ms_this_beat,
+            worst_unit_ms=worst_unit_ms,
+        )
+
+    if rebuild_only:
+        # The rebuild pass ends here, and it ends WITHOUT finalizing. The curve
+        # published from the served bank before this pass started; Stage 3 would
+        # at best re-fold a census nobody is waiting for, and at worst spend
+        # post-publish window on the global rung. ``None`` carries its usual
+        # meaning — no payload from this call — and this caller expects none.
+        runner.ledger.record_gauge("staged:rebuild_units_this_beat", ran_this_beat)
+        logger.info(
+            "calibration staged futures: rebuild pass banked %d unit(s) after the "
+            "publish — %d/%d units held", ran_this_beat, done, len(chunks),
+        )
+        return None
 
     # -- Stage 3: finalize globally, or not at all ----------------------------
     if not is_complete(cursor, chunks):
@@ -6815,6 +6909,110 @@ def staged_unit_fingerprint() -> str:
 _CARRY_MAX_AGE_S = _MAIN_CACHE_TTL
 
 
+async def _run_deferred_rebuild(runner) -> dict:
+    """Advance the NEXT census on what is left of the beat, after the publish.
+
+    CAL-P994 / D45(A). The second half of the reorder described in
+    :func:`_run_staged_futures`: the futures phase published from the served
+    bank and set :attr:`PhaseRunner.rebuild_deferred`; this runs the unit loop
+    it skipped. Called from exactly one place — after ``runner.complete``
+    (``serialize_gate_publish``) — because "the publish is done" is the only
+    precondition it has, and only the orchestrator knows it.
+
+    **Its own session, deliberately.** The build's session is closed by the
+    ``async with`` in the caller before the payload is even serialized, so there
+    is no session left to borrow. Opening a second one costs one engine setup
+    and one roster read (measured 2026-09-03: ``read:futures_generation``
+    32,968 ms) — both paid AFTER the curve is out, which is the entire point.
+    The overlap lock is re-acquired on the new session and released on the way
+    out, so the single-writer invariant this build has always had is unbroken:
+    if the next beat has already started, this pass stands down rather than
+    advancing a cursor from two directions.
+
+    **It never fails the beat, and this is the crux.** A build that published
+    its curve and was then killed mid-rebuild has done the thing a reader can
+    see. Before this queue, that beat raised out of the futures phase, terminated
+    ``cancelled``, published nothing and counted as a freeze-score miss; now the
+    publish is already durable and the interruption is recorded against the
+    REBUILD rather than against the beat. So the cancellation is swallowed here —
+    loudly, into its own named gauges, never into silence — and the beat's
+    terminal is whatever the publish earned. Nothing heavy runs after this call:
+    the orchestrator writes the checkpoint and the ledger and returns.
+
+    Returns a small status dict for the run summary. Never raises.
+    """
+    from app.tasks.base import get_task_session
+    from app.tasks.task_checkpoint import release_overlap_lock, try_acquire_overlap_lock
+    from app.utils.calibration_phase_ledger import MAIN_BUILD_TASK
+
+    if not getattr(runner, "rebuild_deferred", False):
+        # The overwhelmingly common shape for every build that is NOT the
+        # scheduled producer, and the shape of a producer beat whose served bank
+        # did not cover the plan. Named rather than left as a bare early return:
+        # "the rebuild ran and banked nothing" and "there was no deferral" are
+        # different facts about a beat.
+        return {"status": "not_deferred"}
+
+    window_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
+    if window_ms <= 0:
+        # The publish itself used the whole window. Not a failure — it is the
+        # reorder working and finding nothing left to give — but it must be
+        # visible, because a beat that never rebuilds forever is a stalled census
+        # wearing a green terminal.
+        runner.ledger.record_stage("staged:rebuild_stop:no_window_after_publish", 0)
+        return {"status": "no_window", "window_ms": 0}
+
+    runner.ledger.record_gauge("staged:rebuild_window_ms", int(window_ms))
+    started = time.monotonic()
+    status = "ran"
+    try:
+        async with get_task_session() as db:
+            if not await try_acquire_overlap_lock(db, MAIN_BUILD_TASK):
+                runner.ledger.record_stage("staged:rebuild_stop:overlap_lock", 0)
+                logger.info(
+                    "calibration deferred rebuild: another run holds the lock — "
+                    "standing down (the curve already published)"
+                )
+                return {"status": "overlap_lock_not_acquired"}
+            try:
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = {_MAIN_COMPUTE_STMT_TIMEOUT_MS}")
+                )
+                # Its OWN identity field: this is a second backend, and the one
+                # the build published from must stay named (see
+                # ``PhaseRunner.tag_rebuild_session``).
+                await runner.tag_rebuild_session(db)
+                await _run_staged_futures(
+                    db, runner, _main_futures_sql, rebuild_only=True
+                )
+            finally:
+                await release_overlap_lock(db, MAIN_BUILD_TASK)
+    except asyncio.CancelledError:
+        # THE case this queue exists for. Swallowed on purpose; see the
+        # docstring. Recorded under a name of its own so it can never be read as
+        # the beat having been interrupted — the beat published.
+        status = "interrupted"
+        runner.ledger.record_stage("staged:rebuild_stop:interrupted", 0)
+        runner.ledger.record_gauge("staged:rebuild_interrupted", 1)
+        logger.warning(
+            "calibration deferred rebuild: the runtime took the worker away %d ms "
+            "into the post-publish rebuild — the curve is published and durable; "
+            "the next census keeps its banked units and resumes next beat",
+            int((time.monotonic() - started) * 1000),
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed rebuild is not a failed publish
+        status = "error"
+        runner.ledger.record_stage("staged:rebuild_stop:error", 0)
+        runner.ledger.record_gauge("staged:rebuild_error", 1)
+        logger.error(
+            "calibration deferred rebuild failed after the publish: %s", exc,
+            exc_info=True,
+        )
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    runner.ledger.record_gauge("staged:rebuild_elapsed_ms", elapsed_ms)
+    return {"status": status, "window_ms": int(window_ms), "elapsed_ms": elapsed_ms}
+
+
 async def _run_calibration_main_build(runner=None):
     """Precompute the main /api/calibration payload and cache it in Redis.
 
@@ -7135,6 +7333,14 @@ async def _run_calibration_main_build(runner=None):
         compute_ms, publish_ms, stages.get("last_good"),
     )
     runner.complete(PHASE_PUBLISH)
+
+    # CAL-P994 / D45(A). The curve is durable and the accelerators are warm. THIS
+    # is where the rebuild's unit loop belongs — everything above it is the ~6
+    # minutes a deploy now has to hit in order to cost a publish, instead of the
+    # ~21 it had when the loop ran first. A no-op on every path that did not
+    # defer, which is every path except the scheduled producer's.
+    summary["deferred_rebuild"] = await _run_deferred_rebuild(runner)
+
     summary["status"] = "ok"
     return summary
 
@@ -7287,6 +7493,14 @@ async def _precompute_calibration_main():
             # cancellations — those are the runs whose backend might still be
             # sitting there, and this row is what names it afterwards.
             "session_identity": runner.session_identity,
+            # CAL-P994. The deferred rebuild's backend, on its own key. A field
+            # nothing persists is a field nobody can read, and this is the
+            # backend most likely to be the one still sitting there: it runs
+            # last, on the far side of the publish, in the window a deploy
+            # interrupts.
+            "rebuild_session_identity": getattr(
+                runner, "rebuild_session_identity", None
+            ),
         },
     )
     health = health_for(
