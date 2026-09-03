@@ -1,0 +1,120 @@
+{
+ "league": "geopolitics",
+ "market_type": "container_member",
+ "population": {
+  "source": "polymarket",
+  "status": "resolved"
+ },
+ "bands": {
+  "lo_far": 0.25,
+  "lo": 0.8696,
+  "hi": 1.15,
+  "hi_far": 4.0
+ },
+ "seconds": 7.5,
+ "complete": true,
+ "irreducible": [],
+ "table": [
+  {
+   "band": "z_not_two_leg",
+   "truth": "eligible",
+   "n": 10,
+   "ece": null,
+   "gap": null,
+   "lo_n": 2,
+   "lo_win": 0.0,
+   "hi_n": 1,
+   "hi_win": 100.0,
+   "bins": {
+    "0": {
+     "n": 1,
+     "sum_prob": 0.09,
+     "winners": 0
+    },
+    "1": {
+     "n": 1,
+     "sum_prob": 0.105,
+     "winners": 0
+    },
+    "4": {
+     "n": 5,
+     "sum_prob": 2.375,
+     "winners": 3
+    },
+    "5": {
+     "n": 2,
+     "sum_prob": 1.085,
+     "winners": 1
+    },
+    "8": {
+     "n": 1,
+     "sum_prob": 0.895,
+     "winners": 1
+    }
+   }
+  },
+  {
+   "band": "z_not_two_leg",
+   "truth": "ineligible",
+   "n": 1496,
+   "ece": 18.12,
+   "gap": 15.3,
+   "lo_n": 610,
+   "lo_win": 6.2,
+   "hi_n": 352,
+   "hi_win": 65.6,
+   "bins": {
+    "0": {
+     "n": 490,
+     "sum_prob": 11.935999999999996,
+     "winners": 33
+    },
+    "1": {
+     "n": 120,
+     "sum_prob": 17.837,
+     "winners": 5
+    },
+    "2": {
+     "n": 60,
+     "sum_prob": 14.900500000000001,
+     "winners": 7
+    },
+    "3": {
+     "n": 57,
+     "sum_prob": 20.189500000000002,
+     "winners": 9
+    },
+    "4": {
+     "n": 121,
+     "sum_prob": 55.195,
+     "winners": 20
+    },
+    "5": {
+     "n": 189,
+     "sum_prob": 99.0545,
+     "winners": 47
+    },
+    "6": {
+     "n": 53,
+     "sum_prob": 33.716,
+     "winners": 18
+    },
+    "7": {
+     "n": 54,
+     "sum_prob": 40.167500000000004,
+     "winners": 18
+    },
+    "8": {
+     "n": 122,
+     "sum_prob": 103.4925,
+     "winners": 43
+    },
+    "9": {
+     "n": 230,
+     "sum_prob": 220.40299999999996,
+     "winners": 188
+    }
+   }
+  }
+ ]
+}

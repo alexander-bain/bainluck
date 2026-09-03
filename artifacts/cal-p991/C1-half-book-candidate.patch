@@ -1,0 +1,35 @@
+diff --git a/backend/app/tasks/precompute_calibration.py b/backend/app/tasks/precompute_calibration.py
+index 1ca43709..8201bc54 100644
+--- a/backend/app/tasks/precompute_calibration.py
++++ b/backend/app/tasks/precompute_calibration.py
+@@ -1022,6 +1022,30 @@ POLY_PLACEHOLDER_EXCLUDE = (
+     "        SELECT 1 FROM futures_odds_snapshots fos\n"
+     "        WHERE fos.outcome_id = fo.id\n"
+     "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
++    # CAL-P991 CANDIDATE C1 — MEASUREMENT ONLY, NOT FOR COMMIT (ruling 009).
++    #
++    # The rule above is PER LEG on a market that has two of them. Measured on
++    # polymarket/basketball/quantity: it fires on 398 Under legs and ZERO Over
++    # legs, because the Under leg of a Polymarket O/U pair is written as the
++    # arithmetic complement of the Over and never carries a book of its own
++    # (652 of 1,045 Unders have no bid/trade evidence at any price; 1,045 of
++    # 1,045 Overs have one). Dropping the bookless half and keeping the booked
++    # half publishes HALF A BOOK — 398 orphan Over legs at a mean 0.4966 that
++    # win 9.8%.
++    #
++    # C1 says a two-sided price needs two sides: if EITHER leg of a two-leg
++    # Polymarket market never showed a bid or a trade, the market had no price
++    # discovery and BOTH legs leave. It picks no winner and reads no outcome —
++    # the test is book presence, which is fixed at capture.
++    "\n     OR (vm.source = 'polymarket' AND EXISTS (\n"
++    "        SELECT 1 FROM futures_outcomes fo9\n"
++    "        WHERE fo9.market_id = fo.market_id\n"
++    "          AND NOT EXISTS (\n"
++    "             SELECT 1 FROM futures_odds_snapshots fos9\n"
++    "             WHERE fos9.outcome_id = fo9.id\n"
++    "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))\n"
++    "          AND (SELECT COUNT(*) FROM futures_outcomes fo8\n"
++    "               WHERE fo8.market_id = fo.market_id) = 2))"
+ )
+ 
+ POLY_PLACEHOLDER_RULE_TEXT = (
