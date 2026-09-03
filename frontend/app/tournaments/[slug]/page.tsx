@@ -154,6 +154,7 @@ import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
 import { fetchTournament } from "@/lib/api";
+import HubBootScript from "@/components/tournament/HubBootScript";
 import type { TournamentPayload } from "@/lib/tournament";
 
 type Tab = "tournament" | "bracket";
@@ -307,6 +308,13 @@ export default function TournamentPage() {
   if (loading) {
     return (
       <div className="mx-auto max-w-[560px] px-4 py-10 text-center text-text-secondary">
+        {/* LAT-P217 — the boot fetch belongs HERE, in the loading branch, because this branch IS the
+            server-rendered document: `loading` starts true on the server and on the client, so the
+            HTML a cold reader receives contains exactly this subtree. Rendering the script in the
+            loaded branch instead would emit it only after hydration, i.e. after the request it is
+            supposed to precede. Verified against the production HTML, which carries "Loading…" and
+            nothing of the hub itself. */}
+        <HubBootScript slug={slug} />
         Loading…
       </div>
     );
