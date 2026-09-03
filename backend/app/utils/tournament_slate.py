@@ -1368,6 +1368,20 @@ def build_results(
                 "completed_at": found.get("completed_at"),
                 "source_round": found.get("espn_round"),
                 "source": "espn",
+                # THE AUTHORITY'S OWN ID FOR THIS MATCH (#2693 step 2).
+                # Published on EVERY row, not only on the rows whose
+                # `matchup_key` happens to be `espn:…`. A register-keyed row has
+                # a competition id too — it was simply being thrown away, and
+                # with it the only channel that can link a finished match whose
+                # market never attached (28 of the 34 `MARKET_UNLINKED` rows).
+                # A field, not a prefix on another field: a reader should not
+                # have to parse an identifier out of a key to find an id we
+                # already hold.
+                "espn_competition_id": (
+                    str(found["espn_competition_id"])
+                    if found.get("espn_competition_id") is not None
+                    else None
+                ),
             })
 
     rows.sort(key=lambda r: (str(r.get("completed_at") or ""), r["matchup_key"] or ""))

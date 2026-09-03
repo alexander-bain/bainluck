@@ -39,7 +39,11 @@ import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
-import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import {
+  matchEventHref,
+  type EspnEventIds,
+  type MatchupEventIds,
+} from "./tournamentEventLink";
 
 export interface ResultPlayer {
   entity_key: string;
@@ -89,6 +93,15 @@ export interface TournamentResult {
   /** ESPN's own round wording — finer than ours, kept beside it. */
   source_round: string | null;
   source: string;
+  /**
+   * ESPN's own id for this competition (#2693 step 2), on every row.
+   *
+   * The key of `event_links.by_espn`, and the only channel that can route a
+   * finished match the register no longer carries. Optional so a payload
+   * cached before the field existed still renders — absent simply means the
+   * row falls back to the market channel, which is what it did before.
+   */
+  espn_competition_id?: string | null;
 }
 
 export interface TournamentResults {
@@ -622,9 +635,15 @@ export function resultsEmptyReason(
  */
 export function resultEventHref(
   result: TournamentResult,
-  eventIds: MatchupEventIds
+  eventIds: MatchupEventIds,
+  espnEventIds?: EspnEventIds
 ): string | null {
-  return matchupEventHref(result.matchup_key, eventIds);
+  return matchEventHref(
+    result.matchup_key,
+    result.espn_competition_id,
+    eventIds,
+    espnEventIds
+  );
 }
 
 /**
@@ -637,11 +656,13 @@ export function resultEventHref(
  */
 export function resultLinkCoverage(
   matches: TournamentResult[],
-  eventIds: Record<string, number> | null | undefined
+  eventIds: Record<string, number> | null | undefined,
+  espnEventIds?: EspnEventIds
 ): { linked: number; total: number } {
   return {
-    linked: matches.filter((match) => resultEventHref(match, eventIds) !== null)
-      .length,
+    linked: matches.filter(
+      (match) => resultEventHref(match, eventIds, espnEventIds) !== null
+    ).length,
     total: matches.length,
   };
 }
