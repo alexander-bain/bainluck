@@ -12,7 +12,9 @@
 //
 // Usage: node tools/blank-event-hunt.mjs [url] [runs] [out.json]
 import { createRequire } from 'module';
-import { existsSync, readdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 function findPlaywright() {
   const npx = `${process.env.HOME}/.npm/_npx`;
@@ -28,7 +30,15 @@ const { chromium } = createRequire(findPlaywright())('playwright');
 
 const URL = process.argv[2] || 'https://www.bainluck.com/events/15293206';
 const RUNS = parseInt(process.argv[3] || '20', 10);
-const OUT = process.argv[4] || '/tmp/blank-event-hunt.json';
+// A PRIVATE directory, not a predictable path in the shared temp dir. A run of
+// this writes every console line and every response the page saw, and a
+// world-writable `/tmp/blank-event-hunt.json` is both pre-emptable by anyone on
+// the box and readable by them afterwards (CodeQL js/insecure-temporary-file).
+// `mkdtempSync` creates the directory 0700 and unguessable; an explicit path
+// from the caller is still honoured and still written 0600.
+const OUT =
+  process.argv[4] ||
+  join(mkdtempSync(join(tmpdir(), 'blank-event-hunt-')), 'results.json');
 const SETTLE_MS = parseInt(process.env.HUNT_SETTLE_MS || '9000', 10);
 // A page load fires ~22 requests at api.bainluck.com, and production rate-limits
 // at 60/minute per client. Unpaced, this instrument trips that limit and then
@@ -143,7 +153,7 @@ for (let run = 1; run <= RUNS; run++) {
   await browser.close();
 }
 
-writeFileSync(OUT, JSON.stringify({ url: URL, runs: RUNS, settleMs: SETTLE_MS, results }, null, 2));
+writeFileSync(OUT, JSON.stringify({ url: URL, runs: RUNS, settleMs: SETTLE_MS, results }, null, 2), { mode: 0o600 });
 const blanks = results.filter((r) => r.cards === 0);
 const throttledRuns = results.filter((r) => r.throttled > 0);
 console.log(`\n${blanks.length}/${results.length} blank, ${throttledRuns.length}/${results.length} saw a 429. wrote ${OUT}`);
