@@ -128,14 +128,35 @@ const DEFAULT_CARD_SEL = [
   'article',
 ].join(',');
 
-const INIT = (cardSel) => `
+// 🔴 THE 12-CHARACTER FLOOR MADE THE EVENT PAGE'S HERO INVISIBLE (LAT-P216).
+//
+// `isReal` required >=12 characters of text, which is right for a card — a skeleton has almost no
+// text — and exactly wrong for a hero. `EventHeroProbabilityPair` renders `99%-1%`: SIX characters.
+// So on every cold Event run the hero was rejected, the detector fell through to the first
+// related-futures link (long text), and the felt table reported the Event page's number as the
+// arrival of the RELATED-MARKETS RAIL — a chained second-wave request — while calling it "seconds to
+// the first real card". Every one of the five 2026-09-02 cold runs logged `firstDesc` as an anonymous
+// `A :: MLB World Series Winner...`, and nobody read it.
+//
+// A hero is not a card and cannot borrow a card's realness test. Its placeholder is not a grey block
+// with no text, it is the SAME element printing an em-dash where the number goes. So the honest
+// predicate for a hero is "does it print a number yet", and that is what is used here.
+const HERO_SEL = [
+  '[data-testid="event-hero-probability"]',
+  '[data-testid="event-hero-settled"]',
+  '[data-testid="futures-hero-probability"]',
+].join(',');
+
+const INIT = (cardSel, heroSel) => `
 (() => {
   const CARD_SEL = ${JSON.stringify(cardSel)};
+  const HERO_SEL = ${JSON.stringify(heroSel)};
 
   const S = {
     origin: 0,            // performance.now() at the start of THIS arm
     label: 'cold',
     first: null, firstNumber: null, fold: null,
+    hero: null, heroDesc: null,
     foldCount: 0, total: 0,
     firstDesc: null,
     skeletonSeen: false,
@@ -155,14 +176,53 @@ const INIT = (cardSel) => `
 
   // textContent, not innerText: innerText forces layout every frame and the instrument would then be
   // part of what it is measuring. A skeleton has almost no text, so textContent separates them fine.
+  function isHero(el) { return HERO_SEL && el.matches && el.matches(HERO_SEL); }
+
+  // 🔴 A ZERO-SIZE BOX IS NOT AN ABSENT CARD (LAT-P216). The 80x40 floor is there to reject
+  // furniture, and it silently rejected the US Open page instead. Its result rows are anchors that
+  // generate no box of their own — display:contents, or a wrapper whose children carry the layout —
+  // so getBoundingClientRect() returns 0x0 on an element holding 87 characters of visible scoreline.
+  // In the afternoon the page also had LIVE match cards, which do have boxes, so the surface measured
+  // fine and the blindness only appears at night once the live cards are gone. That is the worst
+  // possible failure shape: an instrument that works exactly until the population changes under it.
+  // When an element has no box, its visible extent is its children's; that union is what gets tested.
+  function boxOf(el) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return r;
+    let top = Infinity, left = Infinity, bottom = -Infinity, right = -Infinity;
+    for (const k of el.children) {
+      const kr = k.getBoundingClientRect();
+      if (kr.width <= 0 || kr.height <= 0) continue;
+      top = Math.min(top, kr.top); left = Math.min(left, kr.left);
+      bottom = Math.max(bottom, kr.bottom); right = Math.max(right, kr.right);
+    }
+    if (bottom === -Infinity) return r;
+    return { top, left, bottom, right, width: right - left, height: bottom - top };
+  }
+
   function isReal(el) {
     if (el.classList && el.classList.contains('animate-pulse')) return false;
     if (el.closest('.animate-pulse')) return false;
     if (el.closest('[aria-hidden="true"]')) return false;
     if (el.querySelector('.animate-pulse')) return false;
     const t = (el.textContent || '').trim();
+    // A hero is real when it prints ITS OWN ANSWER, and the two heroes have two different answers.
+    // Neither is a character count and neither is a box size:
+    //   - the live hero answers with a number, and its unresolved state is the SAME element printing
+    //     an em-dash, so only the number test separates them;
+    //   - the settled hero answers with a WINNER ("settled means settled: heroes show winners"), so a
+    //     number test would reject it forever. It declares its own readiness in data-winner, which is
+    //     empty until the outcome is known — that attribute IS the contract, so it is what is used.
+    // The 80x40 floor is skipped for heroes: the settled hero measures 70x55 on production and would
+    // be rejected as furniture by a rule written for cards.
+    if (isHero(el)) {
+      const settled = el.getAttribute('data-winner');
+      if (settled !== null) { if (!settled.trim()) return false; }
+      else if (!/\\d{1,3}\\s?%/.test(t)) return false;
+      return true;
+    }
     if (t.length < 12) return false;
-    const r = el.getBoundingClientRect();
+    const r = boxOf(el);
     if (r.width < 80 || r.height < 40) return false;
     return true;
   }
@@ -172,6 +232,19 @@ const INIT = (cardSel) => `
     // Cheap pre-check: has a skeleton ever been on screen? Tells us whether "first" was preceded by a
     // placeholder (the reader waited looking at grey) or by nothing (the reader waited looking at white).
     if (!S.skeletonSeen && document.querySelector('.animate-pulse')) S.skeletonSeen = true;
+    // The hero is scanned SEPARATELY from the card loop, on purpose. Folding it in would leave it at
+    // the mercy of two card-shaped rules that have nothing to do with it: it would be skipped by
+    // hasCountedAncestor whenever a card-shaped wrapper happened to be counted first, and it would
+    // be missed entirely on any surface whose cardSel does not happen to name it. A hero is the one
+    // element on the page the reader actually came for; it gets its own clock.
+    if (S.hero === null && HERO_SEL) {
+      for (const h of document.querySelectorAll(HERO_SEL)) {
+        if (!isReal(h)) continue;
+        S.hero = now;
+        S.heroDesc = (h.getAttribute('data-testid') || h.tagName) + ' :: ' + (h.textContent || '').trim().slice(0, 40);
+        break;
+      }
+    }
     const nodes = document.querySelectorAll(CARD_SEL);
     for (const el of nodes) {
       if (seen.has(el)) continue;
@@ -185,7 +258,7 @@ const INIT = (cardSel) => `
         S.firstDesc = (el.getAttribute('data-testid') || el.tagName) + ' :: ' + (el.textContent || '').trim().slice(0, 70);
       }
       if (S.firstNumber === null && /\\d{1,3}\\s?%/.test(el.textContent || '')) S.firstNumber = now;
-      const r = el.getBoundingClientRect();
+      const r = boxOf(el);
       if (r.top < window.innerHeight && r.bottom > 0) { S.fold = now; S.foldCount++; }
     }
     requestAnimationFrame(tick);
@@ -203,6 +276,7 @@ const INIT = (cardSel) => `
     S.origin = performance.now();
     S.label = label || 'warm';
     S.first = S.firstNumber = S.fold = null;
+    S.hero = null; S.heroDesc = null;
     S.foldCount = 0; S.total = 0; S.firstDesc = null; S.skeletonSeen = false;
     return S.origin;
   };
@@ -231,6 +305,8 @@ const COLLECT = `(() => {
   return {
     shell: paint['first-contentful-paint'] ?? null,
     first: S.first, firstNumber: S.firstNumber, fold: S.fold,
+    hero: S.hero, heroDesc: S.heroDesc,
+    heroPresent: document.querySelectorAll(${JSON.stringify(HERO_SEL)}).length,
     foldCards: S.foldCount, totalCards: S.total, firstDesc: S.firstDesc, skeletonSeen: S.skeletonSeen,
     ttfb: nav.responseStart ?? null, dcl: nav.domContentLoadedEventEnd ?? null, load: nav.loadEventEnd ?? null,
     lastScriptEnd: Math.round(scriptMs),
@@ -278,7 +354,7 @@ for (let i = 0; i < RUNS; i++) {
   const browser = await newBrowser();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await page.addInitScript(INIT(surface.cardSel || DEFAULT_CARD_SEL));
+    await page.addInitScript(INIT(surface.cardSel || DEFAULT_CARD_SEL, HERO_SEL));
 
     let m;
     if (MODE === 'warm') {
@@ -349,6 +425,7 @@ for (let i = 0; i < RUNS; i++) {
     console.error(
       `run ${i + 1}/${RUNS} ${surfaceKey.padEnd(11)} ${String(m.how).padEnd(12)} ` +
       `shell=${m.shell == null ? '   -' : Math.round(m.shell)} first=${m.first == null ? 'NONE' : Math.round(m.first)} ` +
+      `hero=${m.hero == null ? (m.heroPresent ? 'NEVER-REAL' : 'ABSENT') : Math.round(m.hero)} ` +
       `firstNum=${m.firstNumber == null ? 'NONE' : Math.round(m.firstNumber)} fold=${m.fold == null ? 'NONE' : Math.round(m.fold)} ` +
       `foldCards=${m.foldCards} cards=${m.proof.cards} pct=${m.proof.pct} skel=${m.skeletonSeen}`
     );
@@ -379,6 +456,12 @@ const summary = {
   mode: MODE, throttle: process.env.FELT_THROTTLE || 'none', cpu: process.env.FELT_CPU || '1',
   runs: RUNS, valid: ok.length,
   shell: summ('shell'), first: summ('first'), firstNumber: summ('firstNumber'), fold: summ('fold'),
+  // `hero` is reported next to `first` rather than replacing it, because the gap between them is
+  // itself the finding: on the Event page `first` is the related-markets rail and `hero` is the
+  // number in 48px type. A row that quotes only one of them is quoting the wrong page.
+  hero: summ('hero'),
+  heroRuns: ok.filter(r => typeof r.hero === 'number').length,
+  heroPresentRuns: ok.filter(r => r.heroPresent > 0).length,
   medianFoldCards: pct(ok.map(r => r.foldCards), 50),
   medianLastScriptEnd: pct(ok.map(r => r.lastScriptEnd), 50),
   skeletonSeen: ok.length ? ok.every(r => r.skeletonSeen) : null,
