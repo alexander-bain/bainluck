@@ -181,17 +181,14 @@ struct NativeConceptDiscoverCard: View {
     /// 40%", never a price). Clamped because an independent-binary field can sum
     /// past 100% (gotcha #23) and a card must not print 104%.
     private func probabilityLabel(_ probability: Double) -> String {
-        let clamped = min(max(probability, 0), 1)
-        return "\(Int((clamped * 100).rounded()))%"
+        "\(FeedProbabilityScale.wholePercent(fromFraction: probability))%"
     }
 
     /// 24h movement in percentage POINTS, shown only when it is worth a glance.
     /// Sub-point noise is suppressed rather than rounded to "+0", which reads as
     /// a measured non-move rather than as an absence.
     private func movementLabel(_ movement: Double?) -> String? {
-        guard let movement else { return nil }
-        let points = movement * 100
-        guard abs(points) >= 1 else { return nil }
+        guard let points = FeedProbabilityScale.movementPoints(fromFraction: movement) else { return nil }
         let rounded = Int(points.rounded())
         return rounded > 0 ? "▲\(rounded)" : "▼\(abs(rounded))"
     }
