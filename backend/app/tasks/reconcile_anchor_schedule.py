@@ -35,9 +35,17 @@ different defect (the anchor is wrong, not the clock) and it belongs to
 ``authority-id-collisions``; the verdict is reported so the two rails can be
 read together.
 
-ATTENDED ONLY.  ``apply`` defaults to False and this is deliberately not wired
-to a beat: the population it moves is small, the moves are large (98 days in
-the charter case), and a reviewer should see the plan.
+THE APPLY IS ATTENDED; THE REPORT IS NOT (#2853).  ``apply`` defaults to False
+and a write still needs a person: the population it moves is small, the moves
+are large (98 days in the charter case), and a reviewer should see the plan.
+
+But that argument is about *writing*, and until #2853 it was being used to keep
+the rail from *looking*.  A rail that only runs when asked catches a December
+anchor on a September row exactly when somebody thinks to ask — which, for
+#2804, was days after a fan could already see the wrong kickoff.  So the
+read-only half now runs nightly (``app.tasks.anchor_schedule_sentinel``), pages
+the window under a budget, and files what it finds; the plan it produces is
+still the reviewer's to apply.
 """
 
 from __future__ import annotations
@@ -89,6 +97,22 @@ DEFAULT_LIMIT = 100
 #: What separates the two halves of a cursor. A kickoff renders as ISO-8601,
 #: which already contains ``-``, ``:`` and ``+``; ``|`` appears in none of them.
 CURSOR_SEPARATOR = "|"
+
+#: Sports whose anchors this rail cannot dereference, so asking costs a call and
+#: buys nothing (#2852).
+#:
+#: Measured 2026-09-03: of 46 in-window US Open rows, a 20-row sample returned
+#: ``no_answer`` 20/20. ESPN's tennis anchors are not ``summary?event=`` ids in
+#: the shape ``_fetch_record`` dereferences, so every tennis row is a guaranteed
+#: miss. Left in, they are not merely wasteful — they are *misreading*: a page
+#: that is entirely tennis terminates ``authority_dark``, which is the rail's
+#: word for an ESPN outage, and a nightly sentinel that cries outage every night
+#: is one nobody reads.
+#:
+#: This is an exclusion from the POPULATION, not a filter on the report, so
+#: ``eligible`` never counts a row the rail would refuse to ask about. Two
+#: definitions of "eligible" is how a census comes to disagree with itself.
+EXCLUDED_SPORT_KEYS = frozenset({"tennis_atp", "tennis_wta"})
 
 
 def encode_cursor(commence_time: datetime, event_id: int) -> str:
@@ -188,6 +212,7 @@ async def _count_eligible(
     horizon: timedelta,
     now: Optional[datetime] = None,
     cursor: Optional[str] = None,
+    exclude_sports: frozenset[str] = frozenset(),
 ) -> int:
     """How many rows the window holds, ignoring ``limit``.
 
@@ -213,6 +238,8 @@ async def _count_eligible(
     )
     if sport:
         query = query.where(Sport.key == sport)
+    if exclude_sports:
+        query = query.where(Sport.key.notin_(tuple(exclude_sports)))
     return int((await session.execute(query)).scalar() or 0)
 
 
@@ -225,6 +252,7 @@ async def _load_rows(
     horizon: timedelta,
     now: Optional[datetime] = None,
     cursor: Optional[str] = None,
+    exclude_sports: frozenset[str] = frozenset(),
 ) -> list[AnchoredRow]:
     """The anchored, unfinished, near-future rows — oldest kickoff first.
 
@@ -264,6 +292,8 @@ async def _load_rows(
     )
     if sport:
         query = query.where(Sport.key == sport)
+    if exclude_sports:
+        query = query.where(Sport.key.notin_(tuple(exclude_sports)))
 
     result = await session.execute(query)
     return [
@@ -315,6 +345,7 @@ async def reconcile(
     lookback: timedelta = DEFAULT_LOOKBACK,
     horizon: timedelta = DEFAULT_HORIZON,
     cursor: Optional[str] = None,
+    exclude_sports: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Ask the authority about every anchored near-future row's kickoff.
 
@@ -364,13 +395,22 @@ async def reconcile(
     from app.tasks.repair_authority_id_collisions import _fetch_record
 
     eligible = await _count_eligible(
-        session, sport=sport, lookback=lookback, horizon=horizon
+        session,
+        sport=sport,
+        lookback=lookback,
+        horizon=horizon,
+        exclude_sports=exclude_sports,
     )
     remaining = (
         eligible
         if not cursor
         else await _count_eligible(
-            session, sport=sport, lookback=lookback, horizon=horizon, cursor=cursor
+            session,
+            sport=sport,
+            lookback=lookback,
+            horizon=horizon,
+            cursor=cursor,
+            exclude_sports=exclude_sports,
         )
     )
     rows = await _load_rows(
@@ -380,6 +420,7 @@ async def reconcile(
         lookback=lookback,
         horizon=horizon,
         cursor=cursor,
+        exclude_sports=exclude_sports,
     )
     if not rows:
         return {
