@@ -831,6 +831,39 @@ def _still_holds(client, tier: str, token: Optional[str]) -> bool:
         return True
 
 
+def _assert_apply_contract(apply) -> None:
+    """`apply` must accept `(pipe, observed)`. Say so NOW, not in a swallow.
+
+    Checked by signature rather than by letting the call fail, because the call
+    fails INSIDE :func:`_with_redis`, which is deliberately blind to everything.
+    A `TypeError` there is indistinguishable from a Redis outage and produces
+    the worst possible answer: the fence reports it still holds the tier while
+    the write it was fencing never existed (CERT-831).
+
+    A callable whose signature cannot be read — a builtin, a C extension — is
+    ACCEPTED. This guard exists to catch a stale hand-written lambda, and
+    refusing what it cannot inspect would trade a real bug class for an
+    imaginary one.
+    """
+    import inspect
+
+    try:
+        signature = inspect.signature(apply)
+    except (TypeError, ValueError):  # not introspectable — see above
+        return
+    try:
+        signature.bind(None, None)
+    except TypeError as exc:
+        raise TypeError(
+            "_fenced: `apply` must accept (pipe, observed) — it queues writes "
+            f"on a pipeline already in MULTI mode, and {apply!r} does not take "
+            "them. A one-argument callback left over from when this fence ran "
+            "commands directly is CERT-831: the TypeError is swallowed by "
+            "`_with_redis`, the fence answers `held=True`, and the write it "
+            "promised never lands."
+        ) from exc
+
+
 def _fenced(tier: str, token: Optional[str], apply, *, read=None, watch=()) -> bool:
     """Run the caller's writes only while we still hold the tier, ATOMICALLY.
 
@@ -893,7 +926,39 @@ def _fenced(tier: str, token: Optional[str], apply, *, read=None, watch=()) -> b
     :param watch: extra keys whose movement must also abort the transaction. A
         caller that READS a key in `read` and branches on it has to watch it, or
         it has re-created this very bug one key over.
+    :raises TypeError: if `apply` does not accept the two-argument contract.
     """
+    # 🔴 THE CONTRACT IS CHECKED OUT HERE, ABOVE `_with_redis`, AND THAT
+    # PLACEMENT IS THE POINT — CERT-831. `_with_redis` swallows every exception
+    # on purpose: a Redis outage must cost a re-scan, not a crashed drain. That
+    # blanket also swallows PROGRAMMING errors raised inside `_guarded`, and
+    # when it does, `refused` stays empty and this function answers `True` — a
+    # write that never happened, reported as a write that did. That is exactly
+    # how the legacy reopen site's one-argument callback survived four updated
+    # callbacks, a full focused suite and a cert: `TypeError`, swallowed,
+    # `held=True`, terminal marker left in place.
+    #
+    # So the two things a caller can get structurally wrong are decided BEFORE
+    # the swallow exists. A contract violation is not an outage and must never
+    # be reported as one; it is a loud failure at the call that made it, in
+    # every environment, on the first invocation.
+    _assert_apply_contract(apply)
+    # Nothing is watched when there is no lease to watch (a dry run) and the
+    # caller named no other key — which is the one shape a read phase cannot
+    # survive. `token is None` is a refusal before any of this and is left alone.
+    if read is not None and not watch and token == _DRY_RUN_LOCK:
+        # A read phase is only a read phase while watching: redis-py puts a
+        # pipeline into IMMEDIATE mode on `watch()` and not before, so a `read`
+        # issued on an unwatched pipeline is QUEUED — it answers with the
+        # pipeline object rather than a value, which is truthy, and `_mark_done`
+        # would report `awaiting_retries` for every tier forever. A wrong
+        # verdict arriving through a mode error, refused here where the refusal
+        # can actually be heard.
+        raise AssertionError(
+            "_fenced: a read phase requires at least one watched key — "
+            "a read the write branches on is part of the write"
+        )
+
     refused: list = []
     lost_watch: list = []
 
@@ -909,21 +974,9 @@ def _fenced(tier: str, token: Optional[str], apply, *, read=None, watch=()) -> b
         fencing = token != _DRY_RUN_LOCK
 
         with client.pipeline(transaction=True) as pipe:
+            # The read-phase/watch contract is asserted before `_with_redis`,
+            # where the assertion is not swallowed (CERT-831).
             watched = ([lock_key] if fencing else []) + list(watch)
-            # 🔴 A READ PHASE IS ONLY A READ PHASE WHILE WATCHING. redis-py puts
-            # a pipeline into IMMEDIATE mode on `watch()` and not before, so a
-            # `read` issued on an unwatched pipeline would be QUEUED — it would
-            # answer with the pipeline object rather than a value, which is
-            # truthy, and `_mark_done` would silently report `awaiting_retries`
-            # for every tier forever. That is a wrong verdict arriving through a
-            # mode error, so it is refused loudly here instead of being possible.
-            # Unreachable from the three current callers (the only one with a
-            # read phase also passes `watch`); this exists for the fourth.
-            if read is not None and not watched:
-                raise AssertionError(
-                    "_fenced: a read phase requires at least one watched key — "
-                    "a read the write branches on is part of the write"
-                )
             if watched:
                 pipe.watch(*watched)
             if fencing and _decode(pipe.get(lock_key)) != token:
@@ -944,7 +997,17 @@ def _fenced(tier: str, token: Optional[str], apply, *, read=None, watch=()) -> b
                 refused.append(True)
                 return
 
-        if settle is not None:
+        # 🔴 `callable`, NOT `is not None` — CERT-831's second seam. A queued
+        # write returns the PIPELINE (`pipe.delete(k)` is chainable, in redis-py
+        # and in the fake), so the natural one-line callback
+        # `lambda pipe, _observed: pipe.delete(k)` hands a pipeline back here.
+        # Under `is not None` that pipeline was called as a settle function, and
+        # the resulting `TypeError` went straight into `_with_redis`'s swallow —
+        # after `execute()`, so the write DID land, but every caller-visible
+        # effect of the settle phase silently did not. A callback that queues one
+        # command and wants no settle phase is the common case and must not have
+        # to remember to end in a bare statement.
+        if callable(settle):
             # Strip the renewal's own reply so the caller indexes its own
             # commands — `results[-1]`, `results[0]` and friends must mean what
             # they meant when the writes were in a pipeline of their own.
@@ -1331,12 +1394,45 @@ async def run_thirty_day_chart_drain(
                             tier.name, state.done, len(state.retry),
                             sorted(state.retry)[:10],
                         )
-                        _fenced(
+                        # 🔴 THE REOPEN IS A QUEUED WRITE LIKE EVERY OTHER ONE
+                        # — CERT-831. This site kept a `lambda client: ...` from
+                        # before `_fenced` became a transaction, and the two-arg
+                        # `apply(pipe, observed)` contract turned it into a
+                        # `TypeError` that `_with_redis` swallowed: `_fenced`
+                        # answered `True`, the marker was never deleted, and the
+                        # pass went on believing it had reopened the tier. If the
+                        # owed retry then SUCCEEDED and the page behind it was
+                        # not exhausted, `_record_attempts` removed the retry
+                        # without deleting a marker (it only deletes when it ADDS
+                        # one), `_settle_tier` wrote nothing because the tier is
+                        # not terminal — and the next trigger read `drained`
+                        # beside an empty retry hash and skipped the rest of the
+                        # tier forever. The silent contract drift is closed in
+                        # `_fenced` itself; this is the write it broke.
+                        #
+                        # 🔴 AND A DRY RUN DOES NOT DO IT. Every other write on
+                        # this path is behind `if not dry_run`; this one was not,
+                        # and only the broken callback hid that — a spot check
+                        # would otherwise reopen a tier it took no lock on. It
+                        # still reopens IN MEMORY, so the probe reports what a
+                        # real run would find, and persists nothing.
+                        reopened = dry_run or _fenced(
                             tier.name, lock,
-                            lambda client: client.delete(
+                            lambda pipe, _observed: pipe.delete(
                                 TIER_DONE_KEY.format(tier=tier.name)
                             ),
                         )
+                        if not reopened:
+                            # 🔴 AND THE ANSWER IS ACTED ON. `_fenced` returning
+                            # `False` means the lease moved: the marker is still
+                            # in Redis and belongs to whoever holds the tier now.
+                            # Draining on anyway would spend a page of venue
+                            # fetches whose every write is refused, and would
+                            # leave this pass reporting progress it did not make.
+                            summary["tiers"][tier.name] = {
+                                "why": tier.why, "status": LOCK_LOST,
+                            }
+                            continue
                         state = state._replace(done=None)
                     if state.done:
                         summary["tiers"][tier.name] = {
