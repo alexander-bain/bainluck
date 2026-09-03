@@ -66,7 +66,23 @@ struct FeedView: View {
             // (re)appearance re-arms after a prior stop, then supersedes any prior
             // owned load.
             vm.viewDidStart()
+            if vm.items.isEmpty {
+                // 🔴 Arm the felt-number rail on tab activation with an empty
+                // screen (CERT-782): the cold/warm label is claimed now instead of
+                // when the first card finally lands, and a Sports load that renders
+                // nothing reports `no_card` rather than nothing at all. Guarded on
+                // `items.isEmpty` because a tab switch back to a populated Sports
+                // stamps no new render generation to settle the arm with.
+                ScreenTimingSession.armScreen(surface: ScreenTimingSurface.sports)
+            }
             await vm.startLoad()
+        }
+        .onChange(of: vm.loading) { _, loading in
+            guard !loading, vm.items.isEmpty else { return }
+            ScreenTimingSession.reportOutcome(
+                surface: ScreenTimingSurface.sports,
+                outcome: vm.error == nil ? "empty" : "error"
+            )
         }
         .onChange(of: vm.firstRenderGeneration) { _, _ in
             // Generation-keyed acknowledgement (L2-211 Item 2 / C73): fires when the
@@ -79,6 +95,7 @@ struct FeedView: View {
             // generation, and stop the timer so a timer-driven refresh already in
             // flight can't mutate state after the tab closes (L2-211 Item 1 / C73).
             vm.viewDidStop()
+            ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.sports)
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
