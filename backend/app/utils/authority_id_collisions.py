@@ -108,7 +108,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional, Sequence
 
-from app.utils.authority_name_forms import canonical_forms, composed_forms
+from app.utils.authority_name_forms import (
+    canonical_forms,
+    composed_forms,
+    synonym_forms,
+)
 from app.utils.name_normalization import normalize_team_name_for_matching
 
 __all__ = [
@@ -202,7 +206,11 @@ def authority_names(competitor: dict[str, Any]) -> frozenset[str]:
     (:func:`~app.utils.authority_name_forms.composed_forms`); the rule stays
     exact and only the vocabulary grows.
     """
-    block = competitor.get("team") if isinstance(competitor.get("team"), dict) else competitor
+    block = (
+        competitor.get("team")
+        if isinstance(competitor.get("team"), dict)
+        else competitor
+    )
     names = set()
     for key in (
         "displayName",
@@ -341,9 +349,24 @@ def _teams_agree(row: CandidateRow, record: AuthorityRecord) -> tuple[bool, bool
 
     Because every form set contains the plain normalized name, this is a strict
     widening: nothing the exact rule used to agree on can stop agreeing.
+
+    ═══ AND THE ASYMMETRIC HALF (#2823) ═══
+
+    Our side — and ONLY our side — is additionally widened by
+    :func:`~app.utils.authority_name_forms.synonym_forms`, an exact
+    ``(sport, name)`` lookup for the dozen clubs ESPN simply calls something
+    else: ``Athletic Bilbao``/``Athletic Club``, ``Sporting Lisbon``/``Sporting
+    CP``, ``Sam Houston State``/``Sam Houston``. Those are not reachable by any
+    structural rule, and every rule that would reach them fuses ``Ohio State``
+    with ``Texas State``. A table of named clubs cannot generalise, so it cannot
+    generalise wrongly; see that constant for why it is keyed on sport.
     """
-    ours_home = canonical_forms(row.home_team_name)
-    ours_away = canonical_forms(row.away_team_name)
+    ours_home = canonical_forms(row.home_team_name) | synonym_forms(
+        row.home_team_name, row.sport_key
+    )
+    ours_away = canonical_forms(row.away_team_name) | synonym_forms(
+        row.away_team_name, row.sport_key
+    )
     if not ours_home or not ours_away or not record.home_names or not record.away_names:
         return False, False, "none"
     theirs_home = _forms_of_all(record.home_names)
@@ -424,7 +447,8 @@ def _select_cluster(
 
     window = MAX_TWIN_DELTA.total_seconds()
     near = [
-        c for c in clusters
+        c
+        for c in clusters
         if any(
             r.commence_time is not None
             and abs((r.commence_time - record.starts_at).total_seconds()) <= window
@@ -438,8 +462,12 @@ def _select_cluster(
 
     authority_date = record.starts_at.date()
     same_day = [
-        c for c in clusters
-        if any(r.commence_time is not None and r.commence_time.date() == authority_date for r in c)
+        c
+        for c in clusters
+        if any(
+            r.commence_time is not None and r.commence_time.date() == authority_date
+            for r in c
+        )
     ]
     if len(same_day) == 1:
         return same_day[0], ""
@@ -527,7 +555,9 @@ def decide_group(
         verdicts[row.event_id] = RowVerdict(
             row.event_id,
             "AGREES" if row.event_id in kept_ids else "TIME_DISAGREES",
-            inverted, delta, channel,
+            inverted,
+            delta,
+            channel,
         )
 
     ordered = sorted(chosen, key=_rank)
@@ -578,7 +608,9 @@ def summarize(decisions: Iterable[GroupDecision]) -> dict[str, Any]:
         # Groups still wearing one id on two rows after this repair runs. The
         # unique index cannot be created while this is above zero, so it is the
         # number the migration note has to quote.
-        "groups_unresolved": groups - outcomes["RESOLVED_ONE"] - outcomes["RESOLVED_MERGE"],
+        "groups_unresolved": groups
+        - outcomes["RESOLVED_ONE"]
+        - outcomes["RESOLVED_MERGE"],
         # Which channel every verdict came through. A repair graded on the id
         # channel and quietly delivered on the name channel is a different
         # repair; this is the line that makes the swap visible.

@@ -220,6 +220,33 @@ REJECT_ATTEMPT_ERROR = "attempt_error"
 #: at low rates (gotcha #13); a spike is its own signal.
 REJECT_DEADLOCK = "deadlock"
 
+#: The market has SETTLED, so the matcher will not attempt it again (#2798).
+#:
+#: NOT A REFUSAL OF A CANDIDATE — an INELIGIBILITY, and the distinction is the
+#: whole reason it is a value here rather than an absence. Measured on
+#: production 2026-09-03: every receipt the matcher wrote in an hour came from
+#: Pass 1, and 7,464 of those 7,642 sat on ``status='resolved'`` markets, some
+#: re-attempted 40 times. The event population for a past date is frozen, so
+#: not one of those attempts could ever have produced a different answer — and
+#: while they ran, Passes 2 and 3 never started at all (zero rows in the whole
+#: receipts table carry their phase). The settled tail was eating the budget of
+#: the backlog sweep built to end "never attempted".
+#:
+#: So the settled rows leave the scan, and this value is what keeps that from
+#: re-creating the hole the table exists to abolish: a market that stops being
+#: attempted must SAY why, once. Written by the settled sweep
+#: (:data:`PHASE_SETTLED_SWEEP`) exactly one time per market — its own selection
+#: excludes rows that already carry it — so the reject histogram stops being
+#: dominated by dead rows whose timestamps keep looking fresh.
+#:
+#: It overwrites whatever the last live attempt decided, which is correct: the
+#: receipt is current state ("the last time the matcher looked, here is what it
+#: decided"), and a ``name_mismatch`` on a market that has since resolved
+#: describes a question nobody can act on. The history it replaces is not lost —
+#: every link CHANGE is immutable in ``market_link_changes``, and
+#: ``attempt_count`` / ``first_attempted_at`` survive the upsert.
+REJECT_SETTLED = "settled"
+
 #: The receipt's claim about the link and the database disagree. The attempt
 #: CHOSE an event and the row is not on it; or the attempt UNLINKED and the row
 #: is still attached; or a merge claimed to repoint and the row did not move.
@@ -251,6 +278,7 @@ REJECT_REASONS: frozenset[str] = frozenset({
     REJECT_AUTO_CREATE_DECLINED,
     REJECT_ATTEMPT_ERROR,
     REJECT_DEADLOCK,
+    REJECT_SETTLED,
     REJECT_LINK_NOT_DURABLE,
 })
 
@@ -263,6 +291,13 @@ PHASE_PASS2_GENERAL = "pass2_general"
 #: "never attempted" impossible. Ordered by oldest receipt first, so no market
 #: can sit behind a newer wave forever.
 PHASE_PASS3_BACKLOG = "pass3_backlog"
+#: The settled sweep (#2798) — the one pass that writes a receipt WITHOUT
+#: attempting anything. It stamps :data:`REJECT_SETTLED` on the markets that
+#: have left the matcher's population by resolving, so "the scan stopped coming
+#: here" is a recorded decision instead of a silence. Its own selection skips
+#: rows that already carry the reason, which is what makes it once-per-market
+#: rather than another every-pass re-touch.
+PHASE_SETTLED_SWEEP = "settled_sweep"
 
 # The phases below never attach a market that was unattached. They only END or
 # MOVE a link that already existed, which is why they arrived with the
@@ -288,6 +323,7 @@ PHASE_ADMIN_REPAIR = "admin_repair"
 
 PHASES: frozenset[str] = frozenset({
     PHASE_PASS1_TICKER, PHASE_PASS2_GENERAL, PHASE_PASS3_BACKLOG,
+    PHASE_SETTLED_SWEEP,
     PHASE_PHASE15_REVALIDATE, PHASE_PHASE2_LINKED, PHASE_TWIN_MERGE,
     PHASE_ADMIN_REPAIR, PHASE_RELINK_COLLAPSED, PHASE_SEGMENT_RECONCILE,
 })

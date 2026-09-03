@@ -18,8 +18,13 @@ Writes nothing, anywhere: the database is read through ``/api/admin/db-query``
 
     source ~/.claude/.env
     python3 scripts/audit_anchor_schedule.py
-    python3 scripts/audit_anchor_schedule.py --sport americanfootball_nfl
-    python3 scripts/audit_anchor_schedule.py --verdict teams_disagree --json
+    python3 scripts/audit_anchor_schedule.py --sport americanfootball_nfl --all
+    python3 scripts/audit_anchor_schedule.py --verdict teams_disagree --all --json
+
+``--all`` follows the cursor to the end of the window. Without it the run stops
+at ``--limit`` — the rail's router-timeout bound, 100 — and a sport with more
+anchored rows than that reports a census of its earliest page only. The window
+held 685 rows on 2026-09-03, so the unpaged default sees under a sixth of it.
 
 ═══ WHAT IT MEASURED THE DAY IT WAS WRITTEN (2026-09-03) ═══
 
@@ -55,6 +60,8 @@ from app.tasks.reconcile_anchor_schedule import (  # noqa: E402
     DEFAULT_HORIZON,
     DEFAULT_LIMIT,
     DEFAULT_LOOKBACK,
+    decode_cursor,
+    encode_cursor,
 )
 from app.tasks.repair_authority_id_collisions import record_from_summary  # noqa: E402
 from app.utils.anchor_schedule import (  # noqa: E402
@@ -138,22 +145,41 @@ def fetch_summary(sport_key: str, authority_id: str) -> dict | None:
 
 
 def load_rows(
-    sport: str | None, limit: int, lookback: timedelta, horizon: timedelta
+    sport: str | None,
+    limit: int,
+    lookback: timedelta,
+    horizon: timedelta,
+    cursor: str | None = None,
 ) -> tuple[list[AnchoredRow], int]:
     """The same population ``reconcile_anchor_schedule._load_rows`` selects.
 
-    Same predicates, same ``ORDER BY commence_time``, same limit. A census
-    measured over a wider or narrower set than the rail it watches is a census
-    of a different question.
+    Same predicates, same ``ORDER BY commence_time, id``, same limit, and the
+    same keyset cursor. A census measured over a wider or narrower set than the
+    rail it watches is a census of a different question.
 
     Returns the rows AND how many the window holds, because those two numbers
     are routinely different: 685 rows were eligible on 2026-09-03 against a
     default limit of 200. Printing only the first would make every run look
     complete.
+
+    The ``id`` tiebreaker is not cosmetic here either — ``db-query`` is a
+    different planner run from the rail's, and two orderings that agree only up
+    to ties are two orderings.
     """
     now = datetime.now(timezone.utc)
     settled = ", ".join(f"'{s}'" for s in sorted(SETTLED_STATUSES))
     sport_clause = f"AND s.key = '{sport}'" if sport else ""
+    after_clause = ""
+    if cursor:
+        moment, event_id = decode_cursor(cursor)
+        # The rail's `_after_cursor` predicate, in plain SQL. Expanded rather
+        # than a row comparison for the reason that module's docstring gives:
+        # both rails must be able to write the identical predicate.
+        after_clause = (
+            f"AND (e.commence_time > '{moment.isoformat()}'"
+            f" OR (e.commence_time = '{moment.isoformat()}'"
+            f" AND e.id > {int(event_id)}))"
+        )
     where = f"""
         WHERE e.espn_id IS NOT NULL
           AND e.completed_at IS NULL
@@ -161,6 +187,7 @@ def load_rows(
           AND e.commence_time >= '{(now - lookback).isoformat()}'
           AND e.commence_time <  '{(now + horizon).isoformat()}'
           {sport_clause}
+          {after_clause}
     """
     eligible = int(
         db_query(
@@ -175,7 +202,7 @@ def load_rows(
         FROM events e
         JOIN sports s ON s.id = e.sport_id
         {where}
-        ORDER BY e.commence_time
+        ORDER BY e.commence_time, e.id
         LIMIT {limit}
         """,
         limit=limit,
@@ -208,29 +235,65 @@ def main() -> int:
         help="Print every row landing on one verdict, with both names and ESPN's label",
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="sweep_all",
+        help=(
+            "Follow the cursor to the end of the window instead of stopping at "
+            "--limit. This is the unattended form: one command sweeps a sport "
+            "with more anchored rows than a single page holds."
+        ),
+    )
     args = parser.parse_args()
 
     if not TOKEN:
         print("ERROR: ADMIN_TOKEN not set. Run: source ~/.claude/.env", file=sys.stderr)
         return 2
 
-    rows, eligible = load_rows(
-        args.sport, args.limit, DEFAULT_LOOKBACK, timedelta(days=args.horizon_days)
-    )
+    horizon = timedelta(days=args.horizon_days)
+
+    # Page one is also the census: `load_rows` without a cursor reports the
+    # whole window, and that is the `eligible` every later page is judged
+    # against. Asking a later page for it would get `remaining` instead, and a
+    # sweep that compared its total against a shrinking denominator would
+    # announce it had examined more rows than existed.
+    rows, eligible = load_rows(args.sport, args.limit, DEFAULT_LOOKBACK, horizon)
     if not rows:
         print("no anchored, unfinished rows inside the window", file=sys.stderr)
         return 0
 
     decisions, labels = [], {}
-    for row in rows:
-        record = record_from_summary(
-            row.espn_id, fetch_summary(row.sport_key, row.espn_id)
+    pages, cursor = 0, None
+    while True:
+        pages += 1
+        for row in rows:
+            record = record_from_summary(
+                row.espn_id, fetch_summary(row.sport_key, row.espn_id)
+            )
+            if record is not None and not record.usable:
+                record = None
+            decisions.append(schedule_decision(row, record))
+            labels[row.event_id] = row
+            time.sleep(ESPN_PAUSE_S)
+
+        if not args.sweep_all:
+            break
+        # The cursor is the LAST ROW EXAMINED, never a running count. The window
+        # floor is `now - lookback` and `now` moves while the sweep runs, so an
+        # offset would step over every row that fell out of the floor behind us
+        # (gotcha #41). Naming a position cannot do that.
+        last = rows[-1]
+        cursor = encode_cursor(last.commence_time, last.event_id)
+        rows, remaining = load_rows(
+            args.sport, args.limit, DEFAULT_LOOKBACK, horizon, cursor=cursor
         )
-        if record is not None and not record.usable:
-            record = None
-        decisions.append(schedule_decision(row, record))
-        labels[row.event_id] = row
-        time.sleep(ESPN_PAUSE_S)
+        if not rows:
+            break
+        print(
+            f"  … page {pages + 1}: {remaining} rows remain after the cursor",
+            file=sys.stderr,
+        )
 
     summary = summarize_decisions(decisions)
     if summary["by_verdict"][NO_ANSWER] == summary["examined"]:
@@ -265,6 +328,8 @@ def main() -> int:
                     **summary,
                     "eligible": eligible,
                     "truncated": truncated,
+                    "pages": pages,
+                    "swept_all": args.sweep_all,
                     "detail": detail,
                 },
                 indent=2,
@@ -274,10 +339,14 @@ def main() -> int:
         return 0
 
     scope = f" ({args.sport})" if args.sport else ""
-    print(f"examined {summary['examined']} of {eligible} anchored rows{scope}")
+    paging = f" across {pages} pages" if pages > 1 else ""
+    print(f"examined {summary['examined']} of {eligible} anchored rows{scope}{paging}")
     if truncated:
+        # `--all` is the remedy, not a bigger `--limit`: the limit is the rail's
+        # router-timeout bound and raising it past the population is exactly the
+        # habit paging exists to end.
         print(
-            f"  ** TRUNCATED — {eligible - summary['examined']} rows unseen; --limit {eligible}"
+            f"  ** TRUNCATED — {eligible - summary['examined']} rows unseen; re-run with --all"
         )
     for verdict in SCHEDULE_VERDICTS:
         print(f"  {verdict:<20} {summary['by_verdict'][verdict]}")

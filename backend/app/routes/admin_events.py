@@ -44,9 +44,15 @@ async def create_event_manually(
     home_team: str = Query(..., description="Home team name (e.g., 'USA', 'Canada')"),
     away_team: str = Query(..., description="Away team name"),
     sport_key: str = Query(..., description="Sport key (e.g., 'icehockey_olympics')"),
-    sport_name: Optional[str] = Query(None, description="Sport display name (auto-generated if omitted)"),
-    commence_time: Optional[str] = Query(None, description="ISO 8601 timestamp (defaults to now)"),
-    status: str = Query("live", description="Event status: scheduled, live, completed, closed"),
+    sport_name: Optional[str] = Query(
+        None, description="Sport display name (auto-generated if omitted)"
+    ),
+    commence_time: Optional[str] = Query(
+        None, description="ISO 8601 timestamp (defaults to now)"
+    ),
+    status: str = Query(
+        "live", description="Event status: scheduled, live, completed, closed"
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """
@@ -70,12 +76,12 @@ async def create_event_manually(
             if ct.tzinfo is None:
                 ct = ct.replace(tzinfo=timezone.utc)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid commence_time: {commence_time}")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid commence_time: {commence_time}"
+            )
 
     # Get or create Sport record
-    sport_result = await db.execute(
-        select(Sport).where(Sport.key == sport_key)
-    )
+    sport_result = await db.execute(select(Sport).where(Sport.key == sport_key))
     sport = sport_result.scalar_one_or_none()
     if not sport:
         display_name = sport_name or sport_key.replace("_", " ").title()
@@ -86,11 +92,13 @@ async def create_event_manually(
 
     # Check for duplicate
     existing = await db.execute(
-        select(Event).where(
+        select(Event)
+        .where(
             Event.home_team_name == home_team,
             Event.away_team_name == away_team,
             Event.status.in_(["scheduled", "live"]),
-        ).limit(1)
+        )
+        .limit(1)
     )
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -195,7 +203,9 @@ async def fix_live_statuses(
                     "external_id": e.external_id[:60] if e.external_id else None,
                     "home_team": e.home_team_name,
                     "away_team": e.away_team_name,
-                    "commence_time": e.commence_time.isoformat() if e.commence_time else None,
+                    "commence_time": (
+                        e.commence_time.isoformat() if e.commence_time else None
+                    ),
                     "status": e.status,
                 }
                 for e in bad_events[:20]
@@ -226,7 +236,9 @@ async def backfill_game_state(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(500, description="Max events to process"),
-    sport: Optional[str] = Query(None, description="Sport key filter (e.g., 'baseball_mlb', 'basketball')"),
+    sport: Optional[str] = Query(
+        None, description="Sport key filter (e.g., 'baseball_mlb', 'basketball')"
+    ),
 ):
     """
     Backfill missing game state (period markers) for completed events.
@@ -291,7 +303,8 @@ async def event_creation_lead_time(
 
     await db.execute(_text("SET LOCAL statement_timeout = '15s'"))
 
-    result = await db.execute(_text("""
+    result = await db.execute(
+        _text("""
         SELECT
             e.id,
             e.home_team_name,
@@ -311,22 +324,28 @@ async def event_creation_lead_time(
           AND e.commence_time IS NOT NULL
         ORDER BY e.commence_time DESC
         LIMIT 50
-    """), {"sport": sport, "days_back": days})
+    """),
+        {"sport": sport, "days_back": days},
+    )
     rows = result.all()
 
     events = []
     for r in rows:
-        events.append({
-            "id": r.id,
-            "matchup": f"{r.away_team_name} vs {r.home_team_name}",
-            "commence": r.commence_time.isoformat()[:16] if r.commence_time else None,
-            "created": r.created_at.isoformat()[:16] if r.created_at else None,
-            "lead_hours": round(r.lead_hours, 1) if r.lead_hours else None,
-            "status": r.status,
-            "source": r.commence_time_source,
-            "has_odds_api": r.external_id is not None,
-            "has_statpal": r.statpal_fixture_id is not None,
-        })
+        events.append(
+            {
+                "id": r.id,
+                "matchup": f"{r.away_team_name} vs {r.home_team_name}",
+                "commence": (
+                    r.commence_time.isoformat()[:16] if r.commence_time else None
+                ),
+                "created": r.created_at.isoformat()[:16] if r.created_at else None,
+                "lead_hours": round(r.lead_hours, 1) if r.lead_hours else None,
+                "status": r.status,
+                "source": r.commence_time_source,
+                "has_odds_api": r.external_id is not None,
+                "has_statpal": r.statpal_fixture_id is not None,
+            }
+        )
 
     lead_hours = [e["lead_hours"] for e in events if e["lead_hours"] is not None]
     return {
@@ -335,8 +354,14 @@ async def event_creation_lead_time(
         "lead_time_stats": {
             "min_hours": round(min(lead_hours), 1) if lead_hours else None,
             "max_hours": round(max(lead_hours), 1) if lead_hours else None,
-            "median_hours": round(sorted(lead_hours)[len(lead_hours) // 2], 1) if lead_hours else None,
-            "avg_hours": round(sum(lead_hours) / len(lead_hours), 1) if lead_hours else None,
+            "median_hours": (
+                round(sorted(lead_hours)[len(lead_hours) // 2], 1)
+                if lead_hours
+                else None
+            ),
+            "avg_hours": (
+                round(sum(lead_hours) / len(lead_hours), 1) if lead_hours else None
+            ),
             "under_6h": sum(1 for h in lead_hours if h < 6),
             "under_24h": sum(1 for h in lead_hours if h < 24),
             "under_48h": sum(1 for h in lead_hours if h < 48),
@@ -352,7 +377,8 @@ async def event_creation_lead_time(
 
 @router.delete("/events/delete-duplicates")
 async def delete_duplicate_events(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     event_ids: str = Query(..., description="Comma-separated event IDs to delete"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -365,32 +391,55 @@ async def delete_duplicate_events(
 
     # Clean up FKs
     fk_tables = [
-        "odds_snapshots", "odds_aggregated", "win_prob_snapshots",
-        "espn_snapshots", "score_snapshots", "scoring_plays",
+        "odds_snapshots",
+        "odds_aggregated",
+        "win_prob_snapshots",
+        "espn_snapshots",
+        "score_snapshots",
+        "scoring_plays",
         "line_movement_analyses",
     ]
     for table in fk_tables:
-        await db.execute(text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"), {"ids": ids})
+        await db.execute(
+            text(f"DELETE FROM {table} WHERE event_id = ANY(:ids)"), {"ids": ids}
+        )
 
     # Read the markets BEFORE the unlink: the previous event id does not
     # survive the UPDATE, and this endpoint then deletes the event itself, so
     # nothing afterwards can reconstruct which card lost which price
     # (LINKLOSS-03 / CERT-791).
-    losing_markets = _market_rows(await db.execute(text(
-        "SELECT id, source, external_id, name, event_id FROM futures_markets "
-        "WHERE event_id = ANY(:ids)"
-    ), {"ids": ids}))
+    losing_markets = _market_rows(
+        await db.execute(
+            text(
+                "SELECT id, source, external_id, name, event_id FROM futures_markets "
+                "WHERE event_id = ANY(:ids)"
+            ),
+            {"ids": ids},
+        )
+    )
 
-    await db.execute(text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"), {"ids": ids})
-    await db.execute(text("UPDATE user_pins SET target_id = NULL WHERE pin_type = 'event' AND target_id = ANY(:ids)"), {"ids": ids})
+    await db.execute(
+        text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
+        {"ids": ids},
+    )
+    await db.execute(
+        text(
+            "UPDATE user_pins SET target_id = NULL WHERE pin_type = 'event' AND target_id = ANY(:ids)"
+        ),
+        {"ids": ids},
+    )
 
-    result = await db.execute(text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids})
+    result = await db.execute(
+        text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids}
+    )
     await db.commit()
 
     # AFTER the commit and on its own session: the receipt is verified against
     # the committed row, and a repair must never fail on its own bookkeeping.
     receipted = await record_link_losses(
-        losing_markets, actor=ACTOR_ADMIN_REPAIR, phase=PHASE_ADMIN_REPAIR,
+        losing_markets,
+        actor=ACTOR_ADMIN_REPAIR,
+        phase=PHASE_ADMIN_REPAIR,
     )
 
     return {
@@ -407,9 +456,11 @@ async def prune_unanchored_duplicates_endpoint(
     secret: str = Query(None),
     sport_id: int = Query(..., description="Required. The partition is per-sport."),
     linked_copies: int = Query(
-        1, ge=0, le=99,
+        1,
+        ge=0,
+        le=99,
         description="Fixtures with exactly this many futures-linked copies. "
-                    "1 = Tranche A (the only prunable shape).",
+        "1 = Tranche A (the only prunable shape).",
     ),
     apply: bool = Query(False, description="DEFAULT FALSE. True deletes."),
     max_delete: int = Query(DEFAULT_MAX_DELETE, ge=1, le=MAX_DELETE_CEILING),
@@ -418,7 +469,7 @@ async def prune_unanchored_duplicates_endpoint(
     plan_hash: Optional[str] = Query(
         None,
         description="Required when apply=true. The content address the dry run "
-                    "returned over its exact ordered id set.",
+        "returned over its exact ordered id set.",
     ),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -512,6 +563,14 @@ async def reconcile_anchor_schedule_endpoint(
         ),
     ),
     sport: Optional[str] = Query(None, description="Restrict to one sport key"),
+    cursor: Optional[str] = Query(
+        None,
+        description=(
+            "Resume after a previous page: pass back the `next_cursor` it "
+            "returned. Loop until `next_cursor` is null to sweep the window "
+            "without raising `limit` past what the router will allow."
+        ),
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """#2693/#2697 — does each anchored row agree with its own anchor's kickoff?
@@ -531,6 +590,11 @@ async def reconcile_anchor_schedule_endpoint(
     ``truncated``.** They differ constantly — the window held 685 rows on
     2026-09-03 — and a reviewer shown only ``examined`` would read the first
     page as the whole population and an all-clear as complete.
+
+    ``next_cursor`` walks the window one router-safe page at a time; feed it
+    back as ``cursor`` until it is null. A paged call never terminates
+    ``no_work``, because reaching the end of a cursor is not the same discovery
+    as finding an empty population.
     """
     _check_admin_secret(secret, request=request)
     if apply:
@@ -545,9 +609,26 @@ async def reconcile_anchor_schedule_endpoint(
     # The module owns the bound, and it owns it for a reason a route cannot see
     # (the router-timeout arithmetic is in its docstring). A second copy of the
     # number here is how the two come to disagree.
-    result = await reconcile(
-        db, apply=apply, limit=DEFAULT_LIMIT if limit is None else limit, sport=sport
-    )
+    try:
+        result = await reconcile(
+            db,
+            apply=apply,
+            limit=DEFAULT_LIMIT if limit is None else limit,
+            sport=sport,
+            cursor=cursor,
+        )
+    except ValueError as bad_cursor:
+        # A bad cursor is the caller's bug and it is told so. Falling back to
+        # the first page would let a driver loop forever on page one while
+        # every response looked healthy.
+        #
+        # (`bad_cursor`, not the obvious `exc`: binding a ValueError to `exc` on
+        # this line reproduces the M9 replacement literal in
+        # `futures_categories_warm_mutations` character for character, which
+        # trips the mutation-residue sweep's Pass B in a file that is not that
+        # harness's target. Naming the binding for what it holds costs nothing
+        # and keeps the residue guard un-allowlisted.)
+        raise HTTPException(status_code=400, detail=str(bad_cursor)) from None
     if apply:
         await db.commit()
     return {**result, "operator_line": summarize_for_operator(result)}
@@ -555,7 +636,8 @@ async def reconcile_anchor_schedule_endpoint(
 
 @router.get("/events/duplicates")
 async def list_duplicate_events(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Find duplicate events: same sport, same teams, same date."""
@@ -601,29 +683,31 @@ async def list_duplicate_events(
 
     duplicates = []
     for row in rows:
-        duplicates.append({
-            "event_a": {
-                "id": row.event_a_id,
-                "external_id": row.event_a_external_id,
-                "has_snapshots": row.event_a_has_snaps,
-                "statpal_fixture_id": row.event_a_statpal,
-                "commence_time_source": row.event_a_source,
-                "status": row.event_a_status,
-            },
-            "event_b": {
-                "id": row.event_b_id,
-                "external_id": row.event_b_external_id,
-                "has_snapshots": row.event_b_has_snaps,
-                "statpal_fixture_id": row.event_b_statpal,
-                "commence_time_source": row.event_b_source,
-                "status": row.event_b_status,
-            },
-            "sport": row.sport_key,
-            "home_team": row.home_team_name,
-            "away_team": row.away_team_name,
-            "commence_a": row.commence_a.isoformat() if row.commence_a else None,
-            "commence_b": row.commence_b.isoformat() if row.commence_b else None,
-        })
+        duplicates.append(
+            {
+                "event_a": {
+                    "id": row.event_a_id,
+                    "external_id": row.event_a_external_id,
+                    "has_snapshots": row.event_a_has_snaps,
+                    "statpal_fixture_id": row.event_a_statpal,
+                    "commence_time_source": row.event_a_source,
+                    "status": row.event_a_status,
+                },
+                "event_b": {
+                    "id": row.event_b_id,
+                    "external_id": row.event_b_external_id,
+                    "has_snapshots": row.event_b_has_snaps,
+                    "statpal_fixture_id": row.event_b_statpal,
+                    "commence_time_source": row.event_b_source,
+                    "status": row.event_b_status,
+                },
+                "sport": row.sport_key,
+                "home_team": row.home_team_name,
+                "away_team": row.away_team_name,
+                "commence_a": row.commence_a.isoformat() if row.commence_a else None,
+                "commence_b": row.commence_b.isoformat() if row.commence_b else None,
+            }
+        )
 
     # ── Ruling 048 provenance meter ────────────────────────────────────
     # 048 declares rising duplicates a BOUNDED cost, bounded because id-keyed
@@ -710,7 +794,8 @@ async def list_duplicate_events(
 
 @router.post("/events/merge-duplicates")
 async def merge_duplicate_events(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     dry_run: bool = Query(True, description="Preview without making changes"),
 ):
     """Queue a Celery task to merge duplicate events.
@@ -721,6 +806,7 @@ async def merge_duplicate_events(
     _check_admin_secret(secret, request=request)
 
     from app.tasks import merge_duplicate_events_task
+
     task = merge_duplicate_events_task.delay(dry_run=dry_run)
     return {
         "status": "queued",
@@ -732,7 +818,8 @@ async def merge_duplicate_events(
 
 @router.post("/events/merge-duplicates-sql")
 async def merge_duplicate_events_sql(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     dry_run: bool = Query(True, description="Preview without making changes"),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -785,10 +872,18 @@ async def merge_duplicate_events_sql(
     # Re-assert on the rows in hand, before anything is destroyed.
     for row in pairs:
         assert_mergeable(
-            {"external_id": row.keeper_external_id, "espn_id": row.keeper_espn_id,
-             "statpal_fixture_id": row.keeper_statpal_fixture_id, "id": row.keeper_id},
-            {"external_id": row.orphan_external_id, "espn_id": row.espn_id,
-             "statpal_fixture_id": row.statpal_fixture_id, "id": row.orphan_id},
+            {
+                "external_id": row.keeper_external_id,
+                "espn_id": row.keeper_espn_id,
+                "statpal_fixture_id": row.keeper_statpal_fixture_id,
+                "id": row.keeper_id,
+            },
+            {
+                "external_id": row.orphan_external_id,
+                "espn_id": row.espn_id,
+                "statpal_fixture_id": row.statpal_fixture_id,
+                "id": row.orphan_id,
+            },
             context="merge_duplicate_events_sql",
         )
 
@@ -806,7 +901,9 @@ async def merge_duplicate_events_sql(
         # and a hand-edit here can no longer remove the protection.
         for row in pairs:
             await assert_absorbable_now(
-                db, keep_id=row.keeper_id, orphan_id=row.orphan_id,
+                db,
+                keep_id=row.keeper_id,
+                orphan_id=row.orphan_id,
                 context="merge_duplicate_events_sql",
             )
 
@@ -851,12 +948,19 @@ async def merge_duplicate_events_sql(
         # its next pass. That is a real, if temporary, loss of a price from a
         # card, so it is receipted as one — read the rows first, because the
         # event they name is deleted four statements from here.
-        losing_markets = _market_rows(await db.execute(text(
-            "SELECT id, source, external_id, name, event_id FROM futures_markets "
-            "WHERE event_id = ANY(:ids)"
-        ), {"ids": orphan_ids}))
+        losing_markets = _market_rows(
+            await db.execute(
+                text(
+                    "SELECT id, source, external_id, name, event_id FROM futures_markets "
+                    "WHERE event_id = ANY(:ids)"
+                ),
+                {"ids": orphan_ids},
+            )
+        )
         await db.execute(
-            text("UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"),
+            text(
+                "UPDATE futures_markets SET event_id = NULL WHERE event_id = ANY(:ids)"
+            ),
             {"ids": orphan_ids},
         )
 
@@ -874,7 +978,9 @@ async def merge_duplicate_events_sql(
         # actor answers "what kind of thing did this", and this is a merge that
         # a human happened to trigger, not a hand repair of one market.
         receipted = await record_link_losses(
-            losing_markets, actor=ACTOR_TWIN_CLEANUP, phase=PHASE_TWIN_MERGE,
+            losing_markets,
+            actor=ACTOR_TWIN_CLEANUP,
+            phase=PHASE_TWIN_MERGE,
         )
         return {
             "dry_run": False,
@@ -886,6 +992,7 @@ async def merge_duplicate_events_sql(
     except Exception as e:
         await db.rollback()
         import traceback
+
         return {
             "error": str(e),
             "error_type": type(e).__name__,
@@ -898,13 +1005,15 @@ async def merge_duplicate_events_sql(
 @router.get("/events/merge-task/{task_id}")
 async def check_merge_task(
     task_id: str,
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
 ):
     """Check status of a merge-duplicates background task."""
     _check_admin_secret(secret, request=request)
 
     from celery.result import AsyncResult
     from app.tasks import celery_app
+
     result = AsyncResult(task_id, app=celery_app)
     response = {
         "task_id": task_id,
@@ -919,13 +1028,15 @@ async def check_merge_task(
 
 @router.post("/merge-events")
 async def merge_events_admin(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Manually trigger the duplicate event merger (runs in non-dry-run mode)."""
     _check_admin_secret(secret, request=request)
 
     from app.tasks.sports import _merge_duplicate_events_impl
+
     result = await _merge_duplicate_events_impl(dry_run=False)
     return result
 
@@ -966,7 +1077,8 @@ async def clear_line_movement_cache(
 
 @router.get("/market-lookup")
 async def market_lookup(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     ticker: str = Query(None),
     name: str = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -975,8 +1087,12 @@ async def market_lookup(
     _check_admin_secret(secret, request=request)
 
     query = select(
-        FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.name,
-        FuturesMarket.status, FuturesMarket.source, FuturesMarket.market_tier,
+        FuturesMarket.id,
+        FuturesMarket.external_id,
+        FuturesMarket.name,
+        FuturesMarket.status,
+        FuturesMarket.source,
+        FuturesMarket.market_tier,
         FuturesMarket.llm_sport_category,
     )
     if ticker:
@@ -988,9 +1104,15 @@ async def market_lookup(
     query = query.limit(20)
     result = await db.execute(query)
     return [
-        {"id": r.id, "external_id": r.external_id, "name": r.name,
-         "status": r.status, "source": r.source, "tier": r.market_tier,
-         "category": r.llm_sport_category}
+        {
+            "id": r.id,
+            "external_id": r.external_id,
+            "name": r.name,
+            "status": r.status,
+            "source": r.source,
+            "tier": r.market_tier,
+            "category": r.llm_sport_category,
+        }
         for r in result.all()
     ]
 
@@ -1079,7 +1201,9 @@ async def schedule_accuracy(
                 "sources": {"odds_api": 0, "espn": 0, "statpal": 0},
                 "commence_time_sources": {},
             }
-        sports[sport_key]["commence_time_sources"][row.commence_time_source or "null"] = row.count
+        sports[sport_key]["commence_time_sources"][
+            row.commence_time_source or "null"
+        ] = row.count
 
     # Reliability rating is based on TRUE Odds API linkage (the sportsbook source
     # that drives event pages), not on who set the commence_time.
@@ -1103,7 +1227,10 @@ async def schedule_accuracy(
     sorted_sports = dict(
         sorted(
             sports.items(),
-            key=lambda item: (reliability_order.get(item[1].get("reliability", "LOW"), 3), item[0])
+            key=lambda item: (
+                reliability_order.get(item[1].get("reliability", "LOW"), 3),
+                item[0],
+            ),
         )
     )
 
@@ -1112,8 +1239,14 @@ async def schedule_accuracy(
         "sports": sorted_sports,
         "summary": {
             "total_sports": len(sorted_sports),
-            "high_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "HIGH"),
-            "medium_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "MEDIUM"),
-            "low_reliability": sum(1 for s in sorted_sports.values() if s.get("reliability") == "LOW"),
+            "high_reliability": sum(
+                1 for s in sorted_sports.values() if s.get("reliability") == "HIGH"
+            ),
+            "medium_reliability": sum(
+                1 for s in sorted_sports.values() if s.get("reliability") == "MEDIUM"
+            ),
+            "low_reliability": sum(
+                1 for s in sorted_sports.values() if s.get("reliability") == "LOW"
+            ),
         },
     }
