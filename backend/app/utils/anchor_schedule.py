@@ -52,10 +52,20 @@ wrong, and the existing #1947 log asserts the second:
 (b) our ``espn_id`` is wrong — the row is some other fixture.
 
 The teams decide between them, and only the teams.  If our stored names match
-ESPN's competitors exactly then (a) holds: it is that game, misdated, and the
-authority owns the date.  If they do not, this module writes nothing — that is
-(b), it is ``authority-id-collisions``' question, and moving a start time to
-"fix" a mis-anchor would drag a real fixture onto another game's clock.
+ESPN's competitors then (a) holds: it is that game, misdated, and the authority
+owns the date.  If they do not, this module writes nothing — that is (b), it is
+``authority-id-collisions``' question, and moving a start time to "fix" a
+mis-anchor would drag a real fixture onto another game's clock.
+
+"Match" is an EXACT comparison between two deliberately wide vocabularies, not a
+fuzzy one (``authority_name_forms``, #2792).  It has to be wide: measured over
+685 anchored rows on 2026-09-03, a strict reading of ESPN's printed strings
+disagreed with 52 of them and **51 were the same fixture spelled differently** —
+``UMass``/``Massachusetts``, ``Houston Dynamo``/``Houston Dynamo FC``,
+``Hawthorn Hawks`` against an ESPN ``displayName`` of bare ``Hawthorn``.  That
+shortfall cost only reach, because a disagreement writes nothing; but the reach
+it cost was most of MLS and every FCS visitor.  Widening it left 17 refusals,
+16 genuine synonyms and one real mis-anchor.
 
 Deciding on names rather than on ``teams.espn_id`` is not a preference; the id
 channel is measurably poisoned (1,204 of 1,469 team rows sit in a colliding

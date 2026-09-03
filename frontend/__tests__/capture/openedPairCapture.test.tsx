@@ -262,6 +262,43 @@ function visibleText(html: string): string {
  */
 function printedOpened(html: string): [number, number] {
   const text = visibleText(html);
+
+  // ═══ ux/1041 (#2689) — READ THE FOOTER'S SIDES BY NAME WHERE IT GIVES THEM ═══
+  //
+  // `FeedCard`'s footer used to be `Opened {home}/{away}` on a card that lists
+  // the AWAY team above the HOME team, which inverted the favourite on 10 of 10
+  // rows — by construction, since the pair is an exact complement. It is
+  // away-first now, and it states the order in its own accessible name instead
+  // of leaving it to position, so this reads THAT and derives which side is
+  // which from the card's own link label ("{away} at {home}").
+  //
+  // NOT a constant in this file. A hardcoded [home, away] here is exactly the
+  // mistake #2786 made one component away — it read the order off a sibling and
+  // could not notice when the card moved underneath it. `EventCard` keeps the
+  // positional branch below, because it lists HOME first and its footer is
+  // correct; that asymmetry is the whole point and is why this cannot be one
+  // global flip.
+  //
+  // The UX-P166 rule this file exists for is untouched: same two integers, same
+  // pair, same rounding. Only the order they are read in changed.
+  const said = html.match(/data-testid="feed-card-opened"[^>]*aria-label="([^"]+)"/);
+  if (said) {
+    const sides = Array.from(
+      said[1].matchAll(/(.+?) opened at (\d+)%/g),
+    ).map((m) => [m[1].replace(/^,\s*/, ""), Number(m[2])] as [string, number]);
+    // Anti-vacuity: two sides, always, or the sentence stopped naming them and
+    // this must go red rather than fall through to a positional guess.
+    expect(sides).toHaveLength(2);
+    const link = html.match(/aria-label="([^"]+?) at ([^"]+?)(?: - [^"]*)?"/);
+    expect(link).not.toBeNull();
+    const [awayName] = [link![1]];
+    const away = sides.find(([team]) => team === awayName);
+    const home = sides.find(([team]) => team !== awayName);
+    expect(away).toBeDefined();
+    expect(home).toBeDefined();
+    return [home![1], away![1]];
+  }
+
   const footer = text.match(/Opened\s+(\d+)\s*\/\s*(\d+)/);
   if (footer) return [Number(footer[1]), Number(footer[2])];
 

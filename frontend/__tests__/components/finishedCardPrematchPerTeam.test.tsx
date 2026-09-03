@@ -211,7 +211,14 @@ describe("the /sports FINAL card", () => {
       } as Partial<FeedEventData>)
     );
 
-    expect(html).toContain("Opened 60/40");
+    // ux/1041 (#2689) — WAS `"Opened 60/40"`. This assertion's subject is that
+    // the live card KEEPS the footer, and it still does; the pair is the same
+    // pair. What moved is the side order: the footer printed home-first on a
+    // card that lists the away team above the home team, which inverted the
+    // favourite on 10 of 10 measured rows. Home is 60 here, away 40, so the
+    // away-first footer reads 40/60. Updated rather than loosened to a regex,
+    // because the specific digits are what make this a regression arm.
+    expect(html).toContain("Opened 40/60");
     expect(html).not.toContain('data-testid="feed-card-prematch-home"');
   });
 });

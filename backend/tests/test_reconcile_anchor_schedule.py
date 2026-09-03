@@ -76,14 +76,21 @@ class _Session:
 def wired(monkeypatch):
     """Stub the two edges — the database read and the authority — and nothing else."""
 
-    def _wire(rows, records, rowcount=1):
+    def _wire(rows, records, rowcount=1, eligible=None):
         async def _load_rows(session, **kwargs):
             return list(rows)
+
+        async def _count_eligible(session, **kwargs):
+            # Defaults to "the limit reached everything", so a test that says
+            # nothing about reach gets the complete-pass reading it means.
+            # Pass `eligible=` to model a truncated window.
+            return len(rows) if eligible is None else eligible
 
         async def _fetch_record(service, sport_keys, authority_id):
             return records.get(authority_id)
 
         monkeypatch.setattr(rail, "_load_rows", _load_rows)
+        monkeypatch.setattr(rail, "_count_eligible", _count_eligible)
         monkeypatch.setattr(
             "app.tasks.repair_authority_id_collisions._fetch_record", _fetch_record
         )
@@ -219,3 +226,94 @@ class TestTheWindow:
         would leave the rail unable to see the case it was built for.
         """
         assert rail.DEFAULT_HORIZON >= timedelta(days=98)
+
+    def test_the_default_limit_fits_inside_the_router_timeout(self):
+        """One ESPN call per row at ~0.2s, against Heroku's 30-second cutoff.
+
+        The only caller is an admin endpoint, so a limit whose run cannot return
+        is not a limit — and worse here than usual, because ``apply`` commits
+        its writes before the router gives up, leaving an operator with an H12
+        and no idea what landed.
+        """
+        assert rail.DEFAULT_LIMIT * 0.2 < 25
+
+
+class TestReachIsReported:
+    """A truncated pass and a complete one must not read the same. #2792.
+
+    Measured 2026-09-03: the window held 685 anchored rows and the default limit
+    was 200, so every unfiltered run saw under a third of the population and
+    said nothing about it. The NFL slice alone was 239 against the same 200.
+    """
+
+    async def test_a_complete_pass_reports_its_reach(self, wired):
+        session = wired([_row()], {"401873124": _record()})
+        result = await rail.reconcile(session)
+
+        assert result["eligible"] == 1
+        assert result["truncated"] is False
+
+    async def test_a_truncated_pass_says_so_and_cannot_report_complete(self, wired):
+        session = wired([_row()], {"401873124": _record()}, eligible=685)
+        result = await rail.reconcile(session, apply=True)
+
+        assert result["truncated"] is True
+        assert result["eligible"] == 685 and result["examined"] == 1
+        assert result["terminal"] == "partial", (
+            "a run that saw 1 of 685 rows has not completed, whatever it did "
+            "with the one it saw"
+        )
+        # The write still happened — truncation is about reach, not correctness.
+        assert result["moved"] == 1
+
+    async def test_a_truncated_pass_that_found_nothing_is_not_an_all_clear(self, wired):
+        """The worst of the three misreadings, and the reason for the ordering.
+
+        A page of rows that all agree, out of a window ten times larger, would
+        otherwise terminate ``no_work`` — the one word that sounds like the
+        population is clean.
+        """
+        session = wired([_row()], {"401873124": _record(starts_at=OURS)}, eligible=685)
+        result = await rail.reconcile(session)
+
+        assert result["by_verdict"]["agrees"] == 1
+        assert result["by_verdict"]["authority_moves_us"] == 0
+        assert result["terminal"] == "partial"
+
+    async def test_a_dark_authority_still_outranks_truncation(self, wired):
+        """Both readings are true; the operator needs the more alarming one."""
+        session = wired([_row()], {}, eligible=685)
+        result = await rail.reconcile(session)
+
+        assert result["terminal"] == "authority_dark"
+        assert result["truncated"] is True
+
+    async def test_the_operator_line_prints_reach_and_shouts_when_short(self):
+        line = rail.summarize_for_operator(
+            {
+                "measured": True,
+                "terminal": "partial",
+                "examined": 200,
+                "eligible": 685,
+                "truncated": True,
+                "moved": 0,
+                "by_verdict": {"agrees": 200},
+            }
+        )
+        assert "examined=200/685" in line
+        assert "TRUNCATED" in line
+
+    async def test_the_operator_line_is_quiet_on_a_complete_pass(self):
+        line = rail.summarize_for_operator(
+            {
+                "measured": True,
+                "terminal": "no_work",
+                "examined": 34,
+                "eligible": 34,
+                "truncated": False,
+                "moved": 0,
+                "by_verdict": {"agrees": 34},
+            }
+        )
+        assert "examined=34/34" in line
+        assert "TRUNCATED" not in line
