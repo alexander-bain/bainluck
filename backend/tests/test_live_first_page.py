@@ -7,13 +7,22 @@ WHAT THE ARMS ARE, BECAUSE THEY ARE NOT THE USUAL SHAPE
 parent and the file would fail to import. Red-first grades a CHANGE; counter-
 cases grade an ADDITION (ux/1019's lesson #8). So:
 
-* The RED ARM for this ship lives at the route level
-  (`tests/integration/test_route_feed_live_first_page_2709.py`), where reverting
-  only the call site in `apply_discover_display_chain` — keeping the import, or
-  it dangles and you get a collection error rather than a red arm — turns the
-  served payload back into the reported defect.
-* The four COUNTER-CASES below are what grade this module. Each is a fix a
-  reader could plausibly write from the issue text, and each fails differently.
+* The RED ARM for this ship lives in `test_feed_live_first_page_wiring_2709.py`,
+  which asserts on the display chain's output. Reverting only the call site in
+  `apply_discover_display_chain` — keeping the import, or it dangles and you get
+  a collection error rather than a red arm — takes it to 3 red / 30 passed with
+  all nine controls green.
+* COUNTER-CASES are what grade this module, and they were run against it rather
+  than described. Measured, each against both files: no price gate **6 red**;
+  overwrite instead of swap **5 red**; unbounded budget **3 red**; displace
+  front-first **1 red**; drop the `MARQUEE_PIN_KEY` skip **1 red**; drop both
+  prefix guards **2 red**.
+
+  The pin-skip number is the interesting one and it is why the mid-window
+  control below exists: deleting that skip was GREEN at 33/33 until that test
+  was written, because walking the window backwards already covers a pin at
+  index 0. The comment in the module used to call the skip belt-and-braces;
+  that was a guess, and this is the measurement that replaced it.
 
 THE CORPUS IS REAL, AND IN SERVED ORDER
 ----------------------------------------
@@ -40,9 +49,7 @@ from app.utils.live_first_page import (
     live_first_page_budget,
 )
 
-CORPUS_PATH = (
-    Path(__file__).parent / "fixtures" / "sports_feed_served_order_2709.json"
-)
+CORPUS_PATH = Path(__file__).parent / "fixtures" / "sports_feed_served_order_2709.json"
 
 
 def _corpus() -> list[dict]:
@@ -221,7 +228,10 @@ class TestAdmission:
         assert not is_hoistable_live_event(item)
 
     def test_a_futures_card_is_not_a_live_game(self):
-        item = {"type": "futures", "data": {"status": "live", "current_odds": {"home_probability": 0.5}}}
+        item = {
+            "type": "futures",
+            "data": {"status": "live", "current_odds": {"home_probability": 0.5}},
+        }
         assert not is_hoistable_live_event(item)
 
     def test_malformed_items_do_not_raise(self):

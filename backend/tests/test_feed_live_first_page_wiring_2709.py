@@ -99,9 +99,9 @@ class TestSportsFirstPage:
         _out, meta = apply_discover_display_chain(
             _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
         )
-        assert meta["live_first_page"] is not None, (
-            "sports mode never invoked the pass — this is the reported defect"
-        )
+        assert (
+            meta["live_first_page"] is not None
+        ), "sports mode never invoked the pass — this is the reported defect"
 
     def test_the_sports_chain_reports_no_live_game_left_behind(self):
         _out, meta = apply_discover_display_chain(
@@ -136,9 +136,9 @@ class TestDiscoverIsUnchanged:
         _out, meta = apply_discover_display_chain(
             _reported_pool(), limit=20, ctx=PersonalizationContext(), **DISCOVER
         )
-        assert meta["live_first_page"] is None, (
-            "None means the pass never ran; 0 would mean it ran and did nothing"
-        )
+        assert (
+            meta["live_first_page"] is None
+        ), "None means the pass never ran; 0 would mean it ran and did nothing"
 
     def test_CONTROL_the_quality_floor_is_still_discover_only(self):
         _out, meta = apply_discover_display_chain(

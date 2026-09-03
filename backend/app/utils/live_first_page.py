@@ -186,7 +186,9 @@ def hoist_live_events_into_first_page(
         window = items[:window_size]
         tail = items[window_size:]
 
-        live_in_window = [i for i, it in enumerate(window) if is_hoistable_live_event(it)]
+        live_in_window = [
+            i for i, it in enumerate(window) if is_hoistable_live_event(it)
+        ]
         live_in_tail = [i for i, it in enumerate(tail) if is_hoistable_live_event(it)]
 
         budget = live_first_page_budget(window_size) if max_live is None else max_live
@@ -220,7 +222,8 @@ def hoist_live_events_into_first_page(
         displaceable = [
             i
             for i in range(window_size - 1, -1, -1)
-            if not is_hoistable_live_event(window[i]) and not window[i].get(MARQUEE_PIN_KEY)
+            if not is_hoistable_live_event(window[i])
+            and not window[i].get(MARQUEE_PIN_KEY)
         ]
 
         swaps = min(room, len(live_in_tail), len(displaceable))
