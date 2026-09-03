@@ -541,7 +541,7 @@ async def test_the_task_publishes_authority_links_and_counts_them(monkeypatch):
         written[slug] = payload
         return True
 
-    async def _fake_candidates(session, series):
+    async def _fake_candidates(session, series, *, now=None):
         return [_candidate()]
 
     async def _fake_order_of_play(slug):
@@ -590,7 +590,7 @@ async def test_a_cold_order_of_play_cache_costs_only_the_numbers(monkeypatch):
         written[slug] = payload
         return True
 
-    async def _fake_candidates(session, series):
+    async def _fake_candidates(session, series, *, now=None):
         return [_candidate()]
 
     async def _cold(slug):

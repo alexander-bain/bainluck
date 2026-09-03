@@ -546,3 +546,282 @@ class TestPass3ActuallyStartsOnAFullCycle:
         assert "pass2_yielded_to_backlog" in stats["funnel"]
         # And the backlog's own reporting still says what it did not reach.
         assert "backlog_dropped" in stats["funnel"]
+
+
+# =============================================================================
+# L1B-009-END-TO-END-BUDGET-GUARD — CERT-822's follow-up.
+# =============================================================================
+
+
+class TestTheWholeCycleIsChargedNotJustTheAttemptLoops:
+    """The cycle spends its 780 seconds on more than the three attempt loops.
+
+    ``TestPass3ActuallyStartsOnAFullCycle`` above burns a clock, which is why it
+    caught what reading the constants could not. But it starts that clock at
+    Pass 1 and charges only per market loaded, so two real consumers of the
+    budget cost nothing in it:
+
+    * **The settled sweep**, which runs BEFORE Pass 1 — one join+sort over the
+      receipted resolved population and a bulk flush of up to
+      ``_SETTLED_SWEEP_MAX`` rows. On production 2026-09-03 it stamped exactly
+      5,000 at 16:50Z and 3,586 more at 17:05Z.
+    * **Pass 3's own selection and count queries**, which run AFTER its floor
+      test and therefore spend the very window the floor was reserved to
+      protect: a ``NOT EXISTS`` anti-join, a receipt-ordered join, and a
+      ``count(*)`` over the whole eligible population — 36,676 rows on
+      production 2026-09-03, a number that only grows.
+
+    So pre-pass overhead can grow until Pass 3 stops running in production while
+    the existing guard stays green. That is #2798's original failure arriving
+    from the other side, and it is what these tests price.
+
+    THEY STATE THE HEADROOM RATHER THAN ASSUMING IT, and each has a red arm that
+    drives the overhead past the headroom and proves the harness notices. A
+    budget guard that cannot fail is a decoration.
+    """
+
+    #: Measured on production 2026-09-03 (CERT-817): ~12.5 markets/s.
+    RATE_PER_SECOND = 12.5
+    BUDGET = 780
+    #: Pass 1's population after #2798's status predicate.
+    PASS1_ROWS = 7447
+    #: What the sweep actually stamped on its first production run, 16:50Z.
+    SWEEP_ROWS = 5000
+    #: ``coverage.backlog_pass.eligible_total``, production 2026-09-03 17:00Z.
+    ELIGIBLE_TOTAL = 36676
+
+    class _Clock:
+        """Charges wall-clock for every priced thing the cycle does."""
+
+        def __init__(self, budget):
+            self.remaining = float(budget)
+            self.log = []
+
+        def __call__(self):
+            return self.remaining
+
+        def charge(self, seconds, what=""):
+            self.remaining -= seconds
+            if what:
+                self.log.append((what, round(self.remaining, 1)))
+
+    class _Row:
+        """The four columns ``_new_receipt`` reads off a swept market."""
+
+        def __init__(self, mid):
+            self.id = mid
+            self.source = "kalshi"
+            self.external_id = f"KXTEST-{mid}"
+            self.name = f"market {mid}"
+
+    def _run_full_cycle(
+        self, *, query_cost=0.0, sweep_write_cost_per_row=0.0,
+        pass3_query_cost=None, pass1_rows=None, sweep_rows=None,
+    ):
+        """Sweep, Pass 1, Pass 2, Pass 3 — the order the task runs them in.
+
+        Every ``execute``/``scalar`` costs ``query_cost``; every swept row costs
+        ``sweep_write_cost_per_row`` to flush; every market a pass loads costs
+        the measured ``1 / RATE_PER_SECOND``.
+
+        ``pass3_query_cost`` prices Pass 3's three statements separately,
+        because they are the ones that grow on their own: the ``count(*)`` is
+        over the whole eligible population and nothing about this pass bounds
+        it. Pricing them globally instead would starve Pass 3 before its floor
+        test and so measure the wrong failure.
+        """
+        from unittest.mock import patch
+
+        pass1_rows = self.PASS1_ROWS if pass1_rows is None else pass1_rows
+        sweep_rows = self.SWEEP_ROWS if sweep_rows is None else sweep_rows
+
+        clock = self._Clock(self.BUDGET)
+        stats = {"funnel": {}, "errors": [], "markets_scanned": 0}
+        outer = self
+
+        class _PricedSession:
+            """Charges the clock for each statement, then serves canned rows."""
+
+            def __init__(self, queue, cost=None):
+                # One entry per execute(), in call order.
+                self.queue = list(queue)
+                self.cost = query_cost if cost is None else cost
+                self.statements = []
+
+            async def execute(self, stmt):
+                self.statements.append(stmt)
+                clock.charge(self.cost, "execute")
+                rows = self.queue.pop(0) if self.queue else []
+
+                class _R:
+                    def all(s):
+                        return rows
+
+                    def scalars(s):
+                        return s
+
+                    def unique(s):
+                        return s
+                return _R()
+
+            async def scalar(self, stmt):
+                self.statements.append(stmt)
+                clock.charge(self.cost, "scalar")
+                return outer.ELIGIBLE_TOTAL
+
+            async def commit(self):
+                pass
+
+            async def rollback(self):
+                pass
+
+        async def _fake_load(session, market_id):
+            clock.charge(1.0 / outer.RATE_PER_SECOND)
+            return None      # no attempt work; we are pricing the budget
+
+        async def _fake_flush(session, receipts, stats_, phase, session_factory=None):
+            clock.charge(len(receipts) * sweep_write_cost_per_row, f"flush:{phase}")
+
+        sweep = _PricedSession([[self._Row(i) for i in range(sweep_rows)]])
+        p1 = _PricedSession([list(range(1, pass1_rows + 1))])
+        p2 = _PricedSession([[]])
+        # Pass 3 issues three statements: the NOT EXISTS anti-join, the
+        # receipt-ordered join, then a count(*) via scalar().
+        p3 = _PricedSession([[], []], cost=pass3_query_cost)
+
+        with patch.object(pmm, "_load_market_row", _fake_load), \
+                patch.object(pmm, "_flush_pass_receipts", _fake_flush):
+            asyncio.run(pmm._settled_sweep(sweep, stats, NOW, clock))
+            before_pass1 = clock.remaining
+            processed = asyncio.run(
+                pmm._phase1_pass1_ticker_scan(p1, stats, NOW, [], clock)
+            )
+            asyncio.run(
+                pmm._phase1_pass2_general_scan(
+                    p2, stats, NOW, 500, processed, [], clock
+                )
+            )
+            before_pass3 = clock.remaining
+            asyncio.run(
+                pmm._phase1_pass3_backlog_scan(
+                    p3, stats, NOW, processed, [], clock
+                )
+            )
+        return stats, clock, before_pass1, before_pass3
+
+    # ── the pre-pass headroom ────────────────────────────────────────────────
+
+    def test_the_sweep_is_inside_the_priced_cycle_now_not_before_it(self):
+        """The regression this whole class exists to make possible to catch."""
+        stats, clock, before_pass1, _ = self._run_full_cycle(
+            query_cost=2.0, sweep_write_cost_per_row=0.01,
+        )
+        # It ran, it stamped, and it COST something the clock recorded.
+        assert stats["funnel"]["settled_sweep_skipped_budget"] is False
+        assert stats["funnel"]["settled_receipted"] == self.SWEEP_ROWS
+        assert before_pass1 < self.BUDGET, (
+            "The settled sweep was free. It selects up to "
+            f"{pmm._SETTLED_SWEEP_MAX} rows and flushes them, and if the guard "
+            "charges nothing for that then pre-pass overhead can grow without "
+            "any test noticing."
+        )
+
+    def test_pass3_still_starts_once_the_sweep_and_the_queries_are_charged(self):
+        """THE SHIP: the whole cycle, priced, still reaches the backlog pass."""
+        stats, clock, _, _ = self._run_full_cycle(
+            query_cost=2.0, sweep_write_cost_per_row=0.01,
+        )
+        assert stats["funnel"]["backlog_skipped_budget"] is False, (
+            "Pass 3 stood down once the sweep and the selection queries were "
+            f"charged. {clock.remaining:.0f}s remained at its "
+            f"{pmm._BACKLOG_MIN_SECONDS_REMAINING}s floor."
+        )
+        # And it stood up on a cycle where Pass 1 genuinely yielded, not one
+        # where there was nothing to do.
+        assert stats["funnel"]["pass1_yielded_to_backlog"] is True
+
+    def test_the_pre_pass_headroom_is_derived_from_the_floor_it_protects(self):
+        """How much may run before Pass 1 without starving Pass 3? Say it.
+
+        Every threshold is an absolute "seconds remaining", so overhead ahead of
+        Pass 1 does not shift them — it just arrives at them later. Pass 3 tests
+        ``_BACKLOG_MIN_SECONDS_REMAINING``, so the whole pre-pass budget is
+        whatever the cycle can spend and still be above that floor.
+        """
+        headroom = self.BUDGET - pmm._BACKLOG_MIN_SECONDS_REMAINING
+        assert headroom == 300
+        # The sweep may not spend it all: it declines to start below its own
+        # floor, which must sit above Pass 3's or the sweep could begin a run it
+        # can only finish by eating the backlog pass.
+        assert pmm._SETTLED_SWEEP_MIN_SECONDS_REMAINING > (
+            pmm._BACKLOG_MIN_SECONDS_REMAINING
+        )
+        # Real slack, not a rounding error — the sweep's flush is bounded by
+        # _SETTLED_SWEEP_MAX and has to fit under it.
+        assert (
+            pmm._SETTLED_SWEEP_MIN_SECONDS_REMAINING
+            - pmm._BACKLOG_MIN_SECONDS_REMAINING
+        ) >= 60
+
+    def test_pre_pass_overhead_past_the_headroom_starves_pass3(self):
+        """RED ARM. Drive the sweep past the headroom; the guard must notice.
+
+        Without this the test above proves only that today's numbers happen to
+        work, not that the harness can see tomorrow's not working.
+        """
+        # 0.062s/row over 5,000 rows ≈ 310s of pre-pass overhead — just past the
+        # 300s headroom the previous test derives.
+        stats, clock, before_pass1, _ = self._run_full_cycle(
+            query_cost=2.0, sweep_write_cost_per_row=0.062,
+        )
+        assert before_pass1 < pmm._BACKLOG_MIN_SECONDS_REMAINING
+        assert stats["funnel"]["backlog_skipped_budget"] is True, (
+            "Pre-pass overhead crossed the headroom and Pass 3 still claimed to "
+            "start — then this harness cannot catch the regression it exists for."
+        )
+
+    # ── Pass 3's own queries, inside the window its floor reserved ───────────
+
+    def test_pass3_selection_queries_are_charged_inside_its_own_window(self):
+        """They run AFTER the floor test, so they spend Pass 3's attempt time.
+
+        Pass 3 clears its floor at 480s and stops at the 420s downstream
+        reserve, so its entire working window is 60 seconds — and the anti-join,
+        the receipt-ordered join and the ``count(*)`` over all
+        36,676 eligible rows all come out of it before a single market is tried.
+        """
+        stats, clock, _, before_pass3 = self._run_full_cycle(
+            query_cost=2.0, sweep_write_cost_per_row=0.01,
+        )
+        window = (
+            pmm._BACKLOG_MIN_SECONDS_REMAINING
+            - pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS
+        )
+        assert window == 60
+        # The queries were charged: Pass 3 spent time before its loop.
+        assert clock.remaining < before_pass3
+        # And it still had room to do its actual job.
+        assert stats["funnel"]["backlog_skipped_budget"] is False
+
+    def test_selection_queries_that_outgrow_the_window_are_reported_not_silent(
+        self,
+    ):
+        """RED ARM. A Pass 3 that starts and reaches nothing must still SAY so.
+
+        This is the quieter failure of the two: ``backlog_skipped_budget`` stays
+        False — Pass 3 genuinely started — but the count query has eaten the
+        window and no market is attempted. The cap counter is what keeps that
+        from reading as "we attempted everything" (gotcha #53).
+        """
+        stats, _, _, before_pass3 = self._run_full_cycle(
+            query_cost=2.0, sweep_write_cost_per_row=0.01,
+            # Three statements at 25s each = 75s, past Pass 3's 60s window.
+            pass3_query_cost=25.0,
+        )
+        # It cleared its floor — this is not the starvation case above.
+        assert before_pass3 >= pmm._BACKLOG_MIN_SECONDS_REMAINING
+        assert stats["funnel"]["backlog_skipped_budget"] is False
+        assert stats["funnel"]["backlog_scanned"] == 0
+        # The honest denominator still reports the whole eligible population as
+        # unreached, rather than a zero that looks like nothing was pending.
+        assert stats["funnel"]["backlog_eligible_total"] == self.ELIGIBLE_TOTAL

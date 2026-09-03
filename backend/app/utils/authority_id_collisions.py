@@ -605,9 +605,15 @@ def summarize(decisions: Iterable[GroupDecision]) -> dict[str, Any]:
         "groups": groups,
         "outcomes": outcomes,
         "row_verdicts": verdict_counts,
-        # Groups still wearing one id on two rows after this repair runs. The
-        # unique index cannot be created while this is above zero, so it is the
-        # number the migration note has to quote.
+        # Groups still wearing one id on two rows after this repair runs —
+        # counted over the decisions THIS call was handed, so it is scoped to
+        # the examined slice and never speaks for the table.  #2839: reading it
+        # as the index's blocker is what let `?sport=icehockey_nhl` print an
+        # all-clear over a payload carrying `before.contested_ids: 164`.  The
+        # number a migration note has to quote is that census — the whole-table
+        # `before.contested_ids` — not this one.  See `index_blocker_note()` in
+        # `app/tasks/repair_authority_id_collisions.py`, which keeps the two
+        # apart by construction.
         "groups_unresolved": groups
         - outcomes["RESOLVED_ONE"]
         - outcomes["RESOLVED_MERGE"],

@@ -148,7 +148,7 @@ import {
 import { tournamentWindowStarts } from "@/lib/tournamentWindows";
 import { buildMatchList, type TitleChances } from "@/lib/matchList";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
-import { slateNotice } from "@/lib/slate";
+import { slateEmptyState, slateNotice } from "@/lib/slate";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
@@ -439,12 +439,18 @@ export default function TournamentPage() {
                    * sentence was live and wrong the same afternoon. It reads
                    * the payload's own label now, so being right is a data
                    * property rather than a deploy.
+                   *
+                   * #2707: and the HEADLINE is computed here too, from the
+                   * payload's own `order_of_play_listed`, because "No matches
+                   * scheduled" over five live matches is the same class of
+                   * error one level up — a sentence about the world asserted
+                   * from a fact about our own output.
                    */
-                  emptyHint={
-                    data.draw_released || !data.main_draw_label
-                      ? "Nothing is on right now. This is where the day's matches sit."
-                      : `Nothing is on right now. This is where the day's matches sit, and the draw fills them in ${data.main_draw_label}.`
-                  }
+                  empty={slateEmptyState({
+                    drawReleased: data.draw_released,
+                    mainDrawLabel: data.main_draw_label,
+                    orderOfPlayListed: data.slate?.order_of_play_listed,
+                  })}
                 />
               </div>
 
