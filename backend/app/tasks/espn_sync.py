@@ -1816,6 +1816,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     from app.utils.espn_tennis_anchor import (
         anchor_receipt,
         anchorable_sport_keys,
+        authority_score_write,
         authority_write,
         state_contradiction,
     )
@@ -1834,6 +1835,15 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "status_writes": 0,
         "completions_revoked": 0,
         "commence_writes": 0,
+        # lane1/064: the score half. `score_writes` counts rows the authority
+        # moved; `score_blanks_filled` is the SHIP — a settled row that printed
+        # nothing and now prints the result; `score_corrections` is a row whose
+        # existing score the authority overruled. `score_refused` is keyed by
+        # reason, because "no score" is four different findings.
+        "score_writes": 0,
+        "score_blanks_filled": 0,
+        "score_corrections": 0,
+        "score_refused": {},
         "contradictions": {},
         "row_errors": 0,
         "stamp_refused": 0,
@@ -2085,6 +2095,58 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     event.commence_time = changes["commence_time"]
                     stats["commence_writes"] += 1
 
+                # ═══ THE SCORE, THROUGH THE SAME ANCHOR AND THE SAME READ ═══
+                #
+                # 37 anchored US Open rows were `closed` with no score at all
+                # while ESPN held the full result — Alcaraz over Safiullin
+                # 6-4, 6-4, 6-4, closed blank by a wall-clock net on an Odds API
+                # session-start default. A search for "Safiullin" returned seven
+                # cards saying FINAL with nothing under them.
+                #
+                # Deliberately AFTER the state block and unconditional on it: a
+                # `decided` row that is already settled gets NO status change
+                # (`closed` and `completed` are both settled and churning one
+                # into the other rewrites history for no reader) — which is
+                # exactly the population that has been blank for four days. A
+                # score write gated on a status write would have skipped all 37.
+                was_blank = event.home_score is None and event.away_score is None
+                score = authority_score_write(
+                    ours=ours,
+                    our_home_score=event.home_score,
+                    our_away_score=event.away_score,
+                    competition=competition,
+                )
+                if score["reason"] is not None:
+                    stats["score_refused"][score["reason"]] = (
+                        stats["score_refused"].get(score["reason"], 0) + 1
+                    )
+                elif score["changes"]:
+                    # BOTH NUMBERS READ BEFORE EITHER IS WRITTEN — the log below
+                    # is a before/after and would print the same pair twice if
+                    # the assignment came first.
+                    before = (event.home_score, event.away_score)
+                    event.home_score = score["changes"].get(
+                        "home_score", event.home_score
+                    )
+                    event.away_score = score["changes"].get(
+                        "away_score", event.away_score
+                    )
+                    stats["score_writes"] += 1
+                    if was_blank:
+                        stats["score_blanks_filled"] += 1
+                    else:
+                        # THE AUTHORITY OVERRULING A SCORE FEED (§R rung 1 over
+                        # rung 3). Logged at WARNING with both numbers: a
+                        # correction is a claim that something else was wrong,
+                        # and it should be readable without a database.
+                        stats["score_corrections"] += 1
+                        logger.warning(
+                            "Tennis score CORRECTED: event %s (%s v %s) %s-%s -> %s-%s",
+                            event.id, ours[0], ours[1],
+                            before[0], before[1],
+                            event.home_score, event.away_score,
+                        )
+
             except Exception as exc:  # noqa: BLE001 — one row never costs the pass
                 stats["row_errors"] += 1
                 logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
@@ -2093,9 +2155,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
 
     logger.info(
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
-        "%d status writes, %d closes revoked, %d contradictions",
+        "%d status writes, %d closes revoked, %d contradictions, "
+        "%d score writes (%d blanks filled, %d corrected), %d scores refused",
         stats["events_considered"], stats["anchored"], stats["already_anchored"],
         sum(stats["refused"].values()), stats["status_writes"],
         stats["completions_revoked"], sum(stats["contradictions"].values()),
+        stats["score_writes"], stats["score_blanks_filled"],
+        stats["score_corrections"], sum(stats["score_refused"].values()),
     )
     return {"status": "ok", **stats}

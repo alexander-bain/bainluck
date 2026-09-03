@@ -594,6 +594,213 @@ def authority_write(
     return changes
 
 
+#: Why the authority declined to write a score. Every one is a sentence about
+#: THIS fixture that a person can act on, and none of them is "no score".
+SCORE_NOT_PLAYED = "not-played"
+SCORE_NO_LINE = "no-line"
+SCORE_ORIENTATION_UNRESOLVED = "orientation-unresolved"
+SCORE_NOT_A_COMPLETED_RESULT = "not-a-completed-result"
+
+#: The two ESPN states that entitle the authority to state a score at all.
+#: ``upcoming`` does not: a match nobody has started has no score, and the
+#: refusal is named (``not-played``) rather than silent.
+SCORED_STATES = ("in_progress", "decided")
+
+#: How many sets the winner of a COMPLETED tennis match holds. Best-of-three and
+#: best-of-five, and nothing else — the whole legality test in one tuple.
+#:
+#: Measured over all 377 ``STATUS_FINAL`` competitions on the US Open board
+#: 2026-09-03T04:0xZ, the winner's set count under
+#: :func:`espn_tennis.competition_sides` is 2 or 3 without exception, and the
+#: winner leads in 377 of 377::
+#:
+#:     (2,0) 196   (2,1) 102   (3,0) 34   (3,1) 28   (3,2) 17
+#:
+#: THE TEST IS "COULD A MATCH HAVE ENDED HERE, WITH THIS WINNER AHEAD" — not
+#: "did it go the distance", and the 7 non-final decided competitions on that
+#: same board are what makes the difference legible. Replayed through
+#: :func:`authority_score`, they split 6 / 1::
+#:
+#:     184685  RETIRED   7-5, 6-7      sets 1-0 for the side that LOST    refused
+#:     184599  RETIRED   4-6, 7-5, 3-1 sets 1-1                           refused
+#:     184686  RETIRED   6-4, 4-6, 0-5 sets 1-1                           refused
+#:     184661  RETIRED   6-4, 3-0      sets 1-0, winner ahead but at 1    refused
+#:     184744  RETIRED   0-5           sets 0-0                           refused
+#:     184769  WALKOVER  no line at all                                   refused (`no-line`)
+#:     182706  RETIRED   7-6, 6-4, 3-0 sets 0-2, winner already had two   WRITTEN
+#:
+#: The last one is the point of stating the rule this way. Sweeny had the match
+#: won two sets to none when Moutet retired in the third; ``0-2`` is true, names
+#: the right winner, and refusing it would be refusing a real result because of
+#: how it ended. The six above it are refused because ESPN awards an abandoned
+#: set to NOBODY, so the count can put the loser ahead (184685) or tie a match
+#: somebody advanced from — and writing ``1-0`` for the player who lost is the
+#: inverted-winner defect gotcha #21 exists about, arriving through a column
+#: nothing downstream doubts.
+COMPLETED_WINNER_SET_COUNTS = (2, 3)
+
+
+def orient_sides(
+    ours: list[str], sides: list[dict[str, Any]]
+) -> Optional[tuple[dict[str, Any], dict[str, Any]]]:
+    """Which ESPN side is OUR home, and which is our away? — or ``None``.
+
+    Returns ``(home_side, away_side)``.  ESPN publishes its own ``homeAway`` on
+    every competitor and it is deliberately NOT read: ours comes from the Odds
+    API and the two orderings are independent, so trusting ESPN's would silently
+    reverse a score on every fixture the two happen to disagree about.
+
+    THE TEST IS WHICH ORIENTATION FITS BETTER, NOT WHETHER BOTH NAMES MATCH.
+    Both matching is the ordinary case (112 of the 123 already-scored US Open
+    rows), but a real class resolves on ONE name and must not be thrown away:
+    ``Aleksandr``/``Alexander`` Shevchenko and ``Caty``/``Catherine`` McNally
+    defeat :func:`player_names.names_agree` outright, while their opponents
+    agree cleanly.  With two sides and one of them taken, the other is forced —
+    the same elimination that makes ``pairing_anchors`` (pass 3) sound, and it
+    is sound here for the same reason: the ANCHOR has already established that
+    this competition is this match.
+
+    ``None`` when the two orientations fit equally well — including the case
+    where nothing matches at all.  A tie is not a coin to flip: a reversed score
+    is worse than no score, because a blank is visibly missing and a reversed
+    one is confidently wrong.
+    """
+    if len(ours) != 2 or len(sides) != 2 or not all(ours):
+        return None
+    straight = sum(
+        1 for i in (0, 1) if names_agree(ours[i], sides[i].get("name") or "")
+    )
+    crossed = sum(
+        1 for i in (0, 1) if names_agree(ours[i], sides[1 - i].get("name") or "")
+    )
+    if straight > crossed:
+        return sides[0], sides[1]
+    if crossed > straight:
+        return sides[1], sides[0]
+    return None
+
+
+def authority_score(
+    ours: list[str], competition: dict[str, Any]
+) -> dict[str, Any]:
+    """The set score ESPN states for this match, in OUR home/away order.
+
+    Returns ``{home_score, away_score, reason}``; the scores are ``None``
+    whenever ``reason`` is set, and ``reason`` is ``None`` on a write.  Pure, so
+    every rule below is checkable against a saved payload.
+
+    ═══ WHY THIS EXISTS: 37 FINALS PRINTING NOTHING ═══
+
+    Measured on production 2026-09-03T04:2xZ, over the 202 tennis rows that
+    carry an ESPN anchor:
+
+        decided / our row `completed` / scored   123   agree with ESPN: 112
+        decided / our row `closed`    / BLANK     37
+        upcoming / `scheduled`       / blank      42
+
+    The 37 are real, played, first-round US Open matches — Alcaraz beat
+    Safiullin 6-4, 6-4, 6-4 — that a wall-clock staleness net closed on an Odds
+    API session-start default before any source published a result, and nothing
+    has been able to fill since: ``authority_write`` corrects state and
+    ``commence_time`` and has never written a score.  Searching "Safiullin" on
+    the site returns seven cards that say **FINAL** with no score and no winner
+    on any of them.
+
+    The one disagreement in the 123 is the other half of the same gap:
+    ``15293702`` Jović v Frech holds ``1-0``, a mid-match score frozen by
+    whichever poll happened to be last, where ESPN says the match finished 2-0.
+    The authority outranks a score feed (§R rung 1 over rung 3), so a
+    ``decided`` competition overwrites rather than merely fills.
+
+    ═══ AND THE FOUR REFUSALS, WHICH ARE THE POLICY ═══
+
+    ``not-played``               ESPN has this fixture as upcoming, or in a
+                                 state we have no word for.  Nothing happened
+                                 yet; there is nothing to say.
+    ``no-line``                  in play or decided, and not one set line on the
+                                 board.  The walkover shape (competition 184769:
+                                 a winner flag, no ``linescores`` at all) and the
+                                 first seconds of a match.
+    ``orientation-unresolved``   we cannot tell which of our two players is
+                                 which of ESPN's — see :func:`orient_sides`.
+    ``not-a-completed-result``   ESPN calls it decided and no completed match
+                                 could have ended on this set count with this
+                                 winner: 5 of the 6 retirements on the board,
+                                 where the abandoned set is awarded to nobody
+                                 and the count can name the LOSER as ahead.  The
+                                 sixth IS written — see
+                                 :data:`COMPLETED_WINNER_SET_COUNTS`.
+
+    An in-progress match is deliberately held to none of the legality rules.
+    ``1-0`` is exactly what a live second set looks like, and refusing it would
+    be refusing the very thing the live card wants.
+    """
+    blank = {"home_score": None, "away_score": None}
+
+    if competition.get("state") not in SCORED_STATES:
+        return {**blank, "reason": SCORE_NOT_PLAYED}
+
+    sides = competition.get("sides") or []
+    oriented = orient_sides(ours, sides)
+    if oriented is None:
+        return {**blank, "reason": SCORE_ORIENTATION_UNRESOLVED}
+    home, away = oriented
+
+    if not (home.get("games") or away.get("games")):
+        # NO LINE AT ALL. Not zero-zero — unpublished. The two are the same
+        # silence to a reader and only one of them is a score (gotcha #53).
+        return {**blank, "reason": SCORE_NO_LINE}
+
+    home_sets = int(home.get("sets_won") or 0)
+    away_sets = int(away.get("sets_won") or 0)
+
+    if competition.get("state") == "decided":
+        winner_sets, loser_sets = (
+            (home_sets, away_sets) if home.get("winner") else (away_sets, home_sets)
+        )
+        decided_by_someone = bool(home.get("winner")) != bool(away.get("winner"))
+        if (
+            not decided_by_someone
+            or winner_sets not in COMPLETED_WINNER_SET_COUNTS
+            or winner_sets <= loser_sets
+        ):
+            return {**blank, "reason": SCORE_NOT_A_COMPLETED_RESULT}
+
+    return {"home_score": home_sets, "away_score": away_sets, "reason": None}
+
+
+def authority_score_write(
+    *,
+    ours: list[str],
+    our_home_score: Any,
+    our_away_score: Any,
+    competition: dict[str, Any],
+) -> dict[str, Any]:
+    """What the authority changes about the SCORE — changes only, plus the why.
+
+    Returns ``{"changes": {...}, "reason": str | None}``.  ``changes`` is empty
+    both when the authority declines to speak and when the row already holds
+    what it says, and ``reason`` separates those two: a refusal names itself, an
+    agreement is ``None``.
+
+    Kept beside :func:`authority_write` rather than inside it on purpose.  That
+    function's contract is "the columns that must move" and its guards are
+    written against exactly that; a score refusal is a FINDING, not a column,
+    and folding a reason into a changes dict would make the caller re-derive
+    which keys are columns.  Both are pure and the task calls both.
+    """
+    verdict = authority_score(ours, competition)
+    if verdict["reason"] is not None:
+        return {"changes": {}, "reason": verdict["reason"]}
+
+    changes: dict[str, Any] = {}
+    if verdict["home_score"] != our_home_score:
+        changes["home_score"] = verdict["home_score"]
+    if verdict["away_score"] != our_away_score:
+        changes["away_score"] = verdict["away_score"]
+    return {"changes": changes, "reason": None}
+
+
 #: The tour segment in a tennis sport key: ``tennis_<tour>_<tournament>``.
 TENNIS_TOURS = ("atp", "wta")
 

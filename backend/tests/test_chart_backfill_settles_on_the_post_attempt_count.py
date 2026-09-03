@@ -471,10 +471,16 @@ def test_a_dry_run_still_persists_nothing(monkeypatch):
 
 def test_the_outcome_is_a_named_pair_not_a_bare_dict():
     """The seam itself. `_record_attempts` returning a bare hash is what made
-    the give-up count impossible to hand on without a second Redis read."""
+    the give-up count impossible to hand on without a second Redis read.
+
+    `held` joined the tuple at CERT-794/795 and is asserted by name rather than
+    by leaving the shape open: the caller has to be able to tell "the retry was
+    persisted" from "the lease was gone and nothing was", and a field that can
+    be dropped without a test noticing is a field the fence cannot rely on.
+    """
     drain = _drain()
     outcome = _record(drain, _FakeRedis(), [1], [], {}, 0)
 
     assert isinstance(outcome, drain.AttemptOutcome)
-    assert outcome._fields == ("owed", "gave_up_total")
+    assert outcome._fields == ("owed", "gave_up_total", "held")
     assert isinstance(MagicMock() and outcome.owed, dict)
