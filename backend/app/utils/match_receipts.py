@@ -44,11 +44,14 @@ by the matcher itself, on the path that made the decision.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import func
+
+from app.utils.name_normalization import normalize_name
 
 # ── Outcomes ────────────────────────────────────────────────────────────────
 OUTCOME_LINKED = "linked"
@@ -169,6 +172,149 @@ PHASES: frozenset[str] = frozenset({
 MAX_TRACE_CANDIDATES = 8
 
 
+# ── Coverage: is this retrieved row THIS GAME? ───────────────────────────────
+#
+# THE ORACLE MUST NOT BE THE PREDICATE UNDER DIAGNOSIS. A receipt says
+# ``name_mismatch`` when the team-name gate refused a real candidate, and
+# ``no_candidate`` when the retrieval ILIKE returned rows that are simply other
+# games. Separating those two needs a second opinion on "is this row the game
+# the market is about" — and it cannot be ``_fuzzy_team_match``, because that is
+# the exact function whose refusal is being explained. Asking it produces a
+# guaranteed answer: it already said no, so every real name-gate failure would
+# be relabelled an upstream absence.
+#
+# Measured on production, 2026-09-03 (266 rejected receipts on open unlinked
+# markets, 222 of them ``name_mismatch``): deriving coverage from
+# ``_fuzzy_team_match`` calls **0** of the 222 covered, so all 222 would defer to
+# the probe and 109 real name-gate failures would land in ``no_candidate``.
+# CERT-783 blocked exactly that on the Browns-Jaguars case (market 60075060,
+# "CLE Browns vs JAC Jaguars", event 14780144 "Jacksonville Jaguars" vs
+# "Cleveland Browns", in-window and in the candidate list).
+#
+# So coverage is measured here, on anchor tokens, and the failure it is tuned
+# for is the SILENT one: when in doubt, a row counts as covered and the receipt
+# keeps saying ``name_mismatch`` — the label it had before receipts learned to
+# measure coverage at all. A row is only handed to the probe when it can be
+# positively ruled out as this game.
+
+#: A shared token shorter than this is not evidence. Three characters keeps the
+#: real anchors ("lsu", "smu", "byu", "usc") and drops the noise ("st", "fc",
+#: "la", "at"). Tokens are compared by EQUALITY, never by prefix: a prefix rule
+#: makes a one-letter token a wildcard that covers every name starting with that
+#: letter (lane1 Q503 measured `Christopher O'Connell` == `Oleksandra
+#: Oliynykova` that way).
+COVERAGE_MIN_ANCHOR = 3
+
+#: Separators that split a market name into two sides. ``vs``/``v``/``@`` are
+#: tried before ``at``, because "University at Albany vs Buffalo" contains both
+#: and only the ``vs`` split is the matchup.
+_COVERAGE_VS_SPLIT = re.compile(r"\s+(?:vs\.?|v\.?|@)\s+", re.IGNORECASE)
+_COVERAGE_AT_SPLIT = re.compile(r"\s+at\s+", re.IGNORECASE)
+
+_COVERAGE_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def coverage_anchors(name: Optional[str]) -> frozenset[str]:
+    """The tokens of ``name`` long enough to anchor a coverage claim.
+
+    Apostrophes are deleted rather than split on, so "Hawai'i" is one token
+    ``hawaii`` and matches "Hawaii Rainbow Warriors". Splitting there would
+    produce a one-character token, which is the wildcard this function's
+    3-character floor exists to prevent.
+    """
+    if not name:
+        return frozenset()
+    base = normalize_name(name).replace("'", "")
+    return frozenset(
+        t for t in _COVERAGE_TOKEN.findall(base) if len(t) >= COVERAGE_MIN_ANCHOR
+    )
+
+
+def _anchors_touch(side: Optional[str], team: Optional[str]) -> bool:
+    return bool(coverage_anchors(side) & coverage_anchors(team))
+
+
+def sides_from_market_name(
+    market_name: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """The two sides a market's own NAME states, or ``(None, None)``.
+
+    This is the second, independent reading of the matchup. The matcher's parsed
+    ``team_a``/``team_b`` come from an extractor that can be wrong in a way no
+    amount of team-name tolerance recovers from: on production, "Denver vs
+    Kansas City" parsed to ``Nuggets``/``Chiefs`` — the NBA teams for those
+    cities, for an NFL market — and 65 of 222 ``name_mismatch`` receipts were
+    that shape. Reading the sides off the name catches those, because the row
+    the ILIKE returned really is the game the name describes.
+
+    A trailing ``": Spread"`` / ``": 1st Half Total"`` qualifier is dropped; a
+    name that does not split into exactly two non-empty sides yields nothing.
+    """
+    head = (market_name or "").split(":")[0]
+    for pattern in (_COVERAGE_VS_SPLIT, _COVERAGE_AT_SPLIT):
+        parts = pattern.split(head)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+            return parts[0].strip(), parts[1].strip()
+    return None, None
+
+
+def sides_covered(
+    side_a: Optional[str],
+    side_b: Optional[str],
+    home_team: Optional[str],
+    away_team: Optional[str],
+) -> int:
+    """How many of the named sides this row's two teams cover, 0-2.
+
+    The two sides must land on DIFFERENT team slots. Without that, "Morehouse
+    Maroon Tigers vs Arkansas-Pine Bluff" would read as fully covered by a row
+    whose home and away are both Tigers — the one-token retrieval coincidence
+    the whole distinction exists to catch.
+    """
+    if not side_a and not side_b:
+        return 0
+    if not side_b:
+        return 1 if (_anchors_touch(side_a, home_team)
+                     or _anchors_touch(side_a, away_team)) else 0
+    if (
+        (_anchors_touch(side_a, home_team) and _anchors_touch(side_b, away_team))
+        or (_anchors_touch(side_a, away_team) and _anchors_touch(side_b, home_team))
+    ):
+        return 2
+    if any((
+        _anchors_touch(side_a, home_team), _anchors_touch(side_a, away_team),
+        _anchors_touch(side_b, home_team), _anchors_touch(side_b, away_team),
+    )):
+        return 1
+    return 0
+
+
+def row_coverage(
+    market_name: Optional[str],
+    team_a: Optional[str],
+    team_b: Optional[str],
+    home_team: Optional[str],
+    away_team: Optional[str],
+) -> tuple[int, int]:
+    """``(sides_covered, sides_named)`` for one retrieved row.
+
+    Both readings of the matchup get a vote and the better one wins, because a
+    miss in either direction costs a true ``name_mismatch``: the parsed sides
+    can be invented (``Nuggets`` for an NFL market) and the name can be
+    unsplittable (a Polymarket "Player Props" container).
+    """
+    named = 2 if team_b else 1
+    best = sides_covered(team_a, team_b, home_team, away_team)
+    if best < named:
+        name_a, name_b = sides_from_market_name(market_name)
+        if name_a and name_b:
+            best = max(
+                best,
+                min(sides_covered(name_a, name_b, home_team, away_team), named),
+            )
+    return best, named
+
+
 @dataclass
 class CandidateTrace:
     """One event the matcher considered, and what it did with it."""
@@ -187,14 +333,12 @@ class CandidateTrace:
     #: ``chosen``.
     verdict: str = "considered"
     #: How many of the sides the MARKET named this candidate's two teams cover,
-    #: out of ``sides_named``. This is the difference between a candidate and a
-    #: coincidence, and it is why the first-look measured `name_mismatch` at
-    #: 234/333 with not one row meaning what the bucket is documented to mean:
-    #: the retrieval ILIKE fires on ONE token, so "Morehouse Maroon Tigers vs
-    #: Arkansas-Pine Bluff" retrieves Detroit Tigers (MLB) and Hanshin Tigers
-    #: (NPB). Both were reported as a name-gate refusal — a bug in OUR matcher —
-    #: when the truth is that the game is not in ``events`` at all.
-    #: ``None`` on a trace whose coverage was never computed.
+    #: out of ``sides_named``, per :func:`row_coverage`. This is the difference
+    #: between a candidate and a coincidence: the retrieval ILIKE fires on ONE
+    #: token, so "Morehouse Maroon Tigers vs Arkansas-Pine Bluff" retrieves
+    #: Detroit Tigers (MLB) and Hanshin Tigers (NPB), and reporting those as a
+    #: name-gate refusal blames OUR matcher for a game that is not in ``events``
+    #: at all. ``None`` on a trace whose coverage was never computed.
     sides_matched: Optional[int] = None
     #: How many sides the market named: 2 for a normal matchup, 1 for the
     #: single-team ``will_win`` shape. Stored per trace so one exported row is
