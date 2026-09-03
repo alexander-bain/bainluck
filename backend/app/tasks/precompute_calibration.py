@@ -626,7 +626,46 @@ def _main_payload_is_publishable(response: Any) -> bool:
 # methodology shrink is to declare it, which is what this bump does.
 # ``evaluate_publish`` returns before Rule 2 and Rule 3 when the version is
 # bumped (``calibration_publish_gate.py``, "if verdict.version_bumped").
+#
+# CAL-P982 AMENDMENT: it no longer just "returns". A bump that uses the escape
+# now DECLARES the move it expects — see
+# :data:`CALIBRATION_POPULATION_DECLARATION` directly below.
 CALIBRATION_POPULATION_VERSION = "q269"
+
+#: What THIS bump expects to do to the population, stated up front so the publish
+#: gate can hold it to its word (CAL-P982, #1978). ``None`` on any build that is
+#: not bumping — an unbumped build declares nothing, because it is waiving
+#: nothing.
+#:
+#: Before CAL-P982 a bumped version was an UNBOUNDED escape: one string changing
+#: waived population drift, per-category collapse and liquidity ordering
+#: together, so a bump that meant to remove 21.7% and one that removed 97% were
+#: indistinguishable to the gate. The escape is necessary — a ruled methodology
+#: change legitimately moves the population — but "necessary" is not "unbounded".
+#:
+#: THE NUMBER, and where it comes from: the completed 128-unit rebuild of
+#: 2026-09-01 measured q269 at 930,149 -> 728,641 outcomes against the published
+#: q268 artifact, i.e. a 21.66% drop (crypto 4,625 -> 0 by D12, economics
+#: 43,270 -> 10,501 by RULE E, plus the D5 dedup).
+#:
+#: THE TOLERANCE, and why 3.0 rather than tighter: the published baseline is
+#: fixed at 930,149 but the CANDIDATE keeps growing — resolution adds outcomes
+#: every hour the drain is not running. ±3.0pp admits a candidate anywhere in
+#: 700,774 .. 756,583 outcomes, i.e. ~28,000 outcomes of organic headroom in
+#: either direction around the measured 728,641. Wide enough that a few days'
+#: ordinary resolution cannot refuse the ship; far tighter than the ~200,000-row
+#: move an unbounded bump used to wave through unexamined.
+#:
+#: NOT a fingerprint input, deliberately. This is publish-time metadata about a
+#: version transition; it does not shape WHICH ROWS QUALIFY, so hashing it would
+#: discard the staged-futures bank for an edit that changes no SQL. It is also
+#: applied OUTSIDE the four functions ``_main_input_fingerprint`` hashes, for the
+#: same reason (see ``_run_calibration_main_build``).
+CALIBRATION_POPULATION_DECLARATION: "dict | None" = {
+    "from_version": "q268",
+    "expected_drop_pct": 21.66,
+    "tolerance_pct": 3.0,
+}
 
 #: The predecessor versions whose PUBLISHED artifacts this build declares
 #: comparable with its own — the explicit, bounded rollover window that the
@@ -6859,6 +6898,22 @@ async def _run_calibration_main_build(runner=None):
             f"after {compute_ms}ms — not published"
         )
 
+    # CAL-P982 (#1978): a bump DECLARES the move it expects, and the declaration
+    # has to be in the artifact the gate judges AND in the bytes that publish —
+    # so it is stamped here, before `json.dumps` below, not after.
+    #
+    # Stamped in THIS function and not inside `compute_calibration_payload`
+    # (where `population_version` itself is set) for one measured reason: that
+    # function's source is hashed by `_main_input_fingerprint`, so writing the
+    # declaration there would reset the checkpoint cursor and bin the 128-unit
+    # staged-futures bank — a ~2.5h rebuild spent on publish metadata that
+    # changes no SQL and moves no row. Guarded by
+    # `test_the_ledger_rider_did_not_move_the_build_input_fingerprint`.
+    if CALIBRATION_POPULATION_DECLARATION is not None and isinstance(response, dict):
+        from app.utils.calibration_publish_gate import DECLARATION_FIELD
+
+        response[DECLARATION_FIELD] = dict(CALIBRATION_POPULATION_DECLARATION)
+
     # PHASE 4 (serialize_gate_publish). Deliberately NOT resumable: it consumes
     # every other phase's output and must run against the run that publishes.
     runner.begin(PHASE_PUBLISH)
@@ -6880,7 +6935,7 @@ async def _run_calibration_main_build(runner=None):
     # build that lost two thirds of the population, or whose well-traded/thin
     # ordering inverted, replaced the good copy silently. A rejected candidate
     # touches neither key, so the last published snapshot keeps serving.
-    from app.utils.calibration_publish_gate import evaluate_publish
+    from app.utils.calibration_publish_gate import evaluate_publish, gate_ledger_record
 
     # Queue 300M Item 0: THIS is the stretch r343's arithmetic could not see.
     # Its last success ran 1,502.5s total against compute_ms=534.9s,
@@ -6933,6 +6988,18 @@ async def _run_calibration_main_build(runner=None):
     # branch below, so a refused run records which baseline refused it.
     runner.outcome["baseline_source"] = verdict.baseline_source
     runner.outcome["baseline_probe"] = verdict.baseline_probe
+    # CAL-P982 (#1978) rider. `gate` above records THAT the gate refused and
+    # which codes fired; it has never recorded WHAT fell. CAL-P213 spent four
+    # days unexplained for exactly that reason — the per-category answer existed,
+    # in a Sentry message, and nothing durable kept it, so the run evidence a
+    # later reader queries said `refuse` and stopped. The gate already computes
+    # the diff; this persists it, bounded and JSON-safe, on the PASS path too.
+    #
+    # Placed here, in `_run_calibration_main_build`, and NOT inside any of the
+    # four functions `_main_input_fingerprint` hashes — so the staged-futures
+    # bank survives this queue. Guarded by a test that reads those four sources
+    # (`test_the_ledger_rider_did_not_move_the_build_input_fingerprint`).
+    runner.outcome["gate_record"] = gate_ledger_record(verdict)
 
     if not verdict.ok:
         with runner.stage("gate_rejection_filing"):

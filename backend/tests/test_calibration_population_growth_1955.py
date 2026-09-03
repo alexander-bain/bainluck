@@ -193,14 +193,44 @@ class TestAChangedPredicateStillRefuses:
         assert verdict.codes == ["population_drift"]
         assert "unstated" in verdict.rejections[0]["detail"]
 
-    def test_a_version_bump_still_waives_it(self):
-        """The operator's escape hatch is untouched."""
+    def test_a_version_bump_still_waives_it_when_the_bump_DECLARES_the_move(self):
+        """The operator's escape hatch survives — bounded, as of CAL-P982.
+
+        Before CAL-P982 this passed with no declaration at all: a bumped version
+        returned before every comparative rule, so the escape authorised any
+        move whatsoever. It still waives the predicate rule, which is the point
+        of #1955's hatch; it now requires the bump to state the move it expects.
+        """
+        from app.utils.calibration_publish_gate import DECLARATION_FIELD
+
+        candidate = _payload(
+            outcomes=CANDIDATE_POP, version="q269", predicate=PREDICATE_B
+        )
+        candidate[DECLARATION_FIELD] = {
+            "from_version": "q268",
+            # +17.89% growth, i.e. a NEGATIVE drop.
+            "expected_drop_pct": -17.89,
+            "tolerance_pct": 1.0,
+        }
+
+        verdict = evaluate_publish(
+            candidate,
+            _payload(outcomes=PUBLISHED_POP, version="q268", predicate=PREDICATE_A),
+        )
+
+        assert verdict.ok, verdict.summary()
+        assert verdict.version_bumped
+        assert "population_drift" not in verdict.codes
+
+    def test_an_UNDECLARED_version_bump_no_longer_waives_it(self):
+        """CAL-P982: the hatch is an escape, and an escape needs a ceiling."""
         verdict = evaluate_publish(
             _payload(outcomes=CANDIDATE_POP, version="q269", predicate=PREDICATE_B),
             _payload(outcomes=PUBLISHED_POP, version="q268", predicate=PREDICATE_A),
         )
-        assert verdict.ok
-        assert verdict.version_bumped
+
+        assert not verdict.ok
+        assert "version_bump_undeclared" in verdict.codes
 
 
 class TestShrinkIsNeverExcused:
