@@ -942,6 +942,29 @@ export interface FeedEventData {
     away_probability: number | null;
     favorite: string | null;
   };
+  /**
+   * ux/1036 — WHAT THE MARKET SAID BEFORE THE MATCH, AND WHO SAID IT.
+   *
+   * `opening_odds` above is the sportsbook median and only ever was: the sole
+   * writer of `Event.opening_*` is `_maybe_set_opening_odds`. It arrives with no
+   * source on it, so a card printing it cannot tell a reader whether they are
+   * looking at a prediction market or at a book — and those are different
+   * claims.
+   *
+   * This key resolves Alex's ladder server-side (Kalshi → Polymarket → books,
+   * ordered, never merged) and names the rung. OPTIONAL: a feed response is
+   * cached, so "the backend deployed it" is not "this payload carries it", and
+   * `lib/prematchReading.ts` falls back to `opening_odds` labelled as the books
+   * reading it has always been.
+   */
+  prematch_odds?: {
+    home_probability: number;
+    away_probability: number;
+    /** The pair rounded ONCE, server-side — see UX-P114. */
+    home_rendered_percent?: number | null;
+    away_rendered_percent?: number | null;
+    source: string;
+  };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
   highlight?: {
