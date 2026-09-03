@@ -605,14 +605,25 @@ export default function EventPage({ params }: EventPageProps) {
   // nothing>unhelpful ruling). Suppress it entirely until the game is in-game
   // or later; the pregame odds-movement story lives in the Win Probability
   // timeline above (time x-axis, with its own clean "tracking will begin" state).
+  //
+  // ux/1034 B5: the scoreboard half counts toward this gate only where the
+  // scoreboard counts the thing the chart's axis is in. For a tennis match it
+  // reports SETS against a GAMES projection, so the chart will not draw an
+  // actual line from it — and a gate that still admitted it would open the
+  // card on an event with nothing but a suppressed series inside it, which is
+  // the empty-chrome failure the L2-157 note above exists to prevent.
+  const scoreboardCountsTheUnit = sportVocab(event?.sport || undefined)
+    .scoreboardCountsTheUnit;
   const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
     (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
     ) ||
-    (historyData.score_history?.length ?? 0) > 0 ||
-    (historyData.espn_history ?? []).some(
-      (p) => p.home_score != null && p.away_score != null
-    )
+    (scoreboardCountsTheUnit && (
+      (historyData.score_history?.length ?? 0) > 0 ||
+      (historyData.espn_history ?? []).some(
+        (p) => p.home_score != null && p.away_score != null
+      )
+    ))
   );
 
   return (
@@ -1274,6 +1285,10 @@ export default function EventPage({ params }: EventPageProps) {
             sharedTicks={sharedChartDomain?.ticks}
             externalTimeRange={chartTimeRange}
             onTimeRangeChange={handleChartTimeRangeChange}
+            /* ux/1034 B5: the same key the market maps below already take, so
+               the three widgets on this page cannot disagree about whether
+               `home_score` counts the thing the projection is quoted in. */
+            sportKey={event.sport || undefined}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
