@@ -87,13 +87,20 @@ function render(event: Event): string {
   return renderToStaticMarkup(<EventCard event={event} />);
 }
 
-/** Rendered text with entities decoded, so `·` compares sanely. */
+/** Rendered text with entities decoded, so `·` compares sanely.
+ *
+ * `&amp;` is unescaped LAST, and that ordering is the whole point rather than a
+ * style choice (CodeQL `js/double-escaping`). Doing it first turns a literal
+ * `&amp;#x27;` in the markup into `&#x27;` and then into an apostrophe — one
+ * escape too many — so an assertion could pass on text the page never showed.
+ * Every specific entity is decoded before the ampersand that introduces them.
+ */
 function text(html: string): string {
   return html
     .replace(/<[^>]*>/g, " ")
     .replace(/&middot;|&#xB7;/g, "·")
-    .replace(/&amp;/g, "&")
     .replace(/&#x27;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 }
 

@@ -95,13 +95,19 @@ function renderDiscoverCard(data: FeedEventData): string {
   );
 }
 
-/** The rendered text with entities decoded, so `·` and `&amp;` compare sanely. */
+/** The rendered text with entities decoded, so `·` and `&amp;` compare sanely.
+ *
+ * `&amp;` is unescaped LAST (CodeQL `js/double-escaping`, alert 1892 — same
+ * class as 1896 on the CERT-792 sibling, fixed with it). Unescaping the
+ * ampersand first turns a literal `&amp;#x27;` into an apostrophe, one escape
+ * too many, so an assertion could pass on text the page never showed.
+ */
 function text(html: string): string {
   return html
     .replace(/<[^>]*>/g, " ")
     .replace(/&middot;|&#xB7;/g, "·")
-    .replace(/&amp;/g, "&")
     .replace(/&#x27;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 }
 
