@@ -95,6 +95,14 @@ _PARENT_GROUP_TYPES = frozenset({
 _PROBE_PAST_DAYS = 45
 _PROBE_FUTURE_DAYS = 120
 _PROBE_MIN_SECONDS_REMAINING = 90
+# How many rows either probe arm may return. It is a bound on EVIDENCE, never on
+# the answer: the covering arm filters to rows carrying the whole matchup before
+# the LIMIT applies, so what survives the cut is what the question asked for. It
+# was the opposite before — a broad OR ordered by commence_time, cut at 5, with
+# `covering_hits` counted over whatever the cut happened to leave (103 of 109
+# live NCAAF rejects filled it exactly, CERT-810). When the broad arm is the one
+# that ran and it fills up, the receipt now records `saturated`.
+_PROBE_LIMIT = 5
 
 # Phase 1 Pass 3 — the backlog sweep that makes "never attempted" impossible.
 # Pass 2 orders by updated_at DESC and takes the top `limit` rows, so an older
@@ -117,6 +125,25 @@ _BACKLOG_SCAN_MAX = 3000
 # it stops the moment it would eat into it.
 _BACKLOG_DOWNSTREAM_RESERVE_SECONDS = 420
 _BACKLOG_MIN_SECONDS_REMAINING = 480
+
+# The settled sweep (#2798). A settled market cannot link — the event population
+# for a past date is frozen — but Pass 1 had no status predicate at all, so it
+# re-attempted them forever: measured on production 2026-09-03, 7,464 of the
+# 7,642 receipts written in an hour sat on `status='resolved'` rows, worst
+# attempt_count 40, and the whole receipts table carried ONE phase, `pass1_ticker`
+# — Passes 2 and 3 had never written a row, because Pass 1 spent the budget
+# before they could start. Excluding the settled rows is therefore not a saving,
+# it is what lets the rest of Phase 1 run at all.
+#
+# The cap exists because the exclusion must not silently re-open the "never
+# attempted" hole: a market that leaves the scan says so, once, and the drain of
+# the rows that left it before this shipped is bounded per run so the stamp can
+# never cost a matching pass. Ordered newest-attempt-first (gotcha #41: ask what
+# the ordering STARTS on) — the bus asks about the game that settled last night,
+# not the 2025 ITF tail — and each stamped row is permanently excluded by the
+# selection, so no ordering can starve the tail.
+_SETTLED_SWEEP_MAX = 5000
+_SETTLED_SWEEP_MIN_SECONDS_REMAINING = 600
 
 
 def _new_receipt(market, phase: str, now: datetime) -> MatchReceipt:
@@ -1352,6 +1379,88 @@ async def _abandon_attempt(
             pass
 
 
+async def _settled_sweep(session, stats: dict, now: datetime, _time_remaining) -> int:
+    """Receipt the markets that left the matcher's population by SETTLING (#2798).
+
+    THE ONE PASS THAT ATTEMPTS NOTHING. Every other pass writes a receipt as the
+    by-product of a decision about a link; this one writes a receipt *because
+    there will be no more decisions*. Its whole job is to stop the exclusion
+    added to Pass 1 from re-creating the silence receipts exist to abolish: a
+    market the scan stops visiting has to say why, or "we refuse it" and "we no
+    longer look" are once again the same NULL.
+
+    ONCE PER MARKET, and the selection is what guarantees it — a row carrying
+    ``settled`` is not selected again. That is the difference between this and
+    the behaviour it replaces: Pass 1 re-attempted the same resolved markets
+    every cycle (worst ``attempt_count`` 40 on production), which not only cost
+    the budget but kept their ``last_attempted_at`` fresh, so any census counted
+    off the receipts read a dead ITF tennis tail as today's top matching defect.
+
+    IT ONLY STAMPS MARKETS THAT WERE IN THE POPULATION. The join to
+    ``market_match_receipts`` is the scope, not an optimisation: ~460k unlinked
+    resolved rows exist, almost all of them archive nobody will ever ask about,
+    and stamping them would be a 90-day drain writing rows to answer a question
+    that is never asked. A market with a receipt is one the matcher looked at
+    and has now stopped looking at — exactly the transition that needs a record.
+    For the rest, ``GET /api/admin/match-receipts`` already reads settledness off
+    ``futures_markets`` and publishes ``still_linkable`` / ``settled`` per reason.
+
+    Returns rows stamped. Bounded by ``_SETTLED_SWEEP_MAX`` and by a time floor,
+    because the record must never cost the thing it records.
+    """
+    from app.models.models import FuturesMarket, MarketMatchReceipt
+
+    stats["funnel"].setdefault("settled_receipted", 0)
+    stats["funnel"]["settled_sweep_skipped_budget"] = False
+
+    if _time_remaining() < _SETTLED_SWEEP_MIN_SECONDS_REMAINING:
+        logger.info(
+            "Skipping the settled sweep — only %.0fs remaining", _time_remaining(),
+        )
+        stats["funnel"]["settled_sweep_skipped_budget"] = True
+        return 0
+
+    rows = (await session.execute(
+        select(
+            FuturesMarket.id, FuturesMarket.source,
+            FuturesMarket.external_id, FuturesMarket.name,
+        )
+        .join(MarketMatchReceipt, MarketMatchReceipt.market_id == FuturesMarket.id)
+        .where(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "resolved",
+            # Spelled out rather than IS DISTINCT FROM: the reason is NULL on
+            # every `linked` and `unlinked` receipt, and those markets settle
+            # too — a bare `<>` would silently skip all of them.
+            or_(
+                MarketMatchReceipt.reject_reason.is_(None),
+                MarketMatchReceipt.reject_reason != _receipts.REJECT_SETTLED,
+            ),
+        )
+        .order_by(MarketMatchReceipt.last_attempted_at.desc())
+        .limit(_SETTLED_SWEEP_MAX)
+    )).all()
+
+    if not rows:
+        return 0
+
+    receipts = [
+        _new_receipt(row, _receipts.PHASE_SETTLED_SWEEP, now).reject(
+            _receipts.REJECT_SETTLED, market_status="resolved",
+        )
+        for row in rows
+    ]
+    await _flush_pass_receipts(
+        session, receipts, stats, _receipts.PHASE_SETTLED_SWEEP,
+    )
+    stats["funnel"]["settled_receipted"] += len(receipts)
+    logger.info(
+        "Settled sweep: %d market(s) recorded as settled and out of the scan",
+        len(receipts),
+    )
+    return len(receipts)
+
+
 async def _phase1_pass1_ticker_scan(
     session, stats: dict, now: datetime,
     polymarket_backfill_queue: list, _time_remaining,
@@ -1368,6 +1477,20 @@ async def _phase1_pass1_ticker_scan(
         .where(
             FuturesMarket.source == "kalshi",
             FuturesMarket.event_id.is_(None),
+            # SETTLED MARKETS ARE NOT CANDIDATES (#2798). This pass is the only
+            # one that never had a status predicate, and it is also the only one
+            # with no LIMIT — so it pulled all 138,676 unlinked ticker-shaped
+            # Kalshi rows, of which 131,229 had already resolved, and worked
+            # down them by `updated_at DESC` until the clock ran out. It never
+            # reached the end and never yielded to Pass 2 or Pass 3.
+            #
+            # `!= 'resolved'` rather than `== 'open'`: `suspended` is a market
+            # whose trading is paused, not one whose answer is fixed, and
+            # narrowing this pass is not the place to decide that. Kalshi
+            # markets that settled upstream but still read 'open' here
+            # (gotcha #33) stay eligible too — the conservative direction, since
+            # the cost of attempting one is the status quo.
+            FuturesMarket.status != "resolved",
             or_(*ticker_conditions),
         )
         .order_by(FuturesMarket.updated_at.desc())
@@ -2898,6 +3021,13 @@ async def _match_prediction_markets(limit: int = 500):
     polymarket_backfill_queue = []
 
     async with get_task_session() as session:
+        # The settled sweep (#2798) runs FIRST, before anything that attempts a
+        # link. It is the record of the population Pass 1 has just stopped
+        # visiting, and a record of an exclusion that only gets written when
+        # there is budget left over is a record that reliably goes missing on
+        # exactly the busy nights it is wanted for.
+        await _settled_sweep(session, stats, now, _time_remaining)
+
         # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         processed_ids = await _phase1_pass1_ticker_scan(
@@ -3531,6 +3661,69 @@ def _row_coverage(
     )
 
 
+def _side_ilike_conditions(side: str | None) -> list:
+    """Every ILIKE that would retrieve a row carrying ONE named side."""
+    from app.models.models import Event
+
+    conditions = []
+    for term in _expand_team_search_terms(side or ""):
+        if not term:
+            continue
+        pattern = f"%{_escape_like(term)}%"
+        conditions.append(Event.home_team_name.ilike(pattern))
+        conditions.append(Event.away_team_name.ilike(pattern))
+    return conditions
+
+
+def _covering_probe_condition(market_name: str | None, matchup):
+    """A predicate that retrieves ONLY rows carrying BOTH named sides.
+
+    THE PROBE HAD TO ANSWER A DIFFERENT QUESTION THAN IT ASKED. Its job is
+    "is this game in our events table at all", and it went at that with an
+    OR over every side's patterns, ordered by ``commence_time``, ``LIMIT 5``.
+    The OR fires on ONE token, so for a market like "Morehouse Maroon Tigers vs
+    Arkansas-Pine Bluff" the five earliest rows in a 165-day window are five
+    other games that happen to share a word — and ``covering_hits: 0`` then
+    means "none of five arbitrary rows was this game", which is not evidence of
+    anything. Measured by the CERT-810 grader: 103 of 109 live NCAAF rejects
+    came back with exactly 5 hits, i.e. saturated, so the bucket those receipts
+    landed in was decided by a truncation.
+
+    Asking for both sides at once moves the filter into the index scan, so the
+    LIMIT stops choosing the answer: a row that comes back is a row that carries
+    the whole matchup, and an empty result is the honest "no such game here".
+
+    BOTH READINGS OF THE MATCHUP GET A VOTE, exactly as in
+    :func:`app.utils.match_receipts.row_coverage`, and for the same reason: the
+    parsed sides can be invented ("Denver vs Kansas City" parsed to the NBA
+    ``Nuggets``/``Chiefs`` for an NFL market — 65 of 222 ``name_mismatch``
+    receipts), and the market name can be unsplittable. Retrieving on only one
+    of the two would rebuild the parse bug inside the instrument that is
+    supposed to detect it.
+
+    ``None`` when no reading names two sides — a single-sided market's broad
+    probe already IS its covering probe, because one hit covers the one side.
+    """
+    from sqlalchemy import and_
+
+    readings = []
+    if matchup.team_b:
+        readings.append((matchup.team_a, matchup.team_b))
+    name_a, name_b = _receipts.sides_from_market_name(market_name)
+    if name_a and name_b:
+        readings.append((name_a, name_b))
+
+    arms = []
+    for side_a, side_b in readings:
+        a_conditions = _side_ilike_conditions(side_a)
+        b_conditions = _side_ilike_conditions(side_b)
+        if a_conditions and b_conditions:
+            arms.append(and_(or_(*a_conditions), or_(*b_conditions)))
+    if not arms:
+        return None
+    return or_(*arms)
+
+
 async def _record_no_match_reason(
     session, receipt, ilike_conditions, now, time_start, time_end,
     *, matchup, probe_allowed: bool,
@@ -3565,24 +3758,47 @@ async def _record_no_match_reason(
 
     probe_start = now - timedelta(days=_PROBE_PAST_DAYS)
     probe_end = now + timedelta(days=_PROBE_FUTURE_DAYS)
-    probe_result = await session.execute(
-        select(
-            Event.id, Event.home_team_name, Event.away_team_name,
-            Event.commence_time, Event.status,
+
+    async def _probe(where_clause):
+        result = await session.execute(
+            select(
+                Event.id, Event.home_team_name, Event.away_team_name,
+                Event.commence_time, Event.status,
+            )
+            .where(where_clause, Event.commence_time.between(probe_start, probe_end))
+            .order_by(Event.commence_time)
+            .limit(_PROBE_LIMIT)
         )
-        .where(
-            or_(*ilike_conditions),
-            Event.commence_time.between(probe_start, probe_end),
-        )
-        .order_by(Event.commence_time)
-        .limit(5)
-    )
-    probe_rows = probe_result.all()
+        return result.all()
+
+    # THE COVERING ARM RUNS FIRST and, when it hits, is the only one that runs.
+    # It asks the question the receipt is about to answer; the broad OR arm is a
+    # fallback that exists to record WHAT came back when nothing covers, which is
+    # the evidence behind `no_candidate`.
+    covering_condition = _covering_probe_condition(receipt.market_name, matchup)
+    probe_rows = []
+    arm = "broad"
+    if covering_condition is not None:
+        probe_rows = await _probe(covering_condition)
+        arm = "covering"
+
+    saturated = False
+    if not probe_rows:
+        probe_rows = await _probe(or_(*ilike_conditions))
+        # A BROAD ARM THAT FILLED ITS LIMIT DECIDED NOTHING, and the receipt has
+        # to say so. `covering_hits: 0` off a truncated result is the reading
+        # that produced #2796's NCAAF numbers; a consumer that cannot see the
+        # truncation cannot know to discount it (gotcha #53).
+        saturated = len(probe_rows) >= _PROBE_LIMIT
+        arm = "broad_after_covering_miss" if covering_condition is not None else "broad"
 
     receipt.detail["candidate_probe"] = {
         "start": probe_start,
         "end": probe_end,
         "hits": len(probe_rows),
+        "arm": arm,
+        "limit": _PROBE_LIMIT,
+        "saturated": saturated,
     }
 
     if not probe_rows:
