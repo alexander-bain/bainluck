@@ -64,6 +64,200 @@ const TIMEFRAME_DAYS: Record<Timeframe, number | null> = {
   ALL: null,
 };
 
+/**
+ * ═══ ux/1034 A1: THE CHART OPENS ON THE TOURNAMENT, NOT ON THE MONTH ═══
+ *
+ * Alex, on the live hub during the US Open's fourth day: *"I'm a LOT more
+ * interested in how the Contender chart has looked … since the tournament
+ * started than since August 5th."*
+ *
+ * He was reading `ALL`, which is what this chart has always opened on, and on
+ * the men's board `ALL` is 30 days: three and a half weeks of pre-tournament
+ * drift, then the four days anybody is actually watching, compressed into the
+ * right-hand sixth of the plot. The four buttons could not fix it either —
+ * `1W` is seven days back from the latest reading, which is a rolling window
+ * that happens to land near the draw today and will not next Tuesday, and the
+ * one thing a reader wants is a window with a MEANING rather than a length.
+ *
+ * So the range selector gains two options that are DATES rather than durations:
+ *
+ *   - **`DRAW`** — since the main draw began. The default, when the payload
+ *     names a start and there are two readings inside it.
+ *   - **`QUAL`** — since qualifying began, five days earlier. Alex's toggle:
+ *     the qualifying week is real tournament history and some readers want it,
+ *     but it is not what "the tournament started" means to most people.
+ *
+ * `1D`/`1W`/`1M`/`ALL` are untouched and stay on the row — the instruction was
+ * to change the default and add a toggle, not to take anything away.
+ *
+ * ⚠️ **THE DATES ARE NEVER CONSTANTS HERE.** `30 August` is a fact about one
+ * tournament in one year; a literal in this module would be wrong for the
+ * Australian Open and silently wrong for next year's US Open. Both starts are
+ * read off the payload — see `tournamentWindowStarts` — and an option whose
+ * start the payload does not carry is not offered at all.
+ */
+export type ChartWindow = "DRAW" | "QUAL";
+
+/** A window (a date) or a timeframe (a duration). What a range chip selects. */
+export type ChartRange = ChartWindow | Timeframe;
+
+/** The two date-anchored windows, in the order they are offered. */
+export const CHART_WINDOWS: ChartWindow[] = ["DRAW", "QUAL"];
+
+/**
+ * Where each window starts, as `YYYY-MM-DD`, or `null` for "we cannot say".
+ *
+ * The trend series is a series of DAYS, so a day is the resolution this needs
+ * and a timestamp would only invite a timezone argument the data cannot settle.
+ */
+export interface WindowStarts {
+  /** First day of the main draw. */
+  DRAW: string | null;
+  /** First day of qualifying. */
+  QUAL: string | null;
+}
+
+export const NO_WINDOW_STARTS: WindowStarts = { DRAW: null, QUAL: null };
+
+/** Chip text. Short, because six of these share one row with the span note. */
+export const RANGE_LABELS: Record<ChartRange, string> = {
+  DRAW: "Draw",
+  QUAL: "Quals",
+  "1D": "1D",
+  "1W": "1W",
+  "1M": "1M",
+  ALL: "ALL",
+};
+
+export function isChartWindow(range: ChartRange): range is ChartWindow {
+  return range === "DRAW" || range === "QUAL";
+}
+
+/** The timeframe a range draws with. A window has already filtered its points. */
+export function rangeTimeframe(range: ChartRange): Timeframe {
+  return isChartWindow(range) ? "ALL" : range;
+}
+
+/**
+ * What a chip means, spelled out — `Since the main draw began, 30 August`.
+ *
+ * Ruling 2's rule on this page, applied to a control instead of to a number: a
+ * chip labelled `Draw` names a window whose bounds only the data knows, so the
+ * sentence travels with it for a screen reader and as a `title` for everyone
+ * else. `DRAW`/`QUAL` are the two chips a reader cannot decode from the label.
+ */
+export function rangeDescription(
+  range: ChartRange,
+  starts: WindowStarts
+): string | null {
+  if (!isChartWindow(range)) return null;
+  const start = starts[range];
+  if (!start) return null;
+  const when = longDateLabel(start);
+  return range === "DRAW"
+    ? `Since the main draw began, ${when}`
+    : `Since qualifying began, ${when}`;
+}
+
+/** `2026-08-30` -> `30 August`. Day-first, like the axis labels. */
+export function longDateLabel(iso: string): string {
+  const [year, month, day] = (iso || "").split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return `${day} ${months[month - 1] ?? ""}`.trim();
+}
+
+/**
+ * Points on or after a day, or every point when there is no day.
+ *
+ * String comparison rather than `Date.parse`, deliberately: both sides are
+ * `YYYY-MM-DD`, which sorts lexicographically exactly as it sorts
+ * chronologically, and parsing would reintroduce the midnight-UTC question that
+ * `dayNumber` exists to keep out of the rest of this module.
+ */
+export function pointsFromDate(
+  points: TournamentTrendPoint[],
+  start: string | null
+): TournamentTrendPoint[] {
+  if (!Array.isArray(points)) return [];
+  if (!start) return points;
+  return points.filter((point) => typeof point.date === "string" && point.date >= start);
+}
+
+/**
+ * A whole series list narrowed to a window.
+ *
+ * The narrowing happens HERE, before geometry, rather than inside
+ * `pointsInTimeframe` — which would have meant threading a pair of dates
+ * through `chartCeiling`, `chartGeometry`, `seriesPoints`, `seriesEndpoint` and
+ * `timeframeIsDrawable`, five signatures whose every caller would then have to
+ * be told about a tournament. A window is a smaller SERIES, and the chart
+ * already knows how to draw a smaller series: `ALL` over it is the whole
+ * window. Nothing downstream learns a new concept.
+ */
+export function seriesFromDate(
+  series: ChartSeries[],
+  start: string | null
+): ChartSeries[] {
+  if (!start) return series;
+  return series.map((entry) => ({ ...entry, points: pointsFromDate(entry.points, start) }));
+}
+
+/** The series a range draws — windowed for `DRAW`/`QUAL`, untouched otherwise. */
+export function seriesForRange(
+  series: ChartSeries[],
+  range: ChartRange,
+  starts: WindowStarts
+): ChartSeries[] {
+  return isChartWindow(range) ? seriesFromDate(series, starts[range]) : series;
+}
+
+/** Whether a range has two readings to join. Windows and durations, one test. */
+export function rangeIsDrawable(
+  series: ChartSeries[],
+  range: ChartRange,
+  starts: WindowStarts
+): boolean {
+  return timeframeIsDrawable(
+    seriesForRange(series, range, starts),
+    rangeTimeframe(range)
+  );
+}
+
+/**
+ * The chips, in order: the windows the payload can date, then the durations.
+ *
+ * A window with no start is not offered. An option that cannot be honoured is
+ * worse than an absent one — it would render disabled beside four disabled
+ * duration buttons on a thin field and read as a broken control.
+ */
+export function chartRanges(starts: WindowStarts): ChartRange[] {
+  return [
+    ...CHART_WINDOWS.filter((window) => Boolean(starts[window])),
+    ...TIMEFRAMES,
+  ];
+}
+
+/**
+ * What the chart opens on: the main draw where it can be drawn, else `ALL`.
+ *
+ * `ALL` remains the floor for the same reason it was the default before — with
+ * a field's prices dark the narrow windows are the empty ones, and a chart that
+ * opens blank on a market with a month of history is the worse failure. So the
+ * tournament window has to EARN the default by having two readings in it, which
+ * on the morning of day one it will not.
+ */
+export function defaultChartRange(
+  series: ChartSeries[],
+  starts: WindowStarts
+): ChartRange {
+  if (starts.DRAW && rangeIsDrawable(series, "DRAW", starts)) return "DRAW";
+  return "ALL";
+}
+
 export interface ChartSeries {
   entityKey: string;
   displayName: string;

@@ -167,8 +167,35 @@ export default function MarketMapSection({
   const isDone = eventStatus === "completed" || eventStatus === "closed";
   const status = isLive ? "live" : isDone ? "done" : "pre";
 
-  const homeScore = gameMarkets.home_score;
-  const awayScore = gameMarkets.away_score;
+  /**
+   * ux/1034 B5: the scoreboard's two numbers, ONLY where they count the thing
+   * this map's rail is drawn in.
+   *
+   * On a tennis match they are SETS (`0 — 3`) and the rail is GAMES, so every
+   * downstream use — the margin marker, the total marker, the "expected vs
+   * final" grading — was comparing three sets against a game line and printing
+   * the answer as a fact. Nulling them here rather than at each use is
+   * deliberate: there are six call sites across the four maps on this page, and
+   * a gate per site is a gate somebody adds a seventh site beside.
+   *
+   * The maps keep every rung, every density and every pre-game marker. What
+   * goes is only the half we cannot state — see `scoreboardCountsTheUnit`.
+   */
+  const homeScore = vocab.scoreboardCountsTheUnit ? gameMarkets.home_score : null;
+  const awayScore = vocab.scoreboardCountsTheUnit ? gameMarkets.away_score : null;
+
+  /**
+   * The sentence a suppressed map owes the reader.
+   *
+   * A map that simply drops its Final tile reads as a map that failed to load.
+   * This says which two units it refuses to mix and what is missing, in the
+   * sport's own words — `unit` and `scoreboardUnit` both come from the vocab,
+   * so a second set-scored sport declared tomorrow gets the sentence for free.
+   */
+  const unitMismatchNote =
+    !vocab.scoreboardCountsTheUnit && vocab.scoreboardUnit && (isLive || isDone)
+      ? `The scoreboard reports ${vocab.scoreboardUnit}, this market quotes ${vocab.unit} — we do not hold the ${vocab.unit} played yet.`
+      : null;
 
   const halfScores = useMemo(
     () => deriveHalfScores(espnHistory, homeScore, awayScore),
@@ -209,6 +236,13 @@ export default function MarketMapSection({
     // #2441: the rail's reach is DECLARED by the sport, not inferred from a
     // three-name low-scoring list with basketball as the else. That else is
     // what labelled a tennis rail `WAW by 18+ / BER by 18+`.
+    /* ux/1034 B5: is there a scoreboard half to this map at all? `homeScore` is
+       already nulled for a sport whose scoreboard counts something else, so
+       this one test governs the marker AND the "expected vs final" grading —
+       a title that promises a comparison the card cannot draw is the same
+       defect one level up. */
+    const hasScoreboard = homeScore != null && awayScore != null;
+
     const maxMargin = vocab.marginRange;
     const rangeMin = -maxMargin;
     const rangeMax = maxMargin;
@@ -340,7 +374,7 @@ export default function MarketMapSection({
     return {
       // L2-131 Item 4: a settled game grades the distribution — actual final
       // margin vs the pregame mass — so it reads "expected vs final".
-      title: status === "done"
+      title: status === "done" && hasScoreboard
         ? "Margin: expected vs final"
         // #2441: the title is the DECLARED one, not "Full game " + it.
         // Prefixing stuttered the moment a sport's unit was the word "game"
@@ -348,7 +382,11 @@ export default function MarketMapSection({
         // names the scope. The half maps below carry their own period label,
         // so the contrast this prefix used to draw is still drawn.
         : vocab.marginTitle,
-      subtitle: status === "done"
+      subtitle: unitMismatchNote
+        // ux/1034 B5: this card cannot say where it landed, and says so rather
+        // than grading three sets against a game-and-a-half line.
+        ? unitMismatchNote
+        : status === "done" && hasScoreboard
         // #2442: "the pregame spread" is a betting line. What the sentence
         // means is the distribution the market had before play, which is
         // what the reader is looking at on the rail beside it.
@@ -416,7 +454,7 @@ export default function MarketMapSection({
     const minThresh = gameTotals[0].threshold;
     const maxThresh = gameTotals[gameTotals.length - 1].threshold;
     const actualTotal = homeScore != null && awayScore != null ? homeScore + awayScore : null;
-    const paceProj = gameMarkets.pace?.projected_total ?? null;
+    const paceProj = (vocab.scoreboardCountsTheUnit ? gameMarkets.pace?.projected_total : null) ?? null;
     const allValues = [minThresh, maxThresh];
     if (actualTotal != null) allValues.push(actualTotal);
     if (paceProj != null) allValues.push(paceProj);
@@ -435,7 +473,10 @@ export default function MarketMapSection({
       12
     );
 
-    const pace = gameMarkets.pace;
+    /* ux/1034 B5: `pace` is derived from the same scoreboard, so it inherits
+       the same unit. Dropping it with the scores keeps "Projected 6" — a
+       set-count run forward — off a rail that reads to 40 games. */
+    const pace = vocab.scoreboardCountsTheUnit ? gameMarkets.pace : null;
     const scored = pace?.total_scored ?? (homeScore != null && awayScore != null ? homeScore + awayScore : null);
     const projected = pace?.projected_total ?? null;
     const ouVal = overUnder ?? ouLine.threshold;
@@ -513,10 +554,14 @@ export default function MarketMapSection({
 
     return {
       // L2-131 Item 4: settled totals grade expected vs final, same as margins.
-      title: status === "done"
+      title: status === "done" && scored != null
         ? "Total: expected vs final"
         : vocab.totalTitle,
-      subtitle: status === "done"
+      subtitle: unitMismatchNote
+        // ux/1034 B5: `FINAL 3 games` on this card was three SETS, summed, over
+        // a rail whose pre-game mark was 35 GAMES.
+        ? unitMismatchNote
+        : status === "done" && scored != null
         // #2442's wording, through #2441's unit helper: an undeclared sport
         // has no unit to interpolate, and inlining it produced "Final
         // distribution" with a double space.

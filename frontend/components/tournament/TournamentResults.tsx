@@ -10,6 +10,7 @@ import {
   completionNote,
   drawIsPriced,
   formatPrematch,
+  prematchAbsenceNote,
   prematchCoverage,
   prematchPercents,
   resultScoreLine,
@@ -465,6 +466,8 @@ export default function TournamentResults({
           data-testid="results-prematch-note"
           data-with-prematch={prior.withPrior}
           data-total={prior.total}
+          data-held-without-opening={prior.heldWithoutOpening}
+          data-untied={prior.untied}
         >
           The grey figure beside a name is what the market gave that player{" "}
           <b className="font-semibold text-text-secondary">before the match started</b> —
@@ -475,8 +478,24 @@ export default function TournamentResults({
               <b className="font-semibold text-text-secondary">
                 {prior.withPrior} of {prior.total}
               </b>
-              . The rest are matches nobody ran a market on, and we would rather leave
-              the space empty than fill it with a number about a different question.
+              .{" "}
+              {/* ═══ ux/1034 A3: THIS SENTENCE USED TO BE A CLAIM ABOUT A VENUE
+                  ═══
+
+                  It read "The rest are matches nobody ran a market on". Alex
+                  found it under Shelton–Hurkacz, where it is false and
+                  measurably so: Polymarket had a market on that match, its
+                  price history simply begins at 17:38Z and the match began at
+                  17:08Z. What is missing is an OPENING, not a market.
+
+                  The field it was written from only ever described US — whether
+                  our register tied the fixture to a market of ours. Nothing in
+                  this payload knows what Kalshi or Polymarket chose to list, so
+                  the two cases it CAN tell apart are named and the third is not
+                  asserted. `prematchCoverage` counts them. */}
+              {prematchAbsenceNote(prior)}{" "}
+              We would rather leave the space empty than fill it with a number about
+              a different question.
             </>
           )}
         </p>

@@ -141,6 +141,36 @@ def _reason_from_traces(traces: list[CandidateTrace]) -> str | None:
     ``name_mismatch`` because a candidate that reached the sport gate had
     already passed the name gate — reporting it as a name problem would send
     the next reader looking in the wrong place.
+
+    A RETRIEVED ROW IS NOT A CANDIDATE. Returning ``name_mismatch`` for any
+    non-empty trace was a lie. The retrieval ILIKE fires on ONE token, so a
+    market whose game we simply do not carry still comes back holding rows —
+    "Merrimack vs Maine" retrieves *Merrimack Warriors @ Delaware* and *Maine
+    Black Bears @ Appalachian State*, two different games, each covering one
+    side. Reported as ``name_mismatch``, that reads as "our fuzzy gate is too
+    strict" and points the next reader at a matcher bug that is not there.
+
+    So when nothing covered the whole matchup, this returns ``None`` — the same
+    answer it gives for no rows at all — and :func:`_record_no_match_reason`
+    runs its probe, which is the code that can tell an upstream gap
+    (``no_candidate``) from a window or status bug (``outside_time_window`` /
+    ``state_disagrees``). That is the distinction CLAUDE.md asks every matching
+    fix to make, and it was unreachable before: ``no_candidate`` fired **once**
+    in 333 rows, because a one-token coincidence always pre-empted it.
+
+    THE OTHER DIRECTION IS THE WORSE LIE. Deferring a row that really is the
+    game sends a genuine name-gate failure — ours, and fixable — into the
+    upstream-absence bucket, where nobody will look for it. That is why
+    coverage is measured by :func:`app.utils.match_receipts.row_coverage` and
+    not by the gate under diagnosis, and why it is biased toward covered.
+    Measured over the 222 ``name_mismatch`` receipts on production's open
+    unlinked markets (2026-09-03): 109 stay ``name_mismatch`` (real gate
+    failures — "CLE Browns" vs "Cleveland Browns", "LSU" vs "LSU Tigers", "The
+    Citadel" vs "Citadel Bulldogs"), 113 defer to the probe.
+
+    Traces from a matcher that never recorded coverage (``sides_named`` None)
+    keep the old behaviour, so this cannot silently reclassify a caller that
+    has not been taught to measure.
     """
     if not traces:
         return None
@@ -149,6 +179,9 @@ def _reason_from_traces(traces: list[CandidateTrace]) -> str | None:
         return _receipts.REJECT_NAME_SCORE_BELOW
     if _receipts.REJECT_WRONG_SPORT in verdicts:
         return _receipts.REJECT_WRONG_SPORT
+    measured = [t for t in traces if t.sides_named is not None]
+    if measured and not any(t.covers_matchup for t in measured):
+        return None
     return _receipts.REJECT_NAME_MISMATCH
 
 
@@ -3251,15 +3284,39 @@ async def _find_matching_event(
     if receipt is not None:
         await _record_no_match_reason(
             session, receipt, ilike_conditions, now,
-            time_start, time_end, probe_allowed=probe_allowed,
+            time_start, time_end, matchup=matchup, probe_allowed=probe_allowed,
         )
 
     return None
 
 
+def _row_coverage(
+    market_name: str | None, matchup, home_team: str | None, away_team: str | None,
+) -> tuple[int, int]:
+    """``(sides_covered, sides_named)`` for one retrieved row — see
+    :func:`app.utils.match_receipts.row_coverage`.
+
+    Every coverage question in this module goes through here, so the candidate
+    path and the probe path answer it the same way. The probe re-uses the SAME
+    one-token ILIKE that produced the candidates and inherits the same defect:
+    without a coverage check, a row retrieved on a shared mascot would be read
+    as "the game IS in our table, the window excluded it" and reported as
+    ``outside_time_window`` — moving the lie from one bucket to another instead
+    of ending it.
+
+    NOT ``_fuzzy_team_match``. That function's refusal is what a receipt is
+    explaining; using it to decide whether the refused row was the right game
+    guarantees the answer "it was not", and sends every real name-gate failure
+    to the upstream-absence bucket. CERT-783 blocked that on Browns-Jaguars.
+    """
+    return _receipts.row_coverage(
+        market_name, matchup.team_a, matchup.team_b, home_team, away_team,
+    )
+
+
 async def _record_no_match_reason(
     session, receipt, ilike_conditions, now, time_start, time_end,
-    *, probe_allowed: bool,
+    *, matchup, probe_allowed: bool,
 ) -> None:
     """Write the reject reason for an attempt that found no event (#2705).
 
@@ -3326,10 +3383,20 @@ async def _record_no_match_reason(
 
     lo, hi = _aware(time_start), _aware(time_end)
     in_window = False
+    covering = 0
+    sides_named = 2 if matchup.team_b else 1
     for row in probe_rows:
         ct = _aware(row.commence_time)
         within = ct is not None and lo is not None and hi is not None and lo <= ct <= hi
-        in_window = in_window or within
+        covered, sides_named = _row_coverage(
+            receipt.market_name, matchup, row.home_team_name, row.away_team_name,
+        )
+        # Only a row that carries the WHOLE matchup is evidence that the game is
+        # in our table; a partial hit is the same one-token coincidence the
+        # candidate search already returned, and it decides nothing.
+        if covered >= sides_named:
+            covering += 1
+            in_window = in_window or within
         receipt.trace(CandidateTrace(
             event_id=row.id,
             home_team=row.home_team_name,
@@ -3337,10 +3404,24 @@ async def _record_no_match_reason(
             commence_time=ct,
             status=row.status,
             verdict=(
-                _receipts.REJECT_STATE_DISAGREES if within
-                else _receipts.REJECT_OUTSIDE_TIME_WINDOW
+                (
+                    _receipts.REJECT_STATE_DISAGREES if within
+                    else _receipts.REJECT_OUTSIDE_TIME_WINDOW
+                ) if covered >= sides_named
+                else _receipts.REJECT_NO_CANDIDATE
             ),
+            sides_matched=covered,
+            sides_named=sides_named,
         ))
+
+    receipt.detail["candidate_probe"]["covering_hits"] = covering
+
+    if not covering:
+        # Rows came back and not one of them is this game. That is the honest
+        # "upstream has a market we have no event for" bucket — the one that
+        # fired 1 time in 333 before coverage was measured.
+        receipt.reject(_receipts.REJECT_NO_CANDIDATE)
+        return
 
     receipt.reject(
         _receipts.REJECT_STATE_DISAGREES if in_window
@@ -3363,9 +3444,26 @@ def _score_candidates(
 
     traces: list[CandidateTrace] = []
 
-    def _trace(event, verdict, score=None):
+    #: The market named two sides, or one (the ``will_win`` shape). Every trace
+    #: carries this so a rejected row can be read as "covered 1 of 2" without
+    #: re-deriving the matchup from the market name.
+    sides_named = 2 if matchup.team_b else 1
+    market_name = getattr(market, "name", None)
+
+    def _trace(event, verdict, score=None, measure_coverage=False):
+        """Record one candidate.
+
+        ``measure_coverage`` is set exactly where the NAME GATE refused the row,
+        and only there. Everywhere else the row already cleared that gate, so it
+        covers the matchup by construction and re-deriving it would be noise.
+        """
         if receipt is None:
             return None
+        covered = sides_named
+        if measure_coverage:
+            covered, _ = _row_coverage(
+                market_name, matchup, event.home_team_name, event.away_team_name,
+            )
         t = CandidateTrace(
             event_id=event.id,
             home_team=event.home_team_name,
@@ -3375,6 +3473,8 @@ def _score_candidates(
             sport_key=(event.sport.key if event.sport else None),
             score=score,
             verdict=verdict,
+            sides_matched=covered,
+            sides_named=sides_named,
         )
         traces.append(t)
         receipt.trace(t)
@@ -3407,7 +3507,16 @@ def _score_candidates(
                 or _fuzzy_team_match(matchup.team_b, event.away_team_name)
             )
             if not (a_matches and b_matches):
-                _trace(event, _receipts.REJECT_NAME_MISMATCH)
+                # Coverage is what separates a rejected candidate from a row
+                # the ILIKE happened to return on one shared token — and it is
+                # measured INDEPENDENTLY of a_matches/b_matches, which are the
+                # verdict being explained. "CLE Browns vs JAC Jaguars" against
+                # Jacksonville Jaguars / Cleveland Browns fails both halves here
+                # and covers both sides; that is a name-gate bug of ours, not an
+                # upstream absence (CERT-783).
+                _trace(
+                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                )
                 continue
 
         # Check team name matching (determine yes/no home/away mapping)
@@ -3418,7 +3527,14 @@ def _score_candidates(
             external_id=market.external_id or "",
         )
         if not team_match:
-            _trace(event, _receipts.REJECT_NAME_MISMATCH)
+            # A two-sided matchup that reaches here already cleared the gate
+            # above, so its coverage is full: this IS the documented
+            # name_mismatch — both sides present, orientation refused. A
+            # one-sided matchup never met that gate, so measure it.
+            _trace(
+                event, _receipts.REJECT_NAME_MISMATCH,
+                measure_coverage=not matchup.team_b,
+            )
             continue
 
         # For "Will X win?" with only one team, verify the market team
@@ -3428,7 +3544,13 @@ def _score_candidates(
                 _fuzzy_team_match(matchup.team_a, event.home_team_name)
                 or _fuzzy_team_match(matchup.team_a, event.away_team_name)
             ):
-                _trace(event, _receipts.REJECT_NAME_MISMATCH)
+                # The market named one side and the gate says this row does not
+                # carry it. Measure independently before calling it a
+                # coincidence — the gate cannot match a name of three
+                # characters or fewer at all.
+                _trace(
+                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                )
                 continue
 
         # Score: prefer closer to now + live games
