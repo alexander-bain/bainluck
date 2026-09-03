@@ -171,6 +171,11 @@ _to_delete/
 # be able to redden the tree it runs in. Nothing under these paths has ever been
 # tracked; deliberate evidence can still be committed with `git add -f`.
 /artifacts-ux-*/
+# Same rule for the native lane's simulator screenshots. Shop evidence is cited
+# by local path in the alex-inbox note and never committed (Fable 2026-09-01):
+# the repo is public and every push burns a Vercel build. An evidence dir must
+# not be able to redden the tree it is written into.
+/artifacts-native-*/
 .env*
 
 # CAL-P992: a LIVE append-only cursor, not a bankable artifact — a watcher is still

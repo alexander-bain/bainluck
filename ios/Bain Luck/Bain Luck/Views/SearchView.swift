@@ -46,16 +46,20 @@ private struct SearchSportFilter: Identifiable, Hashable {
     var id: String { key }
 }
 
-private let searchSportFilters: [SearchSportFilter] = [
-    .init(key: "", label: "All", icon: ""),
-    .init(key: "basketball", label: "Basketball", icon: "basketball.fill"),
-    .init(key: "americanfootball", label: "Football", icon: "football.fill"),
-    .init(key: "baseball", label: "Baseball", icon: "baseball.fill"),
-    .init(key: "icehockey", label: "Hockey", icon: "hockey.puck.fill"),
-    .init(key: "soccer", label: "Soccer", icon: "soccerball"),
-    .init(key: "golf", label: "Golf", icon: "figure.golf"),
-    .init(key: "mma", label: "MMA", icon: "figure.boxing"),
-]
+/// The filter row for one search, derived from the server's `sports` facet.
+///
+/// This replaces a hard-coded list of seven sport FAMILIES. The API's `sport`
+/// parameter is an exact `Sport.key` match, so none of those seven ever matched
+/// anything (`?q=lakers&sport=basketball` → 0 results while the same query
+/// unfiltered returns 5 NBA events). Building the row from the facet fixes all
+/// seven and answers Alex's report at the same time: search a tennis player and
+/// a tennis pill is there, because the results are tennis.
+private func searchSportFilters(for facets: [SportFacet]) -> [SearchSportFilter] {
+    guard !facets.isEmpty else { return [] }
+    return [.init(key: "", label: "All", icon: "")] + facets.map {
+        .init(key: $0.key, label: $0.name, icon: sportSymbolName(forSportKey: $0.key))
+    }
+}
 
 // MARK: - Quick Search Item
 
@@ -112,9 +116,12 @@ struct SearchView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
 
-                // Sport filter chips (shown when there's a query or results)
-                if !viewModel.query.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.results != nil {
-                    sportFilterChips
+                // Sport filter chips. Gated on the FACET, not on "there is a
+                // query": with the row derived from the results there is nothing
+                // honest to draw until a search has come back.
+                let sportFilters = searchSportFilters(for: viewModel.sportFacets)
+                if !sportFilters.isEmpty {
+                    sportFilterChips(sportFilters)
                         .padding(.bottom, 4)
                 }
 
@@ -196,13 +203,10 @@ struct SearchView: View {
                 }
             if !viewModel.query.isEmpty {
                 Button {
-                    // Cancel any in-flight typeahead/search first so a late
-                    // response can't repopulate the field we're clearing (L2-198).
-                    viewModel.cancelInFlightWork()
-                    viewModel.query = ""
-                    viewModel.suggestions = []
-                    viewModel.results = nil
-                    viewModel.selectedSport = ""
+                    // Cancels in-flight work first so a late response can't
+                    // repopulate the field we're clearing (L2-198), then resets
+                    // every piece of search state including the facet row.
+                    viewModel.clear()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.subheadline)
@@ -222,10 +226,10 @@ struct SearchView: View {
 
     // MARK: - Sport Filter Chips
 
-    private var sportFilterChips: some View {
+    private func sportFilterChips(_ filters: [SearchSportFilter]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(searchSportFilters) { filter in
+                ForEach(filters) { filter in
                     let isSelected = viewModel.selectedSport == filter.key
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {

@@ -227,6 +227,64 @@ nonisolated struct WinProbSource: Decodable, Sendable {
     }
 }
 
+/// Reading `Event.win_probability_sources` as a list of SOURCES.
+///
+/// The JSONB map is not all sources: `betting_book_count` is how many
+/// sportsbooks contributed, wearing the same `{value, display_name, type}`
+/// shape as a real reading. Any consumer that iterates the keys prints a
+/// "source" called `betting_book_count` reading 1000%, and any consumer that
+/// counts them over-reads (measured backend-side at 7.2x).
+///
+/// The allowlist is the backend's own: `aggregation.SOURCE_WEIGHTS`, which
+/// `compute_aggregate_probability` uses to decide what feeds the blend
+/// (`if k not in SOURCE_WEIGHTS: continue`). Keeping the two lists identical is
+/// the point — a source the blend reads is a source the app names.
+enum WinProbSourceCatalog {
+    /// The seven keys the backend blends. Everything else in the map is metadata.
+    static let realSourceKeys: Set<String> = [
+        "final_result", "betting", "espn", "stat_model", "kalshi", "polymarket", "mlb",
+    ]
+
+    /// Fallback labels for the keys whose payload omits `display_name`.
+    private static let fallbackNames: [String: String] = [
+        "betting": "Sportsbooks",
+        "kalshi": "Kalshi",
+        "polymarket": "Polymarket",
+        "espn": "ESPN",
+        "stat_model": "Model",
+        "mlb": "MLB",
+        "final_result": "Final result",
+    ]
+
+    /// One contributing source: key, label, and its HOME win probability.
+    struct Entry: Identifiable, Equatable {
+        let key: String
+        let label: String
+        let homeProbability: Double
+        var id: String { key }
+    }
+
+    /// The real, readable sources behind the blended number, biggest-name-first
+    /// order made deterministic by key so two renders never disagree.
+    /// `bookCount`, when the map carries `betting_book_count`, is folded into the
+    /// sportsbook row's label so "Sportsbooks" says how many.
+    static func entries(from sources: [String: WinProbSource]?) -> [Entry] {
+        guard let sources else { return [] }
+        let bookCount = sources["betting_book_count"]?.value?.doubleValue.map { Int($0) }
+        return sources
+            .filter { realSourceKeys.contains($0.key) }
+            .compactMap { key, source -> Entry? in
+                guard let probability = source.value?.doubleValue else { return nil }
+                var label = source.displayName ?? fallbackNames[key] ?? key.capitalized
+                if key == "betting", let bookCount, bookCount > 0 {
+                    label = "Sportsbooks (\(bookCount))"
+                }
+                return Entry(key: key, label: label, homeProbability: probability)
+            }
+            .sorted { $0.key < $1.key }
+    }
+}
+
 /// Flexible value that handles both numeric (0.65) and string ("987726") from API.
 nonisolated enum WinProbValue: Decodable, Sendable {
     case number(Double)

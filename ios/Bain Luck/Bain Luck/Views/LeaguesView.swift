@@ -8,6 +8,20 @@ private struct LeagueInfo: Identifiable {
     let fullName: String
     let icon: String
     let group: String
+    /// Where the tile navigates. Defaults to the championship-grid page, which is
+    /// the right surface for a league of TEAMS chasing one trophy. Individual
+    /// sports have no such grid — golf has always overridden this, and tennis
+    /// (#2560's native sibling) does the same.
+    let route: Route?
+
+    init(slug: String, label: String, fullName: String, icon: String, group: String, route: Route? = nil) {
+        self.slug = slug
+        self.label = label
+        self.fullName = fullName
+        self.icon = icon
+        self.group = group
+        self.route = route
+    }
 
     var id: String { slug }
 }
@@ -26,7 +40,20 @@ private let allLeagues: [LeagueInfo] = [
     LeagueInfo(slug: "la-liga", label: "La Liga", fullName: "Spanish La Liga", icon: "soccerball", group: "Soccer"),
     LeagueInfo(slug: "champions-league", label: "UCL", fullName: "UEFA Champions League", icon: "soccerball", group: "Soccer"),
     LeagueInfo(slug: "bundesliga", label: "Bundesliga", fullName: "German Bundesliga", icon: "soccerball", group: "Soccer"),
-    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour & Majors", icon: "figure.golf", group: "Individual"),
+    LeagueInfo(slug: "golf", label: "Golf", fullName: "PGA Tour & Majors", icon: "figure.golf", group: "Individual",
+               route: .golfCategory),
+    // Tennis had NO row here at all, so `/api/leagues/tennis_atp` — 156 markets,
+    // 130 of them matches, as served on 2026-09-03 — was unreachable from the app
+    // while the same data renders on the web. Alex found it by looking for the US
+    // Open on his phone and not finding it.
+    //
+    // Pointed at the TOUR keys, never the `tennis` umbrella: the umbrella answers
+    // 200 with `total_markets: 0`, so a row wired to it would look like a working
+    // link to an empty page — the worst of the three outcomes.
+    LeagueInfo(slug: "tennis_atp", label: "ATP", fullName: "Men's Tennis Tour", icon: "figure.tennis",
+               group: "Individual", route: .sportCategory(key: "tennis_atp", name: "ATP Tennis")),
+    LeagueInfo(slug: "tennis_wta", label: "WTA", fullName: "Women's Tennis Tour", icon: "figure.tennis",
+               group: "Individual", route: .sportCategory(key: "tennis_wta", name: "WTA Tennis")),
 ]
 
 private let groupOrder = ["Major US Leagues", "College", "Other US Leagues", "Soccer", "Individual"]
@@ -159,6 +186,7 @@ struct LeaguesView: View {
         case "nhl": return .blue
         case "mls", "epl", "la-liga", "champions-league", "bundesliga": return .mint
         case "golf": return .teal
+        case "tennis_atp", "tennis_wta": return .yellow
         default: return .secondary
         }
     }
@@ -264,7 +292,7 @@ private struct BrowseLeagueTile: View {
     let color: Color
 
     var body: some View {
-        NavigationLink(value: league.slug == "golf" ? Route.golfCategory : Route.leagueGrid(slug: league.slug)) {
+        NavigationLink(value: league.route ?? Route.leagueGrid(slug: league.slug)) {
             HStack(spacing: 10) {
                 Image(systemName: league.icon)
                     .font(.subheadline.weight(.semibold))

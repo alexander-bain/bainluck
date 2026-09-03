@@ -756,12 +756,27 @@ struct EventDetailView: View {
 
 
 
-    // MARK: - Sources Toggle (v2)
+    // MARK: - Sources Toggle (v3)
 
+    /// The disclosure under the chart: what the blended number is made of.
+    ///
+    /// It used to say "Individual Sportsbooks" and list only `bookmakerOdds`, so
+    /// on an event whose blend also reads Kalshi and Polymarket the app named
+    /// neither — and the panel did not render at all for an event with prediction
+    /// markets but no book. Alex found it on the upcoming Shelton match, where
+    /// the API was serving all three legs fresh (kalshi 0.775 / polymarket 0.775 /
+    /// betting 0.7525, measured 19:08Z 2026-09-03) and the page credited ten
+    /// sportsbooks and nothing else.
+    ///
+    /// The blend stays the product — this names its inputs, it does not offer a
+    /// competing number to read. Contributing sources come first (that is the
+    /// question "where does 78% come from?"), the book-by-book table stays
+    /// underneath as the detail it always was.
     @ViewBuilder
     private func sourcesToggle(_ event: EventDetail) -> some View {
-        if let bookmakers = event.bookmakerOdds, !bookmakers.isEmpty {
-            // Legend + toggle button
+        let sourceEntries = WinProbSourceCatalog.entries(from: event.winProbabilitySources)
+        let bookmakers = event.bookmakerOdds ?? []
+        if !sourceEntries.isEmpty || !bookmakers.isEmpty {
             VStack(spacing: 0) {
                 Divider()
                 Button {
@@ -772,7 +787,7 @@ struct EventDetailView: View {
                     HStack {
                         Spacer()
                         HStack(spacing: 4) {
-                            Text("Individual Sportsbooks")
+                            Text(sourcesToggleLabel(sourceCount: sourceEntries.count))
                                 .font(.caption2)
                                 .fontWeight(.medium)
                                 .foregroundStyle(.secondary)
@@ -789,10 +804,68 @@ struct EventDetailView: View {
 
                 if showSources {
                     Divider()
-                    bookmakerContent(event)
+                    if !sourceEntries.isEmpty {
+                        sourceContent(event, entries: sourceEntries)
+                    }
+                    if !bookmakers.isEmpty {
+                        if !sourceEntries.isEmpty { Divider().padding(.horizontal, 16) }
+                        Text("Individual sportsbooks")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .textCase(.uppercase)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                        bookmakerContent(event)
+                    }
                 }
             }
         }
+    }
+
+    /// The collapsed label names the count so the reader can tell there is more
+    /// than a book list behind the chevron without opening it.
+    private func sourcesToggleLabel(sourceCount: Int) -> String {
+        sourceCount > 0 ? "Sources (\(sourceCount))" : "Individual Sportsbooks"
+    }
+
+    /// One row per source feeding the blend: label, the same away–home pair the
+    /// hero reads, and the same bar the book table uses.
+    private func sourceContent(_ event: EventDetail, entries: [WinProbSourceCatalog.Entry]) -> some View {
+        let colors = teamColors(event)
+        return VStack(spacing: 0) {
+            ForEach(entries) { entry in
+                let homeProbability = entry.homeProbability
+                let awayProbability = 1 - homeProbability
+                HStack(spacing: 6) {
+                    // Wider than the bookmaker column below it: these labels carry
+                    // a book count ("Sportsbooks (10)"), which truncates at 90.
+                    Text(entry.label)
+                        .font(.caption.weight(.medium))
+                        .frame(width: 118, alignment: .leading)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+
+                    ProbabilityBar(
+                        awayProb: awayProbability, homeProb: homeProbability,
+                        awayColor: colors.away,
+                        homeColor: colors.home,
+                        height: 6
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    Text(formatProbability(awayProbability))
+                        .font(.caption2.monospacedDigit())
+                        .frame(width: 36, alignment: .trailing)
+                    Text(formatProbability(homeProbability))
+                        .font(.caption2.monospacedDigit())
+                        .frame(width: 36, alignment: .trailing)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 8)
     }
 
     private func legendItem(color: Color, label: String) -> some View {
