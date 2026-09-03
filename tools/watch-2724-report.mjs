@@ -91,30 +91,59 @@ for (const [s, rs] of [...bySurface.entries()].sort()) {
 if (!rows.length) rows.push('| — | **NO BROWSER LOAD COMPLETED IN THIS WINDOW** | | | | | | |');
 
 // ── THE PROBER ─────────────────────────────────────────────────────────────────────────────────────
-// TSV: epoch, http_code, seconds. `000` is a request that never completed, which during a lock convoy
-// is the reader-facing shape and is NOT the same outcome as a slow 200.
-let probe = { n: 0, ok: 0, slow: 0, parked: 0, throttled: 0, worst: 0, gapS: 0, worstAt: null };
+// TSV: epoch, http_code, seconds, and since latency/130 a 4th `rc=<curl exit>` column. `000` is a
+// request that got no status back, which during a lock convoy is the reader-facing shape and is NOT
+// the same outcome as a slow 200.
+//
+// 🔴 BUT `000` IS A CLAIM ABOUT THE CLIENT, NOT ABOUT PRODUCTION, and this sampler runs behind a
+// sandbox egress proxy that fails on its own. That distinction is not academic: the v4037 window
+// (2026-09-03) banked six `000` rows and this file printed `🔴 SYMPTOM WITHOUT A MIGRATION — this
+// re-opens #2724 in a WIDER form` off them, while the browser arm called the very same stretch a rig
+// error, the ring saw zero new slow events, `watch.log` was logging `tunneling socket could not be
+// established, statusCode=503`, and the next window came back 21/21 HTTP 200. One arm that cannot
+// audit its own egress outvoted two that were clean.
+//
+// So a `000` only counts as production having parked the request when the row is CONSISTENT WITH
+// HAVING REACHED PRODUCTION. Three rows are not, and are attributed to our egress:
+//   * curl exited with a transport code (5/6/7/35/45/56/97) — it never got far enough to reach a
+//     Heroku router that could have parked anything;
+//   * no duration at all (`curl-failed`) — curl emitted no write-out, same argument;
+//   * a duration LONGER than curl's own `--max-time` — curl was told to abort at that bound, so the
+//     number is not describing a request. v4037 banked 838 s and 337 s rows under `--max-time 60`.
+// What survives is rc 28 (timed out waiting on a response) and any `000` inside the timeout bound.
+// Same family as gotcha #53: an absent response is a response SHAPE, and needs a second signal.
+const MAXT = parseFloat(E.PROBE_MAX_TIME || '60');
+const LOCAL_RC = new Set([5, 6, 7, 35, 45, 56, 97]);
+let probe = { n: 0, ok: 0, slow: 0, parked: 0, egress: 0, throttled: 0, worst: 0, gapS: 0, worstAt: null };
 const probeLines = [];
 try {
   const raw = readFileSync(E.PROBE_PATH || `${OUT}/probe.tsv`, 'utf8').trim().split('\n').filter(Boolean);
   let prevT = null;
   for (const ln of raw) {
-    const [t, code, secs] = ln.split('\t');
+    const [t, code, secs, rcCol] = ln.split('\t');
     const ts = parseInt(t, 10); const sec = parseFloat(secs);
+    const rc = rcCol && /^rc=(\d+)$/.test(rcCol) ? parseInt(rcCol.slice(3), 10) : null;
     if (!isFinite(ts)) continue;
     probe.n++;
     if (code === '200') probe.ok++;
     if (code === '429') probe.throttled++;
-    if (code === '000' || !isFinite(sec)) probe.parked++;
-    else {
+    let why = '';
+    if (code === '000' || !isFinite(sec)) {
+      // Windows banked before the rc column exists have rc === null; they are still classified, just
+      // on the two duration tests alone. A pre-rc window must not silently grade as clean.
+      const isEgress = (rc !== null && LOCAL_RC.has(rc)) || !isFinite(sec) || sec > MAXT;
+      if (isEgress) { probe.egress++; why = ' ← OUR EGRESS, not production'; }
+      else { probe.parked++; why = ' ← no response inside the timeout — production'; }
+    } else {
       if (sec >= 5) probe.slow++;
       if (sec > probe.worst) { probe.worst = sec; probe.worstAt = ts; }
     }
     // A gap much larger than the probe cadence means the PREVIOUS request was parked long enough to
-    // swallow whole cycles — the prober's own timeline is evidence, not just its rows.
+    // swallow whole cycles — the prober's own timeline is evidence, not just its rows. Gaps that sit
+    // against an egress-attributed row say nothing about the site, so they are tracked separately.
     if (prevT !== null) probe.gapS = Math.max(probe.gapS, ts - prevT);
     prevT = ts;
-    if (code !== '200' || sec >= 5) probeLines.push(`  - ${new Date(ts * 1000).toISOString()} HTTP ${code} ${isFinite(sec) ? sec.toFixed(1) + ' s' : secs}`);
+    if (code !== '200' || sec >= 5) probeLines.push(`  - ${new Date(ts * 1000).toISOString()} HTTP ${code} ${isFinite(sec) ? sec.toFixed(1) + ' s' : secs}${rc !== null ? ` (curl rc=${rc})` : ''}${why}`);
   }
 } catch { /* no probe file — reported as such below, never as a clean probe */ }
 
@@ -167,8 +196,28 @@ if (!hasMigration && !migUnknown) applied = `n/a — no migration in this releas
 // ── THE VERDICT ────────────────────────────────────────────────────────────────────────────────────
 // Stated as a machine read with its inputs beside it, because it is written unattended and will be
 // quoted by someone who was asleep.
-const symptomFree = realBlanks === 0 && releasedTogether.length === 0 && probe.parked === 0;
+// `probe.parked` here is the FILTERED count — rows our own egress cannot explain. `probe.egress` is
+// deliberately absent from this boolean: a proxy that dropped our socket is not a symptom, and letting
+// it flip the verdict is exactly how v4037 printed a re-open on a window the site sailed through.
+// A `000` that survived the egress filter is still only ONE arm's word, and the filter is not perfect:
+// it cannot classify a row banked before the `rc=` column existed, and a proxy that drops a socket at
+// 27 s is indistinguishable, from the row alone, from production parking one. So a symptom that ONLY
+// the prober saw, in a window where the prober is DEMONSTRABLY unreliable (it also banked egress
+// failures), is unresolved — the two arms that can audit themselves both came back clean. That is a
+// held signal, not a re-open. v4037: 1 surviving `000` at 27.5 s, six seconds from a `curl-failed`,
+// against 0 reader-visible blanks and 0 new ring events. It printed a re-open.
+const proberOnly = probe.parked > 0 && realBlanks === 0 && releasedTogether.length === 0;
+const proberUnresolved = proberOnly && probe.egress > 0;
+const symptomFree = realBlanks === 0 && releasedTogether.length === 0
+  && (probe.parked === 0 || proberUnresolved);
 const noEvidence = runs === 0 && probe.n === 0;
+// A window whose prober was mostly talking to a broken proxy did not measure the pipeline half at all.
+// Clean-looking is then a blind spot, not a result, and the report has to say which one it is.
+const probeBlind = probe.n > 0 && probe.egress > probe.ok;
+// CLOSES is the one verdict in this file that ends an investigation, so it takes a stricter gate than
+// the rest: `symptomFree` tolerates an unresolved prober row, and closing #2724 must not. A window
+// that could not measure the pipeline half cleanly can hold the issue open; it can never shut it.
+const closeable = symptomFree && !proberUnresolved && !probeBlind;
 let verdict, headline;
 if (noEvidence) {
   verdict = 'NO VERDICT — the window was sampled but nothing was banked (rig failure, not a clean run)';
@@ -187,19 +236,34 @@ if (noEvidence) {
     : '🔴 RE-OPENS #2724 — the migration could not land AND readers paid for it';
   headline = `release v${VER} carried a migration and ${STATUS.toUpperCase()}`;
 } else {
-  verdict = symptomFree
+  verdict = closeable
     ? 'CLOSES #2724 — a migration-carrying release LANDED and neither symptom appeared'
-    : '🔴 RE-OPENS #2724 — the symptom survived a migration-carrying release that landed';
+    : symptomFree
+      ? '#2724 STAYS OPEN — a migration-carrying release landed and no reader was hurt, but the prober could not clear itself in this window, so this is not the clean verdict window. Wait for the next migration'
+      : '🔴 RE-OPENS #2724 — the symptom survived a migration-carrying release that landed';
   headline = `release v${VER} landed a migration — this is the verdict window`;
+}
+// Both downgrades below attach to the verdict LINE, not to a footnote, because the verdict line is
+// the part that gets quoted by someone who was asleep.
+if (symptomFree && proberUnresolved) {
+  verdict = `${verdict} — ⚠️ ONE UNRESOLVED PROBER SIGNAL: ${probe.parked} sample(s) returned no status inside the timeout, but this window ALSO banked ${probe.egress} egress failure(s), so that row cannot be separated from them. No reader-visible blank and no new ring event corroborate it. HELD, not re-opened`;
+}
+// A clean read earned by a prober that spent the window arguing with our own proxy is not a clean
+// read.
+if (symptomFree && probeBlind) {
+  verdict = `${verdict} — ⚠️ BUT THE PROBER WAS BLIND: ${probe.egress} of ${probe.n} samples failed in OUR egress (more than the ${probe.ok} that reached the site), so the pipeline half of this window was not measured`;
 }
 
 const probeBlock = probe.n === 0
   ? '🔴 **The prober banked nothing.** Its silence is a rig failure, not a clean pipeline — do not read the window as quiet.'
   : [
     `- samples: **${probe.n}** over the window (${E.PROBE_PATH ? E.PROBE_PATH.replace(/^.*\//, '') : 'probe.tsv'})`,
-    `- HTTP 200: **${probe.ok}** · 429 (our own budget): **${probe.throttled}** · never completed: **${probe.parked}**`,
+    `- HTTP 200: **${probe.ok}** · 429 (our own budget): **${probe.throttled}** · parked by production: **${probe.parked}** · failed in OUR egress: **${probe.egress}**`,
     `- slowest completed request: **${probe.worst.toFixed(1)} s**${probe.worstAt ? ` at ${new Date(probe.worstAt * 1000).toISOString()}` : ''}`,
-    `- largest gap between samples: **${probe.gapS} s** (cadence is ${E.PROBE_S || 6} s; a big gap means a request was parked through whole cycles)`,
+    `- largest gap between samples: **${probe.gapS} s** (cadence is ${E.PROBE_S || 6} s; a big gap means a request was parked through whole cycles — or that our own proxy sat on one)`,
+    probe.egress
+      ? `- ⚠️ **${probe.egress} sample(s) never reached the site.** A status-\`000\` is a claim about this client, not about production: it is attributed to our egress when curl exits with a transport code, emits no duration, or reports one longer than its own \`--max-time ${MAXT}\` s. Those rows do NOT drive the verdict.${probeBlind ? ' More samples failed here than succeeded — **the pipeline half of this window is unmeasured, not clean.**' : ''}`
+      : '- every sample that failed to return did so at the site, not in our egress',
     probeLines.length ? 'Every non-200 or ≥5 s sample:\n' + probeLines.slice(0, 25).join('\n') : '- every sample was a fast 200',
   ].join('\n');
 

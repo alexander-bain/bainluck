@@ -117,17 +117,27 @@ latest_release() {
 }
 
 # ── THE PROBER ─────────────────────────────────────────────────────────────────────────────────────
-# One request per PROBE_S, writing TSV: epoch, http_code, total_seconds. `%{http_code}` is 000 when the
-# connection never completed, which is a distinct and important outcome from a slow 200 — during last
-# night's convoy the reader-facing symptom was requests that never returned, not requests that were
-# slow. curl's own timeout is deliberately longer than the probe cadence so a parked request is
-# recorded as parked rather than as a gap in the file.
+# One request per PROBE_S, writing TSV: epoch, http_code, total_seconds, rc=<curl exit code>.
+# `%{http_code}` is 000 when the connection never completed, which is a distinct and important outcome
+# from a slow 200 — during last night's convoy the reader-facing symptom was requests that never
+# returned, not requests that were slow. curl's own timeout is deliberately longer than the probe
+# cadence so a parked request is recorded as parked rather than as a gap in the file.
+#
+# 🔴 A `000` IS NOT BY ITSELF EVIDENCE ABOUT PRODUCTION. This sampler runs behind a sandbox egress
+# proxy that fails independently of the site, and on 2026-09-03 it did: the v4037 window banked six
+# `000` rows — two of them claiming 838 s and 337 s under `--max-time 60`, which no request can — while
+# `watch.log` logged `tunneling socket could not be established, statusCode=503` over the same stretch
+# and the next window came back 21/21 HTTP 200. The report read `🔴 re-opens #2724` off those rows.
+# The 4th column exists so the reporter can tell a transport failure (rc 5/6/7/35/45/56/97 — never
+# reached a Heroku router that could have parked it) from a genuine hang (rc 28, timed out waiting on
+# a response). Never widen the classifier without widening this column first.
+PROBE_MAX_TIME="${PROBE_MAX_TIME:-60}"
 prober() {
-  local out="$1"
+  local out="$1" line rc
   while :; do
-    curl -s -o /dev/null --max-time 60 \
-      -w "$(date +%s)\t%{http_code}\t%{time_total}\n" "$API$PROBE_PATH_URL" >> "$out" 2>/dev/null \
-      || echo -e "$(date +%s)\t000\tcurl-failed" >> "$out"
+    line=$(curl -s -o /dev/null --max-time "$PROBE_MAX_TIME" \
+      -w "%{http_code}\t%{time_total}" "$API$PROBE_PATH_URL" 2>/dev/null); rc=$?
+    echo -e "$(date +%s)\t${line:-000\tcurl-failed}\trc=$rc" >> "$out"
     sleep "$PROBE_S"
   done
 }
@@ -243,7 +253,8 @@ sample_window() {
   local report="$INBOX/${QUEUE}-2724-v${ver}-${status}.md"
   MIGS="$migs" CUR="$sha" LAST="$prev_sha" OUT="$out" WORK="$WORK" \
     RING_BEFORE="$out/ring-before.json" RING_PATH="$out/ring-after.json" \
-    PROBE_PATH="$out/probe.tsv" RELEASE_VERSION="$ver" RELEASE_STATUS="$status" \
+    PROBE_PATH="$out/probe.tsv" PROBE_MAX_TIME="$PROBE_MAX_TIME" PROBE_S="$PROBE_S" \
+    RELEASE_VERSION="$ver" RELEASE_STATUS="$status" \
     RELEASE_CREATED="$created" WINDOW_S="$elapsed" QUEUE="$QUEUE" \
     RELEASE_OUTPUT="$out/release-output.txt" REPORT_PATH="$report" \
     "$NODE" "$TOOLS/tools/watch-2724-report.mjs" >>"$LOG" 2>&1
@@ -275,6 +286,7 @@ if [ -n "$WATCH_SELFTEST" ]; then
   MIGS="${SELFTEST_MIGS:-backend/alembic/versions/selftest_fixture.py}" CUR=selftest LAST=selftest0 \
     OUT="$ST_OUT" WORK="$WORK" RING_BEFORE="$ST_OUT/ring-before.json" \
     RING_PATH="$ST_OUT/ring-after.json" PROBE_PATH="$ST_OUT/probe.tsv" \
+    PROBE_MAX_TIME="$PROBE_MAX_TIME" PROBE_S="$PROBE_S" \
     RELEASE_VERSION=0000 RELEASE_STATUS="${SELFTEST_STATUS:-succeeded}" RELEASE_CREATED="selftest" \
     WINDOW_S=0 QUEUE="$QUEUE" RELEASE_OUTPUT="$ST_OUT/release-output.txt" REPORT_PATH="$ST_REPORT" \
     "$NODE" "$TOOLS/tools/watch-2724-report.mjs" || exit 1
