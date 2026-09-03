@@ -56,6 +56,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,69 @@ FIXTURE_PATH = (
 #: Rows named in an issue body. Enough to act on, bounded so the body stays
 #: readable; the total is always stated, so truncation is never silent.
 MAX_LISTED = 25
+
+#: A non-null ``events.external_id`` IS NOT the same claim as "an outside
+#: schedule provider carries this fixture", and the golden check needs the
+#: second one. Measured on production 2026-09-03 over all 51,312 anchored
+#: events, the column holds exactly three vocabularies:
+#:
+#: * a 32-char hex Odds API event id — 29,333 events, still written today, and
+#:   782 of an 809-event sample carry ``odds_snapshots`` rows. A sportsbook feed
+#:   independently lists the fixture, so the matcher is genuinely corroborated.
+#: * ``pm_kalshi_*`` / ``pm_polymarket_*`` — 21,978 events the registry CREATED
+#:   FROM a prediction market (frozen 2026-02-22..2026-04-16; 24,232 markets
+#:   still hang off them). ZERO of 587 sampled carry bookmaker odds. A
+#:   prediction market "confirming" an event that a prediction market created is
+#:   the matcher answering itself one step removed — the id-less case laundered
+#:   through the ingest path, and NOT corroboration.
+#: * exactly one row of neither shape — a ``manual_*`` id (see below).
+#:
+#: And the column is NOT provider-only by construction:
+#: ``POST /api/admin/events/create`` (``routes/admin_events.py``) mints
+#: ``manual_{sport}_{home}_{away}_{unix_ts}`` — a composite WE synthesise out of
+#: our own field values, carried by nobody. Only one such row exists today, but
+#: the endpoint can mint another at any time, so the shape is named rather than
+#: left to the ``unknown`` fallback.
+#:
+#: So the discriminator is an ALLOWLIST of the shapes an outside provider
+#: writes, never ``IS NOT NULL``: an unrecognised shape is unknown provenance,
+#: and gotcha #53 forbids reading an absence of evidence as corroboration.
+#:
+#: THE STRONGER PREDICATE, once it is reachable: a ``game``-kind
+#: ``event_provider_anchors`` row passing ``anchor_is_current()``. Not yet — the
+#: channel holds 1,234 ``odds_api``/``game`` anchors against 29,333 Odds API
+#: events (4% coverage, 2026-09-03), so switching to it today would call 96% of
+#: genuinely corroborated fixtures uncorroborated. Revisit when coverage lands
+#: (#1946); the shape check is the honest instrument until then.
+_ODDS_API_EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
+_MARKET_DERIVED_PREFIXES = ("pm_kalshi_", "pm_polymarket_")
+_SYNTHESIZED_PREFIX = "manual_"
+
+#: Provenances that promote a later attachment out of RED. An allowlist, so a
+#: new id vocabulary arriving upstream reads as ``unknown`` and stays RED until
+#: somebody decides it corroborates — it can never quietly promote itself.
+CORROBORATING_PROVENANCE = frozenset({"schedule_provider"})
+
+
+def anchor_provenance(external_id: str | None, event_row_missing: bool = False) -> str:
+    """Who, other than us, says this event exists.
+
+    ``unreadable`` and ``idless`` are kept apart on purpose even though both are
+    RED: "we could not read the events row" is not the finding "no provider
+    anchors this fixture", and collapsing them would put an unproven claim in an
+    issue body.
+    """
+    if event_row_missing:
+        return "unreadable"
+    if external_id is None:
+        return "idless"
+    if _ODDS_API_EVENT_ID.match(external_id):
+        return "schedule_provider"
+    if external_id.startswith(_MARKET_DERIVED_PREFIXES):
+        return "market_derived"
+    if external_id.startswith(_SYNTHESIZED_PREFIX):
+        return "synthesized"
+    return "unknown"
 
 #: A market this old without a single price snapshot is not "sourced".
 #: 90 minutes: two 15-minute matching cycles plus the 2-minute live poll's
@@ -151,14 +215,23 @@ async def check_golden_pairs(session) -> dict:
 
     So a later attachment is judged by WHAT IT ATTACHED TO:
 
-    * **provider-anchored** (``events.external_id`` present) — an outside source
-      carries this fixture now. The matcher is corroborated, the baseline row is
-      merely stale, and it is reported as ``baseline_stale`` and never RED.
-    * **id-less** (``external_id IS NULL``) — nothing outside the matcher says
-      this event exists; the matcher created it and then matched to its own
-      creation. There is no corroboration to promote it out of RED, and the
-      id-less-claim rule (gotcha #32 / ruling 048) means such a row can never be
-      absorbed or reconciled later, so it is permanent. RED, as ``self_answered``.
+    * **corroborated** — an outside SCHEDULE PROVIDER anchors the fixture
+      (``anchor_provenance`` above; measured today that means an Odds API event
+      id, 96.7% of which carry bookmaker odds). The matcher is independently
+      confirmed, the baseline row is merely stale, and it is reported as
+      ``baseline_stale`` and never RED.
+    * **uncorroborated** — nothing outside the matcher says this event exists.
+      RED, as ``self_answered``, and each row carries the provenance that put it
+      there: ``idless`` (the matcher created the event and matched its own
+      creation), ``market_derived`` (a prediction-market-derived event, which is
+      the same self-answer one step removed), ``unknown`` (an id vocabulary
+      nobody has adjudicated) or ``unreadable``. The id-less-claim rule
+      (gotcha #32 / ruling 048) means such a row can never be absorbed or
+      reconciled later, so it is permanent.
+
+    The discriminator is deliberately an allowlist and not ``external_id IS NOT
+    NULL``: the proxy would read all 21,978 prediction-market-derived events as
+    outside corroboration.
 
     A POSITIVE pair — one the audit adjudicated onto a specific event — is
     unchanged: it had a known-correct answer, and losing it is a regression with
@@ -175,7 +248,7 @@ async def check_golden_pairs(session) -> dict:
     # accuses the twin cleanup of being a matcher failure.
     rows = (await session.execute(
         text(
-            "SELECT fm.id, fm.event_id, (e.external_id IS NULL) AS event_is_idless "
+            "SELECT fm.id, fm.event_id, e.external_id, (e.id IS NULL) AS event_missing "
             "FROM futures_markets fm "
             "LEFT JOIN events e ON e.id = fm.event_id "
             "WHERE fm.id = ANY(:ids)"
@@ -183,16 +256,18 @@ async def check_golden_pairs(session) -> dict:
         {"ids": ids},
     )).all()
     current = {
-        int(r[0]): (int(r[1]) if r[1] is not None else None, r[2]) for r in rows
+        int(r[0]): (int(r[1]) if r[1] is not None else None, r[2], r[3])
+        for r in rows
     }
 
     regressed, self_answered, baseline_stale = [], [], []
     recovered, vanished = [], []
+    by_provenance: dict[str, int] = {}
     for mid, was_ok in baseline.items():
         if mid not in current:
             vanished.append(mid)
             continue
-        actual, event_is_idless = current[mid]
+        actual, external_id, event_missing = current[mid]
         expected = by_market[mid]["correct_event_id"]
         now_ok = actual == expected
         if was_ok and not now_ok:
@@ -208,31 +283,44 @@ async def check_golden_pairs(session) -> dict:
                 # The audit knew the right answer and the market left it.
                 row["verdict"] = "regressed"
                 regressed.append(row)
-            elif event_is_idless is False:
-                # A provider anchors this fixture now. Not the matcher's error.
+                continue
+            provenance = anchor_provenance(external_id, bool(event_missing))
+            row["anchor_provenance"] = provenance
+            by_provenance[provenance] = by_provenance.get(provenance, 0) + 1
+            if provenance in CORROBORATING_PROVENANCE:
+                # An outside schedule provider anchors this fixture now, so the
+                # matcher is confirmed and the baseline row is what is stale.
                 row["verdict"] = "baseline_stale"
                 baseline_stale.append(row)
             else:
-                # id-less, or an event_id whose events row we could not read —
-                # either way nothing outside the matcher corroborates it.
+                # Nothing outside the matcher corroborates it.
                 row["verdict"] = "self_answered"
                 self_answered.append(row)
         elif not was_ok and now_ok:
             recovered.append(mid)
 
     red_rows = regressed + self_answered
+    # Name WHICH uncorroborated provenance, so "the matcher invented the event"
+    # and "an id vocabulary nobody has adjudicated" never hide in one number.
+    uncorroborated = ", ".join(
+        f"{n} {name}"
+        for name, n in sorted(by_provenance.items())
+        if name not in CORROBORATING_PROVENANCE
+    )
     detail = (
         f"{len(regressed)} adjudicated pairs regressed and {len(self_answered)} "
-        f"negative pairs attached to an id-less event the matcher created "
-        f"itself, of {len(baseline)} pairs ({len(baseline_stale)} attached to a "
-        f"provider-anchored fixture that did not exist at capture — baseline "
-        f"stale, not a regression; {len(recovered)} recovered, "
+        f"negative pairs attached to an event no outside provider corroborates "
+        f"({uncorroborated or 'none'}), of {len(baseline)} pairs "
+        f"({len(baseline_stale)} attached to a schedule-provider-anchored "
+        f"fixture that did not exist at capture — baseline stale, not a "
+        f"regression; {len(recovered)} recovered, "
         f"{len(vanished)} markets no longer exist)"
     )
     out = _finding("golden", bool(red_rows), len(red_rows), detail, red_rows)
     out["regressed"] = len(regressed)
     out["self_answered"] = len(self_answered)
     out["baseline_stale"] = len(baseline_stale)
+    out["by_provenance"] = by_provenance
     out["recovered"] = len(recovered)
     out["vanished"] = len(vanished)
     return out
