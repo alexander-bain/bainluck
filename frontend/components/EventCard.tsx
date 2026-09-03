@@ -49,16 +49,23 @@ interface EventCardProps {
 }
 
 // ---------------------------------------------------------------------------
-// AnimatedProbability — smoothly counts between probability values
+// AnimatedProbability — smoothly counts between ALREADY-RESOLVED whole percents
 // ---------------------------------------------------------------------------
+//
+// #2787: this took a raw probability and did its own `Math.round(v * 100)`
+// inside `useTransform`, which is what put the card's two chips outside the
+// rendered-percent contract. The rounding happens on the SPRING's output, so a
+// per-side `renderedPercent` at the call site would have been discarded — the
+// contract has to be applied to the spring's TARGET. So the target is the whole
+// percent now, and this component only animates towards it.
 function AnimatedProbability({
-  value,
+  percent,
   className,
 }: {
-  value: number | null;
+  percent: number | null;
   className?: string;
 }) {
-  const springValue = useSpring(value !== null ? value * 100 : 0, {
+  const springValue = useSpring(percent ?? 0, {
     stiffness: 80,
     damping: 20,
     mass: 0.5,
@@ -67,10 +74,10 @@ function AnimatedProbability({
 
   // Update spring target when value changes
   useEffect(() => {
-    springValue.set(value !== null ? value * 100 : 0);
-  }, [value, springValue]);
+    springValue.set(percent ?? 0);
+  }, [percent, springValue]);
 
-  if (value === null) {
+  if (percent === null) {
     return <span className={className}>-</span>;
   }
 
@@ -110,6 +117,11 @@ export default function EventCard({
   // none print 99. The away side is derived as `1 - home` when absent, exactly as
   // before, which is precisely what makes the pair an exact complement and the
   // both-sides-round-up case reachable.
+  //
+  // #2787 AMENDMENT: that reasoning was right and its SCOPE was wrong. The
+  // HEADLINE CHIPS print both sides of the same question in fixed positions too
+  // — home above, away below — so they are the same duel, and they were not
+  // going through this. See `chipAwayPct`/`chipHomePct` below.
   const [openedAwayPct, openedHomePct] = renderedDuelPercents(
     opening?.away_probability ?? (opening ? 1 - opening.home_probability : null),
     opening?.home_probability,
@@ -131,6 +143,19 @@ export default function EventCard({
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
   }
+
+  // #2787 — the fourth arm of #2084/#2085/#2279. The chips below print
+  // `homeProb` and `awayProb` in two fixed slots of one card, and each side was
+  // rounded ALONE inside `AnimatedProbability`, so an exact complement pair
+  // landing on a half-percent on both sides rounded up twice: measured on
+  // production 2026-09-03, `/sports/tennis_atp_us_open` printed 82/19, 20/81
+  // and 18/83 on three of ~16 upcoming cards. Resolved ONCE here, as a pair, and
+  // handed to the chips already whole — never a per-side round at the leaf.
+  //
+  // `homeFavorite` deliberately still reads the raw probabilities: which side is
+  // emphasised is a comparison, not a printed number, and it must not flip on a
+  // rounding tie.
+  const [chipAwayPct, chipHomePct] = renderedDuelPercents(awayProb, homeProb);
 
   const handleCardClick = () => {
     trackEventCardClick(event, sourceSection, positionIndex);
@@ -252,9 +277,16 @@ export default function EventCard({
                   than of four editors remembering. Not uppercased: the settled
                   sibling below uppercases the single word "Final", and shouting
                   a whole sentence is a different register. */}
+              {/* #2786 — HOME-AWAY, because that is what this component does
+                  everywhere else: the FINAL block below prints home then away,
+                  both live score slots put home above away, and the `Proj`
+                  footer is home-away. The away-home default made this the only
+                  numeric pair on the card reading the other way, and it shipped
+                  an inverted score on production (event 15293347: "last score
+                  6-3" for a 3-6 match, directly under the HOME team's name). */}
               {isSuspended && (
                 <span className="text-micro-xs text-text-muted">
-                  {suspendedSummary(event.away_score, event.home_score)}
+                  {suspendedSummary(event.away_score, event.home_score, "home-away")}
                 </span>
               )}
               {!isLive && !isFinished && !isSuspended && hasGameTime && (
@@ -366,7 +398,7 @@ export default function EventCard({
                   suspended summary above is the whole statement. */}
               {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
-                  value={homeProb}
+                  percent={chipHomePct}
                   className={cn(
                     "font-mono tabular-nums",
                     homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
@@ -375,7 +407,7 @@ export default function EventCard({
               )}
               {isLive && (
                 <AnimatedProbability
-                  value={homeProb}
+                  percent={chipHomePct}
                   className="font-mono tabular-nums text-xs text-text-muted"
                 />
               )}
@@ -439,7 +471,7 @@ export default function EventCard({
               {/* Probability chip — scheduled/live only (see home team above). */}
               {!isLive && !isFinished && !isSuspended && (
                 <AnimatedProbability
-                  value={awayProb}
+                  percent={chipAwayPct}
                   className={cn(
                     "font-mono tabular-nums",
                     !homeFavorite ? "text-prob-md text-text-primary" : "text-prob-sm text-text-secondary",
@@ -448,7 +480,7 @@ export default function EventCard({
               )}
               {isLive && (
                 <AnimatedProbability
-                  value={awayProb}
+                  percent={chipAwayPct}
                   className="font-mono tabular-nums text-xs text-text-muted"
                 />
               )}

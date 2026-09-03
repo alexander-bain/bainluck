@@ -1,0 +1,145 @@
+{
+ "league": "basketball",
+ "market_type": "container_member",
+ "population": {
+  "source": "polymarket",
+  "status": "resolved"
+ },
+ "bands": {
+  "lo_far": 0.25,
+  "lo": 0.8696,
+  "hi": 1.15,
+  "hi_far": 4.0
+ },
+ "seconds": 14.4,
+ "complete": true,
+ "irreducible": [],
+ "table": [
+  {
+   "band": "z_not_two_leg",
+   "truth": "eligible",
+   "n": 266,
+   "ece": 7.22,
+   "gap": 0.02,
+   "lo_n": 59,
+   "lo_win": 22.0,
+   "hi_n": 59,
+   "hi_win": 78.0,
+   "bins": {
+    "0": {
+     "n": 18,
+     "sum_prob": 1.277,
+     "winners": 3
+    },
+    "1": {
+     "n": 41,
+     "sum_prob": 5.948,
+     "winners": 10
+    },
+    "2": {
+     "n": 13,
+     "sum_prob": 3.265,
+     "winners": 2
+    },
+    "3": {
+     "n": 20,
+     "sum_prob": 7.244,
+     "winners": 8
+    },
+    "4": {
+     "n": 28,
+     "sum_prob": 12.514,
+     "winners": 14
+    },
+    "5": {
+     "n": 53,
+     "sum_prob": 27.93,
+     "winners": 27
+    },
+    "6": {
+     "n": 20,
+     "sum_prob": 12.655999999999999,
+     "winners": 11
+    },
+    "7": {
+     "n": 14,
+     "sum_prob": 10.434999999999999,
+     "winners": 12
+    },
+    "8": {
+     "n": 38,
+     "sum_prob": 32.352,
+     "winners": 28
+    },
+    "9": {
+     "n": 21,
+     "sum_prob": 19.423,
+     "winners": 18
+    }
+   }
+  },
+  {
+   "band": "z_not_two_leg",
+   "truth": "ineligible",
+   "n": 6938,
+   "ece": 26.92,
+   "gap": 2.16,
+   "lo_n": 3286,
+   "lo_win": 28.0,
+   "hi_n": 684,
+   "hi_win": 56.7,
+   "bins": {
+    "0": {
+     "n": 3053,
+     "sum_prob": 28.873999999999995,
+     "winners": 888
+    },
+    "1": {
+     "n": 233,
+     "sum_prob": 32.527499999999996,
+     "winners": 31
+    },
+    "2": {
+     "n": 243,
+     "sum_prob": 59.63550000000001,
+     "winners": 48
+    },
+    "3": {
+     "n": 221,
+     "sum_prob": 77.36949999999999,
+     "winners": 43
+    },
+    "4": {
+     "n": 928,
+     "sum_prob": 431.478,
+     "winners": 213
+    },
+    "5": {
+     "n": 1175,
+     "sum_prob": 615.3385,
+     "winners": 299
+    },
+    "6": {
+     "n": 192,
+     "sum_prob": 123.11900000000001,
+     "winners": 44
+    },
+    "7": {
+     "n": 209,
+     "sum_prob": 156.143,
+     "winners": 63
+    },
+    "8": {
+     "n": 179,
+     "sum_prob": 152.1545,
+     "winners": 39
+    },
+    "9": {
+     "n": 505,
+     "sum_prob": 489.94449999999995,
+     "winners": 349
+    }
+   }
+  }
+ ]
+}

@@ -23,6 +23,7 @@ import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
+import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -314,33 +315,51 @@ export default function SportsPage() {
   }, [interests, setInterest, showToast]);
 
   // =========================================================================
+  // The renderable, fresh feed — everything below reads THIS, not mergedItems
+  // =========================================================================
+  //
+  // Two filters, in order:
+  //   L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the
+  //   Sports dispatcher (FeedCard) has no per-card empty guard, so drop any card
+  //   with neither a renderable probability nor an authoritative result.
+  //   UX-1034f — then the finished-card guard: the SAME `isStale` gate Discover
+  //   has always run. /sports never called it, which is the whole reason page
+  //   one carried 20 completed games while Discover carried 0 on the same
+  //   2026-09-03T03:15Z pull. See lib/sports/finishedCardGuard.ts.
+  const guardedFeed = useMemo(() => {
+    if (mergedItems.length === 0) {
+      return { items: [] as FeedItem[], agedOut: [] as FeedItem[], keptToAvoidEmptyGames: false };
+    }
+    const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
+    return applyFinishedCardGuard(renderable);
+  }, [mergedItems]);
+
+  // =========================================================================
   // Summary stats
   // =========================================================================
 
   const feedStats = useMemo(() => {
     // #2597 — the bundle-unfolded list, so the header counts what the section
-    // badges below it count and what the grid actually renders.
-    const cards = flattenFeedBundles(mergedItems);
+    // badges below it count and what the grid actually renders. That is also why
+    // it counts the GUARDED list: a header advertising events the freshness gate
+    // has already removed is the same drift #2597 fixed, from the other end.
+    const cards = flattenFeedBundles(guardedFeed.items);
     const events = cards.filter(i => i.type === "event").length;
     const futures = cards.filter(i => i.type === "futures").length;
     const live = cards.filter(i =>
       i.type === "event" && (i.data as FeedEventData).status === "live"
     ).length;
     return { events, futures, live };
-  }, [mergedItems]);
+  }, [guardedFeed]);
 
   // =========================================================================
   // Group feed items into visual sections
   // =========================================================================
 
-  const feedSections = useMemo(() => {
-    if (mergedItems.length === 0) return [];
-    // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the Sports
-    // dispatcher (FeedCard) has no per-card empty guard, so drop any card with
-    // neither a renderable probability nor an authoritative result before sectioning.
-    const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
-    return groupFeedIntoSections(renderable);
-  }, [mergedItems]);
+  const feedSections = useMemo(
+    () => (guardedFeed.items.length === 0 ? [] : groupFeedIntoSections(guardedFeed.items)),
+    [guardedFeed]
+  );
 
   // L2-215 Item 1 — suppression telemetry (identity-free: type + machine reason
   // only), fired once per distinct suppression signature.
@@ -362,6 +381,30 @@ export default function SportsPage() {
       trackEvent("feed_card_suppressed", { card_type, suppression_reason, count, surface: "sports" });
     }
   }, [mergedItems]);
+
+  // UX-1034f — the same identity-free suppression telemetry for the cards the
+  // finished-card guard aged out, so the freshness needle is readable from
+  // production instead of only from an hourly hand pull.
+  const agedOutSigRef = useRef("");
+  useEffect(() => {
+    const { agedOut } = guardedFeed;
+    if (agedOut.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const item of agedOut) {
+      counts.set(item.type, (counts.get(item.type) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === agedOutSigRef.current) return;
+    agedOutSigRef.current = sig;
+    for (const [card_type, count] of counts) {
+      trackEvent("feed_card_suppressed", {
+        card_type,
+        suppression_reason: "stale_finished",
+        count,
+        surface: "sports",
+      });
+    }
+  }, [guardedFeed]);
 
   // #1102 information architecture: games LEAD the page. Split the game sections
   // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
@@ -629,7 +672,8 @@ export default function SportsPage() {
             </>
           ) : (
             <div className="flex justify-center pt-4">
-              <EndOfFeedCard count={mergedItems.length} onRefresh={() => refreshFeed()} />
+              {/* The count the reader actually saw — guarded, not loaded. */}
+              <EndOfFeedCard count={guardedFeed.items.length} onRefresh={() => refreshFeed()} />
             </div>
           )}
         </>

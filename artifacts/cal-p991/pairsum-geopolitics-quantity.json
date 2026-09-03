@@ -1,0 +1,135 @@
+{
+ "league": "geopolitics",
+ "market_type": "quantity",
+ "population": {
+  "source": "polymarket",
+  "status": "resolved"
+ },
+ "bands": {
+  "lo_far": 0.25,
+  "lo": 0.8696,
+  "hi": 1.15,
+  "hi_far": 4.0
+ },
+ "seconds": 6.7,
+ "complete": true,
+ "irreducible": [],
+ "table": [
+  {
+   "band": "z_not_two_leg",
+   "truth": "eligible",
+   "n": 73,
+   "ece": 18.11,
+   "gap": 18.11,
+   "lo_n": 21,
+   "lo_win": 0.0,
+   "hi_n": 1,
+   "hi_win": 0.0,
+   "bins": {
+    "0": {
+     "n": 16,
+     "sum_prob": 0.47950000000000004,
+     "winners": 0
+    },
+    "1": {
+     "n": 5,
+     "sum_prob": 0.76,
+     "winners": 0
+    },
+    "2": {
+     "n": 24,
+     "sum_prob": 5.9975,
+     "winners": 2
+    },
+    "3": {
+     "n": 10,
+     "sum_prob": 3.3899999999999997,
+     "winners": 3
+    },
+    "4": {
+     "n": 10,
+     "sum_prob": 4.44,
+     "winners": 1
+    },
+    "5": {
+     "n": 5,
+     "sum_prob": 2.7199999999999998,
+     "winners": 1
+    },
+    "6": {
+     "n": 1,
+     "sum_prob": 0.69,
+     "winners": 0
+    },
+    "7": {
+     "n": 1,
+     "sum_prob": 0.765,
+     "winners": 0
+    },
+    "9": {
+     "n": 1,
+     "sum_prob": 0.98,
+     "winners": 0
+    }
+   }
+  },
+  {
+   "band": "z_not_two_leg",
+   "truth": "ineligible",
+   "n": 188,
+   "ece": 15.12,
+   "gap": 15.12,
+   "lo_n": 68,
+   "lo_win": 10.3,
+   "hi_n": 2,
+   "hi_win": 50.0,
+   "bins": {
+    "0": {
+     "n": 25,
+     "sum_prob": 1.143,
+     "winners": 1
+    },
+    "1": {
+     "n": 43,
+     "sum_prob": 6.2555,
+     "winners": 6
+    },
+    "2": {
+     "n": 40,
+     "sum_prob": 9.924999999999999,
+     "winners": 5
+    },
+    "3": {
+     "n": 21,
+     "sum_prob": 7.535,
+     "winners": 1
+    },
+    "4": {
+     "n": 46,
+     "sum_prob": 20.235,
+     "winners": 7
+    },
+    "5": {
+     "n": 8,
+     "sum_prob": 4.26,
+     "winners": 3
+    },
+    "6": {
+     "n": 1,
+     "sum_prob": 0.605,
+     "winners": 0
+    },
+    "7": {
+     "n": 2,
+     "sum_prob": 1.54,
+     "winners": 1
+    },
+    "9": {
+     "n": 2,
+     "sum_prob": 1.918,
+     "winners": 1
+    }
+   }
+  }
+ ]
+}

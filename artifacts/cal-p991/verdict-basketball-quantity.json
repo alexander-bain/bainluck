@@ -1,0 +1,96 @@
+{
+  "cell": "polymarket/basketball/quantity",
+  "elapsed_s": 377.5,
+  "rows": [
+    {
+      "verdict": "kept_multi",
+      "side": "zz_other",
+      "graded": "won",
+      "n": 1
+    },
+    {
+      "verdict": "x14_multi_modal_price",
+      "side": "zz_other",
+      "graded": "lost",
+      "n": 12
+    },
+    {
+      "verdict": "kept_multi",
+      "side": "zz_other",
+      "graded": "lost",
+      "n": 3
+    },
+    {
+      "verdict": "x13_multi_extreme_tail",
+      "side": "under",
+      "graded": "won",
+      "n": 2
+    },
+    {
+      "verdict": "kept_multi",
+      "side": "over",
+      "graded": "lost",
+      "n": 957
+    },
+    {
+      "verdict": "kept_multi",
+      "side": "under",
+      "graded": "lost",
+      "n": 46
+    },
+    {
+      "verdict": "kept_multi",
+      "side": "under",
+      "graded": "won",
+      "n": 592
+    },
+    {
+      "verdict": "kept_multi",
+      "side": "over",
+      "graded": "won",
+      "n": 82
+    },
+    {
+      "verdict": "x02_poly_placeholder",
+      "side": "under",
+      "graded": "won",
+      "n": 364
+    },
+    {
+      "verdict": "x02_poly_placeholder",
+      "side": "under",
+      "graded": "lost",
+      "n": 34
+    },
+    {
+      "verdict": "x13_multi_extreme_tail",
+      "side": "under",
+      "graded": "lost",
+      "n": 4
+    },
+    {
+      "verdict": "x15_not_the_rn1_representative",
+      "side": "under",
+      "graded": "won",
+      "n": 1
+    },
+    {
+      "verdict": "kept_rn1",
+      "side": "over",
+      "graded": "lost",
+      "n": 2
+    },
+    {
+      "verdict": "kept_rn1",
+      "side": "over",
+      "graded": "won",
+      "n": 4
+    },
+    {
+      "verdict": "x15_not_the_rn1_representative",
+      "side": "under",
+      "graded": "lost",
+      "n": 2
+    }
+  ]
+}

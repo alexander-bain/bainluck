@@ -1,0 +1,249 @@
+{
+ "league": "table_tennis",
+ "market_type": "quantity",
+ "population": {
+  "source": "polymarket",
+  "status": "resolved"
+ },
+ "bands": {
+  "lo_far": 0.25,
+  "lo": 0.8696,
+  "hi": 1.15,
+  "hi_far": 4.0
+ },
+ "seconds": 14.5,
+ "complete": true,
+ "irreducible": [],
+ "table": [
+  {
+   "band": "b_sum_0.25_0.87",
+   "truth": "ineligible",
+   "n": 120,
+   "ece": 13.14,
+   "gap": 1.03,
+   "lo_n": 36,
+   "lo_win": 0.0,
+   "hi_n": 0,
+   "hi_win": null,
+   "bins": {
+    "0": {
+     "n": 35,
+     "sum_prob": 0.258,
+     "winners": 0
+    },
+    "1": {
+     "n": 1,
+     "sum_prob": 0.15,
+     "winners": 0
+    },
+    "2": {
+     "n": 18,
+     "sum_prob": 3.865,
+     "winners": 0
+    },
+    "3": {
+     "n": 10,
+     "sum_prob": 3.46,
+     "winners": 1
+    },
+    "4": {
+     "n": 18,
+     "sum_prob": 7.77,
+     "winners": 6
+    },
+    "5": {
+     "n": 25,
+     "sum_prob": 12.896,
+     "winners": 18
+    },
+    "6": {
+     "n": 9,
+     "sum_prob": 5.86,
+     "winners": 7
+    },
+    "7": {
+     "n": 4,
+     "sum_prob": 2.975,
+     "winners": 4
+    }
+   }
+  },
+  {
+   "band": "c_sum_coherent",
+   "truth": "eligible",
+   "n": 342,
+   "ece": 9.41,
+   "gap": -0.01,
+   "lo_n": 2,
+   "lo_win": 0.0,
+   "hi_n": 2,
+   "hi_win": 100.0,
+   "bins": {
+    "0": {
+     "n": 2,
+     "sum_prob": 0.01,
+     "winners": 0
+    },
+    "2": {
+     "n": 13,
+     "sum_prob": 3.355,
+     "winners": 7
+    },
+    "3": {
+     "n": 33,
+     "sum_prob": 11.99,
+     "winners": 10
+    },
+    "4": {
+     "n": 106,
+     "sum_prob": 48.44,
+     "winners": 38
+    },
+    "5": {
+     "n": 134,
+     "sum_prob": 70.94,
+     "winners": 80
+    },
+    "6": {
+     "n": 39,
+     "sum_prob": 24.61,
+     "winners": 28
+    },
+    "7": {
+     "n": 13,
+     "sum_prob": 9.645,
+     "winners": 6
+    },
+    "9": {
+     "n": 2,
+     "sum_prob": 1.99,
+     "winners": 2
+    }
+   }
+  },
+  {
+   "band": "c_sum_coherent",
+   "truth": "ineligible",
+   "n": 78936,
+   "ece": 44.35,
+   "gap": 44.35,
+   "lo_n": 1164,
+   "lo_win": 0.2,
+   "hi_n": 1193,
+   "hi_win": 62.4,
+   "bins": {
+    "0": {
+     "n": 641,
+     "sum_prob": 3.3145,
+     "winners": 0
+    },
+    "1": {
+     "n": 523,
+     "sum_prob": 64.55,
+     "winners": 2
+    },
+    "2": {
+     "n": 957,
+     "sum_prob": 242.17,
+     "winners": 19
+    },
+    "3": {
+     "n": 4272,
+     "sum_prob": 1513.4255,
+     "winners": 191
+    },
+    "4": {
+     "n": 15558,
+     "sum_prob": 7403.08,
+     "winners": 587
+    },
+    "5": {
+     "n": 50331,
+     "sum_prob": 25514.835000000003,
+     "winners": 2390
+    },
+    "6": {
+     "n": 4451,
+     "sum_prob": 2858.2995,
+     "winners": 469
+    },
+    "7": {
+     "n": 1010,
+     "sum_prob": 749.105,
+     "winners": 59
+    },
+    "8": {
+     "n": 193,
+     "sum_prob": 158.55,
+     "winners": 7
+    },
+    "9": {
+     "n": 1000,
+     "sum_prob": 960.781,
+     "winners": 737
+    }
+   }
+  },
+  {
+   "band": "d_sum_1.15_4",
+   "truth": "ineligible",
+   "n": 42,
+   "ece": 50.93,
+   "gap": 50.93,
+   "lo_n": 0,
+   "lo_win": null,
+   "hi_n": 10,
+   "hi_win": 70.0,
+   "bins": {
+    "4": {
+     "n": 10,
+     "sum_prob": 4.7605,
+     "winners": 0
+    },
+    "5": {
+     "n": 9,
+     "sum_prob": 4.91,
+     "winners": 0
+    },
+    "6": {
+     "n": 9,
+     "sum_prob": 6.025,
+     "winners": 0
+    },
+    "7": {
+     "n": 4,
+     "sum_prob": 2.98,
+     "winners": 0
+    },
+    "8": {
+     "n": 1,
+     "sum_prob": 0.81,
+     "winners": 0
+    },
+    "9": {
+     "n": 9,
+     "sum_prob": 8.905,
+     "winners": 7
+    }
+   }
+  },
+  {
+   "band": "y_one_leg_priced",
+   "truth": "ineligible",
+   "n": 1,
+   "ece": null,
+   "gap": null,
+   "lo_n": 0,
+   "lo_win": null,
+   "hi_n": 0,
+   "hi_win": null,
+   "bins": {
+    "2": {
+     "n": 1,
+     "sum_prob": 0.2,
+     "winners": 0
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,534 @@
+{
+ "league": "baseball",
+ "market_type": "quantity",
+ "population": {
+  "source": "polymarket",
+  "status": "resolved"
+ },
+ "family_regex": ":\\s*(.*?)\\s*O/U",
+ "seconds": 36.7,
+ "complete": true,
+ "irreducible": [],
+ "table": [
+  {
+   "family": "",
+   "truth": "eligible",
+   "n": 3556,
+   "ece": 13.13,
+   "gap": -6.32,
+   "lo_n": 859,
+   "lo_win": 37.5,
+   "hi_n": 439,
+   "hi_win": 69.0,
+   "spread": 31.5,
+   "bins": {
+    "0": {
+     "n": 464,
+     "sum_prob": 18.911500000000004,
+     "winners": 171
+    },
+    "1": {
+     "n": 395,
+     "sum_prob": 55.05999999999999,
+     "winners": 151
+    },
+    "2": {
+     "n": 489,
+     "sum_prob": 119.456,
+     "winners": 186
+    },
+    "3": {
+     "n": 374,
+     "sum_prob": 128.88899999999998,
+     "winners": 147
+    },
+    "4": {
+     "n": 353,
+     "sum_prob": 156.92849999999996,
+     "winners": 155
+    },
+    "5": {
+     "n": 360,
+     "sum_prob": 193.91250000000002,
+     "winners": 207
+    },
+    "6": {
+     "n": 313,
+     "sum_prob": 201.772,
+     "winners": 197
+    },
+    "7": {
+     "n": 369,
+     "sum_prob": 275.26399999999995,
+     "winners": 245
+    },
+    "8": {
+     "n": 252,
+     "sum_prob": 213.26149999999998,
+     "winners": 168
+    },
+    "9": {
+     "n": 187,
+     "sum_prob": 173.8185,
+     "winners": 135
+    }
+   }
+  },
+  {
+   "family": "",
+   "truth": "ineligible",
+   "n": 8730,
+   "ece": 14.12,
+   "gap": 0.75,
+   "lo_n": 2506,
+   "lo_win": 23.2,
+   "hi_n": 1225,
+   "hi_win": 65.9,
+   "spread": 42.7,
+   "bins": {
+    "0": {
+     "n": 2239,
+     "sum_prob": 25.559500000000003,
+     "winners": 540
+    },
+    "1": {
+     "n": 267,
+     "sum_prob": 40.06,
+     "winners": 41
+    },
+    "2": {
+     "n": 739,
+     "sum_prob": 185.654,
+     "winners": 241
+    },
+    "3": {
+     "n": 778,
+     "sum_prob": 272.057,
+     "winners": 285
+    },
+    "4": {
+     "n": 822,
+     "sum_prob": 372.366,
+     "winners": 353
+    },
+    "5": {
+     "n": 1210,
+     "sum_prob": 638.351,
+     "winners": 599
+    },
+    "6": {
+     "n": 738,
+     "sum_prob": 477.8,
+     "winners": 392
+    },
+    "7": {
+     "n": 712,
+     "sum_prob": 529.207,
+     "winners": 389
+    },
+    "8": {
+     "n": 247,
+     "sum_prob": 206.95,
+     "winners": 112
+    },
+    "9": {
+     "n": 978,
+     "sum_prob": 964.4010000000001,
+     "winners": 695
+    }
+   }
+  },
+  {
+   "family": "(unnamed)",
+   "truth": "eligible",
+   "n": 4,
+   "ece": null,
+   "gap": null,
+   "lo_n": 0,
+   "lo_win": null,
+   "hi_n": 0,
+   "hi_win": null,
+   "spread": null,
+   "bins": {
+    "5": {
+     "n": 4,
+     "sum_prob": 2.0,
+     "winners": 1
+    }
+   }
+  },
+  {
+   "family": "(unnamed)",
+   "truth": "ineligible",
+   "n": 3,
+   "ece": null,
+   "gap": null,
+   "lo_n": 0,
+   "lo_win": null,
+   "hi_n": 0,
+   "hi_win": null,
+   "spread": null,
+   "bins": {
+    "6": {
+     "n": 1,
+     "sum_prob": 0.695,
+     "winners": 1
+    },
+    "7": {
+     "n": 2,
+     "sum_prob": 1.52,
+     "winners": 2
+    }
+   }
+  },
+  {
+   "family": "1st 5 Innings",
+   "truth": "ineligible",
+   "n": 1907,
+   "ece": 20.33,
+   "gap": 19.68,
+   "lo_n": 324,
+   "lo_win": 3.4,
+   "hi_n": 162,
+   "hi_win": 50.6,
+   "spread": 47.2,
+   "bins": {
+    "0": {
+     "n": 298,
+     "sum_prob": 1.7825,
+     "winners": 8
+    },
+    "1": {
+     "n": 26,
+     "sum_prob": 4.098,
+     "winners": 3
+    },
+    "2": {
+     "n": 62,
+     "sum_prob": 15.290000000000001,
+     "winners": 4
+    },
+    "3": {
+     "n": 112,
+     "sum_prob": 39.839999999999996,
+     "winners": 16
+    },
+    "4": {
+     "n": 260,
+     "sum_prob": 118.18,
+     "winners": 57
+    },
+    "5": {
+     "n": 790,
+     "sum_prob": 405.36550000000005,
+     "winners": 265
+    },
+    "6": {
+     "n": 141,
+     "sum_prob": 89.78999999999999,
+     "winners": 39
+    },
+    "7": {
+     "n": 56,
+     "sum_prob": 41.895,
+     "winners": 23
+    },
+    "8": {
+     "n": 31,
+     "sum_prob": 25.790000000000003,
+     "winners": 13
+    },
+    "9": {
+     "n": 131,
+     "sum_prob": 130.1745,
+     "winners": 69
+    }
+   }
+  },
+  {
+   "family": "Home Runs",
+   "truth": "eligible",
+   "n": 5744,
+   "ece": 5.52,
+   "gap": -0.71,
+   "lo_n": 1656,
+   "lo_win": 13.6,
+   "hi_n": 1384,
+   "hi_win": 92.3,
+   "spread": 78.7,
+   "bins": {
+    "0": {
+     "n": 1379,
+     "sum_prob": 59.035999999999994,
+     "winners": 163
+    },
+    "1": {
+     "n": 277,
+     "sum_prob": 37.746,
+     "winners": 62
+    },
+    "2": {
+     "n": 442,
+     "sum_prob": 89.994,
+     "winners": 17
+    },
+    "3": {
+     "n": 15,
+     "sum_prob": 5.129,
+     "winners": 7
+    },
+    "4": {
+     "n": 190,
+     "sum_prob": 91.18549999999999,
+     "winners": 135
+    },
+    "5": {
+     "n": 2033,
+     "sum_prob": 1025.9054999999998,
+     "winners": 994
+    },
+    "6": {
+     "n": 7,
+     "sum_prob": 4.388,
+     "winners": 5
+    },
+    "7": {
+     "n": 17,
+     "sum_prob": 12.91,
+     "winners": 17
+    },
+    "8": {
+     "n": 149,
+     "sum_prob": 128.746,
+     "winners": 129
+    },
+    "9": {
+     "n": 1235,
+     "sum_prob": 1181.4035000000001,
+     "winners": 1148
+    }
+   }
+  },
+  {
+   "family": "Home Runs",
+   "truth": "ineligible",
+   "n": 34781,
+   "ece": 20.96,
+   "gap": 20.96,
+   "lo_n": 16963,
+   "lo_win": 0.7,
+   "hi_n": 12222,
+   "hi_win": 54.7,
+   "spread": 54.0,
+   "bins": {
+    "0": {
+     "n": 14767,
+     "sum_prob": 423.83700000000005,
+     "winners": 71
+    },
+    "1": {
+     "n": 2196,
+     "sum_prob": 316.9155,
+     "winners": 51
+    },
+    "2": {
+     "n": 1652,
+     "sum_prob": 417.0825,
+     "winners": 37
+    },
+    "3": {
+     "n": 325,
+     "sum_prob": 112.82699999999998,
+     "winners": 5
+    },
+    "4": {
+     "n": 528,
+     "sum_prob": 251.649,
+     "winners": 155
+    },
+    "5": {
+     "n": 1761,
+     "sum_prob": 896.7729999999999,
+     "winners": 621
+    },
+    "6": {
+     "n": 229,
+     "sum_prob": 151.926,
+     "winners": 8
+    },
+    "7": {
+     "n": 1101,
+     "sum_prob": 810.2420000000001,
+     "winners": 54
+    },
+    "8": {
+     "n": 1597,
+     "sum_prob": 1381.068,
+     "winners": 11
+    },
+    "9": {
+     "n": 10625,
+     "sum_prob": 10212.8745,
+     "winners": 6671
+    }
+   }
+  },
+  {
+   "family": "Strikeouts",
+   "truth": "eligible",
+   "n": 1002,
+   "ece": 2.64,
+   "gap": 0.85,
+   "lo_n": 83,
+   "lo_win": 12.0,
+   "hi_n": 80,
+   "hi_win": 87.5,
+   "spread": 75.5,
+   "bins": {
+    "0": {
+     "n": 44,
+     "sum_prob": 2.7230000000000003,
+     "winners": 3
+    },
+    "1": {
+     "n": 39,
+     "sum_prob": 5.37,
+     "winners": 7
+    },
+    "2": {
+     "n": 62,
+     "sum_prob": 13.755,
+     "winners": 6
+    },
+    "3": {
+     "n": 144,
+     "sum_prob": 50.495,
+     "winners": 47
+    },
+    "4": {
+     "n": 199,
+     "sum_prob": 89.425,
+     "winners": 91
+    },
+    "5": {
+     "n": 244,
+     "sum_prob": 130.98000000000002,
+     "winners": 128
+    },
+    "6": {
+     "n": 161,
+     "sum_prob": 103.91000000000001,
+     "winners": 106
+    },
+    "7": {
+     "n": 29,
+     "sum_prob": 21.7,
+     "winners": 24
+    },
+    "8": {
+     "n": 33,
+     "sum_prob": 28.224999999999998,
+     "winners": 25
+    },
+    "9": {
+     "n": 47,
+     "sum_prob": 43.902,
+     "winners": 45
+    }
+   }
+  },
+  {
+   "family": "Strikeouts",
+   "truth": "ineligible",
+   "n": 4997,
+   "ece": 45.19,
+   "gap": 45.19,
+   "lo_n": 424,
+   "lo_win": 1.2,
+   "hi_n": 268,
+   "hi_win": 29.9,
+   "spread": 28.7,
+   "bins": {
+    "0": {
+     "n": 275,
+     "sum_prob": 3.934,
+     "winners": 2
+    },
+    "1": {
+     "n": 149,
+     "sum_prob": 23.925499999999996,
+     "winners": 3
+    },
+    "2": {
+     "n": 333,
+     "sum_prob": 81.78,
+     "winners": 3
+    },
+    "3": {
+     "n": 538,
+     "sum_prob": 190.555,
+     "winners": 7
+    },
+    "4": {
+     "n": 1041,
+     "sum_prob": 468.51000000000005,
+     "winners": 39
+    },
+    "5": {
+     "n": 1188,
+     "sum_prob": 646.975,
+     "winners": 39
+    },
+    "6": {
+     "n": 791,
+     "sum_prob": 506.03999999999996,
+     "winners": 25
+    },
+    "7": {
+     "n": 414,
+     "sum_prob": 309.025,
+     "winners": 10
+    },
+    "8": {
+     "n": 179,
+     "sum_prob": 149.9,
+     "winners": 10
+    },
+    "9": {
+     "n": 89,
+     "sum_prob": 85.74000000000001,
+     "winners": 70
+    }
+   }
+  },
+  {
+   "family": "Total Games",
+   "truth": "ineligible",
+   "n": 244,
+   "ece": 48.52,
+   "gap": 48.36,
+   "lo_n": 2,
+   "lo_win": 0.0,
+   "hi_n": 2,
+   "hi_win": 100.0,
+   "spread": 100.0,
+   "bins": {
+    "1": {
+     "n": 2,
+     "sum_prob": 0.2,
+     "winners": 0
+    },
+    "5": {
+     "n": 240,
+     "sum_prob": 120.0,
+     "winners": 2
+    },
+    "9": {
+     "n": 2,
+     "sum_prob": 1.8,
+     "winners": 2
+    }
+   }
+  }
+ ]
+}

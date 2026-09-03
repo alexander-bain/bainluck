@@ -104,7 +104,10 @@ function text(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-const EXPECTED = suspendedSummary(1, 2); // "No result reported · last score 1-2"
+// #2786 — HOME-AWAY on this component, because every other numeric pair it
+// prints is home-away (the FINAL block, both live score slots, the `Proj`
+// footer). The specimen is away_score=1, home_score=2, so this reads "2-1".
+const EXPECTED = suspendedSummary(1, 2, "home-away");
 
 describe("the shared EventCard renders the suspended state", () => {
   it("prints the shared summary", () => {
