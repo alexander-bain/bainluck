@@ -1,0 +1,56 @@
+{
+  "what": "CAL-P989 BEFORE state, measured on production before the close_time fix deploys",
+  "measured_at_pt": "2026-09-02 14:28",
+  "measured_by": "calibration (CAL-P989), GET /api/admin/db-query",
+  "why_this_is_the_before": [
+    "The migration has NOT run on production: information_schema shows",
+    "futures_markets.expiration_time absent, resolution_date present. So every",
+    "number here is the unrepaired shape, not a partially-applied one."
+  ],
+  "population": {
+    "kalshi_open_with_future_resolution_date": 9938,
+    "of_those_tier_1_or_2": 6099,
+    "of_those_commenced_more_than_2d_ago": 1342,
+    "note": "10187 at commit time (12:4x PT). This population is live-ingested and decays; the drift is expected, not a contradiction."
+  },
+  "the_headline": {
+    "metric": "rows visible to #1818's settlement sync predicate",
+    "predicate": "source='kalshi' AND status <> 'resolved' AND resolution_date < now()",
+    "value": 3,
+    "reading": [
+      "THREE. Against 9,938 open Kalshi rows carrying a future resolution_date, of",
+      "which the venue-sampled cohort says ~80% of the settled ones have a close_time",
+      "already in the past. The repair exists because this predicate is correct code",
+      "reading a wrong column: expiration_time is Kalshi's legal backstop, so a market",
+      "that finished last Friday stores a date two weeks out and the sync cannot see it.",
+      "This is the number to re-read after deploy + backfill."
+    ]
+  },
+  "the_backstop_signature": {
+    "measured_at_pt": "2026-09-02 15:12",
+    "query": "count rows, count distinct resolution_date, and the biggest single shared-date cluster, over kalshi status='open' rows with a future resolution_date",
+    "rows": 9935,
+    "distinct_resolution_dates": 1441,
+    "biggest_single_cluster": 1791,
+    "reading": [
+      "1,791 unrelated markets share ONE identical resolution_date, and 9,935 rows",
+      "carry only 1,441 distinct dates. A real 'when does this resolve' is near-unique",
+      "per event. A shared administrative date at this scale is not a resolution date",
+      "at all — it is Kalshi's legal backstop, which is exactly what the column holds.",
+      "Spot-checked by hand: 30+ wholly unrelated markets (a Drake album length, a WBC",
+      "heavyweight title, an FDA psychedelic approval, four separate celebrity",
+      "engagement markets) all store 2027-01-08T15:00:00Z.",
+      "This is the defect visible without sampling the venue at all, and it is a",
+      "cheap re-measurable check after the backfill: the cluster must break up."
+    ]
+  },
+  "surface_needle": {
+    "source": "commit 2fcceed6, measured 12:52 PT on GET /api/feed?limit=20",
+    "kalshi_cards_on_page_one": 6,
+    "settled_at_venue": 2,
+    "removed_by_this_ship": 1,
+    "named": "KXWTA-26MONTER, a tournament that finished Aug 30, stored as resolving Oct 3",
+    "not_removed": "KXIPHONERELEASE-IPHONE18 is partially finalized with max(close_time) in 2027, so no date field reaches it. The FRESH needle is not driven to 0 by this ship and must not be reported as if it were.",
+    "status": "to be re-measured on the live surface after deploy"
+  }
+}

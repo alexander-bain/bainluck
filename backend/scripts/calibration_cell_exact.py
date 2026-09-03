@@ -110,6 +110,12 @@ ladder_report = ladder_monotonicity.ladder_report
 outcome_ladder_report = ladder_monotonicity.outcome_ladder_report
 from app.utils.pair_opening_coherence import PAIR_SUM_TOLERANCE  # noqa: E402
 
+# ONE definition of "the server refused the caller, not the range". The sharded
+# folds and this one hit the same endpoint and the same limit; two copies of the
+# predicate is one copy that stops recognising a re-worded refusal.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sharded_sweep import is_throttle  # noqa: E402
+
 #: The db-query row path's silent truncation point.
 ROW_CAP = 1000
 
@@ -163,11 +169,34 @@ _TRANSPORT_ERRORS = (
 )
 
 
+#: CAL-P991, measured 2026-09-03: ``POST /api/admin/db-query`` also refuses with
+#: ``429 Rate limit exceeded: 300/minute`` and a ``retry_after`` in seconds. That
+#: is a THIRD failure shape, and the retry loop below used to fold it into the
+#: generic HTTPError arm whose backoff is 2/4/6 s — shorter than the window it is
+#: waiting out, so three attempts expired inside one minute and a 29-minute fold
+#: died with every completed chunk discarded. It is the same distinction the
+#: transport arm already draws, one layer further out: the range was never
+#: judged, so ask for it again — and wait as long as the server said to.
+THROTTLE_MAX_WAITS = 4
+
+
+def _retry_after_seconds(body: str) -> float | None:
+    """The server's own ``retry_after``, or None when this is not a throttle."""
+    if not is_throttle(body):
+        return None
+    try:
+        return float(json.loads(body).get("retry_after") or 0) + 1.0
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return 30.0
+
+
 def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
     base = os.environ["BAINLUCK_API"].rstrip("/")
     body = json.dumps({"sql": sql, "limit": limit}).encode()
     last = None
-    for attempt in range(retries):
+    throttle_waits = 0
+    attempt = -1
+    while (attempt := attempt + 1) < retries:
         req = urllib.request.Request(
             f"{base}/api/admin/db-query", data=body,
             headers={"Authorization": "Bearer " + os.environ["ADMIN_TOKEN"],
@@ -181,6 +210,20 @@ def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
             last = e.read().decode()[:400]
             if "statement_timeout" in last:
                 raise QueryTimeout(last) from e
+            # ORDERING: the throttle arm sits between the timeout raise and the
+            # generic backoff. Above it, a real statement_timeout must still
+            # split the range; below it, a genuine server error must still
+            # exhaust its budget rather than wait out a window nobody imposed.
+            wait = _retry_after_seconds(last)
+            if wait is not None and throttle_waits < THROTTLE_MAX_WAITS:
+                throttle_waits += 1
+                print(f"      throttled — waiting {wait:.0f}s, re-asking the "
+                      f"SAME range ({throttle_waits}/{THROTTLE_MAX_WAITS})")
+                time.sleep(wait)
+                # A throttle says nothing about this range, so it must not
+                # consume an attempt that exists to bound a FAILING one.
+                attempt -= 1
+                continue
             time.sleep(2 * (attempt + 1))
         except _TRANSPORT_ERRORS as e:
             last = f"{type(e).__name__}: {e}"

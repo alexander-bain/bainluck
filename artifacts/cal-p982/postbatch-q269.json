@@ -1,0 +1,283 @@
+{
+  "baseline": {
+    "cells_at_bar": 31,
+    "cells_material": 49,
+    "generated_at": "2026-08-31T04:37:36.703361+00:00",
+    "headline_pp": 1.86,
+    "population_version": "q268",
+    "total_outcomes": 930149
+  },
+  "delta": {
+    "cells_at_bar": 3,
+    "cells_material": -1,
+    "headline_pp": -0.15,
+    "outcomes_removed_pct": 20.22,
+    "total_outcomes": -188062
+  },
+  "measured_sigma_new": {
+    "cells_at_bar_if_applied": 34,
+    "low_coverage_cells": [],
+    "queued_cells_low_coverage": 0,
+    "queued_cells_measured": 0,
+    "queued_cells_refuted": 0,
+    "queued_cells_unmeasured": 14,
+    "refuted_cells": [],
+    "refuted_excess_outcomes": 0
+  },
+  "movers": {
+    "dropped": [
+      {
+        "cell": "kalshi/crypto",
+        "ece": 7.12,
+        "n": 4624,
+        "verdict": "OVER_BAR_ESTABLISHED"
+      }
+    ],
+    "moved_top": [
+      {
+        "cell": "polymarket/esports",
+        "delta_pp": -4.68,
+        "ece_after": 2.35,
+        "ece_before": 7.03,
+        "n_after": 9795,
+        "n_before": 14864,
+        "verdict_after": "PASS",
+        "verdict_before": "OVER_BAR_ESTABLISHED"
+      },
+      {
+        "cell": "kalshi/economics",
+        "delta_pp": -2.12,
+        "ece_after": 3.28,
+        "ece_before": 5.4,
+        "n_after": 1751,
+        "n_before": 30187,
+        "verdict_after": "OVER_BAR_UNESTABLISHED",
+        "verdict_before": "OVER_BAR_ESTABLISHED"
+      },
+      {
+        "cell": "polymarket/baseball",
+        "delta_pp": -1.86,
+        "ece_after": 2.85,
+        "ece_before": 4.71,
+        "n_after": 15496,
+        "n_before": 45252,
+        "verdict_after": "PASS",
+        "verdict_before": "OVER_BAR_ESTABLISHED"
+      },
+      {
+        "cell": "kalshi/entertainment",
+        "delta_pp": 1.2,
+        "ece_after": 6.29,
+        "ece_before": 5.09,
+        "n_after": 8922,
+        "n_before": 8512,
+        "verdict_after": "OVER_BAR_ESTABLISHED",
+        "verdict_before": "OVER_BAR_ESTABLISHED"
+      },
+      {
+        "cell": "odds_api_totals/baseball_mlb",
+        "delta_pp": -0.92,
+        "ece_after": 2.24,
+        "ece_before": 3.16,
+        "n_after": 1390,
+        "n_before": 1056,
+        "verdict_after": "PASS",
+        "verdict_before": "OVER_BAR_UNESTABLISHED"
+      },
+      {
+        "cell": "kalshi/esports",
+        "delta_pp": -0.74,
+        "ece_after": 1.08,
+        "ece_before": 1.82,
+        "n_after": 14377,
+        "n_before": 16110,
+        "verdict_after": "PASS",
+        "verdict_before": "PASS"
+      },
+      {
+        "cell": "kalshi/tennis",
+        "delta_pp": -0.63,
+        "ece_after": 1.42,
+        "ece_before": 2.05,
+        "n_after": 11488,
+        "n_before": 12743,
+        "verdict_after": "PASS",
+        "verdict_before": "PASS"
+      },
+      {
+        "cell": "polymarket/soccer",
+        "delta_pp": -0.62,
+        "ece_after": 2.74,
+        "ece_before": 3.36,
+        "n_after": 89638,
+        "n_before": 107850,
+        "verdict_after": "PASS",
+        "verdict_before": "OVER_BAR_ESTABLISHED"
+      },
+      {
+        "cell": "kalshi/mma",
+        "delta_pp": -0.52,
+        "ece_after": 2.64,
+        "ece_before": 3.16,
+        "n_after": 2223,
+        "n_before": 3133,
+        "verdict_after": "PASS",
+        "verdict_before": "OVER_BAR_UNESTABLISHED"
+      },
+      {
+        "cell": "polymarket/table_tennis",
+        "delta_pp": -0.51,
+        "ece_after": 1.94,
+        "ece_before": 2.45,
+        "n_after": 26575,
+        "n_before": 26908,
+        "verdict_after": "PASS",
+        "verdict_before": "PASS"
+      },
+      {
+        "cell": "polymarket/economics",
+        "delta_pp": 0.49,
+        "ece_after": 4.36,
+        "ece_before": 3.87,
+        "n_after": 9656,
+        "n_before": 13083,
+        "verdict_after": "OVER_BAR_ESTABLISHED",
+        "verdict_before": "OVER_BAR_UNESTABLISHED"
+      },
+      {
+        "cell": "odds_api/baseball_mlb",
+        "delta_pp": 0.48,
+        "ece_after": 2.64,
+        "ece_before": 2.16,
+        "n_after": 2962,
+        "n_before": 2878,
+        "verdict_after": "OVER_BAR_UNESTABLISHED",
+        "verdict_before": "PASS"
+      }
+    ],
+    "new": [],
+    "verdict_flips": [
+      {
+        "after": "PASS",
+        "before": "OVER_BAR_ESTABLISHED",
+        "cell": "polymarket/esports",
+        "ece_after": 2.35,
+        "ece_before": 7.03
+      },
+      {
+        "after": "OVER_BAR_UNESTABLISHED",
+        "before": "OVER_BAR_ESTABLISHED",
+        "cell": "kalshi/economics",
+        "ece_after": 3.28,
+        "ece_before": 5.4
+      },
+      {
+        "after": "PASS",
+        "before": "OVER_BAR_ESTABLISHED",
+        "cell": "polymarket/baseball",
+        "ece_after": 2.85,
+        "ece_before": 4.71
+      },
+      {
+        "after": "PASS",
+        "before": "OVER_BAR_UNESTABLISHED",
+        "cell": "odds_api_totals/baseball_mlb",
+        "ece_after": 2.24,
+        "ece_before": 3.16
+      },
+      {
+        "after": "PASS",
+        "before": "OVER_BAR_ESTABLISHED",
+        "cell": "polymarket/soccer",
+        "ece_after": 2.74,
+        "ece_before": 3.36
+      },
+      {
+        "after": "PASS",
+        "before": "OVER_BAR_UNESTABLISHED",
+        "cell": "kalshi/mma",
+        "ece_after": 2.64,
+        "ece_before": 3.16
+      },
+      {
+        "after": "OVER_BAR_ESTABLISHED",
+        "before": "OVER_BAR_UNESTABLISHED",
+        "cell": "polymarket/economics",
+        "ece_after": 4.36,
+        "ece_before": 3.87
+      },
+      {
+        "after": "OVER_BAR_UNESTABLISHED",
+        "before": "PASS",
+        "cell": "odds_api/baseball_mlb",
+        "ece_after": 2.64,
+        "ece_before": 2.16
+      }
+    ]
+  },
+  "needle": "NEEDLE: calibration 34/48 cells-at-bar @ 2026-09-02T23:59:29.677686+00:00",
+  "new": {
+    "availability": "stale",
+    "cells_at_bar": 34,
+    "cells_material": 48,
+    "done": false,
+    "generated_at": "2026-09-02T23:59:29.677686+00:00",
+    "headline_pp": 1.71,
+    "population_version": "q269",
+    "self_check": {
+      "detail": [
+        "by_category: 34/34 cells reproduced exactly",
+        "by_source: 7/7 cells reproduced exactly"
+      ],
+      "ok": true
+    },
+    "total_outcomes": 742087
+  },
+  "per_class": {
+    "baseline": {
+      "cells_at_bar": 31,
+      "cells_exempt": 244,
+      "cells_material": 49,
+      "cells_material_outcomes": 889436,
+      "cells_pass": 17,
+      "cells_queued": 18,
+      "cells_total": 293,
+      "cells_unestablished": 14,
+      "queued_excess_outcomes": 455808
+    },
+    "new": {
+      "cells_at_bar": 34,
+      "cells_exempt": 277,
+      "cells_material": 48,
+      "cells_material_outcomes": 695441,
+      "cells_pass": 21,
+      "cells_queued": 14,
+      "cells_total": 325,
+      "cells_unestablished": 13,
+      "queued_excess_outcomes": 200573
+    }
+  },
+  "per_class_new": {
+    "A_multibook_consensus": {
+      "at_bar": 12,
+      "bar_pp": 2.5,
+      "cells": 18,
+      "outcomes": 107356,
+      "queued": 6
+    },
+    "B_exchange_contest": {
+      "at_bar": 15,
+      "bar_pp": 3.0,
+      "cells": 20,
+      "outcomes": 505298,
+      "queued": 5
+    },
+    "C_exchange_standalone": {
+      "at_bar": 7,
+      "bar_pp": 3.0,
+      "cells": 10,
+      "outcomes": 82787,
+      "queued": 3
+    }
+  }
+}

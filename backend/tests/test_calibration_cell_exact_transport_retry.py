@@ -146,3 +146,81 @@ class TestTheSplitSignalSurvivesTheNewArm:
         ])
         assert cce.db_query("SELECT 1") == {"rows": [[7]]}
         assert calls["n"] == 2
+
+
+class TestTheThrottleIsATHIRDShapeAndOutlastsItsWindow:
+    """CAL-P991: ``429 Rate limit exceeded: 300/minute`` with a ``retry_after``.
+
+    Measured 2026-09-03: this arrived as a plain ``HTTPError``, took the generic
+    2/4/6 s backoff, and killed a 29-minute fold inside one 60-second window
+    with every completed chunk discarded. It is neither a timeout (the range was
+    never judged, so splitting is wrong) nor a transport failure (the server
+    answered, and told us how long to wait).
+    """
+
+    @staticmethod
+    def _throttle(retry_after=21):
+        raw = json.dumps({"detail": "Rate limit exceeded: 300/minute",
+                          "retry_after": retry_after}).encode()
+        return urllib.error.HTTPError(
+            "http://x/api/admin/db-query", 429, "Too Many Requests", {},
+            BytesIO(raw))
+
+    def test_a_throttle_waits_the_servers_own_retry_after(self, env, monkeypatch):
+        slept: list[float] = []
+        monkeypatch.setattr(cce.time, "sleep", slept.append)
+        calls = _urlopen_returning(monkeypatch, [
+            self._throttle(21), _Resp({"rows": [[1]]}),
+        ])
+        assert cce.db_query("SELECT 1") == {"rows": [[1]]}
+        assert calls["n"] == 2
+        assert slept == [22.0], (
+            "the generic 2/4/6 backoff is shorter than the window being waited "
+            "out; honouring retry_after is the whole repair"
+        )
+
+    def test_a_throttle_does_not_consume_the_failure_retry_budget(
+        self, env, monkeypatch
+    ):
+        """Four throttles then success — more throttles than ``retries``."""
+        calls = _urlopen_returning(monkeypatch, [
+            self._throttle(), self._throttle(), self._throttle(),
+            self._throttle(), _Resp({"rows": [[9]]}),
+        ])
+        assert cce.db_query("SELECT 1", retries=3) == {"rows": [[9]]}
+        assert calls["n"] == 5
+
+    def test_a_sustained_throttle_still_gives_up_rather_than_looping_forever(
+        self, env, monkeypatch
+    ):
+        calls = _urlopen_returning(
+            monkeypatch, [self._throttle()] * 40)
+        with pytest.raises(RuntimeError, match="db-query failed"):
+            cce.db_query("SELECT 1", retries=3)
+        # Bounded: THROTTLE_MAX_WAITS free re-asks, then the ordinary budget.
+        assert calls["n"] <= cce.THROTTLE_MAX_WAITS + 3
+
+    def test_a_malformed_throttle_body_still_waits_rather_than_hot_looping(self):
+        assert cce._retry_after_seconds("Rate limit exceeded") == 30.0
+        assert cce._retry_after_seconds(
+            '{"detail": "429 Too Many Requests"}') == 1.0
+
+    def test_a_statement_timeout_is_not_read_as_a_throttle(self, env, monkeypatch):
+        """The control. The split signal must survive the new arm."""
+        assert cce._retry_after_seconds(
+            '{"detail": {"reason": "statement_timeout"}}') is None
+        calls = _urlopen_returning(monkeypatch, [
+            _http_error({"detail": {"reason": "statement_timeout"}}),
+        ])
+        with pytest.raises(cce.QueryTimeout):
+            cce.db_query("SELECT 1")
+        assert calls["n"] == 1
+
+    def test_the_throttle_predicate_is_the_one_the_sharded_folds_use(self):
+        """Two copies of this predicate is one copy that goes stale."""
+        import sys
+        from pathlib import Path as _P
+        sys.path.insert(0, str(_P(cce.__file__).resolve().parent))
+        import sharded_sweep
+
+        assert cce.is_throttle is sharded_sweep.is_throttle
