@@ -95,9 +95,17 @@ nonisolated struct StandingsData: Decodable, Sendable {
 
 /// Current consensus odds and derived probabilities for an event.
 nonisolated struct CurrentOdds: Decodable, Sendable {
+    // #2687: `var`, not `let`, on the three fields a pushed SSE frame replaces.
+    // A live frame carries a fresher blend than the payload this struct was
+    // decoded from, and the native surfaces all read the probability THROUGH
+    // here — so the stream writes into the model the page already reads,
+    // exactly as web's stream writes into the SWR cache. The alternative, an
+    // override the views consult alongside the model, would mean every reader
+    // has to know push exists. Nothing else about the struct changes; it is
+    // still a value type and still decoded the same way.
     let capturedAt: String?
-    let homeProbability: Double?
-    let awayProbability: Double?
+    var homeProbability: Double?
+    var awayProbability: Double?
     // UX-P114: the whole percents the card PRINTS for the two probabilities above.
     // A game card draws both at once and the feed derives away as `1 - home`, so
     // rounding them independently printed 101 whenever the blend landed on a
@@ -108,8 +116,13 @@ nonisolated struct CurrentOdds: Decodable, Sendable {
     // Discover response is cached and this build can be installed against an older
     // deploy, so "the field exists in feed.py" is not "the field is on this
     // payload".
-    let homeRenderedPercent: Int?
-    let awayRenderedPercent: Int?
+    // `var` for the same reason, and they must be CLEARED TOGETHER when a
+    // pushed probability lands: the served pair describes the `current_odds`
+    // this payload arrived with and nothing else, so leaving either of them
+    // beside a fresher probability prints a stale number, or a served value
+    // beside a derived one — the mismatched-pair trap `duelPercents` documents.
+    var homeRenderedPercent: Int?
+    var awayRenderedPercent: Int?
     let spread: Double?
     let homeSpread: Double?
     let overUnder: Double?
