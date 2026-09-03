@@ -77,8 +77,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -145,6 +147,22 @@ def _strip_sql_comments(sql: str) -> str:
     return "\n".join(ln for ln in out if ln.strip())
 
 
+#: Transport failures — the connection died, so the server never said anything
+#: about this statement. They are NOT ``statement_timeout``: nothing was learned
+#: about whether the range is too wide, so the answer is to ask the same range
+#: again, not to split it. Measured 2026-09-02 (CAL-P991): three of the largest
+#: cells on the board — ``polymarket/soccer``, ``polymarket/tennis`` and rank 1's
+#: holdout — each discarded 20+ minutes of completed chunks to one of these,
+#: because the retry loop below caught only ``HTTPError`` and every one of these
+#: is a sibling of it, not a subclass.
+_TRANSPORT_ERRORS = (
+    urllib.error.URLError,          # incl. the socket errors urllib wraps
+    http.client.HTTPException,      # incl. RemoteDisconnected, BadStatusLine
+    ConnectionError,                # incl. ConnectionResetError
+    socket.timeout,
+)
+
+
 def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
     base = os.environ["BAINLUCK_API"].rstrip("/")
     body = json.dumps({"sql": sql, "limit": limit}).encode()
@@ -157,9 +175,17 @@ def db_query(sql: str, limit: int = ROW_CAP, retries: int = 3) -> dict:
         try:
             return json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
         except urllib.error.HTTPError as e:
+            # HTTPError is a URLError subclass, so it MUST be caught first or
+            # the transport arm below would swallow the statement_timeout that
+            # tells the caller to split the range.
             last = e.read().decode()[:400]
             if "statement_timeout" in last:
                 raise QueryTimeout(last) from e
+            time.sleep(2 * (attempt + 1))
+        except _TRANSPORT_ERRORS as e:
+            last = f"{type(e).__name__}: {e}"
+            print(f"      transport {type(e).__name__} — retrying same range "
+                  f"({attempt + 1}/{retries})")
             time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"db-query failed after {retries} attempts: {last}")
 
@@ -1171,6 +1197,39 @@ CASE WHEN d.market_id = ANY({_id_array(_TRUTH['truth_broken'], lo, hi)})
 """, "", "")
 
 
+#: CAL-P991 — WHICH SIDE of a two-leg Over/Under pair the curve actually
+#: published, crossed with the pair class and the market type.
+#:
+#: ``deduped``'s ELSE arm publishes ``rn = 1`` only, and ``rn`` orders by
+#: ``ABS(fo.opening_probability - 0.5)`` then ``fo.id``. For a COHERENT pair
+#: ``(p, 1-p)`` the two legs are equidistant from 0.5 BY CONSTRUCTION, so the
+#: distance term never decides and every such pair is resolved by the ``fo.id``
+#: tie-break alone. Alex's 2026-08-03 ruling chose that tie-break as a
+#: DETERMINISM rule and said in as many words that it is "deliberately NOT a
+#: Yes/No or favourite/underdog preference". Whether it behaves as one is a
+#: measurement, and this is the dimension that takes it: if the published side
+#: is ~50/50 over/under the ruling holds in practice, and if it is one-sided
+#: the curve is grading one half of every book.
+#:
+#: ``over_partner_kept`` / ``under_partner_kept`` are the control: they are the
+#: legs whose PARTNER also published, so the pair contributes both sides and
+#: cannot carry a side bias. They must not be pooled with the ``rn = 1``
+#: singletons, because pooling them is what makes a one-sided cut look balanced.
+OUSIDE_JOIN = """
+LEFT JOIN (
+    SELECT market_id, COUNT(*) AS pub_legs
+    FROM deduped GROUP BY market_id
+) pk ON pk.market_id = d.market_id
+"""
+OUSIDE_EXPR = """
+CASE WHEN lower(btrim(d.outcome_name)) = 'over' THEN 'over'
+     WHEN lower(btrim(d.outcome_name)) = 'under' THEN 'under'
+     ELSE 'zz_other' END
+|| CASE WHEN COALESCE(pk.pub_legs, 0) >= 2 THEN '_partner_kept'
+        ELSE '_alone' END
+|| '|' || COALESCE(d.market_type, 'null')
+"""
+
 #: Dimensions whose expression depends on the chunk, and therefore cannot live
 #: in the static table below.
 PER_CHUNK_DIMENSIONS = {"ladder": ladder_dim, "mono": mono_dim, "truth": truth_dim}
@@ -1200,6 +1259,7 @@ DIMENSIONS = {
     "policy2": (POLICY2_EXPR, POLICY2_JOIN, SUMBAND_PRE),
     "price_moved": ("CASE WHEN d.price_moved THEN 'moved' ELSE 'unmoved' END", "", ""),
     "market_type": ("COALESCE(d.market_type, 'null')", "", ""),
+    "ouside": (OUSIDE_EXPR, OUSIDE_JOIN, ""),
 }
 
 
