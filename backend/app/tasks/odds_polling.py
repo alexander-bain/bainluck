@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Sport, Event, OddsSnapshot, ScoreSnapshot
 from app.services.event_registry import ODDS_LISTING_IS_NOT_A_DEREFERENCE
 from app.services.odds_api import OddsAPIService
+from app.utils.event_completion import venue_live_write_is_a_resurrection
 from app.utils.game_pairing import IdCurrency, external_id_currency
 from app.utils.odds_math import moneyline_to_probability, project_scores
 from app.utils.polling_config import compute_effective_interval
@@ -984,6 +985,7 @@ async def _poll_all_odds():
         scores_refused_stale_id = 0
         scores_refused_unverifiable = 0
         scores_unbound_id = 0
+        scores_refused_resurrection = 0
         # #2368: score fetches the quota breaker refused. Same rule as the
         # `scores_refused_*` counters above — a guard whose refusals are
         # invisible is indistinguishable from a guard that is off, and this
@@ -1680,6 +1682,28 @@ async def _poll_all_odds():
                             else:
                                 event_status = None
 
+                            # live/042: a venue's "still quoting it" is not a
+                            # state signal. `completed: false` on a row that is
+                            # ALREADY settled is the resurrection half of the
+                            # stuck-live loop — it re-opens the row and leaves
+                            # `completed_at` behind, so the reader gets a match
+                            # that is live and finished at once. The score write
+                            # below is deliberately left alone.
+                            if event_status == "live" and venue_live_write_is_a_resurrection(
+                                event_obj.status, event_obj.completed_at
+                            ):
+                                scores_refused_resurrection += 1
+                                logger.warning(
+                                    "live/042 refused venue resurrection: event %s (%s vs %s) "
+                                    "is %s with completed_at=%s, and the Odds scores feed "
+                                    "reports completed=false. Status left settled; only the "
+                                    "authority feed un-settles (#1201).",
+                                    event_obj.id, event_obj.home_team_name,
+                                    event_obj.away_team_name, event_obj.status,
+                                    event_obj.completed_at,
+                                )
+                                event_status = None
+
                             update_values = {}
                             if event_status is not None:
                                 update_values["status"] = event_status
@@ -1847,6 +1871,10 @@ async def _poll_all_odds():
             "scores_refused_stale_id": scores_refused_stale_id,
             "scores_refused_unverifiable": scores_refused_unverifiable,
             "scores_unbound_id": scores_unbound_id,
+            # live/042 — the same reason: a refusal that reports nothing reads as
+            # "there was nothing to refuse". This one should trend to zero once
+            # the settled rows stop being re-quoted.
+            "scores_refused_resurrection": scores_refused_resurrection,
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,

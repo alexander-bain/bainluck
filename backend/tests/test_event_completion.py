@@ -98,17 +98,25 @@ class TestSnapshotEvidenceQuery:
     def test_only_post_commence_snapshots_count(self):
         from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
 
-        # A pregame line says nothing about when play ended, so both halves of
-        # the union must be anchored to the event's own commence_time.
+        # A pregame line says nothing about when play ended, so every arm of the
+        # query must be anchored to the event's own commence_time. live/042 left
+        # one arm, so there is one anchor to find rather than two.
         assert LAST_POST_COMMENCE_SNAPSHOT_SQL.count(
             "captured_at >= e.commence_time"
-        ) == 2
+        ) == 1
 
-    def test_both_snapshot_sources_are_consulted(self):
+    def test_only_play_reporting_snapshots_are_consulted(self):
+        """live/042: the evidence is what REPORTS on the game, not what prices it.
+
+        Was ``assert "odds_snapshots" in ...``. That arm is gone on purpose:
+        every row in that table is a bookmaker line, and a book quoting a match
+        it will still take action on is not a witness that the match is being
+        played.
+        """
         from app.utils.event_completion import LAST_POST_COMMENCE_SNAPSHOT_SQL
 
         assert "win_prob_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
-        assert "odds_snapshots" in LAST_POST_COMMENCE_SNAPSHOT_SQL
+        assert "odds_snapshots" not in LAST_POST_COMMENCE_SNAPSHOT_SQL
 
     def test_it_is_batched(self):
         from sqlalchemy import text

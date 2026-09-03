@@ -116,21 +116,57 @@ def commence_time_is_a_reported_start(commence_time_source) -> bool:
 # minutes the espn_sync docstring has always claimed.
 STILL_ACTIVE_MINUTES = 30
 
-# One batched query for a whole candidate set: the most recent snapshot from any
-# source that lands at or after the event's own commence_time. Pre-commence rows
-# are excluded because a pregame line says nothing about when play ended.
-LAST_POST_COMMENCE_SNAPSHOT_SQL = """
+# ── A VENUE PRICE IS NOT EVIDENCE OF PLAY (live/042) ─────────────────────────
+#
+#: Sources that quote a PRICE on a match rather than report ON it. A venue
+#: prices a fixture whenever it is willing to take the other side of the bet —
+#: before the first serve, through a rain suspension, and long after the players
+#: have left the court. So "Kalshi ticked two minutes ago" answers "is this
+#: market open?", never "is this game being played?".
+#:
+#: This is the SAME argument ``commence_time_is_a_reported_start`` already makes
+#: one field over — *"Kalshi prices tomorrow's match all night, so every row
+#: would qualify and the guard would be a no-op that reads as a safeguard"* —
+#: and q076 applied it only to the START side. The HOLD side kept counting
+#: venue ticks, so the two halves of the same rule disagreed.
+#:
+#: MEASURED, production 2026-09-02. Six US Open matches (De Jong/Passaro,
+#: Bergs/Taberner, Kasatkina/Badosa, Molcan/Bonzi, Jović/Frech, Linette/Jones)
+#: read ``status='live'`` while carrying a ``completed_at``. Every one of their
+#: post-commence ``win_prob_snapshots`` rows — 1,037 of them across the seven
+#: candidates — was ``source='kalshi'``. Not "mostly": there was no ESPN, MLB,
+#: stat-model or StatPal snapshot on any of them. The hold guard was being
+#: satisfied 100% by price ticks, and ``derive_completed_at`` then stamped a
+#: game-end time off one. ESPN, the authority, had all six SCHEDULED to resume
+#: that afternoon — none had finished at all.
+#:
+#: A DENYLIST, not an allowlist, and deliberately: StatPal writes
+#: ``source='statpal'`` and is not in ``WIN_PROB_SOURCES`` at all, so an
+#: allowlist would silently drop a real play source. The completeness risk runs
+#: the other way — a NEW venue that nobody classifies — and that is what
+#: ``test_every_market_source_is_named_a_venue`` pins against the registry's own
+#: ``source_type == "market"``.
+VENUE_PRICE_SOURCES = frozenset({"betting", "kalshi", "polymarket"})
+
+_VENUE_SOURCE_SQL_LIST = ", ".join(f"'{s}'" for s in sorted(VENUE_PRICE_SOURCES))
+
+# One batched query for a whole candidate set: the most recent snapshot from a
+# source that REPORTS ON the game, landing at or after the event's own
+# commence_time. Pre-commence rows are excluded because a pregame line says
+# nothing about when play ended; venue prices are excluded because a price says
+# nothing about play at all.
+#
+# ``odds_snapshots`` is gone from the union entirely rather than filtered: every
+# row in that table is a bookmaker line, which is the "betting" venue by
+# definition. There is no play-reporting arm of it left to keep.
+LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
     SELECT x.event_id, MAX(x.captured_at) AS last_snap
     FROM (
         SELECT w.event_id, w.captured_at
           FROM win_prob_snapshots w
           JOIN events e ON e.id = w.event_id
          WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
-        UNION ALL
-        SELECT o.event_id, o.captured_at
-          FROM odds_snapshots o
-          JOIN events e ON e.id = o.event_id
-         WHERE o.event_id = ANY(:event_ids) AND o.captured_at >= e.commence_time
+           AND (w.source IS NULL OR w.source NOT IN ({_VENUE_SOURCE_SQL_LIST}))
     ) x
     GROUP BY x.event_id
 """
@@ -146,10 +182,48 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
     No snapshot at all is NOT evidence of activity — that is the ordinary case
     for an event whose sources went quiet, and it must stay closeable or the
     staleness net stops doing its job.
+
+    ``last_snapshot`` must come from :data:`LAST_POST_COMMENCE_SNAPSHOT_SQL`,
+    which now excludes :data:`VENUE_PRICE_SOURCES`. Passing a venue tick in here
+    re-opens live/042: a market that stays open holds a finished match live
+    forever, because the hold renews itself every two minutes.
     """
     if last_snapshot is None or now is None:
         return False
     return (now - last_snapshot) < timedelta(minutes=STILL_ACTIVE_MINUTES)
+
+
+#: Statuses that mean "this row has been settled by something".
+_SETTLED_STATUSES = ("completed", "closed")
+
+
+def venue_live_write_is_a_resurrection(status, completed_at) -> bool:
+    """Would writing ``live`` here un-settle a row on a VENUE's say-so? (live/042)
+
+    True ⇒ refuse the status write. The score write is unaffected: a later score
+    from the same feed converges a frozen mid-game number on the real one, and
+    gotcha #21 keeps grading out of it either way.
+
+    The Odds API scores feed reports ``completed: false`` for anything its books
+    still quote, and the reader derives ``live`` from that plus a start in the
+    past. On a row nothing has settled that is the ordinary promotion. On a row
+    that ALREADY carries a completion it is a venue overruling a settlement it
+    knows nothing about — and because it leaves ``completed_at`` in place, what
+    it actually produces is a row that is live and finished at the same time.
+
+    MEASURED, production 2026-09-02: five US Open matches served
+    ``{"status": "live", "completed_at": "..."}`` from ``/api/events/{id}``
+    simultaneously. The loop is self-sustaining — the staleness net closes the
+    row, the next scores poll re-opens it, and the fabricated ``completed_at``
+    survives every lap because nothing on this path clears it.
+
+    Un-settling is not forbidden, it is RESERVED: ``espn_replay_unsettles``
+    (#1201) does it from the authority feed, and it clears ``completed_at`` in
+    the same write so the row never holds both facts at once. That path is
+    untouched, and once it has cleared the completion this predicate stops
+    refusing — the venue may promote the row normally again.
+    """
+    return status in _SETTLED_STATUSES or completed_at is not None
 
 
 def derive_completed_at(last_snapshot, commence_time, now=None):
