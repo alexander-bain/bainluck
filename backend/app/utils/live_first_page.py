@@ -205,11 +205,18 @@ def hoist_live_events_into_first_page(
         if room <= 0:
             return items, meta
 
-        # Displaceable window slots, WORST FIRST. Walking the window backwards is
-        # what protects `compose_lead`'s prefix (C185) by construction rather than
-        # by a special case: the marquee sits at the front, and we consume from
-        # the back. The explicit `MARQUEE_PIN_KEY` skip is belt-and-braces for a
-        # future pass that places a pin somewhere other than index 0.
+        # Displaceable window slots, WORST FIRST — which is also the editorially
+        # correct choice, since the tail of the window is the weakest card on the
+        # page.
+        #
+        # TWO mechanisms guard `compose_lead`'s prefix (C185) and they cover
+        # DIFFERENT cases, which was measured rather than assumed. Walking
+        # backwards protects a pin at index 0 on its own: with the
+        # `MARQUEE_PIN_KEY` skip deleted the suite still passed 33/33. The skip
+        # is what protects a pin placed anywhere else — a back-first walk reaches
+        # the LAST slot first, so a pin sitting there would be the first thing
+        # swapped out. Both cases now have a named control, and deleting either
+        # mechanism turns one of them red.
         displaceable = [
             i
             for i in range(window_size - 1, -1, -1)

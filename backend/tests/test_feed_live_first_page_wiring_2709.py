@@ -84,14 +84,30 @@ class TestSportsFirstPage:
         assert _live_slots(pool) == [], "the fixture cannot express the defect"
 
     def test_live_games_reach_the_first_page_on_sports(self):
-        out, meta = apply_discover_display_chain(
+        out, _meta = apply_discover_display_chain(
             _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
         )
         assert len(_live_slots(out)) == 6, (
             "every live game must be on the first page — Alex's acceptance "
             "criterion is rail count == live count"
         )
-        assert meta["live_first_page"]["hoisted"] > 0
+
+    def test_the_sports_chain_runs_a_live_first_page_pass_at_all(self):
+        """Separate from the count on purpose. "The pass never ran" and "the pass
+        ran and chose badly" are different defects and a single assertion would
+        report them identically."""
+        _out, meta = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
+        )
+        assert meta["live_first_page"] is not None, (
+            "sports mode never invoked the pass — this is the reported defect"
+        )
+
+    def test_the_sports_chain_reports_no_live_game_left_behind(self):
+        _out, meta = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
+        )
+        assert meta["live_first_page"]["hoisted"] == 6
         assert meta["live_first_page"]["unhoisted"] == 0
 
     def test_the_first_page_still_holds_the_rest_of_the_surface(self):

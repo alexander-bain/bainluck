@@ -164,6 +164,25 @@ class TestControls:
         assert meta["hoisted"] == 1
         assert out[0] is marquee
 
+    def test_CONTROL_a_marquee_pinned_mid_window_is_not_displaced(self):
+        """The case that makes the `MARQUEE_PIN_KEY` skip load-bearing.
+
+        Walking the window backwards already protects a prefix at index 0, so
+        the counter-case that deletes the skip is GREEN against the test above
+        (measured: 33/33). That made the skip an untested claim — the module
+        says it covers "a future pass that places a pin somewhere other than
+        index 0", and nothing checked it. Here the pin IS the last slot, which
+        is the first slot a back-first walk would take, so the skip is the only
+        thing standing between the pin and the swap.
+        """
+        pinned = _filler(1, status="scheduled")[0]
+        pinned[MARQUEE_PIN_KEY] = True
+        items = _filler(19) + [pinned] + [_event(id="buried")]
+        out, meta = hoist_live_events_into_first_page(items, first_page_size=20)
+
+        assert meta["hoisted"] == 1
+        assert out[19] is pinned, "the pin was displaced despite being pinned"
+
     def test_CONTROL_an_empty_or_short_pool_is_safe(self):
         assert hoist_live_events_into_first_page([], first_page_size=20)[0] == []
         one = [_event(id="only")]
