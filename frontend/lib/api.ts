@@ -54,7 +54,11 @@ import {
 } from "./probabilityDisplay";
 import { reportFeedTelemetry } from "./feedTelemetry";
 import { resolveSharedAnonSuppression } from "./discover/sharedAnonFeed";
-import { bootDurationMs, claimBootFeed } from "./discover/feedBoot";
+import {
+  FEED_BOOT_CLAIM_TIMEOUT_MS,
+  bootDurationMs,
+  claimBootFeed,
+} from "./discover/feedBoot";
 import {
   HUB_BOOT_CLAIM_TIMEOUT_MS,
   claimHubBoot,
@@ -1143,12 +1147,28 @@ export async function fetchFeed(
   // request. Anything else — a mismatch, a non-2xx, a rejected fetch — falls
   // through to the normal `apiFetch` path, which keeps its retries and its
   // typed errors.
+  //
+  // LAT-P218: THE CLAIM IS RACED AGAINST A DEADLINE. It used to `await` the parked promise bare. A
+  // parked fetch is a naked `fetch()` in a script tag — no timeout, no retries — whereas `apiFetch`
+  // has both (20 s per attempt, two retries). So during a #2724 database spell a bare await stranded
+  // the reader on a skeleton for as long as the server held the connection, while the un-booted path
+  // would have given up and retried. `hubBoot.ts` documented that hazard and raced its own claim;
+  // this one did not, and LAT-P218 puts the Sports tab on this same claim, so the exposure now spans
+  // two of the three highest-traffic surfaces. The deadline matches `apiFetch`'s own per-attempt
+  // timeout, so the worst case is one extra attempt's wait rather than an unbounded one.
   if (suppressSessionId && !headers) {
     const booted = claimBootFeed(`${API_URL}${endpoint}`);
     if (booted?.response) {
+      const TIMED_OUT = Symbol("feed-boot-timeout");
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const res = await booted.response;
-        if (res.ok) {
+        const res = await Promise.race([
+          booted.response,
+          new Promise<typeof TIMED_OUT>((resolve) => {
+            timer = setTimeout(() => resolve(TIMED_OUT), FEED_BOOT_CLAIM_TIMEOUT_MS);
+          }),
+        ]);
+        if (res !== TIMED_OUT && res.ok) {
           const parsed = (await res.json()) as FeedResponse;
           try {
             reportFeedTelemetry(res, {
@@ -1169,6 +1189,8 @@ export async function fetchFeed(
         }
       } catch {
         /* boot fetch failed — the normal request below is the fallback */
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     }
   }

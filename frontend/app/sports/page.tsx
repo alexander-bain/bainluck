@@ -23,6 +23,7 @@ import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
+import SportsFeedBootScript from "@/components/sports/SportsFeedBootScript";
 import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
@@ -545,6 +546,18 @@ export default function SportsPage() {
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+    {/* LAT-P218 — first node in the tree so the parser reaches it before the chips, the skeleton
+        grid and the footer. `/api/feed?limit=20&mode=sports` is on the wire ~1.8 s before hydration
+        could have issued it on Slow 4G. Claimed by `fetchFeed`'s existing boot claim.
+
+        🔴 IT SITS OUTSIDE THE `space-y-5` WRAPPER, NOT INSIDE IT. `space-y-5` is
+        `& > * + * { margin-top: 1.25rem }`. A <script> renders nothing but IS an element child, so as
+        the first child it would make LeagueChips the SECOND child and push the entire page down
+        1.25rem — an invisible instrument producing a visible layout shift. Discover can put its boot
+        script inside its root div because that div is `min-h-screen bg-surface-deep` with no space-y;
+        this one cannot. Outside the wrapper it also parses very slightly EARLIER, so nothing is
+        traded away. */}
+    <SportsFeedBootScript />
     <div className="space-y-5">
       {/* Toast feedback */}
       {toast && (

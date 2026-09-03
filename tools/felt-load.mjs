@@ -30,12 +30,15 @@
 // egress proxy. They are comparable TO EACH OTHER — before a cut and after a cut, page against page —
 // and they are NOT comparable to a stopwatch on Alex's laptop on his own network.
 //
-// 🔴 PACING IS PART OF THE MEASUREMENT (LAT-P218). Production caps a client at 60 requests/minute and
-// one `/events/{id}` cold load fires ~22 of them, so at the default 3 s pace the Event surface alone
-// runs at roughly twice the budget and can measure its own 429s. Every run now reports `api429` and
-// the summary reports `throttledRuns`; if that number is not zero the row is about the battery, not
-// about the site. Raise `FELT_PACE_MS` (20000 is the measured-safe value for the Event page) rather
-// than reading a throttled row.
+// 🔴 PACING IS PART OF THE MEASUREMENT (LAT-P218). Production caps a client at 60 requests/minute.
+// How many an Event load spends is NOT one number and the two measurements disagree: live/054 counted
+// ~22 while hunting #2783, and this rig counts 7 against `api.bainluck.com` on the settled fixture
+// `/events/15293206` (`apiStatus {"200":7}`, measured 2026-09-03). Different pages, different widget
+// sets, possibly a different filter — unresolved, so the pacing is sized on the WORSE figure. At ~22
+// per load the default 3 s pace puts the Event surface at roughly twice the budget.
+// Every run now reports `api429` and `apiCount`, and the summary reports `throttledRuns`; if that
+// number is not zero the row is about the battery, not the site. Raise `FELT_PACE_MS` (20000 is the
+// measured-safe value) rather than reading a throttled row.
 //
 // Usage:
 //   node tools/felt-load.mjs <surface|url> [runs] [out.json]

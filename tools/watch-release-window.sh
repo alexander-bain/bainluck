@@ -29,10 +29,14 @@
 # **Every window is banked.** A failed release is not a missing measurement, it is the measurement.
 #
 # ── THE REQUEST BUDGET IS PART OF THE INSTRUMENT ───────────────────────────────────────────────────
-# Production caps a client at 60 requests/minute and one `/events/{id}` cold load fires ~22 of them.
-# An unpaced burst measures its own 429s and renders `Rate limit exceeded` — 673 body chars, which is
-# indistinguishable from a blank page in every column the felt rig used to have (that is how #2783 was
-# filed). So the sampling budget is spent deliberately:
+# Production caps a client at 60 requests/minute. An unpaced burst measures its own 429s and renders
+# `Rate limit exceeded` — 673 body chars, indistinguishable from a blank page in every column the felt
+# rig used to have (that is how #2783 was filed). So the sampling budget is spent deliberately.
+#
+# How many requests a load costs is NOT settled: live/054 counted ~22 for an event page while hunting
+# #2783; this rig counts 7 against api.bainluck.com on the settled fixture (`apiStatus {"200":7}`,
+# measured 2026-09-03). The budget below uses the WORSE figure, because being wrong the other way is
+# what poisons a verdict.
 #
 #   prober        1 request  / PROBE_S (6 s default)   =  10 /min
 #   browser load ~22 requests / LOAD_S (45 s default)  = ~29 /min
@@ -89,7 +93,7 @@ mkdir -p "$WORK"
 if ! mkdir "$WORK/lock" 2>/dev/null; then
   echo "$(date -u +%FT%TZ) another watcher holds $WORK/lock — exiting"; exit 3
 fi
-trap 'rmdir "$WORK/lock" 2>/dev/null' EXIT
+trap 'rm -f "$WORK/active-window"; rmdir "$WORK/lock" 2>/dev/null' EXIT
 
 LOG="$WORK/watch.log"
 say() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG"; }
@@ -153,6 +157,13 @@ sample_window() {
   local t0; t0=$(date +%s)
 
   say "🟢 WINDOW OPEN v$ver ($sha), prev $prev_sha — sampling"
+  # 🔴 THE BUDGET IS SHARED, SO THE WINDOW IS ANNOUNCED. Production caps a client at 60 req/min for
+  # the whole machine, not per process. An attended felt-table run alongside a window would push both
+  # over the cap and BOTH readings would be about the throttling — and the attended one would silently
+  # corrupt the unattended #2724 verdict, which is the one nobody can re-take. This marker exists so an
+  # attended battery can wait; `tools/felt-table.sh` does. The watcher never waits for anyone: the
+  # verdict outranks the table.
+  echo "v$ver $sha $(date -u +%FT%TZ)" > "$WORK/active-window"
 
   # The ring BEFORE anything else: the convoy is what we are here for and it starts with the release,
   # not with our first browser load.
@@ -192,6 +203,7 @@ sample_window() {
 
   kill "$pp" "$bp" 2>/dev/null
   wait "$pp" "$bp" 2>/dev/null
+  rm -f "$WORK/active-window"
   ring > "$out/ring-after.json" 2>/dev/null
   heroku releases -n 8 -a "$APP" > "$out/releases.txt" 2>&1
   # The release log is the only place the release phase speaks, and the Procfile's
