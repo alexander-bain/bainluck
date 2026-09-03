@@ -51,6 +51,8 @@ from app.utils.feed_event_candidates import (  # noqa: E402
     TIER_QUOTAS,
     TIER_RECENT,
     TIER_SCHEDULED,
+    TIER_SUSPENDED,
+    candidate_window_conditions,
     deduplicated_event_ids,
     event_candidate_ids,
     status_tier_expr,
@@ -85,24 +87,25 @@ REAL_RECENT_IDS = [30, 31, 32, 33]
 
 
 def _candidate_conditions(now=NOW):
-    """The exact predicate `_score_events` accumulates for the anonymous path."""
-    return [
-        or_(
-            and_(
-                Event.status == "live",
-                Event.commence_time <= now + timedelta(hours=1),
-            ),
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time >= now,
-                Event.commence_time <= now + timedelta(hours=12),
-            ),
-            and_(
-                Event.status.in_(["completed", "closed"]),
-                Event.commence_time >= now - timedelta(hours=24),
-            ),
-        )
-    ]
+    """The predicate `_score_events` uses — THE SAME OBJECT, not a copy of it.
+
+    This was a hand-written copy until live/048, and its docstring said "the
+    exact predicate `_score_events` accumulates". That was true when it was
+    written, and it stopped being true silently: the route learned a fifth
+    status and the copy did not, so every test in this file kept passing over a
+    predicate that no longer described the route (CERT-786). A copy cannot fail
+    that way loudly — it fails by agreeing with itself.
+
+    The windows are the anonymous path's (1h live buffer, 12h upcoming, 24h
+    recent); `my_teams_only` widens them at the call site, which is why they are
+    arguments rather than constants inside the shared function.
+    """
+    return candidate_window_conditions(
+        now=now,
+        live_start_cutoff=now + timedelta(hours=1),
+        upcoming_cutoff=now + timedelta(hours=12),
+        recent_cutoff=now - timedelta(hours=24),
+    )
 
 
 def _event(
@@ -500,12 +503,22 @@ def test_a_tier_under_its_quota_is_admitted_whole(incident):
 
 
 def test_total_never_exceeds_the_budget(engine):
+    """Every tier flooded at once still fits inside one budget.
+
+    The corpus carries FOUR tiers since live/048. That is not padding: with the
+    suspended tier absent the four quotas can only reach 450, and an assertion
+    of `== EVENT_CANDIDATE_BUDGET` over three tiers would have to be relaxed to
+    `<=` — which would stop noticing a quota edited down to nothing, the exact
+    thing `test_the_quota_case_carries_the_declared_numbers` exists to catch
+    from the other side.
+    """
     rows = []
     for tier_idx, (status, when) in enumerate(
         (
             ("live", NOW - timedelta(minutes=5)),
             ("closed", NOW - timedelta(hours=3)),
             ("scheduled", NOW + timedelta(hours=3)),
+            ("suspended", NOW - timedelta(hours=4)),
         )
     ):
         for i in range(400):

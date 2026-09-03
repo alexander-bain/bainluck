@@ -833,6 +833,16 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     bounded 150-URL pass that drains in ~10 days and then returns `no_work`
     forever, and why `background` rather than `heavy`) is on
     `BACKGROUND_BEAT_COUNT`.
+
+    🔴 **RE-DERIVED AT THE MERGE (live/047 → master, 2026-09-03): 111 → 112,
+    explicit 66 → 67.** live/035 (`backfill-thin-event-charts`) and lane1/057
+    (`sync-tennis-from-espn`) each moved the count 110 → 111 for a different
+    beat, and git auto-merged THIS assertion — the two branches wrote the same
+    numbers here — while the constant conflicted. That is the shape of the trap
+    (#1910, INT-158): the guard goes red pointing at the constant rather than at
+    the merge. Both numbers were re-derived by RUNNING the census below over the
+    assembled schedule on the merged tree, never by adding. Fall-through stays
+    at **45**.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -849,9 +859,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 66, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 67, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 111
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 112
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

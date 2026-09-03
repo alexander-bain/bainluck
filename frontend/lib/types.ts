@@ -12,6 +12,28 @@ import type { MatchProp } from "@/lib/matchDetail";
 // so they share the one type (#2443).
 import type { TournamentResult } from "@/lib/tournamentResults";
 
+/**
+ * The `events` table's state vocabulary — ONE definition, because three
+ * payloads carried three copies of the same inline union and a fourth carried
+ * it as a comment on a bare `string`.
+ *
+ * `suspended` is new (live/048). It is what a staleness net writes when the
+ * clock has run out and nothing that WATCHES the match has said it ended: a
+ * rain delay, a match resuming tomorrow, a fixture whose only source went dark.
+ * It is deliberately non-terminal and asserts no outcome, so it must never be
+ * folded into the finished branch — a suspended match that renders "Final" is
+ * the exact defect it exists to prevent (CERT-752: six US Open matches, one of
+ * them 1-2 down in sets, were about to be settled and graded off a partial
+ * score). Backend ladder and full reasoning: `app/utils/event_completion.py`
+ * and EVENT-GRAPH-DOCTRINE §R.
+ */
+export type EventStatus =
+  | "scheduled"
+  | "live"
+  | "suspended"
+  | "completed"
+  | "closed";
+
 export interface Sport {
   id: number;
   key: string;
@@ -147,7 +169,7 @@ export interface Event {
   // Authoritative finished-event date; prefer over commence_time for FINAL cards
   // to avoid rendering a stale/future date beside a Final badge (Queue #189 §B).
   completed_at?: string | null;
-  status: "scheduled" | "live" | "completed" | "closed";
+  status: EventStatus;
   home_score: number | null;
   away_score: number | null;
   current_odds?: CurrentOdds;
@@ -887,7 +909,7 @@ export interface FeedEventData {
   home_team: string;
   away_team: string;
   commence_time: string;
-  status: "scheduled" | "live" | "completed" | "closed";
+  status: EventStatus;
   home_score: number | null;
   away_score: number | null;
   current_odds?: {
@@ -919,6 +941,29 @@ export interface FeedEventData {
     home_probability: number;
     away_probability: number | null;
     favorite: string | null;
+  };
+  /**
+   * ux/1036 — WHAT THE MARKET SAID BEFORE THE MATCH, AND WHO SAID IT.
+   *
+   * `opening_odds` above is the sportsbook median and only ever was: the sole
+   * writer of `Event.opening_*` is `_maybe_set_opening_odds`. It arrives with no
+   * source on it, so a card printing it cannot tell a reader whether they are
+   * looking at a prediction market or at a book — and those are different
+   * claims.
+   *
+   * This key resolves Alex's ladder server-side (Kalshi → Polymarket → books,
+   * ordered, never merged) and names the rung. OPTIONAL: a feed response is
+   * cached, so "the backend deployed it" is not "this payload carries it", and
+   * `lib/prematchReading.ts` falls back to `opening_odds` labelled as the books
+   * reading it has always been.
+   */
+  prematch_odds?: {
+    home_probability: number;
+    away_probability: number;
+    /** The pair rounded ONCE, server-side — see UX-P114. */
+    home_rendered_percent?: number | null;
+    away_rendered_percent?: number | null;
+    source: string;
   };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
@@ -1186,7 +1231,7 @@ export interface RelatedEvent {
   home_team: string;
   away_team: string;
   commence_time: string;
-  status: "scheduled" | "live" | "completed" | "closed";
+  status: EventStatus;
   sport: string | null;
   home_score: number | null;
   away_score: number | null;
@@ -2068,7 +2113,7 @@ export interface EventConceptChild {
   prop_type?: "method" | "rounds" | "distance" | "occurrence" | string;
   // L2-130 matchup (soccer duel) fields — present only when kind === "matchup":
   event_id?: number;
-  status?: string; // "live" | "scheduled" | "completed" | "closed"
+  status?: string; // an EventStatus, widened here because this payload is loosely typed
   commence_time?: string | null;
   home?: EventConceptMatchupSide;
   away?: EventConceptMatchupSide;

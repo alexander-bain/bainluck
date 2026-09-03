@@ -566,6 +566,48 @@ class KalshiAPIService(BaseAPIClient):
 
         return markets, next_cursor
 
+    async def get_market_candlesticks_raw(
+        self,
+        ticker: str,
+        period_interval: int = 60,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+    ) -> list[dict]:
+        """The UNNORMALIZED candlesticks for one market ticker.
+
+        Added for live/035. :meth:`get_market_candlesticks` reduces each candle
+        to one number before the caller sees it, and its reduction is wrong at
+        settlement (see the note on that method). A caller that needs to make
+        its own price decision — because it is drawing a chart a person reads,
+        not filling a calibration bucket — needs the whole candle: both sides of
+        the book AND the last traded price.
+
+        Raises on transport/HTTP failure rather than swallowing, so a chunked
+        caller can count the window it lost instead of recording it as "no data"
+        (gotcha #53).
+        """
+        import time as _time
+        if start_ts is None:
+            start_ts = int(_time.time()) - 90 * 86400
+        if end_ts is None:
+            end_ts = int(_time.time())
+
+        response = await self.client.get(
+            f"{self.BASE_URL}/markets/candlesticks",
+            params={
+                "market_tickers": ticker,
+                "period_interval": period_interval,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        raw_markets = data.get("markets", [])
+        if not raw_markets:
+            return []
+        return raw_markets[0].get("candlesticks", []) or []
+
     async def get_market_candlesticks(
         self,
         ticker: str,
@@ -577,6 +619,17 @@ class KalshiAPIService(BaseAPIClient):
 
         Uses the batch endpoint GET /markets/candlesticks (the old per-market
         endpoint /markets/{ticker}/candlesticks was deprecated).
+
+        KNOWN FLAW, DELIBERATELY NOT FIXED HERE (live/035). The reduction below
+        falls back to the ASK when there is no bid, and at settlement a losing
+        market's book is bid 0.00 / ask 1.00 — so the LOSER's final candle
+        normalizes to **1.0**. Measured 2026-09-02 on
+        ``KXATPMATCH-26AUG30VALMON-VAL`` (Vallejo lost; last real trade 0.01;
+        this returns 1.0). It is left alone because its two consumers
+        (``kalshi_cliff``, ``_backfill_kalshi_price_history``) fill calibration
+        buckets whose behaviour is not this queue's to change. Anything drawing a
+        USER-FACING curve must use :meth:`get_market_candlesticks_raw` and decide
+        for itself — see ``app/tasks/event_chart_backfill.normalize_candle``.
 
         Args:
             ticker: Market ticker

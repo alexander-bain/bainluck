@@ -30,18 +30,22 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+from app.models import Event, FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.latest_observation import load_latest_observed_at
 from app.utils.market_liquidity import grade_liquidity
 from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import TREND_DAYS, build_boards
-from app.utils.tournament_event_link import resolve_matchup_events
+from app.utils.tournament_event_link import (
+    resolve_espn_competition_events,
+    resolve_matchup_events,
+)
 from app.utils.tournament_grid import build_grids
 from app.tasks.tournament_matchup_linker import apply_resolved_links, read_links
 from app.utils.tournament_match import build_match_detail
 from app.utils.tournament_register import TournamentRegister, load_register
 from app.utils.tournament_slate import (
+    apply_books_prematch,
     build_bracket,
     build_props,
     build_results,
@@ -846,6 +850,55 @@ async def _hub_payload(
     # outcome ids are already in the one `IN (...)` above, and the number used
     # is `opening_probability`, which is loaded on the same row.
     payload["results"] = build_results(register, results=espn, prices=prices)
+    # THE FINISHED LIST STOPS DEAD-ENDING (#2693 step 2). The market channel
+    # above cannot reach these rows — `build_slate` retires a matchup the moment
+    # its match starts, so a finished match usually has no matchup left to pin a
+    # market on. Its ESPN competition id survives, and since step 0 put an
+    # `espn_id` on the US Open events there is now a row to dereference it to.
+    # Resolved AFTER `build_results` because the ids come off its rows, and
+    # bounded by the spec's own `sport_keys` — see `resolve_espn_competition_events`.
+    espn_links = await resolve_espn_competition_events(
+        db,
+        [
+            match.get("espn_competition_id")
+            for match in (payload["results"].get("matches") or [])
+        ],
+        spec.get("sport_keys") or (),
+    )
+    # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).
+    #
+    # Alex: "opening = Kalshi -> Polymarket -> sportsbook blend, labelled by
+    # source. Never blank when any pre-match reading exists." ux/1034 A3 shipped
+    # the honesty half and left the number, because `opening_*` lives on the
+    # EVENT and `by_matchup` cannot reach a row the register no longer carries a
+    # matchup for — which is the row Alex read.
+    #
+    # `by_espn` above IS that missing channel, and it landed for a different
+    # reason (#2693 step 2, the finished list's dead-end links). Nothing new is
+    # queried to FIND the events; this loads the two opening columns off the ids
+    # that channel already resolved, bounded by them.
+    _opening_ids = sorted({int(v) for v in espn_links["by_espn"].values()})
+    _openings: dict[int, dict[str, Any]] = {}
+    if _opening_ids:
+        _rows = await db.execute(
+            select(
+                Event.id,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.opening_home_probability,
+                Event.opening_away_probability,
+            ).where(Event.id.in_(_opening_ids))
+        )
+        for _id, _home, _away, _oh, _oa in _rows.all():
+            _openings[int(_id)] = {
+                "home_team_name": _home,
+                "away_team_name": _away,
+                "opening_home_probability": _oh,
+                "opening_away_probability": _oa,
+            }
+    apply_books_prematch(
+        payload["results"], by_espn=espn_links["by_espn"], openings=_openings
+    )
     payload["broadcasts"] = reg.broadcasts
     # How many blank fixtures the overlay filled this request. Reported rather
     # than inferred: a page whose cards are dark because no market exists and
@@ -872,6 +925,16 @@ async def _hub_payload(
         "by_matchup": event_links["by_matchup"],
         "linked": len(event_links["by_matchup"]),
         "unresolved": event_links["reason_counts"],
+        # THE SECOND CHANNEL, KEPT SEPARATE. Not folded into `by_matchup`:
+        # the two are keyed on different identifiers, and a reader (or a
+        # sentinel) asking "how many finished matches link, and through what"
+        # must be able to tell an authority-id link from a market link. Its
+        # refusals are counted on their own terms for the same reason —
+        # `ESPN_ID_AMBIGUOUS` above zero is a step-2 regression, and it would be
+        # invisible summed into a total.
+        "by_espn": espn_links["by_espn"],
+        "espn_linked": len(espn_links["by_espn"]),
+        "espn_unresolved": espn_links["reason_counts"],
     }
 
     await _cache_set(slug, payload)

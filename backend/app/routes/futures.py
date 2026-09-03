@@ -5,6 +5,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from statistics import mean, median
 from typing import Optional
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.leader_order import leader_first_outcomes
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
     get_stages_for_sport,
@@ -1845,6 +1847,57 @@ async def get_playoff_grid(
     }
 
 
+def _market_has_priced_outcome(market: dict) -> bool:
+    """Does this grouped-feed market carry a probability the card can print?
+
+    #2710. The strip renders one card per row with no admission of its own, so a
+    market with no outcomes, or with outcomes that are all unpriced, becomes a
+    card whose body is the words "No outcomes available" or a column of dashes.
+
+    `Decimal` IS THE NORMAL CASE HERE AND MUST BE ACCEPTED EXPLICITLY.
+    `FuturesOutcome.probability` is a property returning `current_probability`,
+    whose column is `Numeric(7, 6)`, so SQLAlchemy hands back a
+    `decimal.Decimal` — the `Mapped[Optional[float]]` annotation on that column
+    describes the intent, not the runtime type. `isinstance(x, (int, float))`
+    is False for a Decimal, and so is `isinstance(x, numbers.Real)` (verified in
+    the interpreter, not recalled: Decimal registers as `numbers.Number` only).
+    Either of those spellings would have dropped EVERY ungrouped market and
+    emptied the strip. This is the same Decimal-on-this-endpoint seam as #2554.
+
+    A truthiness test would be wrong in the other direction: it discards a
+    genuine 0.0, which is a real and printable "0%". `bool` is excluded because
+    `isinstance(True, int)` is True, and a string is refused outright — a
+    stringified probability (#2554's shape) is not something the card can
+    render, so it must not readmit a row by merely looking truthy.
+    """
+    for outcome in market.get("outcomes") or ():
+        probability = outcome.get("probability")
+        if isinstance(probability, bool):
+            continue
+        if isinstance(probability, (int, float, Decimal)):
+            return True
+    return False
+
+
+def select_ungrouped_markets(
+    market_dicts: list, grouped_market_ids: set, limit: int
+) -> list:
+    """The ungrouped markets the grouped feed will ship, at most ``limit``.
+
+    #2710. Exists as a named function rather than an inline comprehension so the
+    ONE property that makes it a fix is testable: the priceless rows come out
+    BEFORE the truncation, so their slots are backfilled from the ``limit * 5``
+    rows the route already loaded. Filtering after the slice would leave the
+    reader short — 18 cards where 20 were asked for — which is a different and
+    worse outcome than the bug it replaces.
+    """
+    return [
+        m
+        for m in market_dicts
+        if m["id"] not in grouped_market_ids and _market_has_priced_outcome(m)
+    ][:limit]
+
+
 async def _read_grouped_feed_cache(cache_key: str):
     """Fresh-then-stale read of the shared grouped-feed entry.
 
@@ -1885,8 +1938,31 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
     Best-effort by construction: the response has already been built and the
     caller is about to return it, so a Redis failure must cost the next visitor a
     rebuild and this visitor nothing.
+
+    #2554 — THE CACHED BODY IS ENCODED THE WAY THE MISS PATH ENCODES IT.
+    This used to be ``_json.dumps(payload, default=str)``. ``default=`` fires for
+    every value ``json`` cannot serialize natively, and ``current_probability`` is
+    a ``Numeric`` column, so each one arrived here as a ``Decimal`` and was
+    written as the STRING ``"0.682560"``. The route's own return path never sees
+    that: FastAPI encodes the dict with ``jsonable_encoder``, which turns a
+    ``Decimal`` into a float. So one endpoint served two different types for one
+    field depending on whether the caller hit the cache — floats on a miss,
+    strings on every hit, i.e. on ~all real traffic.
+
+    Downstream that is not a cosmetic difference. ``/sports`` prop cards read the
+    value twice: ``Number.isFinite("0.68")`` is ``false`` so the number renders as
+    an em dash, while ``prob * 100`` coerces the same string happily so the bar
+    beside it draws the correct width. A card with a right-sized bar and no
+    number is the signature of this bug, not of a missing price.
+
+    Encoding with ``jsonable_encoder`` rather than special-casing ``Decimal`` is
+    the point: it is the SAME encoder the miss path runs, so hit and miss cannot
+    disagree by construction, and the next non-JSON type to enter this payload
+    cannot silently reopen the defect for a different field.
     """
     import json as _json
+
+    from fastapi.encoders import jsonable_encoder
 
     from app.utils import request_cache as _rc
     from app.utils.grouped_feed_cache import (
@@ -1898,7 +1974,7 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
         client = await _rc.get_shared_async_redis()
         if client is None:
             return
-        body = _json.dumps(payload, default=str)
+        body = _json.dumps(jsonable_encoder(payload))
         await _rc.bounded_redis_call(
             lambda: client.setex(cache_key, GROUPED_FEED_TTL_SECONDS, body)
         )
@@ -2128,10 +2204,26 @@ async def grouped_feed(
             "outcome_count": len(outcomes),
         })
 
-    ungrouped = [
-        m for m in market_dicts
-        if m["id"] not in grouped_market_ids
-    ][:limit]
+    # #2710 — DROP THE PRICELESS ONES BEFORE TRUNCATING, NOT AFTER.
+    #
+    # Alex, on mobile /sports: "every outcome is a dash … a card with no number
+    # is not shown." A market whose outcomes are all unpriced (or absent
+    # entirely) renders a full card reading "No outcomes available" or a column
+    # of dashes. Measured on the served payload at the page's own limit of 20 on
+    # 2026-09-03: 2 of 20 rows carried `outcomes: []`.
+    #
+    # The filter goes HERE, above the slice, because the slice is what makes it
+    # worth doing: dropping these after `[:limit]` would leave the reader with
+    # 18 cards, while dropping them before backfills the two slots from the
+    # `limit * 5` rows already loaded. Same reason #2789 sorted above its own
+    # truncation rather than below it.
+    #
+    # `status` is filtered to active/open at the top of this route, so there is
+    # no settled arm to preserve here — an unpriced open market has nothing to
+    # put on a card. (The Discover futures arm keeps a zero-outcome card when it
+    # carries an authoritative result; that rule lives in
+    # `contracts/feed_card_admission.json` and governs a different endpoint.)
+    ungrouped = select_ungrouped_markets(market_dicts, grouped_market_ids, limit)
 
     for m in ungrouped:
         feed_items.append({
@@ -2142,7 +2234,14 @@ async def grouped_feed(
                 "source": m["source"],
                 "category": m.get("category"),
                 "sport": m.get("sport"),
-                "outcomes": m["outcomes"][:5],
+                # #2789: leader-first BEFORE the truncation. `FuturesMarket.outcomes`
+                # declares no `order_by=`, so `m["outcomes"]` arrives in whatever order
+                # the selectinload returned, and taking five off the front of that is a
+                # uniform random sample the card then stamps `1 2 3 4 5` on. Measured on
+                # the live /sports shape: 0 of 5 five-outcome cards led with their
+                # favourite, and the 192-golfer Winner market shipped a top row of 0.09%
+                # while the true leader (11.8%) was not on the card at all.
+                "outcomes": leader_first_outcomes(m["outcomes"])[:5],
             },
         })
 

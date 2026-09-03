@@ -134,6 +134,35 @@ LEDGER_STALE_AFTER_S = 2 * BEAT_PERIOD_S + 1500
 #: through the sampler.
 CONVERGENCE_REASON_PREFIX = "staged:convergence_reason:"
 
+#: The SECOND prefix, added by CAL-P993 (calibration-028): why a ``cancelled``
+#: beat was cancelled. Imported from the module that writes it rather than
+#: retyped — the CAL-P083 blind spots were both transcription omissions, and a
+#: string copied into a capture list is a string free to drift from the one the
+#: producer emits.
+#:
+#: Captured for a reason the disclosure gauges are not: it is the only field in
+#: which "a deploy killed the beat" and "the build has not converged" can be
+#: told apart, and the ruling 009 freeze score — the number that decides whether
+#: ``precompute_calibration.py`` may be touched at all — is computed off this
+#: ring. A miss is still a miss; an UNATTRIBUTABLE miss is what this ends.
+_CANCEL_CAUSE_PREFIX_FALLBACK = "beat:cancel_cause:"
+
+
+def _cancel_cause_prefix() -> str:
+    """The producer's own constant, read off the module that emits it."""
+    try:
+        from app.tasks.calibration_main_build import CANCEL_CAUSE_PREFIX
+    except Exception:  # noqa: BLE001 — a sampler must never fail on an import
+        return _CANCEL_CAUSE_PREFIX_FALLBACK
+    return CANCEL_CAUSE_PREFIX
+
+
+CANCEL_CAUSE_PREFIX = _cancel_cause_prefix()
+
+#: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
+#: line here and nowhere else.
+CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX)
+
 
 def _required_disclosure_gauges() -> tuple[str, ...]:
     """Every gauge ``build_disclosure`` consumes, read off that module.
@@ -200,7 +229,7 @@ def select_gauges(stages: Any) -> tuple[dict, list[str]]:
 
     # The prefix half. Never a fixed name, so never in the tuples above.
     for key, value in stages.items():
-        if isinstance(key, str) and key.startswith(CONVERGENCE_REASON_PREFIX):
+        if isinstance(key, str) and key.startswith(CAPTURED_PREFIXES):
             captured[key] = value
 
     missing = [n for n in REQUIRED_DISCLOSURE_GAUGES if n not in captured]

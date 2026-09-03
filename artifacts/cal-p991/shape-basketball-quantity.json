@@ -1,0 +1,370 @@
+{
+  "label": "shape_class_cell",
+  "cell": "basketball/quantity",
+  "population": {
+    "source": "polymarket",
+    "status": "resolved",
+    "market_type": "quantity",
+    "league": "basketball",
+    "note": "raw cell population (the 2026-08-24 board's basis), NOT the published population"
+  },
+  "half_spike_value": "0.5000",
+  "irreducible": [],
+  "complete": true,
+  "elapsed_s": 18.8,
+  "shard_count": 15,
+  "classes": {
+    "multi": {
+      "eligible": {
+        "n": 16,
+        "ece": null,
+        "gap": null,
+        "bins": {
+          "1": {
+            "n": 13,
+            "sum_prob": 1.305,
+            "winners": 0
+          },
+          "4": {
+            "n": 2,
+            "sum_prob": 0.945,
+            "winners": 0
+          },
+          "7": {
+            "n": 1,
+            "sum_prob": 0.755,
+            "winners": 1
+          }
+        }
+      },
+      "ineligible": {
+        "n": 28,
+        "ece": null,
+        "gap": null,
+        "bins": {
+          "0": {
+            "n": 2,
+            "sum_prob": 0.0845,
+            "winners": 0
+          },
+          "2": {
+            "n": 6,
+            "sum_prob": 1.52,
+            "winners": 0
+          },
+          "3": {
+            "n": 2,
+            "sum_prob": 0.69,
+            "winners": 1
+          },
+          "4": {
+            "n": 8,
+            "sum_prob": 3.515,
+            "winners": 1
+          },
+          "5": {
+            "n": 5,
+            "sum_prob": 2.57,
+            "winners": 1
+          },
+          "6": {
+            "n": 2,
+            "sum_prob": 1.275,
+            "winners": 1
+          },
+          "7": {
+            "n": 1,
+            "sum_prob": 0.7,
+            "winners": 1
+          },
+          "8": {
+            "n": 1,
+            "sum_prob": 0.845,
+            "winners": 0
+          },
+          "9": {
+            "n": 1,
+            "sum_prob": 0.9745,
+            "winners": 1
+          }
+        }
+      }
+    },
+    "ou_half1": {
+      "ineligible": {
+        "n": 537,
+        "ece": 3.25,
+        "gap": -1.17,
+        "bins": {
+          "0": {
+            "n": 50,
+            "sum_prob": 0.5435,
+            "winners": 3
+          },
+          "1": {
+            "n": 5,
+            "sum_prob": 0.7,
+            "winners": 0
+          },
+          "2": {
+            "n": 9,
+            "sum_prob": 2.375,
+            "winners": 5
+          },
+          "3": {
+            "n": 25,
+            "sum_prob": 8.865,
+            "winners": 11
+          },
+          "4": {
+            "n": 82,
+            "sum_prob": 37.540499999999994,
+            "winners": 35
+          },
+          "5": {
+            "n": 192,
+            "sum_prob": 99.287,
+            "winners": 102
+          },
+          "6": {
+            "n": 17,
+            "sum_prob": 10.745000000000001,
+            "winners": 10
+          },
+          "7": {
+            "n": 12,
+            "sum_prob": 8.902500000000002,
+            "winners": 10
+          },
+          "8": {
+            "n": 13,
+            "sum_prob": 11.145,
+            "winners": 12
+          },
+          "9": {
+            "n": 132,
+            "sum_prob": 130.6105,
+            "winners": 129
+          }
+        }
+      }
+    },
+    "ou_half2": {
+      "ineligible": {
+        "n": 642,
+        "ece": 20.91,
+        "gap": 15.74,
+        "bins": {
+          "0": {
+            "n": 62,
+            "sum_prob": 0.9994999999999999,
+            "winners": 11
+          },
+          "1": {
+            "n": 8,
+            "sum_prob": 1.2650000000000001,
+            "winners": 2
+          },
+          "2": {
+            "n": 4,
+            "sum_prob": 1.065,
+            "winners": 4
+          },
+          "3": {
+            "n": 9,
+            "sum_prob": 3.315,
+            "winners": 5
+          },
+          "4": {
+            "n": 56,
+            "sum_prob": 25.977999999999998,
+            "winners": 20
+          },
+          "5": {
+            "n": 382,
+            "sum_prob": 193.145,
+            "winners": 108
+          },
+          "6": {
+            "n": 12,
+            "sum_prob": 7.764999999999999,
+            "winners": 9
+          },
+          "7": {
+            "n": 7,
+            "sum_prob": 5.12,
+            "winners": 5
+          },
+          "8": {
+            "n": 8,
+            "sum_prob": 6.869,
+            "winners": 5
+          },
+          "9": {
+            "n": 94,
+            "sum_prob": 92.531,
+            "winners": 68
+          }
+        }
+      },
+      "eligible": {
+        "n": 180,
+        "ece": 3.0,
+        "gap": -0.95,
+        "bins": {
+          "0": {
+            "n": 2,
+            "sum_prob": 0.0945,
+            "winners": 1
+          },
+          "1": {
+            "n": 3,
+            "sum_prob": 0.49,
+            "winners": 1
+          },
+          "2": {
+            "n": 2,
+            "sum_prob": 0.495,
+            "winners": 1
+          },
+          "4": {
+            "n": 14,
+            "sum_prob": 6.515000000000001,
+            "winners": 8
+          },
+          "5": {
+            "n": 157,
+            "sum_prob": 79.08500000000001,
+            "winners": 78
+          },
+          "7": {
+            "n": 1,
+            "sum_prob": 0.76,
+            "winners": 0
+          },
+          "8": {
+            "n": 1,
+            "sum_prob": 0.845,
+            "winners": 1
+          }
+        }
+      }
+    },
+    "ou_priced": {
+      "ineligible": {
+        "n": 9819,
+        "ece": 30.84,
+        "gap": 3.33,
+        "bins": {
+          "0": {
+            "n": 4714,
+            "sum_prob": 39.31,
+            "winners": 1389
+          },
+          "1": {
+            "n": 109,
+            "sum_prob": 16.0095,
+            "winners": 17
+          },
+          "2": {
+            "n": 162,
+            "sum_prob": 41.103,
+            "winners": 35
+          },
+          "3": {
+            "n": 382,
+            "sum_prob": 135.12199999999999,
+            "winners": 44
+          },
+          "4": {
+            "n": 1452,
+            "sum_prob": 661.4155000000001,
+            "winners": 151
+          },
+          "5": {
+            "n": 1424,
+            "sum_prob": 768.9955,
+            "winners": 200
+          },
+          "6": {
+            "n": 420,
+            "sum_prob": 266.37300000000005,
+            "winners": 49
+          },
+          "7": {
+            "n": 175,
+            "sum_prob": 129.576,
+            "winners": 52
+          },
+          "8": {
+            "n": 121,
+            "sum_prob": 101.97999999999999,
+            "winners": 30
+          },
+          "9": {
+            "n": 860,
+            "sum_prob": 841.876,
+            "winners": 708
+          }
+        }
+      },
+      "eligible": {
+        "n": 1910,
+        "ece": 6.3,
+        "gap": -0.32,
+        "bins": {
+          "0": {
+            "n": 86,
+            "sum_prob": 5.844,
+            "winners": 17
+          },
+          "1": {
+            "n": 119,
+            "sum_prob": 16.59,
+            "winners": 32
+          },
+          "2": {
+            "n": 122,
+            "sum_prob": 29.538,
+            "winners": 24
+          },
+          "3": {
+            "n": 140,
+            "sum_prob": 47.817,
+            "winners": 29
+          },
+          "4": {
+            "n": 515,
+            "sum_prob": 237.387,
+            "winners": 249
+          },
+          "5": {
+            "n": 450,
+            "sum_prob": 242.053,
+            "winners": 234
+          },
+          "6": {
+            "n": 145,
+            "sum_prob": 93.268,
+            "winners": 110
+          },
+          "7": {
+            "n": 117,
+            "sum_prob": 86.667,
+            "winners": 95
+          },
+          "8": {
+            "n": 126,
+            "sum_prob": 106.49,
+            "winners": 92
+          },
+          "9": {
+            "n": 90,
+            "sum_prob": 83.20299999999999,
+            "winners": 73
+          }
+        }
+      }
+    }
+  }
+}

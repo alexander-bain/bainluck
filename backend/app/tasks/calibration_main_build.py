@@ -275,6 +275,114 @@ class StagedFuturesIncomplete(RuntimeError):
     """
 
 
+#: Prefix for the gauge that says WHY a beat ended ``cancelled``.
+#:
+#: A prefix rather than a fixed key so the value is a NAME and not a code an
+#: operator has to look up, and so a cause this file has not thought of yet
+#: cannot be silently rendered as one it has. Read by a prefix scan in
+#: ``calibration_beat_gauge_sampler.select_gauges``, the same way
+#: ``staged:convergence_reason:`` already is — no fixed tuple can hold it.
+CANCEL_CAUSE_PREFIX = "beat:cancel_cause:"
+
+#: The beat ran out of window with units banked and nothing published. The
+#: DESIGNED partial: ``StagedFuturesIncomplete`` exists to say exactly this, and
+#: a beat ending this way is a build working as specified.
+CANCEL_CAUSE_INCOMPLETE = "incomplete"
+
+#: The RUNTIME took the worker away mid-phase — a deploy cycling ``worker-heavy``,
+#: a dyno restart, an operator pausing the process. Nothing about the build is
+#: wrong; it simply stopped existing.
+CANCEL_CAUSE_INTERRUPTED = "interrupted"
+
+
+def cancel_cause(exc: BaseException) -> Optional[str]:
+    """``incomplete`` | ``interrupted`` | ``None`` — WHY a beat ended cancelled.
+
+    CAL-P993, from calibration-028. :meth:`PhaseRunner.classify_failure` maps
+    ``StagedFuturesIncomplete`` and ``asyncio.CancelledError`` to the SAME
+    terminal, ``cancelled``, and both of them are correct to do so: neither is a
+    failure and neither should page anybody. But they are opposite facts about
+    the producer, and collapsing them cost this program a night.
+
+    * ``incomplete`` is the build saying *I did not finish, and that is the
+      design.* It is the number that answers "is the staged build converging?"
+    * ``interrupted`` is the build saying *I was killed.* It answers a question
+      about the DEPLOY CADENCE, not about calibration at all.
+
+    Measured on production 2026-09-03 over the 168-beat ring: **21 of the 23
+    ``interrupted`` beats had a Heroku release inside their own window**, and
+    the last four terminated 16-28 s after one. Ruling 009's freeze score read
+    all of them as the producer failing to converge, because the ring had no
+    field in which the difference could be written down. That is gotcha #53 in
+    its exact form — one word standing for two states — and ruling 075's second
+    clause is the rule it breaks.
+
+    Returns ``None`` for anything that is not a cancellation, so a caller can
+    write ``if cause is not None`` rather than testing the terminal twice.
+
+    Derived from the SAME predicates :meth:`PhaseRunner.classify_failure` uses,
+    in the same order, deliberately: a second copy of the classification would
+    be free to disagree with the terminal it is annotating, and an annotation
+    that contradicts its subject is worse than no annotation.
+    """
+    import asyncio
+
+    if isinstance(exc, StagedFuturesIncomplete):
+        return CANCEL_CAUSE_INCOMPLETE
+    if isinstance(exc, asyncio.CancelledError):
+        return CANCEL_CAUSE_INTERRUPTED
+    return None
+
+
+def is_runtime_interruption(exc: BaseException) -> bool:
+    """The RUNTIME took the worker away — as opposed to the work being wrong.
+
+    CAL-P994, repairing CERT-821's named follow-up
+    (``CAL-P994-SOFT-TIME-LIMIT-CLASSIFICATION``). The post-publish rebuild
+    swallows its own death and records it under one of two names, and the
+    difference between them is the difference between two operator questions:
+    ``staged:rebuild_interrupted`` asks about the DEPLOY CADENCE, while
+    ``staged:rebuild_error`` asks whether the unit loop is broken. Celery's
+    ``SoftTimeLimitExceeded`` is a plain ``Exception``, so a soft kill — the
+    ordinary way a beat ends when it runs past its limit — was landing in the
+    second bucket and inflating exactly the number that would say the rebuild
+    itself is defective. That is gotcha #53's shape again: one name standing for
+    two states, in the evidence this queue promised.
+
+    **Deliberately NOT wired into** :func:`cancel_cause` **or**
+    :meth:`PhaseRunner.classify_failure`. Those two decide the BEAT's terminal,
+    where a soft kill is currently ``failed``; moving it to ``cancelled`` would
+    re-shape every freeze-score reading taken since ruling 009 and is a measured
+    question, not a repair. This predicate is scoped to the rebuild's own
+    gauges, and this paragraph is why the two classifications differ.
+    """
+    import asyncio
+
+    if isinstance(exc, asyncio.CancelledError):
+        return True
+    try:
+        from celery.exceptions import SoftTimeLimitExceeded
+    except Exception:  # noqa: BLE001 — no Celery in a bare import context
+        return False
+    return isinstance(exc, SoftTimeLimitExceeded)
+
+
+def describe_failure(exc: BaseException) -> str:
+    """``str(exc)``, or the class name when the exception has no message.
+
+    ``asyncio.CancelledError()`` renders as the empty string, and
+    ``PhaseLedger.fail`` stores ``detail or None`` — so every deploy-killed beat
+    since this rail was built has landed in the ledger with NO detail at all,
+    and the phase record read as if nothing had been recorded rather than as a
+    cancellation with an empty message. The class name is the minimum a reader
+    needs to tell those apart.
+
+    Truncated to the same 200 characters the ledger stores, here rather than at
+    the call site, so the bound travels with the description.
+    """
+    return (str(exc) or type(exc).__name__)[:200]
+
+
 def run_owner() -> str:
     """Who is building right now. Stable within a run, distinct across workers."""
     return f"{socket.gethostname()}:{os.getpid()}"
@@ -466,6 +574,16 @@ class PhaseRunner:
             "backend_pid": None,
             "applied": False,
         }
+        #: CAL-P994. The deferred rebuild runs on its OWN session, so it has its
+        #: own backend, and it must not be written over the build's — that field
+        #: exists so a ``pg_stat_activity`` row seen weeks later joins back to
+        #: the run that wedged, and the run that wedges is the one holding the
+        #: publish. Two backends, two fields, both named.
+        self.rebuild_session_identity: dict[str, Any] = {
+            "application_name": None,
+            "backend_pid": None,
+            "applied": False,
+        }
         #: Filled in progressively by the build so the orchestrator's ``finally``
         #: can tell a gate refusal from a durable failure from a clean publish
         #: WITHOUT re-deriving it from an exception message.
@@ -476,8 +594,24 @@ class PhaseRunner:
             "published": False,
             "artifact_generation": None,
         }
+        #: CAL-P994 / D45(A). Set by the futures phase when it decided to publish
+        #: from the SERVED bank and leave the rebuild's unit loop until after the
+        #: publish. Read by the orchestrator, which is the only place that knows
+        #: the publish is done. Default False, so a build that never took the
+        #: reorder behaves exactly as it did before.
+        self.rebuild_deferred: bool = False
 
     # -- staging --------------------------------------------------------------
+
+    def defer_rebuild(self) -> None:
+        """Record that this beat's unit loop belongs AFTER the publish.
+
+        CAL-P994 (D45 = A, a narrow ruling-009 exception for the publish
+        ordering). One-way: nothing clears it within a beat, because the only
+        consumer runs once, at the end, and a flag that could be un-set would
+        make "did the rebuild get its window?" depend on read order.
+        """
+        self.rebuild_deferred = True
 
     @property
     def staged_futures(self) -> bool:
@@ -574,11 +708,21 @@ class PhaseRunner:
         return FAILED
 
     def abort(self, exc: BaseException) -> str:
-        """Close whatever phase was in flight, classified. Returns the status."""
+        """Close whatever phase was in flight, classified. Returns the status.
+
+        CAL-P993 (calibration-028) records the CAUSE beside the status. See
+        :func:`cancel_cause` for why ``cancelled`` alone is not an answer, and
+        :data:`CANCEL_CAUSE_PREFIX` for how it reaches the ring.
+        """
         status = self.classify_failure(exc)
         self.ledger.close_open_phase(
-            now_ms=self.elapsed_ms(), status=status, detail=str(exc)[:200]
+            now_ms=self.elapsed_ms(), status=status, detail=describe_failure(exc)
         )
+        cause = cancel_cause(exc)
+        if cause is not None:
+            # A gauge, not a stage: this is a LEVEL ("this beat ended that
+            # way"), and ``record_stage`` accumulates repeats.
+            self.ledger.record_gauge(f"{CANCEL_CAUSE_PREFIX}{cause}", 1)
         return status
 
     # -- resume / capture -----------------------------------------------------
@@ -681,6 +825,35 @@ class PhaseRunner:
             self.session_identity = identity
         return identity
 
+    async def tag_rebuild_session(self, db) -> dict:
+        """Name the DEFERRED REBUILD's backend — CAL-P994 — on its own field.
+
+        Same tag, same task, same run generation: an orphaned backend from the
+        post-publish rebuild must be as findable as one from the build, and
+        leaving it untagged would put back exactly the anonymous phase-1 orphan
+        #1479 is still stuck on.
+
+        What it must NOT do is land in :attr:`session_identity`. That field's
+        contract — set once, kept — rests on there being one session per run,
+        which stopped being true the moment the rebuild got its own. Overwriting
+        it would mean the ledger named the backend that was rebuilding while the
+        backend that published (the one whose wedge costs a curve) went
+        unrecorded.
+        """
+        from app.tasks.base import tag_task_session
+
+        identity = await tag_task_session(
+            db,
+            task=MAIN_BUILD_TASK,
+            run_generation=self.generation,
+            owner=self.owner,
+        )
+        if identity.get("backend_pid") is not None or not self.rebuild_session_identity.get(
+            "applied"
+        ):
+            self.rebuild_session_identity = identity
+        return identity
+
     async def apply_statement_timeout(self, db, phase: str) -> int:
         """Set this phase's inner DB backstop on the live session.
 
@@ -708,16 +881,31 @@ class PhaseRunner:
         """
         return self.ledger.measured_unit_ms(phase)
 
-    async def apply_unit_statement_timeout(self, db, phase: str, *, unit_ms=None) -> int:
+    async def apply_unit_statement_timeout(
+        self, db, phase: str, *, unit_ms=None, deferred_rebuild: bool = False
+    ) -> int:
         """Set the backstop for ONE unit of a unit-staged phase — CAL-P081 (#2052).
 
         Same contract as :meth:`apply_statement_timeout` and strictly tighter:
         the unit gets the smaller of the phase's remaining window and a multiple
         of its own measured cost. With no measured cost the two are identical, so
         this is never the reason a build stops making progress.
+
+        ``deferred_rebuild`` says this call is CAL-P994's post-publish pass, and
+        it governs the two things that stop being true there. The phase budget
+        stops describing the loop (see
+        :meth:`~app.utils.calibration_phase_ledger.PhaseLedger.statement_timeout_for_unit`
+        for the measurement and for why dropping that term is not a loosening),
+        and the re-tag below belongs to a DIFFERENT backend, so it is written to
+        :attr:`rebuild_session_identity` rather than over the build's. One flag
+        rather than two, because there is one underlying fact: this loop is
+        running somewhere else, later.
         """
         timeout_ms = self.ledger.statement_timeout_for_unit(
-            phase, elapsed_ms=self.elapsed_ms(), unit_ms=unit_ms
+            phase,
+            elapsed_ms=self.elapsed_ms(),
+            unit_ms=unit_ms,
+            ignore_phase_budget=deferred_rebuild,
         )
         # CAL-P163 (#1978): say WHICH evidence bounded this unit, and how far the
         # bound sits from the window that was actually available. Without this
@@ -740,7 +928,9 @@ class PhaseRunner:
             # identically to "the carried worst is zero".
             self.ledger.record_gauge(f"staged:unit_worst_reason:unmeasured:{phase}", 1)
         await db.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
-        await self.tag_session(db)
+        await (
+            self.tag_rebuild_session(db) if deferred_rebuild else self.tag_session(db)
+        )
         return timeout_ms
 
     async def commit(self, db) -> None:
@@ -908,6 +1098,11 @@ class NullPhaseRunner:
     #: Never. A one-off serve has nothing to resume into and must not have its
     #: request transaction committed out from under the caller.
     staged_futures = False
+    #: Never, and for the same reason: ``staged_futures`` is False here, so this
+    #: path never reaches the unit loop the reorder moves. A class attribute
+    #: rather than a settable one — the route must not be able to schedule
+    #: background work off the back of a cold-cache serve.
+    rebuild_deferred = False
 
     def __init__(self) -> None:
         self.outcome: dict[str, Any] = {

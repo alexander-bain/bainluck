@@ -36,10 +36,17 @@
  */
 
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
+/* CERT-812: the one place that decides whether a rung needs saying out loud.
+   Imported rather than re-declared — see `prematchAttribution`. */
+import { isPredictionMarketSource } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
-import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import {
+  matchEventHref,
+  type EspnEventIds,
+  type MatchupEventIds,
+} from "./tournamentEventLink";
 
 export interface ResultPlayer {
   entity_key: string;
@@ -65,6 +72,19 @@ export interface ResultPlayer {
    * the last one we saw.
    */
   prematch_probability: number | null;
+  /**
+   * WHICH VENUE gave it (ux/1036) — `kalshi`, `polymarket`, or `books`.
+   *
+   * Alex's ladder is ORDERED, not merged: Kalshi first, then Polymarket, then
+   * the sportsbook median. `_prematch_by_pair` used to take whichever live block
+   * came first in register order, which on a pair pinned at both venues was an
+   * arbitrary choice between two different numbers.
+   *
+   * Optional, and absent means what it has always meant: a prediction-market
+   * opening, which needs no caveat. A `books` reading is a different claim and
+   * says so — see `prematchSourceNote`.
+   */
+  prematch_source?: string | null;
 }
 
 export interface TournamentResult {
@@ -89,6 +109,15 @@ export interface TournamentResult {
   /** ESPN's own round wording — finer than ours, kept beside it. */
   source_round: string | null;
   source: string;
+  /**
+   * ESPN's own id for this competition (#2693 step 2), on every row.
+   *
+   * The key of `event_links.by_espn`, and the only channel that can route a
+   * finished match the register no longer carries. Optional so a payload
+   * cached before the field existed still renders — absent simply means the
+   * row falls back to the market channel, which is what it did before.
+   */
+  espn_competition_id?: string | null;
 }
 
 export interface TournamentResults {
@@ -545,15 +574,223 @@ export function completionNote(matches: TournamentResult[]): string | null {
   return `${clauses.join("; ")}.`;
 }
 
-/** How many of these results carry a prior — the ratio the section states. */
-export function prematchCoverage(
-  matches: TournamentResult[]
-): { withPrior: number; total: number } {
+/**
+ * The prefix `build_results` gives a row whose PAIRING the draw register does
+ * not carry — `espn:182730` rather than
+ * `mens-singles:ben-shelton-vs-tallon-griekspoor:2026-08-30`.
+ *
+ * `matchup_by_pair.get(..., f"espn:{comp_id}")` is the exact line, and the
+ * fallback is reached only when the register has no matchup for the two
+ * players. Both players ARE registered on such a row — a result with an
+ * unregistered player never reaches this list at all; it is counted in
+ * `unregistered_pairs`. So the prefix means precisely: *we know both these
+ * people and we could not tie this fixture to a market of ours*.
+ */
+const SCOREBOARD_MATCHUP_PREFIX = "espn:";
+
+export interface PrematchCoverage {
+  /** Rows that print a prior. */
+  withPrior: number;
+  total: number;
+  /**
+   * Rows the register carries a matchup for, that still print no prior.
+   *
+   * We hold this fixture. A market for it was registered or it was not, and
+   * either way no OPENING price was captured before play — which is a
+   * different fact from the one below and the reason ux/1034 A3 exists.
+   */
+  heldWithoutOpening: number;
+  /** Rows whose pairing the register does not carry — see the prefix note. */
+  untied: number;
+}
+
+/**
+ * How many of these results carry a prior, and WHY THE REST DO NOT (ux/1034 A3).
+ *
+ * ═══ THE SENTENCE THAT WAS WRONG ═══
+ *
+ * Alex, on the live hub: Shelton–Hurkacz shows no pre-match number, and the
+ * footnote under it said *"The rest are matches nobody ran a market on"*. That
+ * is false for that row, measurably: Polymarket had a market on it, its price
+ * history simply starts at 17:38Z and the match started at 17:08Z — so what we
+ * lack is an OPENING, not a market. He was explicit: *"say 'no pre-match
+ * reading captured' when a market exists but no opening snapshot does.
+ * Distinguish the two cases honestly."*
+ *
+ * The two cases the payload CAN distinguish are counted here. What it cannot
+ * distinguish is a third: whether a venue ran a market on a fixture our
+ * register never tied to one. Nothing in this payload knows that, so the
+ * footnote stops claiming it — a sentence about what Kalshi and Polymarket
+ * chose to list is a claim about a venue, and it was being made from a field
+ * that only ever described US.
+ */
+export function prematchCoverage(matches: TournamentResult[]): PrematchCoverage {
+  let withPrior = 0;
+  let heldWithoutOpening = 0;
+  let untied = 0;
+
+  for (const match of matches) {
+    if (match.players.some((player) => typeof player.prematch_probability === "number")) {
+      withPrior += 1;
+    } else if (String(match.matchup_key ?? "").startsWith(SCOREBOARD_MATCHUP_PREFIX)) {
+      untied += 1;
+    } else {
+      heldWithoutOpening += 1;
+    }
+  }
+
+  return { withPrior, total: matches.length, heldWithoutOpening, untied };
+}
+
+/**
+ * Why the rows without a prior have not got one — the replacement for
+ * *"The rest are matches nobody ran a market on"* (ux/1034 A3).
+ *
+ * Two counts, each said in the terms the payload can actually support, and a
+ * closing clause that refuses the third. On the men's list as served on
+ * 2026-09-03 this reads: *"Of the rest, 55 are fixtures we could not tie to a
+ * market of ours and 3 are matches we hold but caught no price on before play
+ * started — neither is a statement about whether a venue listed one."*
+ *
+ * Empty string when every row has a prior; the caller only prints it in the
+ * branch where some row does not.
+ */
+export function prematchAbsenceNote(coverage: PrematchCoverage): string {
+  const clauses: string[] = [];
+  if (coverage.untied > 0) {
+    clauses.push(
+      `${coverage.untied} ${
+        coverage.untied === 1 ? "is a fixture" : "are fixtures"
+      } we could not tie to a market of ours`
+    );
+  }
+  if (coverage.heldWithoutOpening > 0) {
+    clauses.push(
+      `${coverage.heldWithoutOpening} ${
+        coverage.heldWithoutOpening === 1 ? "is a match" : "are matches"
+      } we hold but caught no price on before play started`
+    );
+  }
+  if (clauses.length === 0) return "";
+  return (
+    `Of the rest, ${clauses.join(" and ")} — neither is a statement about ` +
+    `whether a venue listed one.`
+  );
+}
+
+/**
+ * ═══ WHAT CERT-812 BLOCKED, AND WHY THE COUNT BELOW WAS NEVER THE FIX ═══
+ *
+ * Alex: *"labelled when not a prediction market."* The grey figures on this list
+ * are described as "what the market gave that player", and that sentence is only
+ * true of the Kalshi and Polymarket rungs. A sportsbook median is a different
+ * claim in the same shape, and ux/1034 A3 is the standing lesson about printing
+ * one as the other on this exact list.
+ *
+ * Round one answered that with THIS FUNCTION ALONE — an aggregate footer saying
+ * "N of them are a sportsbook opening" over a list of 172 rows that named none of
+ * them. CERT-812: *"the Shelton–Hurkacz 68/32 books row renders bare percentages,
+ * and each accessible sentence falsely says 'the market gave'; only an aggregate
+ * footer says some unidentified rows are sportsbook openings."* A count is not an
+ * attribution: it tells a reader that somewhere on this page a number means
+ * something else, and leaves them unable to find out which.
+ *
+ * So the count stays — it is a true and useful summary — but it is now a LEGEND
+ * for a per-row marker rather than the whole of the labelling, and
+ * `prematchAttribution` below is what each row actually consumes.
+ *
+ * ═══ AND THE POPULATION WAS NEVER EMPTY ═══
+ *
+ * Round one's comment here read *"silent when every prior is a prediction-market
+ * one — which is the whole served population today."* That was true when it was
+ * written, against commit 1. Commit 2 (`76c463f4`) added `apply_books_prematch`,
+ * which is the rung that fills exactly the rows this claimed could not be
+ * reached — and the comment survived into it unchanged.
+ *
+ * Measured on the served hub payload 2026-09-03, replaying the shipped
+ * `names_agree` bijection over the live rows: 245 result rows, 134 with no
+ * market prior, **63 of those resolve to an event carrying opening odds and 61
+ * pass the bijection**. So the list goes to 172 priors of which **61 (35%) are
+ * sportsbook openings** — not zero, and not an edge case. Every one of them was
+ * rendering a bare percentage under "the market gave".
+ */
+export function prematchSourceNote(matches: TournamentResult[]): string {
+  let books = 0;
+  for (const match of matches) {
+    if (match.players.some(isBooksPrior)) books += 1;
+  }
+  if (books === 0) return "";
+  return (
+    `${books} of them ${books === 1 ? "is" : "are"} a sportsbook opening rather ` +
+    `than a prediction market's, marked ${BOOKS_MARKER} beside the number.`
+  );
+}
+
+/** Does this player's prior come from a rung that needs saying out loud? */
+function isBooksPrior(player: ResultPlayer): boolean {
+  return (
+    typeof player.prematch_probability === "number" &&
+    player.prematch_source != null &&
+    !isPredictionMarketSource(player.prematch_source)
+  );
+}
+
+/**
+ * The visible marker a books number wears on this list.
+ *
+ * A WORD and not a glyph, because the two surfaces that already do this right
+ * print the word (`Pre-match · books` in `FeedCard` and Discover's `EventCard`),
+ * and this codebase has no superscript-legend convention to borrow — inventing
+ * one here would be a seventh private answer to a question `prematchReading`
+ * already owns. Lower case and 9px so it reads as a unit beside the figure
+ * rather than as a second number.
+ */
+export const BOOKS_MARKER = "books";
+
+/**
+ * PER-VALUE ATTRIBUTION: what this one number is, in the two registers a row has
+ * to speak in (CERT-812's required repair).
+ *
+ * This component's own doctrine, written above the prior cell before I got here:
+ * *"a number names its own question … the sentence travels with each number for a
+ * screen reader, and the section's footnote carries it for everyone else."* Round
+ * one honoured the second half and not the first. So the attribution is computed
+ * per player, not per match and not per page — a row where only one side carries
+ * a books prior is not hypothetical (`prematchPercents` already has a branch for
+ * a one-sided prior) and a match-level label would mislabel the other side.
+ *
+ * `isPredictionMarketSource` is IMPORTED, not re-declared. Round one kept a
+ * private `PREDICTION_MARKET_SOURCES` set in this module, three files away from
+ * the identical set in `lib/prematchReading.ts` — which opens with the sentence
+ * "this module is the one place that decides WHICH number that is, because three
+ * surfaces print it and a per-surface answer is how they would drift". The hub
+ * was the third surface and it had already drifted. One decision, one owner.
+ *
+ * `said` is a full clause and never a fragment: a screen reader gets the same
+ * sentence shape whichever rung answered, so the two are comparable by ear.
+ */
+export interface PrematchAttribution {
+  /** The rung id for `data-prematch-source`, or `null` when unstated. */
+  source: string | null;
+  /** The spoken clause, always present — the sentence names its own rung. */
+  said: string;
+  /** The visible marker, or `null` when the reading needs no caveat. */
+  marker: string | null;
+}
+
+export function prematchAttribution(player: ResultPlayer): PrematchAttribution {
+  const source = player.prematch_source ?? null;
+  // An ABSENT source means what it has always meant on this payload: a
+  // prediction-market opening from `_prematch_by_pair`, which predates the
+  // field. Absent must not read as "unknown rung" and pick up a books marker —
+  // that would put the caveat on 111 rows that do not need it.
+  if (isPredictionMarketSource(source) || source === null) {
+    return { source, said: "Before the match, the market gave", marker: null };
+  }
   return {
-    withPrior: matches.filter((match) =>
-      match.players.some((player) => typeof player.prematch_probability === "number")
-    ).length,
-    total: matches.length,
+    source,
+    said: "Before the match, sportsbooks opened",
+    marker: BOOKS_MARKER,
   };
 }
 
@@ -622,9 +859,15 @@ export function resultsEmptyReason(
  */
 export function resultEventHref(
   result: TournamentResult,
-  eventIds: MatchupEventIds
+  eventIds: MatchupEventIds,
+  espnEventIds?: EspnEventIds
 ): string | null {
-  return matchupEventHref(result.matchup_key, eventIds);
+  return matchEventHref(
+    result.matchup_key,
+    result.espn_competition_id,
+    eventIds,
+    espnEventIds
+  );
 }
 
 /**
@@ -637,11 +880,13 @@ export function resultEventHref(
  */
 export function resultLinkCoverage(
   matches: TournamentResult[],
-  eventIds: Record<string, number> | null | undefined
+  eventIds: Record<string, number> | null | undefined,
+  espnEventIds?: EspnEventIds
 ): { linked: number; total: number } {
   return {
-    linked: matches.filter((match) => resultEventHref(match, eventIds) !== null)
-      .length,
+    linked: matches.filter(
+      (match) => resultEventHref(match, eventIds, espnEventIds) !== null
+    ).length,
     total: matches.length,
   };
 }

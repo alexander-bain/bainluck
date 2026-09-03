@@ -10,8 +10,11 @@ import {
   completionNote,
   drawIsPriced,
   formatPrematch,
+  prematchAbsenceNote,
+  prematchAttribution,
   prematchCoverage,
   prematchPercents,
+  prematchSourceNote,
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
@@ -190,6 +193,11 @@ function ResultRow({
           player.prematch_probability,
           percents[player.entity_key]
         );
+        /* CERT-812: which rung this ONE number came from, in both registers.
+           Per player and not per match — `prematchPercents` already has a
+           branch for a row where only one side carries a prior, and a
+           match-level label would put the wrong claim on the other side. */
+        const attribution = prematchAttribution(player);
         const edge = index === 0 ? "border-t border-surface-border pt-2.5" : "pb-2.5";
         return (
           <React.Fragment key={player.entity_key}>
@@ -244,17 +252,43 @@ function ResultRow({
             <span
               className={`text-right text-[12px] tabular-nums text-text-secondary ${edge}${cellHover}`}
               data-testid={prior ? "result-prematch" : undefined}
+              /* CERT-812 required this at the ROW, not just in the footer. The
+                 rung is a queryable fact per number now, so a guard can assert
+                 which claim each figure is making. */
+              data-prematch-source={prior ? attribution.source ?? undefined : undefined}
             >
               {/* Ruling 2 again: a number names its own question. The column
                   has no header — there is no room for one beside a score — so
                   the sentence travels with each number for a screen reader,
-                  and the section's footnote carries it for everyone else. */}
+                  and the section's footnote carries it for everyone else.
+
+                  CERT-812: that sentence used to be the literal string "the
+                  market gave" on EVERY row, so the one reader who cannot see a
+                  label got the exact false claim this ship exists to stop
+                  making — on 61 of today's 172 priors. It is now the rung's own
+                  clause, from the same decision the marker uses. */}
               {prior && (
                 <>
                   <span className="sr-only">
-                    Before the match, the market gave {player.display_name}{" "}
+                    {attribution.said} {player.display_name}{" "}
                   </span>
                   {prior}
+                  {/* THE VISIBLE HALF. A books number says so beside itself;
+                      a prediction-market one renders exactly as it always did,
+                      so this change is strictly additive on the 111 rows that
+                      were already honest. `aria-hidden` because the sr-only
+                      clause above already said it in words — a screen reader
+                      hearing "68% books" after "sportsbooks opened Shelton"
+                      would hear the rung twice. */}
+                  {attribution.marker && (
+                    <span
+                      aria-hidden="true"
+                      data-testid="result-prematch-marker"
+                      className="ml-1 text-[9px] font-medium uppercase tracking-[0.04em] text-text-muted"
+                    >
+                      {attribution.marker}
+                    </span>
+                  )}
                 </>
               )}
             </span>
@@ -323,6 +357,7 @@ export default function TournamentResults({
   draw,
   roundCount,
   eventIds,
+  espnEventIds,
   initialExpanded = false,
 }: {
   results: ResultsModel | null | undefined;
@@ -336,6 +371,17 @@ export default function TournamentResults({
    * rather than throwing, and it never invents an address of its own.
    */
   eventIds?: Record<string, number> | null;
+  /**
+   * `event_links.by_espn` from the hub payload — the server's id-anchored
+   * `ESPN competition id -> events.id` map (#2693 step 2).
+   *
+   * The channel that reaches THIS list. A finished match has usually lost its
+   * register matchup (`build_slate` retires one the moment its match starts),
+   * so `eventIds` above cannot cover it and 118 of 235 rows rendered as dead
+   * text. Optional and absent-tolerant for the same reason as `eventIds`: an
+   * older cached payload degrades to the market channel alone.
+   */
+  espnEventIds?: Record<string, number> | null;
   /**
    * How many main-draw rounds this tournament plays (#2449).
    *
@@ -383,12 +429,15 @@ export default function TournamentResults({
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
   const prior = prematchCoverage(matches);
+  /* ux/1036: whether any of those priors is a sportsbook opening rather than a
+     prediction market's, which is a different claim and has to say so. */
+  const sourceNote = prematchSourceNote(matches);
   /* #2450: the total says which population it is over, or says nothing. */
   const population = resultsPopulationNote(matches);
   /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
      a list where some rows open a page and some do not has to say which, or the
      dead ones read as a broken page rather than as the edge of our coverage. */
-  const links = resultLinkCoverage(matches, eventIds);
+  const links = resultLinkCoverage(matches, eventIds, espnEventIds);
 
   return (
     <section data-testid="tournament-results" data-draw={draw} data-count={matches.length}>
@@ -427,7 +476,7 @@ export default function TournamentResults({
               </li>
               <ResultRow
                 result={result}
-                href={resultEventHref(result, eventIds)}
+                href={resultEventHref(result, eventIds, espnEventIds)}
               />
             </React.Fragment>
           ))}
@@ -453,18 +502,49 @@ export default function TournamentResults({
           data-testid="results-prematch-note"
           data-with-prematch={prior.withPrior}
           data-total={prior.total}
+          data-held-without-opening={prior.heldWithoutOpening}
+          data-untied={prior.untied}
         >
           The grey figure beside a name is what the market gave that player{" "}
           <b className="font-semibold text-text-secondary">before the match started</b> —
           its opening number, not a reading taken after the result was known.{" "}
+          {/* ux/1036, Alex: "labelled when not a prediction market."
+
+              CERT-812 corrected two things about this block. The comment that
+              stood here claimed the books population was "empty on today's
+              served payload" — written against commit 1 and left unchanged by
+              commit 2, which added the very rung that fills it. Measured, it is
+              61 of 172 priors. And this note was the ONLY place the distinction
+              was drawn, over a list that named none of the rows it meant; it is
+              now the legend for the per-row marker `prematchAttribution` sets,
+              not the whole of the labelling. */}
+          {sourceNote && (
+            <span data-testid="results-prematch-source-note">{sourceNote} </span>
+          )}
           {prior.withPrior < prior.total && (
             <>
               Shown on{" "}
               <b className="font-semibold text-text-secondary">
                 {prior.withPrior} of {prior.total}
               </b>
-              . The rest are matches nobody ran a market on, and we would rather leave
-              the space empty than fill it with a number about a different question.
+              .{" "}
+              {/* ═══ ux/1034 A3: THIS SENTENCE USED TO BE A CLAIM ABOUT A VENUE
+                  ═══
+
+                  It read "The rest are matches nobody ran a market on". Alex
+                  found it under Shelton–Hurkacz, where it is false and
+                  measurably so: Polymarket had a market on that match, its
+                  price history simply begins at 17:38Z and the match began at
+                  17:08Z. What is missing is an OPENING, not a market.
+
+                  The field it was written from only ever described US — whether
+                  our register tied the fixture to a market of ours. Nothing in
+                  this payload knows what Kalshi or Polymarket chose to list, so
+                  the two cases it CAN tell apart are named and the third is not
+                  asserted. `prematchCoverage` counts them. */}
+              {prematchAbsenceNote(prior)}{" "}
+              We would rather leave the space empty than fill it with a number about
+              a different question.
             </>
           )}
         </p>

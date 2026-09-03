@@ -70,8 +70,43 @@
  *     an id is only an id if it could address a row.
  */
 
+/**
+ * ═══ THE SECOND MAP, AND WHY IT IS NOT A RELAXATION OF THE FIRST (#2693) ═══
+ *
+ * The `espn:` refusal above stays exactly as written. What follows is a
+ * different question asked of a different map, and the distinction is the
+ * whole of its safety.
+ *
+ * `matchupEventId` refuses an `espn:` key because the destination it would
+ * reach is *the register's* event for that matchup — the one holding the
+ * pairing Q503 just withheld. `espnCompetitionEventId` does not go there. It
+ * reads `event_links.by_espn`, a map the server builds by dereferencing the
+ * AUTHORITY's competition id through `events.espn_id`, so the row it lands on
+ * is one that agrees with the authority by construction: lane1/057's anchor
+ * join only stamps an `espn_id` on an event whose two players ESPN confirms.
+ *
+ * So the row Q503 re-keyed to `espn:184739` now links — to ESPN's match, not to
+ * the register's. The refusal above was never "this row may not be linked"; it
+ * was "this row may not be linked THROUGH THE REGISTER'S KEY", and it still is.
+ *
+ * Order is market-first, authority-second. The market channel is the reviewed
+ * one, and in the disagreement case it returns `null` anyway (the row's key is
+ * `espn:`), so the fallback can never overrule a link a human pinned.
+ */
+
 /** The published map: register matchup key -> our `events.id`. */
 export type MatchupEventIds = Record<string, number> | null | undefined;
+
+/** The published map: ESPN competition id -> our `events.id`. */
+export type EspnEventIds = Record<string, number> | null | undefined;
+
+/** An id is only an id if it could address a row. Shared by both channels. */
+function usableEventId(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}
 
 /**
  * The `events.id` for a matchup key, or `null` — the ONE resolution.
@@ -88,11 +123,7 @@ export function matchupEventId(
   // The authority-named row. See the docstring — this is the refusal that
   // stops a correct-looking link from being a wrong one.
   if (matchupKey.startsWith("espn:")) return null;
-  const eventId = eventIds[matchupKey];
-  if (typeof eventId !== "number" || !Number.isFinite(eventId) || eventId <= 0) {
-    return null;
-  }
-  return eventId;
+  return usableEventId(eventIds[matchupKey]);
 }
 
 /** `/events/{id}`, or `null`. The standard event page; never a hub-private URL. */
@@ -102,4 +133,43 @@ export function matchupEventHref(
 ): string | null {
   const eventId = matchupEventId(matchupKey, eventIds);
   return eventId === null ? null : `/events/${eventId}`;
+}
+
+/**
+ * The `events.id` for an ESPN competition id, or `null` — the second channel.
+ *
+ * Pure and total, like its sibling. A competition id the server could not
+ * resolve is simply absent from the map: it published
+ * `NO_EVENT_FOR_ESPN_ID` (no row exists — most of the qualifying draw) or
+ * `ESPN_ID_AMBIGUOUS` (two rows carry it, so neither is the answer) beside it.
+ * The client does not get to guess past a refusal that was counted, on this
+ * channel any more than on the other.
+ */
+export function espnCompetitionEventId(
+  espnCompetitionId: string | number | null | undefined,
+  espnEventIds: EspnEventIds
+): number | null {
+  if (!espnEventIds) return null;
+  if (espnCompetitionId === null || espnCompetitionId === undefined) return null;
+  const key = String(espnCompetitionId);
+  if (key.length === 0) return null;
+  return usableEventId(espnEventIds[key]);
+}
+
+/**
+ * Where a match row links — BOTH channels, in the one order that is safe.
+ *
+ * Market first, authority second. See the block comment above `MatchupEventIds`
+ * for why the fallback cannot resurrect the link Q503 withheld.
+ */
+export function matchEventHref(
+  matchupKey: string | null | undefined,
+  espnCompetitionId: string | number | null | undefined,
+  eventIds: MatchupEventIds,
+  espnEventIds?: EspnEventIds
+): string | null {
+  const pinned = matchupEventId(matchupKey, eventIds);
+  if (pinned !== null) return `/events/${pinned}`;
+  const viaAuthority = espnCompetitionEventId(espnCompetitionId, espnEventIds);
+  return viaAuthority === null ? null : `/events/${viaAuthority}`;
 }

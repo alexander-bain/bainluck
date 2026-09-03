@@ -125,12 +125,22 @@ describe("(a) the released main draw reaches the page", () => {
     const note = matchDetailNote({
       coherent: false,
       decided: false,
+      // This payload is ceremony day: 96 unpriced rows and not one of them
+      // live, so `upcoming` is the only state this fixture can supply.
+      liveState: null,
       score: null,
       priced: false,
       sides: [{} as never, {} as never],
     });
-    expect(note).toContain("Nobody is quoting this match yet");
+    // WAS `toContain("Nobody is quoting this match yet")` (#2690 retired it —
+    // the site was quoting the match on two other surfaces in the same minute).
+    // The claim UX-P142 was actually protecting is the one kept below: an
+    // unpriced row must say it is unpriced and must NOT borrow the incoherent
+    // branch's sentence. Pinning the old string instead of that property is why
+    // this test stayed green while the sentence became false.
+    expect(note).toContain("no probability against it");
     expect(note).not.toContain("do not agree");
+    expect(note).not.toContain("Nobody is quoting");
   });
 
   it("REFUSES to invent a draw sheet: no fixture carries a draw slot", () => {

@@ -222,9 +222,11 @@ class _Row:
 
 class _NetSession:
     def __init__(self, scheduled):
-        # scheduled, live, bogus-completed, future-settled — the net's four
-        # selects, in the order it issues them.
-        self._selects = [scheduled, [], [], []]
+        # scheduled, live, suspended, bogus-completed, future-settled — the
+        # net's five selects, in the order it issues them. `suspended → live`
+        # is live/048's door back out of the state the staleness net now writes
+        # instead of `closed`.
+        self._selects = [scheduled, [], [], [], []]
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)

@@ -20,9 +20,12 @@ import { getCategoryForLeague } from "@/lib/sportCategories";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes } from "@/components/discover/utils";
 import { initialFeedRequest, nextFeedRequest, dedupeById } from "@/lib/discover/feedPaging";
+import { admittedPropStripRows } from "@/lib/sports/propStripAdmission";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/discover/foregroundTerminal";
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
+import SportsFeedBootScript from "@/components/sports/SportsFeedBootScript";
+import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -108,6 +111,16 @@ export default function SportsPage() {
     groupedFeedKey(user?.uid),
     () => fetchGroupedFeed({ limit: 20, sportsOnly: true }),
     { refreshInterval: 120000, keepPreviousData: true }
+  );
+
+  // UX-P276 (#2710) — the rows the strip will actually put on screen. Every
+  // consumer below reads THIS, not `groupedData.feed`: the section gate, the
+  // count beside the heading, the "markets below" claim in the empty slate, and
+  // the renderer itself. Counting arrived rows while rendering admitted ones is
+  // the #2646 class — a page stating a number bigger than what it ships.
+  const admittedPropRows = useMemo(
+    () => admittedPropStripRows(groupedData?.feed),
+    [groupedData?.feed],
   );
 
   // =========================================================================
@@ -314,33 +327,51 @@ export default function SportsPage() {
   }, [interests, setInterest, showToast]);
 
   // =========================================================================
+  // The renderable, fresh feed — everything below reads THIS, not mergedItems
+  // =========================================================================
+  //
+  // Two filters, in order:
+  //   L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the
+  //   Sports dispatcher (FeedCard) has no per-card empty guard, so drop any card
+  //   with neither a renderable probability nor an authoritative result.
+  //   UX-1034f — then the finished-card guard: the SAME `isStale` gate Discover
+  //   has always run. /sports never called it, which is the whole reason page
+  //   one carried 20 completed games while Discover carried 0 on the same
+  //   2026-09-03T03:15Z pull. See lib/sports/finishedCardGuard.ts.
+  const guardedFeed = useMemo(() => {
+    if (mergedItems.length === 0) {
+      return { items: [] as FeedItem[], agedOut: [] as FeedItem[], keptToAvoidEmptyGames: false };
+    }
+    const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
+    return applyFinishedCardGuard(renderable);
+  }, [mergedItems]);
+
+  // =========================================================================
   // Summary stats
   // =========================================================================
 
   const feedStats = useMemo(() => {
     // #2597 — the bundle-unfolded list, so the header counts what the section
-    // badges below it count and what the grid actually renders.
-    const cards = flattenFeedBundles(mergedItems);
+    // badges below it count and what the grid actually renders. That is also why
+    // it counts the GUARDED list: a header advertising events the freshness gate
+    // has already removed is the same drift #2597 fixed, from the other end.
+    const cards = flattenFeedBundles(guardedFeed.items);
     const events = cards.filter(i => i.type === "event").length;
     const futures = cards.filter(i => i.type === "futures").length;
     const live = cards.filter(i =>
       i.type === "event" && (i.data as FeedEventData).status === "live"
     ).length;
     return { events, futures, live };
-  }, [mergedItems]);
+  }, [guardedFeed]);
 
   // =========================================================================
   // Group feed items into visual sections
   // =========================================================================
 
-  const feedSections = useMemo(() => {
-    if (mergedItems.length === 0) return [];
-    // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the Sports
-    // dispatcher (FeedCard) has no per-card empty guard, so drop any card with
-    // neither a renderable probability nor an authoritative result before sectioning.
-    const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
-    return groupFeedIntoSections(renderable);
-  }, [mergedItems]);
+  const feedSections = useMemo(
+    () => (guardedFeed.items.length === 0 ? [] : groupFeedIntoSections(guardedFeed.items)),
+    [guardedFeed]
+  );
 
   // L2-215 Item 1 — suppression telemetry (identity-free: type + machine reason
   // only), fired once per distinct suppression signature.
@@ -362,6 +393,30 @@ export default function SportsPage() {
       trackEvent("feed_card_suppressed", { card_type, suppression_reason, count, surface: "sports" });
     }
   }, [mergedItems]);
+
+  // UX-1034f — the same identity-free suppression telemetry for the cards the
+  // finished-card guard aged out, so the freshness needle is readable from
+  // production instead of only from an hourly hand pull.
+  const agedOutSigRef = useRef("");
+  useEffect(() => {
+    const { agedOut } = guardedFeed;
+    if (agedOut.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const item of agedOut) {
+      counts.set(item.type, (counts.get(item.type) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === agedOutSigRef.current) return;
+    agedOutSigRef.current = sig;
+    for (const [card_type, count] of counts) {
+      trackEvent("feed_card_suppressed", {
+        card_type,
+        suppression_reason: "stale_finished",
+        count,
+        surface: "sports",
+      });
+    }
+  }, [guardedFeed]);
 
   // #1102 information architecture: games LEAD the page. Split the game sections
   // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
@@ -502,6 +557,18 @@ export default function SportsPage() {
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
+    {/* LAT-P218 — first node in the tree so the parser reaches it before the chips, the skeleton
+        grid and the footer. `/api/feed?limit=20&mode=sports` is on the wire ~1.8 s before hydration
+        could have issued it on Slow 4G. Claimed by `fetchFeed`'s existing boot claim.
+
+        🔴 IT SITS OUTSIDE THE `space-y-5` WRAPPER, NOT INSIDE IT. `space-y-5` is
+        `& > * + * { margin-top: 1.25rem }`. A <script> renders nothing but IS an element child, so as
+        the first child it would make LeagueChips the SECOND child and push the entire page down
+        1.25rem — an invisible instrument producing a visible layout shift. Discover can put its boot
+        script inside its root div because that div is `min-h-screen bg-surface-deep` with no space-y;
+        this one cannot. Outside the wrapper it also parses very slightly EARLIER, so nothing is
+        traded away. */}
+    <SportsFeedBootScript />
     <div className="space-y-5">
       {/* Toast feedback */}
       {toast && (
@@ -561,7 +628,7 @@ export default function SportsPage() {
               <SportsEmptySlate
                 mode="no-games"
                 hasMarketsBelow={
-                  !!marketsSection || (!!groupedData && groupedData.feed.length > 0)
+                  !!marketsSection || admittedPropRows.length > 0
                 }
                 onRefresh={() => refreshFeed()}
               />
@@ -575,7 +642,7 @@ export default function SportsPage() {
             {/* Player Props & Progressions strip — BELOW the games feed (#1102).
                 Renders the shared Quantity kernel (QuantityGroup) per question,
                 never a naked pooled strip without its context. */}
-            {groupedData && groupedData.feed.length > 0 && (
+            {admittedPropRows.length > 0 && (
               <section>
                 {gameSections.length > 0 && (
                   <div className="border-t border-surface-border/30 -mt-1 mb-5" />
@@ -591,10 +658,10 @@ export default function SportsPage() {
                     Player Props & Progressions
                   </h2>
                   <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
-                    {groupedData.feed.length}
+                    {admittedPropRows.length}
                   </span>
                 </motion.div>
-                <GroupedFeedRenderer items={groupedData.feed} compact />
+                <GroupedFeedRenderer items={admittedPropRows} compact />
               </section>
             )}
 
@@ -629,7 +696,8 @@ export default function SportsPage() {
             </>
           ) : (
             <div className="flex justify-center pt-4">
-              <EndOfFeedCard count={mergedItems.length} onRefresh={() => refreshFeed()} />
+              {/* The count the reader actually saw — guarded, not loaded. */}
+              <EndOfFeedCard count={guardedFeed.items.length} onRefresh={() => refreshFeed()} />
             </div>
           )}
         </>

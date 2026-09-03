@@ -623,11 +623,15 @@ def test_the_positive_arm_of_the_baseline_has_teeth():
 #: Passing positives whose answer the capture's own SEARCH surfaced — the
 #: subset where a green means the matcher both FOUND and CHOSE the adjudicated
 #: event. Measured 2026-09-02: 45 of the 105 passing positives.
-END_TO_END_POSITIVE_FLOOR = 45
+#: Raised 2026-09-02 (#2706, lane1b/006): 52 of 116. Kalshi ticker abbreviations
+#: are now resolved inside the asking sport's namespace, so the nine NFL pairs
+#: that were searched for as NBA teams ("ATL Falcons" as Hawks) and two WNBA
+#: pairs that were searched for as an NHL/NBA team now find their event.
+END_TO_END_POSITIVE_FLOOR = 52
 
 
 def test_the_positive_floor_holds_without_the_pairs_that_were_handed_an_answer():
-    """60 of the 105 passing positives were handed their answer by the capture
+    """64 of the 116 passing positives were handed their answer by the capture
     (see the truncation proof above). Those greens test the SCORER only.
 
     So the floor is asserted a second time over the pairs where the matcher's

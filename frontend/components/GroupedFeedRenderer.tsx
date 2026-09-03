@@ -14,6 +14,7 @@
 
 import { motion } from "@/components/motion";
 import { staggerContainer, staggerItem } from "@/lib/animations";
+import { admittedPropStripRows } from "@/lib/sports/propStripAdmission";
 import type {
   GroupedFeedItem,
   StatPropFeedItem,
@@ -195,7 +196,16 @@ export default function GroupedFeedRenderer({
   compact = false,
   onItemClick,
 }: GroupedFeedRendererProps) {
-  if (!items || items.length === 0) {
+  // UX-P276 (#2710) — "a card with no number is not shown" (Alex). A row that
+  // carries no printable probability rendered a full card whose body was the
+  // words "No outcomes available", or a column of dashes. The strip had no
+  // admission of any kind; it renders whatever the endpoint returns.
+  // Fail-closed, and shared with the section heading's count so the two cannot
+  // disagree — see `lib/sports/propStripAdmission.ts` for why this is NOT the
+  // Discover card-admission contract.
+  const admitted = admittedPropStripRows(items);
+
+  if (admitted.length === 0) {
     return (
       <div className="text-center py-12 text-[var(--text-muted)]">
         No grouped markets found
@@ -211,7 +221,7 @@ export default function GroupedFeedRenderer({
       initial="hidden"
       animate="visible"
     >
-      {items.map((item) => {
+      {admitted.map((item) => {
         // Key by a STABLE entity id, not the array index (see groupedFeedItemKey).
         const key = groupedFeedItemKey(item);
 

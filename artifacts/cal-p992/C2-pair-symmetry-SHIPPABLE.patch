@@ -1,0 +1,383 @@
+--- a/backend/app/tasks/precompute_calibration.py
++++ b/backend/app/tasks/precompute_calibration.py
+@@ -1015,20 +1015,84 @@
+ # The bid check uses SNAPSHOT provenance (evidence captured over the outcome's
+ # life), not the current bid — live bids can clear on resolution.
+ POLY_PLACEHOLDER_EXCLUDE = (
+-    "(vm.source = 'polymarket'\n"
++    "((vm.source = 'polymarket'\n"
+     "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
+     "     AND COALESCE(fo.calibration_probability, fo.opening_probability) <= 0.55\n"
+     "     AND NOT EXISTS (\n"
+     "        SELECT 1 FROM futures_odds_snapshots fos\n"
+     "        WHERE fos.outcome_id = fo.id\n"
+     "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
++    # -- CAL-P992 (#1978, calibration-027 option A, Alex 2026-09-02): PAIR SYMMETRY.
++    #
++    # The clause above is per LEG on a market that has two of them, and Polymarket's
++    # O/U markets are not written symmetrically: only the Over side comes from a real
++    # order book, and the Under is stored as the arithmetic complement with no book of
++    # its own. Measured on `polymarket/basketball/quantity`, the leg clause fires on
++    # 398 Under legs and ZERO Over legs (652 of 1,045 Unders never showed a bid or a
++    # trade at any price; 1,045 of 1,045 Overs did). So it deleted the bookless half of
++    # each pair and published the other half alone — 398 orphan Over legs at a mean
++    # 0.4966 that go on to win 9.8%. The curve was grading half a book against the
++    # venue's settlement.
++    #
++    # The rule is the minimal one: if the exclusion removed one leg of a two-leg
++    # market, the partner may not publish alone. It picks no side, invents no
++    # threshold, and touches only rows that are ALREADY half-excluded — the same
++    # sentence R1 already enforces for the 0.5000 pair, because half a book is not a
++    # forecast.
++    #
++    # NOT CELL-SCOPED, deliberately, and that is Alex's call rather than this file's
++    # convention. `NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS` and
++    # `INCOHERENT_BINARY_EXCLUDED_CELLS` scope by cell because they are SHAPE claims
++    # about a category. This is a coherence claim about the clause directly above it:
++    # wherever that clause fires on one leg of a pair, the survivor is half a book by
++    # construction, and there is no cell in which that is acceptable. Option B (census
++    # first, ship after) was declined because the census happens inside the freeze
++    # window anyway; option C (either bookless leg kills the whole market) is refused
++    # by its own measurement — it removes 91% of the cell and leaves the residual over
++    # the bar.
++    #
++    # It stays ONE constant rather than two composed ones on purpose: every
++    # module-level SQL string here is a hole the calibration fingerprint does not
++    # hash, and `test_a_behaviour_only_input_does_not_widen_the_sql_shaping_hole`
++    # counts them. The pre-CAL-P992 shape is pinned in
++    # `tests/test_calibration_poly_pair_symmetry_992.py` as its own defect arm, which
++    # is where a defect arm belongs anyway.
++    #
++    # Measured effect, through the producer's own chain (artifacts/cal-p991,
++    # reproduced in artifacts/cal-p992):
++    #   polymarket/basketball/quantity  15.43 -> 8.85 pp, price-vs-outcome gap
++    #                                   -9.45 -> -0.35
++    #   polymarket/basketball (cell)     4.42 -> 2.25 pp  (under the bar)
++    #   the `field` control              zero rows moved
++    "\n     OR (vm.source = 'polymarket'\n"
++    "     AND (SELECT COUNT(*) FROM futures_outcomes fo8\n"
++    "          WHERE fo8.market_id = fo.market_id) = 2\n"
++    "     AND EXISTS (\n"
++    "        SELECT 1 FROM futures_outcomes fo9\n"
++    "        WHERE fo9.market_id = fo.market_id AND fo9.id <> fo.id\n"
++    "          AND COALESCE(fo9.calibration_probability,\n"
++    "                       fo9.opening_probability) >= 0.45\n"
++    "          AND COALESCE(fo9.calibration_probability,\n"
++    "                       fo9.opening_probability) <= 0.55\n"
++    "          AND NOT EXISTS (\n"
++    "             SELECT 1 FROM futures_odds_snapshots fos9\n"
++    "             WHERE fos9.outcome_id = fo9.id\n"
++    "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))))"
++    # The closing paren of the doubled opener. Load-bearing: this string is
++    # interpolated as a bare expression (`{POLY_PLACEHOLDER_EXCLUDE} AS
++    # is_poly_placeholder`), so an unwrapped top-level OR would bind against
++    # whatever follows it.
++    ")"
+ )
+ 
+ POLY_PLACEHOLDER_RULE_TEXT = (
+     "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed "
+     "a real bid or trade in any snapshot — Gamma synthetic placeholder prices, not "
+     "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
+-    "has-bid at 0.43–0.55). Read-side only; never mutates resolutions."
++    "has-bid at 0.43–0.55). Pair-symmetric: on a two-outcome market the partner of "
++    "an excluded leg is excluded with it, because Polymarket writes only the Over "
++    "side from a real book and publishing the survivor alone grades half a book. "
++    "Read-side only; never mutates resolutions."
+ )
+ 
+ # Queue #220/221 Item 3 — the EXCLUSION-SYMMETRY census.
+diff --git a/backend/tests/test_calibration_poly_pair_symmetry_992.py b/backend/tests/test_calibration_poly_pair_symmetry_992.py
+new file mode 100644
+--- /dev/null
++++ b/backend/tests/test_calibration_poly_pair_symmetry_992.py
+@@ -0,0 +1,289 @@
++"""CAL-P992 (#1978, calibration-027 A): the placeholder filter must be pair-symmetric.
++
++WHY THIS FILE EXISTS. ``POLY_PLACEHOLDER_EXCLUDE`` is a per-LEG rule and Polymarket
++O/U markets have two legs that are not written the same way: the Over comes from a
++real order book, the Under is stored as ``1 - Over`` and usually never carries a book
++of its own. So the leg rule fired on 398 Under legs and ZERO Over legs in
++``polymarket/basketball/quantity``, deleted the bookless half of each pair, and
++published the survivor alone — 398 orphan Over legs at a mean 0.4966 that win 9.8%.
++The curve was grading half a book against the venue's settlement.
++
++WHAT IS GUARDED, AND HOW. The rule is a SQL string, so a guard that asserts on its
++TEXT proves nothing about what the database does with it. Every test below executes
++the module's real ``POLY_PLACEHOLDER_EXCLUDE`` against a seeded table and reads the
++per-outcome boolean back. The DEFECT ARM runs ``LEG_ONLY_DEFECT_SQL`` — the
++pre-CAL-P992 shape, kept verbatim HERE rather than exported from the module, because
++every module-level SQL constant in ``precompute_calibration`` is a hole the
++calibration fingerprint does not hash and
++``test_a_behaviour_only_input_does_not_widen_the_sql_shaping_hole`` counts them. So
++the fixture proves the two shapes disagree without widening that hole, and no
++assertion below can pass merely because the fixture was too weak to tell them apart.
++
++THREE CONTROLS, because a symmetry rule is exactly the kind of change that is easy to
++over-apply: a two-leg pair where BOTH legs traded must keep both legs; a multi-outcome
++FIELD market must not lose its partners (the measured ``field`` control moved zero
++rows); and a Kalshi pair must be untouched, since Kalshi has its own all-bands
++liquidity contract and this rule is Polymarket-only.
++"""
++
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++import pytest
++from sqlalchemy import create_engine, text
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from app.tasks.precompute_calibration import (  # noqa: E402
++    POLY_PLACEHOLDER_EXCLUDE,
++    POLY_PLACEHOLDER_RULE_TEXT,
++)
++
++#: The rule as it stood before CAL-P992 — the per-leg test with no partner clause.
++#: Pinned as a literal so this arm keeps describing the defect even if the shipped
++#: constant is rewritten again; a defect arm that imports the thing it is supposed to
++#: contradict can only ever agree with it.
++LEG_ONLY_DEFECT_SQL = (
++    "(vm.source = 'polymarket'\n"
++    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
++    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) <= 0.55\n"
++    "     AND NOT EXISTS (\n"
++    "        SELECT 1 FROM futures_odds_snapshots fos\n"
++    "        WHERE fos.outcome_id = fo.id\n"
++    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
++)
++
++CREATE = """
++    CREATE TABLE futures_outcomes (
++        id INTEGER PRIMARY KEY,
++        market_id INTEGER,
++        name TEXT,
++        calibration_probability REAL,
++        opening_probability REAL
++    );
++    CREATE TABLE futures_odds_snapshots (
++        id INTEGER PRIMARY KEY,
++        outcome_id INTEGER,
++        yes_bid REAL,
++        last_price REAL
++    );
++    CREATE TABLE vm (market_id INTEGER, source TEXT);
++"""
++
++#: The rule is interpolated into the producer's big query as a bare expression
++#: aliased to ``is_poly_placeholder``. This harness reproduces that exact framing —
++#: including the ``vm`` join the rule reads ``source`` from — so a change that only
++#: parses inside a different set of parentheses cannot pass here.
++PROBE = """
++    SELECT fo.name, {expr} AS is_poly_placeholder
++    FROM futures_outcomes fo
++    JOIN vm ON vm.market_id = fo.market_id
++    ORDER BY fo.id
++"""
++
++
++def _seed(conn, market_id, source, legs):
++    conn.execute(
++        text("INSERT INTO vm (market_id, source) VALUES (:m, :s)"),
++        {"m": market_id, "s": source},
++    )
++    for outcome_id, name, price, has_book in legs:
++        conn.execute(
++            text(
++                "INSERT INTO futures_outcomes "
++                "(id, market_id, name, calibration_probability, opening_probability) "
++                "VALUES (:i, :m, :n, :p, :p)"
++            ),
++            {"i": outcome_id, "m": market_id, "n": name, "p": price},
++        )
++        if has_book:
++            conn.execute(
++                text(
++                    "INSERT INTO futures_odds_snapshots "
++                    "(outcome_id, yes_bid, last_price) VALUES (:i, 0.48, 0.49)"
++                ),
++                {"i": outcome_id},
++            )
++        else:
++            # Present but EMPTY evidence: a snapshot row that never showed a bid or
++            # a trade. Seeding no row at all would let a rule that forgot the
++            # `yes_bid > 0 OR last_price > 0` test pass by accident.
++            conn.execute(
++                text(
++                    "INSERT INTO futures_odds_snapshots "
++                    "(outcome_id, yes_bid, last_price) VALUES (:i, 0, 0)"
++                ),
++                {"i": outcome_id},
++            )
++
++
++@pytest.fixture
++def seeded():
++    """One half-book O/U pair, plus the three controls."""
++    engine = create_engine("sqlite://")
++    with engine.begin() as conn:
++        for stmt in CREATE.strip().split(";"):
++            if stmt.strip():
++                conn.execute(text(stmt))
++
++        # THE DEFECT. Polymarket writes the Over from a real book and the Under as
++        # its complement, so only the Under trips the leg rule — and the Over that
++        # survives is half a book priced at a coin flip.
++        _seed(
++            conn,
++            1,
++            "polymarket",
++            [
++                (10, "half_book_over", 0.4966, True),
++                (11, "half_book_under", 0.5034, False),
++            ],
++        )
++        # CONTROL 1 — a genuine two-leg coin flip. Both legs traded, so neither is
++        # a placeholder and pair symmetry has nothing to act on. #151's census is
++        # explicit that has-bid near-0.50 poly outcomes resolve at 0.43-0.55 and
++        # MUST stay in the curve.
++        _seed(
++            conn,
++            2,
++            "polymarket",
++            [
++                (20, "real_coinflip_yes", 0.51, True),
++                (21, "real_coinflip_no", 0.49, True),
++            ],
++        )
++        # CONTROL 2 — a FIELD market: three outcomes, one of them a bookless
++        # near-0.50 placeholder. Only that leg may leave; a rule that reached for
++        # "the rest of the market" would empty the cell the fold measured as moving
++        # zero rows.
++        _seed(
++            conn,
++            3,
++            "polymarket",
++            [
++                (30, "field_placeholder", 0.50, False),
++                (31, "field_runner_a", 0.30, True),
++                (32, "field_runner_b", 0.20, True),
++            ],
++        )
++        # CONTROL 3 — Kalshi. Its never-traded rows are already excluded in ALL
++        # price bands by KALSHI_LIQUIDITY_EXISTS, a different contract; this rule
++        # must not reach across the source boundary.
++        _seed(
++            conn,
++            4,
++            "kalshi",
++            [
++                (40, "kalshi_over", 0.4966, True),
++                (41, "kalshi_under", 0.5034, False),
++            ],
++        )
++    return engine
++
++
++def _flags(engine, expr):
++    with engine.begin() as conn:
++        rows = conn.execute(text(PROBE.format(expr=expr))).all()
++    return {name: bool(flag) for name, flag in rows}
++
++
++class TestHalfABookIsNotAForecast:
++    """The ship: an excluded leg takes its partner with it."""
++
++    def test_the_defect_arm_publishes_the_orphan_over(self, seeded):
++        """The failure, executed. This is what the curve was grading."""
++        flags = _flags(seeded, LEG_ONLY_DEFECT_SQL)
++
++        assert flags["half_book_under"] is True, (
++            "fixture check: the bookless Under must trip the leg rule, or this "
++            "file is not reproducing the half-book"
++        )
++        assert flags["half_book_over"] is False, (
++            "RED-FIRST ANCHOR: under the per-leg rule the booked Over survives "
++            "alone at 0.4966 and goes on to win 9.8% of the time. If this is "
++            "already True the fixture is not showing the defect."
++        )
++
++    def test_both_legs_of_a_half_book_pair_leave_together(self, seeded):
++        flags = _flags(seeded, POLY_PLACEHOLDER_EXCLUDE)
++
++        assert flags["half_book_under"] is True
++        assert flags["half_book_over"] is True, (
++            "pair symmetry: if the exclusion removed one leg of a two-leg market "
++            "the partner may not publish alone"
++        )
++
++    def test_a_pair_that_both_traded_keeps_both_legs(self, seeded):
++        """Control 1. The rule may only touch rows that are ALREADY half-excluded."""
++        flags = _flags(seeded, POLY_PLACEHOLDER_EXCLUDE)
++
++        assert flags["real_coinflip_yes"] is False
++        assert flags["real_coinflip_no"] is False, (
++            "a genuine 50/50 with a book on both sides is the signal this curve "
++            "exists to measure — excluding it would be the cure killing the patient"
++        )
++
++    def test_a_field_market_loses_only_its_placeholder_leg(self, seeded):
++        """Control 2. `= 2` is the whole blast radius, and it is measured."""
++        flags = _flags(seeded, POLY_PLACEHOLDER_EXCLUDE)
++
++        assert flags["field_placeholder"] is True
++        assert flags["field_runner_a"] is False
++        assert flags["field_runner_b"] is False, (
++            "the fold measured ZERO rows moving in the `field` control; a rule "
++            "that fires here contradicts the measurement it was authorised on"
++        )
++
++    def test_kalshi_pairs_are_untouched(self, seeded):
++        """Control 3. The source boundary, executed rather than read off the string."""
++        flags = _flags(seeded, POLY_PLACEHOLDER_EXCLUDE)
++
++        assert flags["kalshi_over"] is False
++        assert flags["kalshi_under"] is False, (
++            "Kalshi's never-traded rows are excluded all-bands by a different "
++            "contract; reaching them from here would double-apply two policies"
++        )
++
++
++class TestTheRuleIsWiredTheWayTheProducerReadsIt:
++    """The expression must survive being interpolated bare into the big query."""
++
++    def test_the_shipped_expression_still_contains_the_leg_rule(self):
++        """Pair symmetry ADDS a clause; it must not have replaced the original one."""
++        assert LEG_ONLY_DEFECT_SQL in POLY_PLACEHOLDER_EXCLUDE, (
++            "#151's per-leg census is still the reason a bookless near-0.50 poly "
++            "outcome leaves the curve. Symmetry is a second clause, not a swap."
++        )
++
++    def test_a_top_level_or_cannot_escape_its_parentheses(self):
++        """`{...} AS is_poly_placeholder` — an unwrapped OR would bind rightwards.
++
++        Balance-checked rather than eyeballed: the constant is assembled from a
++        dozen concatenated fragments, which is exactly the shape where a dropped
++        paren type-checks, imports, and silently changes what the curve publishes.
++        """
++        assert POLY_PLACEHOLDER_EXCLUDE.startswith("((")
++        assert POLY_PLACEHOLDER_EXCLUDE.endswith("))")
++        assert POLY_PLACEHOLDER_EXCLUDE.count("(") == POLY_PLACEHOLDER_EXCLUDE.count(
++            ")"
++        ), "unbalanced parentheses in the shipped placeholder expression"
++
++        depth = 0
++        for char in POLY_PLACEHOLDER_EXCLUDE[:-1]:
++            depth += (char == "(") - (char == ")")
++            assert depth > 0, (
++                "the expression must never return to depth 0 before its final "
++                "character, or the trailing clauses sit OUTSIDE the wrapper and "
++                "the OR binds against whatever the query puts next"
++            )
++
++    def test_the_user_facing_rule_text_names_the_symmetry(self):
++        """/calibration surfaces this string. A silent filter is the thing to avoid."""
++        lowered = POLY_PLACEHOLDER_RULE_TEXT.lower()
++        assert "pair-symmetric" in lowered
++        assert "partner" in lowered, (
++            "the page prints this sentence as the reason rows were excluded; if it "
++            "still describes only the per-leg rule the disclosure understates what "
++            "the filter removed"
++        )

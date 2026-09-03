@@ -1,0 +1,165 @@
+{
+  "condition": "22 of the last 24",
+  "ruling": "009, amended 2026-08-28 (Alex, MC, #2248)",
+  "clean": 5,
+  "window": 24,
+  "required": 22,
+  "beats_in_window": 24,
+  "misses": 19,
+  "misses_allowed": 2,
+  "verdict": "NOT_MET",
+  "reachable_if_all_remaining_clean": null,
+  "baseline_at": null,
+  "excluded_pre_baseline": 0,
+  "ring_observations": 168,
+  "oldest_in_window": "2026-09-02T15:39:24.720727+00:00",
+  "newest_in_window": "2026-09-03T05:25:16.558249+00:00",
+  "p_per_window_at_broken_rate": 5.6e-06,
+  "p_per_window_at_healthy_rate": 0.884,
+  "beats": [
+    {
+      "generated_at": "2026-09-02T15:39:24.720727+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T16:01:43.798763+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T16:44:23.284787+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T17:03:30.085077+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T17:25:18.110475+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T17:47:48.798060+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T18:29:10.356544+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T18:51:46.019055+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T19:30:14.238261+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T19:52:44.910385+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T20:33:21.872916+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T20:55:52.569658+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T21:38:29.006809+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T22:00:55.355222+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T22:23:26.123788+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T22:45:56.864395+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T23:30:58.074184+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-02T23:59:30.019132+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-09-03T00:17:49.786563+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-09-03T01:39:11.815735+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-09-03T02:30:28.854534+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    },
+    {
+      "generated_at": "2026-09-03T03:38:06.517810+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-09-03T04:33:51.684525+00:00",
+      "terminal": "complete",
+      "gate": "pass",
+      "clean": true
+    },
+    {
+      "generated_at": "2026-09-03T05:25:16.558249+00:00",
+      "terminal": "cancelled",
+      "gate": "not_evaluated",
+      "clean": false
+    }
+  ]
+}

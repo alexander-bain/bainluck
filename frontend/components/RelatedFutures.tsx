@@ -6,6 +6,7 @@ import useSWR from "swr";
 import type { RelatedFuture, RelatedFuturesResponse, TeamProgressionResponse } from "@/lib/types";
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { disambiguateLabels } from "@/lib/labelDisambiguation";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -915,9 +916,20 @@ function StatPropsSection({
               </span>
             </div>
 
-            {/* Player stat cards — horizontal scroll on mobile */}
+            {/* Player stat cards — horizontal scroll on mobile.
+                #2788: the tile labels are disambiguated ACROSS THE GROUP before
+                anything is rendered, because two of these are 110px wide and
+                sat side by side printing the identical string `Will Carlos Al…`
+                at 79% and 55%. Computed over the VISIBLE rows only — those are
+                the ones the reader is comparing. */}
+            {(() => {
+            const visibleRows = rows.slice(0, ROWS_PER_GROUP);
+            const tileLabels = disambiguateLabels(
+              visibleRows.map((r) => r.playerName || (r.isTeamTotal ? "Team" : "—")),
+            );
+            return (
             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
-              {rows.slice(0, ROWS_PER_GROUP).map((row) => {
+              {visibleRows.map((row, rowIndex) => {
                 // For completed events with box score: show settled card
                 const statKey = CATEGORY_TO_STAT[category] || category;
                 const playerStats = ((isFinished || isLive) && boxScore && row.playerName)
@@ -980,9 +992,15 @@ function StatPropsSection({
                       </div>
                     )}
 
-                    {/* Player name */}
-                    <div className="text-[11px] font-semibold text-text-primary truncate leading-tight">
-                      {row.playerName || (row.isTeamTotal ? "Team" : "—")}
+                    {/* Player name — or, when this group's rows are whole
+                        questions, the part of the question that differs from
+                        its neighbours (#2788). `title` carries the full text
+                        either way, so nothing the tile drops is unrecoverable. */}
+                    <div
+                      className="text-[11px] font-semibold text-text-primary truncate leading-tight"
+                      title={row.playerName || (row.isTeamTotal ? "Team" : undefined)}
+                    >
+                      {tileLabels[rowIndex]}
                     </div>
 
                     {hasSettledData ? (
@@ -1058,6 +1076,8 @@ function StatPropsSection({
                 );
               })}
             </div>
+            );
+            })()}
             {rows.length > ROWS_PER_GROUP && (
               <span className="text-[10px] text-text-muted/50 mt-1 inline-block">
                 +{rows.length - ROWS_PER_GROUP} more

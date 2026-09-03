@@ -1056,7 +1056,14 @@ number old enough to stop being a price is removed rather than shown quietly.
     // The detail note rides the CARD since UX-P154 deleted the drawer, so the
     // sentence written for the page's most common state is in the artifact
     // without needing a panel of its own.
-    expect(html).toContain("Nobody is quoting this match yet");
+    // WAS `toContain("Nobody is quoting this match yet")`. #2690 retired that
+    // sentence: it asserts a negative about every venue in the world, and the
+    // hub knows only that IT has no number. The artifact claim is unchanged —
+    // the unpriced row's sentence is on the CARD, not behind a tap — so this
+    // pins the surviving half and the refusal that replaced the overclaim.
+    expect(html).toContain("with no probability against it");
+    expect(html).toContain("not a statement about whether a venue listed one");
+    expect(html).not.toContain("Nobody is quoting");
     // (b) The x-axis, in the rendered chart rather than in a unit test.
     expect(html).toContain('data-testid="chart-axis"');
     expect((html.match(/data-testid="chart-axis-label"/g) ?? []).length).toBeGreaterThan(3);

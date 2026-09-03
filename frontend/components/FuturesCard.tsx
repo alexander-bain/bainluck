@@ -7,10 +7,18 @@ import { formatProbability } from "@/lib/api";
 import PersonalizedBadge from "./PersonalizedBadge";
 import EntityImage from "./EntityImage";
 import { isNonSportsCategory } from "@/lib/images";
+// UX-P276 (#2710). Placed here rather than beside `leaderFirstSlice` at the end
+// of the import block on purpose: PR #2836 (#2831, same lane, ungraded) adds its
+// own import against that exact anchor, and two new lines sharing one context
+// window is a textual conflict that would strand whichever of the two merges
+// second. Nothing else about the position matters.
+import { marketCategoryLabel } from "@/lib/marketCategoryLabel";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
+import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -86,13 +94,34 @@ export default function FuturesCard({
   personalizationReasons,
 }: FuturesCardProps) {
   const outcomes = market.top_outcomes || market.outcomes || [];
-  const topOutcomes = outcomes.slice(0, 5);
   // #2662: some markets name every outcome with this market's own full title plus a
   // suffix, so the rows read identically once truncated. Evaluate the all-or-nothing
   // predicate over the WHOLE shipped set, not the sliced five — a market whose first
   // five happen to be prefixed must not be stripped on the strength of a sample.
   const outcomeLabels = outcomeDisplayNames(market.name, outcomes.map((o) => o.name));
+  // #2789: the rows below carry `rank={index + 1}` and a highlighted leader, so the
+  // array must be leader-first BEFORE it is truncated — `/api/futures/grouped-feed`
+  // shipped an unordered five and this card stamped ranks on it. Pair each outcome
+  // with its #2662 label FIRST: `outcomeLabels` is positional over the unsorted
+  // array, so sorting without re-pairing hands row i's label to a different entrant.
+  const labelled = outcomes.map((outcome, index) => ({
+    outcome,
+    displayName: outcomeLabels[index],
+    probability: outcome.probability,
+  }));
+  const topOutcomes = leaderFirstSlice(labelled, 5);
+  // #2831: a market with exactly two outcomes prints BOTH sides of one question,
+  // and rounding them independently makes `0.925/0.075` read "93% / 8%". Decide
+  // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
+  // for the same reason `outcomeLabels` is: two rows out of a longer field are
+  // not a duel, and `slice` must not be able to manufacture one.
+  const rowPercents = renderedOutcomeRowPercents(outcomes.map((o) => o.probability));
+  const renderedById = new Map(outcomes.map((o, i) => [o.id, rowPercents[i] ?? null]));
   const isResolved = market.status === "resolved";
+  // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
+  // truthiness gate and the text it renders are the same value — a chip that
+  // tests `market.category` and prints a derived label can render an empty pill.
+  const categoryLabel = marketCategoryLabel(market.category);
 
   const handlePinClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -126,9 +155,15 @@ export default function FuturesCard({
                   {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
                 </span>
               )}
-              {market.category && (
+              {/* UX-P276 (#2710): the chip says "Game Props", never `game_prop`.
+                  This printed `FuturesMarket.category` straight through, so the
+                  reader got the column value beside the sport name — measured on
+                  the live /sports strip, 16 of 20 rendered cards. The helper's
+                  title-case fallback is what makes an unknown future category
+                  unable to arrive here raw. */}
+              {categoryLabel && (
                 <span className="text-[10px] bg-accent-futures/15 text-accent-futures px-1.5 py-0.5 rounded">
-                  {market.category}
+                  {categoryLabel}
                 </span>
               )}
               {market.source_count && market.source_count > 1 && (
@@ -184,7 +219,7 @@ export default function FuturesCard({
             initial="hidden"
             animate="visible"
           >
-            {topOutcomes.map((outcome, index) => (
+            {topOutcomes.map(({ outcome, displayName }, index) => (
               <motion.div key={outcome.id} variants={staggerItem}>
                 <OutcomeRow
                   outcome={outcome}
@@ -192,7 +227,8 @@ export default function FuturesCard({
                   isLeader={index === 0}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
-                  displayName={outcomeLabels[index]}
+                  displayName={displayName}
+                  rendered={renderedById.get(outcome.id) ?? null}
                 />
               </motion.div>
             ))}
@@ -235,6 +271,7 @@ function OutcomeRow({
   isResolved,
   marketCategory,
   displayName,
+  rendered,
 }: {
   outcome: FuturesOutcome;
   rank: number;
@@ -245,6 +282,12 @@ function OutcomeRow({
    *  because it needs the whole outcome set to make it. Defaulting this would let a
    *  future call site silently render the un-stripped name with every test green. */
   displayName: string;
+  /** The card-level integer for this row, or null for "no override" (#2831).
+   *  Required for the same reason `displayName` is: the pair decision needs the
+   *  whole outcome set, so only the caller can make it. A default of `null` would
+   *  compile at the next call site and silently print 101 again with every test
+   *  green — which is exactly how this row came to round independently. */
+  rendered: number | null;
 }) {
   const movement = outcome.movement ?? outcome.probability_change_24h;
   const prob = outcome.probability ?? 0;
@@ -293,7 +336,11 @@ function OutcomeRow({
           )}
         </div>
         {/* Mini probability bar */}
-        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${displayName} probability`}>
+        {/* #2831: the same integer the digits print, so a screen-reader user and a
+            sighted one are never told two different numbers about one row. The bar
+            WIDTH deliberately still comes off the raw probability below — only the
+            rounding was at fault, and the geometry must not move. */}
+        <div className="h-1 rounded-full bg-surface-border mt-1 overflow-hidden" role="progressbar" aria-valuenow={rendered ?? Math.round(prob * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`${displayName} probability`}>
           <motion.div
             className="h-full rounded-full"
             style={{
@@ -334,7 +381,7 @@ function OutcomeRow({
               "font-mono text-sm tabular-nums",
               isLeader ? "font-bold text-text-primary" : "text-text-muted",
             )}>
-              {formatProbability(outcome.probability)}
+              {formatProbability(outcome.probability, { rendered })}
             </span>
           </>
         )}

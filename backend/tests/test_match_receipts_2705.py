@@ -393,21 +393,32 @@ def _backlog_statements():
     ], stats
 
 
-#: (id, source, status, event_id, has_receipt, selected_by_never_query, why)
+#: (id, source, status, event_id, has_receipt, selected_by_never_query, name, why)
+#:
+#: THE NAMES ARE NOT DECORATION. Row 7 is a non-game market whose name shares no
+#: token with a matchup, so a predicate that narrows this population to
+#: game-shaped rows selects a DIFFERENT set here and the tests that compare two
+#: selections go red. With every row called "A vs B" that narrowing was
+#: invisible and the comparison was vacuous (#2803).
 BACKLOG_ROWS = [
-    (1, "polymarket", "open", None, False, True,
+    (1, "polymarket", "open", None, False, True, "Ann Li vs Donna Vekic",
      "the 8/28 wave: open, unlinked, never attempted — the whole point"),
-    (2, "polymarket", "open", None, True, False,
+    (2, "polymarket", "open", None, True, False, "Alcaraz vs Sinner",
      "already has a receipt: it goes in the stale queue, not the never queue"),
-    (3, "polymarket", "open", 15299723, False, False,
+    (3, "polymarket", "open", 15299723, False, False, "Swiatek vs Gauff",
      "already linked: the sweep is for unattached markets"),
-    (4, "polymarket", "closed", None, False, False,
+    (4, "polymarket", "closed", None, False, False, "Djokovic vs Medvedev",
      "closed: a settled market is not waiting to be attached"),
-    (5, "odds_api", "open", None, False, False,
+    (5, "odds_api", "open", None, False, False, "Rybakina vs Sabalenka",
      "not a prediction market source"),
-    (6, "kalshi", "open", None, False, True,
+    (6, "kalshi", "open", None, False, True, "Yankees vs Red Sox",
      "Kalshi backlog counts too — pass 1's ticker scan does not cover "
      "non-ticker Kalshi rows"),
+    (7, "kalshi", "open", None, False, True, "10Y US Treasury yield at year-end?",
+     "the 7,480 (#2803): economics, no game, never will be. Pass 3 SELECTS it "
+     "and the attempt refuses it with not_game_level — which is a receipt, so "
+     "it leaves the numerator. Narrowing the coverage denominator to game-shaped "
+     "rows would hide it instead of explaining it"),
 ]
 
 
@@ -421,13 +432,13 @@ def _plant(conn):
         "CREATE TABLE market_match_receipts (id INTEGER PRIMARY KEY, "
         "market_id INTEGER, last_attempted_at TEXT)"
     )
-    for mid, source, status, event_id, has_receipt, _sel, _why in BACKLOG_ROWS:
+    for mid, source, status, event_id, has_receipt, _sel, name, _why in BACKLOG_ROWS:
         conn.execute(
             "INSERT INTO futures_markets (id, source, status, event_id, "
             "updated_at, external_id, name, category, llm_sport_category, "
             "commence_time) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (mid, source, status, event_id, "2026-08-28T00:00:00", f"x{mid}",
-             "A vs B", "prop", "tennis", "2026-09-02T20:00:00"),
+             name, "prop", "tennis", "2026-09-02T20:00:00"),
         )
         if has_receipt:
             conn.execute(
@@ -451,7 +462,7 @@ def test_the_never_attempted_query_selects_exactly_the_starved_rows():
     conn.close()
 
     expected = {r[0] for r in BACKLOG_ROWS if r[5]}
-    for mid, _s, _st, _e, _hr, sel, why in BACKLOG_ROWS:
+    for mid, _s, _st, _e, _hr, sel, _name, why in BACKLOG_ROWS:
         assert (mid in got) is sel, f"market {mid} — {why}"
     assert got == expected
 
@@ -736,14 +747,23 @@ class _FakeResult:
 
 
 class _FakeDB:
-    """Serves queued results in order; records nothing else."""
+    """Serves queued results in order; records nothing else.
+
+    An exhausted queue yields an EMPTY result rather than raising, so a test
+    that cares about the first three summary queries does not have to enumerate
+    the coverage queries (#2803) that run after them. The statements are still
+    recorded — a test that wants to assert on a later query reads
+    ``.statements`` and compiles it itself.
+    """
 
     def __init__(self, results, scalar=0):
         self._results = list(results)
         self._scalar = scalar
+        self.statements: list = []
 
     async def execute(self, stmt):
-        return self._results.pop(0)
+        self.statements.append(stmt)
+        return self._results.pop(0) if self._results else _FakeResult([])
 
     async def scalar(self, stmt):
         return self._scalar
@@ -754,7 +774,7 @@ def _receipt_row(**kw):
         market_id=59669077, source="polymarket", external_id="0xabc",
         market_name="Ann Li vs Donna Vekic", phase=mr.PHASE_PASS3_BACKLOG,
         outcome=mr.OUTCOME_REJECTED, reject_reason=mr.REJECT_OUTSIDE_TIME_WINDOW,
-        linked_event_id=None,
+        linked_event_id=None, previous_event_id=None, actor=None,
         candidates=[{"event_id": 15299723, "verdict": "outside_time_window"}],
         detail={"team_a": "Ann Li", "team_b": "Donna Vekic"},
         attempt_count=41, first_attempted_at=NOW - timedelta(days=5),
@@ -770,14 +790,24 @@ def _call(**kw):
     from app.routes.admin_matching import match_receipts as endpoint
 
     db = kw.pop("db")
+    # Called as a plain coroutine, so every Query() default has to be supplied
+    # by hand — an unsupplied one arrives as the Query object itself, not its
+    # default, and fails inside whatever arithmetic first touches it.
+    kw.setdefault("since_hours", 24)
     with patch("app.routes.admin_matching._check_admin_secret", lambda *a, **k: None):
         return asyncio.run(endpoint(request=None, secret="x", db=db, **kw))
 
 
 def test_one_call_answers_why_a_market_is_unattached():
-    """The bus's acceptance test, in the shape the bus will run it."""
+    """The bus's acceptance test, in the shape the bus will run it.
+
+    Two results are queued because the single-market answer is two questions
+    since LINKLOSS-03: what the last attempt decided (the receipt, which the
+    next attempt overwrites) and what has actually happened to this market's
+    link (the append-only history, which nothing overwrites).
+    """
     out = _call(
-        db=_FakeDB([_FakeResult([_receipt_row()])]),
+        db=_FakeDB([_FakeResult([_receipt_row()]), _FakeResult([])]),
         market_id=59669077, external_id=None, event_id=None,
         reject_reason=None, source=None, limit=50,
     )
@@ -786,6 +816,7 @@ def test_one_call_answers_why_a_market_is_unattached():
     assert r["candidates"][0]["event_id"] == 15299723
     assert r["attempt_count"] == 41
     assert r["detail"]["team_a"] == "Ann Li"
+    assert out["link_changes"] == []
 
 
 def test_a_market_with_no_receipt_is_reported_as_never_attempted_not_as_empty():
@@ -840,10 +871,27 @@ def test_an_unknown_reject_reason_filter_is_refused_by_name():
 
 def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     """open unlinked markets with NO receipt — ARTIFACT-M-20260902-O's hole."""
-    reason_rows = [_Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="polymarket", n=6626)]
+    reason_rows = [
+        _Row(
+            reject_reason=mr.REJECT_NO_CANDIDATE,
+            source="polymarket",
+            n=6626,
+            still_linkable=6626,
+        )
+    ]
     totals = _Row(receipts=31433, linked=10021, oldest=NOW - timedelta(hours=2), newest=NOW)
+    change_rows = [
+        _Row(outcome=mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+             actor=mr.ACTOR_TWIN_CLEANUP, phase=mr.PHASE_TWIN_MERGE, n=261),
+        _Row(outcome=mr.OUTCOME_UNLINKED, actor=mr.ACTOR_MATCHER_PASS,
+             phase=mr.PHASE_PHASE15_REVALIDATE, n=4),
+    ]
     out = _call(
-        db=_FakeDB([_FakeResult(reason_rows), _FakeResult([totals])], scalar=0),
+        db=_FakeDB(
+            [_FakeResult(reason_rows), _FakeResult([totals]),
+             _FakeResult(change_rows)],
+            scalar=0,
+        ),
         market_id=None, external_id=None, event_id=None,
         reject_reason=None, source=None, limit=50,
     )
@@ -852,6 +900,587 @@ def test_the_summary_reports_the_coverage_number_the_bus_could_not_measure():
     assert out["totals"]["rejected"] == 31433 - 10021
     assert out["by_reason"][0]["count"] == 6626
     assert sorted(mr.REJECT_REASONS) == out["valid_reasons"]
+
+
+def _ran(rows_attempted=3000, at=None):
+    """The durable fact a completed Pass 3 leaves behind (#2803/CERT-819)."""
+    from app.utils.matcher_pass_runs import PassRunFact
+
+    return PassRunFact(
+        phase=mr.PHASE_PASS3_BACKLOG, has_run=True, status="ok",
+        last_run_at=at or NOW, rows_attempted=rows_attempted,
+    )
+
+
+class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
+    """#2803. The published figure was 36,966 open unlinked markets without a
+    receipt against ``target: 0``, and it was unreadable three ways.
+
+    #2803 proposed narrowing the denominator to game-shaped rows, on the premise
+    that 7,480 Kalshi economics/politics markets are ones "the game matcher is
+    not supposed to touch". THE CODE SAYS OTHERWISE, and that is what the first
+    test below pins: ``_phase1_pass3_backlog_scan`` selects *exactly* this set,
+    and ``_run_one_attempt`` refuses a non-game row with ``not_game_level`` —
+    which is a RECEIPT, so the row leaves the numerator. Target 0 is reachable;
+    narrowing would have hidden 7,480 rows Pass 3 really does attempt.
+
+    What was actually wrong is published instead: the composition (most of what
+    clears is a refusal, not a link), the source split (every receipt in the
+    table carried ``pass1_ticker``, which is Kalshi-only, so Polymarket's 29,486
+    was a fact about the writer), and whether the pass that drives the number
+    down has ever run.
+    """
+
+    @staticmethod
+    def _coverage_db(never_rows=(), explained_rows=(), phase_rows=()):
+        """The six result sets the endpoint reads, in the order it reads them."""
+        return _FakeDB(
+            [
+                _FakeResult([]),                       # reason histogram
+                _FakeResult([_Row(receipts=0, linked=0, oldest=None, newest=None)]),
+                _FakeResult([]),                       # link-change census
+                _FakeResult(list(never_rows)),
+                _FakeResult(list(explained_rows)),
+                _FakeResult(list(phase_rows)),
+            ],
+            scalar=0,
+        )
+
+    @staticmethod
+    def _summary(never_rows=(), explained_rows=(), phase_rows=(), pass_run=None):
+        """``pass_run`` stands in for the durable per-pass row (#2803/CERT-819).
+
+        Defaults to "no durable row", the state production was measured in —
+        which is published as ``null``, not ``false`` (CERT-824).
+        """
+        from unittest.mock import patch
+
+        from app.utils.matcher_pass_runs import STATUS_NO_RECORD, PassRunFact
+
+        fact = pass_run or PassRunFact(
+            phase=mr.PHASE_PASS3_BACKLOG, has_run=None, status=STATUS_NO_RECORD,
+        )
+        witness_seen: list = []
+
+        db = TestTheCoverageNumberIsHonestAboutItsOwnDenominator._coverage_db(
+            never_rows, explained_rows, phase_rows
+        )
+
+        async def _fake_read(_db, _phase, **kw):
+            witness_seen.append(kw.get("receipt_witness"))
+            return fact
+
+        with patch("app.utils.matcher_pass_runs.read_pass_run", _fake_read):
+            out = _call(
+                db=db, market_id=None, external_id=None, event_id=None,
+                reject_reason=None, source=None, limit=50,
+            )
+        db.witness_seen = witness_seen
+        return out["coverage"], db
+
+    def test_the_denominator_is_pass3s_own_eligibility_set_row_for_row(self):
+        """THE LOAD-BEARING CLAIM, run rather than read.
+
+        Both SELECTs are compiled and executed over the same planted rows. If
+        anyone narrows the endpoint's denominator (to game-shaped markets, to
+        one source, to a name filter) without narrowing Pass 3 the same way,
+        the two sets diverge and this goes red — which is the whole reason
+        ``target: 0`` is allowed to stand.
+        """
+        _cov, db = self._summary()
+        coverage_stmt = next(
+            s for s in db.statements
+            if "NOT (EXISTS" in str(s) and "GROUP BY" in str(s)
+        )
+        coverage_sql = coverage_stmt.compile(
+            dialect=sqlite_dialect.dialect(),
+            compile_kwargs={"literal_binds": True},
+        ).string
+        # Count per source -> ids, so the two queries are comparable as SETS.
+        coverage_sql = re.sub(
+            r"^SELECT.*?FROM", "SELECT futures_markets.id FROM",
+            coverage_sql, count=1, flags=re.S,
+        )
+        coverage_sql = re.sub(r"\s*GROUP BY.*$", "", coverage_sql, flags=re.S)
+
+        never_sql = _backlog_statements()[0][0]
+        never_sql = re.sub(
+            r"\bSELECT futures_markets\.[^F]+FROM",
+            "SELECT futures_markets.id FROM", never_sql, count=1,
+        )
+
+        conn = sqlite3.connect(":memory:")
+        _plant(conn)
+        from_coverage = {r[0] for r in conn.execute(coverage_sql).fetchall()}
+        from_pass3 = {r[0] for r in conn.execute(never_sql).fetchall()}
+        conn.close()
+
+        assert from_coverage == from_pass3, (
+            "the coverage denominator and Pass 3's never-attempted queue have "
+            f"drifted: coverage={sorted(from_coverage)} "
+            f"pass3={sorted(from_pass3)}. While they are equal, target 0 is "
+            "reachable by definition; once they are not, the target is a wish."
+        )
+        # And it is not vacuously equal because both are empty.
+        assert from_coverage == {r[0] for r in BACKLOG_ROWS if r[5]}
+
+    def test_a_non_game_market_leaves_the_numerator_by_being_refused(self):
+        """Why target 0 is reachable at all. ``10Y US Treasury yield at
+        year-end?`` will never link, but the attempt writes ``not_game_level``
+        and it stops being uncounted. If this gate ever returns without a
+        reason, the 7,480 become permanently unexplainable and #2803's
+        narrowing becomes the only honest option."""
+        src = inspect.getsource(pmm._run_one_attempt)
+        gate = src.split("extract_matchup_with_ticker_fallback")[0]
+        assert "is_game_level_market" in gate
+        assert "REJECT_NOT_GAME_LEVEL" in gate, (
+            "the non-game gate must reject with a reason, not just return"
+        )
+        # …and the parent-row branch it defers to also always sets one.
+        assert "REJECT_PARENT_ROW" in inspect.getsource(
+            pmm._receipt_parent_or_not_game_level
+        )
+
+    def test_the_number_is_split_by_source_and_both_sources_are_named(self):
+        """One number across a source the matcher reaches and a source it does
+        not is not a coverage number. A source at zero must still appear —
+        absent, it reads as covered."""
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            explained_rows=[_Row(source="kalshi", n=178, no_game_here=13)],
+        )
+        assert cov["by_source"]["kalshi"]["without_receipt"] == 7480
+        assert cov["by_source"]["kalshi"]["with_receipt"] == 178
+        assert cov["by_source"]["kalshi"]["explained_no_game_here"] == 13
+        # Polymarket wrote no rows at all — it is still published, at zero.
+        assert cov["by_source"]["polymarket"] == {
+            "without_receipt": 0, "with_receipt": 0, "explained_no_game_here": 0,
+        }
+        assert cov["open_unlinked_without_receipt"] == 7480
+
+    def test_the_headline_total_is_the_sum_of_the_split(self):
+        """The two must not be able to disagree — a total computed by its own
+        query would drift from the split the first time one of them changed."""
+        cov, _ = self._summary(
+            never_rows=[
+                _Row(source="kalshi", n=7480),
+                _Row(source="polymarket", n=29486),
+            ],
+        )
+        assert cov["open_unlinked_without_receipt"] == 36966
+        assert sum(
+            v["without_receipt"] for v in cov["by_source"].values()
+        ) == cov["open_unlinked_without_receipt"]
+
+    def test_it_says_whether_the_pass_that_drives_it_has_ever_run(self):
+        """Measured on production 2026-09-03: every receipt in the table
+        carried ``pass1_ticker``. Passes 2 and 3 had never written a row, so the
+        number could not fall — and nothing in the response said so."""
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+        )
+        # Null, not false: no durable row and no receipt witnessing a run means
+        # no evidence, and CERT-824 blocked publishing that as "never ran".
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == "no_record"
+        assert cov["receipt_phase_labels_now"] == {mr.PHASE_PASS1_TICKER: 138676}
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=12)],
+            phase_rows=[
+                _Row(phase=mr.PHASE_PASS1_TICKER, n=7000),
+                _Row(phase=mr.PHASE_PASS3_BACKLOG, n=3000),
+            ],
+            pass_run=_ran(rows_attempted=3000),
+        )
+        assert cov["backlog_pass_has_run"] is True
+
+    def test_pass1_overwriting_every_pass3_label_does_not_unmake_the_run(self):
+        """CERT-819, the exact sequence it blocked on, at the endpoint.
+
+        The receipt table is one MUTABLE row per market and the upsert sets
+        ``phase = excluded.phase``, so after Pass 3 runs, Pass 1/2 re-attempting
+        those same open unlinked markets erase every ``pass3_backlog`` label.
+        The census below is that end state — 100% ``pass1_ticker``, not one
+        ``pass3_backlog`` row left — and the flag must STILL be true, because
+        the pass did run.
+        """
+        after_erasure = [_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)]
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            phase_rows=after_erasure,
+            pass_run=_ran(rows_attempted=3000),
+        )
+        assert cov["backlog_pass_has_run"] is True, (
+            "a later pass overwriting the phase label unmade the run — that is "
+            "the CERT-819 defect back"
+        )
+        assert cov["backlog_pass"]["last_run_at"] == NOW.isoformat()
+        assert cov["backlog_pass"]["rows_attempted"] == 3000
+
+        # THE RED ARM. The blocked derivation, evaluated on the same state: it
+        # says "never ran" about a table where Pass 3 demonstrably ran. Without
+        # this, the assertion above could pass for the wrong reason.
+        phases_seen = {r.phase: r.n for r in after_erasure}
+        assert (mr.PHASE_PASS3_BACKLOG in phases_seen) is False, (
+            "the old label-census derivation is supposed to be wrong here; if "
+            "it is right, this fixture no longer reproduces the erasure"
+        )
+
+    def test_a_lost_record_write_never_reaches_the_admin_as_never_ran(self):
+        """CERT-824 AT THE PUBLISHED SURFACE, with the real reader.
+
+        Every other test in this class stubs ``read_pass_run`` and so proves
+        what the endpoint does with a fact, not which fact it gets. This one
+        runs the real ``record_pass_run`` into a store that refuses the write —
+        the supported non-fatal path — then serves the endpoint through the real
+        ``read_pass_run`` against a healthy store with no row. That is the
+        sequence CERT-824 walked to print ``ran=True, record_stage='error',
+        reported_has_run=False``, and the response must not say ``false``.
+        """
+        from unittest.mock import patch
+
+        from app.utils import matcher_pass_runs as pr
+        from app.utils.durable_state import EnvelopeRead
+
+        async def _write_fails(_envelope):
+            return {"status": "error", "error_class": "OperationalError"}
+
+        async def _healthy_but_empty(_db, _identity, **_kw):
+            return EnvelopeRead(status="missing", tier="durable")
+
+        with patch.multiple(
+            "app.services.durable_snapshots",
+            publish_snapshot_standalone=_write_fails,
+            read_snapshot=_healthy_but_empty,
+        ):
+            stage = asyncio.run(
+                pr.record_pass_run(
+                    phase=mr.PHASE_PASS3_BACKLOG, ran_at=NOW, rows_attempted=3000,
+                )
+            )
+            assert stage["status"] == "error", (
+                "this arm has to exercise a failed record write"
+            )
+            out = _call(
+                db=self._coverage_db(
+                    never_rows=[_Row(source="kalshi", n=7480)],
+                    # Pass 1 has since relabelled every receipt, so the census
+                    # cannot witness the run either. Nothing is left to save it
+                    # except refusing to answer.
+                    phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+                ),
+                market_id=None, external_id=None, event_id=None,
+                reject_reason=None, source=None, limit=50,
+            )
+
+        cov = out["coverage"]
+        assert cov["backlog_pass_has_run"] is not False, (
+            "the backlog pass ran, its record write failed, and the admin was "
+            "told nothing is driving the coverage number down — CERT-824"
+        )
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == pr.STATUS_NO_RECORD
+
+    def test_the_endpoint_hands_the_label_census_over_as_the_witness(self):
+        """The recovery that makes the null above rare rather than permanent.
+
+        The census is already computed for ``receipt_phase_labels_now``; the
+        witness is that same dict, read in the only direction it is sound in.
+        If the endpoint stops passing it, a lost write goes back to being
+        unrecoverable until the next cycle — so this checks the wiring, which
+        no assertion about ``read_pass_run``'s own behaviour can.
+        """
+        _cov, db = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS3_BACKLOG, n=3000)],
+        )
+        assert db.witness_seen == [True], (
+            "a live pass3_backlog label was not offered as a witness"
+        )
+
+        _cov, db = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+        )
+        assert db.witness_seen == [False], (
+            "the witness must be passed as False, not omitted — an absent "
+            "keyword and 'no label' are the same value here only by luck"
+        )
+
+    def test_a_durable_store_that_does_not_answer_is_not_a_no(self):
+        """``false`` is a claim about the matcher; a read failure is a claim
+        about the database. Publishing the second as the first sends an admin
+        hunting a dead beat that is alive — the same false negative CERT-819
+        blocked, arriving by a different route."""
+        from app.utils.matcher_pass_runs import PassRunFact
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            pass_run=PassRunFact(
+                phase=mr.PHASE_PASS3_BACKLOG, has_run=None,
+                status="unavailable", error_class="TimeoutError",
+            ),
+        )
+        assert cov["backlog_pass_has_run"] is None
+        assert cov["backlog_pass"]["status"] == "unavailable"
+        assert cov["backlog_pass"]["error_class"] == "TimeoutError"
+        assert "null" in cov["note"].lower()
+
+    def test_the_label_census_no_longer_claims_to_be_a_run_history(self):
+        """The census is still published — it is useful — but under a name and
+        a note that cannot be read as "these passes have run"."""
+        cov, _ = self._summary(
+            phase_rows=[_Row(phase=mr.PHASE_PASS1_TICKER, n=138676)],
+        )
+        assert "matcher_phases_seen" not in cov, (
+            "the old name asserted an ever-fact the column cannot support"
+        )
+        note = cov["receipt_phase_labels_note"].lower()
+        assert "overwrites" in note
+        assert "not a run history" in note
+
+    def test_the_note_does_not_let_the_number_be_read_as_missing_links(self):
+        """The failure this whole block exists to stop: a reader takes 36,966 as
+        36,966 games we failed to attach and opens a matching investigation into
+        `10Y-2Y spread at the end of 2026`."""
+        cov, _ = self._summary()
+        note = cov["note"].lower()
+        assert "receipt, not a link" in note
+        assert "explained_no_game_here" in note
+        # And the denominator is stated, not left to be inferred.
+        assert "event_id is null" in cov["denominator"].lower()
+        assert "base_where" in cov["denominator"]
+
+    def test_every_coverage_path_the_reconciler_names_actually_resolves(self):
+        """FOLLOW-UP ``L1B-010-RECEIPT-HINT-NESTED-PATH`` from CERT-819.
+
+        The reconciliation job's ``receipt_coverage`` hint is the one line an
+        operator follows out of a filed issue. It named
+        ``coverage.explained_no_game_here``, which has never existed — the field
+        is per-source, under ``coverage.by_source.<source>``. A hint that sends
+        a reader to a key that is not there is worse than no hint: they conclude
+        the number is missing rather than that they are in the wrong place.
+
+        So the hint's paths are checked against a REAL response rather than
+        proof-read. Every ``coverage.x.y`` this job prints must dereference.
+        """
+        import re
+
+        from app.tasks.matching_reconciliation import receipts_hint_for
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            explained_rows=[_Row(source="kalshi", n=178, no_game_here=13)],
+        )
+        hint = receipts_hint_for({"key": "receipt_coverage", "rows": []})
+        paths = set(re.findall(r"`coverage\.([A-Za-z_][A-Za-z0-9_.]*)`", hint))
+        assert paths, "the hint stopped naming any coverage path"
+
+        for path in paths:
+            node = cov
+            for part in path.split("."):
+                assert isinstance(node, dict) and part in node, (
+                    f"the reconciler points at coverage.{path}, which the "
+                    f"endpoint does not publish"
+                )
+                node = node[part]
+
+
+class TestTheRejectHistogramIsOrderedByWhatCanStillBeFixed:
+    """Measured on production 2026-09-03: 7,854 of 8,032 rejects were on
+    ALREADY-RESOLVED markets, so the flat histogram's top bucket
+    (``no_candidate``, 6,843) is overwhelmingly settled ITF tennis whose events
+    are never ingested. A reader who sorts on ``count`` picks the one bucket no
+    matching fix can move. Gotcha #53: a rate needs a denominator where 100% is
+    structurally achievable.
+    """
+
+    @staticmethod
+    def _summary(reason_rows):
+        totals = _Row(receipts=10, linked=2, oldest=NOW, newest=NOW)
+        return _call(
+            db=_FakeDB(
+                [_FakeResult(reason_rows), _FakeResult([totals]), _FakeResult([])],
+                scalar=0,
+            ),
+            market_id=None, external_id=None, event_id=None,
+            reject_reason=None, source=None, limit=50,
+        )
+
+    def test_the_big_dead_bucket_does_not_outrank_the_small_live_one(self):
+        # Production's actual shape, rounded to the two reasons that matter:
+        # no_candidate is 38x larger and 98% unfixable.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=109),
+                _Row(reject_reason=mr.REJECT_NAME_MISMATCH, source="kalshi",
+                     n=93, still_linkable=40),
+            ]
+        )
+        # Sorted by still_linkable, both rows are present and the caller can
+        # see which is worth a fix — but the ordering no longer sends them at
+        # 6,734 settled rows first.
+        assert [r["reject_reason"] for r in out["by_reason"]] == [
+            mr.REJECT_NO_CANDIDATE,
+            mr.REJECT_NAME_MISMATCH,
+        ]
+        assert out["by_reason"][0]["still_linkable"] == 109
+        assert out["by_reason"][0]["settled"] == 6843 - 109
+
+    def test_nothing_is_excluded_the_settled_column_is_published(self):
+        # The standing doctrine: read-side scoping protects a metric, it never
+        # closes an issue. A census that DROPPED the settled rows would be
+        # unable to show that the matcher is still re-attempting them.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=109),
+                _Row(reject_reason=mr.REJECT_OUTSIDE_TIME_WINDOW, source="kalshi",
+                     n=452, still_linkable=8),
+            ]
+        )
+        assert out["reject_totals"]["still_linkable"] == 117
+        assert out["reject_totals"]["settled"] == (6843 - 109) + (452 - 8)
+        assert sum(r["count"] for r in out["by_reason"]) == 6843 + 452
+
+    def test_a_reason_with_no_live_market_left_still_appears(self):
+        # It sorts last, but a reason that has gone entirely settled is a fact
+        # about a class that USED to fail — dropping it would erase the only
+        # evidence the class ever existed.
+        out = self._summary(
+            [
+                _Row(reject_reason=mr.REJECT_NO_CANDIDATE, source="kalshi",
+                     n=6843, still_linkable=0),
+            ]
+        )
+        assert out["by_reason"][0]["still_linkable"] == 0
+        assert out["by_reason"][0]["settled"] == 6843
+        assert out["reject_totals"]["still_linkable"] == 0
+
+    def test_the_split_is_computed_from_the_market_not_from_the_receipt(self):
+        """The join is the whole mechanism, and it is what a refactor drops.
+
+        A receipt carries no status of its own — ``market_match_receipts`` has
+        no column that says whether the market has settled — so the split can
+        only come from joining ``futures_markets``. A version of this query
+        without the join compiles, returns rows, and silently answers the flat
+        question again.
+        """
+        import inspect
+
+        from app.routes import admin_matching
+
+        src = inspect.getsource(admin_matching.match_receipts)
+        head, marker, tail = src.partition("still_linkable = func.count().filter(")
+        assert marker, "the reason histogram's split moved; re-point this guard"
+        query = marker + tail.split(").all()")[0]
+        assert 'FuturesMarket.status == "open"' in query, query
+        assert "FuturesMarket.id == MarketMatchReceipt.market_id" in query, query
+        assert "still_linkable.desc()" in query, query
+
+    def test_the_statement_itself_executes_and_puts_the_live_reason_first(self):
+        """The source scan above pins the SQL; this one RUNS it.
+
+        A shape test driven by a fake DB proves the response formatting and
+        nothing about the query, and the query is where the whole fix lives.
+        The same statement the endpoint builds is executed here against a real
+        engine over four markets — two settled, two open — arranged so that the
+        flat count and the live count disagree about which reason is worst.
+        """
+        from sqlalchemy import create_engine, func, select, text
+
+        from app.models.models import FuturesMarket, MarketMatchReceipt
+
+        still = func.count().filter(FuturesMarket.status == "open")
+        stmt = (
+            select(
+                MarketMatchReceipt.reject_reason,
+                MarketMatchReceipt.source,
+                func.count().label("n"),
+                still.label("still_linkable"),
+            )
+            .join(FuturesMarket, FuturesMarket.id == MarketMatchReceipt.market_id)
+            .where(MarketMatchReceipt.outcome == "rejected")
+            .group_by(MarketMatchReceipt.reject_reason, MarketMatchReceipt.source)
+            .order_by(still.desc(), func.count().desc())
+        )
+
+        engine = create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE futures_markets "
+                    "(id INTEGER PRIMARY KEY, status TEXT)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE market_match_receipts (id INTEGER PRIMARY KEY, "
+                    "market_id INTEGER, source TEXT, outcome TEXT, "
+                    "reject_reason TEXT)"
+                )
+            )
+            # no_candidate: 3 rejects, ALL settled — production's shape.
+            # name_mismatch: 1 reject, still open.
+            conn.execute(
+                text(
+                    "INSERT INTO futures_markets VALUES "
+                    "(1,'resolved'),(2,'resolved'),(3,'resolved'),(4,'open')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO market_match_receipts VALUES "
+                    "(1,1,'kalshi','rejected','no_candidate'),"
+                    "(2,2,'kalshi','rejected','no_candidate'),"
+                    "(3,3,'kalshi','rejected','no_candidate'),"
+                    "(4,4,'kalshi','rejected','name_mismatch')"
+                )
+            )
+            rows = list(conn.execute(stmt))
+
+        # Flat count says no_candidate (3) is the biggest problem. It is not:
+        # every one of its markets has settled and no fix can move it.
+        assert [(r[0], r[2], r[3]) for r in rows] == [
+            ("name_mismatch", 1, 1),
+            ("no_candidate", 3, 0),
+        ]
+
+
+def test_the_summary_answers_the_question_that_had_no_answer():
+    """LINKLOSS-02: "did tonight's merge drop 261 links?" is one GROUP BY.
+
+    The census must separate the merge from the matcher — one is expected
+    bookkeeping and the other is a bug — and must publish the settlement
+    subtraction beside it, because a settlement wave and a link loss look
+    identical in a count of open linked markets.
+    """
+    change_rows = [
+        _Row(outcome=mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE,
+             actor=mr.ACTOR_TWIN_CLEANUP, phase=mr.PHASE_TWIN_MERGE, n=261),
+        _Row(outcome=mr.OUTCOME_UNLINKED, actor=mr.ACTOR_MATCHER_PASS,
+             phase=mr.PHASE_PHASE2_LINKED, n=4),
+    ]
+    totals = _Row(receipts=1, linked=1, oldest=NOW, newest=NOW)
+    out = _call(
+        db=_FakeDB(
+            [_FakeResult([]), _FakeResult([totals]), _FakeResult(change_rows)],
+            scalar=17,
+        ),
+        market_id=None, external_id=None, event_id=None,
+        reject_reason=None, source=None, limit=50, since_hours=6,
+    )
+    census = out["link_changes"]
+    assert census["since_hours"] == 6
+    assert census["ended_total"] == 265
+    by_actor = {(r["outcome"], r["actor"]): r["count"] for r in census["by_actor"]}
+    assert by_actor[(mr.OUTCOME_SUPERSEDED_BY_TWIN_MERGE, mr.ACTOR_TWIN_CLEANUP)] == 261
+    assert by_actor[(mr.OUTCOME_UNLINKED, mr.ACTOR_MATCHER_PASS)] == 4
+    # The subtraction. Without it the 261 above is uninterpretable.
+    assert census["linked_markets_settled"] == 17
+    assert sorted(mr.ACTORS) == census["valid_actors"]
 
 
 def test_the_backlog_pass_holds_a_reserve_for_the_snapshot_phase():

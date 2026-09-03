@@ -2485,15 +2485,37 @@ async def unlink_prediction_market(
         )
         snapshots_deleted = del_result.rowcount
 
+    market_row = {
+        "id": market.id, "source": market.source,
+        "external_id": market.external_id, "name": market.name,
+    }
     market.event_id = None
     await db.commit()
+
+    # LINKLOSS-02: a hand-run unlink used to leave no trace at all, so it turned
+    # up later as an unexplained link loss indistinguishable from a matcher bug.
+    # Written after the commit, on the receipts' own session, and never allowed
+    # to fail the unlink the operator asked for.
+    receipts_written = 0
+    if old_event_id:
+        from app.utils.match_receipts import (
+            ACTOR_ADMIN_REPAIR, PHASE_ADMIN_REPAIR, record_link_change_receipts,
+        )
+        receipts_written = await record_link_change_receipts(
+            [market_row],
+            previous_event_id=old_event_id,
+            new_event_id=None,
+            actor=ACTOR_ADMIN_REPAIR,
+            phase=PHASE_ADMIN_REPAIR,
+        )
 
     return {
         "status": "unlinked",
         "market_id": market_id,
-        "market_name": market.name,
+        "market_name": market_row["name"],
         "old_event_id": old_event_id,
         "snapshots_deleted": snapshots_deleted,
+        "link_receipts_written": receipts_written,
     }
 
 
@@ -4167,6 +4189,10 @@ async def sawtooth_fix(
 
     results = []
     total_markets_unlinked = 0
+    # LINKLOSS-02: every market this repair detaches, collected so the unlink
+    # can be receipted after the commit. A hand-run bulk unlink with no record
+    # is the shape that made "did a merge drop 261 links?" unanswerable.
+    unlinked_rows: list[tuple[int, dict]] = []
     total_snapshots_deleted = 0
 
     for row in affected_rows:
@@ -4336,6 +4362,11 @@ async def sawtooth_fix(
                                         "reason": "wrong game linked to this event",
                                     })
                                     if not dry_run:
+                                        unlinked_rows.append((m.event_id, {
+                                            "id": m.id, "source": m.source,
+                                            "external_id": m.external_id,
+                                            "name": m.name,
+                                        }))
                                         m.event_id = None
                                         total_markets_unlinked += 1
             else:
@@ -4383,6 +4414,11 @@ async def sawtooth_fix(
                                     "external_id": m.external_id,
                                 })
                                 if not dry_run:
+                                    unlinked_rows.append((m.event_id, {
+                                        "id": m.id, "source": m.source,
+                                        "external_id": m.external_id,
+                                        "name": m.name,
+                                    }))
                                     m.event_id = None
                                     total_markets_unlinked += 1
 
@@ -4457,11 +4493,30 @@ async def sawtooth_fix(
     if not dry_run:
         await db.commit()
 
+    # After the commit, on the receipts' own session — each claim is re-read
+    # against the committed row before publication, and the write can never
+    # fail the repair the operator asked for.
+    receipts_written = 0
+    if unlinked_rows:
+        from app.utils.match_receipts import (
+            ACTOR_ADMIN_REPAIR, PHASE_ADMIN_REPAIR, record_link_losses,
+        )
+        # Grouped by the event each market came off, one session per event
+        # rather than one per market: this repair can unlink hundreds of rows
+        # across a handful of events, and a session apiece made the bookkeeping
+        # cost more than the repair.
+        receipts_written = await record_link_losses(
+            [{**row, "event_id": old_event_id} for old_event_id, row in unlinked_rows],
+            actor=ACTOR_ADMIN_REPAIR,
+            phase=PHASE_ADMIN_REPAIR,
+        )
+
     return {
         "dry_run": dry_run,
         "events_processed": len(results),
         "total_markets_unlinked": total_markets_unlinked,
         "total_snapshots_deleted": total_snapshots_deleted,
+        "link_receipts_written": receipts_written,
         "results": results,
     }
 
@@ -4644,6 +4699,10 @@ async def match_receipts(
         None, description="Filter to one reason; omit for the summary"
     ),
     source: Optional[str] = Query(None, description="kalshi | polymarket"),
+    since_hours: int = Query(
+        24, ge=1, le=720,
+        description="Window for the link-loss census in the summary",
+    ),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
@@ -4656,6 +4715,25 @@ async def match_receipts(
     reason histogram plus the coverage numbers — which is the shape the bus
     re-derives the INVARIANTS-2026-09-02 query (c) baseline from.
 
+    THE REASON HISTOGRAM IS ORDERED BY WHAT CAN STILL BE FIXED. Each row
+    carries ``still_linkable`` (the market is still ``open``) beside the flat
+    ``count``, and the list is sorted on the former. Measured 2026-09-03: 7,854
+    of 8,032 rejects sit on already-resolved markets, so a reader sorting on
+    ``count`` picks the largest bucket in the table and finds it is settled ITF
+    tennis nobody ingests events for. Nothing is dropped — ``settled`` is
+    published beside it.
+
+    THE COVERAGE BLOCK IS SPLIT BY SOURCE AND SAYS WHAT CLEARING IT BUYS
+    (#2803). ``open_unlinked_without_receipt`` counts exactly the set Pass 3's
+    ``base_where`` selects, so target 0 is reachable — but it is reached by a
+    RECEIPT, not a link, and for most of the population that receipt is the
+    refusal ``not_game_level``. ``by_source`` publishes the composition
+    (``explained_no_game_here``) rather than narrowing the denominator to hide
+    it, and ``backlog_pass_has_run`` says whether the pass that drives the
+    number down is known to have run — ``true`` or ``null``, never ``false``,
+    because a run whose record write failed leaves no more trace than a run that
+    never happened (CERT-824).
+
     This is a RECORD, not a simulation. ``/prediction-markets/match-trace`` next
     door re-runs the matching logic against today's data and answers "what would
     happen if we tried now"; it holds a partial copy of the window arithmetic
@@ -4663,11 +4741,27 @@ async def match_receipts(
     matcher itself, on the path that made the decision, at the moment it made
     it — including for markets a scan has never reached, which the simulation
     cannot represent at all.
+
+    The summary also carries the LINK-LOSS CENSUS (LINKLOSS-02): what ended or
+    moved a link in the last ``since_hours``, grouped by actor, with the count
+    of linked markets that merely SETTLED in the same window beside it. Those
+    two numbers together are what turns "we are down 261 links" from an
+    observation into a diagnosis. With ``event_id``, ``departed`` is the other
+    half of the same idea — the markets that came OFF that event, which a query
+    keyed on ``linked_event_id`` can never find.
     """
     _check_admin_secret(secret, request=request)
 
     from app.models.models import MarketMatchReceipt
-    from app.utils.match_receipts import REJECT_REASONS
+    from app.utils.match_receipts import (
+        PHASE_PASS3_BACKLOG,
+        REJECT_NOT_GAME_LEVEL,
+        REJECT_PARENT_ROW,
+        REJECT_REASONS,
+        link_changes_for_market_query,
+        link_changes_off_event_query,
+    )
+    from app.utils.matcher_pass_runs import read_pass_run
 
     def _serialize(r: MarketMatchReceipt) -> dict:
         return {
@@ -4679,6 +4773,8 @@ async def match_receipts(
             "outcome": r.outcome,
             "reject_reason": r.reject_reason,
             "linked_event_id": r.linked_event_id,
+            "previous_event_id": r.previous_event_id,
+            "actor": r.actor,
             "candidates": r.candidates or [],
             "detail": r.detail or {},
             "attempt_count": r.attempt_count,
@@ -4688,6 +4784,25 @@ async def match_receipts(
             "last_attempted_at": (
                 r.last_attempted_at.isoformat() if r.last_attempted_at else None
             ),
+        }
+
+    def _serialize_change(c) -> dict:
+        """One immutable link-change row. Keeps the receipt's field names where
+        they mean the same thing, so a reader does not have to hold two
+        vocabularies — ``new_event_id`` is the exception, because on a history
+        row it is where the link went, not where an attempt tried to put it."""
+        return {
+            "market_id": c.market_id,
+            "source": c.source,
+            "external_id": c.external_id,
+            "market_name": c.market_name,
+            "phase": c.phase,
+            "outcome": c.outcome,
+            "actor": c.actor,
+            "previous_event_id": c.previous_event_id,
+            "new_event_id": c.new_event_id,
+            "detail": c.detail or {},
+            "changed_at": c.changed_at.isoformat() if c.changed_at else None,
         }
 
     if reject_reason and reject_reason not in REJECT_REASONS:
@@ -4708,7 +4823,19 @@ async def match_receipts(
             stmt = stmt.where(MarketMatchReceipt.external_id == external_id)
         row = (await db.execute(stmt.limit(1))).scalars().first()
         if row is not None:
-            return {"receipt": _serialize(row)}
+            # The receipt says what the LAST attempt decided; the history says
+            # what actually happened to the link, including the changes that
+            # attempt overwrote. "It had a price yesterday and none today" is
+            # answered by the second one, and only by it (LINKLOSS-03).
+            changes = (
+                await db.execute(
+                    link_changes_for_market_query(row.market_id, limit)
+                )
+            ).scalars().all()
+            return {
+                "receipt": _serialize(row),
+                "link_changes": [_serialize_change(c) for c in changes],
+            }
 
         # A market with no receipt is a real, different answer from a market
         # with a reject reason, and it is the answer the 8/28 wave would have
@@ -4754,10 +4881,21 @@ async def match_receipts(
                 .limit(limit)
             )
         ).scalars().all()
+        # …AND what came OFF it (LINKLOSS-02). An event whose card lost a price
+        # is asked about by its own id, and before this the answer lived
+        # nowhere: the record of a departure points at the event it LEFT, so a
+        # query keyed on ``linked_event_id`` alone can never find it. Read from
+        # the append-only history (LINKLOSS-03) rather than the receipt, which
+        # the departed market's next matching attempt overwrites.
+        departed = (
+            await db.execute(link_changes_off_event_query(event_id, limit))
+        ).scalars().all()
         return {
             "event_id": event_id,
             "count": len(rows),
             "receipts": [_serialize(r) for r in rows],
+            "departed_count": len(departed),
+            "departed": [_serialize_change(c) for c in departed],
         }
 
     # ── Filtered list, or the summary ───────────────────────────────────
@@ -4779,16 +4917,34 @@ async def match_receipts(
             "receipts": [_serialize(r) for r in rows],
         }
 
+    # The reason histogram, split by whether the market CAN still link (#2782
+    # follow-up, measured 2026-09-03). Counted flat, this histogram is 97.8%
+    # dead: 7,854 of 8,032 rejected receipts sit on markets that have already
+    # resolved, so the top bucket — no_candidate, 6,843 — is overwhelmingly
+    # settled ITF tennis whose events were never ingested and never will be.
+    # Hill-climbing on it is hill-climbing on a number no fix can move. The
+    # actionable population is the 178 rejects on markets a reader can still
+    # open, and that is what this orders on. Gotcha #53: a rate needs a
+    # denominator where 100% is structurally achievable.
+    #
+    # NOTHING IS EXCLUDED. The settled count is published beside the live one,
+    # per the standing doctrine that read-side scoping protects a metric and
+    # never closes an issue — a settled reject is still evidence about the pass
+    # that made it, and the fact that the matcher is still re-attempting those
+    # rows every 15 minutes is its own finding, filed under #2693.
+    still_linkable = func.count().filter(FuturesMarket.status == "open")
     reason_rows = (
         await db.execute(
             select(
                 MarketMatchReceipt.reject_reason,
                 MarketMatchReceipt.source,
                 func.count().label("n"),
+                still_linkable.label("still_linkable"),
             )
+            .join(FuturesMarket, FuturesMarket.id == MarketMatchReceipt.market_id)
             .where(MarketMatchReceipt.outcome == "rejected")
             .group_by(MarketMatchReceipt.reject_reason, MarketMatchReceipt.source)
-            .order_by(func.count().desc())
+            .order_by(still_linkable.desc(), func.count().desc())
         )
     ).all()
 
@@ -4805,20 +4961,147 @@ async def match_receipts(
         )
     ).one()
 
-    # The coverage number the whole table exists for: open unlinked markets with
-    # no receipt at all. Target 0 — while it is above 0, "never attempted" is
-    # still possible and query (c) still has an unexplained tail.
-    never = await db.scalar(
+    # ── The link-loss census (LINKLOSS-02, fixed by -03) ────────────────
+    # "Did tonight's merge drop 261 links?" is this GROUP BY. It reads the
+    # APPEND-ONLY history, not the receipts: an unlinked market is
+    # `event_id IS NULL`, the matcher re-scans that population every 15
+    # minutes, and the next ordinary attempt upserts over the receipt that
+    # explained the loss. Counted off the receipts, this number therefore
+    # shrinks as the matcher works and a real loss night reads as a quiet one
+    # (CERT-791). `since_hours` scopes the window; the settlement subtraction
+    # beside it is what stops a settlement wave reading as a loss.
+    from app.utils.match_receipts import ACTORS, link_change_census_query
+
+    since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    change_rows = (await db.execute(link_change_census_query(since))).all()
+
+    # Markets that LEFT the open linked population by settling in the same
+    # window. Not a link loss — the link is still there, the market is simply
+    # done — and the number that has to be subtracted before the census above
+    # can be read as a count of anything wrong.
+    settled_linked = await db.scalar(
         select(func.count())
         .select_from(FuturesMarket)
         .where(
-            FuturesMarket.source.in_(["kalshi", "polymarket"]),
-            FuturesMarket.event_id.is_(None),
-            FuturesMarket.status == "open",
-            ~select(MarketMatchReceipt.id)
-            .where(MarketMatchReceipt.market_id == FuturesMarket.id)
-            .exists(),
+            FuturesMarket.event_id.isnot(None),
+            FuturesMarket.settled_at.isnot(None),
+            FuturesMarket.settled_at >= since,
         )
+    )
+
+    # ── Coverage (#2803) ────────────────────────────────────────────────
+    # THE DENOMINATOR IS NOT A CHOICE. These three predicates are copied from
+    # `_phase1_pass3_backlog_scan`'s `base_where`, and the anti-join below is
+    # its never-attempted query with the `ORDER BY id LIMIT 3000` taken off. So
+    # this number is not a census of "markets we wish were linked" — it is
+    # literally the head of Pass 3's own queue, counted without the cap. That
+    # identity is the reason target 0 is reachable, and it is why the fix here
+    # is NOT the narrowing #2803 proposed: scoping this to game-shaped rows
+    # would hide 7,480 Kalshi rows that Pass 3 does select and will attempt.
+    #
+    # WHAT REACHES 0 IS A RECEIPT, NOT A LINK. Most of this population is
+    # economics and politics — `10Y US Treasury yield at year-end?` — with no
+    # game to attach to and never will be. `_run_one_attempt` refuses those at
+    # its first gate and writes `not_game_level` / `parent_row`, and that
+    # refusal is the coverage: the market stops being unexplained. A reader who
+    # takes this number as missing links overstates it by roughly the
+    # `explained_no_game_here` share published beside it.
+    _open_unlinked = [
+        FuturesMarket.source.in_(["kalshi", "polymarket"]),
+        FuturesMarket.event_id.is_(None),
+        FuturesMarket.status == "open",
+    ]
+    never_rows = (
+        await db.execute(
+            select(FuturesMarket.source, func.count().label("n"))
+            .where(
+                *_open_unlinked,
+                ~select(MarketMatchReceipt.id)
+                .where(MarketMatchReceipt.market_id == FuturesMarket.id)
+                .exists(),
+            )
+            .group_by(FuturesMarket.source)
+        )
+    ).all()
+
+    # The other half of the same population — the rows that DO have a receipt —
+    # split by whether the receipt says a link was ever on the table. This is
+    # what makes the number above readable: it is the measured composition of
+    # the explained rows, and the unexplained ones are drawn from the same pool.
+    _no_game_here = func.count().filter(
+        MarketMatchReceipt.reject_reason.in_(
+            [REJECT_NOT_GAME_LEVEL, REJECT_PARENT_ROW]
+        )
+    )
+    explained_rows = (
+        await db.execute(
+            select(
+                FuturesMarket.source,
+                func.count().label("n"),
+                _no_game_here.label("no_game_here"),
+            )
+            .join(
+                MarketMatchReceipt,
+                MarketMatchReceipt.market_id == FuturesMarket.id,
+            )
+            .where(*_open_unlinked)
+            .group_by(FuturesMarket.source)
+        )
+    ).all()
+
+    # ALWAYS SPLIT BY SOURCE. One number across a source the matcher reaches and
+    # a source it does not is not a coverage number: measured 2026-09-03, every
+    # receipt in the table carried `pass1_ticker`, which is Kalshi-only, so
+    # Polymarket's 29,486 was a fact about the writer and averaging the two
+    # produced a figure that meant nothing.
+    #
+    # BOTH SOURCES ARE ALWAYS PRESENT, at zero if they wrote no rows. A source
+    # that vanishes from the response reads as covered, which is the exact
+    # misreading this split exists to prevent.
+    def _entry() -> dict[str, int]:
+        return {"without_receipt": 0, "with_receipt": 0, "explained_no_game_here": 0}
+
+    by_source: dict[str, dict[str, int]] = {
+        src: _entry() for src in ("kalshi", "polymarket")
+    }
+    for r in never_rows:
+        by_source.setdefault(r.source, _entry())["without_receipt"] = int(r.n or 0)
+    for r in explained_rows:
+        entry = by_source.setdefault(r.source, _entry())
+        entry["with_receipt"] = int(r.n or 0)
+        entry["explained_no_game_here"] = int(r.no_game_here or 0)
+
+    never = sum(v["without_receipt"] for v in by_source.values())
+
+    # WHICH PASS LABEL EACH RECEIPT CURRENTLY CARRIES. Useful, and NOT a run
+    # history: `phase` is overwritten by every later attempt on the same market
+    # (`match_receipts.flush_receipts`: "phase": stmt.excluded.phase), so this is
+    # a census of the present, and a pass can disappear from it entirely without
+    # ever having stopped running. It is published under a name that says so.
+    phase_rows = (
+        await db.execute(
+            select(MarketMatchReceipt.phase, func.count().label("n"))
+            .group_by(MarketMatchReceipt.phase)
+            .order_by(func.count().desc())
+        )
+    ).all()
+    phases_seen = {r.phase: int(r.n or 0) for r in phase_rows if r.phase}
+
+    # WHETHER PASS 3 HAS EVER RUN — read from the durable per-pass row, NOT from
+    # the census above. The number this block publishes can only fall while Pass
+    # 3 runs, so "has the mechanism run" is the fact that makes it actionable;
+    # deriving it from a mutable label meant Pass 1/2 re-attempting the same
+    # markets could report "never ran" minutes after it ran (CERT-819).
+    # NEVER FALSE (CERT-824): recording a run is non-fatal by design, so an
+    # absent row is "ran, and the write failed" as much as it is "never ran".
+    # null is the honest answer, and the census above is handed over as the one
+    # witness that survives a failed write — a live pass3_backlog label proves a
+    # run even with no durable row. Only Pass 3's flush writes that label, so
+    # the witness can add a true and cannot invent one.
+    backlog_run = await read_pass_run(
+        db,
+        PHASE_PASS3_BACKLOG,
+        receipt_witness=PHASE_PASS3_BACKLOG in phases_seen,
     )
 
     return {
@@ -4829,19 +5112,97 @@ async def match_receipts(
             "oldest_attempt": totals.oldest.isoformat() if totals.oldest else None,
             "newest_attempt": totals.newest.isoformat() if totals.newest else None,
         },
+        "link_changes": {
+            "since_hours": since_hours,
+            "since": since.isoformat(),
+            "by_actor": [
+                {
+                    "outcome": r.outcome, "actor": r.actor,
+                    "phase": r.phase, "count": r.n,
+                }
+                for r in change_rows
+            ],
+            "ended_total": sum(r.n for r in change_rows),
+            "linked_markets_settled": int(settled_linked or 0),
+            "source": "market_link_changes",
+            "note": (
+                "Counted from the append-only link-change history, so a market "
+                "the matcher has since re-attempted is still counted here. "
+                "A linked market that settled left the open population without "
+                "losing its link. Subtract linked_markets_settled before "
+                "reading a drop in linked markets as a loss. "
+                "settled_at is NULL for every market resolved before the "
+                "column shipped, so this number is a floor on old windows, "
+                "not a measurement of them."
+            ),
+            "valid_actors": sorted(ACTORS),
+        },
         "coverage": {
             "open_unlinked_without_receipt": int(never or 0),
             "target": 0,
+            "by_source": by_source,
+            "receipt_phase_labels_now": phases_seen,
+            "receipt_phase_labels_note": (
+                "A census of the phase label each receipt carries RIGHT NOW, "
+                "not a run history: every later attempt on a market overwrites "
+                "its phase, so a pass can vanish from this map while still "
+                "running every cycle. Read backlog_pass for whether a pass ran."
+            ),
+            "backlog_pass_has_run": backlog_run.has_run,
+            "backlog_pass": backlog_run.as_dict(),
+            "denominator": (
+                "source IN (kalshi, polymarket) AND event_id IS NULL AND "
+                "status = 'open' — copied from _phase1_pass3_backlog_scan's "
+                "base_where. Nothing is excluded, because nothing in it is out "
+                "of the matcher's scope: Pass 3 selects exactly this set."
+            ),
             "note": (
                 "Above 0 means some open unlinked market has never been "
                 "attempted. This is the number ARTIFACT-M-20260902-O could not "
-                "measure."
+                "measure. WHAT REACHES 0 IS A RECEIPT, NOT A LINK — most of "
+                "this population has no game to attach to, the attempt refuses "
+                "it with not_game_level/parent_row, and that refusal is the "
+                "coverage; read explained_no_game_here beside it before reading "
+                "this as a count of missing links. Split by source because one "
+                "source's zero can be a fact about the writer rather than about "
+                "coverage. It can only fall while the backlog pass runs: "
+                "backlog_pass_has_run true means the mechanism driving it down "
+                "has run at least once. It is never false — recording a run is "
+                "non-fatal, so a run whose record write failed leaves no trace "
+                "a pass that never ran would not also leave — and null means we "
+                "found no evidence of one. DO NOT READ NULL AS NO: read "
+                "backlog_pass.status, and the matcher's "
+                "funnel.backlog_run_recorded, before concluding nothing ran."
             ),
         },
         "by_reason": [
-            {"reject_reason": r.reject_reason, "source": r.source, "count": r.n}
+            {
+                "reject_reason": r.reject_reason,
+                "source": r.source,
+                "count": r.n,
+                # The two numbers a fix decision needs. `still_linkable` is the
+                # one to hill-climb; `settled` is history, and no matcher change
+                # can move it.
+                "still_linkable": int(r.still_linkable or 0),
+                "settled": r.n - int(r.still_linkable or 0),
+            }
             for r in reason_rows
         ],
+        "reject_totals": {
+            "still_linkable": sum(int(r.still_linkable or 0) for r in reason_rows),
+            "settled": sum(
+                r.n - int(r.still_linkable or 0) for r in reason_rows
+            ),
+            "note": (
+                "Ordered by still_linkable, not by count. A reject on a market "
+                "that has already resolved is history: it records what the pass "
+                "saw, and no matching fix can move it. Read the flat count and "
+                "the top bucket is settled ITF tennis whose events were never "
+                "ingested. Nothing is excluded — the settled column is right "
+                "here, because read-side scoping protects a metric and never "
+                "closes an issue."
+            ),
+        },
         "valid_reasons": sorted(REJECT_REASONS),
     }
 

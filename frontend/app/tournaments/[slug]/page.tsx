@@ -145,14 +145,16 @@ import {
   seriesColorByEntity,
   toggleSelection,
 } from "@/lib/contenderChart";
+import { tournamentWindowStarts } from "@/lib/tournamentWindows";
 import { buildMatchList, type TitleChances } from "@/lib/matchList";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
-import { slateNotice } from "@/lib/slate";
+import { slateEmptyState, slateNotice } from "@/lib/slate";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import { TOURNAMENT_PROPS_ENABLED } from "@/lib/tournamentFlags";
 import { fetchTournament } from "@/lib/api";
+import HubBootScript from "@/components/tournament/HubBootScript";
 import type { TournamentPayload } from "@/lib/tournament";
 
 type Tab = "tournament" | "bracket";
@@ -236,6 +238,17 @@ export default function TournamentPage() {
     [board, selectionKeys]
   );
 
+  /**
+   * The days the main draw and qualifying began (ux/1034 A1).
+   *
+   * Computed here rather than inside the chart for the same reason the
+   * selection is: it is a property of the TOURNAMENT, not of one board, so
+   * both draws' charts get the identical pair and the men's and women's
+   * windows cannot come apart. Read off the payload — never a constant; see
+   * `tournamentWindowStarts`.
+   */
+  const windowStarts = useMemo(() => tournamentWindowStarts(data), [data]);
+
   const rounds = useMemo(() => buildBracket(data?.bracket?.[draw] ?? []), [data, draw]);
 
   /**
@@ -295,6 +308,13 @@ export default function TournamentPage() {
   if (loading) {
     return (
       <div className="mx-auto max-w-[560px] px-4 py-10 text-center text-text-secondary">
+        {/* LAT-P217 — the boot fetch belongs HERE, in the loading branch, because this branch IS the
+            server-rendered document: `loading` starts true on the server and on the client, so the
+            HTML a cold reader receives contains exactly this subtree. Rendering the script in the
+            loaded branch instead would emit it only after hydration, i.e. after the request it is
+            supposed to precede. Verified against the production HTML, which carries "Loading…" and
+            nothing of the hub itself. */}
+        <HubBootScript slug={slug} />
         Loading…
       </div>
     );
@@ -384,6 +404,9 @@ export default function TournamentPage() {
                       setSelection(toggleSelection(selectionKeys, key))
                     }
                     onReset={() => setSelection(null)}
+                    /* ux/1034 A1: the chart opens on the tournament, not on
+                       the month before it. */
+                    windowStarts={windowStarts}
                   />
                 )}
 
@@ -416,12 +439,18 @@ export default function TournamentPage() {
                    * sentence was live and wrong the same afternoon. It reads
                    * the payload's own label now, so being right is a data
                    * property rather than a deploy.
+                   *
+                   * #2707: and the HEADLINE is computed here too, from the
+                   * payload's own `order_of_play_listed`, because "No matches
+                   * scheduled" over five live matches is the same class of
+                   * error one level up — a sentence about the world asserted
+                   * from a fact about our own output.
                    */
-                  emptyHint={
-                    data.draw_released || !data.main_draw_label
-                      ? "Nothing is on right now. This is where the day's matches sit."
-                      : `Nothing is on right now. This is where the day's matches sit, and the draw fills them in ${data.main_draw_label}.`
-                  }
+                  empty={slateEmptyState({
+                    drawReleased: data.draw_released,
+                    mainDrawLabel: data.main_draw_label,
+                    orderOfPlayListed: data.slate?.order_of_play_listed,
+                  })}
                 />
               </div>
 
@@ -451,6 +480,15 @@ export default function TournamentPage() {
                      from — `tournament_event_link` resolves it once, by id, and
                      both lists read that one answer. */
                   eventIds={data.event_links?.by_matchup}
+                  /* #2693 step 2: the map above still cannot reach most of this
+                     list, and structurally never could — `build_slate` retires
+                     a matchup the moment its match starts, so a FINISHED match
+                     usually has no matchup left to pin a market on. 118 of 235
+                     rows carried no register key at all. `by_espn` is the
+                     authority's own competition id dereferenced through
+                     `events.espn_id`, which lane1/057 put on the US Open rows;
+                     it is consulted only after the market channel declines. */
+                  espnEventIds={data.event_links?.by_espn}
                 />
 
                 {board && <TournamentBoard board={board} seriesColors={seriesColors} />}

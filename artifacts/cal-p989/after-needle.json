@@ -1,0 +1,80 @@
+{
+  "what": "CAL-P989 AFTER state — merged, deployed, catch-up run to exhaustion",
+  "measured_at_pt": "2026-09-02 15:48",
+  "merge": {
+    "master": "067843fd Merge program/calibration-989 @ 048389a8 (CERT-768) into master",
+    "cert": "CERT-768 GREEN, TOKEN GRANTED for 048389a8 against 9c1fe280",
+    "migration": "kalshi_expiration_backstop applied; information_schema confirms futures_markets.expiration_time is timestamptz",
+    "merged_by": "the Integrator. This lane did not push master."
+  },
+
+  "the_headline": {
+    "metric": "rows visible to #1818's settlement sync predicate",
+    "predicate": "source='kalshi' AND status <> 'resolved' AND resolution_date < now()",
+    "before": 3,
+    "after": 1921,
+    "reading": [
+      "Three to one thousand nine hundred and twenty-one. The predicate did not",
+      "change — not one character of #1818's sync was edited. It was correct code",
+      "reading a column that held Kalshi's legal backstop instead of the date trading",
+      "stopped. 1,921 finalized markets were always there; nothing could see them.",
+      "The sync now drains them on its ordinary cadence."
+    ]
+  },
+
+  "the_catch_up": {
+    "script": "backend/scripts/backfill_kalshi_resolution_window.py",
+    "run_as": "heroku run:detached, five batches, concurrency 8 (heroku logs is EPERM-blocked in this sandbox, so every number here is a DB side-effect reading, never parsed stdout)",
+    "rows_written": 8986,
+    "of_an_eligible_population": 9935,
+    "coverage_pct": 90.4,
+    "not_written_and_why": {
+      "past_the_purge_horizon": 507,
+      "reading_purged": "correctly excluded by the retention floor before the LIMIT — Kalshi no longer holds them, so fetching could only waste budget",
+      "venue_unresolvable_inside_the_floor": 448,
+      "reading_unresolvable": "404 or 200-with-no-markets. No date comes back, so there is nothing this script is ALLOWED to write — status and is_winner belong to a different repair (#1852). This is exactly CAL-P989-UNRESOLVABLE-CURSOR, the non-blocking follow-up CERT-768 recorded, now observed in production: the final batch selected them and wrote zero."
+    },
+    "smoke_test_first": {
+      "batch": 25,
+      "written": 24,
+      "moved_earlier": 2,
+      "unchanged": 22,
+      "reading": "the first batch landed on the far-future tier-1 cohort and 22 of 24 were no-ops, which is the #2644 prediction holding on real data rather than on a fixture"
+    }
+  },
+
+  "the_surface_needle": {
+    "before": "6 Kalshi cards on page one at 12:52 PT, 2 settled at the venue",
+    "after": "GET /api/feed?limit=20 at 15:47 PT — 14 futures cards, 0 with a past resolution_date",
+    "photograph": "after-pageone.png",
+    "judged": "dense, populated, every card carrying real outcomes and percentages. No settled market being sold.",
+    "named_confirmation": [
+      "KXCANADACUP-30 moved 2030-07-07 -> 2030-06-30 on the live surface. The commit",
+      "predicted exactly this: 'KXCANADACUP-30's 7-day error closes outright.'"
+    ],
+    "honest_caveat": [
+      "Page one rotates. 0-of-14 at one instant is not proof the class is extinct; it",
+      "is one clean reading, and the DB number above is the durable one."
+    ]
+  },
+
+  "a_measurement_I_got_wrong_and_am_correcting": {
+    "claim_made_before": "9,935 rows carried only 1,441 distinct resolution_dates with a 1,791-row cluster, read as 'the backstop signature' that this ship would break up",
+    "after": "8,020 rows, 1,270 distinct dates, biggest cluster 1,777",
+    "what_the_cluster_actually_is": [
+      "The 1,777-row cluster at 2027-11-03 is 1,545 rows where close_time EQUALS",
+      "expiration_time at the venue — Kalshi publishes the same date in both slots for",
+      "them — plus 232 of the unresolvable tail. So the cluster is #2644's shape, not",
+      "#2660's, and this ship cannot move it. The clustering metric turns out to be a",
+      "clean SEPARATOR between the two defects rather than a measure of this one.",
+      "Recording the correction rather than quietly dropping the metric."
+    ]
+  },
+
+  "what_is_still_open": {
+    "#2644": "tier-1 futures publish the backstop in BOTH slots; only expected_expiration_time carries the real date. Untouched by design, pinned as a no-op by test_the_2029_defect_survives_this_fix.",
+    "#1818_remainder": "markets that finalized EARLY still carry a future close_time. Only venue status reaches those. ~80% of the settled cohort, not 100%.",
+    "CAL-P989-UNRESOLVABLE-CURSOR": "448 rows inside the floor keep their slot across runs. --offset is the operator's lever; a durable cursor is the real fix.",
+    "polymarket": "same shape, untouched."
+  }
+}

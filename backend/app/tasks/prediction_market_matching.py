@@ -13,6 +13,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text
 from sqlalchemy.orm import joinedload
@@ -51,6 +52,7 @@ from app.utils.live_blend import (
     select_primary_market as _select_primary_market,
 )
 from app.utils import match_receipts as _receipts
+from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
     CandidateTrace,
     MatchReceipt,
@@ -65,6 +67,14 @@ logger = logging.getLogger(__name__)
 # in the final window before (or after) commence so it reflects the settled
 # pregame consensus rather than a stale hours-out price.
 _PREGAME_MARK_LEAD_MINUTES = 15
+
+# live/035: the cadence floor this 120s poll enforces on a LIVE event's chart.
+# The WS fast lane (`live_blend_refresh`, 45s worst case) is the primary
+# guarantee; this is the backstop for the sources and dynos it does not cover,
+# so it is derived from the poll's OWN 120s period rather than from the WS one.
+# 60s here would be observed 180s late — see `live_blend_refresh.heartbeat_deadline`
+# for why a deadline must be the target minus the sampling period.
+_LIVE_SNAPSHOT_HEARTBEAT_S = 60.0
 
 # ── Matching receipts (#2705) ───────────────────────────────────────────────
 # Group/container rows: a parent describes a set of sub-markets, and it is the
@@ -86,6 +96,14 @@ _PARENT_GROUP_TYPES = frozenset({
 _PROBE_PAST_DAYS = 45
 _PROBE_FUTURE_DAYS = 120
 _PROBE_MIN_SECONDS_REMAINING = 90
+# How many rows either probe arm may return. It is a bound on EVIDENCE, never on
+# the answer: the covering arm filters to rows carrying the whole matchup before
+# the LIMIT applies, so what survives the cut is what the question asked for. It
+# was the opposite before — a broad OR ordered by commence_time, cut at 5, with
+# `covering_hits` counted over whatever the cut happened to leave (103 of 109
+# live NCAAF rejects filled it exactly, CERT-810). When the broad arm is the one
+# that ran and it fills up, the receipt now records `saturated`.
+_PROBE_LIMIT = 5
 
 # Phase 1 Pass 3 — the backlog sweep that makes "never attempted" impossible.
 # Pass 2 orders by updated_at DESC and takes the top `limit` rows, so an older
@@ -109,6 +127,57 @@ _BACKLOG_SCAN_MAX = 3000
 _BACKLOG_DOWNSTREAM_RESERVE_SECONDS = 420
 _BACKLOG_MIN_SECONDS_REMAINING = 480
 
+# ── The upstream passes yield above Pass 3's floor (CERT-817 repair) ────────
+# THIS IS WHY PASS 3 HAD STILL NEVER RUN. Passes 1 and 2 both looped until only
+# 120s of the 780s budget remained, and Pass 3 refuses to start below 480s — so
+# on any cycle with enough work to fill the budget, Pass 3 was unreachable no
+# matter what it was ordered by. #2798 cutting Pass 1's population from 138,676
+# to 7,447 was necessary and NOT sufficient: at the measured ~12.5 markets/s
+# that is still ~596s, leaving 184s, and Pass 3 skipped again. A floor nobody
+# can reach is not a guarantee, and `backlog_skipped_budget` was the only thing
+# saying so.
+#
+# So the two upstream passes now stand down ABOVE Pass 3's floor rather than
+# running to the end of the budget. Every number is DERIVED from the floor it
+# has to protect, so the four cannot drift apart the way 120 and 480 did.
+#
+# THIS TRADES TOTAL ATTEMPTS FOR REACH, deliberately. Pass 1 attempts fewer
+# markets per cycle than it did; the ones it drops are the tail of an
+# `updated_at DESC` scan that re-reads the same head every 15 minutes, and Pass
+# 3 takes them never-attempted-first, which is the ship #2705 was built for and
+# has never once delivered in production.
+#: Slack between Pass 2 standing down and Pass 3 testing its floor, so one
+#: long-running final attempt cannot push Pass 3 back under it.
+_PASS3_START_CUSHION_SECONDS = 15
+#: Pass 2's share. It is the smallest of the three because Pass 3 runs the same
+#: `_attempt_market` over a strictly better-ordered queue.
+_PASS2_SHARE_SECONDS = 60
+_PASS2_YIELD_AT_SECONDS_REMAINING = (
+    _BACKLOG_MIN_SECONDS_REMAINING + _PASS3_START_CUSHION_SECONDS
+)
+_PASS1_YIELD_AT_SECONDS_REMAINING = (
+    _PASS2_YIELD_AT_SECONDS_REMAINING + _PASS2_SHARE_SECONDS
+)
+
+# The settled sweep (#2798). A settled market cannot link — the event population
+# for a past date is frozen — but Pass 1 had no status predicate at all, so it
+# re-attempted them forever: measured on production 2026-09-03, 7,464 of the
+# 7,642 receipts written in an hour sat on `status='resolved'` rows, worst
+# attempt_count 40, and the whole receipts table carried ONE phase, `pass1_ticker`
+# — Passes 2 and 3 had never written a row, because Pass 1 spent the budget
+# before they could start. Excluding the settled rows is therefore not a saving,
+# it is what lets the rest of Phase 1 run at all.
+#
+# The cap exists because the exclusion must not silently re-open the "never
+# attempted" hole: a market that leaves the scan says so, once, and the drain of
+# the rows that left it before this shipped is bounded per run so the stamp can
+# never cost a matching pass. Ordered newest-attempt-first (gotcha #41: ask what
+# the ordering STARTS on) — the bus asks about the game that settled last night,
+# not the 2025 ITF tail — and each stamped row is permanently excluded by the
+# selection, so no ordering can starve the tail.
+_SETTLED_SWEEP_MAX = 5000
+_SETTLED_SWEEP_MIN_SECONDS_REMAINING = 600
+
 
 def _new_receipt(market, phase: str, now: datetime) -> MatchReceipt:
     """Open a receipt for one attempt. Every scanned market gets one."""
@@ -120,6 +189,75 @@ def _new_receipt(market, phase: str, now: datetime) -> MatchReceipt:
         phase=phase,
         attempted_at=now,
     )
+
+
+def _record_link_change(
+    sink: Optional[list[MatchReceipt]], market, phase: str, now: datetime,
+) -> MatchReceipt:
+    """Open a receipt for a link this pass is about to END or MOVE.
+
+    Returns the receipt whether or not ``sink`` is collecting, so the call site
+    reads the same either way — ``_record_link_change(...).unlink(42)`` — and a
+    caller that opted out cannot accidentally skip the ``.unlink()`` and leave
+    the receipt half-built. The discarded object costs one allocation on a path
+    that is already doing a database write.
+
+    ``market`` is duck-typed: Phase 1.5 passes ORM rows and the Polymarket
+    sibling arm passes result tuples, and both carry the five denormalized
+    fields a receipt keeps. Never touch a relationship here — this runs inside a
+    loop with rollback boundaries, and a lazy load on an expired row would turn
+    bookkeeping into the thing that raises (gotcha #6).
+    """
+    receipt = MatchReceipt(
+        market_id=market.id,
+        source=market.source,
+        external_id=market.external_id,
+        market_name=market.name,
+        phase=phase,
+        attempted_at=now,
+    )
+    if sink is not None:
+        sink.append(receipt)
+    return receipt
+
+
+async def _receipt_bulk_moves(
+    moves: list[tuple[Optional[int], int, dict]], *, phase: str, label: str,
+) -> int:
+    """Receipt a set of link MOVES made by one bulk SQL pass. Never raises.
+
+    ``moves`` is ``(from_event_id, to_event_id, market_row)``. Rows with no
+    previous event are dropped: those are first attaches, which the forward
+    path already receipts, and calling them moves would inflate the very census
+    this exists to make trustworthy.
+
+    Grouped by ``(from, to)`` so one merge-shaped move of a whole group is one
+    round trip rather than one per market — these passes move hundreds of rows
+    in a run, and the record must stay cheaper than the thing it records.
+    """
+    grouped: dict[tuple[int, int], list[dict]] = {}
+    for from_eid, to_eid, row in moves:
+        if not from_eid or from_eid == to_eid:
+            continue
+        grouped.setdefault((int(from_eid), int(to_eid)), []).append(row)
+    if not grouped:
+        return 0
+
+    written = 0
+    for (from_eid, to_eid), rows in grouped.items():
+        written += await _receipts.record_link_change_receipts(
+            rows,
+            previous_event_id=from_eid,
+            new_event_id=to_eid,
+            actor=_receipts.ACTOR_MATCHER_PASS,
+            phase=phase,
+        )
+    if written != sum(len(v) for v in grouped.values()):
+        logger.warning(
+            "%s: %d link moves, %d receipted — the census will under-report",
+            label, sum(len(v) for v in grouped.values()), written,
+        )
+    return written
 
 
 def _receipt_parent_or_not_game_level(market, receipt: MatchReceipt) -> bool:
@@ -141,6 +279,36 @@ def _reason_from_traces(traces: list[CandidateTrace]) -> str | None:
     ``name_mismatch`` because a candidate that reached the sport gate had
     already passed the name gate — reporting it as a name problem would send
     the next reader looking in the wrong place.
+
+    A RETRIEVED ROW IS NOT A CANDIDATE. Returning ``name_mismatch`` for any
+    non-empty trace was a lie. The retrieval ILIKE fires on ONE token, so a
+    market whose game we simply do not carry still comes back holding rows —
+    "Merrimack vs Maine" retrieves *Merrimack Warriors @ Delaware* and *Maine
+    Black Bears @ Appalachian State*, two different games, each covering one
+    side. Reported as ``name_mismatch``, that reads as "our fuzzy gate is too
+    strict" and points the next reader at a matcher bug that is not there.
+
+    So when nothing covered the whole matchup, this returns ``None`` — the same
+    answer it gives for no rows at all — and :func:`_record_no_match_reason`
+    runs its probe, which is the code that can tell an upstream gap
+    (``no_candidate``) from a window or status bug (``outside_time_window`` /
+    ``state_disagrees``). That is the distinction CLAUDE.md asks every matching
+    fix to make, and it was unreachable before: ``no_candidate`` fired **once**
+    in 333 rows, because a one-token coincidence always pre-empted it.
+
+    THE OTHER DIRECTION IS THE WORSE LIE. Deferring a row that really is the
+    game sends a genuine name-gate failure — ours, and fixable — into the
+    upstream-absence bucket, where nobody will look for it. That is why
+    coverage is measured by :func:`app.utils.match_receipts.row_coverage` and
+    not by the gate under diagnosis, and why it is biased toward covered.
+    Measured over the 222 ``name_mismatch`` receipts on production's open
+    unlinked markets (2026-09-03): 109 stay ``name_mismatch`` (real gate
+    failures — "CLE Browns" vs "Cleveland Browns", "LSU" vs "LSU Tigers", "The
+    Citadel" vs "Citadel Bulldogs"), 113 defer to the probe.
+
+    Traces from a matcher that never recorded coverage (``sides_named`` None)
+    keep the old behaviour, so this cannot silently reclassify a caller that
+    has not been taught to measure.
     """
     if not traces:
         return None
@@ -149,6 +317,9 @@ def _reason_from_traces(traces: list[CandidateTrace]) -> str | None:
         return _receipts.REJECT_NAME_SCORE_BELOW
     if _receipts.REJECT_WRONG_SPORT in verdicts:
         return _receipts.REJECT_WRONG_SPORT
+    measured = [t for t in traces if t.sides_named is not None]
+    if measured and not any(t.covers_matchup for t in measured):
+        return None
     return _receipts.REJECT_NAME_MISMATCH
 
 
@@ -1241,6 +1412,88 @@ async def _abandon_attempt(
             pass
 
 
+async def _settled_sweep(session, stats: dict, now: datetime, _time_remaining) -> int:
+    """Receipt the markets that left the matcher's population by SETTLING (#2798).
+
+    THE ONE PASS THAT ATTEMPTS NOTHING. Every other pass writes a receipt as the
+    by-product of a decision about a link; this one writes a receipt *because
+    there will be no more decisions*. Its whole job is to stop the exclusion
+    added to Pass 1 from re-creating the silence receipts exist to abolish: a
+    market the scan stops visiting has to say why, or "we refuse it" and "we no
+    longer look" are once again the same NULL.
+
+    ONCE PER MARKET, and the selection is what guarantees it — a row carrying
+    ``settled`` is not selected again. That is the difference between this and
+    the behaviour it replaces: Pass 1 re-attempted the same resolved markets
+    every cycle (worst ``attempt_count`` 40 on production), which not only cost
+    the budget but kept their ``last_attempted_at`` fresh, so any census counted
+    off the receipts read a dead ITF tennis tail as today's top matching defect.
+
+    IT ONLY STAMPS MARKETS THAT WERE IN THE POPULATION. The join to
+    ``market_match_receipts`` is the scope, not an optimisation: ~460k unlinked
+    resolved rows exist, almost all of them archive nobody will ever ask about,
+    and stamping them would be a 90-day drain writing rows to answer a question
+    that is never asked. A market with a receipt is one the matcher looked at
+    and has now stopped looking at — exactly the transition that needs a record.
+    For the rest, ``GET /api/admin/match-receipts`` already reads settledness off
+    ``futures_markets`` and publishes ``still_linkable`` / ``settled`` per reason.
+
+    Returns rows stamped. Bounded by ``_SETTLED_SWEEP_MAX`` and by a time floor,
+    because the record must never cost the thing it records.
+    """
+    from app.models.models import FuturesMarket, MarketMatchReceipt
+
+    stats["funnel"].setdefault("settled_receipted", 0)
+    stats["funnel"]["settled_sweep_skipped_budget"] = False
+
+    if _time_remaining() < _SETTLED_SWEEP_MIN_SECONDS_REMAINING:
+        logger.info(
+            "Skipping the settled sweep — only %.0fs remaining", _time_remaining(),
+        )
+        stats["funnel"]["settled_sweep_skipped_budget"] = True
+        return 0
+
+    rows = (await session.execute(
+        select(
+            FuturesMarket.id, FuturesMarket.source,
+            FuturesMarket.external_id, FuturesMarket.name,
+        )
+        .join(MarketMatchReceipt, MarketMatchReceipt.market_id == FuturesMarket.id)
+        .where(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "resolved",
+            # Spelled out rather than IS DISTINCT FROM: the reason is NULL on
+            # every `linked` and `unlinked` receipt, and those markets settle
+            # too — a bare `<>` would silently skip all of them.
+            or_(
+                MarketMatchReceipt.reject_reason.is_(None),
+                MarketMatchReceipt.reject_reason != _receipts.REJECT_SETTLED,
+            ),
+        )
+        .order_by(MarketMatchReceipt.last_attempted_at.desc())
+        .limit(_SETTLED_SWEEP_MAX)
+    )).all()
+
+    if not rows:
+        return 0
+
+    receipts = [
+        _new_receipt(row, _receipts.PHASE_SETTLED_SWEEP, now).reject(
+            _receipts.REJECT_SETTLED, market_status="resolved",
+        )
+        for row in rows
+    ]
+    await _flush_pass_receipts(
+        session, receipts, stats, _receipts.PHASE_SETTLED_SWEEP,
+    )
+    stats["funnel"]["settled_receipted"] += len(receipts)
+    logger.info(
+        "Settled sweep: %d market(s) recorded as settled and out of the scan",
+        len(receipts),
+    )
+    return len(receipts)
+
+
 async def _phase1_pass1_ticker_scan(
     session, stats: dict, now: datetime,
     polymarket_backfill_queue: list, _time_remaining,
@@ -1257,12 +1510,30 @@ async def _phase1_pass1_ticker_scan(
         .where(
             FuturesMarket.source == "kalshi",
             FuturesMarket.event_id.is_(None),
+            # SETTLED MARKETS ARE NOT CANDIDATES (#2798). This pass is the only
+            # one that never had a status predicate, and it is also the only one
+            # with no LIMIT — so it pulled all 138,676 unlinked ticker-shaped
+            # Kalshi rows, of which 131,229 had already resolved, and worked
+            # down them by `updated_at DESC` until the clock ran out. It never
+            # reached the end and never yielded to Pass 2 or Pass 3.
+            #
+            # `!= 'resolved'` rather than `== 'open'`: `suspended` is a market
+            # whose trading is paused, not one whose answer is fixed, and
+            # narrowing this pass is not the place to decide that. Kalshi
+            # markets that settled upstream but still read 'open' here
+            # (gotcha #33) stay eligible too — the conservative direction, since
+            # the cost of attempting one is the status quo.
+            FuturesMarket.status != "resolved",
             or_(*ticker_conditions),
         )
         .order_by(FuturesMarket.updated_at.desc())
     )
     ticker_market_ids = [int(mid) for mid in ticker_result.scalars().all()]
     stats["funnel"]["ticker_scan_count"] = len(ticker_market_ids)
+    # Always present, so "Pass 1 ran to completion" and "Pass 1 stood down" are
+    # distinguishable in the funnel instead of one being an absent key.
+    stats["funnel"]["pass1_yielded_to_backlog"] = False
+    stats["funnel"]["pass1_not_attempted"] = 0
 
     receipts: list[MatchReceipt] = []
     processed_ids = set()
@@ -1271,11 +1542,28 @@ async def _phase1_pass1_ticker_scan(
     # in memory leave their markets reading as never attempted, which is the
     # one state this table exists to abolish.
     try:
+        # Counted here rather than off ``markets_scanned``, which skips a row
+        # that vanished before its attempt: those rows WERE reached, and calling
+        # them "not attempted" would inflate the tail Pass 3 is told to cover.
+        reached = 0
         for market_id in ticker_market_ids:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 1 time budget exhausted after %d/%d ticker markets",
-                            stats["markets_scanned"], len(ticker_market_ids))
+            # Yields ABOVE Pass 3's floor, not at the end of the budget
+            # (CERT-817). Running to 120s here is what kept the backlog sweep
+            # from ever starting; the rows this drops are the tail of an
+            # `updated_at DESC` scan and Pass 3 takes them oldest-first.
+            if _time_remaining() < _PASS1_YIELD_AT_SECONDS_REMAINING:
+                stats["funnel"]["pass1_yielded_to_backlog"] = True
+                stats["funnel"]["pass1_not_attempted"] = (
+                    len(ticker_market_ids) - reached
+                )
+                logger.info(
+                    "Phase 1 Pass 1 yielded after %d/%d ticker markets with "
+                    "%.0fs left, so Pass 3 can start above its %ds floor",
+                    reached, len(ticker_market_ids),
+                    _time_remaining(), _BACKLOG_MIN_SECONDS_REMAINING,
+                )
                 break
+            reached += 1
             processed_ids.add(market_id)
             market = await _load_market_row(session, market_id)
             if market is None:
@@ -1453,15 +1741,22 @@ async def _phase1_pass2_general_scan(
 
     unlinked_ids = matchup_ids + remaining_ids
     stats["funnel"]["general_scan_count"] = len(unlinked_ids)
+    stats["funnel"]["pass2_yielded_to_backlog"] = False
     stats["funnel"]["matchup_scan_count"] = len(matchup_ids)
     stats["funnel"]["remaining_scan_count"] = len(remaining_ids)
 
     receipts: list[MatchReceipt] = []
     try:
         for market_id in unlinked_ids:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 2 time budget exhausted after %d markets scanned",
-                            stats["markets_scanned"])
+            # Same reserve as Pass 1, one share lower (CERT-817).
+            if _time_remaining() < _PASS2_YIELD_AT_SECONDS_REMAINING:
+                stats["funnel"]["pass2_yielded_to_backlog"] = True
+                logger.info(
+                    "Phase 1 Pass 2 yielded after %d markets scanned with "
+                    "%.0fs left, so Pass 3 can start above its %ds floor",
+                    stats["markets_scanned"], _time_remaining(),
+                    _BACKLOG_MIN_SECONDS_REMAINING,
+                )
                 break
             if market_id in processed_ids:
                 continue
@@ -1690,6 +1985,21 @@ async def _phase1_pass3_backlog_scan(
             )
     finally:
         await _flush_pass_receipts(session, receipts, stats, _receipts.PHASE_PASS3_BACKLOG)
+        # THE RUN IS RECORDED WHERE THE RUN CANNOT BE OVERWRITTEN. The receipts
+        # just flushed carry phase=pass3_backlog, but that label is the market's,
+        # not the run's: Pass 1/2 re-attempt these same open unlinked markets and
+        # the upsert overwrites `phase`, so counting labels can report "the
+        # backlog pass never ran" minutes after it ran (CERT-819). The durable
+        # per-phase row cannot be touched by another pass. In the `finally` on
+        # purpose — a pass that died partway through still ran, and the coverage
+        # reader needs to know that more, not less.
+        run_stage = await _pass_runs.record_pass_run(
+            phase=_receipts.PHASE_PASS3_BACKLOG,
+            ran_at=now,
+            rows_attempted=stats["funnel"]["backlog_scanned"],
+            eligible_total=stats["funnel"].get("backlog_eligible_total"),
+        )
+        stats["funnel"]["backlog_run_recorded"] = run_stage.get("status")
 
 
 async def _relink_collapsed_game_markets(session) -> int:
@@ -1750,12 +2060,31 @@ async def _relink_collapsed_game_markets(session) -> int:
                 LIMIT 1
             ) tgt ON true
             WHERE fm.id = ml.mid AND fm.event_id <> tgt.id
+            RETURNING fm.id AS mid, fm.source AS msource,
+                      fm.external_id AS mext, fm.name AS mname,
+                      ml.cur_eid AS from_eid, tgt.id AS to_eid
         """))
-        n = r.rowcount or 0
+        # RETURNING, not rowcount, because LINKLOSS-02 needs the PAIR. This
+        # statement MOVES links — 261 of them in one run is an ordinary night —
+        # and a count alone leaves every one of those moves looking, from
+        # outside, exactly like the matcher having dropped a link.
+        moved_rows = r.all()
+        n = len(moved_rows)
         await session.commit()
         if n:
             logger.info(
                 "Relink collapsed game markets (#944): moved %d markets to correct-date events", n
+            )
+            await _receipt_bulk_moves(
+                [
+                    (row.from_eid, row.to_eid, {
+                        "id": row.mid, "source": row.msource,
+                        "external_id": row.mext, "name": row.mname,
+                    })
+                    for row in moved_rows
+                ],
+                phase=_receipts.PHASE_RELINK_COLLAPSED,
+                label="relink_collapsed_game_markets",
             )
         return n
     except Exception as e:
@@ -2031,6 +2360,9 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                     sport_ids[int(eid)] = int(sport_id)
 
         moves: dict[int, list[int]] = {}
+        # (from_event_id, to_event_id, market_row) for the CONVERGE half only —
+        # the moves that take a price off an event (LINKLOSS-02).
+        receipted_moves: list[tuple[Optional[int], int, dict]] = []
         for members in segments.values():
             target, reason = _choose_segment_event(
                 [r.event_id for r in members], provenance,
@@ -2042,6 +2374,15 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
                 if row.event_id == target:
                     continue
                 moves.setdefault(target, []).append(row.id)
+                if row.event_id is not None:
+                    # A CONVERGE takes the market off an event it was on, so
+                    # that event's card loses this source's price. An ADOPT
+                    # takes it off nothing and is the forward path's to
+                    # explain (LINKLOSS-02).
+                    receipted_moves.append((row.event_id, target, {
+                        "id": row.id, "source": "kalshi",
+                        "external_id": row.external_id, "name": None,
+                    }))
                 stats["adopted" if row.event_id is None else "converged"] += 1
 
         for target, market_ids in moves.items():
@@ -2069,6 +2410,11 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
             )
         if moves:
             await session.commit()
+            await _receipt_bulk_moves(
+                receipted_moves,
+                phase=_receipts.PHASE_SEGMENT_RECONCILE,
+                label="reconcile_kalshi_match_segments",
+            )
             logger.info(
                 "Kalshi match-segment reconcile (Q435): %d adopted, %d converged "
                 "across %d segments (%d ambiguous, %d without an anchor)",
@@ -2089,8 +2435,22 @@ async def _reconcile_kalshi_match_segments(session) -> dict:
 
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
+    link_changes: Optional[list[MatchReceipt]] = None,
 ) -> None:
-    """Phase 1.5: fix stale and mislinked markets."""
+    """Phase 1.5: fix stale and mislinked markets.
+
+    ``link_changes`` collects a receipt for every link this pass ENDS or MOVES
+    (LINKLOSS-02). It is a list the caller owns and flushes AFTER its commit,
+    not written here, for two reasons. The receipt session is separate on
+    purpose (see :func:`_flush_pass_receipts`) so bookkeeping can never roll
+    back matching — and a separate session cannot see this one's uncommitted
+    unlinks, so a receipt written mid-pass would be re-read by
+    ``verify_links_are_durable`` against a row that still looks linked and would
+    be downgraded as un-durable. Collect now, publish once the unlink is real.
+
+    ``None`` (the default) means the caller does not want them; the pass then
+    behaves exactly as it did before. Tests rely on that.
+    """
     from app.models.models import FuturesMarket, Event, WinProbSnapshot
 
     stats["funnel"].setdefault("stale_relinked", 0)
@@ -2174,6 +2534,13 @@ async def _phase15_revalidate(
                     )
                     _shadowed_event_id = linked_event.id
                     market.event_id = None
+                    _record_link_change(
+                        link_changes, market,
+                        _receipts.PHASE_PHASE15_REVALIDATE, now,
+                    ).unlink(
+                        _shadowed_event_id,
+                        cause="shadowed_futures_ticker",
+                    )
                     await session.flush()
                     if await _prune_orphaned_blend_source(
                         session, _shadowed_event_id, market.source,
@@ -2285,8 +2652,31 @@ async def _phase15_revalidate(
                     stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 market.event_id = better_match["event_id"]
                 _set_market_sport_fields(market, better_match)
+                _record_link_change(
+                    link_changes, market,
+                    _receipts.PHASE_PHASE15_REVALIDATE, now,
+                ).link(
+                    better_match["event_id"],
+                    previous_event_id=linked_event.id,
+                    cause=reason,
+                )
                 if market.group_id and market.source == "polymarket":
                     from sqlalchemy import text as _text
+                    # THE SIBLINGS MOVE TOO, AND THEY MOVE SILENTLY. This one
+                    # statement can carry a whole Polymarket group onto the new
+                    # event, and every row it touches is a link change nobody
+                    # else in this loop will ever see: the pass iterates the
+                    # PRIMARY market, not the group. Read the affected rows
+                    # first so each one can name the event it came off — a
+                    # receipt that cannot say where a link went is the shape
+                    # that left LINKLOSS-02 unanswerable.
+                    _siblings = (await session.execute(_text("""
+                        SELECT id, source, external_id, name, event_id
+                        FROM futures_markets
+                        WHERE group_id = :gid
+                          AND group_type = 'polymarket_sub_market'
+                          AND (event_id IS NULL OR event_id != :eid)
+                    """), {"eid": better_match["event_id"], "gid": market.group_id})).all()
                     await session.execute(_text("""
                         UPDATE futures_markets
                         SET event_id = :eid
@@ -2294,6 +2684,21 @@ async def _phase15_revalidate(
                           AND group_type = 'polymarket_sub_market'
                           AND (event_id IS NULL OR event_id != :eid)
                     """), {"eid": better_match["event_id"], "gid": market.group_id})
+                    for _sib in _siblings:
+                        if _sib.id == market.id or _sib.event_id is None:
+                            # A sibling attaching for the first time is an
+                            # ordinary link, made by the forward path's own
+                            # receipt; only a MOVE is this pass's to explain.
+                            continue
+                        _record_link_change(
+                            link_changes, _sib,
+                            _receipts.PHASE_PHASE15_REVALIDATE, now,
+                        ).link(
+                            better_match["event_id"],
+                            previous_event_id=_sib.event_id,
+                            cause="polymarket_group_follows_primary",
+                            primary_market_id=market.id,
+                        )
                 if is_auto_created:
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
@@ -2317,6 +2722,10 @@ async def _phase15_revalidate(
                 stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 _unlinked_event_id = linked_event.id
                 market.event_id = None
+                _record_link_change(
+                    link_changes, market,
+                    _receipts.PHASE_PHASE15_REVALIDATE, now,
+                ).unlink(_unlinked_event_id, cause=reason)
                 await session.flush()  # persist event_id=None before the count query
                 # #1163: prune the now-orphaned blend source key (invariant:
                 # a PM source may not sit in the blend without a linked market).
@@ -2688,6 +3097,13 @@ async def _match_prediction_markets(limit: int = 500):
     polymarket_backfill_queue = []
 
     async with get_task_session() as session:
+        # The settled sweep (#2798) runs FIRST, before anything that attempts a
+        # link. It is the record of the population Pass 1 has just stopped
+        # visiting, and a record of an exclusion that only gets written when
+        # there is budget left over is a record that reliably goes missing on
+        # exactly the busy nights it is wanted for.
+        await _settled_sweep(session, stats, now, _time_remaining)
+
         # Phase 1, Pass 1: Kalshi ticker scan
         logger.info("Phase 1 starting — %.0fs budget remaining", _time_remaining())
         processed_ids = await _phase1_pass1_ticker_scan(
@@ -2719,9 +3135,20 @@ async def _match_prediction_markets(limit: int = 500):
         # Phase 1.5: Re-validate linked markets
         logger.info("Phase 1 done (%d scanned, %d linked) — %.0fs remaining",
                     stats["markets_scanned"], stats["newly_linked"], _time_remaining())
-        await _phase15_revalidate(session, stats, now, _time_remaining)
+        # LINKLOSS-02: Phase 1.5 and Phase 2 are the only passes that can END or
+        # MOVE a link that already existed, and until now they did it with no
+        # record at all — which is why "did tonight's merge drop 261 links?" had
+        # no answer. Each collects its receipts here and they are published
+        # AFTER the commit that makes the change real (see _phase15_revalidate).
+        link_changes: list[MatchReceipt] = []
+        await _phase15_revalidate(
+            session, stats, now, _time_remaining, link_changes,
+        )
 
         await session.commit()
+        await _flush_pass_receipts(
+            session, link_changes, stats, _receipts.PHASE_PHASE15_REVALIDATE,
+        )
 
         # #944: correct Kalshi game markets that collapsed onto the last game's
         # event (commence_time = resolution date). Idempotent + write-on-change,
@@ -2744,6 +3171,10 @@ async def _match_prediction_markets(limit: int = 500):
         #
         # Time-budgeted: skip if running low on time
         stats["funnel"].setdefault("phase2_skipped_budget", False)
+        # Declared before the budget check so the flush after Phase 2b always
+        # has a list to publish, including on the skipped path (an empty flush
+        # is a no-op; an undefined name is a NameError in the error handler).
+        phase2_link_changes: list[MatchReceipt] = []
         linked_rows = []
         if _time_remaining() < 60:
             logger.info("Skipping Phase 2 — only %.0fs remaining", _time_remaining())
@@ -2854,6 +3285,15 @@ async def _match_prediction_markets(limit: int = 500):
                     update(FuturesMarket)
                     .where(FuturesMarket.id == m.market_id)
                     .values(event_id=None)
+                )
+                _record_link_change(
+                    phase2_link_changes, m, _receipts.PHASE_PHASE2_LINKED, now,
+                ).unlink(
+                    ev_ref.event_id,
+                    cause="phase2_multi_game_wrong_date",
+                    ticker_date=d,
+                    event_commence_time=ec,
+                    diff_hours=round(diff_hours, 1),
                 )
                 stats["funnel"]["phase2_multi_game_unlinked"] += 1
                 # #1163: prune the orphaned blend source key on unlink.
@@ -2970,6 +3410,15 @@ async def _match_prediction_markets(limit: int = 500):
                             .where(FuturesMarket.id == market.market_id)
                             .values(event_id=None)
                         )
+                        _record_link_change(
+                            phase2_link_changes, market,
+                            _receipts.PHASE_PHASE2_LINKED, now,
+                        ).unlink(
+                            market.event_id,
+                            cause="phase2_ticker_date_conflict",
+                            ticker_date=_td,
+                            event_commence_time=_ec,
+                        )
                         # #1163: prune the orphaned blend source key on unlink
                         # (before the commit so it lands atomically).
                         if await _prune_orphaned_blend_source(
@@ -3023,6 +3472,13 @@ async def _match_prediction_markets(limit: int = 500):
         except Exception as e:
             await session.rollback()
             stats["errors"].append(f"phase2b: {str(e)[:100]}")
+
+    # Published after the matcher's session is closed, on the receipts' own
+    # session. Phase 2 commits each unlink inline, so by here every claim in the
+    # list is durable and `verify_links_are_durable` re-reads it as such.
+    await _flush_pass_receipts(
+        None, phase2_link_changes, stats, _receipts.PHASE_PHASE2_LINKED,
+    )
 
     stats["phase2_skipped_not_moneyline"] = phase2_skipped_not_ml
 
@@ -3251,15 +3707,102 @@ async def _find_matching_event(
     if receipt is not None:
         await _record_no_match_reason(
             session, receipt, ilike_conditions, now,
-            time_start, time_end, probe_allowed=probe_allowed,
+            time_start, time_end, matchup=matchup, probe_allowed=probe_allowed,
         )
 
     return None
 
 
+def _row_coverage(
+    market_name: str | None, matchup, home_team: str | None, away_team: str | None,
+) -> tuple[int, int]:
+    """``(sides_covered, sides_named)`` for one retrieved row — see
+    :func:`app.utils.match_receipts.row_coverage`.
+
+    Every coverage question in this module goes through here, so the candidate
+    path and the probe path answer it the same way. The probe re-uses the SAME
+    one-token ILIKE that produced the candidates and inherits the same defect:
+    without a coverage check, a row retrieved on a shared mascot would be read
+    as "the game IS in our table, the window excluded it" and reported as
+    ``outside_time_window`` — moving the lie from one bucket to another instead
+    of ending it.
+
+    NOT ``_fuzzy_team_match``. That function's refusal is what a receipt is
+    explaining; using it to decide whether the refused row was the right game
+    guarantees the answer "it was not", and sends every real name-gate failure
+    to the upstream-absence bucket. CERT-783 blocked that on Browns-Jaguars.
+    """
+    return _receipts.row_coverage(
+        market_name, matchup.team_a, matchup.team_b, home_team, away_team,
+    )
+
+
+def _side_ilike_conditions(side: str | None) -> list:
+    """Every ILIKE that would retrieve a row carrying ONE named side."""
+    from app.models.models import Event
+
+    conditions = []
+    for term in _expand_team_search_terms(side or ""):
+        if not term:
+            continue
+        pattern = f"%{_escape_like(term)}%"
+        conditions.append(Event.home_team_name.ilike(pattern))
+        conditions.append(Event.away_team_name.ilike(pattern))
+    return conditions
+
+
+def _covering_probe_condition(market_name: str | None, matchup):
+    """A predicate that retrieves ONLY rows carrying BOTH named sides.
+
+    THE PROBE HAD TO ANSWER A DIFFERENT QUESTION THAN IT ASKED. Its job is
+    "is this game in our events table at all", and it went at that with an
+    OR over every side's patterns, ordered by ``commence_time``, ``LIMIT 5``.
+    The OR fires on ONE token, so for a market like "Morehouse Maroon Tigers vs
+    Arkansas-Pine Bluff" the five earliest rows in a 165-day window are five
+    other games that happen to share a word — and ``covering_hits: 0`` then
+    means "none of five arbitrary rows was this game", which is not evidence of
+    anything. Measured by the CERT-810 grader: 103 of 109 live NCAAF rejects
+    came back with exactly 5 hits, i.e. saturated, so the bucket those receipts
+    landed in was decided by a truncation.
+
+    Asking for both sides at once moves the filter into the index scan, so the
+    LIMIT stops choosing the answer: a row that comes back is a row that carries
+    the whole matchup, and an empty result is the honest "no such game here".
+
+    BOTH READINGS OF THE MATCHUP GET A VOTE, exactly as in
+    :func:`app.utils.match_receipts.row_coverage`, and for the same reason: the
+    parsed sides can be invented ("Denver vs Kansas City" parsed to the NBA
+    ``Nuggets``/``Chiefs`` for an NFL market — 65 of 222 ``name_mismatch``
+    receipts), and the market name can be unsplittable. Retrieving on only one
+    of the two would rebuild the parse bug inside the instrument that is
+    supposed to detect it.
+
+    ``None`` when no reading names two sides — a single-sided market's broad
+    probe already IS its covering probe, because one hit covers the one side.
+    """
+    from sqlalchemy import and_
+
+    readings = []
+    if matchup.team_b:
+        readings.append((matchup.team_a, matchup.team_b))
+    name_a, name_b = _receipts.sides_from_market_name(market_name)
+    if name_a and name_b:
+        readings.append((name_a, name_b))
+
+    arms = []
+    for side_a, side_b in readings:
+        a_conditions = _side_ilike_conditions(side_a)
+        b_conditions = _side_ilike_conditions(side_b)
+        if a_conditions and b_conditions:
+            arms.append(and_(or_(*a_conditions), or_(*b_conditions)))
+    if not arms:
+        return None
+    return or_(*arms)
+
+
 async def _record_no_match_reason(
     session, receipt, ilike_conditions, now, time_start, time_end,
-    *, probe_allowed: bool,
+    *, matchup, probe_allowed: bool,
 ) -> None:
     """Write the reject reason for an attempt that found no event (#2705).
 
@@ -3291,24 +3834,47 @@ async def _record_no_match_reason(
 
     probe_start = now - timedelta(days=_PROBE_PAST_DAYS)
     probe_end = now + timedelta(days=_PROBE_FUTURE_DAYS)
-    probe_result = await session.execute(
-        select(
-            Event.id, Event.home_team_name, Event.away_team_name,
-            Event.commence_time, Event.status,
+
+    async def _probe(where_clause):
+        result = await session.execute(
+            select(
+                Event.id, Event.home_team_name, Event.away_team_name,
+                Event.commence_time, Event.status,
+            )
+            .where(where_clause, Event.commence_time.between(probe_start, probe_end))
+            .order_by(Event.commence_time)
+            .limit(_PROBE_LIMIT)
         )
-        .where(
-            or_(*ilike_conditions),
-            Event.commence_time.between(probe_start, probe_end),
-        )
-        .order_by(Event.commence_time)
-        .limit(5)
-    )
-    probe_rows = probe_result.all()
+        return result.all()
+
+    # THE COVERING ARM RUNS FIRST and, when it hits, is the only one that runs.
+    # It asks the question the receipt is about to answer; the broad OR arm is a
+    # fallback that exists to record WHAT came back when nothing covers, which is
+    # the evidence behind `no_candidate`.
+    covering_condition = _covering_probe_condition(receipt.market_name, matchup)
+    probe_rows = []
+    arm = "broad"
+    if covering_condition is not None:
+        probe_rows = await _probe(covering_condition)
+        arm = "covering"
+
+    saturated = False
+    if not probe_rows:
+        probe_rows = await _probe(or_(*ilike_conditions))
+        # A BROAD ARM THAT FILLED ITS LIMIT DECIDED NOTHING, and the receipt has
+        # to say so. `covering_hits: 0` off a truncated result is the reading
+        # that produced #2796's NCAAF numbers; a consumer that cannot see the
+        # truncation cannot know to discount it (gotcha #53).
+        saturated = len(probe_rows) >= _PROBE_LIMIT
+        arm = "broad_after_covering_miss" if covering_condition is not None else "broad"
 
     receipt.detail["candidate_probe"] = {
         "start": probe_start,
         "end": probe_end,
         "hits": len(probe_rows),
+        "arm": arm,
+        "limit": _PROBE_LIMIT,
+        "saturated": saturated,
     }
 
     if not probe_rows:
@@ -3326,10 +3892,20 @@ async def _record_no_match_reason(
 
     lo, hi = _aware(time_start), _aware(time_end)
     in_window = False
+    covering = 0
+    sides_named = 2 if matchup.team_b else 1
     for row in probe_rows:
         ct = _aware(row.commence_time)
         within = ct is not None and lo is not None and hi is not None and lo <= ct <= hi
-        in_window = in_window or within
+        covered, sides_named = _row_coverage(
+            receipt.market_name, matchup, row.home_team_name, row.away_team_name,
+        )
+        # Only a row that carries the WHOLE matchup is evidence that the game is
+        # in our table; a partial hit is the same one-token coincidence the
+        # candidate search already returned, and it decides nothing.
+        if covered >= sides_named:
+            covering += 1
+            in_window = in_window or within
         receipt.trace(CandidateTrace(
             event_id=row.id,
             home_team=row.home_team_name,
@@ -3337,10 +3913,24 @@ async def _record_no_match_reason(
             commence_time=ct,
             status=row.status,
             verdict=(
-                _receipts.REJECT_STATE_DISAGREES if within
-                else _receipts.REJECT_OUTSIDE_TIME_WINDOW
+                (
+                    _receipts.REJECT_STATE_DISAGREES if within
+                    else _receipts.REJECT_OUTSIDE_TIME_WINDOW
+                ) if covered >= sides_named
+                else _receipts.REJECT_NO_CANDIDATE
             ),
+            sides_matched=covered,
+            sides_named=sides_named,
         ))
+
+    receipt.detail["candidate_probe"]["covering_hits"] = covering
+
+    if not covering:
+        # Rows came back and not one of them is this game. That is the honest
+        # "upstream has a market we have no event for" bucket — the one that
+        # fired 1 time in 333 before coverage was measured.
+        receipt.reject(_receipts.REJECT_NO_CANDIDATE)
+        return
 
     receipt.reject(
         _receipts.REJECT_STATE_DISAGREES if in_window
@@ -3363,9 +3953,26 @@ def _score_candidates(
 
     traces: list[CandidateTrace] = []
 
-    def _trace(event, verdict, score=None):
+    #: The market named two sides, or one (the ``will_win`` shape). Every trace
+    #: carries this so a rejected row can be read as "covered 1 of 2" without
+    #: re-deriving the matchup from the market name.
+    sides_named = 2 if matchup.team_b else 1
+    market_name = getattr(market, "name", None)
+
+    def _trace(event, verdict, score=None, measure_coverage=False):
+        """Record one candidate.
+
+        ``measure_coverage`` is set exactly where the NAME GATE refused the row,
+        and only there. Everywhere else the row already cleared that gate, so it
+        covers the matchup by construction and re-deriving it would be noise.
+        """
         if receipt is None:
             return None
+        covered = sides_named
+        if measure_coverage:
+            covered, _ = _row_coverage(
+                market_name, matchup, event.home_team_name, event.away_team_name,
+            )
         t = CandidateTrace(
             event_id=event.id,
             home_team=event.home_team_name,
@@ -3375,6 +3982,8 @@ def _score_candidates(
             sport_key=(event.sport.key if event.sport else None),
             score=score,
             verdict=verdict,
+            sides_matched=covered,
+            sides_named=sides_named,
         )
         traces.append(t)
         receipt.trace(t)
@@ -3407,7 +4016,16 @@ def _score_candidates(
                 or _fuzzy_team_match(matchup.team_b, event.away_team_name)
             )
             if not (a_matches and b_matches):
-                _trace(event, _receipts.REJECT_NAME_MISMATCH)
+                # Coverage is what separates a rejected candidate from a row
+                # the ILIKE happened to return on one shared token — and it is
+                # measured INDEPENDENTLY of a_matches/b_matches, which are the
+                # verdict being explained. "CLE Browns vs JAC Jaguars" against
+                # Jacksonville Jaguars / Cleveland Browns fails both halves here
+                # and covers both sides; that is a name-gate bug of ours, not an
+                # upstream absence (CERT-783).
+                _trace(
+                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                )
                 continue
 
         # Check team name matching (determine yes/no home/away mapping)
@@ -3418,7 +4036,14 @@ def _score_candidates(
             external_id=market.external_id or "",
         )
         if not team_match:
-            _trace(event, _receipts.REJECT_NAME_MISMATCH)
+            # A two-sided matchup that reaches here already cleared the gate
+            # above, so its coverage is full: this IS the documented
+            # name_mismatch — both sides present, orientation refused. A
+            # one-sided matchup never met that gate, so measure it.
+            _trace(
+                event, _receipts.REJECT_NAME_MISMATCH,
+                measure_coverage=not matchup.team_b,
+            )
             continue
 
         # For "Will X win?" with only one team, verify the market team
@@ -3428,7 +4053,13 @@ def _score_candidates(
                 _fuzzy_team_match(matchup.team_a, event.home_team_name)
                 or _fuzzy_team_match(matchup.team_a, event.away_team_name)
             ):
-                _trace(event, _receipts.REJECT_NAME_MISMATCH)
+                # The market named one side and the gate says this row does not
+                # carry it. Measure independently before calling it a
+                # coincidence — the gate cannot match a name of three
+                # characters or fewer at all.
+                _trace(
+                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                )
                 continue
 
         # Score: prefer closer to now + live games
@@ -4334,6 +4965,18 @@ async def _poll_live_prediction_market_prices():
                         "yes_ask": float(outcome.current_yes_ask) if outcome.current_yes_ask else None,
                         "poll_type": "live_fast",
                     },
+                    # live/035: on a LIVE event a flat price must still gain a
+                    # point. The poll's own period is 120s, so the deadline is
+                    # derived from it the same way the WS lane derives its own —
+                    # a deadline equal to the period is first noticed one period
+                    # late. Scheduled (pre-game) events are excluded: their
+                    # prices genuinely sit still for hours and a heartbeat there
+                    # buys a longer table and no visible line.
+                    max_gap_seconds=(
+                        _LIVE_SNAPSHOT_HEARTBEAT_S
+                        if (event.status or "").lower() == "live"
+                        else None
+                    ),
                 )
 
                 if is_new:
@@ -4528,12 +5171,21 @@ async def _backfill_polymarket_win_prob_history(
                 )
                 return stats
 
-            # Fetch price history
-            history = await service.get_prices_history(
-                token_id=token_id,
-                interval=interval,
-                fidelity=fidelity,
-            )
+            # Fetch price history. `get_prices_history` raises when the venue
+            # could not be asked at all and returns [] only when it answered and
+            # holds nothing — the two must not land in the same bucket, or an
+            # outage reads as a market with no history (gotcha #53).
+            from app.services.polymarket_api import PolymarketHistoryUnavailable
+
+            try:
+                history = await service.get_prices_history(
+                    token_id=token_id,
+                    interval=interval,
+                    fidelity=fidelity,
+                )
+            except PolymarketHistoryUnavailable as exc:
+                stats["errors"].append(f"price history unavailable: {str(exc)[:120]}")
+                return stats
             if not history:
                 stats["errors"].append("empty price history")
                 return stats

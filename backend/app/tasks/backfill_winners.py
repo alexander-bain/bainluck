@@ -2655,7 +2655,7 @@ async def _unresolve_datagolf_premature():
             """))
             mkt_res = await session.execute(text("""
                 UPDATE futures_markets fm
-                SET status = 'open'
+                SET status = 'open', settled_at = NULL
                 WHERE fm.source = 'datagolf'
                   AND fm.status = 'resolved'
                   AND fm.resolution_date > NOW()
@@ -3010,7 +3010,8 @@ async def _grade_date_passed_binaries():
                 # Couple status to the winner write (settled means settled).
                 await session.execute(
                     text(
-                        "UPDATE futures_markets SET status = 'resolved' "
+                        "UPDATE futures_markets SET status = 'resolved', "
+                        "settled_at = COALESCE(settled_at, NOW()) "
                         "WHERE id = ANY(:ids) AND status = 'open'"
                     ),
                     {"ids": chunk},

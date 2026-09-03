@@ -177,6 +177,22 @@ export function claimBootFeed(
 }
 
 /**
+ * How long the consumer waits for a parked feed response before abandoning it (LAT-P218).
+ *
+ * A parked fetch has no timeout and no retries — it is a bare `fetch()` in a script tag. `apiFetch`
+ * has both (20 s per attempt, two retries), so before this existed a claim was strictly WORSE than no
+ * boot at all in one specific case: during a #2724 database spell the bare await stranded the reader
+ * on a skeleton for as long as the server held the connection, where the normal path would have
+ * given up and retried. `HUB_BOOT_CLAIM_TIMEOUT_MS` in `lib/tournament/hubBoot.ts` is the same
+ * deadline for the same reason and the two are deliberately equal; they are separate constants only
+ * because the two modules are separate, and a guard test asserts they agree.
+ *
+ * The value matches `apiFetch`'s own per-attempt timeout, so the worst case a claim can cost is one
+ * extra attempt's wait rather than an unbounded one.
+ */
+export const FEED_BOOT_CLAIM_TIMEOUT_MS = 20000;
+
+/**
  * The client duration to report for a claimed boot fetch: the wire time of the
  * boot request itself, NOT the time from parse to claim (which would fold the
  * whole JS download into a "feed latency" number and read as a regression).

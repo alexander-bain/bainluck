@@ -97,6 +97,35 @@ P_AT_HEALTHY_RATE = 0.884   # publish rate 0.95  — ~1.0 day expected wait
 
 HISTORY_IDENTITY = "calibration:beat_gauge_history"
 
+#: CAL-P993 (calibration-028) — WHY a miss missed.
+#:
+#: The score does not change and no beat is excused: ruling 009 budgets misses,
+#: not excuses, and a miss caused by a deploy is still an hour in which
+#: ``/api/calibration`` did not refresh. What changes is that the reader can see
+#: WHICH producer question a 5/24 is evidence about.
+#:
+#: * ``incomplete`` — the staged build ran out of window with units banked. This
+#:   is the number "is it converging?" is asking for.
+#: * ``interrupted`` — the runtime took the worker away mid-phase (a deploy
+#:   cycling ``worker-heavy``, a dyno restart, an operator pause). Measured
+#:   2026-09-03: 21 of 23 such beats in the ring had a Heroku release inside
+#:   their own window. That is a finding about the DEPLOY CADENCE.
+#: * ``unattributed`` — the beat predates the cause gauge, or missed for a
+#:   reason that is not a cancellation at all (``failed``, ``overlap_refused``).
+#:   Rendered as its own bucket rather than folded into either real cause: this
+#:   whole change exists because one word stood for two states, and inventing a
+#:   third collapse to fix the first would be comic.
+#:
+#: The prefix must equal ``calibration_main_build.CANCEL_CAUSE_PREFIX``. It is
+#: retyped here because this script imports nothing from ``app`` on purpose (it
+#: runs against production from any checkout); the equality is held by
+#: ``backend/tests/test_calibration_cancel_cause_993.py``, which reads both.
+CANCEL_CAUSE_PREFIX = "beat:cancel_cause:"
+CANCEL_CAUSE_INCOMPLETE = "incomplete"
+CANCEL_CAUSE_INTERRUPTED = "interrupted"
+CANCEL_CAUSE_UNATTRIBUTED = "unattributed"
+CANCEL_CAUSES = (CANCEL_CAUSE_INCOMPLETE, CANCEL_CAUSE_INTERRUPTED)
+
 #: Wide enough that the window is never short because the ring was read thin,
 #: and small enough to stay under the endpoint's row cap.
 FETCH_LIMIT = 200
@@ -106,8 +135,12 @@ SQL = (
     "o->>'generated_at' AS generated_at, "
     "o->>'terminal' AS terminal, "
     "o->'outcome'->>'gate' AS gate, "
-    "o->'outcome'->>'published' AS published "
-    "FROM durable_state_snapshots d, "
+    "o->'outcome'->>'published' AS published"
+    + "".join(
+        f", o->'gauges'->>'{CANCEL_CAUSE_PREFIX}{cause}' AS cause_{cause}"
+        for cause in CANCEL_CAUSES
+    )
+    + " FROM durable_state_snapshots d, "
     "jsonb_array_elements(d.payload->'observations') o "
     f"WHERE d.identity = '{HISTORY_IDENTITY}' "
     "ORDER BY 1"
@@ -164,6 +197,21 @@ def is_clean(row: dict) -> bool:
     )
 
 
+def miss_cause(row: dict) -> str:
+    """Which bucket a NON-clean beat belongs to. Pure. See :data:`CANCEL_CAUSES`.
+
+    Only ever called on a miss — a clean beat has no cause and asking for one
+    would invite a caller to render "incomplete" beside a publish.
+
+    A beat carrying BOTH gauges is impossible (one exception ends one beat) and
+    is reported ``unattributed`` rather than picking a winner: two causes on one
+    row means the writer is wrong, and guessing which half to believe is how a
+    contradiction becomes a statistic.
+    """
+    present = [c for c in CANCEL_CAUSES if row.get(f"cause_{c}") is not None]
+    return present[0] if len(present) == 1 else CANCEL_CAUSE_UNATTRIBUTED
+
+
 def score(rows: list[dict], *, baseline=None, window: int = WINDOW,
           required: int = CLEAN_REQUIRED) -> dict:
     """The verdict. Pure, so every branch is reachable from a test."""
@@ -209,6 +257,18 @@ def score(rows: list[dict], *, baseline=None, window: int = WINDOW,
         "beats_in_window": len(considered),
         "misses": len(considered) - clean,
         "misses_allowed": window - required,
+        # CAL-P993: the misses, attributed. Every key is always present, at zero
+        # when empty — an absent key would read as "none of that kind" and
+        # "this build predates the split" identically, which is the exact
+        # collapse this field exists to end.
+        "miss_causes": {
+            bucket: sum(
+                1
+                for r in considered
+                if not is_clean(r) and miss_cause(r) == bucket
+            )
+            for bucket in CANCEL_CAUSES + (CANCEL_CAUSE_UNATTRIBUTED,)
+        },
         "verdict": verdict,
         "reachable_if_all_remaining_clean": reachable if beats_still_to_come else None,
         "baseline_at": baseline.isoformat() if baseline else None,
@@ -224,6 +284,7 @@ def score(rows: list[dict], *, baseline=None, window: int = WINDOW,
                 "terminal": r.get("terminal"),
                 "gate": r.get("gate"),
                 "clean": is_clean(r),
+                "miss_cause": None if is_clean(r) else miss_cause(r),
             }
             for r in considered
         ],
@@ -247,6 +308,11 @@ def render(result: dict) -> str:
         headline + f"   ({result['misses']} misses; {result['misses_allowed']} allowed)",
         f"  {strip}   <- oldest ... newest",
         f"  window   {result['oldest_in_window']} -> {result['newest_in_window']}",
+        "  misses   "
+        + " · ".join(
+            f"{count} {bucket}" for bucket, count in result["miss_causes"].items()
+        )
+        + "   (attributed since CAL-P993; every miss still counts as a miss)",
         f"  ring     {result['ring_observations']} observations"
         + (
             f", {result['excluded_pre_baseline']} excluded as pre-baseline"
@@ -265,8 +331,20 @@ def render(result: dict) -> str:
         lines.append(
             f"           per-window P is {result['p_per_window_at_broken_rate']:.1e} at the broken "
             f"0.472 rate and {result['p_per_window_at_healthy_rate']:.3f} at a healthy 0.95 rate — "
-            "a score this far short is a producer finding, not bad luck"
+            "a score this far short is not bad luck"
         )
+        # CAL-P993. The line above used to end "is a PRODUCER finding". It is
+        # not entitled to say which finding it is: an `interrupted` miss is the
+        # runtime taking the worker away, and blaming the producer for it is how
+        # ruling 009's freeze came to be held shut by other lanes' deploys.
+        interrupted = result["miss_causes"].get(CANCEL_CAUSE_INTERRUPTED, 0)
+        misses = result["misses"]
+        if misses and interrupted * 2 > misses:
+            lines.append(
+                f"           MOST MISSES ARE `{CANCEL_CAUSE_INTERRUPTED}` "
+                f"({interrupted}/{misses}) — the build was KILLED, not slow. That is a "
+                "deploy-cadence finding, and no change to the producer moves it."
+            )
     else:
         lines += [
             "",

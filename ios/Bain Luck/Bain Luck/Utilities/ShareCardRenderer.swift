@@ -224,7 +224,12 @@ struct ShareableEventCardView: View {
 
     private var eyebrow: String {
         if status == "live" { return "LIVE" }
-        if status == "completed" || status == "closed" { return "FINAL" }
+        if EventState.isFinished(status) { return "FINAL" }
+        // live/048 — a shared share card must not print "FINAL" or fall silently
+        // back to the sport name on a match with no reported result. This one
+        // leaves the app and is screenshotted, so it is the copy of the claim we
+        // have the least ability to correct later.
+        if EventState.isSuspended(status) { return "PAUSED" }
         return sportName.uppercased()
     }
 
