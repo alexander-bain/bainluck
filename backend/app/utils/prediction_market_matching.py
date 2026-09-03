@@ -959,8 +959,19 @@ _TICKER_DATE_RE = re.compile(
 # Kalshi team abbreviation → team name fragments.
 # These map ticker codes to substrings we can ILIKE match against event team names.
 # Only need enough to disambiguate within a sport on a given day.
+#
+# NAMESPACING (#2706). A key is either BARE or suffixed with the asking sport
+# (`_nfl`, `_nhl`, `_mlb`, `_mls`, `_soc`, `_wnba`). The bare keys are NOT
+# sport-neutral — each one belongs to whichever sport's block it sits in, and
+# `_BARE_ABBREV_OWNER` below records that. Before ownership existed the lookup
+# fell back from a missing suffixed key onto ANY bare key, so every NFL city the
+# NBA also occupies resolved to the NBA team: `atl_nfl` was missing, `atl` was
+# `Hawks`, and Kalshi's "ATL Falcons vs PIT Steelers" was searched for as Hawks.
+# 73 of 155 open `name_mismatch` receipts were that one bug. Add a bare key and
+# you MUST declare its owner, or tests/test_kalshi_abbrev_sport_namespace_2706.py
+# fails.
 _KALSHI_TEAM_ABBREVS: dict[str, str] = {
-    # NBA
+    # NBA — owns the bare namespace (its tickers carry no sport suffix)
     "atl": "Hawks", "bos": "Celtics", "bkn": "Nets", "cha": "Hornets",
     "chi": "Bulls", "cle": "Cavaliers", "dal": "Mavericks", "den": "Nuggets",
     "det": "Pistons", "gsw": "Warriors", "hou": "Rockets", "ind": "Pacers",
@@ -969,13 +980,30 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "okc": "Thunder", "orl": "Magic", "phi": "76ers", "phx": "Suns",
     "por": "Trail Blazers", "sac": "Kings", "sas": "Spurs", "tor": "Raptors",
     "uta": "Jazz", "was": "Wizards",
-    # NFL
+    # NFL — bare keys kept for tickers whose sport cannot be identified; the
+    # `_nfl` namespace below is what an NFL ticker actually resolves against.
     "sf": "49ers", "kc": "Chiefs", "buf": "Bills", "bal": "Ravens",
     "gb": "Packers", "ne": "Patriots", "pit": "Steelers", "sea": "Seahawks",
     "tb": "Buccaneers", "ari": "Cardinals", "car": "Panthers",
     "cin": "Bengals", "jax": "Jaguars", "ten": "Titans",
     "lar": "Rams", "lac_nfl": "Chargers", "nyg": "Giants", "nyj": "Jets",
     "no": "Saints", "lv": "Raiders",
+    # ── NFL, sport-scoped (all 32; #2706) ──
+    # A PARTIAL namespace is how the collision happened — `lac_nfl` was the only
+    # scoped key, so the other 31 fell back to the NBA. Keep this complete.
+    "ari_nfl": "Cardinals", "atl_nfl": "Falcons", "bal_nfl": "Ravens",
+    "buf_nfl": "Bills", "car_nfl": "Panthers", "chi_nfl": "Bears",
+    "cin_nfl": "Bengals", "cle_nfl": "Browns", "dal_nfl": "Cowboys",
+    "den_nfl": "Broncos", "det_nfl": "Lions", "gb_nfl": "Packers",
+    "hou_nfl": "Texans", "ind_nfl": "Colts", "jax_nfl": "Jaguars",
+    # Kalshi ships JAC, not JAX (KXNFLGAME-26SEP20JACDEN).
+    "jac_nfl": "Jaguars",
+    "kc_nfl": "Chiefs", "lv_nfl": "Raiders", "lar_nfl": "Rams",
+    "mia_nfl": "Dolphins", "min_nfl": "Vikings", "ne_nfl": "Patriots",
+    "no_nfl": "Saints", "nyg_nfl": "Giants", "nyj_nfl": "Jets",
+    "phi_nfl": "Eagles", "pit_nfl": "Steelers", "sf_nfl": "49ers",
+    "sea_nfl": "Seahawks", "tb_nfl": "Buccaneers", "ten_nfl": "Titans",
+    "was_nfl": "Commanders",
     # NHL
     "bos_nhl": "Bruins", "nyr": "Rangers", "nyi": "Islanders",
     "njd": "Devils", "pit_nhl": "Penguins", "phi_nhl": "Flyers",
@@ -1062,6 +1090,9 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "tor_mls": "Toronto FC", "van_mls": "Vancouver Whitecaps",
     "dc_mls": "D.C. United", "skc_mls": "Sporting Kansas City",
     "sd_mls": "San Diego FC",
+    # Kalshi ships NSH (not NAS) and NE — both were being taken by the NHL
+    # Predators and the NFL Patriots before the namespace was enforced (#2706).
+    "nsh_mls": "Nashville SC", "ne_mls": "New England Revolution",
     # ── Soccer — Champions League (commonly used codes) ──
     "par_soc": "Paris Saint-Germain", "bay_soc2": "Bayern Munich",
     "liv_soc2": "Liverpool", "mci_soc2": "Manchester City",
@@ -1082,12 +1113,74 @@ _KALSHI_TEAM_ABBREVS: dict[str, str] = {
     "was_wnba": "Washington Mystics", "gsr_wnba": "Golden State Valkyries",
 }
 
+#: Which sport owns each UNSUFFIXED key in ``_KALSHI_TEAM_ABBREVS`` (#2706).
+#:
+#: A bare key is not sport-neutral — it is the entry its own block wrote. ``det``
+#: is the NBA's Pistons, not "Detroit". Recording that lets a sport-scoped lookup
+#: refuse a fallback that would cross into someone else's league, which is the
+#: whole defect: an NFL ticker asking for ``det`` used to be handed ``Pistons``.
+#:
+#: The NBA's suffix is ``""`` — it is the sport that never carries one — so an
+#: NBA ticker reaches its bare keys directly and is unaffected.
+_BARE_ABBREV_OWNER: dict[str, str] = {
+    # NBA
+    **{a: "" for a in (
+        "atl", "bos", "bkn", "cha", "chi", "cle", "dal", "den", "det", "gsw",
+        "hou", "ind", "lac", "lal", "mem", "mia", "mil", "min", "nop", "nyk",
+        "okc", "orl", "phi", "phx", "por", "sac", "sas", "tor", "uta", "was",
+    )},
+    # NFL
+    **{a: "_nfl" for a in (
+        "sf", "kc", "buf", "bal", "gb", "ne", "pit", "sea", "tb", "ari", "car",
+        "cin", "jax", "ten", "lar", "nyg", "nyj", "no", "lv",
+    )},
+    # NHL
+    **{a: "_nhl" for a in (
+        "nyr", "nyi", "njd", "wsh", "cbj", "fla", "tbl", "mtl", "ott", "stl",
+        "nsh", "wpg", "col", "van", "cgy", "edm", "vgk", "sjs", "ana", "lak",
+    )},
+    # MLB
+    **{a: "_mlb" for a in (
+        "nyy", "nym", "lad", "tex", "sd", "chc", "chw", "cws", "oak", "ath",
+        "laa",
+    )},
+}
+
+
+def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
+    """Resolve one ticker abbreviation WITHIN the asking sport (#2706).
+
+    The sport-scoped key wins. Failing that, the bare key is allowed only when
+    no other sport owns it — an unowned bare key is shared vocabulary, but
+    ``det`` belongs to the NBA and an NFL ticker may not have it.
+
+    Returning ``None`` is the correct answer for a miss. It is strictly better
+    than the wrong team: a miss falls through to the market-title parse, and for
+    exactly these markets the title already carries the answer
+    ("PHI Eagles vs TEN Titans"), whereas a wrong team silently searches for a
+    game that does not exist and lands as ``name_mismatch``.
+    """
+    if sport_suffix:
+        scoped = _KALSHI_TEAM_ABBREVS.get(abbrev + sport_suffix)
+        if scoped:
+            return scoped
+        owner = _BARE_ABBREV_OWNER.get(abbrev)
+        if owner is not None and owner != sport_suffix:
+            return None
+    return _KALSHI_TEAM_ABBREVS.get(abbrev)
+
+
 # Sport-specific abbreviation subsets (no suffix needed for primary sport)
 # The abbreviation lookup tries exact first, then sport-specific suffixed keys.
 # Derived from KALSHI_TICKER_TO_SPORT_KEY to cover ALL game/prop ticker prefixes.
 _SPORT_KEY_TO_ABBREV_SUFFIX: dict[str, str] = {
     "americanfootball_nfl": "_nfl",
-    "americanfootball_ncaaf": "_nfl",
+    # College football gets its OWN (empty) namespace rather than sharing the
+    # NFL's. Sharing was harmless only while `_nfl` was empty; now that it holds
+    # all 32 pro teams, an NCAAF ticker reading MIA/DET would resolve Dolphins
+    # and Lions. NCAAF codes are school codes and belong to the title parse, so
+    # the right answer for this map is "nothing" (#2706).
+    "americanfootball_ncaaf": "_ncaaf",
     "icehockey_nhl": "_nhl",
     "baseball_mlb": "_mlb",
     "baseball_ncaa": "_mlb",
@@ -1190,13 +1283,9 @@ def extract_team_codes_from_ticker(
         if len(abbrev_b) < 2 or len(abbrev_b) > 3:
             continue
 
-        # Look up both abbreviations (sport-suffixed first for disambiguation)
-        if sport_suffix:
-            name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a + sport_suffix) or _KALSHI_TEAM_ABBREVS.get(abbrev_a)
-            name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b + sport_suffix) or _KALSHI_TEAM_ABBREVS.get(abbrev_b)
-        else:
-            name_a = _KALSHI_TEAM_ABBREVS.get(abbrev_a)
-            name_b = _KALSHI_TEAM_ABBREVS.get(abbrev_b)
+        # Look up both abbreviations inside the asking sport's namespace (#2706).
+        name_a = _resolve_team_abbrev(abbrev_a, sport_suffix)
+        name_b = _resolve_team_abbrev(abbrev_b, sport_suffix)
 
         if name_a and name_b:
             best_pair = ((abbrev_a, name_a), (abbrev_b, name_b))
