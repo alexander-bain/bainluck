@@ -159,6 +159,49 @@ export interface TeamData {
   abbreviation?: string | null;
 }
 
+/**
+ * One set of a tennis match, as the authority published it (live/058, #2746).
+ *
+ * `home`/`away` are GAMES — `Event.home_score` for tennis counts SETS, and the
+ * two are routinely confused (#2555: a games-axis chart plotting set counts).
+ * `null` means ESPN has not written that side's line yet, which happens for a
+ * fraction of a second on every changeover and is not `0`.
+ *
+ * `won_by` is ESPN's own per-set winner flag and NOT a games comparison: a set
+ * abandoned to a retirement is awarded to nobody, and comparing games would
+ * hand it to whoever was ahead in it.
+ */
+export interface TennisLinescoreSet {
+  home: number | null;
+  away: number | null;
+  /** Points won in that set's tiebreak, or `null` if it did not go to one. */
+  home_tiebreak: number | null;
+  away_tiebreak: number | null;
+  won_by: "home" | "away" | null;
+}
+
+export interface TennisLinescore {
+  source: string;
+  /** What the numbers count. Always `"games"` today — stated, not assumed. */
+  unit: string;
+  state: "in_progress" | "decided";
+  /** `final` | `retired` | `walkover` | `abandoned` | `unknown`. */
+  completion: string | null;
+  /** ESPN's own display text for the moment — "3rd Set", "Interrupted". */
+  status_detail: string | null;
+  was_suspended: boolean;
+  sets: TennisLinescoreSet[];
+  /** 1-based index of the set being played; `null` unless the match is live. */
+  current_set: number | null;
+  sets_won: { home: number; away: number };
+  /** Cumulative games across every published set — the #2746 B5 quantity. */
+  games: { home: number; away: number };
+  /** Home first, always: `"6-2, 6-7(4), 6-5"`. */
+  line: string;
+  /** When WE read it. ESPN publishes no per-competition write timestamp. */
+  observed_at: string;
+}
+
 export interface Event {
   id: number;
   external_id: string;
@@ -172,6 +215,12 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /**
+   * The score at a finer grain than `home_score` (live/058, #2746). Tennis
+   * only today. ABSENT, not null, on every event that has none — the backend
+   * omits the key rather than paying for it on every row of every list.
+   */
+  linescore?: TennisLinescore | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;

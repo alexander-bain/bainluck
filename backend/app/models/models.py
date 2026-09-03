@@ -206,6 +206,16 @@ class Event(Base):
     # ESPN box score data (populated after game completion)
     box_score_data: Mapped[Optional[dict]] = mapped_column(JSONB)
 
+    # The score at a FINER GRAIN than home_score/away_score, from the authority
+    # (live/058, #2746). For tennis: every published set, its games, its
+    # tiebreak, and which set is in play — `home_score` there counts SETS, so a
+    # card fed by it alone moved 9 times while ESPN published 78 game-level
+    # changes. Shape and the rules behind it: `app/utils/tennis_linescore.py`.
+    #
+    # Written ONLY through Core `update()` (gotcha #4), and only by a source
+    # that is the state authority for that sport (D27).
+    linescore: Mapped[Optional[dict]] = mapped_column(JSONB)
+
     # Taxonomy tags (namespaced, e.g., ["sport:basketball", "tier:1", "signal:upset"])
     event_tags: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
 

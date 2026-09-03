@@ -2280,6 +2280,37 @@ _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
 _EVENT_DETAIL_MAX_SIZE = 50
 
+#: The live TTL for a sport whose durable row now moves faster than 30 s
+#: (live/058, #2746).
+#:
+#: ═══ THE CACHE IS HALF THE LATENCY, AND IT IS THE HALF NOBODY TUNES ═══
+#:
+#: A reader's staleness is the WRITE grid plus the READ cache, and a 20-second
+#: poller behind a 30-second cache has a worse median than the poller suggests:
+#: 10 s + 15 s. Speeding up the beat alone would have moved the number by a
+#: third of what the queue asked for and looked like the fix (LAT-P187 — an
+#: endpoint is not a surface).
+#:
+#: Tennis and nothing else, because tennis is the only sport whose row this
+#: repository refreshes every 20 s; every other live sport writes on a 30-120 s
+#: cadence and a shorter TTL there would buy nothing but requests. The keys are
+#: SPORT-KEY PREFIXES (`tennis_atp_us_open` -> `tennis`), so a new tournament
+#: bucket inherits it without an edit — the sport key space grows by tournament
+#: and a literal list would silently miss the next Slam.
+_EVENT_DETAIL_LIVE_TTL_BY_SPORT_PREFIX: dict[str, int] = {"tennis": 10}
+
+
+def _event_detail_live_ttl(sport_key: str | None) -> int:
+    """The live-event cache TTL for this sport, in seconds.
+
+    Defaults to :data:`_EVENT_DETAIL_LIVE_TTL` for every sport that does not
+    name itself — a shorter TTL is a cost paid on the busiest surface in the
+    app, and it is only worth paying where something upstream actually writes
+    faster than the default.
+    """
+    prefix = str(sport_key or "").split("_")[0]
+    return _EVENT_DETAIL_LIVE_TTL_BY_SPORT_PREFIX.get(prefix, _EVENT_DETAIL_LIVE_TTL)
+
 
 async def _load_ei_percentiles(db: AsyncSession) -> dict:
     """Load EI percentile thresholds from database.
@@ -7714,7 +7745,15 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     requested_event_id = event_id
     if event_id in _event_detail_cache:
         _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
-        _ttl = _EVENT_DETAIL_LIVE_TTL if _cached_status == "live" else _EVENT_DETAIL_DEFAULT_TTL
+        # The TTL is read off the CACHED RESPONSE's own sport, not off a fresh
+        # lookup — a lookup here would be the database round trip the cache
+        # exists to avoid. `sport` is `_format_event`'s first-class key and is
+        # present on every response this cache has ever held.
+        _ttl = (
+            _event_detail_live_ttl(_cached_resp.get("sport"))
+            if _cached_status == "live"
+            else _EVENT_DETAIL_DEFAULT_TTL
+        )
         if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
             return _cached_resp
 
@@ -13090,6 +13129,22 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         "home_score": event.home_score,
         "away_score": event.away_score,
     }
+
+    # THE SCORE AT THE GRAIN THE SPORT IS PLAYED IN (live/058, #2746).
+    #
+    # `home_score` for tennis counts SETS, so a card fed by it alone moved 9
+    # times while ESPN published 78 game-level changes in the same 45 minutes
+    # (live/057). `linescore` is the finer grain: every published set, its
+    # games, its tiebreak, and which set is in play.
+    #
+    # EMITTED ONLY WHEN IT EXISTS. A `"linescore": null` on every event of every
+    # list surface is bytes on the wire for the ~99% of rows that will never
+    # have one, and a client that must branch on null anyway loses nothing by
+    # branching on absence. `getattr` because this formatter also runs over row
+    # proxies that select a subset of columns.
+    _linescore = getattr(event, "linescore", None)
+    if isinstance(_linescore, dict) and _linescore.get("sets"):
+        response["linescore"] = _linescore
 
     # Add team data (colors, logos) from lookup
     if team_lookup:

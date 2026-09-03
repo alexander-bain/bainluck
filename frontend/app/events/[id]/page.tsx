@@ -17,6 +17,11 @@ import {
   resolveEventOutcome,
 } from "@/lib/eventOutcome";
 import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
+// STATIC, not `dynamic()`. It renders INSIDE the hero, above the fold, on the
+// first paint of a live tennis page — a lazy chunk there is a second round trip
+// on a 562 ms-RTT connection to draw two rows of numbers that are already in
+// the payload. It is ~2 KB and has no chart dependency.
+import TennisLinescore from "@/components/TennisLinescore";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
@@ -1120,6 +1125,20 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           </div>
+
+          {/* THE SET-BY-SET SCORE (live/058, #2746).
+              Directly under the hero's two big numbers, because it is what
+              those two numbers are made of: for tennis they count SETS, and
+              live/057 measured them moving 9 times against 78 game-level
+              changes ESPN published in the same 45 minutes. The component
+              renders nothing at all when the payload carries no linescore, so
+              every non-tennis event is byte-for-byte unchanged. */}
+          <TennisLinescore
+            linescore={event.linescore}
+            homeName={event.home_team}
+            awayName={event.away_team}
+            className="mt-3"
+          />
 
           {/* Stakes context from standings */}
           {event.standings_context?.stakes && (

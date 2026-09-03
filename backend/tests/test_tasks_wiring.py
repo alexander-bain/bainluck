@@ -191,6 +191,7 @@ class TestBeatScheduleCompleteness:
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
+        "poll-live-tennis-scores",  # live/058 (#2746) — the score half, 20s
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",

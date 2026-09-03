@@ -243,3 +243,146 @@ def test_get_json_sends_no_custom_user_agent(instrument):
     )
     assert "User-Agent" not in code
     assert "urllib.request.Request(url)" in code
+
+
+# ═════════════════ live/058: the games grain, same two observers ═════════════
+
+
+def test_orientation_puts_our_home_player_first(instrument):
+    """ESPN's competitor order is its own and does not match ours.
+
+    ═══ WHY THE GAMES JOIN NEEDS THIS AND THE SETS JOIN DOES NOT ═══
+
+    The sets key is `home_score + away_score`, a SUM — the same number whichever
+    way round the sides are. A games tuple is not: `6-2` and `2-6` are different
+    keys for one scoreboard. Unoriented, observer A would never match observer B
+    and the games median would come back EMPTY while looking like a run.
+    """
+    sides = [
+        {"name": "Alejandro Tabilo", "games": [2, 7]},
+        {"name": "Alexei Popyrin", "games": [6, 6]},
+    ]
+    oriented = instrument.orient_home_first("Alexei Popyrin", sides)
+    assert [s["name"] for s in oriented] == ["Alexei Popyrin", "Alejandro Tabilo"]
+    assert instrument.games_key(oriented) == "6-2|6-7"
+
+
+def test_orientation_refuses_rather_than_guesses(instrument):
+    """Neither side contains our surname — dropped, not paired at random.
+
+    A reversed key does not produce a wrong latency; it produces NO latency,
+    silently, which is worse because the run still prints a median over
+    whatever else it caught.
+    """
+    sides = [
+        {"name": "Alejandro Tabilo", "games": [2]},
+        {"name": "Alexei Popyrin", "games": [6]},
+    ]
+    assert instrument.orient_home_first("Somebody Else", sides) is None
+    assert instrument.orient_home_first("", sides) is None
+
+
+def test_the_key_is_the_whole_board_not_the_current_set(instrument):
+    """`4-1` in set four must not collide with `4-1` in set two.
+
+    Keyed on the current set alone, the join would pair a game won at 20:40
+    with one won an hour earlier and report a latency of an hour.
+    """
+    set_two = instrument.games_key([{"games": [6, 4]}, {"games": [2, 1]}])
+    set_four = instrument.games_key(
+        [{"games": [6, 3, 6, 4]}, {"games": [2, 6, 4, 1]}]
+    )
+    assert set_two == "6-2|4-1"
+    assert set_four == "6-2|3-6|6-4|4-1"
+    assert set_two != set_four
+
+
+def test_a_side_espn_has_not_written_yet_is_a_question_mark_not_a_zero(instrument):
+    """The changeover. `0` there is a score; `?` is the absence of one.
+
+    Both observers build the key through this one function, so the instant is
+    keyed identically on both sides and pairs normally once ESPN catches up.
+    """
+    assert instrument.games_key([{"games": [6, 1]}, {"games": [3]}]) == "6-3|1-?"
+
+
+def test_no_line_on_either_side_yields_no_key(instrument):
+    assert instrument.games_key([{"games": []}, {"games": [1]}]) is None
+    assert instrument.games_key([{"games": [1]}]) is None
+
+
+def test_the_card_reader_builds_its_key_through_the_same_function(instrument, monkeypatch):
+    """ONE key builder, two callers.
+
+    Two spellings of `6-2|7-6` would join nothing and read as an infinitely slow
+    card — the failure this whole extension is most likely to have.
+    """
+    payload = {
+        "home_score": 1,
+        "away_score": 1,
+        "status": "live",
+        "linescore": {
+            "sets": [
+                {"home": 6, "away": 2},
+                {"home": 6, "away": 7},
+                {"home": 4, "away": 1},
+            ],
+        },
+    }
+    monkeypatch.setattr(instrument, "_get_json", lambda url, timeout=15.0: payload)
+    card = instrument.read_card("https://api.example", 15300836)
+    assert card["games_key"] == "6-2|6-7|4-1"
+    assert card["sets"] == 2
+
+    espn = instrument.orient_home_first("Alexei Popyrin", [
+        {"name": "Alexei Popyrin", "games": [6, 6, 4]},
+        {"name": "Alejandro Tabilo", "games": [2, 7, 1]},
+    ])
+    assert instrument.games_key(espn) == card["games_key"]
+
+
+def test_a_deployment_without_a_linescore_reads_as_absent_not_as_fast(instrument, monkeypatch):
+    """gotcha #53 / the zero-yield rule.
+
+    Run against a build that predates #2746, the card has no `linescore` key.
+    That must surface as `card_carries_linescore: false` and no game pairs —
+    NEVER as a fast median over an empty set.
+    """
+    monkeypatch.setattr(
+        instrument, "_get_json",
+        lambda url, timeout=15.0: {"home_score": 1, "away_score": 1, "status": "live"},
+    )
+    card = instrument.read_card("https://api.example", 15300836)
+    assert card["games_key"] is None
+    assert card["sets"] == 2
+
+
+def test_the_games_pairs_use_the_same_rules_as_the_set_pairs(instrument):
+    """Same warm-up drop, same sign policy, same function — only the key differs."""
+    pairs = instrument.pair_transitions(
+        espn_seen={"182725": {"6-2|4-1": 1100.0, "6-2|5-1": 1400.0}},
+        card_seen={15300836: {"6-2|4-1": 1112.0, "6-2|5-1": 1390.0}},
+        by_espn={"182725": 15300836},
+        started=1000.0,
+        espn_interval=15.0,
+        card_interval=20.0,
+        key_field="games",
+    )
+    by_key = {p["games"]: p for p in pairs}
+    assert set(by_key) == {"6-2|4-1", "6-2|5-1"}
+    assert by_key["6-2|4-1"]["latency_s"] == pytest.approx(12.0)
+    # The negative survives to the summary, exactly as it does for sets.
+    assert by_key["6-2|5-1"]["latency_s"] == pytest.approx(-10.0)
+    assert instrument.summarize(pairs)["median_latency_s"] == pytest.approx(1.0)
+    assert instrument.summarize(pairs)["negative_pairs"] == 1
+
+
+def test_summarize_on_an_empty_run_says_nothing_rather_than_zero(instrument):
+    """`0.0` would read as a perfect card. `None` reads as no measurement."""
+    assert instrument.summarize([]) == {
+        "n": 0,
+        "negative_pairs": 0,
+        "median_latency_s": None,
+        "min_latency_s": None,
+        "max_latency_s": None,
+    }

@@ -481,7 +481,7 @@ def sets_with_play(competition: dict[str, Any]) -> int:
 
 
 def competition_sides(competition: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each side of a competition as ``{name, sets_won, games, winner}``.
+    """Each side of a competition as ``{name, sets_won, games, sets, winner}``.
 
     ═══ ``sets_won`` IS COUNTED OFF ESPN'S OWN PER-SET WINNER FLAG ═══
 
@@ -503,6 +503,26 @@ def competition_sides(competition: dict[str, Any]) -> list[dict[str, Any]]:
     ``games`` carries the raw per-set line so a caller can print ``6-3, 7-6``
     without re-reading the payload.  ``winner`` is ``None`` — not ``False`` —
     when ESPN states nothing, because a scheduled match has no loser either.
+
+    ═══ ``sets`` IS ``games`` WITH ITS INDEX KEPT (live/058) ═══
+
+    ``games`` is deliberately LOSSY — an unparseable line is skipped so the
+    ``winner`` flags beside it still count — and that is right for a set TOTAL
+    and wrong for a printed LINE.  Skipping shortens the list, so set three
+    slides into set two's place and ``6-3, 5-7, 7-6`` prints as ``6-3, 7-6``:
+    the reader is shown a scoreline that never happened, with no marker that
+    anything was dropped.  The two sides can also skip DIFFERENT slots, which
+    pairs one player's second set against the other's third.
+
+    So ``sets`` carries one entry per published line, in publication order,
+    ``{"games": int | None, "tiebreak": int | None, "winner": bool}``.  A line
+    we cannot read is ``games: None`` — present, and visibly unknown.  Index
+    ``i`` on one side is always set ``i`` on the other.
+
+    ``tiebreak`` is the points won in that set's tiebreak, which ESPN publishes
+    beside the games and this module previously discarded: a 7-6 set carries
+    ``{"value": 7.0, "tiebreak": 7}`` against ``{"value": 6.0, "tiebreak": 4}``
+    and the set was 7-6(4).  ``None`` on every set that did not go to one.
     """
     sides: list[dict[str, Any]] = []
     for competitor in competition.get("competitors") or []:
@@ -511,6 +531,7 @@ def competition_sides(competition: dict[str, Any]) -> list[dict[str, Any]]:
             athlete.get("displayName") or competitor.get("name") or ""
         ).strip()
         games: list[int] = []
+        sets: list[dict[str, Any]] = []
         sets_won = 0
         for line in competitor.get("linescores") or []:
             # THE FLAG AND THE VALUE ARE TWO STATEMENTS, COUNTED SEPARATELY. A
@@ -522,14 +543,26 @@ def competition_sides(competition: dict[str, Any]) -> list[dict[str, Any]]:
             if (line or {}).get("winner"):
                 sets_won += 1
             try:
-                games.append(int(float((line or {}).get("value"))))
+                slot_games: Optional[int] = int(float((line or {}).get("value")))
             except (TypeError, ValueError):
-                continue
+                slot_games = None
+            try:
+                slot_tiebreak: Optional[int] = int(float((line or {}).get("tiebreak")))
+            except (TypeError, ValueError):
+                slot_tiebreak = None
+            sets.append({
+                "games": slot_games,
+                "tiebreak": slot_tiebreak,
+                "winner": bool((line or {}).get("winner")),
+            })
+            if slot_games is not None:
+                games.append(slot_games)
         won = competitor.get("winner")
         sides.append({
             "name": name,
             "sets_won": sets_won,
             "games": games,
+            "sets": sets,
             "winner": None if won is None else bool(won),
         })
     return sides
@@ -1049,8 +1082,17 @@ def scoreboard_competitions(
 
                     status = ((competition.get("status") or {}).get("type") or {})
                     state = SLATE_STATE_BY_ESPN_STATE.get(str(status.get("state") or ""))
+                    # `detail` on a REFUTED row is still the schedule sentence
+                    # ("Wed, September 2nd at 3:30 PM EDT") for a match already
+                    # in its fourth set, so the derived set wins outright —
+                    # exactly as `parse_results` does it for `order_of_play`.
+                    # Two readers of one board must not caption it differently.
+                    set_label: Optional[str] = None
                     if play_refutes_upcoming(state, competition):
                         state = IN_PROGRESS_SLATE_STATE
+                        set_label = current_set_label(
+                            (competition.get("status") or {}).get("period")
+                        )
 
                     names = [
                         name
@@ -1078,6 +1120,24 @@ def scoreboard_competitions(
                         "players": names,
                         "pair_key": pair_key(names) if len(names) == 2 else None,
                         "sets_with_play": sets_with_play(competition),
+                        # HOW IT ENDED, AND WHAT ESPN CALLS THE MOMENT
+                        # (live/058). `state` is three words wide and a live
+                        # card needs more than three: a match that is `decided`
+                        # because somebody RETIRED must not be captioned
+                        # "Final", and a match ESPN has stopped for rain is
+                        # neither finished nor being played.
+                        #
+                        # `completion` is `completion_of`'s enum and degrades to
+                        # `unknown` on a status name we do not hold — never to
+                        # "final", which is the one direction that would make a
+                        # renderer confident about a match nobody has finished.
+                        "completion": completion_of(status),
+                        "status_detail": (
+                            set_label if set_label is not None else status.get("detail")
+                        ),
+                        # ESPN's own flag for "play on this court stopped and
+                        # resumed". Carried rather than interpreted.
+                        "was_suspended": competition.get("wasSuspended") is True,
                         # THE RESULT, CARRIED WITH THE LINK (lane1/064). The
                         # anchor consumer writes `events.home_score` through
                         # this, and it has to come off the SAME read as the

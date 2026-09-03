@@ -2282,3 +2282,237 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         stats["score_corrections"], sum(stats["score_refused"].values()),
     )
     return {"status": "ok", **stats}
+
+
+#: How far back a fixture's start may be and still be worth a 20-second read.
+#:
+#: A five-setter runs past four hours and a rain delay can add more, so this is
+#: deliberately generous — the cost of a wide window is rows in a `WHERE`, not
+#: requests to ESPN, because the board is fetched ONCE per pass however many
+#: events select. What bounds the request rate is `TENNIS_LIVE_FORWARD_HOURS`
+#: plus the live gate below, not this number.
+TENNIS_LIVE_LOOKBACK_HOURS = 10
+
+#: How far AHEAD of its scheduled start a fixture is worth reading.
+#:
+#: Small on purpose, and it is the half of the window that matters: a tennis
+#: start slips by hours behind the match before it, so a wide forward window
+#: would select the whole day's order of play and keep this task fetching from
+#: the first match of the morning to the last of the night. `play_refutes_upcoming`
+#: is what actually catches a match that started early — it reads the board, and
+#: the board is already in hand.
+TENNIS_LIVE_FORWARD_MINUTES = 30
+
+#: A row that finished this recently is still read, so the FINAL linescore is
+#: the one that lands.
+#:
+#: Without it there is a race with `sync_tennis_from_espn`, which writes
+#: `completed_at`: whichever task ran last before ESPN went `post` would decide
+#: whether the durable row ends up holding the closing set or the one before it.
+#: A card that says "Final" over `6-4, 6-4, 5-4` is the exact defect
+#: `authority_score` was built to close, arriving one grain down.
+TENNIS_SETTLED_GRACE_HOURS = 2
+
+
+async def _poll_live_tennis_scores(limit: int = 200) -> dict:
+    """Move the live tennis card at ESPN's grain, not at ours (live/058, #2746).
+
+    ═══ WHAT THIS IS NOT ═══
+
+    It is NOT a second anchor. `sync_tennis_from_espn` owns the link, and this
+    task refuses to create one: it selects on `espn_id IS NOT NULL` and looks
+    every row up by that id. Anchoring is a whole-population question — "is this
+    competition contested" cannot be asked a row at a time — and asking it every
+    20 seconds would spend a 1,000-row scan and a contest resolution to move a
+    scoreline. The link is a 10-minute question; the score is a 20-second one.
+
+    ═══ WHY IT EXISTS AT ALL ═══
+
+    live/057 measured the live tennis card against its own upstream: median
+    131.9 s from ESPN publishing a completed set to `GET /api/events/{id}`
+    showing it, and — the number no cadence fixes — 78 game-level changes
+    published against 9 card moves in the same 45 minutes.
+
+    Both halves are here. The GRAIN comes from `authority_linescore`, which
+    fills a column that did not exist. The LATENCY comes from the cadence this
+    task runs at, which it can afford precisely because it does none of the
+    anchor's work.
+
+    ═══ THE COST, STATED ═══
+
+    TWO ESPN requests per pass, and only when a live tennis row exists — the
+    population query runs first and returns before any fetch when it is empty,
+    which off-season and overnight is every pass. During a Slam it is ~14 hours
+    a day of two requests per beat.
+
+    Per-row `try`/`except` (gotcha #42): one unreadable competition never costs
+    the pass its other rows.
+    """
+    from sqlalchemy import update
+
+    from app.services import espn_tennis
+    from app.utils.espn_tennis_anchor import authority_score_write
+    from app.utils.tennis_linescore import authority_linescore
+    import asyncio as _asyncio
+
+    stats: dict = {
+        "candidates": 0,
+        "tours_fetched": 0,
+        "fetch_errors": [],
+        "competitions": 0,
+        "not_on_board": 0,
+        "linescore_writes": 0,
+        "linescore_unchanged": 0,
+        "linescore_refused": {},
+        "score_writes": 0,
+        "score_refused": {},
+        "row_errors": 0,
+    }
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=TENNIS_LIVE_LOOKBACK_HOURS)
+    window_end = now + timedelta(minutes=TENNIS_LIVE_FORWARD_MINUTES)
+    settled_floor = now - timedelta(hours=TENNIS_SETTLED_GRACE_HOURS)
+
+    async with get_task_session() as session:
+        # ═══ THE GATE: NO LIVE TENNIS, NO REQUEST ═══
+        #
+        # Scalars, not ORM rows. Everything below writes through Core `update()`
+        # (gotcha #4 — a JSONB column assigned on an ORM instance can silently
+        # not persist), and mixing the two in one session is how flush ordering
+        # becomes load-bearing (gotcha #5). Reading plain values also means no
+        # object can expire under a rollback (gotcha #6).
+        rows = (await session.execute(
+            select(
+                Event.id,
+                Event.espn_id,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.home_score,
+                Event.away_score,
+                Event.linescore,
+            )
+            .join(Sport, Sport.id == Event.sport_id)
+            .where(
+                Sport.key.like("tennis%"),
+                Event.espn_id.isnot(None),
+                Event.commence_time >= window_start,
+                Event.commence_time <= window_end,
+                Event.home_team_name.isnot(None),
+                Event.away_team_name.isnot(None),
+                or_(
+                    Event.completed_at.is_(None),
+                    Event.completed_at >= settled_floor,
+                ),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )).all()
+        stats["candidates"] = len(rows)
+
+        if not rows:
+            # NOT AN ERROR AND NOT A ZERO-YIELD RUN — there is no tennis on.
+            # Named as its own status so a reader of the verdict can tell "we
+            # looked and nothing was live" from "we looked and found nothing to
+            # write", which are different findings (gotcha #53).
+            return {"status": "no_live_tennis", **stats}
+
+        payloads, errors = await _asyncio.to_thread(espn_tennis.fetch_scoreboards, None)
+        stats["tours_fetched"] = len(payloads)
+        stats["fetch_errors"] = errors
+        if not payloads:
+            # AUTHORITY DARK. An empty board is a fact about the read, never
+            # about the fixtures — nothing is touched, and in particular no
+            # linescore is blanked.
+            logger.warning("Live tennis poll: authority dark, both tours failed: %s", errors)
+            return {"status": "authority_dark", **stats}
+
+        competitions = espn_tennis.scoreboard_competitions(payloads)
+        stats["competitions"] = len(competitions)
+        by_id = {c["espn_competition_id"]: c for c in competitions}
+
+        for (
+            event_id, espn_id, home_name, away_name, home_score, away_score, held
+        ) in rows:
+            try:
+                competition = by_id.get(str(espn_id))
+                if competition is None:
+                    # The board does not mention this competition. Silence about
+                    # a fixture is never a statement about it — the held
+                    # linescore stays exactly as it is.
+                    stats["not_on_board"] += 1
+                    continue
+
+                ours = [home_name, away_name]
+                values: dict = {}
+
+                verdict = authority_linescore(ours, competition, observed_at=now)
+                if verdict["reason"] is not None:
+                    stats["linescore_refused"][verdict["reason"]] = (
+                        stats["linescore_refused"].get(verdict["reason"], 0) + 1
+                    )
+                elif _linescore_changed(held, verdict["linescore"]):
+                    values["linescore"] = verdict["linescore"]
+                else:
+                    stats["linescore_unchanged"] += 1
+
+                # THE SET COUNT TOO, THROUGH THE EXISTING RULE. `home_score` is
+                # what every non-tennis surface already reads, and leaving it on
+                # the 10-minute beat while the linescore moved every 20 seconds
+                # would make one row disagree with itself — a card showing
+                # `6-4, 6-3` beside `1-0`. Same read, same pass, one write.
+                score = authority_score_write(
+                    ours=ours,
+                    our_home_score=home_score,
+                    our_away_score=away_score,
+                    competition=competition,
+                )
+                if score["reason"] is not None:
+                    stats["score_refused"][score["reason"]] = (
+                        stats["score_refused"].get(score["reason"], 0) + 1
+                    )
+                elif score["changes"]:
+                    values.update(score["changes"])
+                    stats["score_writes"] += 1
+
+                if not values:
+                    continue
+                if "linescore" in values:
+                    stats["linescore_writes"] += 1
+                await session.execute(
+                    update(Event).where(Event.id == event_id).values(**values)
+                )
+            except Exception as exc:  # noqa: BLE001 — one row never costs the pass
+                stats["row_errors"] += 1
+                logger.warning("Live tennis poll: event %s failed: %s", event_id, exc)
+
+        await session.commit()
+
+    if stats["linescore_writes"] or stats["score_writes"]:
+        logger.info(
+            "Live tennis poll: %d candidates, %d linescore writes (%d unchanged), "
+            "%d score writes, %d not on board",
+            stats["candidates"], stats["linescore_writes"],
+            stats["linescore_unchanged"], stats["score_writes"],
+            stats["not_on_board"],
+        )
+    return {"status": "ok", **stats}
+
+
+def _linescore_changed(held, fresh: dict) -> bool:
+    """Is this a NEW reading, or the same one with a new clock on it?
+
+    `observed_at` moves every pass by construction, so comparing the two dicts
+    whole would call every pass a change and write the whole live population to
+    Postgres three times a minute for nothing. Everything EXCEPT that field is
+    compared — which is also the honest test, because a linescore that has not
+    moved has not moved however recently we looked at it.
+
+    A held value that is not a dict (never written, or written by something
+    older than this shape) is a change: writing is how it becomes readable.
+    """
+    if not isinstance(held, dict):
+        return True
+    return {k: v for k, v in held.items() if k != "observed_at"} != {
+        k: v for k, v in fresh.items() if k != "observed_at"
+    }

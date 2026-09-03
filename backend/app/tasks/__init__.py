@@ -607,6 +607,7 @@ celery_app.conf.task_routes = {
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
     "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
+    "app.tasks.poll_live_tennis_scores": {"queue": "realtime"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
@@ -1600,6 +1601,22 @@ def sync_tennis_from_espn(self, limit: int = 1000, dates: str = None):
     """
     from app.tasks.espn_sync import _sync_tennis_from_espn
     return _tracked_run("tennis_espn_sync", _sync_tennis_from_espn(limit=limit, dates=dates))
+
+
+@celery_app.task(bind=True, soft_time_limit=45, time_limit=60, name="app.tasks.poll_live_tennis_scores")
+def poll_live_tennis_scores(self, limit: int = 200):
+    """Move the live tennis card at ESPN's grain — every published game.
+
+    live/058 / #2746. The sibling above owns the LINK and runs every 10 minutes;
+    this owns the SCORE and runs every 20 seconds, which it can afford because
+    it does none of the anchor's work — it reads already-anchored rows by
+    `espn_id` and writes `linescore` plus the set count off one board.
+
+    Timeboxed hard (45s soft) so a slow ESPN read can never overlap its own next
+    beat on the realtime queue.
+    """
+    from app.tasks.espn_sync import _poll_live_tennis_scores
+    return _tracked_run("live_tennis_scores", _poll_live_tennis_scores(limit=limit))
 
 
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.backfill_espn_win_prob")
@@ -3997,6 +4014,32 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sync_tennis_from_espn",
         "schedule": crontab(minute="*/10"),
         "options": {"queue": "background"},
+    },
+    # THE SCORE HALF OF THE SAME RAIL, AT A DIFFERENT CADENCE (live/058, #2746).
+    #
+    # `20.0`, and the number is derived rather than picked. The acceptance bar is
+    # a MEDIAN under 30 s from ESPN publishing to our card showing, and the two
+    # terms that make it up are both grids we control:
+    #
+    #     write grid   20 s  -> median 10 s (uniform over the interval)
+    #     read cache   10 s  -> median  5 s  (`_EVENT_DETAIL_LIVE_TTL_TENNIS`)
+    #                          ───────
+    #                           15 s, plus the fetch itself
+    #
+    # Halving this to 10 s buys 5 s of median against double the requests, which
+    # is the wrong trade under a 30 s bar; doubling it to 40 s spends the whole
+    # margin on the write grid alone. The read cache is the other half and is
+    # named here because tuning one without the other is how a beat gets faster
+    # and the card does not (LAT-P187: an endpoint is not a surface).
+    #
+    # TWO ESPN requests per pass, AND ONLY WHEN A LIVE TENNIS ROW EXISTS — the
+    # task's population query runs before any fetch and returns `no_live_tennis`
+    # when it is empty. Off-season that is every pass, for the cost of one
+    # indexed query.
+    "poll-live-tennis-scores": {
+        "task": "app.tasks.poll_live_tennis_scores",
+        "schedule": 20.0,
+        "options": {"queue": "realtime"},
     },
     "backfill-team-logos": {
         "task": "app.tasks.backfill_team_logos",
