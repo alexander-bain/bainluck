@@ -72,6 +72,12 @@ import {
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  SUSPENDED_DESCRIPTION,
+  SUSPENDED_LABEL,
+  isFinishedStatus,
+  isSuspendedStatus,
+} from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
@@ -198,9 +204,10 @@ export default function EventPage({ params }: EventPageProps) {
   // Only consider "live" if the status is "live" AND the game has actually started
   // This guards against cases where the backend status might be incorrect
   const isLive = event?.status === "live" && hasStarted;
-  const isCompleted = event?.status === "completed";
-  const isClosed = event?.status === "closed";
-  const isFinished = isCompleted || isClosed;
+  const isFinished = isFinishedStatus(event?.status);
+  // live/048 — non-terminal, and it must not fall through to either branch:
+  // not Final (nothing reported a result) and not upcoming (it already began).
+  const isSuspended = isSuspendedStatus(event?.status);
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   // Effectively live = event is live status
@@ -373,7 +380,10 @@ export default function EventPage({ params }: EventPageProps) {
   }, [lastRefresh, refreshInterval]);
 
   useEffect(() => {
-    if (!event?.commence_time || isLive || isFinished) {
+    // live/048: `isSuspended` joins the suppression list. A suspended match has
+    // a commence_time in the PAST, so counting down to it is counting down to
+    // something that already happened.
+    if (!event?.commence_time || isLive || isFinished || isSuspended) {
       setGameCountdown("");
       return;
     }
@@ -383,7 +393,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isFinished]);
+  }, [event?.commence_time, isLive, isFinished, isSuspended]);
 
   const {
     data: historyData,
@@ -778,6 +788,18 @@ export default function EventPage({ params }: EventPageProps) {
               </span>
             ) : isFinished ? (
               <span className="text-[10px] font-semibold text-text-muted">Final</span>
+            ) : isSuspended ? (
+              /* live/048 — the branch that did not exist. Without it a
+                 suspended match fell through to "Pregame", which is the same
+                 lie as "Final" told in the other direction: this one already
+                 started. It gets its own badge and no start time, and the hero
+                 says why in a sentence below. */
+              <span
+                className="text-[10px] font-semibold text-text-muted"
+                title={SUSPENDED_DESCRIPTION}
+              >
+                {SUSPENDED_LABEL}
+              </span>
             ) : (
               <span className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />

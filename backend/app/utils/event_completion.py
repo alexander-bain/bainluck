@@ -111,26 +111,159 @@ def commence_time_is_a_reported_start(commence_time_source) -> bool:
     return commence_time_source not in DERIVED_COMMENCE_SOURCES
 
 
+# ══ THE STATE LADDER (live/048 — EVENT-GRAPH-DOCTRINE §R) ════════════════════
+#
+#   authority state  >  venue settlement  >  scores  >  (never) price
+#
+# Read it as an ORDER OF ENTITLEMENT: what a signal is allowed to conclude about
+# an event's state, strongest first.
+#
+#   1. AUTHORITY STATE — the schedule-of-record's own status feed (ESPN for the
+#      major leagues, college, and — since lane1/057 anchored every US Open row
+#      — tennis; DataGolf for golf). It is the only thing entitled to say a
+#      match is over, because it is the only thing that WATCHES the match.
+#      Doctrine rule 3 in one line.
+#   2. VENUE SETTLEMENT — a venue paying out is a statement of record. Not the
+#      price: the SETTLEMENT. Doctrine rule 8 gives the venue authority-of-last-
+#      resort for the categories no schedule source covers (esports, table
+#      tennis, ITF), and a settled Kalshi market is that authority speaking.
+#   3. SCORES — a score feed reporting a result. Weaker than an authority
+#      because a scoreboard lags and can carry a partial line, but it is still
+#      somebody REPORTING ON the game.
+#   4. PRICE — NEVER. A venue quotes a fixture whenever it will take the other
+#      side of the bet: before the first serve, through a rain suspension, and
+#      long after the players have left the court. So "Kalshi ticked two minutes
+#      ago" answers *is this market open?*, never *is this game being played?*
+#
+# ── AND WALL-CLOCK IS NOT ON THE LADDER AT ALL ──
+#
+# The staleness nets reason from elapsed time and silence. Silence is weaker
+# than the weakest rung: it is the ABSENCE of every signal above, and absence
+# cannot end a match. So a staleness net may no longer write a terminal state.
+# It writes :data:`EVENT_SUSPENDED`, which asserts nothing about the outcome.
+#
+# WHY THIS RULE EXISTS, MEASURED (CERT-752, production 2026-09-02). Six US Open
+# matches read ``status='live'`` while carrying a ``completed_at``. All six were
+# SUSPENDED mid-match — ESPN had them scheduled to resume that afternoon and our
+# own scores were 0-1, 2-1, 1-2, 0-0, not one a legal completed tennis result.
+# Removing venue ticks from the staleness evidence (below) is correct and it was
+# not enough: with the ticks gone the next transition pass found no admitted
+# snapshot, took the wall-clock fallback, wrote ``closed``, and resolved the
+# prediction-market blend to 1.0/0.0 **off the partial score**. Every client
+# renders ``closed`` as Final. That is a false LIVE traded for a false FINAL,
+# and the false Final is the worse of the two: it grades.
+
+#: The non-terminal state a staleness net writes when the clock has run out and
+#: NO rung of the ladder has spoken. It is the ladder's SILENCE state — read it
+#: as *"nothing that watches this match has said it ended"*, which is the honest
+#: description of both a rain delay and a fixture whose only ever source went
+#: dark. It deliberately asserts nothing about the outcome, so every query that
+#: means "settled" excludes it by construction rather than by remembering to.
+#:
+#: First rung of the ladder live/044 asked for (``scheduled|live|suspended|
+#: final``). ``Event.status`` is a bare ``String(20)`` with no CHECK constraint
+#: and no enum, so the vocabulary widens without a migration — but it widens
+#: HONESTLY: every consumer that had to learn the word is edited in this change,
+#: and :func:`authority_may_settle` / :func:`play_resumes` are the two doors out
+#: so the state can never become a terminal one by accident.
+EVENT_SUSPENDED = "suspended"
+
+#: Terminal. Something with standing said this event is over. ``completed`` is
+#: the authority's word, ``closed`` the venue/scores word; both mean Final to
+#: every client, which is exactly why staleness may no longer write either.
+SETTLED_STATUSES = frozenset({"completed", "closed"})
+
+#: States a TERMINAL verdict may be written onto. ``suspended`` is in the set —
+#: that is the whole point of it being non-terminal: the authority's ``post``
+#: settles a suspended match the moment it reports one, with no intermediate
+#: hop back through ``live``.
+SETTLEABLE_STATUSES = frozenset({"live", EVENT_SUSPENDED})
+
+#: States that "this is being played right now" promotes back to ``live``.
+#: ``suspended`` is in the set for the same reason: play resuming after a rain
+#: delay is the ordinary case this state exists to survive.
+RESUMABLE_STATUSES = frozenset({"scheduled", EVENT_SUSPENDED})
+
+
+def authority_may_settle(status) -> bool:
+    """May a terminal verdict be written onto a row in this state? (live/048)
+
+    True for ``live`` and ``suspended``; False for a row already settled
+    (churning ``closed`` into ``completed`` rewrites history for no reader) and
+    for ``scheduled`` (a match nobody has started cannot have finished).
+    """
+    return status in SETTLEABLE_STATUSES
+
+
+def play_resumes(status) -> bool:
+    """Does a report of play in progress put this row back on court? (live/048)
+
+    The door out of :data:`EVENT_SUSPENDED` in the direction of ``live``. Its
+    twin in the terminal direction is :func:`authority_may_settle`; between
+    them, a suspended row is reachable from both of the states it can legally
+    become, which is what stops the new state being a trap.
+
+    Deliberately NOT true for ``completed``/``closed``: un-settling a row that
+    something with standing settled is a bigger claim and keeps its own
+    predicate, ``espn_helpers.espn_replay_unsettles`` (#1201), which clears
+    ``completed_at`` in the same write.
+    """
+    return status in RESUMABLE_STATUSES
+
+
 # A source captured something this recently ⇒ the game is still being played, so
 # a wall-clock timeout is NOT evidence that it is over. Deliberately the same 30
 # minutes the espn_sync docstring has always claimed.
 STILL_ACTIVE_MINUTES = 30
 
-# One batched query for a whole candidate set: the most recent snapshot from any
-# source that lands at or after the event's own commence_time. Pre-commence rows
-# are excluded because a pregame line says nothing about when play ended.
-LAST_POST_COMMENCE_SNAPSHOT_SQL = """
+# ── A VENUE PRICE IS NOT EVIDENCE OF PLAY (rung 4: never) ────────────────────
+#
+#: Sources that quote a PRICE on a match rather than report ON it — the bottom
+#: rung of the ladder above, named so the SQL can exclude it.
+#:
+#: This is the SAME argument :func:`commence_time_is_a_reported_start` already
+#: makes one field over — *"Kalshi prices tomorrow's match all night, so every
+#: row would qualify and the guard would be a no-op that reads as a safeguard"*
+#: — and q076 applied it only to the START side. The HOLD side kept counting
+#: venue ticks, so the two halves of the same rule disagreed.
+#:
+#: MEASURED, production 2026-09-02. Six US Open matches (De Jong/Passaro,
+#: Bergs/Taberner, Kasatkina/Badosa, Molcan/Bonzi, Jović/Frech, Linette/Jones)
+#: read ``status='live'`` while carrying a ``completed_at``. Every one of their
+#: post-commence ``win_prob_snapshots`` rows — 1,037 of them across the seven
+#: candidates — was ``source='kalshi'``. Not "mostly": there was no ESPN, MLB,
+#: stat-model or StatPal snapshot on any of them. The hold guard was being
+#: satisfied 100% by price ticks, and ``derive_completed_at`` then stamped a
+#: game-end time off one. ESPN, the authority, had all six SCHEDULED to resume
+#: that afternoon — none had finished at all.
+#:
+#: A DENYLIST, not an allowlist, and deliberately: StatPal writes
+#: ``source='statpal'`` and is not in ``WIN_PROB_SOURCES`` at all, so an
+#: allowlist would silently drop a real play source. The completeness risk runs
+#: the other way — a NEW venue that nobody classifies — and that is what
+#: ``test_every_market_source_is_named_a_venue`` pins against the registry's own
+#: ``source_type == "market"``.
+VENUE_PRICE_SOURCES = frozenset({"betting", "kalshi", "polymarket"})
+
+_VENUE_SOURCE_SQL_LIST = ", ".join(f"'{s}'" for s in sorted(VENUE_PRICE_SOURCES))
+
+# One batched query for a whole candidate set: the most recent snapshot from a
+# source that REPORTS ON the game, landing at or after the event's own
+# commence_time. Pre-commence rows are excluded because a pregame line says
+# nothing about when play ended; venue prices are excluded because a price says
+# nothing about play at all.
+#
+# ``odds_snapshots`` is gone from the union entirely rather than filtered: every
+# row in that table is a bookmaker line, which is the "betting" venue by
+# definition. There is no play-reporting arm of it left to keep.
+LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
     SELECT x.event_id, MAX(x.captured_at) AS last_snap
     FROM (
         SELECT w.event_id, w.captured_at
           FROM win_prob_snapshots w
           JOIN events e ON e.id = w.event_id
          WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
-        UNION ALL
-        SELECT o.event_id, o.captured_at
-          FROM odds_snapshots o
-          JOIN events e ON e.id = o.event_id
-         WHERE o.event_id = ANY(:event_ids) AND o.captured_at >= e.commence_time
+           AND (w.source IS NULL OR w.source NOT IN ({_VENUE_SOURCE_SQL_LIST}))
     ) x
     GROUP BY x.event_id
 """
@@ -144,12 +277,50 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
     settled event and grades the blend off it.
 
     No snapshot at all is NOT evidence of activity — that is the ordinary case
-    for an event whose sources went quiet, and it must stay closeable or the
-    staleness net stops doing its job.
+    for an event whose sources went quiet. Since live/048 that no longer makes
+    the row CLOSEABLE, only SUSPENDABLE: the same absence, read at its true
+    strength.
+
+    ``last_snapshot`` must come from :data:`LAST_POST_COMMENCE_SNAPSHOT_SQL`,
+    which excludes :data:`VENUE_PRICE_SOURCES`. Passing a venue tick in here
+    re-opens live/042: a market that stays open holds a finished match live
+    forever, because the hold renews itself every two minutes.
     """
     if last_snapshot is None or now is None:
         return False
     return (now - last_snapshot) < timedelta(minutes=STILL_ACTIVE_MINUTES)
+
+
+def venue_live_write_is_a_resurrection(status, completed_at) -> bool:
+    """Would writing ``live`` here un-settle a row on a VENUE's say-so? (live/042)
+
+    True ⇒ refuse the status write. The score write is unaffected: a later score
+    from the same feed converges a frozen mid-game number on the real one, and
+    gotcha #21 keeps grading out of it either way.
+
+    The Odds API scores feed reports ``completed: false`` for anything its books
+    still quote, and the reader derives ``live`` from that plus a start in the
+    past. On a row nothing has settled that is the ordinary promotion. On a row
+    that ALREADY carries a completion it is a venue overruling a settlement it
+    knows nothing about — and because it leaves ``completed_at`` in place, what
+    it actually produces is a row that is live and finished at the same time.
+
+    MEASURED, production 2026-09-02: five US Open matches served
+    ``{"status": "live", "completed_at": "..."}`` from ``/api/events/{id}``
+    simultaneously.
+
+    ── ``suspended`` IS DELIBERATELY NOT REFUSED (live/048) ──
+
+    A suspended row is not settled and carries no ``completed_at``, so this
+    returns False for it and the scores feed may promote it straight back to
+    ``live``. That is rung 3 of the ladder doing its job, and it is the reason
+    suspending is not a quieter way of stranding a match: the same feed that
+    reports play resuming is allowed to act on it. What the feed still may not
+    do is un-settle — that stays reserved for ``espn_replay_unsettles`` (#1201),
+    which clears ``completed_at`` in the same write so the row never holds both
+    facts at once.
+    """
+    return status in SETTLED_STATUSES or completed_at is not None
 
 
 def derive_completed_at(last_snapshot, commence_time, now=None):
@@ -172,9 +343,12 @@ def derive_completed_at(last_snapshot, commence_time, now=None):
     return last_snapshot
 
 
-#: Statuses a staleness net can put an event into. Both are "we stopped hearing
-#: about it", neither is "a source told us it finished".
-_NET_SETTLED_STATUSES = ("closed", "completed")
+#: Statuses a staleness net USED to put an event into. Both are "we stopped
+#: hearing about it", neither is "a source told us it finished" — which is why
+#: since live/048 no net writes either and the artifact this repairs is a
+#: historical population rather than a growing one. Aliased to the ladder's own
+#: set so the two can never drift into disagreeing about what "settled" means.
+_NET_SETTLED_STATUSES = SETTLED_STATUSES
 
 
 def settlement_is_a_staleness_artifact(

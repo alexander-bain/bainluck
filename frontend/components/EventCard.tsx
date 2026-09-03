@@ -17,6 +17,11 @@ import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  SUSPENDED_LABEL,
+  isFinishedStatus,
+  isSuspendedStatus,
+} from "@/lib/eventState";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -114,7 +119,7 @@ export default function EventCard({
   let homeProb: number | null;
   let awayProb: number | null;
 
-  if ((event.status === "completed" || event.status === "closed") && opening) {
+  if (isFinishedStatus(event.status) && opening) {
     homeProb = opening.home_probability;
     awayProb = opening.away_probability;
   } else if (shouldWithholdProbability(event)) {
@@ -133,9 +138,8 @@ export default function EventCard({
 
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
   const isLive = event.status === "live" && hasStarted;
-  const isCompleted = event.status === "completed";
-  const isClosed = event.status === "closed";
-  const isFinished = isCompleted || isClosed;
+  const isFinished = isFinishedStatus(event.status);
+  const isSuspended = isSuspendedStatus(event.status);
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
   // Format time and date compactly
@@ -237,7 +241,16 @@ export default function EventCard({
                   {formatLiveClockLabel(event.espn?.period, event.espn?.game_clock) || highlightLabel || "LIVE"}
                 </span>
               )}
-              {!isLive && !isFinished && hasGameTime && (
+              {/* live/048: a suspended match must not advertise a start time.
+                  Its commence_time is in the PAST and the clock has run out —
+                  printing "Today 7:00 PM" beside it is the upcoming-branch
+                  fall-through this state exists to avoid. */}
+              {isSuspended && (
+                <span className="text-micro-xs text-text-muted uppercase">
+                  {SUSPENDED_LABEL}
+                </span>
+              )}
+              {!isLive && !isFinished && !isSuspended && hasGameTime && (
                 <span className="text-micro text-text-muted">{dateTimeStr}</span>
               )}
               {isFinished && (

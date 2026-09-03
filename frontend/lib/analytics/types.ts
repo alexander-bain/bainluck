@@ -10,6 +10,10 @@
  */
 
 import type { MarketShape } from '@/lib/marketShape';
+// The event state vocabulary has ONE definition (live/048). Analytics had
+// its own copy, so a new status was a type error here before it was ever a
+// reporting gap — which is the right failure, but only once.
+import type { EventStatus } from '@/lib/types';
 
 // ============================================================================
 // User Properties (set once per session/user change)
@@ -78,7 +82,7 @@ export interface PageViewParams {
   event_id?: number;
   sport?: string;
   league?: string;
-  event_status?: 'scheduled' | 'live' | 'completed' | 'closed';
+  event_status?: EventStatus;
   /** Referrer info */
   referrer?: string;
   /** Internal navigation source */
@@ -134,7 +138,7 @@ export interface EventCardClickParams {
   league_tier: 1 | 2 | 3;
   home_team: string;
   away_team: string;
-  status: 'scheduled' | 'live' | 'completed' | 'closed';
+  status: EventStatus;
   home_probability: number | null;
   away_probability: number | null;
   /** Is this a close game (<10% difference)? */
@@ -163,7 +167,7 @@ export interface EventDetailViewParams {
   league: string;
   home_team: string;
   away_team: string;
-  status: 'scheduled' | 'live' | 'completed' | 'closed';
+  status: EventStatus;
   home_probability: number | null;
   away_probability: number | null;
   is_close_game: boolean;
