@@ -212,14 +212,17 @@ async def read_pass_run(
     """Has ``phase`` ever run? Tri-state, and it says which state and why."""
     from app.services.durable_snapshots import read_snapshot
 
+    # NOTE ON THE CALL'S SHAPE: the closing paren is kept on the last argument
+    # line rather than on one of its own. A lone `)` directly above this
+    # `except` line is, byte for byte, the M2-NO-LIMIT replacement literal in
+    # `scripts/evals/typeahead_outcome_arm_mutations.py`, and the tree-wide
+    # residue scan reads any file carrying it outside that harness's declared
+    # targets as a mutant left behind. Formatting, not preference.
     try:
         read = await read_snapshot(
-            db,
-            pass_run_identity(phase),
+            db, pass_run_identity(phase),
             expected_version=PASS_RUN_SCHEMA_VERSION,
-            max_age_s=_NO_AGE_BOUND,
-            now=now,
-        )
+            max_age_s=_NO_AGE_BOUND, now=now)
     except Exception as exc:  # noqa: BLE001 — an admin read must not 500 on this
         logger.warning("could not read the %s pass run: %s", phase, exc)
         return PassRunFact(
