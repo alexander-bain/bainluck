@@ -603,6 +603,24 @@ export interface ThresholdFeedItem {
   outcome_count: number;
 }
 
+/**
+ * UX-1052 item 3 — one tournament's placement questions as ONE grid card
+ * (players down, markets across), replacing the five near-identical cards
+ * Alex found for the Omega European Masters.
+ */
+export interface PlacementGridFeedItem {
+  type: "placement_grid";
+  group_key: string;
+  /** The tournament — the question context the grid is never shown without. */
+  title: string;
+  columns: { key: string; label: string }[];
+  rows: { name: string; values: Record<string, number | null> }[];
+  /** How many players the real field has, when the card shows a slice of it. */
+  row_total: number;
+  market_count: number;
+  sources: string[];
+}
+
 export interface UngroupedMarketFeedItem {
   type: "market";
   market: {
@@ -624,6 +642,7 @@ export type GroupedFeedItem =
   | StatPropFeedItem
   | PlayoffProgressionFeedItem
   | ThresholdFeedItem
+  | PlacementGridFeedItem
   | UngroupedMarketFeedItem;
 
 export interface GroupedFeedResponse {
@@ -634,6 +653,8 @@ export interface GroupedFeedResponse {
     stat_prop: number;
     playoff_progression: number;
     threshold: number;
+    exact_score?: number;
+    placement_grid?: number;
   };
 }
 

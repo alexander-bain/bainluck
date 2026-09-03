@@ -118,6 +118,49 @@ describe("UX-1052 item 2 — exact-score rungs (render path)", () => {
   });
 });
 
+/** The tennis shape: the winner is IN the label because the digits collide. */
+const TENNIS_ROW: ThresholdFeedItem = {
+  type: "threshold",
+  kind: "exact_score",
+  group_key: "exact_score:group:polymarket:tennis-1",
+  title: "Iva Jovic vs Magdalena Frech: Exact Match Score",
+  outcome_count: 4,
+  points: [
+    { id: 21, name: "Iva Jovic wins 2-0", probability: 0.99, label: "Iva Jovic 2–0",
+      threshold_value: 0, threshold_unit: "", threshold_direction: "exact" },
+    { id: 22, name: "Iva Jovic wins 2-1", probability: 0.01, label: "Iva Jovic 2–1",
+      threshold_value: 0, threshold_unit: "", threshold_direction: "exact" },
+    { id: 23, name: "Magdalena Frech wins 2-0", probability: 0.01, label: "Magdalena Frech 2–0",
+      threshold_value: 0, threshold_unit: "", threshold_direction: "exact" },
+    { id: 24, name: "Magdalena Frech wins 2-1", probability: 0.01, label: "Magdalena Frech 2–1",
+      threshold_value: 0, threshold_unit: "", threshold_direction: "exact" },
+  ],
+};
+
+describe("UX-1052 item 2 — tennis exact match score", () => {
+  it("prints the winner beside the score, so no two rungs read alike", () => {
+    const html = render([TENNIS_ROW]);
+    for (const label of ["Iva Jovic 2–0", "Iva Jovic 2–1", "Magdalena Frech 2–0"]) {
+      expect(html).toContain(label);
+    }
+    expect(html).not.toContain("≥");
+  });
+
+  it("switches to the wide label track so a name is not clipped to nothing", () => {
+    // `wideLabels` is what makes the label column 45% instead of the fixed
+    // numeric w-11 — a two-word label in w-11 truncates to about two glyphs.
+    const html = render([TENNIS_ROW]);
+    expect(html).toContain("w-[45%]");
+    // …and a bare-score card keeps the tight numeric column.
+    expect(render([EXACT_SCORE_ROW])).not.toContain("w-[45%]");
+  });
+
+  it("leads with the 99% outcome", () => {
+    const html = render([TENNIS_ROW]);
+    expect(html.indexOf("Iva Jovic 2–0")).toBeLessThan(html.indexOf("Magdalena Frech 2–0"));
+  });
+});
+
 describe("UX-1052 item 2 — a rung that cannot be labelled is not rendered", () => {
   /** What a pre-fix warm Redis entry, or any future producer bug, can serve. */
   const UNLABELLED: ThresholdFeedItem = {

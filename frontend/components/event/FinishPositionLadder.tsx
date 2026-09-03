@@ -9,6 +9,13 @@
 // leaderboard. Previously these markets were COUNTED by the header chip but had
 // no renderer (invisible); this section makes "render everything you count" true.
 
+// UX-1052 item 3: the DRAWING of this grid now lives in `PlacementGrid`, shared
+// with the /sports feed card that replaced the five near-identical golf cards.
+// Two surfaces asking one question ("who finishes where?") were about to grow
+// two tables; the derivation below stays here because it is specific to the
+// concept envelope, but the header, the cells, the "—" and the heat steps are
+// one component.
+import PlacementGrid from "@/components/PlacementGrid";
 import {
   renderedFinishColumns,
   finishPositionRows,
@@ -18,20 +25,6 @@ import type { EventConceptResponse } from "@/lib/types";
 interface FinishPositionLadderProps {
   data: EventConceptResponse;
   limit?: number;
-}
-
-/** Format a 0–100 point probability as a whole-percent, "—" when absent. */
-function fmtPts(v: number | null): string {
-  return v == null ? "—" : `${Math.round(v)}%`;
-}
-
-/** Colour a placement probability like the win column: brand for the confident
- *  end, muted for the long shots — a light heat gradient without raw palette. */
-function ptsClass(v: number | null): string {
-  if (v == null) return "text-text-muted";
-  if (v >= 50) return "text-text-primary font-semibold";
-  if (v >= 15) return "text-text-primary";
-  return "text-text-secondary";
 }
 
 export default function FinishPositionLadder({
@@ -56,44 +49,20 @@ export default function FinishPositionLadder({
       <p className="text-xs text-text-muted mb-4">
         Chance to finish inside each cutoff.
       </p>
-      <div className="overflow-x-auto -mx-1 px-1">
-        <div className="min-w-[22rem]">
-          {/* Column header */}
-          <div className="flex items-center gap-2 px-1 pb-1.5 text-[10px] uppercase tracking-wide text-text-muted">
-            <span className="flex-1 min-w-0">Player</span>
-            {columns.map((col) => (
-              <span
-                key={col.type}
-                className="w-16 text-right shrink-0"
-              >
-                {col.label}
-              </span>
-            ))}
-          </div>
-          <div className="divide-y divide-surface-border/40">
-            {rows.map(({ competitor, values }, i) => (
-              <div
-                key={`${competitor.name}-${i}`}
-                className="flex items-center gap-2 py-2 text-sm"
-              >
-                <span className="flex-1 min-w-0 truncate text-text-primary">
-                  {competitor.name}
-                </span>
-                {columns.map((col) => (
-                  <span
-                    key={col.type}
-                    className={`w-16 text-right shrink-0 font-mono tabular-nums ${ptsClass(
-                      values[col.key],
-                    )}`}
-                  >
-                    {fmtPts(values[col.key])}
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <PlacementGrid
+        columns={columns.map((c) => ({ key: c.key, label: c.label }))}
+        // The envelope fuses these as 0–100 POINTS; the shared grid speaks
+        // fractions. Convert here rather than teaching the grid two scales.
+        rows={rows.map(({ competitor, values }) => ({
+          name: competitor.name,
+          values: Object.fromEntries(
+            columns.map((c) => [
+              c.key,
+              typeof values[c.key] === "number" ? (values[c.key] as number) / 100 : null,
+            ]),
+          ),
+        }))}
+      />
     </section>
   );
 }

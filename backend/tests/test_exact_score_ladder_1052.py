@@ -144,6 +144,52 @@ class TestExactScoreGroupsAreLabelled:
         assert set(groups) == {"group:polymarket:960217", "group:polymarket:960245"}
 
 
+class TestTennisExactMatchScoreNamesItsWinner:
+    """The SECOND shape on the same strip, and the reason a bare score is not
+    always enough. Polymarket tennis serves "Iva Jovic wins 2-1" — labelling
+    that "2–1" collides with "Magdalena Frech wins 2-1", which is the very
+    defect being fixed, one layer down. Payload read 2026-09-03."""
+
+    def _outcomes(self):
+        rows = [
+            ("Iva Jovic wins 2-0", 0.99),
+            ("Iva Jovic wins 2-1", 0.01),
+            ("Magdalena Frech wins 2-0", 0.01),
+            ("Magdalena Frech wins 2-1", 0.01),
+        ]
+        return [
+            {"id": 300 + i, "name": n, "market_id": 9, "group_id": "polymarket:tennis-1",
+             "market_name": "Iva Jovic vs Magdalena Frech: Exact Match Score",
+             "probability": p}
+            for i, (n, p) in enumerate(rows)
+        ]
+
+    def test_the_winner_is_in_the_label(self):
+        groups = detect_exact_score_groups(self._outcomes())
+        labels = {o["score_label"] for o in groups["group:polymarket:tennis-1"]}
+        assert labels == {
+            "Iva Jovic 2–0", "Iva Jovic 2–1",
+            "Magdalena Frech 2–0", "Magdalena Frech 2–1",
+        }
+
+    def test_no_two_rungs_share_a_label(self):
+        groups = detect_exact_score_groups(self._outcomes())
+        labels = [o["score_label"] for o in groups["group:polymarket:tennis-1"]]
+        assert len(set(labels)) == 4
+
+    def test_the_99_percent_outcome_leads(self):
+        groups = detect_exact_score_groups(self._outcomes())
+        assert groups["group:polymarket:tennis-1"][0]["score_label"] == "Iva Jovic 2–0"
+
+    @pytest.mark.parametrize("name", [
+        "Iva Jovic wins 2-1",
+        "Zizou Bergs wins 3-1",
+        "Jesper De Jong wins 3-2",
+    ])
+    def test_these_are_refused_as_thresholds_too(self, name):
+        assert extract_threshold(name) is None
+
+
 class TestRealThresholdsStillParse:
     """The control. A refusal that is too wide is the same bug pointed the
     other way — it deletes rungs from every genuine ladder on the site."""
@@ -159,6 +205,27 @@ class TestRealThresholdsStillParse:
             # A decimal range must NOT read as a scoreline (digits on both
             # sides of the dash are guarded by the surrounding non-digit rule).
             ("Over 2.5 goals", 2.5),
+        ],
+    )
+    def test_threshold_names_still_yield_a_threshold_control(self, name, value):
+        parsed = extract_threshold(name)
+        assert parsed is not None, f"{name!r} lost its threshold"
+        assert parsed[0] == value
+
+    @pytest.mark.parametrize("name", [
+        # An ISO date is three integers joined by dashes. The scoreline pattern
+        # must not read "09-03" out of it and refuse the whole name.
+        "Resolves 2026-09-03",
+        "Between 2026-01-01 and 2026-12-31",
+    ])
+    def test_an_iso_date_is_not_a_scoreline(self, name):
+        assert extract_scoreline(name) is None
+
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("Will Bitcoin exceed $80,000?", 80000.0),
+            ("Over 100.5 points", 100.5),
         ],
     )
     def test_threshold_names_still_yield_a_threshold(self, name, value):

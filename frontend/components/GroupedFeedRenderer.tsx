@@ -9,6 +9,8 @@
  * - threshold → QuantityGroup (the shared Quantity kernel — one question, many
  *   rungs; Queue L2-119 retired the #958-era pooled ThresholdSparkline strip so
  *   the card system and detail-page system draw the SAME primitive)
+ * - placement_grid → PlacementGrid (UX-1052 item 3: one tournament's Winner /
+ *   Top 5 / Top 10 / Top 20 / Make-cut questions as ONE grid, not five cards)
  * - market → FuturesCard (fallback for ungrouped markets)
  */
 
@@ -20,12 +22,14 @@ import type {
   StatPropFeedItem,
   PlayoffProgressionFeedItem,
   ThresholdFeedItem,
+  PlacementGridFeedItem,
   UngroupedMarketFeedItem,
 } from "@/lib/types";
 
 import PlayerStatCard from "./PlayerStatCard";
 import ProgressionLadder from "./ProgressionLadder";
 import QuantityGroup, { buildThresholdRungs } from "./QuantityGroup";
+import PlacementGrid from "./PlacementGrid";
 import FuturesCard from "./FuturesCard";
 
 interface GroupedFeedRendererProps {
@@ -144,11 +148,19 @@ function ThresholdItem({
   if (rungs.length === 0) return null;
   const cap = compact ? 4 : undefined;
   const hidden = cap == null ? 0 : Math.max(0, rungs.length - cap);
+  // A tennis "Exact Match Score" outcome names its WINNER ("Iva Jovic 2–1"),
+  // because the digits alone collide with the other player's identical
+  // scoreline. Those labels do not fit the fixed numeric column, so the ladder
+  // switches to its roomier label track — driven by the label the payload
+  // actually sent, not by the sport.
+  const needsWideLabels =
+    isExactScore && rungs.some((r) => r.label.includes(" "));
   return (
     <QuantityGroup
       title={formatThresholdTitle(item.title)}
       rungs={rungs}
       compact={compact}
+      wideLabels={needsWideLabels}
       sortBy={isExactScore ? "probability" : "value"}
       footnote={
         isExactScore && hidden > 0
@@ -157,6 +169,40 @@ function ThresholdItem({
       }
       onRungSelect={onClick ? () => onClick() : undefined}
     />
+  );
+}
+
+/**
+ * UX-1052 item 3 — one tournament, one card.
+ *
+ * Alex: five near-identical Omega European Masters cards (Winner / Top 5 /
+ * Top 10 / Top 20 / Make the Cut) listing the same golfers. "Group them into a
+ * beautiful grid … players down, markets across, the way the US Open bracket
+ * grid works." The drawing is `PlacementGrid`, shared with the concept page's
+ * finish-position ladder so the two surfaces stay one design.
+ */
+function PlacementGridItem({ item }: { item: PlacementGridFeedItem }) {
+  const shown = item.rows.length;
+  const total = item.row_total ?? shown;
+  return (
+    <div className="bg-surface-card rounded-card shadow-card border border-surface-border p-4">
+      <div className="flex items-center gap-2 pb-2.5 mb-1.5 border-b border-surface-elevated">
+        <span className="text-xs font-semibold uppercase tracking-wide text-text-muted truncate">
+          {item.title}
+        </span>
+        <span className="ml-auto text-[11px] text-text-muted shrink-0">
+          chance to finish
+        </span>
+      </div>
+      <PlacementGrid
+        columns={item.columns}
+        rows={item.rows}
+        compact
+        footnote={
+          total > shown ? `${shown} of ${total} players` : undefined
+        }
+      />
+    </div>
   );
 }
 
@@ -271,6 +317,13 @@ export default function GroupedFeedRenderer({
                   compact={compact}
                   onClick={() => onItemClick?.(item)}
                 />
+              </motion.div>
+            );
+
+          case "placement_grid":
+            return (
+              <motion.div key={key} variants={staggerItem}>
+                <PlacementGridItem item={item} />
               </motion.div>
             );
 

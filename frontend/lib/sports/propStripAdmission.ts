@@ -79,6 +79,16 @@ export function groupedFeedRowHasNumber(item: GroupedFeedItem): boolean {
       return (item.points ?? []).some(
         (p) => isShowableProbability(p?.probability) && isLabelableRung(p),
       );
+    case "placement_grid":
+      // UX-1052 item 3. Every cell may legitimately be "—" for a given player,
+      // so the row is not the unit — the GRID needs at least one real number
+      // somewhere, and at least one column to put it under.
+      return (
+        (item.columns ?? []).length > 0 &&
+        (item.rows ?? []).some((r) =>
+          Object.values(r?.values ?? {}).some(isShowableProbability),
+        )
+      );
     case "stat_prop":
       return (item.lines ?? []).some((l) =>
         isShowableProbability(l?.probability),

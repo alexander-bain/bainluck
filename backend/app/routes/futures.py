@@ -1847,6 +1847,14 @@ async def get_playoff_grid(
     }
 
 
+#: UX-1052 item 3 — how many players a placement grid puts on a FEED card.
+#: The concept page's version of the same grid shows 20; a strip card is a
+#: glance, and a 156-golfer table inside it is the five-card wall it replaced
+#: wearing a different shape. The card prints `row_total` so the depth of the
+#: real field is stated rather than hidden.
+PLACEMENT_GRID_FEED_ROWS = 8
+
+
 def _market_has_priced_outcome(market: dict) -> bool:
     """Does this grouped-feed market carry a probability the card can print?
 
@@ -2021,6 +2029,7 @@ async def grouped_feed(
     """
     from ..utils.market_grouping import (
         detect_exact_score_groups,
+        detect_placement_groups,
         detect_stat_prop_groups,
         detect_playoff_progression_groups,
         detect_threshold_groups,
@@ -2119,6 +2128,11 @@ async def grouped_feed(
     # rung labels that are the actual outcomes ("2–3"), which is what Alex
     # asked for: "show the real scorelines or the real thresholds."
     exact_score_groups = detect_exact_score_groups(outcome_dicts)
+    # UX-1052 item 3 — one tournament's placement questions are ONE grid.
+    # Alex: five near-identical Omega European Masters cards (Winner / Top 5 /
+    # Top 10 / Top 20 / Make the Cut) listing the same golfers — "group them
+    # into a beautiful grid."
+    placement_groups = detect_placement_groups(market_dicts)
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
@@ -2171,6 +2185,23 @@ async def grouped_feed(
                 for gm in group_markets
             ],
             "market_count": len(group_markets),
+        })
+
+    for tournament_key, grid in placement_groups.items():
+        # The grid CONSUMES its markets: leaving them ungrouped would put the
+        # five cards back underneath the thing built to replace them.
+        for mid in grid["market_ids"]:
+            grouped_market_ids.add(mid)
+        feed_items.append({
+            "type": "placement_grid",
+            "group_key": f"placement:{tournament_key}",
+            "title": grid["tournament"],
+            "columns": grid["columns"],
+            # The card shows a readable field and says how deep the real one is.
+            "rows": grid["rows"][:PLACEMENT_GRID_FEED_ROWS],
+            "row_total": grid["row_total"],
+            "market_count": len(grid["market_ids"]),
+            "sources": grid["sources"],
         })
 
     def _group_title(outcomes: list[dict], scope: str) -> str:
@@ -2295,6 +2326,7 @@ async def grouped_feed(
             "playoff_progression": len(playoff_groups),
             "threshold": len(threshold_groups),
             "exact_score": len(exact_score_groups),
+            "placement_grid": len(placement_groups),
         },
     }
 
