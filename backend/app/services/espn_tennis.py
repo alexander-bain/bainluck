@@ -480,6 +480,61 @@ def sets_with_play(competition: dict[str, Any]) -> int:
     return played
 
 
+def competition_sides(competition: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each side of a competition as ``{name, sets_won, games, winner}``.
+
+    ═══ ``sets_won`` IS COUNTED OFF ESPN'S OWN PER-SET WINNER FLAG ═══
+
+    Every entry in a competitor's ``linescores`` carries its own ``winner``
+    boolean beside its ``value``, and that flag — not a games comparison — is
+    what is counted here.  The difference only ever shows up on the fixtures
+    that matter::
+
+        184685  STATUS_RETIRED   7-5, 6-7   flags: [True, False] / [False, False]
+                                            match winner: the side with NO flags
+
+    A games comparison would read that as ``1-1`` and hand the abandoned set to
+    whoever was ahead in it; ESPN declines to award the set, and declining is the
+    true statement.  Counting the flag means this function never invents a set
+    nobody won — see :func:`espn_tennis_anchor.authority_score`, which refuses
+    to write a decided score whose set count contradicts the match winner rather
+    than reconciling the two here.
+
+    ``games`` carries the raw per-set line so a caller can print ``6-3, 7-6``
+    without re-reading the payload.  ``winner`` is ``None`` — not ``False`` —
+    when ESPN states nothing, because a scheduled match has no loser either.
+    """
+    sides: list[dict[str, Any]] = []
+    for competitor in competition.get("competitors") or []:
+        athlete = competitor.get("athlete") or {}
+        name = str(
+            athlete.get("displayName") or competitor.get("name") or ""
+        ).strip()
+        games: list[int] = []
+        sets_won = 0
+        for line in competitor.get("linescores") or []:
+            # THE FLAG AND THE VALUE ARE TWO STATEMENTS, COUNTED SEPARATELY. A
+            # set whose game count we cannot parse is still a set ESPN says
+            # somebody won, and dropping the flag with the value would undercount
+            # the winner — the one direction that can invert a result. What is
+            # lost is only the ability to PRINT that set (gotcha #42 in
+            # miniature: one bad line never costs the others).
+            if (line or {}).get("winner"):
+                sets_won += 1
+            try:
+                games.append(int(float((line or {}).get("value"))))
+            except (TypeError, ValueError):
+                continue
+        won = competitor.get("winner")
+        sides.append({
+            "name": name,
+            "sets_won": sets_won,
+            "games": games,
+            "winner": None if won is None else bool(won),
+        })
+    return sides
+
+
 def play_refutes_upcoming(slate_state: Optional[str], competition: dict[str, Any]) -> bool:
     """Does a competition's own scoreboard refute the state ESPN gave it?
 
@@ -1023,6 +1078,13 @@ def scoreboard_competitions(
                         "players": names,
                         "pair_key": pair_key(names) if len(names) == 2 else None,
                         "sets_with_play": sets_with_play(competition),
+                        # THE RESULT, CARRIED WITH THE LINK (lane1/064). The
+                        # anchor consumer writes `events.home_score` through
+                        # this, and it has to come off the SAME read as the
+                        # state: a score fetched separately could describe a
+                        # different moment of the same match than the status
+                        # that authorises writing it.
+                        "sides": competition_sides(competition),
                     })
 
     return competitions
