@@ -45,6 +45,21 @@ looked identical from outside. ``unlinked`` and ``superseded_by_twin_merge``,
 four pieces that make that one question a ``GROUP BY``. The full argument for
 each is at its definition below.
 
+A LINK CHANGE IS HISTORY, NOT A COLUMN YOU OVERWRITE (LINKLOSS-03, the CERT-791
+repair). The vocabulary above was written onto the one-row-per-market receipt,
+and that row is an upsert: the *next* ordinary attempt on the same market
+replaces ``outcome``, ``previous_event_id`` and ``actor`` with its own. An
+unlinked market is by definition ``event_id IS NULL``, which is exactly the
+population the scheduled matcher re-scans every 15 minutes — so the receipt
+recording *why a price disappeared* was reliably destroyed by the next pass,
+usually within the hour, and the 24h census under-counted by everything it had
+already re-attempted. The receipt stays what it always was, "the last time the
+matcher looked, here is what it decided"; every link change ALSO appends an
+immutable row to ``market_link_changes`` (:class:`app.models.models.
+MarketLinkChange`), and the census reads that table. One writer — every receipt
+goes through :func:`flush_receipts` — so a change cannot be published without
+its history row, and nothing later can rewrite one.
+
 NOT A SIMULATION. ``/api/admin/prediction-markets/match-trace`` re-runs the
 matching logic *now*, against today's events, with a partial copy of the window
 arithmetic. It answers "what would happen if we tried". It cannot answer "what
@@ -60,7 +75,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from app.utils.name_normalization import normalize_name
 
@@ -533,6 +548,15 @@ class MatchReceipt:
         exact failure this table was built to end — so it fails loudly here,
         in the caller's own stack, rather than becoming the 997th unexplained
         market.
+
+        A REJECT CARRIES NO LINK CHANGE. ``previous_event_id`` and ``actor``
+        are cleared, not merely left behind, so that a row carrying them is
+        always a change that really happened. The path that makes this
+        load-bearing is :func:`verify_links_are_durable`: it downgrades an
+        unlink whose row is still attached, and if the downgraded receipt kept
+        its ``previous_event_id`` the "what came off this event" lookup would
+        still report a departure that never occurred. The claimed ids survive
+        in ``detail``, where they are evidence rather than assertion.
         """
         if reason not in REJECT_REASONS:
             raise ValueError(
@@ -542,6 +566,8 @@ class MatchReceipt:
         self.outcome = OUTCOME_REJECTED
         self.reject_reason = reason
         self.linked_event_id = None
+        self.previous_event_id = None
+        self.actor = None
         if detail:
             self.detail.update(detail)
         return self
@@ -830,6 +856,191 @@ async def record_twin_merge_receipts(
     )
 
 
+def link_change_row(receipt: MatchReceipt) -> Optional[dict[str, Any]]:
+    """The append-only history row for a receipt that ENDED or MOVED a link.
+
+    ``None`` for everything else, and the two conditions are separate on
+    purpose:
+
+    * the outcome must be one that asserts something about
+      ``futures_markets.event_id`` — a ``rejected`` receipt never appends,
+      including one :func:`verify_links_are_durable` downgraded, which is what
+      keeps a rolled-back unlink out of the permanent record;
+    * ``previous_event_id`` must be set — an ordinary first attach is not a
+      change to any link that existed, and counting it as one would inflate the
+      census with losses that never happened.
+    """
+    if receipt.outcome not in _STATEFUL_OUTCOMES:
+        return None
+    if receipt.previous_event_id is None:
+        return None
+    return {
+        "market_id": receipt.market_id,
+        "source": (receipt.source or "")[:50],
+        "external_id": (receipt.external_id or "")[:200] or None,
+        "market_name": (receipt.market_name or "")[:300] or None,
+        "phase": receipt.phase,
+        "outcome": receipt.outcome,
+        "actor": _validated_actor(receipt.actor),
+        "previous_event_id": receipt.previous_event_id,
+        "new_event_id": receipt.linked_event_id,
+        "detail": _jsonable(receipt.detail),
+        "changed_at": receipt.attempted_at,
+    }
+
+
+async def append_link_changes(
+    session, receipts: list[MatchReceipt], chunk: int = 500
+) -> int:
+    """Append one immutable row per link change. Returns rows written.
+
+    Plain ``INSERT``: no key to conflict on, nothing to update, nothing that
+    can overwrite an earlier change. That is the entire difference from the
+    receipt upsert beside it, and it is the difference CERT-791 blocked on —
+    an unlinked market is ``event_id IS NULL``, which is the population the
+    matcher re-scans every 15 minutes, so the receipt explaining a lost price
+    was routinely replaced by an ordinary ``rejected`` attempt before anyone
+    read it.
+
+    Called from :func:`flush_receipts` on the same session and therefore inside
+    the same transaction as the receipt it accompanies: a change is recorded
+    once, in both places, or in neither.
+    """
+    rows = [row for row in map(link_change_row, receipts) if row is not None]
+    if not rows:
+        return 0
+
+    from sqlalchemy import insert as sa_insert
+
+    from app.models.models import MarketLinkChange
+
+    written = 0
+    for start in range(0, len(rows), chunk):
+        batch = rows[start:start + chunk]
+        await session.execute(sa_insert(MarketLinkChange).values(batch))
+        written += len(batch)
+    return written
+
+
+def link_change_census_query(since: datetime):
+    """``GROUP BY outcome, actor, phase`` over the changes in a window.
+
+    The one query the bus asks on the night of a merge, and it reads HISTORY.
+    Asking the receipt table instead answers a different question — "link
+    changes whose market has not been attempted since" — which is smaller,
+    shrinks the longer you wait, and looks exactly like a quiet night.
+    """
+    from app.models.models import MarketLinkChange
+
+    return (
+        select(
+            MarketLinkChange.outcome,
+            MarketLinkChange.actor,
+            MarketLinkChange.phase,
+            func.count().label("n"),
+        )
+        .where(MarketLinkChange.changed_at >= since)
+        .group_by(
+            MarketLinkChange.outcome,
+            MarketLinkChange.actor,
+            MarketLinkChange.phase,
+        )
+        .order_by(func.count().desc())
+    )
+
+
+def link_changes_off_event_query(event_id: int, limit: int):
+    """What came OFF this event, newest first — the card that went quiet."""
+    from app.models.models import MarketLinkChange
+
+    return (
+        select(MarketLinkChange)
+        .where(MarketLinkChange.previous_event_id == event_id)
+        .order_by(MarketLinkChange.changed_at.desc())
+        .limit(limit)
+    )
+
+
+def link_changes_for_market_query(market_id: int, limit: int):
+    """Every link this market has lost or moved, newest first.
+
+    The single-market half of the ship: "this market had a price yesterday and
+    none today" is answered here even after the matcher has attempted it a
+    hundred more times, because nothing in this table is ever updated.
+    """
+    from app.models.models import MarketLinkChange
+
+    return (
+        select(MarketLinkChange)
+        .where(MarketLinkChange.market_id == market_id)
+        .order_by(MarketLinkChange.changed_at.desc())
+        .limit(limit)
+    )
+
+
+def link_loss_rows(result) -> list[dict[str, Any]]:
+    """The pre-change market rows :func:`record_link_losses` needs, off a result.
+
+    The SELECT that feeds it must run BEFORE the unlink — ``event_id`` is the
+    thing about to be destroyed — and it raises rather than shrugging if the
+    result cannot supply a column, because at that point nothing has been
+    changed yet and a repair that cannot describe itself should not run. That
+    is the opposite posture from ``event_child_repoint._rows``, which reads its
+    rows mid-merge where a raise would cost the merge.
+    """
+    return [
+        {
+            "id": r.id, "source": r.source, "external_id": r.external_id,
+            "name": r.name, "event_id": r.event_id,
+        }
+        for r in result.all()
+    ]
+
+
+async def record_link_losses(
+    market_rows,
+    *,
+    actor: str,
+    phase: str,
+    now: Optional[datetime] = None,
+    session_factory=None,
+) -> int:
+    """Receipt an unlink of markets that came off DIFFERENT events. Rows written.
+
+    :func:`record_link_change_receipts` takes ONE ``previous_event_id``, because
+    a merge moves the children of one loser. The admin repairs do not have that
+    shape: ``delete-duplicates`` takes a list of event ids, and the
+    date-mismatch sweep unlinks markets scattered across hundreds of events. A
+    caller that flattened them onto a single id would name the wrong event as
+    the loser on every row but one, and "which event lost its price" is the
+    whole question — so the grouping happens here, once, instead of in three
+    endpoints.
+
+    ``market_rows`` carry their own pre-change ``event_id``; a row without one
+    is skipped rather than guessed at. CALL AFTER THE COMMIT, for the reason in
+    :func:`record_link_change_receipts`.
+    """
+    by_previous: dict[int, list] = {}
+    for row in market_rows:
+        previous = row.get("event_id", row.get("previous_event_id"))
+        if previous is None:
+            continue
+        by_previous.setdefault(int(previous), []).append(row)
+
+    written = 0
+    for previous_event_id, rows in by_previous.items():
+        written += await record_link_change_receipts(
+            rows,
+            previous_event_id=previous_event_id,
+            new_event_id=None,
+            actor=actor,
+            phase=phase,
+            now=now,
+            session_factory=session_factory,
+        )
+    return written
+
+
 async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500) -> int:
     """Upsert receipts, newest attempt wins, ``attempt_count`` accumulates.
 
@@ -843,6 +1054,14 @@ async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500
     Deduplicated within the batch first: Postgres refuses an ``ON CONFLICT``
     statement that hits the same key twice in one command ("cannot affect row a
     second time"), and one market CAN be seen by two passes in one run.
+
+    AND EVERY LINK CHANGE IS ALSO APPENDED, here, because this is the one
+    function every receipt in the system passes through — the matcher's passes,
+    the bulk moves, the merge rails and the admin repairs all end up on this
+    line. A writer therefore cannot publish a link change and forget its
+    history; there is no second path to forget it on. The append runs on the
+    same session, from the same deduplicated list the upsert uses, so the two
+    tables cannot disagree and neither can outlive a rollback of the other.
     """
     if not receipts:
         return 0
@@ -852,10 +1071,16 @@ async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500
     from app.models.models import MarketMatchReceipt
 
     # Last write wins within a batch — the later pass saw the later state.
+    # The history append reads the SAME deduplicated list rather than the raw
+    # one: ``verify_links_are_durable`` also keeps the last receipt per market,
+    # so an earlier same-market receipt in one batch was never checked against
+    # the database, and an unverified claim is exactly what must not become
+    # permanent.
     deduped: dict[int, MatchReceipt] = {}
     for receipt in receipts:
         deduped[receipt.market_id] = receipt
-    rows = [r.to_row() for r in deduped.values()]
+    ordered = list(deduped.values())
+    rows = [r.to_row() for r in ordered]
 
     written = 0
     for start in range(0, len(rows), chunk):
@@ -885,4 +1110,6 @@ async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500
         )
         await session.execute(stmt)
         written += len(batch)
+
+    await append_link_changes(session, ordered, chunk=chunk)
     return written

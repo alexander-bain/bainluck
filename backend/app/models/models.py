@@ -2449,3 +2449,87 @@ class MarketMatchReceipt(Base):
         # and the one the merge question is asked in.
         Index("ix_match_receipt_prev_event", "previous_event_id"),
     )
+
+
+class MarketLinkChange(Base):
+    """Every time a market's event link ENDED or MOVED. Append-only (LINKLOSS-03).
+
+    THE ROW BESIDE IT IS NOT ENOUGH, AND THAT IS THE WHOLE REASON THIS TABLE
+    EXISTS. ``MarketMatchReceipt`` is deliberately one upserted row per market —
+    "the last time the matcher looked, here is what it decided" — and LINKLOSS-02
+    wrote the link-change vocabulary onto it. But a market the matcher just
+    unlinked sits at ``event_id IS NULL``, which is precisely the population the
+    scheduled pass re-scans every 15 minutes: the next attempt upserts an
+    ordinary ``rejected`` over the ``unlinked``, and the record of why a price
+    left a card is gone, usually inside the hour. CERT-791 measured it — a real
+    unlink receipt read ``{outcome: unlinked, previous_event_id: 42, actor:
+    matcher_pass}`` and the next attempt on the same market rewrote all three to
+    ``{rejected, null, null}``. The 24h census then counted only the link changes
+    nobody had re-attempted, which shrinks as the matcher works and looks exactly
+    like a quiet night.
+
+    So the two tables answer two different questions and neither can be the
+    other. Current state is a row you overwrite; history is a row you append.
+    Nothing here is ever UPDATEd — there is no unique key to conflict on, and
+    :func:`app.utils.match_receipts.append_link_changes` issues a plain INSERT.
+
+    NO FK ON ``market_id``, for the same reason ``linked_event_id`` carries none:
+    the forensic has to outlive its subject. The events in ``previous_event_id``
+    are frequently deleted moments after the change that names them (a twin
+    cleanup deletes the loser), and a history row that vanishes with the thing it
+    explains explains nothing.
+
+    VOLUME. Bounded by link CHANGES, not by attempts — hundreds a day, against
+    the ~2M attempts a day the receipt upsert exists to avoid storing. A count
+    here in the tens of thousands is not a storage problem to solve, it is the
+    finding: something is unlinking the estate.
+    """
+
+    __tablename__ = "market_link_changes"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: The market whose link changed. Plain integer, no FK — see the docstring.
+    market_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    #: Denormalized off the market, so one exported row is readable alone.
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(String(200))
+    market_name: Mapped[Optional[str]] = mapped_column(String(300))
+
+    #: Which pass or rail made the change — one of
+    #: ``app.utils.match_receipts.PHASES``.
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: ``unlinked`` | ``superseded_by_twin_merge`` | ``linked`` (a relink).
+    #: Never ``rejected``: an attempt that changed nothing is not history.
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: One of ``app.utils.match_receipts.ACTORS``. NOT NULL — a change whose
+    #: actor is unknown cannot be grouped, and the census is a GROUP BY actor.
+    actor: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    #: Where the link pointed before. NOT NULL: a row that cannot name what it
+    #: came off is not a link change, it is a first attach.
+    previous_event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: Where it points now, NULL for a loss. ``(prev, new)`` reads as
+    #: loss / move exactly as it does on the receipt.
+    new_event_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+    #: The deciding pass's own detail, copied at the moment of the change —
+    #: the receipt's copy is overwritten by the next attempt.
+    detail: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # The census is always "in this window", so the window leads.
+        Index("ix_link_change_changed_at", "changed_at"),
+        # "What came off event 42" — the card that went quiet.
+        Index("ix_link_change_prev_event", "previous_event_id", "changed_at"),
+        # "Everything that ever happened to this market's link."
+        Index("ix_link_change_market", "market_id", "changed_at"),
+    )

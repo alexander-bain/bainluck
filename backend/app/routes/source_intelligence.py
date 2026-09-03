@@ -26,6 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
 from app.services.anchor_channel import invalidate_scalar_anchor
+from app.utils.match_receipts import (
+    ACTOR_ADMIN_REPAIR,
+    PHASE_ADMIN_REPAIR,
+    record_link_losses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -872,7 +877,7 @@ async def fix_date_mismatches(
     from app.utils.prediction_market_matching import extract_game_date_from_ticker
 
     sql = text("""
-        SELECT fm.id, fm.external_id, fm.event_id,
+        SELECT fm.id, fm.source, fm.name, fm.external_id, fm.event_id,
                e.commence_time AS event_commence
         FROM futures_markets fm
         JOIN events e ON e.id = fm.event_id
@@ -888,6 +893,10 @@ async def fix_date_mismatches(
     checked = 0
     by_sport_prefix: dict[str, int] = {}
     ids_to_unlink: list[int] = []
+    # The markets about to lose their link, each carrying the event it is
+    # coming OFF — collected here because the UPDATE below destroys that id and
+    # this sweep scatters across hundreds of different events (LINKLOSS-03).
+    losing_markets: list[dict] = []
 
     for r in rows:
         ticker_date = extract_game_date_from_ticker(r.external_id)
@@ -909,7 +918,12 @@ async def fix_date_mismatches(
             by_sport_prefix[prefix] = by_sport_prefix.get(prefix, 0) + 1
             unlinked += 1
             ids_to_unlink.append(r.id)
+            losing_markets.append({
+                "id": r.id, "source": r.source, "external_id": r.external_id,
+                "name": r.name, "event_id": r.event_id,
+            })
 
+    receipted = 0
     if not dry_run and ids_to_unlink:
         # Batch unlink in chunks of 1000
         for i in range(0, len(ids_to_unlink), 1000):
@@ -920,10 +934,18 @@ async def fix_date_mismatches(
             """), {"ids": chunk})
         await db.commit()
 
+        # After the commit, on its own session, never fatal. Without this the
+        # sweep can take a price off hundreds of cards and leave the link-loss
+        # census reporting nothing at all (CERT-791).
+        receipted = await record_link_losses(
+            losing_markets, actor=ACTOR_ADMIN_REPAIR, phase=PHASE_ADMIN_REPAIR,
+        )
+
     return {
         "dry_run": dry_run,
         "markets_checked": checked,
         "markets_unlinked": unlinked,
+        "link_change_receipts": receipted,
         "by_ticker_prefix": dict(sorted(by_sport_prefix.items(),
                                         key=lambda x: -x[1])[:30]),
     }

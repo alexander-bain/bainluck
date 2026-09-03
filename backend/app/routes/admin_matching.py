@@ -4499,18 +4499,17 @@ async def sawtooth_fix(
     receipts_written = 0
     if unlinked_rows:
         from app.utils.match_receipts import (
-            ACTOR_ADMIN_REPAIR, PHASE_ADMIN_REPAIR, record_link_change_receipts,
+            ACTOR_ADMIN_REPAIR, PHASE_ADMIN_REPAIR, record_link_losses,
         )
-        for old_event_id, row in unlinked_rows:
-            if not old_event_id:
-                continue
-            receipts_written += await record_link_change_receipts(
-                [row],
-                previous_event_id=old_event_id,
-                new_event_id=None,
-                actor=ACTOR_ADMIN_REPAIR,
-                phase=PHASE_ADMIN_REPAIR,
-            )
+        # Grouped by the event each market came off, one session per event
+        # rather than one per market: this repair can unlink hundreds of rows
+        # across a handful of events, and a session apiece made the bookkeeping
+        # cost more than the repair.
+        receipts_written = await record_link_losses(
+            [{**row, "event_id": old_event_id} for old_event_id, row in unlinked_rows],
+            actor=ACTOR_ADMIN_REPAIR,
+            phase=PHASE_ADMIN_REPAIR,
+        )
 
     return {
         "dry_run": dry_run,
@@ -4735,7 +4734,11 @@ async def match_receipts(
     _check_admin_secret(secret, request=request)
 
     from app.models.models import MarketMatchReceipt
-    from app.utils.match_receipts import REJECT_REASONS
+    from app.utils.match_receipts import (
+        REJECT_REASONS,
+        link_changes_for_market_query,
+        link_changes_off_event_query,
+    )
 
     def _serialize(r: MarketMatchReceipt) -> dict:
         return {
@@ -4760,6 +4763,25 @@ async def match_receipts(
             ),
         }
 
+    def _serialize_change(c) -> dict:
+        """One immutable link-change row. Keeps the receipt's field names where
+        they mean the same thing, so a reader does not have to hold two
+        vocabularies — ``new_event_id`` is the exception, because on a history
+        row it is where the link went, not where an attempt tried to put it."""
+        return {
+            "market_id": c.market_id,
+            "source": c.source,
+            "external_id": c.external_id,
+            "market_name": c.market_name,
+            "phase": c.phase,
+            "outcome": c.outcome,
+            "actor": c.actor,
+            "previous_event_id": c.previous_event_id,
+            "new_event_id": c.new_event_id,
+            "detail": c.detail or {},
+            "changed_at": c.changed_at.isoformat() if c.changed_at else None,
+        }
+
     if reject_reason and reject_reason not in REJECT_REASONS:
         raise HTTPException(
             status_code=400,
@@ -4778,7 +4800,19 @@ async def match_receipts(
             stmt = stmt.where(MarketMatchReceipt.external_id == external_id)
         row = (await db.execute(stmt.limit(1))).scalars().first()
         if row is not None:
-            return {"receipt": _serialize(row)}
+            # The receipt says what the LAST attempt decided; the history says
+            # what actually happened to the link, including the changes that
+            # attempt overwrote. "It had a price yesterday and none today" is
+            # answered by the second one, and only by it (LINKLOSS-03).
+            changes = (
+                await db.execute(
+                    link_changes_for_market_query(row.market_id, limit)
+                )
+            ).scalars().all()
+            return {
+                "receipt": _serialize(row),
+                "link_changes": [_serialize_change(c) for c in changes],
+            }
 
         # A market with no receipt is a real, different answer from a market
         # with a reject reason, and it is the answer the 8/28 wave would have
@@ -4826,25 +4860,19 @@ async def match_receipts(
         ).scalars().all()
         # …AND what came OFF it (LINKLOSS-02). An event whose card lost a price
         # is asked about by its own id, and before this the answer lived
-        # nowhere: the receipt for a departed market points at the event it
-        # LEFT, so a query keyed on ``linked_event_id`` alone can never find it.
+        # nowhere: the record of a departure points at the event it LEFT, so a
+        # query keyed on ``linked_event_id`` alone can never find it. Read from
+        # the append-only history (LINKLOSS-03) rather than the receipt, which
+        # the departed market's next matching attempt overwrites.
         departed = (
-            await db.execute(
-                select(MarketMatchReceipt)
-                .where(
-                    MarketMatchReceipt.previous_event_id == event_id,
-                    MarketMatchReceipt.linked_event_id.is_distinct_from(event_id),
-                )
-                .order_by(MarketMatchReceipt.last_attempted_at.desc())
-                .limit(limit)
-            )
+            await db.execute(link_changes_off_event_query(event_id, limit))
         ).scalars().all()
         return {
             "event_id": event_id,
             "count": len(rows),
             "receipts": [_serialize(r) for r in rows],
             "departed_count": len(departed),
-            "departed": [_serialize(r) for r in departed],
+            "departed": [_serialize_change(c) for c in departed],
         }
 
     # ── Filtered list, or the summary ───────────────────────────────────
@@ -4908,38 +4936,19 @@ async def match_receipts(
         )
     )
 
-    # ── The link-loss census (LINKLOSS-02) ──────────────────────────────
-    # "Did tonight's merge drop 261 links?" is this GROUP BY, and it did not
-    # exist before this table learned that a link can END. `since_hours` scopes
-    # it to the window being investigated; the settlement subtraction beside it
-    # is what stops a settlement wave reading as a loss.
-    from app.utils.match_receipts import (
-        ACTORS, OUTCOME_SUPERSEDED_BY_TWIN_MERGE, OUTCOME_UNLINKED,
-    )
+    # ── The link-loss census (LINKLOSS-02, fixed by -03) ────────────────
+    # "Did tonight's merge drop 261 links?" is this GROUP BY. It reads the
+    # APPEND-ONLY history, not the receipts: an unlinked market is
+    # `event_id IS NULL`, the matcher re-scans that population every 15
+    # minutes, and the next ordinary attempt upserts over the receipt that
+    # explained the loss. Counted off the receipts, this number therefore
+    # shrinks as the matcher works and a real loss night reads as a quiet one
+    # (CERT-791). `since_hours` scopes the window; the settlement subtraction
+    # beside it is what stops a settlement wave reading as a loss.
+    from app.utils.match_receipts import ACTORS, link_change_census_query
 
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-    change_rows = (
-        await db.execute(
-            select(
-                MarketMatchReceipt.outcome,
-                MarketMatchReceipt.actor,
-                MarketMatchReceipt.phase,
-                func.count().label("n"),
-            )
-            .where(
-                MarketMatchReceipt.outcome.in_(
-                    [OUTCOME_UNLINKED, OUTCOME_SUPERSEDED_BY_TWIN_MERGE]
-                ),
-                MarketMatchReceipt.last_attempted_at >= since,
-            )
-            .group_by(
-                MarketMatchReceipt.outcome,
-                MarketMatchReceipt.actor,
-                MarketMatchReceipt.phase,
-            )
-            .order_by(func.count().desc())
-        )
-    ).all()
+    change_rows = (await db.execute(link_change_census_query(since))).all()
 
     # Markets that LEFT the open linked population by settling in the same
     # window. Not a link loss — the link is still there, the market is simply
@@ -4975,7 +4984,10 @@ async def match_receipts(
             ],
             "ended_total": sum(r.n for r in change_rows),
             "linked_markets_settled": int(settled_linked or 0),
+            "source": "market_link_changes",
             "note": (
+                "Counted from the append-only link-change history, so a market "
+                "the matcher has since re-attempted is still counted here. "
                 "A linked market that settled left the open population without "
                 "losing its link. Subtract linked_markets_settled before "
                 "reading a drop in linked markets as a loss. "

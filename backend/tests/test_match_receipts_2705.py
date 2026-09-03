@@ -779,9 +779,15 @@ def _call(**kw):
 
 
 def test_one_call_answers_why_a_market_is_unattached():
-    """The bus's acceptance test, in the shape the bus will run it."""
+    """The bus's acceptance test, in the shape the bus will run it.
+
+    Two results are queued because the single-market answer is two questions
+    since LINKLOSS-03: what the last attempt decided (the receipt, which the
+    next attempt overwrites) and what has actually happened to this market's
+    link (the append-only history, which nothing overwrites).
+    """
     out = _call(
-        db=_FakeDB([_FakeResult([_receipt_row()])]),
+        db=_FakeDB([_FakeResult([_receipt_row()]), _FakeResult([])]),
         market_id=59669077, external_id=None, event_id=None,
         reject_reason=None, source=None, limit=50,
     )
@@ -790,6 +796,7 @@ def test_one_call_answers_why_a_market_is_unattached():
     assert r["candidates"][0]["event_id"] == 15299723
     assert r["attempt_count"] == 41
     assert r["detail"]["team_a"] == "Ann Li"
+    assert out["link_changes"] == []
 
 
 def test_a_market_with_no_receipt_is_reported_as_never_attempted_not_as_empty():
