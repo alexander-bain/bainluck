@@ -499,7 +499,11 @@ function EventFeedCard({
               because every later arm would tell a lie about this row. */}
           {isSuspended ? (
             <span className="text-[11px] text-text-muted font-medium text-right leading-tight max-w-[46%]">
-              {suspendedSummary(data.away_score, data.home_score)}
+              {/* #2786 — HOME-AWAY, matching the live branch immediately below
+                  it. Both arms render into THIS SLOT, so an away-home summary
+                  made the two numbers swap places the moment a match suspended,
+                  with nothing on the card to say they had. */}
+              {suspendedSummary(data.away_score, data.home_score, "home-away")}
             </span>
           ) : hasScore && !isFinished ? (
             <span className="text-base font-mono font-bold flex-shrink-0 text-accent-live">

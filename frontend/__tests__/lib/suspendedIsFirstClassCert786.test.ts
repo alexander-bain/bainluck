@@ -31,22 +31,36 @@ import type { FeedEventData, FeedItem } from "@/lib/types";
 
 describe("suspendedSummary is the one thing every surface says", () => {
   it("carries the last score when both sides are known", () => {
-    // The CERT-752 specimen: De Jong v Passaro, 1-2 in sets. Away-home, matching
-    // every card's crest order and the "{away} @ {home}" title.
-    expect(suspendedSummary(1, 2)).toBe("No result reported · last score 1-2");
+    // The CERT-752 specimen: De Jong v Passaro, 1-2 in sets, on a surface that
+    // paints the away side first.
+    expect(suspendedSummary(1, 2, "away-home")).toBe(
+      "No result reported · last score 1-2",
+    );
+  });
+
+  it("prints the SAME scores in the surface's own order (#2786)", () => {
+    // One string, two orders — because the four callers do not agree about
+    // which side they paint first, and standardising the string while ignoring
+    // the surface around it is what shipped an inverted score. Same two
+    // numbers, same sentence, flipped to match the card.
+    expect(suspendedSummary(1, 2, "home-away")).toBe(
+      "No result reported · last score 2-1",
+    );
   });
 
   it("prints the badge alone when there is no score at all", () => {
-    expect(suspendedSummary(null, null)).toBe(SUSPENDED_LABEL);
-    expect(suspendedSummary(undefined, undefined)).toBe(SUSPENDED_LABEL);
+    expect(suspendedSummary(null, null, "away-home")).toBe(SUSPENDED_LABEL);
+    expect(suspendedSummary(undefined, undefined, "home-away")).toBe(SUSPENDED_LABEL);
   });
 
   it("refuses to print HALF a score", () => {
     // A partial line under a "last score" label is the same trap that graded the
     // CERT-752 specimen 1.0/0.0 off a 1-2 — told smaller, and therefore more
-    // likely to survive review.
-    expect(suspendedSummary(1, null)).toBe(SUSPENDED_LABEL);
-    expect(suspendedSummary(null, 2)).toBe(SUSPENDED_LABEL);
+    // likely to survive review. Neither order rescues half a score.
+    expect(suspendedSummary(1, null, "away-home")).toBe(SUSPENDED_LABEL);
+    expect(suspendedSummary(null, 2, "away-home")).toBe(SUSPENDED_LABEL);
+    expect(suspendedSummary(1, null, "home-away")).toBe(SUSPENDED_LABEL);
+    expect(suspendedSummary(null, 2, "home-away")).toBe(SUSPENDED_LABEL);
   });
 
   it("prints a 0-0 score rather than treating it as absent", () => {
@@ -54,7 +68,9 @@ describe("suspendedSummary is the one thing every surface says", () => {
     // score was reported" and "the score reported was nil-all", and a suspended
     // match at 0-0 is a real and common shape (a rain delay before the first
     // point). Two different facts must not print the same sentence.
-    expect(suspendedSummary(0, 0)).toBe("No result reported · last score 0-0");
+    expect(suspendedSummary(0, 0, "away-home")).toBe(
+      "No result reported · last score 0-0",
+    );
   });
 
   it("says nothing about the future", () => {
@@ -62,14 +78,14 @@ describe("suspendedSummary is the one thing every surface says", () => {
     // promise about a later update is not a description of the state, and
     // describing exactly what is and is not known right now is this state's
     // entire job.
-    const summary = suspendedSummary(1, 2).toLowerCase();
+    const summary = suspendedSummary(1, 2, "home-away").toLowerCase();
     for (const banned of ["will", "soon", "shortly", "pending", "check back"]) {
       expect(summary).not.toContain(banned);
     }
   });
 
   it("never claims a result", () => {
-    const summary = suspendedSummary(1, 2).toLowerCase();
+    const summary = suspendedSummary(1, 2, "home-away").toLowerCase();
     for (const banned of ["final", "won", "winner", "beat"]) {
       expect(summary).not.toContain(banned);
     }

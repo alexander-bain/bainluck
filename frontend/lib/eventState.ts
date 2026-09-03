@@ -58,6 +58,14 @@ export const SUSPENDED_DESCRIPTION =
   "This match left the live board and no source has reported a result.";
 
 /**
+ * Which side a surface paints FIRST when it prints a pair of scores.
+ *
+ * Not a preference and not a style token — a fact about a specific component,
+ * which each caller reads off its own markup and passes in.
+ */
+export type ScoreOrder = "away-home" | "home-away";
+
+/**
  * The one line every card prints for a suspended event — ONE function, because
  * CERT-786 blocked on four surfaces reading this state four different ways and
  * three of them not reading it at all.
@@ -69,10 +77,27 @@ export const SUSPENDED_DESCRIPTION =
  * printed only "No result reported" beside two visible team crests invites the
  * reader to supply the missing half themselves.
  *
- * SIDE ORDER IS AWAY-HOME, matching every card in the app: the Discover card
- * paints `away_score` left of `home_score`, the feed card and the native cards
- * do the same, and the title reads "{away} @ {home}". A summary that flipped
- * them would be a third reading of one row.
+ * SIDE ORDER FOLLOWS THE SURFACE, and is therefore an argument (#2786).
+ *
+ * It was a hardcoded away-home, justified as "matching every card in the app".
+ * That premise was measured and is FALSE for three of the four callers: the
+ * shared `EventCard` prints home-away in its FINAL block, its live scores and
+ * its `Proj` footer; `FeedCard` prints `{home} - {away}` in the very SAME SLOT
+ * this string occupies, so a live 3-6 became "last score 6-3" the moment the
+ * match stopped, with no change in play; and the event page's hero stacks home
+ * above away. Only the Discover card paints away first, and it still does.
+ *
+ * On production 2026-09-03 that shipped an inverted score: event 15293347
+ * (`home_score=3`, `away_score=6`) rendered "last score 6-3" on a card listing
+ * the HOME team directly above it, one glance from its settled twin's "3 – 6".
+ *
+ * So the shared string is still one string — but the ORDER it prints is the
+ * order the surface around it already uses, because the alternative is a
+ * function that standardises the wrong half and makes each card contradict
+ * itself. The state exists to refuse a quiet lie; an inverted score is one.
+ *
+ * The parameter is REQUIRED on purpose: a new caller must state what its own
+ * card does rather than inherit a default that may not be true of it.
  *
  * A partial line (one side scored, the other null) prints the badge alone. Half
  * a score under a "last score" label is the same partial-line trap that graded
@@ -81,9 +106,12 @@ export const SUSPENDED_DESCRIPTION =
 export function suspendedSummary(
   awayScore: number | null | undefined,
   homeScore: number | null | undefined,
+  order: ScoreOrder,
 ): string {
   if (awayScore == null || homeScore == null) return SUSPENDED_LABEL;
-  return `${SUSPENDED_LABEL} · last score ${awayScore}-${homeScore}`;
+  const [first, second] =
+    order === "home-away" ? [homeScore, awayScore] : [awayScore, homeScore];
+  return `${SUSPENDED_LABEL} · last score ${first}-${second}`;
 }
 
 /**

@@ -234,7 +234,10 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated text-text-muted"
               data-testid="event-card-suspended"
             >
-              {suspendedSummary(data.away_score, data.home_score)}
+              {/* #2786 — AWAY-HOME, unchanged. This is the one surface whose
+                  own scores really are away-first: the hero above paints
+                  `away_score` on the left and `home_score` on the right. */}
+              {suspendedSummary(data.away_score, data.home_score, "away-home")}
             </span>
           </div>
         )}
