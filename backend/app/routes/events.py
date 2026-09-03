@@ -2312,6 +2312,55 @@ def _event_detail_live_ttl(sport_key: str | None) -> int:
     return _EVENT_DETAIL_LIVE_TTL_BY_SPORT_PREFIX.get(prefix, _EVENT_DETAIL_LIVE_TTL)
 
 
+#: The one ``linescore.state`` that means "this score will not change again".
+_LINESCORE_DECIDED = "decided"
+
+
+def _event_detail_caches_forever(cached_status: str, response: dict) -> bool:
+    """May this settled response be served from cache indefinitely?
+
+    ═══ THE RACE THIS CLOSES (live/058, CERT-854 repair) ═══
+
+    A ``completed``/``closed`` response is cached with no expiry, on the sound
+    reasoning that a finished game's score does not change. For tennis that
+    reasoning acquired a hole the moment a second, finer score arrived on the
+    same row, because the two are written by different jobs on different
+    cadences:
+
+        21:44:10  ESPN goes `post`
+        21:44:12  `transition_event_statuses` (60 s) flips status -> completed
+        21:44:14  a reader arrives; the response caches FOREVER holding
+                  `6-4, 6-7(2), 5-4` — the line from before the last game
+        21:44:26  `poll_live_tennis_scores` (20 s) writes `6-4, 6-7(2), 7-5`
+
+    Nothing after 21:44:14 can dislodge it. The poller's two-hour settled grace
+    writes the right answer to the database and no reader ever sees it: a page
+    that says "Final" over a scoreline that stops one game early, permanently.
+
+    So the indefinite cache now requires a TERMINAL response, and terminal means
+    the fine-grained score agrees the match is over. A sport we hold no finer
+    grain for is unaffected — an MLB final has one score and it is already
+    final, and slowing that down would be paying for a race it cannot have.
+
+    A tennis response that carries NO linescore is deliberately not terminal
+    either: absent is not decided (gotcha #53). It falls back to the ordinary
+    5-minute TTL, which is bounded, cheap, and self-correcting once the poller
+    writes — where caching forever is neither.
+    """
+    if cached_status not in ("completed", "closed"):
+        return False
+    prefix = str(response.get("sport") or "").split("_")[0]
+    if prefix not in _EVENT_DETAIL_LIVE_TTL_BY_SPORT_PREFIX:
+        # No finer grain exists for this sport, so the settled score is the
+        # whole score and it is already settled.
+        return True
+    linescore = response.get("linescore")
+    return (
+        isinstance(linescore, dict)
+        and linescore.get("state") == _LINESCORE_DECIDED
+    )
+
+
 async def _load_ei_percentiles(db: AsyncSession) -> dict:
     """Load EI percentile thresholds from database.
 
@@ -7754,7 +7803,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             if _cached_status == "live"
             else _EVENT_DETAIL_DEFAULT_TTL
         )
-        if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
+        if (
+            _event_detail_caches_forever(_cached_status, _cached_resp)
+            or _now - _cached_at < _ttl
+        ):
             return _cached_resp
 
     result = await db.execute(

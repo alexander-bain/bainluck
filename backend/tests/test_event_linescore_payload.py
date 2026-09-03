@@ -14,6 +14,7 @@ from app.models import Event, Sport
 from app.routes.events import (
     _EVENT_DETAIL_DEFAULT_TTL,
     _EVENT_DETAIL_LIVE_TTL,
+    _event_detail_caches_forever,
     _event_detail_live_ttl,
     _format_event,
 )
@@ -95,3 +96,62 @@ class TestTheCacheTtl:
         """The live TTL applies to `status == "live"` only — a settled row keeps
         the 5-minute default and a completed one is cached indefinitely."""
         assert _EVENT_DETAIL_DEFAULT_TTL > _event_detail_live_ttl("tennis_atp")
+
+
+class TestTheSettledCacheFinalizes:
+    """CERT-854 repair: a `completed` response cached before the last game was
+    served forever, so the poller's two-hour settled grace wrote the right
+    scoreline into a database nobody could read it from.
+
+    Status and linescore are written by DIFFERENT jobs on DIFFERENT cadences —
+    `transition_event_statuses` at 60 s, `poll_live_tennis_scores` at 20 s — so
+    the window where one has flipped and the other has not is ordinary, not
+    exotic.
+    """
+
+    def test_a_settled_tennis_response_whose_line_is_not_decided_expires(self):
+        """THE RACE. `Final` over `6-4, 6-7(2), 5-4`, permanently, is the defect."""
+        mid_match = {**LINE, "state": "in_progress", "line": "6-4, 6-7(2), 5-4"}
+        response = {"sport": "tennis_atp_us_open", "linescore": mid_match}
+
+        assert _event_detail_caches_forever("completed", response) is False
+        assert _event_detail_caches_forever("closed", response) is False
+
+    def test_a_settled_tennis_response_with_a_decided_line_caches_forever(self):
+        """THE CONTROL, and it is the whole point of the guard above.
+
+        A rule that simply stopped caching settled tennis would pass the test
+        above and put every finished US Open match back on a 5-minute TTL for
+        the rest of its life. Terminal means terminal.
+        """
+        final = {**LINE, "state": "decided", "completion": "final",
+                 "line": "6-4, 6-7(2), 7-5", "current_set": None}
+        response = {"sport": "tennis_atp_us_open", "linescore": final}
+
+        assert _event_detail_caches_forever("completed", response) is True
+
+    def test_a_settled_tennis_response_with_no_line_at_all_expires(self):
+        """Absent is not decided (gotcha #53). A walkover, or a row the poller
+        has not reached yet — both self-correct on a bounded TTL and neither
+        does on an unbounded one."""
+        assert _event_detail_caches_forever(
+            "completed", {"sport": "tennis_wta_us_open"}
+        ) is False
+
+    def test_every_other_sport_keeps_caching_its_finals_forever(self):
+        """THE SECOND CONTROL. No finer grain exists for these, so the settled
+        score IS the whole score — paying a TTL there is paying for a race the
+        sport cannot have."""
+        for key in ("baseball_mlb", "americanfootball_nfl", "soccer_epl", None):
+            assert _event_detail_caches_forever(
+                "completed", {"sport": key}
+            ) is True
+
+    def test_a_live_response_is_never_in_the_forever_branch(self):
+        """The forever branch is for settled rows only; a live row takes the
+        TTL path above whatever its linescore says."""
+        final = {**LINE, "state": "decided"}
+        assert _event_detail_caches_forever(
+            "live", {"sport": "tennis_atp_us_open", "linescore": final}
+        ) is False
+        assert _event_detail_caches_forever("scheduled", {"sport": "baseball_mlb"}) is False

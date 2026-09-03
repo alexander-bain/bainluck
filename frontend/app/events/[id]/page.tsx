@@ -17,6 +17,11 @@ import {
   resolveEventOutcome,
 } from "@/lib/eventOutcome";
 import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
+import {
+  LIVE_REFRESH_INTERVAL,
+  SCHEDULED_REFRESH_INTERVAL,
+  liveDetailRefreshInterval,
+} from "@/lib/liveDetailRefresh";
 // STATIC, not `dynamic()`. It renders INSIDE the hero, above the fold, on the
 // first paint of a live tennis page — a lazy chunk there is a second round trip
 // on a 562 ms-RTT connection to draw two rows of numbers that are already in
@@ -105,8 +110,10 @@ interface EventPageProps {
   params: { id: string };
 }
 
-const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
-const SCHEDULED_REFRESH_INTERVAL = 120000;
+// live/058 (CERT-854 repair): the poll cadence is one exported rule now, so it
+// can be asserted. It used to be three nested ternaries inside the SWR config
+// below, which is where the frozen-linescore defect lived unexamined.
+
 
 export default function EventPage({ params }: EventPageProps) {
   const eventId = parseInt(params.id, 10);
@@ -169,11 +176,11 @@ export default function EventPage({ params }: EventPageProps) {
       // would be a use-before-declare. The ref is written just after the hook
       // below, and SWR only ever invokes this after a render has completed.
       refreshInterval: (data) =>
-        streamConnectedRef.current
-          ? 0
-          : data?.status === "live"
-            ? LIVE_REFRESH_INTERVAL
-            : SCHEDULED_REFRESH_INTERVAL,
+        liveDetailRefreshInterval({
+          streamConnected: streamConnectedRef.current,
+          status: data?.status,
+          hasLinescore: Boolean(data?.linescore),
+        }),
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
