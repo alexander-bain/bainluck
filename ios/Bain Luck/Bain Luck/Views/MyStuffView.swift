@@ -378,7 +378,8 @@ struct MyStuffView: View {
                 feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
             }
             if !vm.liveNow.isEmpty {
-                feedSection(title: "Live Now", systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
+                // live/048 — the header reads the bucket. See `EventState`.
+                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
             }
             if !vm.justHappened.isEmpty {
                 feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)

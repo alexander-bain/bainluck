@@ -8,8 +8,18 @@ struct EventCardView: View {
     var headline: String? = nil
 
     private var isLive: Bool { event.status == "live" }
-    private var isFinished: Bool { event.status == "completed" || event.status == "closed" }
-    private var isScheduled: Bool { event.status == "scheduled" || (!isLive && !isFinished) }
+    private var isFinished: Bool { EventState.isFinished(event.status) }
+    /// live/048 + CERT-786 — the branch this card did not have.
+    private var isSuspended: Bool { EventState.isSuspended(event.status) }
+    /// `isScheduled` was the card's default arm, and it was the only one of the
+    /// three that did not actually test the status it names: anything not live
+    /// and not finished was "scheduled", so a suspended match took the whole
+    /// pregame treatment — a START TIME for a match already played. Narrowed to
+    /// exclude the state it was mislabelling; the trailing clause is kept for
+    /// nil/unknown statuses, which have no better home.
+    private var isScheduled: Bool {
+        !isSuspended && (event.status == "scheduled" || (!isLive && !isFinished))
+    }
 
     private var awayWon: Bool { isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0) }
     private var homeWon: Bool { isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0) }
@@ -135,6 +145,13 @@ struct EventCardView: View {
             } else if isFinished {
                 // Finished: Show date only "Mar 5"
                 formattedDate
+            } else if isSuspended {
+                // live/048: no start time, no Final — the shared summary, the
+                // same string the web card prints for the same row.
+                Text(EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             PinButton(type: "event", id: event.id, compact: true)
         }
@@ -183,7 +200,7 @@ struct EventCardView: View {
                 logo: event.awayTeamData?.logoSmall,
                 color: awayColor,
                 record: event.awayTeamData?.record,
-                score: (isLive || isFinished) ? event.awayScore : nil,
+                score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
                 won: awayWon,
                 side: .away
             )
@@ -195,7 +212,7 @@ struct EventCardView: View {
                 logo: event.homeTeamData?.logoSmall,
                 color: homeColor,
                 record: event.homeTeamData?.record,
-                score: (isLive || isFinished) ? event.homeScore : nil,
+                score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
                 won: homeWon,
                 side: .home
             )
@@ -362,6 +379,13 @@ struct EventCardView: View {
                     height: 5
                 )
             }
+        } else if isSuspended {
+            // live/048 — no bar. It would be the last live blend on a match
+            // nothing is reporting on, drawn at full width and full colour: the
+            // most confident element on a card whose whole message is that
+            // nobody has said anything. The settled arm above drops it for the
+            // mirror-image reason.
+            EmptyView()
         } else if let away = event.currentOdds?.awayProbability,
                   let home = event.currentOdds?.homeProbability {
             ProbabilityBar(

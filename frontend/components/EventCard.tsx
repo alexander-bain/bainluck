@@ -18,9 +18,9 @@ import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
-  SUSPENDED_LABEL,
   isFinishedStatus,
   isSuspendedStatus,
+  suspendedSummary,
 } from "@/lib/eventState";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
@@ -245,9 +245,16 @@ export default function EventCard({
                   Its commence_time is in the PAST and the clock has run out —
                   printing "Today 7:00 PM" beside it is the upcoming-branch
                   fall-through this state exists to avoid. */}
+              {/* CERT-786 — one shared summary, not the bare badge this
+                  originally carried. Four surfaces render this state and they
+                  now render one string, so "the card says the same thing
+                  wherever you meet it" is a property of the function rather
+                  than of four editors remembering. Not uppercased: the settled
+                  sibling below uppercases the single word "Final", and shouting
+                  a whole sentence is a different register. */}
               {isSuspended && (
-                <span className="text-micro-xs text-text-muted uppercase">
-                  {SUSPENDED_LABEL}
+                <span className="text-micro-xs text-text-muted">
+                  {suspendedSummary(event.away_score, event.home_score)}
                 </span>
               )}
               {!isLive && !isFinished && !isSuspended && hasGameTime && (

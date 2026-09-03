@@ -74,9 +74,9 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_DESCRIPTION,
-  SUSPENDED_LABEL,
   isFinishedStatus,
   isSuspendedStatus,
+  suspendedSummary,
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
@@ -797,8 +797,12 @@ export default function EventPage({ params }: EventPageProps) {
               <span
                 className="text-[10px] font-semibold text-text-muted"
                 title={SUSPENDED_DESCRIPTION}
+                data-testid="event-hero-suspended"
               >
-                {SUSPENDED_LABEL}
+                {/* CERT-786 — the shared summary, so the hero says exactly what
+                    the card the reader tapped said. The page-level sentence
+                    stays on the `title`, which has room for it. */}
+                {suspendedSummary(event?.away_score, event?.home_score)}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">

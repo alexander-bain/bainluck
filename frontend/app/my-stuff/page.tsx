@@ -28,6 +28,7 @@ import {
   dataForPrincipal,
 } from "@/lib/myStuffIdentity";
 import { classifyMyStuffOutcome, reportMyStuffTelemetry } from "@/lib/myStuffTelemetry";
+import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
 export default function MyStuffPage() {
   // Analytics hooks must be called before conditional returns
@@ -283,9 +284,16 @@ function MyTeamsFeed({ principal }: { principal: string }) {
         continue;
       }
       const data = item.data as FeedEventData;
-      if (data.status === "live") {
+      // live/048 + CERT-786 — the shared ladder, not a fourth copy of it. This
+      // `else` is precisely what the cert found: a pinned suspended match was
+      // still reachable (My Stuff fetches pinned events by id, so it never
+      // depended on the list SQL), arrived with an unrecognised status, and was
+      // filed under Upcoming — a match that had already been played, listed
+      // among games that have not started.
+      const section = eventSectionKey(data.status);
+      if (section === "live") {
         liveNow.push(item);
-      } else if (data.status === "completed" || data.status === "closed") {
+      } else if (section === "finished") {
         recentlyCompleted.push(item);
       } else {
         upcoming.push(item);
@@ -310,7 +318,19 @@ function MyTeamsFeed({ principal }: { principal: string }) {
 
     const sections: { key: string; emoji: string; title: string; accent: string; items: FeedItem[] }[] = [];
     if (liveNow.length > 0)
-      sections.push({ key: "live", emoji: "\uD83D\uDD34", title: "Live Now", accent: "text-accent-live", items: liveNow });
+      sections.push({
+        key: "live",
+        emoji: "\uD83D\uDD34",
+        // Same shared title rule as `/sports` and the category grids, so the
+        // three surfaces cannot describe one bucket three ways (live/048).
+        title: liveSectionTitle(
+          liveNow.some((item) =>
+            isSuspendedStatus((item.data as FeedEventData).status),
+          ),
+        ),
+        accent: "text-accent-live",
+        items: liveNow,
+      });
     if (upcoming.length > 0)
       sections.push({ key: "upcoming", emoji: "\uD83C\uDFDF\uFE0F", title: "Upcoming", accent: "text-text-secondary", items: upcoming });
     if (recentlyCompleted.length > 0)

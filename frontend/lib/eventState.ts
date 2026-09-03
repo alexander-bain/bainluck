@@ -56,3 +56,66 @@ export const SUSPENDED_LABEL = "No result reported";
  */
 export const SUSPENDED_DESCRIPTION =
   "This match left the live board and no source has reported a result.";
+
+/**
+ * The one line every card prints for a suspended event — ONE function, because
+ * CERT-786 blocked on four surfaces reading this state four different ways and
+ * three of them not reading it at all.
+ *
+ * It carries the LAST SCORE when there is one, and that is the substance of the
+ * fix rather than a decoration. The badge alone says what is not known; the
+ * score says what is, and the pair is the whole honest statement a suspended
+ * match can make: play reached 1-2 and nothing since has spoken. A card that
+ * printed only "No result reported" beside two visible team crests invites the
+ * reader to supply the missing half themselves.
+ *
+ * SIDE ORDER IS AWAY-HOME, matching every card in the app: the Discover card
+ * paints `away_score` left of `home_score`, the feed card and the native cards
+ * do the same, and the title reads "{away} @ {home}". A summary that flipped
+ * them would be a third reading of one row.
+ *
+ * A partial line (one side scored, the other null) prints the badge alone. Half
+ * a score under a "last score" label is the same partial-line trap that graded
+ * the CERT-752 specimen 1.0/0.0, told smaller.
+ */
+export function suspendedSummary(
+  awayScore: number | null | undefined,
+  homeScore: number | null | undefined,
+): string {
+  if (awayScore == null || homeScore == null) return SUSPENDED_LABEL;
+  return `${SUSPENDED_LABEL} · last score ${awayScore}-${homeScore}`;
+}
+
+/**
+ * The section a status belongs to on every grid surface that groups events.
+ *
+ * `suspended` returns "live" — NOT because a suspended match is being played,
+ * but because the three buckets answer "has this happened yet?" and the honest
+ * answer for a suspended row is the same as a live one: it started, it has not
+ * finished. Filing it under "upcoming" (which is where every surface put it by
+ * falling through) claims it has not started; filing it under "finished" claims
+ * a result. Both are the lie this state exists to refuse.
+ *
+ * The section TITLE changes when the bucket holds one — see
+ * `liveSectionTitle` — so the header does not claim "Live Now" over a match
+ * nobody is watching.
+ */
+export function eventSectionKey(
+  status: string | null | undefined,
+): "live" | "finished" | "upcoming" {
+  if (status === "live" || isSuspendedStatus(status)) return "live";
+  if (isFinishedStatus(status)) return "finished";
+  return "upcoming";
+}
+
+/**
+ * What the live section calls itself, given what landed in it.
+ *
+ * "Live Now" over a rain-delayed match is the section-header sized version of
+ * the same false claim the card branch fixes, so the header reads the bucket
+ * rather than assuming it. Shared by `/sports`, the category grids and My
+ * Stuff so the three cannot drift.
+ */
+export function liveSectionTitle(hasSuspended: boolean): string {
+  return hasSuspended ? "Live & Paused" : "Live Now";
+}

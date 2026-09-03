@@ -166,6 +166,35 @@ def commence_time_is_a_reported_start(commence_time_source) -> bool:
 #: HONESTLY: every consumer that had to learn the word is edited in this change,
 #: and :func:`authority_may_settle` / :func:`play_resumes` are the two doors out
 #: so the state can never become a terminal one by accident.
+#:
+#: ── §R, AMENDMENT (CERT-786): A STATE NOBODY CAN REACH IS NOT A BETTER LIE ──
+#:
+#: The paragraph above claimed "every consumer that had to learn the word is
+#: edited in this change" and it was not true. The SETTLEMENT consumers had been
+#: edited; the RETRIEVAL consumers had not. ``routes/feed.py`` and
+#: ``routes/events.py`` each enumerated ``live | scheduled | completed |
+#: closed``, so the moment a staleness net wrote this value the match stopped
+#: printing a false Final and stopped being reachable at all — Discover, the
+#: Sports list and search each dropped it silently, and My Stuff filed the
+#: pinned copy under Upcoming.
+#:
+#: **A new state in a vocabulary is not shipped when the producer writes it. It
+#: is shipped when every consumer that DISPATCHES on that vocabulary has been
+#: shown the word.** Producing a truer value into readers that drop it converts
+#: a display defect into an absence, and absence is the one defect class users
+#: cannot report: there is no card to screenshot.
+#:
+#: The distinction that makes this tractable is between the two kinds of
+#: consumer, and it is not "settlement vs display":
+#:
+#:   * queries meaning **"is this settled?"** must keep excluding it, and do so
+#:     by construction via :data:`SETTLED_STATUSES` — nothing to edit;
+#:   * queries meaning **"what is there to show?"** must include it, and each
+#:     one is a hand-written literal list that has to be found.
+#:
+#: The second kind is why this cost a cert. When adding the next state, grep for
+#: the enumerations that contain ``"scheduled"`` — those are the retrieval
+#: surfaces, and they are the ones that will not fail loudly.
 EVENT_SUSPENDED = "suspended"
 
 #: Terminal. Something with standing said this event is over. ``completed`` is

@@ -51,7 +51,14 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var isDone: Bool {
-        event.status == "completed" || event.status == "closed"
+        EventState.isFinished(event.status)
+    }
+
+    /// live/048 + CERT-786. The `statusText` default arm below is the literal
+    /// string "vs" — the pregame reading — so a suspended match printed the
+    /// crest strip of a game that has not started, on the app's default screen.
+    private var isSuspended: Bool {
+        EventState.isSuspended(event.status)
     }
 
     private var sportLabel: String {
@@ -66,6 +73,10 @@ struct NativeEventDiscoverCard: View {
             }
             return "Final"
         }
+        // live/048 — the crest strip is 50pt wide and sized for "Q3", so it
+        // gets the short word and the full shared summary goes in the badge
+        // below the matchup, where the reader already looks for the outcome.
+        if isSuspended { return "Paused" }
         return "vs"
     }
 
@@ -141,6 +152,16 @@ struct NativeEventDiscoverCard: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(.black.opacity(0.24), in: Capsule())
+                        } else if isSuspended {
+                            // The corner that says FINAL or LIVE has to say
+                            // something here too — leaving it empty is how the
+                            // state stayed invisible (live/048).
+                            Text("PAUSED")
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(.white.opacity(0.78))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.black.opacity(0.24), in: Capsule())
                         }
                     }
 
@@ -185,11 +206,25 @@ struct NativeEventDiscoverCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
+                // live/048 — the shared summary, in the slot the settled card
+                // uses for its result. Same string the web Discover card
+                // prints for the same row.
+                if isSuspended {
+                    Text(EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 // Probability bar — hidden once the game is done: a settled
                 // game's "Win Probability" is stale/meaningless (the result is
                 // the final score shown above), so we never surface a live-looking
                 // split on a FINAL card (Queue #238 settled-state honesty).
-                if !isDone,
+                // live/048 — `!isSuspended` for the same honesty reason as
+                // `!isDone`: the split would be the last live blend on a match
+                // nothing is reporting on, drawn as a current read.
+                if !isDone, !isSuspended,
                    let homeProbability = event.currentOdds?.homeProbability,
                    let awayProbability = event.currentOdds?.awayProbability {
                     // UX-P114 — these two are two sides of ONE question (the feed
@@ -323,7 +358,7 @@ struct NativeEventDiscoverCard: View {
                 .foregroundStyle(.white.opacity(0.92))
                 .lineLimit(1)
 
-            if let score, (isLive || isDone) {
+            if let score, (isLive || isDone || isSuspended) {
                 Text("\(score)")
                     .font(.title2.weight(.black).monospacedDigit())
                     .foregroundStyle(.white)
