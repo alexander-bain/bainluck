@@ -219,6 +219,15 @@ class TestChainContract:
             # because that is the only order in which it sees the same twenty
             # cards `boring-rate@20` / `ladder-rate@20` are counted over.
             "first_page_quality_floor",
+            # #2709: sports live completeness runs LAST, for the same reason the
+            # quality floor runs late — the window it reasons about is the first
+            # page of the SERVED order. Note this fires here even though this
+            # case is Discover (`event_pct=0.15`) and the pass itself is gated
+            # off: the tick is outside the gate, exactly as
+            # `first_page_quality_floor`'s is, so a stage's duration is recorded
+            # whether or not it did work. That is the existing convention and
+            # this stage follows it rather than inventing a second one.
+            "live_first_page",
         ], (
             "get_feed's per-stage timings are built from these callbacks; "
             f"got {seen}"
