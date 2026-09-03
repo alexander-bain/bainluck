@@ -6909,15 +6909,73 @@ def staged_unit_fingerprint() -> str:
 _CARRY_MAX_AGE_S = _MAIN_CACHE_TTL
 
 
+def _record_rebuild_interruption(runner, exc: BaseException, started: float) -> str:
+    """THE case this queue exists for: the runtime took the worker away.
+
+    Swallowed on purpose — see :func:`_deferred_rebuild_pass` — and recorded
+    under a name of its own so it can never be read as the BEAT having been
+    interrupted. The beat published. Shared by the two shapes an interruption
+    arrives in (``CancelledError`` and Celery's soft kill) so they cannot drift
+    into two different gauges; :func:`
+    app.tasks.calibration_main_build.is_runtime_interruption` decides which
+    exceptions get here, and says why the beat's own classifier is untouched.
+    """
+    runner.ledger.record_stage("staged:rebuild_stop:interrupted", 0)
+    runner.ledger.record_gauge("staged:rebuild_interrupted", 1)
+    logger.warning(
+        "calibration deferred rebuild: the runtime took the worker away %d ms "
+        "into the post-publish rebuild (%s) — the curve is published and "
+        "durable; the next census keeps its banked units and resumes next beat",
+        int((time.monotonic() - started) * 1000), type(exc).__name__,
+    )
+    return "interrupted"
+
+
 async def _run_deferred_rebuild(runner) -> dict:
+    """Run the deferred rebuild and put its result where a reader can find it.
+
+    CAL-P994 repair (CERT-821). The pass itself is
+    :func:`_deferred_rebuild_pass`; this exists for one reason. The rebuild is
+    now discharged on TWO exits — a clean publish, which returns a summary dict
+    the caller keeps, and a publish-gate REFUSAL, which raises and so has no
+    summary at all. ``runner.outcome`` is the only structure that survives both,
+    because the orchestrator persists it into the phase ledger on every
+    terminal. Recording here rather than at each call site means the two paths
+    cannot come to disagree about where the answer lives.
+    """
+    result = await _deferred_rebuild_pass(runner)
+    outcome = getattr(runner, "outcome", None)
+    if isinstance(outcome, dict):
+        outcome["deferred_rebuild"] = result
+    return result
+
+
+async def _deferred_rebuild_pass(runner) -> dict:
     """Advance the NEXT census on what is left of the beat, after the publish.
 
     CAL-P994 / D45(A). The second half of the reorder described in
     :func:`_run_staged_futures`: the futures phase published from the served
     bank and set :attr:`PhaseRunner.rebuild_deferred`; this runs the unit loop
-    it skipped. Called from exactly one place — after ``runner.complete``
-    (``serialize_gate_publish``) — because "the publish is done" is the only
-    precondition it has, and only the orchestrator knows it.
+    it skipped.
+
+    **Both ways the gate can end a beat discharge it** — CAL-P994's repair of
+    CERT-821, and the whole of that verdict. It shipped called from one place,
+    after ``runner.complete(serialize_gate_publish)``, on the reasoning that
+    "the publish is done" was its only precondition. A publish-gate REFUSAL
+    raises before that line, and a refusal is a designed live path, not an
+    outage: the module files one and keeps serving the prior snapshot. So on a
+    beat that deferred, refusal used to reach the raise having run no units at
+    all — and because the served bank only advances when a census COMPLETES, and
+    a census only completes through this loop, the next beat rebuilt the same
+    candidate from the same served bank and earned the same refusal. A fixed
+    point: refuse -> no rebuild -> same bank -> refuse. Readers stay on the old
+    curve forever while the census that could replace it never runs.
+
+    The refusal is still the beat's terminal and the prior snapshot is still
+    untouched — this pass publishes nothing, and it cannot raise (below), so it
+    cannot swallow or soften the ``RuntimeError`` the gate raises after it. What
+    it does is spend the window that refusal was about to throw away on the one
+    thing that can break the loop.
 
     **Its own session, deliberately.** The build's session is closed by the
     ``async with`` in the caller before the payload is even serialized, so there
@@ -6942,6 +7000,7 @@ async def _run_deferred_rebuild(runner) -> dict:
     Returns a small status dict for the run summary. Never raises.
     """
     from app.tasks.base import get_task_session
+    from app.tasks.calibration_main_build import is_runtime_interruption
     from app.tasks.task_checkpoint import release_overlap_lock, try_acquire_overlap_lock
     from app.utils.calibration_phase_ledger import MAIN_BUILD_TASK
 
@@ -6987,27 +7046,27 @@ async def _run_deferred_rebuild(runner) -> dict:
                 )
             finally:
                 await release_overlap_lock(db, MAIN_BUILD_TASK)
-    except asyncio.CancelledError:
-        # THE case this queue exists for. Swallowed on purpose; see the
-        # docstring. Recorded under a name of its own so it can never be read as
-        # the beat having been interrupted — the beat published.
-        status = "interrupted"
-        runner.ledger.record_stage("staged:rebuild_stop:interrupted", 0)
-        runner.ledger.record_gauge("staged:rebuild_interrupted", 1)
-        logger.warning(
-            "calibration deferred rebuild: the runtime took the worker away %d ms "
-            "into the post-publish rebuild — the curve is published and durable; "
-            "the next census keeps its banked units and resumes next beat",
-            int((time.monotonic() - started) * 1000),
-        )
+    except asyncio.CancelledError as exc:
+        status = _record_rebuild_interruption(runner, exc, started)
     except Exception as exc:  # noqa: BLE001 — a failed rebuild is not a failed publish
-        status = "error"
-        runner.ledger.record_stage("staged:rebuild_stop:error", 0)
-        runner.ledger.record_gauge("staged:rebuild_error", 1)
-        logger.error(
-            "calibration deferred rebuild failed after the publish: %s", exc,
-            exc_info=True,
-        )
+        if is_runtime_interruption(exc):
+            # CERT-821's follow-up, ``CAL-P994-SOFT-TIME-LIMIT-CLASSIFICATION``.
+            # Celery's ``SoftTimeLimitExceeded`` is a plain ``Exception``, so
+            # the ordinary soft kill was landing below, in ``rebuild_error`` —
+            # the gauge that says the unit loop is BROKEN — and the interruption
+            # share this queue promised to measure was short by exactly the
+            # deploys it exists to count. A predicate rather than a second
+            # ``except`` clause listing the class, so the two interruption
+            # shapes cannot come to be recorded differently.
+            status = _record_rebuild_interruption(runner, exc, started)
+        else:
+            status = "error"
+            runner.ledger.record_stage("staged:rebuild_stop:error", 0)
+            runner.ledger.record_gauge("staged:rebuild_error", 1)
+            logger.error(
+                "calibration deferred rebuild failed after the publish: %s", exc,
+                exc_info=True,
+            )
     elapsed_ms = int((time.monotonic() - started) * 1000)
     runner.ledger.record_gauge("staged:rebuild_elapsed_ms", elapsed_ms)
     return {"status": status, "window_ms": int(window_ms), "elapsed_ms": elapsed_ms}
@@ -7206,6 +7265,27 @@ async def _run_calibration_main_build(runner=None):
             "calibration publish gate REJECTED candidate (%s): %s [filing=%s]",
             ", ".join(verdict.codes), verdict.summary(), filing.get("action"),
         )
+        # CAL-P994 repair (CERT-821). A refusal ends the beat, but it must not
+        # end the CENSUS: on a deferred beat the rebuild's unit loop has not run
+        # yet, and the served bank it would replace is the same bank that just
+        # earned this refusal. Skipping the rebuild here closes the loop —
+        # refuse, rebuild nothing, publish the same candidate next hour, refuse
+        # again — with readers pinned to the old curve for as long as the cause
+        # persists. So the rebuild is discharged BEFORE the raise.
+        #
+        # Order is deliberate: the filing above is what an operator sees, and it
+        # is written first so it exists whatever the (~15-minute) rebuild does.
+        # `_run_deferred_rebuild` never raises and never publishes, so the
+        # refusal below is still this beat's terminal and the prior snapshot is
+        # still the one being served. On any beat that did NOT defer — every
+        # cold-cursor beat and every non-producer build — it is a named no-op
+        # that opens no session.
+        rebuild = await _run_deferred_rebuild(runner)
+        logger.info(
+            "calibration publish gate refusal: deferred rebuild discharged anyway "
+            "(%s) — the refusal stands, and the next beat judges a new census",
+            rebuild.get("status"),
+        )
         raise RuntimeError(
             f"calibration publish gate rejected the candidate "
             f"({', '.join(verdict.codes)}): {verdict.summary()} — "
@@ -7339,6 +7419,10 @@ async def _run_calibration_main_build(runner=None):
     # minutes a deploy now has to hit in order to cost a publish, instead of the
     # ~21 it had when the loop ran first. A no-op on every path that did not
     # defer, which is every path except the scheduled producer's.
+    #
+    # The SECOND of the two discharges since CERT-821's repair; the other is on
+    # the gate-refusal path above, which raises and therefore never reaches this
+    # line. Exactly one of them runs per beat.
     summary["deferred_rebuild"] = await _run_deferred_rebuild(runner)
 
     summary["status"] = "ok"
@@ -7372,6 +7456,12 @@ async def _precompute_calibration_main():
     * A **gate refusal** clears it too. The candidate was rejected for what it
       contained, so carrying the same reads forward would rebuild the identical
       rejected candidate every hour, forever. Refusal must force fresh reads.
+      CERT-821's repair is the other half of that same sentence: fresh reads are
+      not enough on a beat that publishes from the SERVED futures bank, because
+      that bank lives on a cursor this checkpoint does not own and only the
+      rebuild's unit loop can move it. So the refusal path discharges the
+      deferred rebuild before it raises — see the gate branch in
+      :func:`_run_calibration_main_build`.
     * A **durable/Redis publication failure** keeps it. The payload was fine;
       only persisting it failed, so the next beat should re-publish from the
       carried reads rather than re-earn them.

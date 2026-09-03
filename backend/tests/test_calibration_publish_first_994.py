@@ -806,6 +806,295 @@ class TestTheLockIsAlwaysReleased:
 
 
 # =============================================================================
+# CERT-821's repair — a REFUSAL is the other exit, and it funds the rebuild too
+# =============================================================================
+
+
+def _total_n(merged) -> int:
+    """The population the fold is about to publish, summed over its rows.
+
+    The census identity this file needs is not the unit keys — those are the
+    plan, and the plan does not move between the beats under test. It is what
+    the units COUNTED.
+    """
+    rows = list(merged or [])
+    return sum(int(row["n"] if isinstance(row, dict) else row.n) for row in rows)
+
+
+def _refuse_the_gate(monkeypatch, *, codes=("population_shrink",)):
+    """Make the publish gate reject, and keep the filing off the network.
+
+    The refusal this models is the ordinary one the module was built to expect:
+    a candidate the gate judges wrong, filed and refused, prior snapshot left
+    serving. Nothing here is an exotic failure.
+    """
+    import app.utils.calibration_publish_gate as gate
+    from app.tasks import precompute_calibration as pc
+
+    verdict = SimpleNamespace(
+        ok=False,
+        first_publish=False,
+        version_bumped=False,
+        codes=list(codes),
+        fingerprint="fp-refused",
+        candidate={"population": 700_000},
+        published={"population": 930_149},
+        baseline_source="found",
+        baseline_probe={},
+        observation_codes=[],
+        observations=[],
+        summary=lambda: "population fell 24.7% against a 5% limit",
+    )
+    monkeypatch.setattr(gate, "evaluate_publish", lambda response, baseline: verdict)
+    monkeypatch.setattr(
+        pc, "_file_publish_gate_rejection", lambda v: {"action": "commented"}
+    )
+    return verdict
+
+
+class TestAGateRefusalStillFundsTheRebuild:
+    """CERT-821, repaired.
+
+    The reorder shipped with ONE discharge, after ``runner.complete``. A
+    publish-gate refusal raises before that line, and on a deferred beat the
+    unit loop had not run yet — so the beat that was refused banked nothing, the
+    served bank it would have replaced stayed exactly as it was, and the next
+    beat rebuilt the same candidate and earned the same refusal. Refuse ->
+    rebuild nothing -> same bank -> refuse, with readers pinned to the old curve
+    for as long as the cause held.
+
+    What must be true now, and each of these is an arm below: the rebuild runs
+    on the refusal path, the refusal is still the terminal, nothing is
+    published, a non-deferring beat still costs nothing, and — the one that
+    proves the fixed point is actually broken — the NEXT beat judges a bank this
+    one advanced.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_refused_beat_runs_the_rebuild_and_still_raises(
+        self, orchestrator, monkeypatch
+    ):
+        pc, _sessions = orchestrator
+        _refuse_the_gate(monkeypatch)
+        recorder = _Recorder()
+        monkeypatch.setattr(pc, "_run_staged_futures", recorder)
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+        runner.begin = lambda phase: None
+        runner.complete = lambda phase, committed=True: 0
+
+        with pytest.raises(RuntimeError, match="publish gate rejected"):
+            await pc._run_calibration_main_build(runner)
+
+        assert [c["rebuild_only"] for c in recorder.calls] == [True], (
+            "the gate refused and the deferred rebuild never ran — the beat is "
+            "back in the CERT-821 fixed point"
+        )
+        assert recorder.calls[0]["gate"] == "refuse"
+        assert runner.outcome["deferred_rebuild"]["status"] == "ran"
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_publishes_nothing_and_keeps_the_prior_snapshot(
+        self, orchestrator, monkeypatch
+    ):
+        """The repair must not buy the rebuild with the thing refusal protects."""
+        import app.services.durable_snapshots as ds
+
+        pc, _sessions = orchestrator
+        _refuse_the_gate(monkeypatch)
+        monkeypatch.setattr(pc, "_run_staged_futures", _Recorder())
+
+        writes = {"durable": 0, "redis": 0}
+
+        async def counting_durable(envelope):
+            writes["durable"] += 1
+            return {"status": "ok"}
+
+        monkeypatch.setattr(ds, "publish_snapshot_standalone", counting_durable)
+        monkeypatch.setattr(
+            pc,
+            "_publish_calibration_main",
+            lambda rc, j: writes.__setitem__("redis", writes["redis"] + 1) or {},
+        )
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+        runner.begin = lambda phase: None
+        runner.complete = lambda phase, committed=True: 0
+
+        with pytest.raises(RuntimeError):
+            await pc._run_calibration_main_build(runner)
+
+        assert writes == {"durable": 0, "redis": 0}
+        assert runner.outcome["published"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_refused_beat_that_never_deferred_opens_no_second_session(
+        self, orchestrator, monkeypatch
+    ):
+        """The control, and it is GREEN on both arms by construction — it says
+        what must not change, so a version of this file that only ever went red
+        on the unrepaired code would not contain it.
+
+        Refusal is common; the rebuild is not free (a session, an engine setup
+        and a roster read of ~33 s). Only a beat that DEFERRED is owed one, and
+        this is what fails if the repair discharges blindly.
+        """
+        pc, sessions = orchestrator
+        _refuse_the_gate(monkeypatch)
+        recorder = _Recorder()
+        monkeypatch.setattr(pc, "_run_staged_futures", recorder)
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.begin = lambda phase: None
+        runner.complete = lambda phase, committed=True: 0
+
+        with pytest.raises(RuntimeError, match="publish gate rejected"):
+            await pc._run_calibration_main_build(runner)
+
+        assert recorder.calls == []
+        assert sessions["opened"] == 1
+        assert runner.outcome.get("deferred_rebuild") in (
+            None,  # the unrepaired shape: nothing was asked
+            {"status": "not_deferred"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_refused_beat_advances_the_bank_the_next_beat_judges(
+        self, wiring, orchestrator, monkeypatch
+    ):
+        """THE sequence, end to end, with nothing about the loop stubbed:
+
+        complete served bank + partial building bank -> the gate refuses ->
+        the rebuild-only pass advances the staged cursor -> the refusal still
+        propagates -> the NEXT beat publishes a census only the refused beat
+        could have produced.
+
+        The last line is the one that needs an instrument, because the unit KEYS
+        do not move — the plan is the same plan. What moves is the census
+        inside the bank, so the refused beat's units are read at a population
+        size no earlier beat ever saw (``unit_n``), and the next beat is asked
+        what it is about to publish. Before the repair it published the old
+        number, every hour, forever.
+        """
+        import app.tasks.base as base
+
+        pc, store = wiring
+        _refuse_the_gate(monkeypatch)
+
+        roster = _roster(4)
+        await _serving_state(pc, roster)
+        assert store["cursor"]["served_units"], (
+            "the harness never reached a complete served bank"
+        )
+        assert not store["cursor"]["committed_units"], (
+            "the building bank is not empty — this is not the deferring shape "
+            "CERT-821 is about"
+        )
+
+        # What the fixed point would keep serving: the bank as it stands now.
+        stale, stale_runner, _db = await _publish_pass(
+            pc, roster=roster, window_ms=10_000_000
+        )
+        assert stale_runner.rebuild_deferred is True
+        stale_n = _total_n(stale)
+
+        db = _FakeDB(roster, unit_n=7)
+
+        class _Ctx:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(base, "get_task_session", lambda: _Ctx())
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+        runner.begin = lambda phase: None
+        runner.complete = lambda phase, committed=True: 0
+
+        with pytest.raises(RuntimeError, match="publish gate rejected"):
+            await pc._run_calibration_main_build(runner)
+
+        assert db.unit_reads > 0, "the refused beat banked no units"
+
+        merged, _next_runner, _db = await _publish_pass(
+            pc, roster=roster, window_ms=10_000_000
+        )
+        assert merged is not None, "the next beat had nothing complete to publish"
+        assert _total_n(merged) != stale_n, (
+            "the next beat published the same census the gate just refused — "
+            "the CERT-821 fixed point survived the repair"
+        )
+        assert _total_n(merged) == stale_n // 3 * 7, (
+            "the next beat's census is not the one the refused beat's rebuild "
+            "banked"
+        )
+
+
+class TestASoftKilledRebuildIsAnInterruption:
+    """CERT-821's named follow-up, ``CAL-P994-SOFT-TIME-LIMIT-CLASSIFICATION``.
+
+    ``staged:rebuild_error`` and ``staged:rebuild_interrupted`` answer different
+    operator questions — "is the unit loop broken?" and "is the deploy cadence
+    eating the rebuild?". Celery's ``SoftTimeLimitExceeded`` is a plain
+    ``Exception``, so every soft kill was answering the first one, which is the
+    one this queue's evidence is about.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_soft_time_limit_is_interrupted_not_error(self, monkeypatch):
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        from app.tasks import precompute_calibration as pc
+
+        await _install_rebuild_session(monkeypatch, raises=SoftTimeLimitExceeded())
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+
+        result = await pc._run_deferred_rebuild(runner)
+
+        assert result["status"] == "interrupted"
+        assert runner.ledger.gauges.get("staged:rebuild_interrupted") == 1
+        assert "staged:rebuild_error" not in runner.ledger.gauges
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_failure_is_still_an_error(self, monkeypatch):
+        """The other arm: widening the predicate must not swallow real breakage
+        into the deploy-cadence bucket."""
+        from app.tasks import precompute_calibration as pc
+
+        await _install_rebuild_session(monkeypatch, raises=ValueError("bad row"))
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+
+        result = await pc._run_deferred_rebuild(runner)
+
+        assert result["status"] == "error"
+        assert runner.ledger.gauges.get("staged:rebuild_error") == 1
+        assert "staged:rebuild_interrupted" not in runner.ledger.gauges
+
+    @pytest.mark.asyncio
+    async def test_a_shutdown_is_not_the_rebuilds_to_swallow(self, monkeypatch):
+        """``KeyboardInterrupt``/``SystemExit`` are not the runtime reclaiming a
+        worker mid-task; nothing about a census is worth holding a shutdown."""
+        from app.tasks import precompute_calibration as pc
+
+        await _install_rebuild_session(monkeypatch, raises=KeyboardInterrupt())
+
+        runner = _FakeRunner(window_ms=10_000_000)
+        runner.defer_rebuild()
+
+        with pytest.raises(KeyboardInterrupt):
+            await pc._run_deferred_rebuild(runner)
+
+
+# =============================================================================
 # The bank must survive this queue
 # =============================================================================
 

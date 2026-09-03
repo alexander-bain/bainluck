@@ -334,6 +334,39 @@ def cancel_cause(exc: BaseException) -> Optional[str]:
     return None
 
 
+def is_runtime_interruption(exc: BaseException) -> bool:
+    """The RUNTIME took the worker away — as opposed to the work being wrong.
+
+    CAL-P994, repairing CERT-821's named follow-up
+    (``CAL-P994-SOFT-TIME-LIMIT-CLASSIFICATION``). The post-publish rebuild
+    swallows its own death and records it under one of two names, and the
+    difference between them is the difference between two operator questions:
+    ``staged:rebuild_interrupted`` asks about the DEPLOY CADENCE, while
+    ``staged:rebuild_error`` asks whether the unit loop is broken. Celery's
+    ``SoftTimeLimitExceeded`` is a plain ``Exception``, so a soft kill — the
+    ordinary way a beat ends when it runs past its limit — was landing in the
+    second bucket and inflating exactly the number that would say the rebuild
+    itself is defective. That is gotcha #53's shape again: one name standing for
+    two states, in the evidence this queue promised.
+
+    **Deliberately NOT wired into** :func:`cancel_cause` **or**
+    :meth:`PhaseRunner.classify_failure`. Those two decide the BEAT's terminal,
+    where a soft kill is currently ``failed``; moving it to ``cancelled`` would
+    re-shape every freeze-score reading taken since ruling 009 and is a measured
+    question, not a repair. This predicate is scoped to the rebuild's own
+    gauges, and this paragraph is why the two classifications differ.
+    """
+    import asyncio
+
+    if isinstance(exc, asyncio.CancelledError):
+        return True
+    try:
+        from celery.exceptions import SoftTimeLimitExceeded
+    except Exception:  # noqa: BLE001 — no Celery in a bare import context
+        return False
+    return isinstance(exc, SoftTimeLimitExceeded)
+
+
 def describe_failure(exc: BaseException) -> str:
     """``str(exc)``, or the class name when the exception has no message.
 
