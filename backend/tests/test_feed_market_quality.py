@@ -1305,6 +1305,14 @@ class TestFabricatedMidpointWiring:
         # copies are now one shared `_futures_feed_load_options()`, so the count is
         # ONE, and `== 1` still fails the moment anyone inlines a copy again.
         #
+        # LAT-P174 then moved that one list's COLUMNS out of `feed.py` and into
+        # `futures_market_snapshot.OUTCOME_COLUMNS`, where they are both the
+        # query's load_only and the wire format of the shared hydration artifact.
+        # The count therefore spans BOTH homes: counting only `feed.py` would now
+        # read ZERO and pass by absence — a guard going vacuous is the failure
+        # mode this guard exists to prevent — while counting both keeps `== 1`
+        # meaning what CERT-622 made it mean, one projection and no inlined copy.
+        #
         # That both paths still USE the shared list is proved separately, per
         # scorer, in tests/test_feed_market_type_load_only_1698.py. The columns
         # actually READ are derived by AST in
@@ -1313,15 +1321,25 @@ class TestFabricatedMidpointWiring:
         import inspect
 
         from app.routes import feed as feed_module
+        from app.utils import futures_market_snapshot as fms
 
         src = inspect.getsource(feed_module)
-        assert src.count("FuturesOutcome.current_probability") == 1, (
+
+        def _sites(column: str) -> int:
+            """How many homes carry this outcome column — `feed.py` AND the tuple."""
+            name = column.split(".", 1)[1]
+            return src.count(column) + (1 if name in fms.OUTCOME_COLUMNS else 0)
+
+        assert _sites("FuturesOutcome.current_probability") == 1, (
             "expected exactly ONE outcome load_only list — the shared "
-            "`_futures_feed_load_options()`. More than one means a query site has "
-            "inlined its own copy again, which is the CERT-622 defect returning."
+            "`_futures_feed_load_options()`, whose columns live in "
+            "`futures_market_snapshot.OUTCOME_COLUMNS`. More than one means a query "
+            "site has inlined its own copy again, which is the CERT-622 defect "
+            "returning; ZERO means the column left both homes and the book is "
+            "unprojected, which is the L2-172 crash."
         )
-        assert src.count("FuturesOutcome.current_yes_bid") == 1
-        assert src.count("FuturesOutcome.current_yes_ask") == 1
+        assert _sites("FuturesOutcome.current_yes_bid") == 1
+        assert _sites("FuturesOutcome.current_yes_ask") == 1
 
 
 class TestFeedQualityDebug:

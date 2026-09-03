@@ -17,6 +17,7 @@ from app.utils.espn_candidate_selection import (
 from app.utils.espn_id_stamp import (
     REFUSED as _ESPN_STAMP_REFUSED,
     STAMPED as _ESPN_STAMP_STAMPED,
+    espn_id_holder,
     stamp_espn_id_if_unheld,
 )
 from app.utils.game_pairing import (
@@ -544,9 +545,33 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
         getattr(event, "commence_time", None),
         corroboration=("provider-anchor" if match_method == "espn_id" else None),
     )
-    if ee.espn_id and ee.espn_id not in claimed_espn_ids and _id_authorized:
-        _update_vals["espn_id"] = ee.espn_id
-        claimed_espn_ids.add(ee.espn_id)
+    # #2693 CERT-784: THE HOLDER CHECK, which the authorization above does not
+    # perform. `authorize_espn_pair` answers "is this row and this ESPN event
+    # the same game"; it says nothing about whether a DIFFERENT row is already
+    # wearing the id. Both questions have to be answered before a stamp, or the
+    # step-2 repair is undone by the next live sync.
+    #
+    # Core `update()` here rather than `stamp_espn_id_if_unheld`, because this
+    # writer builds a payload for a single Core UPDATE (gotcha #4) instead of
+    # assigning to the ORM object. The check is the helper's `espn_id_holder`,
+    # imported rather than re-implemented.
+    # Written ONCE and held in a name: the same three-term predicate spelled out
+    # twice is a guard that half-survives the next edit.
+    _wants_stamp = bool(ee.espn_id) and ee.espn_id not in claimed_espn_ids
+    if _wants_stamp and _id_authorized:
+        _held_by = await espn_id_holder(
+            session, ee.espn_id, exclude_event_id=getattr(event, "id", None)
+        )
+        if _held_by is None:
+            _update_vals["espn_id"] = ee.espn_id
+            claimed_espn_ids.add(ee.espn_id)
+        else:
+            logger.warning(
+                "ESPN id stamp REFUSED at write for event %s -> %s: event %s "
+                "already holds it (#2017/#2693). The row keeps its NULL rather "
+                "than a contradicted id.",
+                getattr(event, "id", "?"), ee.espn_id, _held_by,
+            )
     elif ee.espn_id and not _id_authorized:
         logger.warning(
             "ESPN id stamp REFUSED at write for event %s -> %s: %s",
@@ -1305,8 +1330,19 @@ async def backfill_missing_scores(session, stats):
                             ev.away_score = ee.away_score
                             if ee.status_detail:
                                 ev.period = ee.status_detail
-                            if ee.espn_id and not ev.espn_id:
-                                ev.espn_id = ee.espn_id
+                            # #2693 CERT-784: `not ev.espn_id` asks whether THIS
+                            # row has one and never whether another row already
+                            # holds it — the exact question #2017 exists to add.
+                            # This rail selects rows missing a score, which is
+                            # the same population the step-2 repair leaves with
+                            # a cleared id, so a raw stamp here hands a
+                            # contested id straight back.
+                            _verdict, _holder = await stamp_espn_id_if_unheld(
+                                session, ev, ee.espn_id,
+                                context="espn backfill_missing_scores",
+                            )
+                            if _verdict == _ESPN_STAMP_REFUSED:
+                                stats["espn_id_held"] = stats.get("espn_id_held", 0) + 1
                             # Upsert teams for colors/logos
                             home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id, backfill_team_cache, stats)
                             away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id, backfill_team_cache, stats)

@@ -141,6 +141,16 @@ def _espn_names_match(names, espn_team) -> bool:
     return any(str(n).lower() == display.lower() for n in names)
 
 
+class _NoRows:
+    """A result that says "no row holds this id"."""
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
 class _CapturingSession:
     """Records every Core statement so the compiled params can be inspected."""
 
@@ -150,7 +160,12 @@ class _CapturingSession:
 
     async def execute(self, stmt):
         self.statements.append(stmt)
-        return None
+        # #2693: the writer now asks `espn_id_holder` whether ANOTHER row wears
+        # this id before it stamps. These specimens hold one event each, so the
+        # honest answer is "nobody" — an empty result rather than a None the
+        # helper would crash on. Returning it for every statement is safe: no
+        # caller here reads an UPDATE's result.
+        return _NoRows()
 
     def add(self, obj):
         self.added.append(obj)

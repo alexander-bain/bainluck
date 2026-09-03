@@ -73,6 +73,11 @@ DRAW_SLUGS: dict[str, str] = {
     "mixed-doubles": "mixed-doubles",
 }
 
+#: The two draws whose competitions name individual athletes.  A doubles
+#: competition names a TEAM and no athlete in some payloads, which yields a
+#: half-pair or none — silence, never a fixture to anchor on.
+SINGLES_SLUGS = ("mens-singles", "womens-singles")
+
 #: Only a FINAL competition yields a result.  An in-progress match has line
 #: scores too, and printing them as a result would be the settled-means-settled
 #: rule broken in the one direction that matters.
@@ -419,6 +424,17 @@ SLATE_STATE_BY_ESPN_STATE: dict[str, str] = {
 #: rather than a membership check that would silently widen.
 DECIDED_SLATE_STATE = "decided"
 
+#: The two other ``SLATE_STATE_BY_ESPN_STATE`` values, named for the same reason
+#: ``DECIDED_SLATE_STATE`` is: :func:`play_refutes_upcoming` turns one into the
+#: other, and a literal on both sides of that rule is a literal that can drift.
+UPCOMING_SLATE_STATE = "upcoming"
+IN_PROGRESS_SLATE_STATE = "in_progress"
+
+#: ESPN's own words for ``status.period`` in tennis — the set being played.
+#: Indexed from 1; a period outside this range yields no label rather than a
+#: guess (see :func:`current_set_label`).
+SET_ORDINALS = ("1st", "2nd", "3rd", "4th", "5th")
+
 #: ESPN's ``status.type.shortDetail`` for a fixture it has not given a time yet.
 #:
 #: This is the marker that keeps a placeholder from being printed as a start.
@@ -435,6 +451,106 @@ DECIDED_SLATE_STATE = "decided"
 #: in the sense that displaying it would be a bug; it is dropped, and the flag
 #: is carried instead.
 TBD_SHORT_DETAIL = "TBD"
+
+
+def sets_with_play(competition: dict[str, Any]) -> int:
+    """How many sets has ESPN put a game on the board for in this competition?
+
+    The number of the LAST set holding a positive game count for either player,
+    which for a match in progress is the set being played and for a finished one
+    is the set it ended in.  ``0`` means the scoreboard shows no games at all —
+    either the match has not started or ESPN has not published a line for it,
+    and those two are the same silence to a reader.
+
+    Deliberately "positive", not "present".  A set at 0-0 is a line ESPN writes
+    the instant the previous one ends, so counting presence would call the
+    changeover a set; and a competition that has genuinely not begun carries no
+    ``linescores`` array at all (measured below), so nothing is lost by asking
+    for a game rather than for a slot.
+    """
+    played = 0
+    for competitor in competition.get("competitors") or []:
+        for index, line in enumerate(competitor.get("linescores") or [], start=1):
+            try:
+                games = float((line or {}).get("value"))
+            except (TypeError, ValueError):
+                continue
+            if games > 0:
+                played = max(played, index)
+    return played
+
+
+def play_refutes_upcoming(slate_state: Optional[str], competition: dict[str, Any]) -> bool:
+    """Does a competition's own scoreboard refute the state ESPN gave it?
+
+    ═══ THE BUG THIS CLOSES (lane1/054) ═══
+
+    ESPN flips ``status.type.state`` to ``in`` on a cadence of its own, and for
+    tennis that cadence can lag the match by SETS, not seconds.  Measured on the
+    live US Open scoreboards at 2026-09-02T18:50Z, deduped across both tours:
+
+        state  has games on the board   period      n
+        pre            no                 1       238   <- genuinely upcoming
+        pre            YES               1..4       5   <- being played RIGHT NOW
+        in             YES               1..4      10
+        post           YES               1..5     371
+        post            no                 1         2   <- walkovers
+
+    All five of the contradicted rows were matches in progress.  Carlos Taberner
+    v Zizou Bergs was 6-3, 3-6, 6-2 and into a fourth set while ESPN still called
+    it ``STATUS_SCHEDULED`` for "Wed, September 2nd at 3:30 PM EDT" — so the hub
+    printed **"12:30 PM"** over a match two hours old and three sets deep.  That
+    is #2550's defect ("a stale start time is worse than no time") arriving
+    through the source instead of through the renderer, and the renderer's guard
+    cannot see it: ``liveMatchLabel`` only runs on a row already called live.
+
+    ═══ WHY THE LINESCORE AND NOT THE CLOCK ═══
+
+    The tempting rule is "scheduled, but the start time has passed" — and it is
+    exactly the elapsed-time reasoning this module refuses everywhere else.  A
+    tennis start slips by hours behind a five-setter on the same court, and a
+    match on at 3:30 that is called at 3:31 is not late, it is normal.  Elapsed
+    time would flip all 238 clean rows the moment their session began.
+
+    A game on the board is not an inference about time.  It is the authority
+    reporting play, in the same payload and from the same read as the state that
+    contradicts it, which makes this the source disagreeing with ITSELF rather
+    than us overruling it — and when a source contradicts itself, the field it
+    keeps writing wins over the field it forgot to update.  The 238-row control
+    is what makes that safe to say: not one competition without games claims to
+    be in progress, so the rule cannot reach a fixture that has not started.
+
+    Narrow on purpose.  Only ``upcoming`` is refutable.  ``decided`` is left
+    alone — a finished match has games on the board too, and "post plus a
+    linescore" is the ordinary shape of all 371 of them, not a contradiction.
+    """
+    return slate_state == UPCOMING_SLATE_STATE and sets_with_play(competition) > 0
+
+
+def current_set_label(period: Any) -> Optional[str]:
+    """ESPN's ``status.period`` as the words it uses itself — "4th Set".
+
+    Needed only on a refuted row.  Such a row's ``status.type.detail`` is still
+    the scheduled sentence ("Wed, September 2nd at 3:30 PM EDT"), and publishing
+    that beside ``in_progress`` would put a date inside a live pill — the exact
+    thing ``liveMatchLabel`` refuses on the client.  Refusing is the client's
+    safe floor, not the answer; this is the answer.
+
+    ``period`` is trustworthy for this and was checked rather than assumed: over
+    every in-progress competition on the two live scoreboards it equalled the
+    number of published set lines exactly, 10 for 10, 0 mismatches.
+
+    A period we have no ordinal for returns ``None`` — the caller then falls back
+    to ESPN's own detail and the client to its "LIVE" label.  A fifth-set label
+    invented for a sixth-set period would be worse than the word LIVE.
+    """
+    try:
+        index = int(period)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= index <= len(SET_ORDINALS):
+        return f"{SET_ORDINALS[index - 1]} Set"
+    return None
 
 
 def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dict[str, Any]:
@@ -501,6 +617,14 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
         "in_progress": 0,
         "upcoming": 0,
         "decided": 0,
+        # lane1/054: how many of the `in_progress` above ESPN itself still
+        # called `pre`. THE NEEDLE for this class — a match is only counted
+        # here because the scoreboard contradicted itself, so a number that
+        # climbs is ESPN's state field lagging further, and a number that
+        # returns to zero means the source caught up rather than that the
+        # rule stopped working. Counted separately from `in_progress` so the
+        # census of what the map speaks for stays a census.
+        "upcoming_refuted_by_play": 0,
         # CERT-526: a competition whose ESPN state we have no word for is left
         # OUT of the map (see `SLATE_STATE_BY_ESPN_STATE`) — which is the right
         # call, but it means the map is silently short. Counted here so
@@ -596,6 +720,21 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                     # and inventing a word for it would be the same mistake in
                     # the other direction. It falls to the caller's fallback.
                     slate_state = SLATE_STATE_BY_ESPN_STATE.get(espn_state)
+
+                    # THE SOURCE DISAGREEING WITH ITSELF (lane1/054). An
+                    # `upcoming` competition with games on its own board is a
+                    # match being played, and the state is the field ESPN forgot
+                    # to update. `set_label` carries the set out of `period`
+                    # because the `detail` beside it is still the schedule
+                    # sentence — see `play_refutes_upcoming`.
+                    set_label: Optional[str] = None
+                    if play_refutes_upcoming(slate_state, competition):
+                        slate_state = IN_PROGRESS_SLATE_STATE
+                        set_label = current_set_label(
+                            (competition.get("status") or {}).get("period")
+                        )
+                        stats["upcoming_refuted_by_play"] += 1
+
                     if slate_state is not None:
                         tbd = (
                             str(status.get("shortDetail") or "") == TBD_SHORT_DETAIL
@@ -612,8 +751,14 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             "start_is_tbd": tbd,
                             # Dropped when it is the unsubstituted template
                             # rather than text about this match. See
-                            # `TBD_SHORT_DETAIL`.
-                            "status_detail": None if tbd else status.get("detail"),
+                            # `TBD_SHORT_DETAIL`. On a refuted row the derived
+                            # set wins outright: `detail` there is the schedule
+                            # sentence for a match already in its fourth set.
+                            "status_detail": (
+                                set_label
+                                if set_label is not None
+                                else (None if tbd else status.get("detail"))
+                            ),
                             "espn_round": (
                                 (competition.get("round") or {}).get("displayName")
                             ),
@@ -791,3 +936,111 @@ def fetch_scoreboards(dates: Optional[str] = None) -> tuple[list[dict[str, Any]]
         except Exception as exc:  # noqa: BLE001 — reported, never silent
             errors.append(f"{tour}: {exc}")
     return payloads, errors
+
+
+def scoreboard_competitions(
+    payloads: Iterable[dict[str, Any]],
+    *,
+    slugs: Iterable[str] = SINGLES_SLUGS,
+) -> list[dict[str, Any]]:
+    """EVERY competition on the board, deduped by id — the anchor's whole view.
+
+    ``parse_results`` answers "what is the state of the tournament I already
+    named" and is scoped two ways to do it: an ``event_name`` substring, and the
+    five ``DRAW_SLUGS``.  The ANCHOR asks the other question — "which ESPN
+    competition IS this event of ours" — and both scopings are wrong for it:
+
+    * The tournament name is what we are trying to establish.  Our ``events``
+      rows carry a sport key (``tennis_atp_us_open``) and player names, not
+      ESPN's event string, so filtering on a name we would have to guess is how
+      a whole tournament silently anchors nothing.
+    * A ``post`` competition gets no ``order_of_play`` entry, deliberately —
+      and the finished matches are most of what needs anchoring, because the
+      contradictions this rail exists to kill are rows we call ``live`` that
+      ESPN finished hours ago.
+
+    So this is a flat, unfiltered read: one dict per competition, carrying the
+    tournament it belongs to rather than being selected by it.  ``slugs``
+    defaults to the two singles draws — see :data:`SINGLES_SLUGS`.
+
+    ``state`` is the slate word, with lane1/054's :func:`play_refutes_upcoming`
+    already applied, so an anchor consumer and the hub card cannot disagree
+    about whether a match is being played.  A competition whose ESPN state we
+    have no word for is carried with ``state=None`` rather than dropped: the
+    anchor still wants to LINK it (identity does not depend on state), and the
+    authority write must be able to tell "ESPN says nothing I understand" from
+    "ESPN did not mention this match" — gotcha #53, the same distinction
+    ``order_of_play_complete`` is held to.
+
+    Both tours return the same competition ids for a shared event, so the second
+    tour is a duplicate pass; the first read of an id wins.
+    """
+    wanted = set(slugs)
+    seen: set[str] = set()
+    competitions: list[dict[str, Any]] = []
+
+    for payload in payloads:
+        for event in (payload or {}).get("events") or []:
+            event_name = str(event.get("name") or "")
+            for grouping in event.get("groupings") or []:
+                slug = ((grouping.get("grouping") or {}).get("slug")) or ""
+                if slug not in wanted:
+                    continue
+                for competition in grouping.get("competitions") or []:
+                    comp_id = str(competition.get("id") or "")
+                    if not comp_id or comp_id in seen:
+                        continue
+                    seen.add(comp_id)
+
+                    status = ((competition.get("status") or {}).get("type") or {})
+                    state = SLATE_STATE_BY_ESPN_STATE.get(str(status.get("state") or ""))
+                    if play_refutes_upcoming(state, competition):
+                        state = IN_PROGRESS_SLATE_STATE
+
+                    names = [
+                        name
+                        for name in (
+                            ((c.get("athlete") or {}).get("displayName") or "")
+                            for c in (competition.get("competitors") or [])
+                        )
+                        if name
+                    ]
+
+                    competitions.append({
+                        "espn_competition_id": comp_id,
+                        "event_name": event_name,
+                        "draw": DRAW_SLUGS.get(slug, slug),
+                        "state": state,
+                        # ESPN's own clock for this competition. For a `post`
+                        # row this is when it was PLAYED, which is the closest
+                        # thing the scoreboard has to an end time; for a `pre`
+                        # row it is the scheduled start, real or the midnight-ET
+                        # placeholder (`start_is_tbd` says which).
+                        "date": competition.get("date"),
+                        "start_is_tbd": (
+                            str(status.get("shortDetail") or "") == TBD_SHORT_DETAIL
+                        ),
+                        "players": names,
+                        "pair_key": pair_key(names) if len(names) == 2 else None,
+                        "sets_with_play": sets_with_play(competition),
+                    })
+
+    return competitions
+
+
+#: :data:`PLACEHOLDER_NAMES` through the same fold the join key uses, so the
+#: test is against what the comparison actually sees.
+_PLACEHOLDER_KEYS = frozenset(normalize_name(name) for name in PLACEHOLDER_NAMES)
+
+
+def is_placeholder_pairing(names: Iterable[str]) -> bool:
+    """Does this competition name a slot rather than two people?
+
+    ``TBD``/``Bye``/``Qualifier``/``Lucky Loser`` are the draw's unfilled
+    positions, and 56 of the US Open's 478 singles competitions carried
+    ``TBD vs TBD`` on 2026-09-02.  They collide with each other under
+    :func:`pair_key` — the ONLY key collision on the board — so an anchor that
+    did not refuse them would have 56 events fighting over one slot.
+    """
+    return any(normalize_name(name) in _PLACEHOLDER_KEYS for name in names)
+

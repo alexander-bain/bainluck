@@ -16,6 +16,7 @@ import {
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
+import { sportVocab } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -60,6 +61,14 @@ interface ScoreDifferentialChartProps {
   /** External time range from parent — syncs both charts' All/Since Start toggle */
   externalTimeRange?: "all" | "live";
   onTimeRangeChange?: (range: "all" | "live") => void;
+  /**
+   * The event's sport key (ux/1034 B5). Decides whether `home_score` counts the
+   * thing the projection is quoted in — see `hasActualScoreData`. Omitted, the
+   * chart behaves exactly as it always has (`sportVocab` answers `true` for a
+   * sport it has not been told about; the field's own note says why that
+   * default runs the opposite way from `hasDerivedSpread`'s).
+   */
+  sportKey?: string;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
     implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
@@ -112,6 +121,7 @@ export default function ScoreDifferentialChart({
   sharedTicks,
   externalTimeRange,
   onTimeRangeChange,
+  sportKey,
   pmSpreadData,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -219,9 +229,49 @@ export default function ScoreDifferentialChart({
     );
   }, [history]);
 
-  const hasActualScoreData = filteredScoreHistory.length > 0 || filteredEspnHistory.some(
-    (p) => p.home_score != null && p.away_score != null
-  );
+  /**
+   * ═══ ux/1034 B5: THE FLAT LINE WAS A UNIT ERROR ═══
+   *
+   * Alex, on `/events/15293830` (Marozsan–Zheng): *"Score Differential is in
+   * GAMES (the green projection is the books' game spread); the bug is 'Actual
+   * Score Diff' is fed the SET score so it sits flat."*
+   *
+   * Exactly right. `score_history` for that match is four points — `0-0`,
+   * `0-1`, `0-2`, `0-3` — and those are SETS, while `projected_home_score`
+   * 15.1 / `projected_away_score` 19.7 are GAMES. The orange line was a
+   * three-unit step function drawn under a ±5 game axis, and next to a
+   * fluid win-probability chart it reads as a broken widget rather than as
+   * the category error it is.
+   *
+   * **The fix Alex asked for needs data we do not hold.** "Actual = cumulative
+   * games differential from ESPN's linescore" is the right answer and the
+   * linescore is not in any payload this page fetches: `/api/events/{id}`
+   * carries `home_score`/`away_score` as sets and nothing per-set, and
+   * `espn_history` is EMPTY for tennis (0 of 798 snapshots on this event).
+   * Capturing it is a backend change and is on the bus.
+   *
+   * What ships here is the half that does not need it: the widget keeps its
+   * projection, and STOPS DRAWING A LINE IN THE WRONG UNIT. A number in the
+   * wrong unit is worse than an absent one — it looks sourced.
+   *
+   * `sportVocab` decides, not a `startsWith("tennis")` here: the same question
+   * is asked by the two market maps on this page, and two answers to it is how
+   * one of them comes to disagree with the other.
+   */
+  const scoreboardCountsTheUnit = sportVocab(sportKey).scoreboardCountsTheUnit;
+
+  const hasActualScoreData =
+    scoreboardCountsTheUnit &&
+    (filteredScoreHistory.length > 0 ||
+      filteredEspnHistory.some((p) => p.home_score != null && p.away_score != null));
+
+  /** The sentence the chart owes a reader whose actual line is missing. */
+  const unitMismatchNote = (() => {
+    if (scoreboardCountsTheUnit) return null;
+    const vocab = sportVocab(sportKey);
+    if (!vocab.scoreboardUnit) return null;
+    return `Played ${vocab.unit} are not captured yet — the scoreboard reports ${vocab.scoreboardUnit}. The line below is the books' projected ${vocab.unitSingular} margin.`;
+  })();
 
   // Build chart data by merging projected and actual score data on timeline.
   // Bucket by minute so each "h:mm a" label is unique — required for
@@ -545,7 +595,19 @@ export default function ScoreDifferentialChart({
   };
 
   return (
-    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
+    <div
+      className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}
+      /* ux/1034 B5: WHICH SERIES THIS CHART WILL DRAW, on the wrapper.
+         recharts renders nothing inside `ResponsiveContainer` without a
+         viewport, so a server render — which is all a guard or the capture rig
+         can see — cannot observe a `<Line>` or a legend entry. Without this the
+         suppression would be untestable except through the sentence beside it,
+         and a sentence is not the claim: the claim is that no set count is
+         plotted on a games axis. It is also true in a browser, which is where
+         somebody debugging this will look first. */
+      data-actual-series={hasActualScoreData ? "true" : "false"}
+      data-projected-series={hasProjectedScoreData ? "true" : "false"}
+    >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => (
@@ -570,6 +632,20 @@ export default function ScoreDifferentialChart({
           </button>
         ))}
       </div>
+
+      {/* ux/1034 B5: WHY THERE IS NO ACTUAL LINE. A widget that quietly drops
+          half of itself reads as a widget that failed to load, and the reader
+          has no way to tell that from "we are refusing to draw a set count on a
+          games axis". Suppressed in `fillContainer` (the fullscreen modal),
+          which has no room for a sentence and no chrome to hang it on. */}
+      {unitMismatchNote && !fillContainer && (
+        <p
+          className="shrink-0 text-[11.5px] leading-snug text-text-muted"
+          data-testid="score-diff-unit-note"
+        >
+          {unitMismatchNote}
+        </p>
+      )}
 
       {/* Chart with vertical team labels */}
       <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-48"}`}>

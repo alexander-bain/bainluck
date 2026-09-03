@@ -25,6 +25,7 @@ import {
   sportPagePath,
 } from "@/lib/eventKey";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -1249,7 +1250,13 @@ function OutcomeRow({
         </div>
         {isResolved && outcome.is_winner !== null ? (
           <span className="text-xs text-text-muted">-</span>
-        ) : change !== null && change !== 0 ? (
+        ) : change !== null && isRenderedMove(change) ? (
+          // UX-P275: the gate asks whether a move PRINTS, not whether the wire
+          // fraction is nonzero. Those disagreed on everything that rounds to
+          // zero, so 16 of 22 rows here carried a coloured `±0.0%` pill. A move
+          // too small to print is no move: it falls to the same muted dash an
+          // exact zero already used, rather than becoming a differently-coloured
+          // claim decided by the sign of a rounding residue.
           <span
             data-testid="outcome-change"
             className={`text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -1258,8 +1265,8 @@ function OutcomeRow({
                 : "bg-red-500/15 text-red-400"
             }`}
           >
-            {change > 0 ? "+" : ""}
-            {(change * 100).toFixed(1)}%
+            {change > 0 ? "+" : "-"}
+            {formatMovementPoints(change)}%
           </span>
         ) : (
           <span className="text-xs text-text-muted">-</span>

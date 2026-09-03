@@ -4624,3 +4624,261 @@ async def game_market_counts(
     row = r7.one()
     results["mlb_7day"] = {"total_events": row[0], "kalshi_game_covered": row[1]}
     return results
+
+
+# ---------------------------------------------------------------------------
+# Matching receipts (#2705) — why a market is, or is not, attached
+# ---------------------------------------------------------------------------
+@router.get("/match-receipts")
+async def match_receipts(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    market_id: Optional[int] = Query(None, description="futures_markets.id"),
+    external_id: Optional[str] = Query(
+        None, description="Provider ticker / condition id (exact)"
+    ),
+    event_id: Optional[int] = Query(
+        None, description="Every receipt that landed on this event"
+    ),
+    reject_reason: Optional[str] = Query(
+        None, description="Filter to one reason; omit for the summary"
+    ),
+    source: Optional[str] = Query(None, description="kalshi | polymarket"),
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """Answer "why is market X unattached" in one call (#2705).
+
+    With ``market_id`` or ``external_id`` this returns the one receipt: the
+    window that was searched, every candidate considered with its verdict, and
+    the closed-enum reason. With ``event_id`` it returns every market the
+    matcher put on that event. With none of them it returns the summary — the
+    reason histogram plus the coverage numbers — which is the shape the bus
+    re-derives the INVARIANTS-2026-09-02 query (c) baseline from.
+
+    This is a RECORD, not a simulation. ``/prediction-markets/match-trace`` next
+    door re-runs the matching logic against today's data and answers "what would
+    happen if we tried now"; it holds a partial copy of the window arithmetic
+    and drifts every time the matcher changes. These rows were written by the
+    matcher itself, on the path that made the decision, at the moment it made
+    it — including for markets a scan has never reached, which the simulation
+    cannot represent at all.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.models.models import MarketMatchReceipt
+    from app.utils.match_receipts import REJECT_REASONS
+
+    def _serialize(r: MarketMatchReceipt) -> dict:
+        return {
+            "market_id": r.market_id,
+            "source": r.source,
+            "external_id": r.external_id,
+            "market_name": r.market_name,
+            "phase": r.phase,
+            "outcome": r.outcome,
+            "reject_reason": r.reject_reason,
+            "linked_event_id": r.linked_event_id,
+            "candidates": r.candidates or [],
+            "detail": r.detail or {},
+            "attempt_count": r.attempt_count,
+            "first_attempted_at": (
+                r.first_attempted_at.isoformat() if r.first_attempted_at else None
+            ),
+            "last_attempted_at": (
+                r.last_attempted_at.isoformat() if r.last_attempted_at else None
+            ),
+        }
+
+    if reject_reason and reject_reason not in REJECT_REASONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown reject_reason {reject_reason!r}; "
+                f"valid: {sorted(REJECT_REASONS)}"
+            ),
+        )
+
+    # ── Single-market lookup ────────────────────────────────────────────
+    if market_id is not None or external_id is not None:
+        stmt = select(MarketMatchReceipt)
+        if market_id is not None:
+            stmt = stmt.where(MarketMatchReceipt.market_id == market_id)
+        else:
+            stmt = stmt.where(MarketMatchReceipt.external_id == external_id)
+        row = (await db.execute(stmt.limit(1))).scalars().first()
+        if row is not None:
+            return {"receipt": _serialize(row)}
+
+        # A market with no receipt is a real, different answer from a market
+        # with a reject reason, and it is the answer the 8/28 wave would have
+        # given. Say which of the two it is instead of returning an empty 200
+        # (gotcha #53: an empty 200 is a response shape, not an absence).
+        mstmt = select(
+            FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.name,
+            FuturesMarket.source, FuturesMarket.status, FuturesMarket.event_id,
+            FuturesMarket.created_at,
+        )
+        if market_id is not None:
+            mstmt = mstmt.where(FuturesMarket.id == market_id)
+        else:
+            mstmt = mstmt.where(FuturesMarket.external_id == external_id)
+        mrow = (await db.execute(mstmt.limit(1))).first()
+        if mrow is None:
+            raise HTTPException(status_code=404, detail="market not found")
+        return {
+            "receipt": None,
+            "state": "never_attempted",
+            "explanation": (
+                "The matcher has no record of ever looking at this market. It is "
+                "either newer than the last matching cycle, or it is behind the "
+                "backlog pass's per-cycle cap (funnel.backlog_dropped)."
+            ),
+            "market": {
+                "id": mrow.id, "external_id": mrow.external_id,
+                "name": mrow.name, "source": mrow.source,
+                "status": mrow.status, "event_id": mrow.event_id,
+                "created_at": (
+                    mrow.created_at.isoformat() if mrow.created_at else None
+                ),
+            },
+        }
+
+    # ── By event: what the matcher put here, and why ────────────────────
+    if event_id is not None:
+        rows = (
+            await db.execute(
+                select(MarketMatchReceipt)
+                .where(MarketMatchReceipt.linked_event_id == event_id)
+                .order_by(MarketMatchReceipt.last_attempted_at.desc())
+                .limit(limit)
+            )
+        ).scalars().all()
+        return {
+            "event_id": event_id,
+            "count": len(rows),
+            "receipts": [_serialize(r) for r in rows],
+        }
+
+    # ── Filtered list, or the summary ───────────────────────────────────
+    if reject_reason or source:
+        stmt = select(MarketMatchReceipt)
+        if reject_reason:
+            stmt = stmt.where(MarketMatchReceipt.reject_reason == reject_reason)
+        if source:
+            stmt = stmt.where(MarketMatchReceipt.source == source)
+        rows = (
+            await db.execute(
+                stmt.order_by(MarketMatchReceipt.last_attempted_at.desc()).limit(limit)
+            )
+        ).scalars().all()
+        return {
+            "reject_reason": reject_reason,
+            "source": source,
+            "count": len(rows),
+            "receipts": [_serialize(r) for r in rows],
+        }
+
+    reason_rows = (
+        await db.execute(
+            select(
+                MarketMatchReceipt.reject_reason,
+                MarketMatchReceipt.source,
+                func.count().label("n"),
+            )
+            .where(MarketMatchReceipt.outcome == "rejected")
+            .group_by(MarketMatchReceipt.reject_reason, MarketMatchReceipt.source)
+            .order_by(func.count().desc())
+        )
+    ).all()
+
+    totals = (
+        await db.execute(
+            select(
+                func.count().label("receipts"),
+                func.count().filter(
+                    MarketMatchReceipt.outcome == "linked"
+                ).label("linked"),
+                func.min(MarketMatchReceipt.last_attempted_at).label("oldest"),
+                func.max(MarketMatchReceipt.last_attempted_at).label("newest"),
+            ).select_from(MarketMatchReceipt)
+        )
+    ).one()
+
+    # The coverage number the whole table exists for: open unlinked markets with
+    # no receipt at all. Target 0 — while it is above 0, "never attempted" is
+    # still possible and query (c) still has an unexplained tail.
+    never = await db.scalar(
+        select(func.count())
+        .select_from(FuturesMarket)
+        .where(
+            FuturesMarket.source.in_(["kalshi", "polymarket"]),
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.status == "open",
+            ~select(MarketMatchReceipt.id)
+            .where(MarketMatchReceipt.market_id == FuturesMarket.id)
+            .exists(),
+        )
+    )
+
+    return {
+        "totals": {
+            "receipts": totals.receipts,
+            "linked": totals.linked,
+            "rejected": totals.receipts - totals.linked,
+            "oldest_attempt": totals.oldest.isoformat() if totals.oldest else None,
+            "newest_attempt": totals.newest.isoformat() if totals.newest else None,
+        },
+        "coverage": {
+            "open_unlinked_without_receipt": int(never or 0),
+            "target": 0,
+            "note": (
+                "Above 0 means some open unlinked market has never been "
+                "attempted. This is the number ARTIFACT-M-20260902-O could not "
+                "measure."
+            ),
+        },
+        "by_reason": [
+            {"reject_reason": r.reject_reason, "source": r.source, "count": r.n}
+            for r in reason_rows
+        ],
+        "valid_reasons": sorted(REJECT_REASONS),
+    }
+
+
+@router.post("/matching-reconciliation/run")
+async def trigger_matching_reconciliation(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(
+        True, description="File/close GitHub issues (False = detect-only)"
+    ),
+    inline: bool = Query(
+        False, description="Run in-request and return the findings"
+    ),
+):
+    """#2706: on-demand run of the matching reconciliation job.
+
+    Re-checks the 709-pair golden set and the three INVARIANTS-2026-09-02
+    queries against production, and files ONE deduped `matching-drift` issue per
+    subject on regression — closing it again on recovery. Read-only against
+    market data.
+
+    `?inline=true&file_issues=false` is the verification form: it returns the
+    findings without touching GitHub, which is how the bus re-derives the
+    baselines without a beat run.
+    """
+    _check_admin_secret(secret, request=request)
+
+    if inline:
+        from app.tasks.matching_reconciliation import _run_matching_reconciliation
+
+        return await _run_matching_reconciliation(file_issues=file_issues)
+
+    from app.routes.admin import _safe_send_task
+
+    result = _safe_send_task(
+        "app.tasks.matching_reconciliation",
+        kwargs={"file_issues": file_issues},
+    )
+    return {"status": "enqueued", "task_id": result.id}

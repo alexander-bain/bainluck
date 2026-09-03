@@ -189,106 +189,30 @@ def espn_competition_id(matchup: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _name_tokens(name: Any) -> frozenset[str]:
-    """A display name as its set of alphanumeric tokens, accent-folded."""
-    if not isinstance(name, str):
-        return frozenset()
-    folded = unicodedata.normalize("NFD", name).lower()
-    cleaned = "".join(ch if ch.isalnum() else " " for ch in folded)
-    return frozenset(token for token in cleaned.split() if token)
+# THE NAME COMPARATORS NOW LIVE IN `player_names` (lane1/057 STEP 0).
+#
+# Same functions, same rules, same sweep behind `SUBSTANTIAL_TOKEN_CHARS` —
+# moved because the tennis ESPN anchor has to ask "are these the same person"
+# before it may stamp an `espn_id`, and a SECOND comparator over there is how
+# the slate would come to withhold a fixture the anchor had just linked.
+#
+# Bound to the private names this module has always used so every call site and
+# the existing test keep reading unchanged.
+from app.utils.player_names import (  # noqa: E402
+    SUBSTANTIAL_TOKEN_CHARS,
+    name_tokens as _name_tokens,
+    names_agree as _names_agree,
+    pairing_agrees,
+    token_covered as _token_covered,
+)
 
-
-#: Shortest token that may serve as the shared anchor between two names. Two
-#: characters is enough to exclude the initials that make the prefix rule a
-#: wildcard, and short enough to keep every real surname in the draw.
-SUBSTANTIAL_TOKEN_CHARS = 3
-
-
-def _token_covered(token: str, others: frozenset[str] | set[str]) -> bool:
-    """Is ``token`` the same name-part as something in ``others``?
-
-    Prefix either way, so an initial matches the name it abbreviates:
-    ``j`` covers ``jj``, and ``J.J. Wolf`` is ``JJ Wolf``.
-    """
-    return any(
-        token == other or token.startswith(other) or other.startswith(token)
-        for other in others
-    )
-
-
-def _names_agree(a: Any, b: Any) -> bool:
-    """Are these two display names the same person?
-
-    Token SETS, where one side's tokens must all be covered by the other's.
-    Deliberately looser than ``espn_tennis.normalize_name``, which concatenates
-    and would therefore call ``Bu Yunchaokete`` and ``Yunchaokete Bu`` two
-    different people — ESPN and the register genuinely disagree on the leading
-    token for several names, and **a false disagreement here DELETES A REAL
-    MATCH from the card**, which is a worse defect than the one this exists to
-    catch.  One-way coverage handles the other two benign cases: a middle name
-    one side drops (``Juan Manuel Cerundolo`` / ``Juan Cerundolo``) and an
-    initialism (``J.J. Wolf`` / ``JJ Wolf``).
-
-    It stays strict where it has to be.  Two players who share a surname do not
-    agree — ``Francisco Cerundolo`` and ``Juan Manuel Cerundolo`` are both in
-    this draw and neither given name covers the other.
-
-    An empty name agrees with anything: it is an absent read, not a claim.
-    """
-    tokens_a, tokens_b = _name_tokens(a), _name_tokens(b)
-    if not tokens_a or not tokens_b:
-        return True
-
-    covered = all(_token_covered(t, tokens_b) for t in tokens_a) or all(
-        _token_covered(t, tokens_a) for t in tokens_b
-    )
-    if not covered:
-        return False
-
-    # AND ONE SUBSTANTIAL TOKEN IN COMMON — the surname anchor.
-    #
-    # Coverage alone is not enough, because a ONE-LETTER TOKEN IS A WILDCARD
-    # under the prefix rule: it covers every token beginning with that letter.
-    # Swept over all 378 registered players, that made exactly one pair of
-    # genuinely different people agree — `Christopher O'Connell` and
-    # `Oleksandra Oliynykova`, where the `o` of `O'Connell` covers both
-    # `Oleksandra` and `Oliynykova`.  (The sweep's only other two hits are one
-    # person listed twice under both word orders, `Shang Juncheng` and `Wang
-    # Xiyu` — the case the tolerance exists for.)
-    #
-    # A false AGREEMENT only fails us silent, so it was the safe direction to be
-    # wrong in, but it is still a hole.  Requiring one shared token of real
-    # length closes it and costs none of the benign cases: every one of them
-    # shares a full surname.
-    return any(
-        len(token) >= SUBSTANTIAL_TOKEN_CHARS
-        and any(
-            len(other) >= SUBSTANTIAL_TOKEN_CHARS and _token_covered(token, {other})
-            for other in tokens_b
-        )
-        for token in tokens_a
-    )
-
-
-def pairing_agrees(ours: Any, theirs: Any) -> bool:
-    """Does our pairing name the same two people the authority does?
-
-    ``theirs`` is ESPN's competitor list for the competition this fixture is
-    anchored to.  Anything that is not a pair of names on EITHER side returns
-    ``True`` — silence and half-reads are facts about the read, never about the
-    match, which is the same posture ``order_of_play_complete`` is held to
-    (CERT-532/548, gotcha #53).  Only a full, unambiguous contradiction counts.
-
-    Matched without regard to side order, because ESPN's competitor order is
-    ingest order and the register's is the matchup key's.
-    """
-    if not isinstance(ours, list) or not isinstance(theirs, list):
-        return True
-    if len(ours) != 2 or len(theirs) != 2:
-        return True
-    straight = _names_agree(ours[0], theirs[0]) and _names_agree(ours[1], theirs[1])
-    crossed = _names_agree(ours[0], theirs[1]) and _names_agree(ours[1], theirs[0])
-    return straight or crossed
+__all_name_comparators__ = (
+    "SUBSTANTIAL_TOKEN_CHARS",
+    "_name_tokens",
+    "_names_agree",
+    "_token_covered",
+    "pairing_agrees",
+)
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -1444,6 +1368,20 @@ def build_results(
                 "completed_at": found.get("completed_at"),
                 "source_round": found.get("espn_round"),
                 "source": "espn",
+                # THE AUTHORITY'S OWN ID FOR THIS MATCH (#2693 step 2).
+                # Published on EVERY row, not only on the rows whose
+                # `matchup_key` happens to be `espn:…`. A register-keyed row has
+                # a competition id too — it was simply being thrown away, and
+                # with it the only channel that can link a finished match whose
+                # market never attached (28 of the 34 `MARKET_UNLINKED` rows).
+                # A field, not a prefix on another field: a reader should not
+                # have to parse an identifier out of a key to find an id we
+                # already hold.
+                "espn_competition_id": (
+                    str(found["espn_competition_id"])
+                    if found.get("espn_competition_id") is not None
+                    else None
+                ),
             })
 
     rows.sort(key=lambda r: (str(r.get("completed_at") or ""), r["matchup_key"] or ""))

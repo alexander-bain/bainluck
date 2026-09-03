@@ -1195,6 +1195,14 @@ async def _backfill_espn_ids(limit: int = 1000):
                 date_str = event.commence_time.strftime("%Y%m%d")
                 by_sport_date[(sport_key, date_str)].append(event)
 
+            # `stamp_espn_id_if_unheld`'s in-pass set (#2017). The DB check
+            # alone is nearly sufficient, and "nearly" is the word that makes a
+            # guard accidental: this pass groups by (sport, date), so the two
+            # halves of a same-day twin pair are stamped inside one uncommitted
+            # transaction and only this set sees the first one.
+            from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+            claimed_espn_ids: set = set()
+
             espn = ESPNAPIService()
             try:
                 for (sport_key, date_str), date_events in list(by_sport_date.items())[:200]:
@@ -1238,13 +1246,42 @@ async def _backfill_espn_ids(limit: int = 1000):
                             anchor_espn_id=getattr(event, "espn_id", None),
                         )
                         if matched is not None:
-                            event.espn_id = matched.espn_id
-                            stats["events_matched"] += 1
-                            logger.info(
-                                f"ESPN ID backfill: matched event {event.id} "
-                                f"({event.home_team_name} vs {event.away_team_name}) "
-                                f"→ ESPN {matched.espn_id}"
+                            # #2693 CERT-784: this used to be a raw
+                            # `event.espn_id = matched.espn_id` with no holder
+                            # check — the one authorized writer that still
+                            # bypassed the #2017 guard. It is the writer that
+                            # makes the step-2 repair non-durable: the repair
+                            # unstamps a twin, this task runs six hours later,
+                            # selects it (`espn_id IS NULL`), name-matches the
+                            # same ESPN fixture and hands the contested id
+                            # straight back. A unique index would then be
+                            # uninstallable again and the hub's Finished link
+                            # would correctly go dead a second time.
+                            verdict, holder_id = await stamp_espn_id_if_unheld(
+                                session, event, matched.espn_id,
+                                context="espn_id backfill",
+                                claimed=claimed_espn_ids,
                             )
+                            if verdict == STAMPED:
+                                stats["events_matched"] += 1
+                                logger.info(
+                                    f"ESPN ID backfill: matched event {event.id} "
+                                    f"({event.home_team_name} vs {event.away_team_name}) "
+                                    f"→ ESPN {matched.espn_id}"
+                                )
+                            else:
+                                # COUNTED. A guard whose refusals are invisible
+                                # reads exactly like a guard that never fired.
+                                stats["events_id_held"] = (
+                                    stats.get("events_id_held", 0) + 1
+                                )
+                                stats.setdefault("held_examples", [])
+                                if len(stats["held_examples"]) < 20:
+                                    stats["held_examples"].append({
+                                        "event_id": event.id,
+                                        "espn_id": matched.espn_id,
+                                        "holder_event_id": holder_id,
+                                    })
                         elif reason != "no-name-match":
                             stats["events_refused"] = stats.get("events_refused", 0) + 1
                             logger.info(
@@ -1737,3 +1774,328 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
         stats["snapshots_created"],
     )
     return stats
+
+
+#: How far either side of now a tennis event may sit and still be a candidate
+#: for today's scoreboard. The board carries a whole tournament — the US Open's
+#: 478 singles competitions run from 8/24 qualifying to the final — so the
+#: window has to cover a fortnight of draw either way, and bounding it is what
+#: keeps 30,199 historical tennis rows out of every cycle.
+TENNIS_ANCHOR_WINDOW_DAYS = 21
+
+#: Sport-key prefix for every tennis bucket: `tennis_atp`, `tennis_wta`,
+#: `tennis_other`, and the per-tournament keys below them.
+TENNIS_SPORT_KEY_PREFIX = "tennis"
+
+
+async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) -> dict:
+    """Anchor tennis events to ESPN competitions, then let ESPN write their state.
+
+    ═══ THE GAP THIS CLOSES (lane1/057 STEP 0) ═══
+
+    This module had no tennis path — the string appeared zero times in 1,739
+    lines — and could not have had one: every write here goes through
+    ``espn_id``, and on 2026-09-02 **zero of 30,199 tennis events had one**.  So
+    the sport whose fixtures move most (a start slips hours behind a five-setter
+    on the same court) was the one sport the authority could not correct, and
+    what corrected it instead was a wall-clock staleness net.  Three US Open
+    rows held ``status='live'`` AND a ``completed_at`` simultaneously as a
+    result, which the serve layer resolves as *completed* — a card printing
+    "Final" over a match in its fourth set.
+
+    ONE fetch, both jobs.  The anchor and the state write read the same
+    scoreboard in the same pass deliberately: fetching twice would double the
+    load on ESPN and, worse, let the link and the state come from two different
+    boards, so a match could be anchored from one read and settled from another
+    taken minutes later.
+
+    Per-event ``try``/``except`` (gotcha #42): one unparseable row must never
+    cost the pass its other 193.
+    """
+    from app.services import espn_tennis
+    from app.utils.espn_tennis_anchor import (
+        anchor_receipt,
+        anchorable_sport_keys,
+        authority_write,
+        state_contradiction,
+    )
+    from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+    import asyncio as _asyncio
+
+    stats: dict = {
+        "tours_fetched": 0,
+        "fetch_errors": [],
+        "competitions": 0,
+        "events_considered": 0,
+        "anchored": 0,
+        "already_anchored": 0,
+        "by_method": {},
+        "refused": {},
+        "status_writes": 0,
+        "completions_revoked": 0,
+        "commence_writes": 0,
+        "contradictions": {},
+        "row_errors": 0,
+        "stamp_refused": 0,
+    }
+
+    # ═══ THE BOARD ═══
+    #
+    # `fetch_scoreboards` is the synchronous reader `espn_tennis` exposes for
+    # offline ingest; run OFF THE LOOP rather than called directly, because it
+    # is two blocking httpx requests and this task shares a worker with the
+    # realtime queue.
+    payloads, errors = await _asyncio.to_thread(espn_tennis.fetch_scoreboards, dates)
+    stats["tours_fetched"] = len(payloads)
+    stats["fetch_errors"] = errors
+
+    if not payloads:
+        # AUTHORITY DARK. Both tours failed, so we know nothing — and an empty
+        # board is a fact about the read, never about the fixtures (gotcha #53).
+        # Returning early rather than iterating means not one row is touched.
+        logger.warning("Tennis ESPN sync: authority dark, both tours failed: %s", errors)
+        return {"status": "authority_dark", **stats}
+
+    competitions = espn_tennis.scoreboard_competitions(payloads)
+    stats["competitions"] = len(competitions)
+    by_id = {c["espn_competition_id"]: c for c in competitions}
+
+    if not competitions:
+        # A 200 that mentions no singles competition is an empty answer wearing
+        # a 200 — no tournament today, or a scoreboard that has rolled over.
+        logger.info("Tennis ESPN sync: no singles competitions on the board")
+        return {"status": "no_competitions", **stats}
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=TENNIS_ANCHOR_WINDOW_DAYS)
+    window_end = now + timedelta(days=TENNIS_ANCHOR_WINDOW_DAYS)
+
+    async with get_task_session() as session:
+        # ═══ ONLY THE BUCKETS THAT NAME A TOURNAMENT ON THIS BOARD ═══
+        #
+        # See `anchorable_sport_keys`. Widening this to every `tennis%` row does
+        # not add coverage — it adds CONTESTS, because a `tennis_atp` row and its
+        # `tennis_atp_us_open` twin are one match written twice and the
+        # at-most-one-event rule then anchors neither.
+        #
+        # Resolved as a cheap DISTINCT over `sports` rather than a LIKE over
+        # `events`: the token comparison is a fold ESPN's "US Open" and our
+        # `us_open` both pass through, and expressing that in SQL would mean
+        # de-normalising the token back into a pattern and getting the rule
+        # subtly different from the one in the anchor module.
+        key_rows = await session.execute(
+            select(Sport.key).where(Sport.key.like(f"{TENNIS_SPORT_KEY_PREFIX}%"))
+        )
+        wanted_keys = anchorable_sport_keys(
+            [k for (k,) in key_rows.all()], competitions
+        )
+        stats["sport_keys"] = wanted_keys
+        if not wanted_keys:
+            # The board carries a tournament we hold no bucket for. Not an
+            # error, and not something to widen our way out of.
+            logger.info(
+                "Tennis ESPN sync: board carries %s, no matching sport bucket",
+                sorted({c["event_name"] for c in competitions})[:5],
+            )
+            return {"status": "no_matching_bucket", **stats}
+
+        result = await session.execute(
+            select(Event)
+            .join(Sport, Sport.id == Event.sport_id)
+            .where(
+                Sport.key.in_(wanted_keys),
+                Event.commence_time.isnot(None),
+                Event.commence_time >= window_start,
+                Event.commence_time <= window_end,
+                Event.home_team_name.isnot(None),
+                Event.away_team_name.isnot(None),
+            )
+            .order_by(Event.commence_time.desc())
+            .limit(limit)
+        )
+        events = result.scalars().all()
+        stats["events_considered"] = len(events)
+
+        # ═══ PHASE 1: RECEIPTS FOR EVERY ROW, WRITES FOR NONE ═══
+        #
+        # Anchoring is resolved for the whole population BEFORE anything is
+        # written, because "is this competition contested" is a question about
+        # the set and a row-at-a-time loop cannot ask it.
+        receipts: dict[int, dict] = {}
+        claimants: dict[str, list[int]] = {}
+        for event in events:
+            try:
+                # `our_commence_time` is the TOURNAMENT discriminator, and it is
+                # load-bearing: the unordered pair is a key within a draw and
+                # not across them, so two players who met in Cincinnati and
+                # again at Flushing Meadows produce one key for two matches.
+                # Without it, 58 competitions were claimed by more than one of
+                # our events and the authority write became a channel for
+                # copying the US Open's state onto a Cincinnati row.
+                receipt = anchor_receipt(
+                    [event.home_team_name, event.away_team_name],
+                    competitions,
+                    our_commence_time=event.commence_time,
+                )
+            except Exception as exc:  # noqa: BLE001
+                stats["row_errors"] += 1
+                logger.warning("Tennis anchor: event %s failed: %s", event.id, exc)
+                continue
+            receipts[event.id] = receipt
+            if receipt["espn_competition_id"]:
+                claimants.setdefault(receipt["espn_competition_id"], []).append(event.id)
+
+        # ═══ AN ESPN COMPETITION ANCHORS AT MOST ONE OF OUR EVENTS ═══
+        #
+        # THE INVARIANT, ENFORCED AT WRITE TIME RATHER THAN HOPED FOR. Measured
+        # 2026-09-02 over the 1,000 in-window tennis rows: even with the
+        # tournament gate, **47 competitions were claimed by two of our events**
+        # — genuine duplicate instances of one match (a `tennis_wta` row and its
+        # `tennis_wta_us_open` twin, or two rows in the same bucket).
+        #
+        # Writing the id on both would not merely record a duplicate. It would
+        # ARM `merge-duplicate-events`, which runs every 30 minutes with
+        # `dry_run=False` and DELETES the loser of any same-sport, same-name,
+        # within-6h pair **that shares a provider id** — and `espn_id` is one of
+        # the three (`event_merge_invariant.PROVIDER_ID_COLUMNS`). Tennis is
+        # immune to that path today only because no tennis row has an `espn_id`.
+        # Stamping twins would hand a data-destructive task a sport it has never
+        # touched, as a side effect of a job that was asked to write a link.
+        #
+        # So a contested competition anchors NOBODY, and the contest is reported
+        # with both event ids. Refusing is also the honest answer: we do not know
+        # which twin is canonical, and picking one silently is a guess. The twin
+        # cleanup is its own step of the durable-matching program (#2693 step 2),
+        # where it re-points links rather than deleting rows.
+        contested = {c: ids for c, ids in claimants.items() if len(ids) > 1}
+        stats["contested_competitions"] = len(contested)
+        stats["contested_events"] = sum(len(ids) for ids in contested.values())
+        stats["contested_detail"] = {c: ids for c, ids in list(contested.items())[:50]}
+        for comp, ids in contested.items():
+            logger.warning(
+                "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
+                comp, ids,
+            )
+
+        # ═══ PHASE 2: THE WRITES ═══
+        #
+        # `claimed` is `stamp_espn_id_if_unheld`'s in-pass set. It overlaps the
+        # contested check above and is kept anyway: that check can only see the
+        # population THIS pass selected, and the twin of a US Open row lives in
+        # `tennis_atp`, which this pass deliberately does not query.
+        claimed_ids: set = set()
+        for event in events:
+            try:
+                receipt = receipts.get(event.id)
+                if receipt is None:
+                    continue
+                ours = [event.home_team_name, event.away_team_name]
+                comp_id = receipt["espn_competition_id"]
+
+                if comp_id is not None and len(claimants.get(comp_id, [])) > 1:
+                    # Contested — see the block above. Not counted as a refusal:
+                    # the matcher did its job, and the defect is that two of our
+                    # rows are one match.
+                    continue
+
+                if comp_id is None:
+                    reason = receipt["reason"]
+                    stats["refused"][reason] = stats["refused"].get(reason, 0) + 1
+                    # A REFUSAL IS A FINDING, NOT A MISS. `absent_players` names
+                    # the player ESPN's draw does not contain, which is the
+                    # difference between "our matcher is weak" and "this fixture
+                    # is fabricated" — and only the second is actionable.
+                    if receipt["absent_players"]:
+                        logger.warning(
+                            "Tennis anchor REFUSED event %s (%s v %s): %s — not in draw: %s",
+                            event.id, ours[0], ours[1], reason,
+                            ", ".join(receipt["absent_players"]),
+                        )
+                    continue
+
+                if event.espn_id == comp_id:
+                    stats["already_anchored"] += 1
+                else:
+                    # THROUGH THE GUARDED STAMP, NOT A RAW ASSIGNMENT (#2017,
+                    # ruling 042). It asks the question this task cannot: does
+                    # ANOTHER ROW ALREADY HOLD THIS ID — a database check, where
+                    # the contested pass above is only an in-memory one over the
+                    # rows this task selected. `ix_events_espn_id` is not UNIQUE,
+                    # so nothing else would refuse the contradiction.
+                    verdict, holder = await stamp_espn_id_if_unheld(
+                        session, event, comp_id,
+                        context="tennis-espn-anchor", claimed=claimed_ids,
+                    )
+                    if verdict != STAMPED:
+                        # Refused, so this row has no anchor and the authority
+                        # has no channel to it. Writing state anyway would be
+                        # the link's authority without the link.
+                        stats["stamp_refused"] = stats.get("stamp_refused", 0) + 1
+                        if holder is not None:
+                            stats.setdefault("stamp_refused_holders", {})[
+                                str(event.id)] = holder
+                        continue
+                    stats["anchored"] += 1
+                    method = receipt["method"]
+                    stats["by_method"][method] = stats["by_method"].get(method, 0) + 1
+                    logger.info(
+                        "Tennis anchor: event %s (%s v %s) -> ESPN %s via %s",
+                        event.id, ours[0], ours[1], comp_id, method,
+                    )
+
+                competition = by_id[comp_id]
+
+                # REPORTED BEFORE IT IS REPAIRED. The contradiction is counted
+                # against the state we found, so the needle measures the defect
+                # rather than the fix — a count that drops because this pass
+                # already wrote is a count that can never reach zero honestly.
+                contradiction = state_contradiction(
+                    event.status, event.completed_at, competition["state"],
+                    competition=competition, now=now,
+                )
+                if contradiction:
+                    stats["contradictions"][contradiction] = (
+                        stats["contradictions"].get(contradiction, 0) + 1
+                    )
+                    logger.warning(
+                        "Tennis contradiction %s: event %s (%s v %s) ours=%s/%s espn=%s",
+                        contradiction, event.id, ours[0], ours[1],
+                        event.status, event.completed_at, competition["state"],
+                    )
+
+                changes = authority_write(
+                    now=now,
+                    our_status=event.status,
+                    our_completed_at=event.completed_at,
+                    our_commence_time=event.commence_time,
+                    competition=competition,
+                )
+                if "status" in changes:
+                    event.status = changes["status"]
+                    stats["status_writes"] += 1
+                if "completed_at" in changes:
+                    # THE REVOKE — the clause that did not exist anywhere.
+                    event.completed_at = changes["completed_at"]
+                    stats["completions_revoked"] += 1
+                    logger.warning(
+                        "Tennis close REVOKED: event %s (%s v %s) — ESPN reports play",
+                        event.id, ours[0], ours[1],
+                    )
+                if "commence_time" in changes:
+                    event.commence_time = changes["commence_time"]
+                    stats["commence_writes"] += 1
+
+            except Exception as exc:  # noqa: BLE001 — one row never costs the pass
+                stats["row_errors"] += 1
+                logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
+
+        await session.commit()
+
+    logger.info(
+        "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
+        "%d status writes, %d closes revoked, %d contradictions",
+        stats["events_considered"], stats["anchored"], stats["already_anchored"],
+        sum(stats["refused"].values()), stats["status_writes"],
+        stats["completions_revoked"], sum(stats["contradictions"].values()),
+    )
+    return {"status": "ok", **stats}

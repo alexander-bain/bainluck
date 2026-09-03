@@ -750,6 +750,17 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     benign direction this docstring reserves. The cost declaration (one 1.37-
     1.59 s build per 5 min = ~0.46 % of a slot-day, and why `background` rather
     than `realtime`) is on `BACKGROUND_BEAT_COUNT`.
+    🔴 **RE-DERIVED at lane1/057 STEP 0 (2026-09-02): 110 -> 111, explicit
+    65 -> 66.** This lane added `sync-tennis-from-espn` (`crontab(minute="*/10")`,
+    the ESPN authority channel for tennis — the sport that had none) with an
+    explicit `options={"queue": "background"}`. RE-DERIVED by running the census
+    below over the assembled schedule and printing all three numbers, never by
+    adding one to the old number (#1910). The fall-through half is UNMOVED at
+    **45** — the new beat names its queue rather than defaulting into it, the
+    benign direction this docstring reserves. The cadence argument (why `*/10`
+    and why a crontab rather than the 180 s interval that would have joined
+    `BACKGROUND_INTERVAL_FLOOR`) is on the beat entry itself.
+
 
     🔴 **RE-DERIVED at queue 419 (2026-08-26, #2077): 102 -> 103, explicit
     57 -> 58.** This lane added `settlement-capture-sweep-nightly`
@@ -822,6 +833,16 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     bounded 150-URL pass that drains in ~10 days and then returns `no_work`
     forever, and why `background` rather than `heavy`) is on
     `BACKGROUND_BEAT_COUNT`.
+
+    🔴 **RE-DERIVED AT THE MERGE (live/047 → master, 2026-09-03): 111 → 112,
+    explicit 66 → 67.** live/035 (`backfill-thin-event-charts`) and lane1/057
+    (`sync-tennis-from-espn`) each moved the count 110 → 111 for a different
+    beat, and git auto-merged THIS assertion — the two branches wrote the same
+    numbers here — while the constant conflicted. That is the shape of the trap
+    (#1910, INT-158): the guard goes red pointing at the constant rather than at
+    the merge. Both numbers were re-derived by RUNNING the census below over the
+    assembled schedule on the merged tree, never by adding. Fall-through stays
+    at **45**.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -838,9 +859,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 66, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 67, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 111
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 112
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

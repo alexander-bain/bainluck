@@ -1,0 +1,546 @@
+{
+ "us_open": {
+  "groups": 36,
+  "spoke_before": 25,
+  "spoke_after": 36,
+  "added": [
+   {
+    "group": "15299463",
+    "market": "US Open ATP: Alexander Bublik vs Adrian Mannarino",
+    "p": 0.76
+   },
+   {
+    "group": "15299482",
+    "market": "US Open ATP: Lloyd Harris vs Stefanos Tsitsipas",
+    "p": 0.32
+   },
+   {
+    "group": "15299603",
+    "market": "US Open ATP: Brandon Nakashima vs Alex Michelsen",
+    "p": 0.0005
+   },
+   {
+    "group": "15299604",
+    "market": "US Open ATP: Daniel Merida Aguilar vs Andrey Rublev",
+    "p": 0.999
+   },
+   {
+    "group": "15299606",
+    "market": "US Open ATP: Daniil Medvedev vs Sebastian Gorzny",
+    "p": 0.999
+   },
+   {
+    "group": "15299860",
+    "market": "US Open ATP: Felix Auger-Aliassime vs Karen Khachanov",
+    "p": 0.705
+   },
+   {
+    "group": "15300834",
+    "market": "US Open ATP: Dane Sweeny vs Lorenzo Musetti",
+    "p": 0.075
+   },
+   {
+    "group": "15300835",
+    "market": "US Open ATP: Tristan Schoolkate vs Flavio Cobolli",
+    "p": 0.175
+   },
+   {
+    "group": "15300836",
+    "market": "US Open ATP: Jan-Lennard Struff vs Francisco Cerundolo",
+    "p": 0.355
+   },
+   {
+    "group": "15300837",
+    "market": "US Open ATP: Taylor Fritz vs Mattia Bellucci",
+    "p": 0.855
+   },
+   {
+    "group": "15300873",
+    "market": "US Open ATP: Gael Monfils vs Learner Tien",
+    "p": 0.195
+   }
+  ],
+  "lost": [],
+  "changed": [],
+  "added_count": 11,
+  "lost_count": 0,
+  "changed_count": 0
+ },
+ "blast": {
+  "groups": 2197,
+  "spoke_before": 826,
+  "spoke_after": 919,
+  "added": [
+   {
+    "group": "15291224:polymarket",
+    "market": "Wolfsberger AC vs. LASK Linz",
+    "p": 0.0005
+   },
+   {
+    "group": "15297336:polymarket",
+    "market": "Aluminij Kidricevo vs. NK Celje",
+    "p": 0.004
+   },
+   {
+    "group": "15297388:polymarket",
+    "market": "RKC Waalwijk vs. NAC Breda",
+    "p": 0.32
+   },
+   {
+    "group": "15297728:polymarket",
+    "market": "Go Ahead Eagles vs. FC Groningen",
+    "p": 0.25
+   },
+   {
+    "group": "15297876:polymarket",
+    "market": "IF Brommapojkarna vs. IF Elfsborg",
+    "p": 0.31
+   },
+   {
+    "group": "15298068:polymarket",
+    "market": "SK Beveren vs. Oud-Heverlee Leuven",
+    "p": 0.475
+   },
+   {
+    "group": "15298452:polymarket",
+    "market": "Bodrum FK vs. Esenler Erokspor",
+    "p": 0.33
+   },
+   {
+    "group": "15298520:polymarket",
+    "market": "Volos NPS vs. Olympiacos Piraeus",
+    "p": 0.145
+   },
+   {
+    "group": "15298700:polymarket",
+    "market": "Deportivo Madryn vs. Club Ciudad de Bolivar",
+    "p": 0.575
+   },
+   {
+    "group": "15298964:polymarket",
+    "market": "Cercle Brugge vs. KAA Gent",
+    "p": 0.375
+   },
+   {
+    "group": "15299420:polymarket",
+    "market": "Toronto Blue Jays vs. Cleveland Guardians",
+    "p": 0.535
+   },
+   {
+    "group": "15299604:polymarket",
+    "market": "US Open ATP: Daniel Merida Aguilar vs Andrey Rublev",
+    "p": 0.999
+   },
+   {
+    "group": "15299860:polymarket",
+    "market": "US Open ATP: Felix Auger-Aliassime vs Karen Khachanov",
+    "p": 0.705
+   },
+   {
+    "group": "15300144:polymarket",
+    "market": "Zamora FC vs. Deportivo Tachira",
+    "p": 0.28
+   },
+   {
+    "group": "15300836:polymarket",
+    "market": "US Open ATP: Jan-Lennard Struff vs Francisco Cerundolo",
+    "p": 0.355
+   },
+   {
+    "group": "15300900:polymarket",
+    "market": "Ipswich Town FC vs. Arsenal FC",
+    "p": 0.22
+   },
+   {
+    "group": "15300976:polymarket",
+    "market": "CA Central Norte Salta vs. Club Almirante Brown",
+    "p": 0.335
+   },
+   {
+    "group": "15301056:polymarket",
+    "market": "CA Mineiro vs. Fluminense FC",
+    "p": 0.29
+   },
+   {
+    "group": "15291061:polymarket",
+    "market": "Inter Miami CF vs. Atlanta United FC",
+    "p": 0.68
+   },
+   {
+    "group": "15291301:polymarket",
+    "market": "GAIS vs. IF Brommapojkarna",
+    "p": 0.9995
+   },
+   {
+    "group": "15291781:polymarket",
+    "market": "CD Coquimbo Unido vs. CD Huachipato",
+    "p": 0.195
+   },
+   {
+    "group": "15296105:polymarket",
+    "market": "GAIS vs. BK Hacken",
+    "p": 0.275
+   },
+   {
+    "group": "15297297:polymarket",
+    "market": "Heracles Almelo vs. De Graafschap",
+    "p": 0.675
+   },
+   {
+    "group": "15298445:polymarket",
+    "market": "Thor Akureyri vs. FH Hafnarfjordur",
+    "p": 0.305
+   },
+   {
+    "group": "15298873:polymarket",
+    "market": "CD Universidad Catolica del Ecuador vs. SD Aucas",
+    "p": 0.515
+   },
+   {
+    "group": "15298985:polymarket",
+    "market": "CF Estrela da Amadora vs. SC Braga",
+    "p": 0.19
+   },
+   {
+    "group": "15299181:polymarket",
+    "market": "Stroemmen IF vs. Bryne FK",
+    "p": 0.3
+   },
+   {
+    "group": "15299185:polymarket",
+    "market": "Aasane Fotball vs. Hoedd IL",
+    "p": 0.38
+   },
+   {
+    "group": "15299249:polymarket",
+    "market": "Ittihad Kalba FC vs. Al Ain FC",
+    "p": 0.095
+   },
+   {
+    "group": "15299329:polymarket",
+    "market": "Igdir FK vs. Manisa Futbol Kulubu",
+    "p": 0.465
+   },
+   {
+    "group": "15299465:polymarket",
+    "market": "Bnei Sakhnin FC vs. Beitar Jerusalem FC",
+    "p": 0.49
+   },
+   {
+    "group": "15299949:polymarket",
+    "market": "Rhode Island FC vs. Louisville City FC",
+    "p": 0.44
+   },
+   {
+    "group": "15299957:polymarket",
+    "market": "San Antonio FC vs. FC Tulsa",
+    "p": 0.46
+   },
+   {
+    "group": "15299961:polymarket",
+    "market": "Indy Eleven vs. Birmingham Legion FC",
+    "p": 0.56
+   },
+   {
+    "group": "15300017:polymarket",
+    "market": "Orange County SC vs. Sacramento Republic FC",
+    "p": 0.265
+   },
+   {
+    "group": "15300837:polymarket",
+    "market": "US Open ATP: Taylor Fritz vs Mattia Bellucci",
+    "p": 0.855
+   },
+   {
+    "group": "15300873:polymarket",
+    "market": "US Open ATP: Gael Monfils vs Learner Tien",
+    "p": 0.195
+   },
+   {
+    "group": "15291182:polymarket",
+    "market": "CA River Plate vs. CS Independiente Rivadavia",
+    "p": 0.545
+   },
+   {
+    "group": "15291298:polymarket",
+    "market": "Djurgardens IF vs. Mjallby AIF",
+    "p": 0.9995
+   },
+   {
+    "group": "15296106:polymarket",
+    "market": "Degerfors IF vs. Halmstads BK",
+    "p": 0.5
+   },
+   {
+    "group": "15296182:polymarket",
+    "market": "IK Oddevold vs. Falkenbergs FF",
+    "p": 0.44
+   },
+   {
+    "group": "15296342:polymarket",
+    "market": "Korona Kielce vs. Wisla Krakow",
+    "p": 0.425
+   },
+   {
+    "group": "15296622:polymarket",
+    "market": "Standard Liege vs. Royal Antwerp FC",
+    "p": 0.435
+   },
+   {
+    "group": "15297690:polymarket",
+    "market": "FC Lugano vs. Servette Geneva",
+    "p": 0.48
+   },
+   {
+    "group": "15297730:polymarket",
+    "market": "Fortuna Sittard vs. AFC Ajax",
+    "p": 0.25
+   },
+   {
+    "group": "15297958:polymarket",
+    "market": "Atalanta BC vs. Cagliari Calcio",
+    "p": 0.185
+   },
+   {
+    "group": "15298694:polymarket",
+    "market": "Leones Futbol Club vs. Orense SC",
+    "p": 0.405
+   },
+   {
+    "group": "15299038:polymarket",
+    "market": "FC Sion vs. FC Thun",
+    "p": 0.555
+   },
+   {
+    "group": "15299134:polymarket",
+    "market": "Central Espanol FC vs. Defensor Sporting",
+    "p": 0.295
+   },
+   {
+    "group": "15299170:polymarket",
+    "market": "Kalmar FF vs. Djurgardens IF",
+    "p": 0.24
+   },
+   {
+    "group": "15299274:polymarket",
+    "market": "K Beerschot VA vs. Patro Eisden Maasmechelen",
+    "p": 0.535
+   },
+   {
+    "group": "15299314:polymarket",
+    "market": "CR Flamengo vs. SC Corinthians Paulista",
+    "p": 0.645
+   },
+   {
+    "group": "15299442:polymarket",
+    "market": "Tallinna FC Flora vs. Tartu JK Tammeka",
+    "p": 0.58
+   },
+   {
+    "group": "15299482:polymarket",
+    "market": "US Open ATP: Lloyd Harris vs Stefanos Tsitsipas",
+    "p": 0.32
+   },
+   {
+    "group": "15299606:polymarket",
+    "market": "US Open ATP: Daniil Medvedev vs Sebastian Gorzny",
+    "p": 0.999
+   },
+   {
+    "group": "15299918:polymarket",
+    "market": "Vasas FC vs. Nyiregyhaza Spartacus FC",
+    "p": 0.405
+   },
+   {
+    "group": "15299946:polymarket",
+    "market": "Tampa Bay Rowdies vs. Brooklyn FC",
+    "p": 0.74
+   },
+   {
+    "group": "15299974:polymarket",
+    "market": "Loudoun United FC vs. Colorado Springs Switchbacks FC",
+    "p": 0.305
+   },
+   {
+    "group": "15299982:polymarket",
+    "market": "Las Vegas Lights vs. New Mexico United",
+    "p": 0.415
+   },
+   {
+    "group": "15300626:polymarket",
+    "market": "FCV Dender EH vs. RFC Seraing",
+    "p": 0.615
+   },
+   {
+    "group": "15300834:polymarket",
+    "market": "US Open ATP: Dane Sweeny vs Lorenzo Musetti",
+    "p": 0.075
+   },
+   {
+    "group": "15300878:polymarket",
+    "market": "CD Tecnico Universitario vs. LDU Quito",
+    "p": 0.29
+   },
+   {
+    "group": "15300894:polymarket",
+    "market": "Liverpool FC vs. Tottenham Hotspur FC",
+    "p": 0.25
+   },
+   {
+    "group": "15300918:polymarket",
+    "market": "Moik Baku vs. Shahdag Qusar FK",
+    "p": 0.475
+   },
+   {
+    "group": "15300954:polymarket",
+    "market": "FK LNZ Cherkasy vs. FK Obolon Kyiv",
+    "p": 0.825
+   },
+   {
+    "group": "15300978:polymarket",
+    "market": "CA Chaco For Ever vs. CA Estudiantes",
+    "p": 0.395
+   },
+   {
+    "group": "15300982:polymarket",
+    "market": "Colon de Santa Fe vs. Deportivo Moron",
+    "p": 0.505
+   },
+   {
+    "group": "15291299:polymarket",
+    "market": "IK Sirius vs. Malmo FF",
+    "p": 0.005
+   },
+   {
+    "group": "15291375:polymarket",
+    "market": "IFK Mariehamn vs. FF Jaro",
+    "p": 0.9995
+   },
+   {
+    "group": "15292775:polymarket",
+    "market": "GIF Sundsvall vs. Norrby IF",
+    "p": 0.995
+   },
+   {
+    "group": "15294595:polymarket",
+    "market": "Lommel SK vs. Club Brugge",
+    "p": 0.145
+   },
+   {
+    "group": "15296371:polymarket",
+    "market": "Yellow-Red KV Mechelen vs. KVC Westerlo",
+    "p": 0.445
+   },
+   {
+    "group": "15297731:polymarket",
+    "market": "SBV Excelsior vs. FC Utrecht",
+    "p": 0.26
+   },
+   {
+    "group": "15298699:polymarket",
+    "market": "CA San Miguel vs. CD Godoy Cruz",
+    "p": 0.335
+   },
+   {
+    "group": "15298867:polymarket",
+    "market": "Libertad Loja vs. CS Emelec",
+    "p": 0.355
+   },
+   {
+    "group": "15299035:polymarket",
+    "market": "Grasshopper Club Zurich vs. FC Zurich",
+    "p": 0.4
+   },
+   {
+    "group": "15299147:polymarket",
+    "market": "Cheonan City FC vs. Hwaseong FC",
+    "p": 0.255
+   },
+   {
+    "group": "15299183:polymarket",
+    "market": "Royal Francs Borains vs. KSC Lokeren-Temse",
+    "p": 0.365
+   },
+   {
+    "group": "15299207:polymarket",
+    "market": "Yunnan Yukun vs. Chongqing Tonglianglong FC",
+    "p": 0.51
+   },
+   {
+    "group": "15299239:polymarket",
+    "market": "Odds BK vs. Stroemsgodset IF",
+    "p": 0.27
+   },
+   {
+    "group": "15299311:polymarket",
+    "market": "EC Bahia vs. Clube do Remo",
+    "p": 0.26
+   },
+   {
+    "group": "15299455:polymarket",
+    "market": "FK Tukums 2000/TSS vs. Ogre United",
+    "p": 0.52
+   },
+   {
+    "group": "15299463:polymarket",
+    "market": "US Open ATP: Alexander Bublik vs Adrian Mannarino",
+    "p": 0.76
+   },
+   {
+    "group": "15299603:polymarket",
+    "market": "US Open ATP: Brandon Nakashima vs Alex Michelsen",
+    "p": 0.0005
+   },
+   {
+    "group": "15299831:polymarket",
+    "market": "PEC Zwolle vs. Feyenoord Rotterdam",
+    "p": 0.225
+   },
+   {
+    "group": "15299951:polymarket",
+    "market": "Monterey Bay FC vs. Phoenix Rising FC",
+    "p": 0.31
+   },
+   {
+    "group": "15299963:polymarket",
+    "market": "Sporting Jax vs. Lexington SC",
+    "p": 0.28
+   },
+   {
+    "group": "15299971:polymarket",
+    "market": "Miami FC vs. Pittsburgh Riverhounds",
+    "p": 0.29
+   },
+   {
+    "group": "15300147:polymarket",
+    "market": "Caracas FC vs. Portuguesa FC",
+    "p": 0.3
+   },
+   {
+    "group": "15300835:polymarket",
+    "market": "US Open ATP: Tristan Schoolkate vs Flavio Cobolli",
+    "p": 0.175
+   },
+   {
+    "group": "15300883:polymarket",
+    "market": "West Ham United FC vs. Fulham FC",
+    "p": 0.255
+   },
+   {
+    "group": "15300915:polymarket",
+    "market": "Westchester SC vs. Chattanooga Red Wolves SC",
+    "p": 0.415
+   },
+   {
+    "group": "15301103:polymarket",
+    "market": "AFC Ajax vs. Willem II Tilburg",
+    "p": 0.165
+   }
+  ],
+  "lost": [],
+  "changed": [],
+  "added_count": 93,
+  "lost_count": 0,
+  "changed_count": 0
+ }
+}

@@ -740,8 +740,15 @@ class FuturesMarket(Base):
 
     # When the event/tournament begins (e.g., when the Masters starts)
     commence_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    # When the market resolves (e.g., when the champion is crowned)
+    # When the market resolves (e.g., when the champion is crowned).
+    # Kalshi: max(close_time) — when trading actually stops (CAL-P989, #2660).
     resolution_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Kalshi's legal backstop, max(expiration_time) — the LATEST a market could
+    # possibly expire, which is what resolution_date used to hold. Kept in its own
+    # column so the switch to close_time loses nothing; see
+    # app/utils/kalshi_resolution_window.py for why the backstop is the wrong
+    # field to render or to run `past resolution_date` predicates against.
+    expiration_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         String(20), default="open", index=True
     )  # open, suspended, resolved
@@ -2307,4 +2314,98 @@ class EventProviderAnchor(Base):
         Index(
             "uq_anchor_source_id", "source", "source_id", "id_kind", unique=True
         ),
+    )
+
+
+class MarketMatchReceipt(Base):
+    """What the matcher saw and decided, the last time it looked at a market.
+
+    #2705 (step 1 of the durable matching program, #2693). The full argument for
+    one-row-per-market, and for the reject reason being a closed enum, lives in
+    ``app/utils/match_receipts.py`` — read that first.
+
+    THE ROW IS A RECORD, NOT A CONSTRAINT. Nothing reads a receipt to decide a
+    link. Deleting the table would change no matching behaviour and answer no
+    questions; that asymmetry is the point. ``ON DELETE CASCADE`` on
+    ``market_id`` because a receipt for a market that no longer exists is not
+    history, it is a dangling answer to a question nobody can now ask.
+
+    THE UNIQUE KEY IS THE DESIGN. ``market_id`` is unique, so an attempt is an
+    upsert and the table is bounded by the market count (~450k), not by
+    attempts (~2M/day at 96 cycles). ``attempt_count`` and ``first_attempted_at``
+    keep the part of the history that answers a real question — *"this has been
+    refused for the same reason 340 times since 8/28"* — without keeping 340
+    near-identical rows to say it.
+
+    ``last_attempted_at`` IS THE COVERAGE METRIC. ``max(now() -
+    last_attempted_at)`` over open unlinked markets is the number that says
+    whether "never attempted" is still possible. It is why the index on that
+    column exists, and it is what the backlog pass (``PHASE_PASS3_BACKLOG``)
+    orders on — NULLS FIRST, so a market with no receipt at all is always at
+    the front of the queue.
+    """
+
+    __tablename__ = "market_match_receipts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: The market this receipt explains. Unique — one receipt per market.
+    market_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_markets.id", ondelete="CASCADE"), nullable=False
+    )
+
+    #: Denormalized from the market so the bus can answer "why is
+    #: KXATPMATCH-… unattached" without a join, and so a receipt stays readable
+    #: in an export.
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(String(200))
+    market_name: Mapped[Optional[str]] = mapped_column(String(300))
+
+    #: Which scan reached it: ``pass1_ticker`` | ``pass2_general`` |
+    #: ``pass3_backlog``. A market that only ever shows ``pass3_backlog`` is one
+    #: the ordinary scans never get to — that is a finding, not noise.
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: ``linked`` | ``rejected``.
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: One of ``app.utils.match_receipts.REJECT_REASONS``, or NULL when linked.
+    #: Indexed because every question the reconciliation job asks is a GROUP BY
+    #: on this column.
+    reject_reason: Mapped[Optional[str]] = mapped_column(String(40))
+
+    #: The event this attempt linked to. Plain integer, no FK: a receipt should
+    #: still be able to say "it linked to 15299648" after a twin cleanup has
+    #: deleted 15299648 — that is exactly the forensic the Li–Vekic ghost-twin
+    #: case needed.
+    linked_event_id: Mapped[Optional[int]] = mapped_column(Integer)
+
+    #: The candidates considered, best score first, with a per-candidate
+    #: verdict. Capped at ``MAX_TRACE_CANDIDATES``.
+    candidates: Mapped[Optional[list]] = mapped_column(JSONB, server_default="[]")
+
+    #: Parsed matchup, ticker date, the time window actually searched, sport
+    #: prefix — the inputs the decision was made on, so a wrong decision can be
+    #: re-derived instead of re-guessed.
+    detail: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    first_attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        # Identity. Names match the migration exactly.
+        Index("uq_match_receipt_market", "market_id", unique=True),
+        # The coverage metric's index (see the class docstring).
+        Index("ix_match_receipt_last_attempted", "last_attempted_at"),
+        # Every reconciliation question is a GROUP BY on the reason, usually
+        # scoped to one source.
+        Index("ix_match_receipt_reason", "reject_reason", "source"),
+        # "Which markets did the matcher put on this event, and why" — the
+        # by-event-id half of the admin lookup.
+        Index("ix_match_receipt_event", "linked_event_id"),
     )

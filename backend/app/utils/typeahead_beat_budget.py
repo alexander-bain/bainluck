@@ -1167,7 +1167,25 @@ def free_background_slots(
 #: obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above remain
 #: accurate as written; live/039's `backfill_thirty_day_charts` is deliberately
 #: NOT on the beat schedule and correctly moves nothing here.
-BACKGROUND_BEAT_COUNT = 111
+#:
+#: 🔴 lane1/057 STEP 0 (2026-09-02): 110 -> 111. `sync-tennis-from-espn`,
+#: `crontab(minute="*/10")`, explicitly routed here. Two ESPN scoreboard fetches
+#: and one indexed query bounded to the tournament buckets on today's board; no
+#: DB work of consequence, which is why `background` rather than `heavy`.
+#:
+#: 🔴 RE-DERIVATION AT THE MERGE (live/047 → master, 2026-09-03): INT-158's
+#: collision for the THIRD time. live/035 and lane1/057 EACH moved this constant
+#: 110 → 111 for a DIFFERENT beat (`backfill-thin-event-charts` and
+#: `sync-tennis-from-espn`), each correct against its own base, and 111 is the
+#: one number that is wrong on the merged tree — both beats are present. The
+#: trap's usual second half repeated too: both branches made the SAME edit to
+#: `test_typeahead_beat_budget.py` (65→66, 110→111), so git auto-merged the
+#: assertion without a conflict while the constant conflicted loudly. The census
+#: below was RUN over the assembled `beat_schedule` on the MERGED tree and its
+#: printed value — `explicit 67 implicit 45 total 112` — is what stands here. It
+#: was not obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above
+#: remain accurate as written.
+BACKGROUND_BEAT_COUNT = 112
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
