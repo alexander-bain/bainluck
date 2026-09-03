@@ -260,14 +260,16 @@ def run_with_lock_retry(
     answer a query. It returns ``None`` when the version cannot be read, and
     ``None == None`` is deliberately treated as "unchanged" — a database with no
     ``alembic_version`` row yet has, by definition, committed no migration.
+
+    ``Exception``, not ``BaseException``: a ``KeyboardInterrupt`` or a
+    ``SystemExit`` during a release is someone stopping the deploy, and the
+    answer to that is to stop, not to classify it and consider a retry.
     """
-    last_error: BaseException | None = None
     for attempt in range(1, settings.attempts + 1):
         version_before = read_version()
         try:
             return attempt_once()
-        except BaseException as exc:  # noqa: BLE001 - re-raised unless retryable
-            last_error = exc
+        except Exception as exc:
             version_after = read_version()
             if not should_retry(exc, attempt, settings, version_before, version_after):
                 raise
@@ -275,5 +277,10 @@ def run_with_lock_retry(
                 on_retry(attempt, version_after)
             sleep(settings.backoff_s)
 
-    # Unreachable: the loop either returns or re-raises on its final attempt.
-    raise last_error  # type: ignore[misc]
+    # Unreachable: `attempts` is clamped to >= 1, so the loop body always runs,
+    # and `should_retry` is False on the last attempt, so that iteration either
+    # returns or re-raises. Raising a real error rather than a stashed
+    # `last_error` keeps the fall-through from being a `TypeError` about None.
+    raise RuntimeError(
+        f"migration retry loop fell through after {settings.attempts} attempts"
+    )
