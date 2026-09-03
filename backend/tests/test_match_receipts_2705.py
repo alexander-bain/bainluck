@@ -1159,6 +1159,40 @@ class TestTheCoverageNumberIsHonestAboutItsOwnDenominator:
         assert "event_id is null" in cov["denominator"].lower()
         assert "base_where" in cov["denominator"]
 
+    def test_every_coverage_path_the_reconciler_names_actually_resolves(self):
+        """FOLLOW-UP ``L1B-010-RECEIPT-HINT-NESTED-PATH`` from CERT-819.
+
+        The reconciliation job's ``receipt_coverage`` hint is the one line an
+        operator follows out of a filed issue. It named
+        ``coverage.explained_no_game_here``, which has never existed — the field
+        is per-source, under ``coverage.by_source.<source>``. A hint that sends
+        a reader to a key that is not there is worse than no hint: they conclude
+        the number is missing rather than that they are in the wrong place.
+
+        So the hint's paths are checked against a REAL response rather than
+        proof-read. Every ``coverage.x.y`` this job prints must dereference.
+        """
+        import re
+
+        from app.tasks.matching_reconciliation import receipts_hint_for
+
+        cov, _ = self._summary(
+            never_rows=[_Row(source="kalshi", n=7480)],
+            explained_rows=[_Row(source="kalshi", n=178, no_game_here=13)],
+        )
+        hint = receipts_hint_for({"key": "receipt_coverage", "rows": []})
+        paths = set(re.findall(r"`coverage\.([A-Za-z_][A-Za-z0-9_.]*)`", hint))
+        assert paths, "the hint stopped naming any coverage path"
+
+        for path in paths:
+            node = cov
+            for part in path.split("."):
+                assert isinstance(node, dict) and part in node, (
+                    f"the reconciler points at coverage.{path}, which the "
+                    f"endpoint does not publish"
+                )
+                node = node[part]
+
 
 class TestTheRejectHistogramIsOrderedByWhatCanStillBeFixed:
     """Measured on production 2026-09-03: 7,854 of 8,032 rejects were on
