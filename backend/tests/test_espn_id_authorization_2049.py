@@ -755,7 +755,11 @@ class TestNoUngatedEspnIdStampSurvives:
          "event.espn_id = claim.source_id"):
             "ESPN's own claim carries ESPN's id — arm (A) of gotcha #32, an "
             "id-anchored correspondence, not a name-derived one. Guarded by "
-            "`if not event.espn_id`, so it never overwrites.",
+            "`if not event.espn_id` so it never overwrites, AND (#2693 "
+            "CERT-784) by the REQUIRED `espn_id_is_held` argument, which both "
+            "production call sites compute from `espn_id_holder` — including "
+            "the CREATE path, where #2017 photographed the duplicate being "
+            "BORN carrying the collision.",
         ("app/tasks/espn_sync.py", "_cleanup_bad_espn_matches._clear_espn_data",
          "team.espn_id = None"):
             "A CLEAR of Team.espn_id during bad-match cleanup.",
@@ -795,8 +799,28 @@ class TestNoUngatedEspnIdStampSurvives:
     #: Non-vacuity floor. If the census stops finding writes it has stopped
     #: being a census, and a green board would mean nothing. These are floors,
     #: not equalities, so adding a rail does not fail the suite.
-    MIN_TOTAL_WRITES = 13
-    MIN_BOUND_WRITES = 5
+    #:
+    #: LOWERED 13 -> 10 / 5 -> 1 on 2026-09-02 (#2693 CERT-784), and a lowered
+    #: non-vacuity floor is exactly the move that hollows out a guard, so the
+    #: accounting is written down rather than asserted. FOUR writers left the
+    #: census because they now go THROUGH ``stamp_espn_id_if_unheld`` — which is
+    #: itself the one remaining allowlisted stamp — rather than assigning the
+    #: column themselves:
+    #:
+    #:     app/tasks/espn_sync.py            _backfill_espn_ids
+    #:     app/routes/admin_providers.py     sync_espn_live_events
+    #:     app/routes/admin_providers.py     backfill_espn_ids
+    #:     app/utils/espn_helpers.py         backfill_missing_scores
+    #:
+    #: They did not stop writing; they stopped writing RAW. That consolidation
+    #: is what makes ``MIN_BOUND_WRITES`` weak here — one bound writer is a poor
+    #: detector of "the binder is broken" — so the property it was protecting
+    #: now lives in ``tests/test_espn_id_collision_safety_2693.py``, which
+    #: asserts the stamp census EXHAUSTIVE in both directions and is red-checked
+    #: against a re-introduced raw stamp. A floor is weaker than a partition;
+    #: the partition is the one to keep honest.
+    MIN_TOTAL_WRITES = 10
+    MIN_BOUND_WRITES = 1
 
     def test_every_name_derived_writer_routes_through_the_gate(self):
         writes = census_espn_id_writes(_real_app_root())

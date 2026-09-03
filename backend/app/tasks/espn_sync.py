@@ -1195,6 +1195,14 @@ async def _backfill_espn_ids(limit: int = 1000):
                 date_str = event.commence_time.strftime("%Y%m%d")
                 by_sport_date[(sport_key, date_str)].append(event)
 
+            # `stamp_espn_id_if_unheld`'s in-pass set (#2017). The DB check
+            # alone is nearly sufficient, and "nearly" is the word that makes a
+            # guard accidental: this pass groups by (sport, date), so the two
+            # halves of a same-day twin pair are stamped inside one uncommitted
+            # transaction and only this set sees the first one.
+            from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+            claimed_espn_ids: set = set()
+
             espn = ESPNAPIService()
             try:
                 for (sport_key, date_str), date_events in list(by_sport_date.items())[:200]:
@@ -1238,13 +1246,42 @@ async def _backfill_espn_ids(limit: int = 1000):
                             anchor_espn_id=getattr(event, "espn_id", None),
                         )
                         if matched is not None:
-                            event.espn_id = matched.espn_id
-                            stats["events_matched"] += 1
-                            logger.info(
-                                f"ESPN ID backfill: matched event {event.id} "
-                                f"({event.home_team_name} vs {event.away_team_name}) "
-                                f"→ ESPN {matched.espn_id}"
+                            # #2693 CERT-784: this used to be a raw
+                            # `event.espn_id = matched.espn_id` with no holder
+                            # check — the one authorized writer that still
+                            # bypassed the #2017 guard. It is the writer that
+                            # makes the step-2 repair non-durable: the repair
+                            # unstamps a twin, this task runs six hours later,
+                            # selects it (`espn_id IS NULL`), name-matches the
+                            # same ESPN fixture and hands the contested id
+                            # straight back. A unique index would then be
+                            # uninstallable again and the hub's Finished link
+                            # would correctly go dead a second time.
+                            verdict, holder_id = await stamp_espn_id_if_unheld(
+                                session, event, matched.espn_id,
+                                context="espn_id backfill",
+                                claimed=claimed_espn_ids,
                             )
+                            if verdict == STAMPED:
+                                stats["events_matched"] += 1
+                                logger.info(
+                                    f"ESPN ID backfill: matched event {event.id} "
+                                    f"({event.home_team_name} vs {event.away_team_name}) "
+                                    f"→ ESPN {matched.espn_id}"
+                                )
+                            else:
+                                # COUNTED. A guard whose refusals are invisible
+                                # reads exactly like a guard that never fired.
+                                stats["events_id_held"] = (
+                                    stats.get("events_id_held", 0) + 1
+                                )
+                                stats.setdefault("held_examples", [])
+                                if len(stats["held_examples"]) < 20:
+                                    stats["held_examples"].append({
+                                        "event_id": event.id,
+                                        "espn_id": matched.espn_id,
+                                        "holder_event_id": holder_id,
+                                    })
                         elif reason != "no-name-match":
                             stats["events_refused"] = stats.get("events_refused", 0) + 1
                             logger.info(
