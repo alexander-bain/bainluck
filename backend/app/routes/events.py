@@ -30,6 +30,10 @@ from app.services.anchor_channel import (
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
 from app.utils.lifecycle import served_event_status
+# ONE definition of the state vocabulary (live/048) — imported, not spelled, so
+# that widening it is a rename here rather than a literal this route quietly
+# stops matching. CERT-786 is what that quiet stop looks like from a user's side.
+from app.utils.event_completion import EVENT_SUSPENDED
 from app.utils.graded_card import rendered_duel_percents
 from app.utils import (
     moneyline_to_probability,
@@ -68,6 +72,74 @@ from app.utils.search_match_class import (
     Evidence as _SearchEvidence,
 )
 from app.utils.feed_market_quality import has_no_real_price
+
+# Search scope vocabularies (live/048, CERT-786). The event search has FOUR
+# status enumerations — the primary path and the fuzzy-corrected fallback, each
+# with an `include_upcoming` arm — and the fallback's job is to answer the same
+# question as the primary when the primary found nothing. Four hand-written
+# lists is four chances for a widened vocabulary to reach three of them, so they
+# are one definition used four times.
+#
+# `suspended` is searchable in BOTH arms. A reader who types "Alcaraz" during a
+# rain delay is asking the question this state exists to answer honestly, and a
+# search that cannot reach the match answers it by omission instead.
+_SEARCH_STATUSES = ["scheduled", "live", EVENT_SUSPENDED, "completed", "closed"]
+#: `include_upcoming=False` means "has already started". A suspended match has —
+#: that is the one thing about it nothing disputes — so it belongs here too.
+_SEARCH_STARTED_STATUSES = ["live", EVENT_SUSPENDED, "completed", "closed"]
+
+#: The default `GET /api/events` status set — every state the list is MEANT to
+#: reach, as opposed to the four that happened to exist when it was written.
+#:
+#: `suspended` is in it because this list is how the Sports feed reaches an
+#: event at all (live/048, CERT-786). The old default enumerated a closed
+#: vocabulary, so a fifth state was excluded by an omission nobody made on
+#: purpose: the match stopped printing a false Final — the point of live/048 —
+#: and then stopped being reachable, which is a worse answer to "where did my
+#: match go" than the wrong one it replaced.
+#:
+#: An explicit `?status=` still filters to exactly one state, so a caller asking
+#: for `completed` sees no change. Named rather than inlined so the executing
+#: guard can assert on the object the route uses instead of a copy of it — a
+#: copy is how the omission survived review in the first place.
+EVENT_LIST_DEFAULT_STATUSES = [
+    "scheduled",
+    "live",
+    EVENT_SUSPENDED,
+    "completed",
+    "closed",
+]
+
+
+def event_list_window_condition(*, now, end_date, recent_start):
+    """The time window `GET /api/events` applies on top of the status set.
+
+    Three arms, and the status set above is a SEPARATE gate — excluding
+    `suspended` from either one hides the match, which is why CERT-786 named
+    this route twice:
+
+    * live — regardless of when it started;
+    * scheduled — starting inside the requested range;
+    * completed / closed / **suspended** — started yesterday or today.
+
+    `suspended` rides the finished window for the same reason it rides
+    `recent_cutoff` in the feed: a suspended row is as recent as the Final it
+    replaced, and it should age off this list exactly where that Final would
+    have. Giving it the live arm's open floor would have kept every
+    went-dark fixture on the Sports feed indefinitely.
+    """
+    return or_(
+        Event.status == "live",
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time >= now,
+            Event.commence_time <= end_date,
+        ),
+        and_(
+            Event.status.in_(["completed", "closed", EVENT_SUSPENDED]),
+            Event.commence_time >= recent_start,
+        ),
+    )
 
 # #921 slice 2: placeholder/TBD-team markets have no information to show on an
 # event page (e.g. "TBD vs TBD" props for an unscheduled matchup). Name-based,
@@ -3605,11 +3677,9 @@ async def search_events(
 
     # Filter by status based on include_upcoming
     if include_upcoming:
-        event_scope_conditions.append(
-            Event.status.in_(["scheduled", "live", "completed", "closed"])
-        )
+        event_scope_conditions.append(Event.status.in_(_SEARCH_STATUSES))
     else:
-        event_scope_conditions.append(Event.status.in_(["live", "completed", "closed"]))
+        event_scope_conditions.append(Event.status.in_(_SEARCH_STARTED_STATUSES))
 
     # Filter by sport if specified
     if sport:
@@ -3732,8 +3802,17 @@ async def search_events(
             (Event.status.in_(["live", "scheduled"]), Event.commence_time),
             else_=None
         ).asc().nulls_last(),
+        # live/048 — `suspended` takes the DESCENDING arm. Its commence_time is
+        # in the past by construction, so most-recent-first is the same reading
+        # a Final gets. Matching NEITHER arm is not neutral: both CASEs would
+        # return NULL, both are `nulls_last`, and the row lands at the bottom of
+        # its tier in whatever order the plan happens to emit — admitted to the
+        # result set and sorted off the end of it.
         case(
-            (Event.status.in_(["completed", "closed"]), Event.commence_time),
+            (
+                Event.status.in_(["completed", "closed", EVENT_SUSPENDED]),
+                Event.commence_time,
+            ),
             else_=None
         ).desc().nulls_last(),
     )
@@ -3862,11 +3941,11 @@ async def search_events(
                 # so the fallback count is identity-only too.
                 fuzzy_conditions = [fuzzy_filter, Event.commence_time >= cutoff]
                 if include_upcoming:
-                    fuzzy_conditions.append(
-                        Event.status.in_(["scheduled", "live", "completed", "closed"])
-                    )
+                    fuzzy_conditions.append(Event.status.in_(_SEARCH_STATUSES))
                 else:
-                    fuzzy_conditions.append(Event.status.in_(["live", "completed", "closed"]))
+                    fuzzy_conditions.append(
+                        Event.status.in_(_SEARCH_STARTED_STATUSES)
+                    )
                 if sport:
                     fuzzy_conditions.append(Sport.key == sport)
                 query = (
@@ -7365,9 +7444,9 @@ async def list_events(
     if status:
         conditions.append(Event.status == status)
     else:
-        # Default: show scheduled, live, completed, and closed
-        # "closed" = inferred completion via stale odds (Scores API didn't confirm)
-        conditions.append(Event.status.in_(["scheduled", "live", "completed", "closed"]))
+        # Default: every state the list is meant to reach. See
+        # `EVENT_LIST_DEFAULT_STATUSES` for why `suspended` is in it.
+        conditions.append(Event.status.in_(EVENT_LIST_DEFAULT_STATUSES))
 
     # Date range - but always include live games regardless of start time
     now = datetime.now(timezone.utc)
@@ -7375,22 +7454,9 @@ async def list_events(
     # Include completed events from yesterday and today
     yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Show events that either:
-    # 1. Are live (regardless of when they started), OR
-    # 2. Are scheduled and start within the date range, OR
-    # 3. Are completed/closed and started yesterday or today
     conditions.append(
-        or_(
-            Event.status == "live",
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time >= now,
-                Event.commence_time <= end_date
-            ),
-            and_(
-                Event.status.in_(["completed", "closed"]),
-                Event.commence_time >= yesterday_start
-            )
+        event_list_window_condition(
+            now=now, end_date=end_date, recent_start=yesterday_start
         )
     )
 

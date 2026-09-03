@@ -640,7 +640,10 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
                   return_value=_FakeRedis(now_ts - last_poll_age_s, sport_404)), \
             patch("app.tasks.odds_polling.get_task_session", return_value=_CM()), \
             patch("app.tasks.odds_polling.detect_and_close_stale_events",
-                  AsyncMock(return_value=0)), \
+                  # live/048: two outcomes, not one. StatPal's end time closes a
+                  # row; quiet books only suspend it, so a single `int` could no
+                  # longer say which arm fired.
+                  AsyncMock(return_value={"closed": 0, "suspended": 0})), \
             patch("app.tasks.odds_polling.update_poll_state", MagicMock()), \
             patch("app.tasks.excitement_index.update_live_ei", AsyncMock(return_value=0)):
         result = await odds_polling._poll_all_odds()
@@ -1176,7 +1179,8 @@ class TestAPerSportReReadDoesNotFloodTheBreakersOwnLog:
                 patch("app.tasks.odds_polling.get_redis_client", return_value=quota), \
                 patch("app.tasks.odds_polling.get_task_session", return_value=_CM()), \
                 patch("app.tasks.odds_polling.detect_and_close_stale_events",
-                      AsyncMock(return_value=0)), \
+                      # live/048 — see the note on the sibling patch above.
+                      AsyncMock(return_value={"closed": 0, "suspended": 0})), \
                 patch("app.tasks.odds_polling.update_poll_state", MagicMock()), \
                 patch("app.tasks.excitement_index.update_live_ei",
                       AsyncMock(return_value=0)):
