@@ -145,6 +145,7 @@ import {
   seriesColorByEntity,
   toggleSelection,
 } from "@/lib/contenderChart";
+import { tournamentWindowStarts } from "@/lib/tournamentWindows";
 import { buildMatchList, type TitleChances } from "@/lib/matchList";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
 import { slateNotice } from "@/lib/slate";
@@ -235,6 +236,17 @@ export default function TournamentPage() {
     () => (board ? seriesColorByEntity(chartSeriesFor(board.rows, selectionKeys)) : {}),
     [board, selectionKeys]
   );
+
+  /**
+   * The days the main draw and qualifying began (ux/1034 A1).
+   *
+   * Computed here rather than inside the chart for the same reason the
+   * selection is: it is a property of the TOURNAMENT, not of one board, so
+   * both draws' charts get the identical pair and the men's and women's
+   * windows cannot come apart. Read off the payload — never a constant; see
+   * `tournamentWindowStarts`.
+   */
+  const windowStarts = useMemo(() => tournamentWindowStarts(data), [data]);
 
   const rounds = useMemo(() => buildBracket(data?.bracket?.[draw] ?? []), [data, draw]);
 
@@ -384,6 +396,9 @@ export default function TournamentPage() {
                       setSelection(toggleSelection(selectionKeys, key))
                     }
                     onReset={() => setSelection(null)}
+                    /* ux/1034 A1: the chart opens on the tournament, not on
+                       the month before it. */
+                    windowStarts={windowStarts}
                   />
                 )}
 
