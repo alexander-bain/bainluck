@@ -56,6 +56,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
 import ErrorMessage from "@/components/ErrorMessage";
+import { describeLoadFailure } from "@/lib/loadFailure";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
@@ -545,12 +546,23 @@ export default function EventPage({ params }: EventPageProps) {
     );
   }
 
+  // #2783 — this said "Event not found" for EVERY failure. Measured on
+  // production 2026-09-03: a client over the 60/minute limit gets a 429 and was
+  // told the event does not exist, with "Rate limit exceeded: 60/minute"
+  // printed directly underneath — the heading contradicting its own body, and
+  // both contradicting the truth, which is that the event is fine.
+  //
+  // The status decides the heading now (`lib/loadFailure.ts`). A reader told a
+  // thing does not exist stops looking for it; a reader told we could not reach
+  // it reloads, which is the correct thing to do for every failure here except
+  // a real 404 — and that one no longer offers a retry button that cannot help.
   if (eventError || !event) {
+    const failure = describeLoadFailure(eventError, "event");
     return (
       <ErrorMessage
-        title="Event not found"
-        message={eventError?.message || "Unable to load event details"}
-        onRetry={() => refreshEvent()}
+        title={failure.title}
+        message={failure.message}
+        onRetry={failure.retryable ? () => refreshEvent() : undefined}
       />
     );
   }
