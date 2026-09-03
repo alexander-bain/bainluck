@@ -444,7 +444,13 @@ describe("grouping", () => {
 
   it("renders an honest empty state rather than nothing", () => {
     const html = render(slate({ matches: [], count: 0 }));
-    expect(html).toContain("No matches scheduled");
+    // #2707: "honest" used to be asserted as the literal "No matches
+    // scheduled", which is what the card printed over five live matches on
+    // 2026-09-03. An empty list is a fact about our output, so the card may
+    // report the emptiness and may not name its cause. The wording rules are
+    // pinned in `tournamentEmptySlate2707.test.tsx`.
+    expect(html).toContain('data-testid="matches-empty"');
+    expect(html).not.toContain("No matches scheduled");
     expect(html).not.toMatch(/\d+%/);
   });
 });
