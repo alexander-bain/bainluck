@@ -1,0 +1,341 @@
+{
+ "_source": "VERBATIM concept cards from production GET /api/feed?mode=sports&limit=200, 2026-09-02 ~22:5xZ. Not hand-written. Three cards claim status 'live' with a start_date in the FUTURE (Dutch GP 09-06, Freedom 250 09-06, Vuelta 09-15); two F1 cards with equally future starts (Italian 09-13, Spanish 09-20) read 'upcoming'. That pair is the control that makes #2711 a bug and not a policy. Every card in this file carried a hardcoded boxing-glove icon.",
+ "items": [
+  {
+   "type": "concept",
+   "score": 80,
+   "reason": "18 race markets",
+   "headline": "Live",
+   "data": {
+    "key": "event:cycling:vuelta-2026",
+    "name": "Vuelta a Espa\u00f1a 2026",
+    "domain": "cycling",
+    "status": "live",
+    "start_date": "2026-09-15T15:18:00+00:00",
+    "is_major": true,
+    "fight_count": 0,
+    "entry_count": 18,
+    "is_marquee": true,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Tadej Pogacar",
+     "probability": 0.751,
+     "movement_24h": null,
+     "field_size": 30
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 75,
+   "reason": "3 weekend markets",
+   "headline": "Live",
+   "data": {
+    "key": "event:f1:freedom-250-grand-prix-of-washington-winner",
+    "name": "Freedom 250 Grand Prix of Washington Winner",
+    "domain": "f1",
+    "status": "live",
+    "start_date": "2026-09-06T21:30:00+00:00",
+    "is_major": false,
+    "fight_count": 0,
+    "entry_count": 3,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Alex Palou",
+     "probability": 0.325,
+     "movement_24h": null,
+     "field_size": 25
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 75,
+   "reason": "6 weekend markets",
+   "headline": "Live",
+   "data": {
+    "key": "event:f1:dutch-grand-prix-winner",
+    "name": "Dutch Grand Prix Winner",
+    "domain": "f1",
+    "status": "live",
+    "start_date": "2026-09-06T15:00:00+00:00",
+    "is_major": false,
+    "fight_count": 0,
+    "entry_count": 6,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Lando Norris",
+     "probability": 0.824,
+     "movement_24h": null,
+     "field_size": 22
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 53,
+   "reason": "14 fights on the card",
+   "headline": "This week",
+   "data": {
+    "key": "event:ufc:26sep05",
+    "name": "Fight Night: Hooker vs Parnasse",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-05T23:20:00+00:00",
+    "is_major": false,
+    "fight_count": 14,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Salahdine Parnasse",
+     "probability": 0.805,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 40,
+   "reason": "1 fight on the card",
+   "headline": "This week",
+   "data": {
+    "key": "event:ufc:26sep09",
+    "name": "Mir vs Apodaca",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-09T00:20:00+00:00",
+    "is_major": false,
+    "fight_count": 1,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Apodaca",
+     "probability": 0.99,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 40,
+   "reason": "1 fight on the card",
+   "headline": "This week",
+   "data": {
+    "key": "event:ufc:26sep06",
+    "name": "Spivac vs Petrino",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-06T00:40:00+00:00",
+    "is_major": false,
+    "fight_count": 1,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Petrino",
+     "probability": 0.99,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 38,
+   "reason": "11 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep20",
+    "name": "Joshua Van vs Alexandre Pantoja",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-20T04:00:00+00:00",
+    "is_major": false,
+    "fight_count": 11,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Joshua Van",
+     "probability": 0.5,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 38,
+   "reason": "14 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep13",
+    "name": "Jean Silva vs Jose Delgado",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-13T04:00:00+00:00",
+    "is_major": false,
+    "fight_count": 14,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Jean Silva",
+     "probability": 0.7715,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 38,
+   "reason": "10 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep10",
+    "name": "Edmen Shahbazyan vs Brunno Ferreira",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-10T00:00:00+00:00",
+    "is_major": false,
+    "fight_count": 10,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Joanderson Brito",
+     "probability": 0.7429,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 30,
+   "reason": "14 weekend markets",
+   "headline": null,
+   "data": {
+    "key": "event:f1:spanish-grand-prix-driver-winner",
+    "name": "Spanish Grand Prix: Driver Winner",
+    "domain": "f1",
+    "status": "upcoming",
+    "start_date": "2026-09-20T13:00:00+00:00",
+    "is_major": false,
+    "fight_count": 0,
+    "entry_count": 14,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Nico Hulkenberg",
+     "probability": 0.475,
+     "movement_24h": null,
+     "field_size": 1
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 30,
+   "reason": "2 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep19",
+    "name": "Sy vs Bukauskas",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-19T17:40:00+00:00",
+    "is_major": false,
+    "fight_count": 2,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Sy",
+     "probability": 0.665,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 30,
+   "reason": "2 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep17",
+    "name": "Rivera vs Darby",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-17T00:20:00+00:00",
+    "is_major": false,
+    "fight_count": 2,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Darby",
+     "probability": 0.99,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 30,
+   "reason": "3 fights on the card",
+   "headline": null,
+   "data": {
+    "key": "event:ufc:26sep15",
+    "name": "McCracken vs Sanchez",
+    "domain": "ufc",
+    "status": "upcoming",
+    "start_date": "2026-09-15T23:40:00+00:00",
+    "is_major": false,
+    "fight_count": 3,
+    "entry_count": 0,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Sanchez",
+     "probability": 0.99,
+     "movement_24h": null,
+     "field_size": 2
+    }
+   }
+  },
+  {
+   "type": "concept",
+   "score": 30,
+   "reason": "20 weekend markets",
+   "headline": null,
+   "data": {
+    "key": "event:f1:italian-grand-prix-winner",
+    "name": "Italian Grand Prix Winner",
+    "domain": "f1",
+    "status": "upcoming",
+    "start_date": "2026-09-13T13:00:00+00:00",
+    "is_major": false,
+    "fight_count": 0,
+    "entry_count": 20,
+    "is_marquee": false,
+    "marquee_whathit": false,
+    "leader": {
+     "name": "Lando Norris",
+     "probability": 0.277,
+     "movement_24h": null,
+     "field_size": 22
+    }
+   }
+  }
+ ]
+}

@@ -29,6 +29,11 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string 
   mma: { bg: "bg-red-700/15", text: "text-red-700", emoji: "🥊" },
   boxing: { bg: "bg-red-600/15", text: "text-red-600", emoji: "🥊" },
   motorsports: { bg: "bg-gray-600/15", text: "text-gray-600", emoji: "🏎" },
+  // #2711: cycling was simply absent, so every cycling surface fell to
+  // DEFAULT_CAT's 📊 — and the concept card, which never consulted this map at
+  // all, drew a boxing glove over the Vuelta.
+  cycling: { bg: "bg-yellow-500/15", text: "text-yellow-700", emoji: "🚴" },
+  tennis: { bg: "bg-lime-500/15", text: "text-lime-600", emoji: "🎾" },
   economics: { bg: "bg-violet-500/15", text: "text-violet-600", emoji: "📈" },
   culture: { bg: "bg-pink-500/15", text: "text-pink-600", emoji: "🎭" },
   tech: { bg: "bg-cyan-500/15", text: "text-cyan-600", emoji: "💻" },

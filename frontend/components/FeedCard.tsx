@@ -16,6 +16,7 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
+import { conceptDomainIcon } from "@/lib/conceptDomainIcon";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -949,7 +950,10 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
               </span>
             )}
             <span className="text-[11px] text-text-muted tracking-wide truncate">
-              <span className="mr-0.5">🥊</span>
+              {/* #2711: was a hardcoded 🥊 for every concept, so the Vuelta and
+                  the Dutch Grand Prix both wore a boxing glove. The icon now
+                  follows the domain the label right beside it already prints. */}
+              <span className="mr-0.5">{conceptDomainIcon(data.domain)}</span>
               {data.domain?.toUpperCase() || "EVENT"}
             </span>
           </div>

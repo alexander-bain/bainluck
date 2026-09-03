@@ -60,16 +60,57 @@ def shares_gp(name: str | None, tokens: set[str]) -> bool:
 
 
 def f1_status(status: str | None, resolution_date, now) -> str:
-    """upcoming / live / settled from status + resolution proximity (race weekend)."""
+    """upcoming / settled. A Grand Prix concept CANNOT say live on this data.
+
+    🔴 UX-1035 / #2711 — THIS FUNCTION USED TO RETURN "live" AND IT WAS NEVER
+    ONCE TRUE.
+
+    The rule was ``days <= 4  # race weekend``. Read it against the only
+    timestamp this adapter has: ``list_f1_gp_concepts`` uses ``resolution_date``
+    as the race time (``commence_time`` is the market-open date, gotcha #14) and
+    publishes the SAME value as the concept's ``start_date``. So the branch
+    above it, ``resolution_date < now -> settled``, fires the moment the race
+    begins. The window between them — the four days BEFORE lights out — was the
+    entire "live" state. A Grand Prix was live for four days and then settled;
+    it was never live while it was being run.
+
+    Measured on production 2026-09-02 22:5xZ, from the feed's own payload:
+    "Dutch Grand Prix Winner" carried ``status: "live"`` beside
+    ``start_date: "2026-09-06T15:00:00Z"`` — a card asserting it was live on a
+    Wednesday for a race four days away, with its own refutation printed one
+    field below. "Freedom 250 Grand Prix of Washington Winner" was the same.
+    The control is in the same payload and is what makes this a bug rather than
+    a policy: "Italian Grand Prix Winner" (09-13) and "Spanish Grand Prix:
+    Driver Winner" (09-20) read ``upcoming``, so the adapter called two future
+    races live and two future races upcoming on nothing but distance.
+
+    ⚠️ THIS REMOVES A CLAIM; IT DOES NOT ADD THE OPPOSITE ONE. There is no
+    honest "live" here to put back. Saying so is the point — a GP concept now
+    says ``upcoming`` until its race time and ``settled`` after, which is
+    everything this data can support. Giving it a real live phase needs a real
+    start time, which is a source question (`F1-CONCEPT-NEEDS-A-START-TIME`),
+    not a threshold to re-tune.
+
+    ⚠️ AND IT COSTS THE CARD 35 POINTS, DELIBERATELY. ``_score_event_concept``
+    pays +35 for ``status == "live"``, so the Dutch GP goes 75 -> 40 and off the
+    first page. That boost exists because a live event is interesting; a card
+    that is not live did not earn it, and quietly compensating with a new
+    race-week constant would be inventing an unmeasured ranking input to hide
+    the size of the correction. If race-week prominence should come back it is a
+    separate, measurable ranking change.
+
+    DELIBERATELY NOT CHANGED: ``cycling_status``'s 25-day window. It is the same
+    shape and has the same 4-day-ish slack before a tour begins, but a grand tour
+    RUNS for ~3 weeks before its resolution date, so "within 25 days of the end"
+    is a defensible proxy for "under way" and is currently telling the truth
+    about the Vuelta. A GP is one afternoon; the same proxy cannot work for it.
+    """
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
         return "settled"
     if resolution_date is not None:
         try:
             if resolution_date < now:
                 return "settled"
-            days = (resolution_date - now).total_seconds() / 86400
-            if days <= 4:  # race weekend
-                return "live"
         except TypeError:
             pass
     return "upcoming"
