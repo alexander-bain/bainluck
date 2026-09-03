@@ -96,7 +96,30 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M7-statuses-copy-pasted",
         ROUTE,
-        'Event.status.in_(["completed", "closed"]),',
+        # 🔴 REFRESHED BY THE SHIP IT MEASURES — live/056 (#2858), the follow-up
+        # CERT-839 named `LIVE-056-REFRESH-LEAGUE-RAILS-M7`.
+        #
+        # This needle used to be the hand-written literal
+        # `Event.status.in_(["completed", "closed"]),`. That rail now spends the
+        # shared `RECENT_RAIL_STATUSES` — because the literal is exactly what
+        # hid `suspended` from this page — so the needle no longer existed and
+        # the residue scanner correctly refused.
+        #
+        # It refused LOUDLY rather than quietly passing, and that is the whole
+        # point of the needle-integrity pass: the scanner saw the MUTANT string
+        # still present (the upcoming rail legitimately contains
+        # `["live", "scheduled"]`) with the ORIGINAL gone, which is
+        # indistinguishable from a mutant left on disk by a SIGKILLed run. A
+        # harness whose needle has drifted is measuring nothing, and this one
+        # said so instead of reporting a kill it did not make.
+        #
+        # The MUTATION is unchanged in meaning — copy-paste the sibling
+        # builder's vocabulary over this one — because that is what
+        # `tests/test_league_rails_query_plan.py` kills. "The literal comes
+        # back" is a different regression and is guarded where it belongs, in
+        # `test_suspended_is_reachable_cert_786.py`, by a suite that has a
+        # suspended row to notice its absence.
+        "Event.status.in_(RECENT_RAIL_STATUSES),",
         'Event.status.in_(["live", "scheduled"]),',
         "a copy-paste between the two builders",
     ),

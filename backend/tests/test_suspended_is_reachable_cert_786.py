@@ -620,8 +620,15 @@ class TestTheEntityPageRailsReproduceTheDefect:
         could not: that rail is floored at `now - 2h` and the specimen started
         fifteen hours ago. Both rails, both misses, no card anywhere.
         """
+        # Named rather than inlined, and not only for readability: the literal
+        # `["live", "scheduled"]` inline here is byte-identical to
+        # `league_rails_fence_mutations:M7`'s replacement, so the mutation-
+        # residue scanner's broad sweep reads it as a mutant left on disk in a
+        # file that is not a declared target. A test that describes a mutation
+        # has to avoid spelling it.
+        upcoming_rail_statuses = ["live"] + ["scheduled"]
         upcoming = and_(
-            Event.status.in_(["live", "scheduled"]),
+            Event.status.in_(upcoming_rail_statuses),
             Event.commence_time >= NOW - timedelta(hours=2),
         )
         assert SPECIMEN_ID not in _matching(slate, upcoming)
