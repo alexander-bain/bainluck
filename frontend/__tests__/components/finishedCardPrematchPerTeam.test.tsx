@@ -166,6 +166,31 @@ describe("the /sports FINAL card", () => {
     expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
   });
 
+  it("says which rung the spoken sentence is quoting, not just the visible label", () => {
+    // The label "Pre-match · books" is the caveat a SIGHTED reader gets. The
+    // sentence beside the number is what everyone else gets, and it used to say
+    // "the market gave" on every card — including the books rung, which is a
+    // sportsbook median and not a market at all. Measured on the served /sports
+    // payload 2026-09-03: 13 of 13 finished cards were the books rung, so the
+    // unlabelled sentence was what a screen-reader user heard every time.
+    //
+    // BOTH ARMS. The books arm alone would pass against a card that said
+    // "sportsbooks opened" unconditionally, which is the same defect mirrored.
+    const books = renderFeedCard(
+      makeData({
+        opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
+      })
+    );
+
+    expect(books).toContain("Before the game, sportsbooks opened San Diego Padres");
+    expect(books).not.toContain("the market gave");
+
+    expect(renderFeedCard(KALSHI_FINAL)).toContain(
+      "Before the game, the market gave San Diego Padres"
+    );
+    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("sportsbooks opened");
+  });
+
   it("prints nothing at all when we hold no pre-match reading", () => {
     // The empty space is a real answer. It is what the tennis hub's finished
     // list has always done, and what stops a card inventing a prior.
@@ -216,6 +241,22 @@ describe("the Discover FINAL card", () => {
     );
 
     expect(html).toContain("Pre-match · books");
+  });
+
+  it("and says so in the spoken sentence too, not only the label", () => {
+    const books = renderDiscoverCard(
+      makeData({
+        opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
+      })
+    );
+
+    expect(books).toContain("Before the game, sportsbooks opened San Diego Padres");
+    expect(books).not.toContain("the market gave");
+
+    expect(renderDiscoverCard(KALSHI_FINAL)).toContain(
+      "Before the game, the market gave San Diego Padres"
+    );
+    expect(renderDiscoverCard(KALSHI_FINAL)).not.toContain("sportsbooks opened");
   });
 
   it("shows no strip on a card we hold no reading for", () => {

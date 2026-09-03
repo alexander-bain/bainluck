@@ -41,7 +41,9 @@ import TournamentResults from "@/components/tournament/TournamentResults";
 import {
   prematchAbsenceNote,
   prematchCoverage,
+  prematchSourceNote,
   resultsForDraw,
+  type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
 
@@ -162,5 +164,52 @@ describe("ux/1034 A3 — why a finished row has no pre-match number", () => {
         prematchAbsenceNote({ withPrior: 4, total: 4, untied: 0, heldWithoutOpening: 0 })
       ).toBe("");
     });
+  });
+});
+
+// ═══ ux/1036 / #2747 — AND THE LABEL WHEN THE PRIOR IS A SPORTSBOOK'S ═══
+//
+// The books rung now fills rows the market channel cannot reach: measured by
+// replaying the served payload (2026-09-03) through `apply_books_prematch`,
+// 111 of 245 rows carried a prior and 172 do — including Shelton–Hurkacz, the
+// row Alex read, at 68% labelled `books`.
+//
+// The sentence above those numbers says the grey figure is "what the market gave
+// that player". That is true of Kalshi and Polymarket and NOT of a sportsbook
+// median, and printing the second as the first on this exact list is the defect
+// ux/1034 A3 removed from the sentence beside it.
+describe("ux/1036 — a sportsbook prior says so", () => {
+  const row = (source: string | null) => ({
+    matchup_key: `espn:${source ?? "none"}`,
+    draw: "mens-singles",
+    draw_label: "Men's Singles",
+    round: "R64",
+    players: [
+      { entity_key: "a", display_name: "Ben Shelton", seed: null, is_winner: true,
+        prematch_probability: 0.6792, prematch_source: source },
+      { entity_key: "b", display_name: "Hubert Hurkacz", seed: null, is_winner: false,
+        prematch_probability: 0.3208, prematch_source: source },
+    ],
+    winner_entity_key: "a",
+    score: "6-4, 6-4",
+    completed_at: "2026-09-02T19:00:00Z",
+    source_round: "Round 2",
+    source: "espn",
+  }) as unknown as TournamentResult;
+
+  it("counts and names the books rows", () => {
+    expect(prematchSourceNote([row("books"), row("kalshi")])).toBe(
+      "1 of them is a sportsbook opening rather than a prediction market's.",
+    );
+  });
+
+  it("says nothing when every prior is a prediction market's", () => {
+    // Silent on today's whole served population, which is the point: a caveat
+    // printed under numbers it does not describe is noise.
+    expect(prematchSourceNote([row("kalshi"), row("polymarket")])).toBe("");
+  });
+
+  it("says nothing on a payload that predates the field", () => {
+    expect(prematchSourceNote([row(null)])).toBe("");
   });
 });

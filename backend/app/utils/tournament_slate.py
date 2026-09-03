@@ -78,7 +78,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
-from app.utils.prematch_reading import prematch_source_rank
+from app.utils.prematch_reading import (
+    BOOKS_SOURCE,
+    prematch_source_rank,
+    resolve_prematch_reading,
+)
 from app.utils.tournament_board import (
     DARK_PRICE_HOURS,
     draw_label,
@@ -1456,6 +1460,136 @@ def build_results(
         "source_retirements": (results or {}).get("stats", {}).get("retirements", 0),
         "source_errors": (results or {}).get("errors") or [],
     }
+
+
+def apply_books_prematch(
+    results: dict[str, Any],
+    *,
+    by_espn: Optional[dict[str, int]] = None,
+    openings: Optional[dict[int, dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """The BOOKS rung of the pre-match ladder, over rows that have no prior (#2747).
+
+    ═══ WHAT ALEX FOUND, AND WHAT THE PAGE COULD NOT DO ABOUT IT ═══
+
+    Shelton–Hurkacz on the live hub showed no pre-match number. It has one:
+    ``opening_odds`` 68/32 from sportsbooks. His rule — *"opening = Kalshi →
+    Polymarket → sportsbook blend, labelled by source. Never blank when any
+    pre-match reading exists."*
+
+    ux/1034 A3 shipped the honesty half (the footnote stopped claiming a venue had
+    listed nothing) and left this, because the number was genuinely unreachable:
+    ``opening_*`` lives on the EVENT, and the only id-anchored path from a
+    finished row to its event was ``event_links.by_matchup`` — which by
+    construction covers only pairs the register still carries a matchup for.
+    Shelton–Hurkacz is keyed ``espn:182730``; it is not one of them.
+
+    **#2693 step 2 built the missing channel.** ``Event.espn_id`` plus
+    ``resolve_espn_competition_events`` dereference a competition id to an events
+    row, so the id-anchored path now exists for exactly the rows that lacked one.
+    Verified on production 2026-09-03: ``espn_id = '182730'`` resolves to event
+    15299858, Ben Shelton v Hubert Hurkacz, ``opening_home_probability = 0.6792``
+    — the 68% Alex named.
+
+    ═══ WHY THIS IS AN OVERLAY AND NOT A BRANCH INSIDE `build_results` ═══
+
+    The ESPN links are resolved FROM this section's own rows, so they cannot be an
+    argument to the function that produces them. Keeping the rung as a separate
+    pass also keeps ``build_results`` about the ESPN join and the market prior,
+    and makes the books rung testable on its own terms.
+
+    ═══ THE ORIENTATION RULE: A BIJECTION, OR NOTHING ═══
+
+    An event row names ``home_team_name`` / ``away_team_name``; a result row names
+    two ``entity_key``s. Putting 68% on the wrong player is the worst thing this
+    function could do — it is wrong in the most confident possible way and it
+    looks right. So the two event names must land on the two players EXACTLY one
+    each, and a row where either side is ambiguous or unmatched keeps its empty
+    column.
+
+    ``names_agree`` and not ``espn_tennis.normalize_name``. The strict normalizer
+    concatenates, so it calls ``Shang Juncheng`` and ``Juncheng Shang`` two
+    different people — and measured against the served payload 2026-09-03 that
+    single choice refused 7 of the 63 linkable rows, every one of them a benign
+    variant: a reversed word order (``Zhang Shuai`` / ``Shuai Zhang``), a
+    shortened given name (``Caty`` / ``Catherine McNally``), a dropped second
+    surname (``Daniel Merida`` / ``Daniel Merida Aguilar``). ``names_agree`` is
+    the module built for exactly those, hardened by its own 378-player sweep, and
+    it stays strict where it must: two players sharing a surname do not agree.
+    Its extra tolerance is safe HERE for the reason its own docstring gives —
+    both names must agree, and the bijection below is what enforces that. (It is
+    imported as ``_names_agree``; the underscore is this module's existing
+    convention for the helpers it re-exports nothing of.)
+
+    Mutates and returns ``results``. Rows that already carry a prediction-market
+    prior are never touched — the ladder is ordered, and a books number must not
+    displace a Kalshi one.
+    """
+    matches = (results or {}).get("matches") or []
+    links = by_espn or {}
+    rows_by_event = openings or {}
+    filled = 0
+
+    for match in matches:
+        players = match.get("players") or []
+        if len(players) != 2:
+            continue
+        if any(p.get("prematch_probability") is not None for p in players):
+            continue  # an upper rung already answered; ordered, not merged
+        competition_id = match.get("espn_competition_id")
+        event_id = links.get(str(competition_id)) if competition_id else None
+        row = rows_by_event.get(event_id) if event_id is not None else None
+        if not row:
+            continue
+
+        pair = _pair_probabilities(row)
+        if pair is None:
+            continue
+        home_prob, away_prob = pair
+
+        home_matches = [p for p in players if _names_agree(p.get("display_name"), row.get("home_team_name"))]
+        away_matches = [p for p in players if _names_agree(p.get("display_name"), row.get("away_team_name"))]
+        if len(home_matches) != 1 or len(away_matches) != 1:
+            continue
+        home_player, away_player = home_matches[0], away_matches[0]
+        if home_player is away_player:
+            # One player answered to both event names — the orientation is
+            # exactly as unknown as if neither had. Refuse; see the rule above.
+            # Silent rather than logged: on a doubles row the event's two "teams"
+            # are pairs and this is the expected outcome, not a fault.
+            continue
+
+        home_player["prematch_probability"] = home_prob
+        home_player["prematch_source"] = BOOKS_SOURCE
+        away_player["prematch_probability"] = away_prob
+        away_player["prematch_source"] = BOOKS_SOURCE
+        filled += 1
+
+    if filled:
+        results["with_prematch"] = int(results.get("with_prematch") or 0) + filled
+        # Named on its own, not summed away: "how many of these priors are a
+        # sportsbook median" is the question the footnote's label answers, and a
+        # total cannot answer it.
+        results["with_prematch_books"] = (
+            int(results.get("with_prematch_books") or 0) + filled
+        )
+    return results
+
+
+def _pair_probabilities(row: dict[str, Any]) -> Optional[tuple[float, float]]:
+    """``(home, away)`` from an events row's opening columns, or ``None``.
+
+    Through the shared ladder resolver rather than a local float cast, so the
+    endpoint refusal (a 0 or a 1 is a settled price, not a forecast) and the
+    derive-away-when-incoherent rule are the same ones the game cards use.
+    """
+    reading = resolve_prematch_reading(
+        books_home=row.get("opening_home_probability"),
+        books_away=row.get("opening_away_probability"),
+    )
+    if reading is None:
+        return None
+    return reading["home_probability"], reading["away_probability"]
 
 
 def _prop_settlement(

@@ -32,7 +32,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { prematchReading } from "@/lib/prematchReading";
+import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -434,6 +434,15 @@ function EventFeedCard({
   // `lib/prematchReading.ts` owns the fallback for a cached payload predating
   // `prematch_odds`, and the reason only the books rung carries a label.
   const prematch = isFinished ? prematchReading(data) : null;
+  // THE SPOKEN SENTENCE CARRIES THE LABEL TOO. The visible card says which rung
+  // the number came from ("Pre-match · books"); the screen-reader sentence used
+  // to say "the market gave" on every card regardless, so the one reader who
+  // cannot see the label got the exact claim this ship exists to stop making —
+  // and on the served /sports payload 2026-09-03 all 13 finished cards were the
+  // books rung. Same rule as the label, one decision: `isPredictionMarketSource`.
+  const prematchSaid = isPredictionMarketSource(prematch?.source)
+    ? "Before the game, the market gave"
+    : "Before the game, sportsbooks opened";
 
   // For the probability bar: finished events show opening odds, others show current
   const barHomeProb = isFinished
@@ -575,7 +584,7 @@ function EventFeedCard({
                   data-prematch-source={prematch.source}
                 >
                   <span className="sr-only">
-                    Before the game, the market gave {data.away_team}{" "}
+                    {prematchSaid} {data.away_team}{" "}
                   </span>
                   {prematch.awayPercent}%
                 </span>
@@ -601,7 +610,7 @@ function EventFeedCard({
                   data-prematch-source={prematch.source}
                 >
                   <span className="sr-only">
-                    Before the game, the market gave {data.home_team}{" "}
+                    {prematchSaid} {data.home_team}{" "}
                   </span>
                   {prematch.homePercent}%
                 </span>

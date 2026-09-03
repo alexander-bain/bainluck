@@ -20,7 +20,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { prematchReading } from "@/lib/prematchReading";
+import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -83,6 +83,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // Alex's ladder (Kalshi → Polymarket → books) and labelled when it is not a
   // prediction market. `lib/prematchReading.ts` carries the argument.
   const prematch = isDone ? prematchReading(data) : null;
+  // The spoken sentence names its rung, exactly as the visible label beside it
+  // does — "the market gave" is false of a sportsbook median. Same helper, so
+  // the two can never disagree about what this number is.
+  const prematchSaid = isPredictionMarketSource(prematch?.source)
+    ? "Before the game, the market gave"
+    : "Before the game, sportsbooks opened";
   const catStyle = getCat(data.sport?.split("_")[0]);
   const sportCat = data.sport?.split("_")[0] || "sports";
 
@@ -272,7 +278,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               data-prematch={prematch.awayProbability}
             >
               <span className="sr-only">
-                Before the game, the market gave {data.away_team}{" "}
+                {prematchSaid} {data.away_team}{" "}
               </span>
               {prematch.awayPercent}%
             </span>
@@ -288,7 +294,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               data-prematch={prematch.homeProbability}
             >
               <span className="sr-only">
-                Before the game, the market gave {data.home_team}{" "}
+                {prematchSaid} {data.home_team}{" "}
               </span>
               {prematch.homePercent}%
             </span>
