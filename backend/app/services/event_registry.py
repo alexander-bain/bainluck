@@ -579,7 +579,9 @@ async def _find_by_anchor(
 ) -> Optional[Event]:
     """Step 2: does some row already carry this provider id in the channel?"""
     key = anchor_key_for_claim(
-        identity.claim.source, identity.claim.anchor_source_id
+        identity.claim.source,
+        identity.claim.anchor_source_id,
+        sport_key=identity.sport_key,
     )
     event_id = await find_event_by_anchor(
         session, key, expected_sport_id=sport_id
@@ -632,7 +634,9 @@ async def _record_claim_anchor(
         return
 
     key = anchor_key_for_claim(
-        identity.claim.source, identity.claim.anchor_source_id
+        identity.claim.source,
+        identity.claim.anchor_source_id,
+        sport_key=identity.sport_key,
     )
     if key is None:
         return
