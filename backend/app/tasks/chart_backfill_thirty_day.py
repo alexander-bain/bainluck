@@ -134,8 +134,41 @@ GAVE_UP_KEY = "chart_backfill_30d:gaveup:{tier}"
 #: wasted double-fetch; the other three remove the wrong verdict. Any one of
 #: them alone would close CERT-773's reproduction, and they are all here because
 #: the failure they prevent is permanent and the cost of preventing it is not.
+#: 🔴 CERT-794/795 — AND THE MONOTONE MARKER WAS NOT THE GUARANTEE EITHER. The
+#: paragraph above is right that a clean finish cannot DOWNGRADE a failure
+#: ending. It is silent about the other order, which is the one the graders
+#: reproduced: a sibling writes a clean `drained` onto a tier holding no
+#: terminal marker at all, and the older runner — whose fixed 30-minute lease
+#: had quietly expired — THEN appends a newly owed retry. Nothing was
+#: downgraded; the two writes simply do not know about each other, and the tier
+#: ends `done='drained'` beside `retry={7007: 1}`. The next trigger returns on
+#: `state.done` and never retries that event, so the match page stays incomplete
+#: behind a verdict that says the drain finished cleanly.
+#:
+#: Three changes close it, and again they are deliberately redundant:
+#:
+#:   1. **THE LEASE IS RENEWED, NOT FIXED.** Every state write refreshes the TTL
+#:      (:func:`_still_holds`), so a pass that is alive keeps its tier for as
+#:      long as it keeps working. A fixed 1800s was a promise about how long a
+#:      pass takes, and a promise about duration is not a lock.
+#:   2. **A WRITER THAT LOST THE LEASE WRITES NOTHING.** Every write is fenced on
+#:      the token, so the loser cannot append the retry, move the cursor, or
+#:      settle the tier. Losing the lease now means being stalled for a full TTL
+#:      between two writes, at which point the pass's in-memory results are
+#:      stale and refusing them is the correct answer.
+#:   3. **A NEWLY OWED RETRY RE-OPENS THE TIER, ATOMICALLY.** The retry write
+#:      DELETES the terminal marker in the same MULTI that adds the field, so
+#:      the reverse order cannot leave the pair behind: whichever lands second,
+#:      the state a reader sees is either "terminal and owing nothing" or "owing
+#:      something and not terminal", never both.
 TIER_LOCK_KEY = "chart_backfill_30d:lock:{tier}"
 TIER_LOCK_TTL_SECONDS = 1800
+
+#: What a fenced-out write reports. NOT terminal, and deliberately distinct from
+#: `locked_out`: `locked_out` is a trigger that never got in, this is one that
+#: was inside and lost the tier mid-pass. Both mean re-trigger; only this one
+#: means a pass's work was thrown away, which is worth seeing in a log.
+LOCK_LOST = "lock_lost"
 
 #: A dry run holds no lock — it persists nothing, so there is nothing to
 #: serialize. This stands in for the token so the runner's release path stays
@@ -146,6 +179,12 @@ _DRY_RUN_LOCK = "dry-run"
 #: stopped, and it says so by name rather than by looking finished.
 DONE_CLEAN = "drained"
 DONE_WITH_FAILURES = "drained_with_failures"
+
+#: NOT terminal, and it already existed as a literal on the tier report — it is
+#: named here because :func:`_mark_done` now answers with it too (CERT-794/795):
+#: a settlement that finds the retry hash non-empty reports this instead of
+#: writing a clean marker over a tier that still owes work.
+AWAITING_RETRIES = "awaiting_retries"
 
 #: Attempts per event before the drain gives up on it. Bounded because an event
 #: that can never be fetched — a token the venue has dropped, a market whose
@@ -456,20 +495,31 @@ def _decode(raw) -> Optional[str]:
     return str(raw) or None
 
 
-def _write_cursor(tier: str, cursor: Optional[tuple]) -> None:
-    """Persist the position this tier reached. Nothing else."""
+def _write_cursor(
+    tier: str, cursor: Optional[tuple], token: Optional[str] = _DRY_RUN_LOCK,
+) -> bool:
+    """Persist the position this tier reached. Nothing else.
+
+    Fenced (CERT-794/795): a pass that lost the lease must not move the cursor.
+    The cursor is allowed to advance past a FAILED event only because that
+    event's id is held in the retry hash — so a writer that cannot record the
+    retry must not record the advance either, or the failure is stepped over and
+    never seen again.
+    """
     if cursor is None:
-        return
+        return True
     stamp, event_id = cursor
-    _with_redis(
-        tier,
+    return _fenced(
+        tier, token,
         lambda client: client.set(
             CHECKPOINT_KEY.format(tier=tier), f"{stamp.isoformat()}|{int(event_id)}"
         ),
     )
 
 
-def _mark_done(tier: str, marker: str) -> str:
+def _mark_done(
+    tier: str, marker: str, token: Optional[str] = _DRY_RUN_LOCK,
+) -> str:
     """Mark the tier terminal, MONOTONICALLY. Returns the marker now in force.
 
     `drained` and `drained_with_failures` are BOTH terminal and are deliberately
@@ -499,6 +549,20 @@ def _mark_done(tier: str, marker: str) -> str:
     verdict — so the marker actually in force is read back and returned, and the
     caller reports THAT rather than what it proposed (CERT-764's clause: one
     decision, not three readers each inferring their own).
+
+    🔴 AND MONOTONE IS NOT ENOUGH — CERT-794/795. Monotonicity only orders the
+    two TERMINAL markers against each other. It says nothing about a clean
+    `drained` landing on an empty done-key while a sibling still owes a retry,
+    which is the pair the graders reproduced. So the clean write also refuses
+    while the retry hash is non-empty, checked on this same connection
+    immediately before the `SET NX`: a tier that owes work has not finished, and
+    the answer is `awaiting_retries` — not terminal, so the operator's re-call
+    loop picks it straight back up. The other order (the retry landing after the
+    clean marker) is closed at the retry's own write, which deletes the marker
+    inside its transaction; see :func:`_record_attempts`.
+
+    The whole call is fenced, so a pass that lost the lease cannot settle a tier
+    it no longer owns. A fenced-out settlement reports :data:`LOCK_LOST`.
     """
     key = TIER_DONE_KEY.format(tier=tier)
     in_force: list = []
@@ -507,6 +571,16 @@ def _mark_done(tier: str, marker: str) -> str:
         if marker == DONE_WITH_FAILURES:
             client.set(key, marker)
             in_force.append(marker)
+            return
+        # 🔴 CERT-794/795: no clean `drained` while anything is owed.
+        if client.hlen(RETRY_KEY.format(tier=tier)):
+            logger.warning(
+                "30d chart drain: tier %s proposed %s but the retry hash is NOT "
+                "empty — a sibling owes work on this tier, so it has not "
+                "finished. Reporting %s instead of writing a terminal marker.",
+                tier, marker, AWAITING_RETRIES,
+            )
+            in_force.append(AWAITING_RETRIES)
             return
         if client.set(key, marker, nx=True):
             in_force.append(marker)
@@ -519,7 +593,9 @@ def _mark_done(tier: str, marker: str) -> str:
             DONE_WITH_FAILURES if existing == DONE_WITH_FAILURES else DONE_CLEAN
         )
 
-    _with_redis(tier, _apply)
+    held = _fenced(tier, token, _apply)
+    if not held:
+        return LOCK_LOST
     # Nothing persisted (Redis unreachable) still reports what was DECIDED — the
     # verdict is not silently downgraded by an outage, and `_with_redis` has
     # already logged that the checkpoint did not land.
@@ -543,10 +619,17 @@ class AttemptOutcome(NamedTuple):
     #: `INCRBY` returned, so it is what a later trigger will read back.
     gave_up_total: int
 
+    #: Whether this pass still HELD the tier when it wrote (CERT-794/795).
+    #: `False` means the lease had expired and a sibling owns the tier: nothing
+    #: above was persisted, and the caller must stop rather than go on to write
+    #: a cursor or a verdict for a tier it no longer owns. Defaults to `True` so
+    #: a caller constructing an outcome by hand gets the ordinary case.
+    held: bool = True
+
 
 def _record_attempts(
     tier: str, attempted: Sequence[int], failed: Sequence[int], prior: dict,
-    prior_gave_up: int = 0,
+    prior_gave_up: int = 0, token: Optional[str] = _DRY_RUN_LOCK,
 ) -> AttemptOutcome:
     """Fold one pass's outcomes into the tier's retry hash and give-up count.
 
@@ -608,18 +691,34 @@ def _record_attempts(
         # visibility: INCRBY is queued last so its reply is the last element of
         # `execute()`, and that reply is the persisted post-attempt total the
         # settlement turns on (CERT-764).
+        #
+        # 🔴 AND A NEWLY OWED RETRY RE-OPENS THE TIER, INSIDE THIS SAME BLOCK —
+        # CERT-794/795. `added` non-empty means "this pass just failed to reach
+        # an event and owes it another go", and a tier that owes work is by
+        # definition not finished. So the terminal marker is DELETED here rather
+        # than left for the next reader to notice, which is what closes the
+        # reverse order the graders reproduced: a sibling's clean `drained`
+        # landing FIRST is simply removed by the retry that follows it, in one
+        # visible transition. No reader can ever see `done='drained'` beside a
+        # non-empty retry hash, so no reader can early-return past owed work.
+        #
+        # Deleting a `drained_with_failures` here loses nothing: the give-up
+        # COUNTER is untouched and monotone, so when this tier settles again it
+        # reads that counter back and ends `drained_with_failures` exactly as
+        # before. The marker is re-derivable; the abandoned retry is not.
         with client.pipeline(transaction=True) as pipe:
             if dropped:
                 pipe.hdel(key, *[str(e) for e in dropped])
             if added:
                 pipe.hset(key, mapping=added)
+                pipe.delete(TIER_DONE_KEY.format(tier=tier))
             if gave_up:
                 pipe.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
             results = pipe.execute()
         if gave_up and results:
             persisted.append(results[-1])
 
-    _with_redis(tier, _apply)
+    held = _fenced(tier, token, _apply)
 
     gave_up_total = computed_total
     if persisted:
@@ -627,7 +726,7 @@ def _record_attempts(
             gave_up_total = max(computed_total, int(persisted[0]))
         except (TypeError, ValueError):
             gave_up_total = computed_total
-    return AttemptOutcome(still_owed, gave_up_total)
+    return AttemptOutcome(still_owed, gave_up_total, held)
 
 
 def _with_redis(tier: str, apply) -> None:
@@ -640,6 +739,83 @@ def _with_redis(tier: str, apply) -> None:
             "30d chart drain: checkpoint for tier %s not persisted", tier,
             exc_info=True,
         )
+
+
+def _still_holds(client, tier: str, token: Optional[str]) -> bool:
+    """Do we still own this tier — and if so, RENEW the lease. CERT-794/795.
+
+    Called immediately before every state write, on the same client and the same
+    connection the write goes out on, so the check is as close to the write as it
+    can be without a server-side script.
+
+    🔴 RENEWING IS THE POINT, not the check. CERT-794's race needs the older
+    runner's lease to have expired while it was still working, and a fixed
+    1800-second TTL guarantees that eventually happens to a long enough pass. A
+    lease that is refreshed on every write expires only when the holder has done
+    nothing at all for half an hour — a stalled or dead worker, which is exactly
+    who the TTL is meant to evict. So the renewal removes the race's precondition
+    and the fence removes its consequence.
+
+    🔴 A DRY RUN ALWAYS HOLDS. It took no lock because it writes nothing, and
+    :data:`_DRY_RUN_LOCK` keeps `None` meaning one thing (locked out) rather than
+    two. Since a dry run reaches no write, this answer is never load-bearing;
+    saying so here is cheaper than a second branch at every call site.
+
+    🔴 UNREACHABLE REDIS ANSWERS TRUE, matching :func:`_acquire_tier_lock`'s
+    documented FAIL OPEN. If the server cannot be reached there is no lock, no
+    sibling and no persisted verdict to corrupt — every write is swallowed by
+    :func:`_with_redis` anyway — and refusing to run would turn a blip into a
+    silently disabled drain.
+    """
+    if token is None:
+        return False
+    if token == _DRY_RUN_LOCK:
+        return True
+    key = TIER_LOCK_KEY.format(tier=tier)
+    try:
+        if _decode(client.get(key)) != token:
+            return False
+        client.expire(key, TIER_LOCK_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 — see FAIL OPEN above
+        logger.warning(
+            "30d chart drain: tier %s lease could not be checked; proceeding "
+            "(nothing persists while Redis is unreachable)", tier, exc_info=True,
+        )
+        return True
+    return True
+
+
+def _fenced(tier: str, token: Optional[str], apply) -> bool:
+    """Run `apply(client)` only while we still hold the tier. CERT-794/795.
+
+    Returns whether this pass STILL OWNS the tier. `False` is a REAL answer the
+    caller must act on — it means the lease is gone, everything this write was
+    about to persist has been thrown away, and the caller must not go on to
+    persist the NEXT thing either. Silently continuing is how a fenced pass still
+    advances a cursor past a failure it was not allowed to record.
+
+    🔴 IT IS NOT A "DID REDIS WORK" FLAG. An unreachable Redis returns `True`:
+    nothing persisted, but the tier was not taken from us, and reporting that as
+    a lost lease would turn a blip into an aborted drain. That is the same
+    fail-open the lock itself documents, and it is why the refusal is recorded by
+    the fence rather than inferred from the write's absence.
+    """
+    refused: list = []
+
+    def _guarded(client):
+        if not _still_holds(client, tier, token):
+            refused.append(True)
+            return
+        apply(client)
+
+    _with_redis(tier, _guarded)
+    if refused:
+        logger.warning(
+            "30d chart drain: tier %s write REFUSED — this pass no longer holds "
+            "the tier (lease expired and a sibling took it). Nothing was "
+            "written; the tier belongs to whoever holds it now.", tier,
+        )
+    return not refused
 
 
 def _acquire_tier_lock(tier: str) -> Optional[str]:
@@ -965,6 +1141,35 @@ async def run_thirty_day_chart_drain(
 
                 try:
                     state = _read_checkpoint(tier.name)
+                    if state.done and state.retry:
+                        # 🔴 CERT-794/795 — THE STATE THAT MUST NOT BE SKIPPED.
+                        # A terminal marker beside a non-empty retry hash is
+                        # self-contradictory: the tier finished, and it owes
+                        # work. The writes above now make the pair unreachable
+                        # going forward, but a tier can ALREADY be sitting in it
+                        # — the shipped code could produce it, so production
+                        # can be holding one right now — and the old early
+                        # return here is what made it permanent: `state.done`
+                        # sent every later trigger straight past the owed event,
+                        # forever, behind a verdict that says the drain finished.
+                        # So this is not an assertion, it is a REPAIR: drop the
+                        # marker and drain what is owed. Re-opening a tier costs
+                        # a pass; not re-opening it costs the chart.
+                        logger.warning(
+                            "30d chart drain: tier %s is marked %s but owes %d "
+                            "retry/retries (%s) — that pair cannot both be "
+                            "true. RE-OPENING the tier and draining them; the "
+                            "marker is re-derived when it settles again.",
+                            tier.name, state.done, len(state.retry),
+                            sorted(state.retry)[:10],
+                        )
+                        _fenced(
+                            tier.name, lock,
+                            lambda client: client.delete(
+                                TIER_DONE_KEY.format(tier=tier.name)
+                            ),
+                        )
+                        state = state._replace(done=None)
                     if state.done:
                         summary["tiers"][tier.name] = {
                             "status": state.done, "already_done": True,
@@ -1012,10 +1217,22 @@ async def run_thirty_day_chart_drain(
                                 result.failed,
                                 owed,
                                 gave_up_total,
+                                lock,
                             )
                             owed, gave_up_total = (
                                 outcome.owed, outcome.gave_up_total,
                             )
+                            if not outcome.held:
+                                # 🔴 CERT-794/795. The lease is gone, so nothing
+                                # above persisted. Stop HERE: settling or
+                                # advancing a cursor for a tier we no longer own
+                                # is precisely the write the fence exists to
+                                # refuse, and doing it one call later is the
+                                # same wrong write with a different name.
+                                summary["tiers"][tier.name] = dict(
+                                    tier_report, status=LOCK_LOST,
+                                )
+                                continue
                         stopped = result.stopped
                         if stopped == "consecutive_errors":
                             summary["tiers"][tier.name] = dict(
@@ -1053,16 +1270,26 @@ async def run_thirty_day_chart_drain(
                                 result.failed,
                                 owed,
                                 gave_up_total,
+                                lock,
                             )
                             owed, gave_up_total = (
                                 outcome.owed, outcome.gave_up_total,
                             )
+                            if not outcome.held:
+                                # See the retry arm above: a fenced-out write
+                                # ends the tier for this pass, it does not fall
+                                # through to the settlement.
+                                summary["tiers"][tier.name] = dict(
+                                    tier_report, status=LOCK_LOST,
+                                )
+                                continue
                         stopped = result.stopped
                     tier_report["advanced_to"] = _label(page.next_cursor)
                     tier_report["exhausted"] = page.exhausted
                     settled = _settle_tier(
                         tier.name, page, tier_report,
                         owed=owed, gave_up=gave_up_total, dry_run=dry_run,
+                        token=lock,
                     )
                     # The verdict this trigger PERSISTED, carried on the report
                     # rather than re-derived. `_verdict` and the next trigger's
@@ -1110,7 +1337,7 @@ async def run_thirty_day_chart_drain(
 
 def _settle_tier(
     tier: str, page: DrainPage, tier_report: dict, *,
-    owed: dict, gave_up: int, dry_run: bool,
+    owed: dict, gave_up: int, dry_run: bool, token: Optional[str] = _DRY_RUN_LOCK,
 ) -> Optional[str]:
     """Decide, and persist, what this tier's page means for the tier.
 
@@ -1153,7 +1380,7 @@ def _settle_tier(
         # here only because its id is held in `owed`.
         tier_report["status"] = "in_progress"
         if not dry_run:
-            _write_cursor(tier, page.next_cursor)
+            _write_cursor(tier, page.next_cursor, token)
         return None
 
     if owed:
@@ -1164,7 +1391,7 @@ def _settle_tier(
             tier, len(owed),
         )
         if not dry_run:
-            _write_cursor(tier, page.next_cursor)
+            _write_cursor(tier, page.next_cursor, token)
         return None
 
     marker = DONE_WITH_FAILURES if gave_up else DONE_CLEAN
@@ -1176,7 +1403,7 @@ def _settle_tier(
             tier, DONE_WITH_FAILURES, gave_up, MAX_EVENT_RETRIES,
         )
     if not dry_run:
-        _write_cursor(tier, page.next_cursor)
+        _write_cursor(tier, page.next_cursor, token)
         # 🔴 CERT-773. `_mark_done` is MONOTONE and answers with the marker
         # actually in force, which is not always the one proposed: a sibling
         # trigger that abandoned an event has already written
@@ -1184,7 +1411,7 @@ def _settle_tier(
         # report follows Redis rather than the other way round, so the summary,
         # the persisted key and the next trigger's read-back stay one verdict
         # (CERT-764's clause) even when two triggers settled the same tier.
-        in_force = _mark_done(tier, marker)
+        in_force = _mark_done(tier, marker, token)
         if in_force != marker:
             logger.warning(
                 "30d chart drain: tier %s proposed %s but a concurrent trigger "

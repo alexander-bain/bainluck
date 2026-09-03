@@ -129,6 +129,21 @@ class FakeTierRedis:
                 removed += 1
         return removed
 
+    def _hlen(self, key):
+        """🔴 CERT-794/795. The clean done-marker refuses while this is non-zero,
+        so a fake that always answered 0 would make the refusal look present
+        while it did nothing — the same failure the `SET NX` note above warns
+        about."""
+        return len(self.hashes.get(key, {}))
+
+    def _expire(self, key, seconds):
+        """Lease renewal. The fake holds no clock, so TTLs are not simulated: a
+        test makes a lease expire by DELETING or overwriting the lock key, which
+        is what expiry looks like to every reader anyway. What is modelled is
+        that `expire` on a MISSING key is a no-op answering 0 — a renewal cannot
+        resurrect a lease a sibling has already taken and released."""
+        return 1 if key in self.store else 0
+
     def _apply(self, name, args, kwargs):
         self.commands.append((name, args, dict(kwargs)))
         return getattr(self, f"_{name}")(*args, **kwargs)
@@ -160,6 +175,12 @@ class FakeTierRedis:
 
     def hdel(self, key, *ids):
         return self._run("hdel", key, *ids)
+
+    def hlen(self, key):
+        return self._run("hlen", key)
+
+    def expire(self, key, seconds):
+        return self._run("expire", key, seconds)
 
     def pipeline(self, transaction=True):
         return FakePipeline(self, transaction=transaction)
