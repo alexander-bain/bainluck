@@ -11,7 +11,7 @@ lane_dir () { case "$1" in integrator) echo "$HOME/bainluck";; *) echo "$HOME/ba
 lane_args () { echo "$1"; }  # 9/2: lane1 has its own worktree+window now (it was starved by the integrator conveyor)
 launch () { osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null; }
 while true; do
-  for L in integrator lane1 lane1b ux latency calibration live; do
+  for L in integrator lane1 lane1b ux latency calibration live authority; do
     D="$(lane_dir "$L")"; A="$(lane_args "$L")"; [ -d "$D" ] || continue
     if ! pgrep -f "lane-runner.sh $D $A" >/dev/null 2>&1; then
       echo "[supervisor] $(date '+%H:%M:%S') lane '$L' has no runner — relaunching"
