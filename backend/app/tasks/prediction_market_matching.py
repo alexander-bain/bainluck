@@ -126,6 +126,38 @@ _BACKLOG_SCAN_MAX = 3000
 _BACKLOG_DOWNSTREAM_RESERVE_SECONDS = 420
 _BACKLOG_MIN_SECONDS_REMAINING = 480
 
+# ── The upstream passes yield above Pass 3's floor (CERT-817 repair) ────────
+# THIS IS WHY PASS 3 HAD STILL NEVER RUN. Passes 1 and 2 both looped until only
+# 120s of the 780s budget remained, and Pass 3 refuses to start below 480s — so
+# on any cycle with enough work to fill the budget, Pass 3 was unreachable no
+# matter what it was ordered by. #2798 cutting Pass 1's population from 138,676
+# to 7,447 was necessary and NOT sufficient: at the measured ~12.5 markets/s
+# that is still ~596s, leaving 184s, and Pass 3 skipped again. A floor nobody
+# can reach is not a guarantee, and `backlog_skipped_budget` was the only thing
+# saying so.
+#
+# So the two upstream passes now stand down ABOVE Pass 3's floor rather than
+# running to the end of the budget. Every number is DERIVED from the floor it
+# has to protect, so the four cannot drift apart the way 120 and 480 did.
+#
+# THIS TRADES TOTAL ATTEMPTS FOR REACH, deliberately. Pass 1 attempts fewer
+# markets per cycle than it did; the ones it drops are the tail of an
+# `updated_at DESC` scan that re-reads the same head every 15 minutes, and Pass
+# 3 takes them never-attempted-first, which is the ship #2705 was built for and
+# has never once delivered in production.
+#: Slack between Pass 2 standing down and Pass 3 testing its floor, so one
+#: long-running final attempt cannot push Pass 3 back under it.
+_PASS3_START_CUSHION_SECONDS = 15
+#: Pass 2's share. It is the smallest of the three because Pass 3 runs the same
+#: `_attempt_market` over a strictly better-ordered queue.
+_PASS2_SHARE_SECONDS = 60
+_PASS2_YIELD_AT_SECONDS_REMAINING = (
+    _BACKLOG_MIN_SECONDS_REMAINING + _PASS3_START_CUSHION_SECONDS
+)
+_PASS1_YIELD_AT_SECONDS_REMAINING = (
+    _PASS2_YIELD_AT_SECONDS_REMAINING + _PASS2_SHARE_SECONDS
+)
+
 # The settled sweep (#2798). A settled market cannot link — the event population
 # for a past date is frozen — but Pass 1 had no status predicate at all, so it
 # re-attempted them forever: measured on production 2026-09-03, 7,464 of the
@@ -1497,6 +1529,10 @@ async def _phase1_pass1_ticker_scan(
     )
     ticker_market_ids = [int(mid) for mid in ticker_result.scalars().all()]
     stats["funnel"]["ticker_scan_count"] = len(ticker_market_ids)
+    # Always present, so "Pass 1 ran to completion" and "Pass 1 stood down" are
+    # distinguishable in the funnel instead of one being an absent key.
+    stats["funnel"]["pass1_yielded_to_backlog"] = False
+    stats["funnel"]["pass1_not_attempted"] = 0
 
     receipts: list[MatchReceipt] = []
     processed_ids = set()
@@ -1505,11 +1541,28 @@ async def _phase1_pass1_ticker_scan(
     # in memory leave their markets reading as never attempted, which is the
     # one state this table exists to abolish.
     try:
+        # Counted here rather than off ``markets_scanned``, which skips a row
+        # that vanished before its attempt: those rows WERE reached, and calling
+        # them "not attempted" would inflate the tail Pass 3 is told to cover.
+        reached = 0
         for market_id in ticker_market_ids:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 1 time budget exhausted after %d/%d ticker markets",
-                            stats["markets_scanned"], len(ticker_market_ids))
+            # Yields ABOVE Pass 3's floor, not at the end of the budget
+            # (CERT-817). Running to 120s here is what kept the backlog sweep
+            # from ever starting; the rows this drops are the tail of an
+            # `updated_at DESC` scan and Pass 3 takes them oldest-first.
+            if _time_remaining() < _PASS1_YIELD_AT_SECONDS_REMAINING:
+                stats["funnel"]["pass1_yielded_to_backlog"] = True
+                stats["funnel"]["pass1_not_attempted"] = (
+                    len(ticker_market_ids) - reached
+                )
+                logger.info(
+                    "Phase 1 Pass 1 yielded after %d/%d ticker markets with "
+                    "%.0fs left, so Pass 3 can start above its %ds floor",
+                    reached, len(ticker_market_ids),
+                    _time_remaining(), _BACKLOG_MIN_SECONDS_REMAINING,
+                )
                 break
+            reached += 1
             processed_ids.add(market_id)
             market = await _load_market_row(session, market_id)
             if market is None:
@@ -1687,15 +1740,22 @@ async def _phase1_pass2_general_scan(
 
     unlinked_ids = matchup_ids + remaining_ids
     stats["funnel"]["general_scan_count"] = len(unlinked_ids)
+    stats["funnel"]["pass2_yielded_to_backlog"] = False
     stats["funnel"]["matchup_scan_count"] = len(matchup_ids)
     stats["funnel"]["remaining_scan_count"] = len(remaining_ids)
 
     receipts: list[MatchReceipt] = []
     try:
         for market_id in unlinked_ids:
-            if _time_remaining() < 120:
-                logger.info("Phase 1 Pass 2 time budget exhausted after %d markets scanned",
-                            stats["markets_scanned"])
+            # Same reserve as Pass 1, one share lower (CERT-817).
+            if _time_remaining() < _PASS2_YIELD_AT_SECONDS_REMAINING:
+                stats["funnel"]["pass2_yielded_to_backlog"] = True
+                logger.info(
+                    "Phase 1 Pass 2 yielded after %d markets scanned with "
+                    "%.0fs left, so Pass 3 can start above its %ds floor",
+                    stats["markets_scanned"], _time_remaining(),
+                    _BACKLOG_MIN_SECONDS_REMAINING,
+                )
                 break
             if market_id in processed_ids:
                 continue

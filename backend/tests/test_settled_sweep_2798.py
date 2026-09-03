@@ -390,3 +390,159 @@ def test_the_sweep_runs_before_anything_that_attempts_a_link():
 @pytest.mark.parametrize("name", ["_SETTLED_SWEEP_MAX", "_SETTLED_SWEEP_MIN_SECONDS_REMAINING"])
 def test_the_bounds_are_named_constants(name):
     assert isinstance(getattr(pmm, name), int)
+
+
+# =============================================================================
+# CERT-817 repair — the floor Pass 3 could never reach.
+# =============================================================================
+
+
+class TestPass3ActuallyStartsOnAFullCycle:
+    """CERT-817 BLOCKed #2798 on arithmetic, and the arithmetic was right.
+
+    Cutting Pass 1's population from 138,676 to 7,447 was necessary and NOT
+    sufficient. Passes 1 and 2 both looped until 120s of the 780s budget
+    remained; Pass 3 refuses to start below 480s. At the measured ~12.5
+    markets/s, 7,447 rows is ~596s, so Pass 1 alone left ~184s and Pass 3
+    skipped again — exactly as it had every cycle since #2705 shipped it.
+
+    THESE TESTS BURN A CLOCK, they do not read the constants. A fake
+    `_time_remaining` is charged per market at the measured rate, the three
+    passes run in the task's own order, and the assertion is that Pass 3
+    ISSUED A QUERY. Under the old floors that assertion fails, which is what
+    makes it the test that would have caught this before the bus did.
+    """
+
+    #: Measured on production 2026-09-03 (CERT-817): 8,279 rows in a ~660s
+    #: Pass-1 window.
+    RATE_PER_SECOND = 12.5
+    BUDGET = 780
+    #: Pass 1's population after #2798's status predicate.
+    PASS1_ROWS = 7447
+
+    class _Clock:
+        """Charges wall-clock per market loaded, like the real attempt does."""
+
+        def __init__(self, budget, rate):
+            self.remaining = float(budget)
+            self.cost = 1.0 / rate
+
+        def __call__(self):
+            return self.remaining
+
+        def charge(self):
+            self.remaining -= self.cost
+
+    def _run_a_cycle(self, pass1_rows):
+        """Passes 1, 2, 3 in the order `_match_prediction_markets` runs them."""
+        from unittest.mock import patch
+
+        clock = self._Clock(self.BUDGET, self.RATE_PER_SECOND)
+        stats = {"funnel": {}, "errors": [], "markets_scanned": 0}
+
+        class _Session(_CapturingSession):
+            def __init__(self, ids):
+                super().__init__()
+                self._ids = ids
+                self._served = False
+
+            async def execute(self, stmt):
+                self.statements.append(stmt)
+                ids, self._served = (
+                    (self._ids, True) if not self._served else ([], True)
+                )
+
+                class _R:
+                    def all(s):
+                        return ids
+
+                    def scalars(s):
+                        return s
+
+                    def unique(s):
+                        return s
+                return _R()
+
+        async def _fake_load(session, market_id):
+            clock.charge()
+            return None          # no attempt work; we are measuring the budget
+
+        p1 = _Session(list(range(1, pass1_rows + 1)))
+        p2 = _Session([])
+        p3 = _Session([])
+        with patch.object(pmm, "_load_market_row", _fake_load):
+            processed = asyncio.run(
+                pmm._phase1_pass1_ticker_scan(p1, stats, NOW, [], clock)
+            )
+            asyncio.run(
+                pmm._phase1_pass2_general_scan(
+                    p2, stats, NOW, 500, processed, [], clock
+                )
+            )
+            asyncio.run(
+                pmm._phase1_pass3_backlog_scan(
+                    p3, stats, NOW, processed, [], clock
+                )
+            )
+        return stats, clock
+
+    def test_pass3_starts_on_the_cycle_that_used_to_starve_it(self):
+        """THE REPAIR, and the exact scenario CERT-817 computed."""
+        stats, clock = self._run_a_cycle(self.PASS1_ROWS)
+
+        assert stats["funnel"]["backlog_skipped_budget"] is False, (
+            "Pass 3 stood down on its budget floor again — this is the CERT-817 "
+            f"BLOCK unrepaired. {clock.remaining:.0f}s remained when it tested "
+            f"its {pmm._BACKLOG_MIN_SECONDS_REMAINING}s floor."
+        )
+        # …and it stood down because Pass 1 YIELDED, not because Pass 1 was
+        # small enough to finish. A repair that only worked on a short queue
+        # would not be a repair.
+        assert stats["funnel"]["pass1_yielded_to_backlog"] is True
+        assert stats["funnel"]["pass1_not_attempted"] > 0
+
+    def test_pass1_still_runs_to_completion_when_the_queue_is_small(self):
+        """The reserve is a ceiling on Pass 1's time, not a quota it must spend.
+
+        A cheap cycle must still attempt every fresh ticker market — the
+        reserve exists to stop Pass 1 monopolising the budget, not to leave
+        work undone when there is room for it.
+        """
+        stats, _ = self._run_a_cycle(100)
+        assert stats["funnel"]["pass1_yielded_to_backlog"] is False
+        assert stats["funnel"]["pass1_not_attempted"] == 0
+        # Every one of the 100 was reached. `_load_market_row` is faked to
+        # return None here, so the loop counts them as rows that vanished
+        # before their attempt rather than as scans — the point is that the
+        # loop consumed all 100 instead of breaking on the reserve.
+        assert stats["funnel"]["row_gone_before_attempt"] == 100
+        assert stats["funnel"]["backlog_skipped_budget"] is False
+
+    def test_the_yield_points_are_derived_from_the_floor_they_protect(self):
+        """120 and 480 drifted apart because nothing tied them together.
+
+        Ordering, with real slack at every step: Pass 1 hands off above Pass 2,
+        Pass 2 above Pass 3's floor, and Pass 3's floor above the downstream
+        reserve that protects Phase 2's win_prob_snapshots.
+        """
+        assert (
+            pmm._PASS1_YIELD_AT_SECONDS_REMAINING
+            > pmm._PASS2_YIELD_AT_SECONDS_REMAINING
+            > pmm._BACKLOG_MIN_SECONDS_REMAINING
+            > pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS
+        )
+        # Pass 3 gets a real window, not a rounding error.
+        assert (
+            pmm._BACKLOG_MIN_SECONDS_REMAINING
+            - pmm._BACKLOG_DOWNSTREAM_RESERVE_SECONDS
+        ) >= 60
+
+    def test_standing_down_is_reported_not_silent(self):
+        """A pass that quietly drops its tail reads as "we attempted
+        everything" — the failure this whole sweep exists to end."""
+        stats, _ = self._run_a_cycle(self.PASS1_ROWS)
+        assert "pass1_yielded_to_backlog" in stats["funnel"]
+        assert "pass1_not_attempted" in stats["funnel"]
+        assert "pass2_yielded_to_backlog" in stats["funnel"]
+        # And the backlog's own reporting still says what it did not reach.
+        assert "backlog_dropped" in stats["funnel"]
