@@ -321,6 +321,10 @@ class TestBeatScheduleCompleteness:
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",
+        # #2853 — the anchor-schedule rail's nightly read-only driver. Gotcha
+        # #12: this allowlist is the reason a new beat entry cannot land
+        # silently.
+        "anchor-schedule-sentinel-daily",
         "sentry-snapshot-15min",
         "backfill-kalshi-settled-events",
         "backfill-kalshi-trade-history",

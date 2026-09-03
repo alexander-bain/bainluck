@@ -709,6 +709,12 @@ HEAVY_TASKS = {
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
+    # #2853 — the anchor-schedule rail's nightly read-only driver. Same family
+    # and the same reason: a daily detect-only sentinel that must not sit on the
+    # congested background queue. It is the most network-bound of the group
+    # (one ESPN `summary?event=` per row, budget-capped at 300s), which is an
+    # argument for the protected slot, not against it.
+    "app.tasks.anchor_schedule_sentinel",
     # Queue #258: the Board Sentinel keeps the board itself honest (duplicate
     # fingerprints, stale Inbox, template-P1 share, blocked-in-Inbox, missing
     # area labels). Cheap + daily like its siblings; heavy queue for a free slot.
@@ -2853,6 +2859,29 @@ def grid_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
+                 name="app.tasks.anchor_schedule_sentinel")
+def anchor_schedule_sentinel(self, file_issues=True):
+    """Anchor-Schedule Sentinel (#2853): dereference every anchored, unfinished,
+    near-future row BY ID and report the ones whose kickoff disagrees with the
+    game their own ESPN anchor names — the December-anchor-on-a-September-row
+    class that no scoreboard pass ever visits (#2804). Pages the window under a
+    300s budget and a 12-page cap, resuming by cursor, and files ONE deduped
+    issue; closes it only on a COMPLETE clean sweep, never on a truncated one.
+
+    READ-ONLY: `apply=False` at the one call site and this wrapper exposes no
+    apply flag — the correction stays attended (the moves are large and a
+    reviewer should see the plan). Excludes tennis, which answers for no anchor
+    (#2852). The 840s soft limit (under the 900s hard limit, clear of the global
+    300s) plus the run's 300s inner deadline keep it from SIGKILLing untracked
+    (#966)."""
+    from app.tasks.anchor_schedule_sentinel import _run_anchor_schedule_sentinel
+    return _tracked_run(
+        "anchor_schedule_sentinel",
+        _run_anchor_schedule_sentinel(file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
@@ -4677,6 +4706,25 @@ celery_app.conf.beat_schedule = {
         # sentinels so it observes a settled board). heavy queue (#233).
         "task": "app.tasks.board_sentinel",
         "schedule": crontab(minute=50, hour=7),  # Daily 07:50 UTC
+        "options": {"queue": "heavy"},
+    },
+    "anchor-schedule-sentinel-daily": {
+        # #2853: the anchor-schedule rail existed since #2697 but ran only when a
+        # person asked, so the December-anchor-on-a-September-row defect (#2804)
+        # was caught days after a fan could already see the wrong kickoff. This
+        # is its nightly read-only driver: page the anchored near-future window,
+        # ask ESPN what game each anchor NAMES, file one deduped issue on drift.
+        # Never writes — the correction stays attended.
+        #
+        # 06:40 UTC, and the time is a decision, not a free slot. It is the only
+        # sentinel that is network-bound per ROW (one `summary?event=` each,
+        # budget-capped at 300s), so dropping it into the 07:05–07:50 block would
+        # hold one of the two heavy slots for five minutes and starve exactly the
+        # beats #233 moved here to protect. Running it 25 minutes ahead also puts
+        # its issue on the board BEFORE the board sentinel reads the board at
+        # 07:50. heavy queue (#233).
+        "task": "app.tasks.anchor_schedule_sentinel",
+        "schedule": crontab(minute=40, hour=6),  # Daily 06:40 UTC
         "options": {"queue": "heavy"},
     },
     "recategorize-other-daily": {
