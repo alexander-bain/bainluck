@@ -1885,8 +1885,31 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
     Best-effort by construction: the response has already been built and the
     caller is about to return it, so a Redis failure must cost the next visitor a
     rebuild and this visitor nothing.
+
+    #2554 — THE CACHED BODY IS ENCODED THE WAY THE MISS PATH ENCODES IT.
+    This used to be ``_json.dumps(payload, default=str)``. ``default=`` fires for
+    every value ``json`` cannot serialize natively, and ``current_probability`` is
+    a ``Numeric`` column, so each one arrived here as a ``Decimal`` and was
+    written as the STRING ``"0.682560"``. The route's own return path never sees
+    that: FastAPI encodes the dict with ``jsonable_encoder``, which turns a
+    ``Decimal`` into a float. So one endpoint served two different types for one
+    field depending on whether the caller hit the cache — floats on a miss,
+    strings on every hit, i.e. on ~all real traffic.
+
+    Downstream that is not a cosmetic difference. ``/sports`` prop cards read the
+    value twice: ``Number.isFinite("0.68")`` is ``false`` so the number renders as
+    an em dash, while ``prob * 100`` coerces the same string happily so the bar
+    beside it draws the correct width. A card with a right-sized bar and no
+    number is the signature of this bug, not of a missing price.
+
+    Encoding with ``jsonable_encoder`` rather than special-casing ``Decimal`` is
+    the point: it is the SAME encoder the miss path runs, so hit and miss cannot
+    disagree by construction, and the next non-JSON type to enter this payload
+    cannot silently reopen the defect for a different field.
     """
     import json as _json
+
+    from fastapi.encoders import jsonable_encoder
 
     from app.utils import request_cache as _rc
     from app.utils.grouped_feed_cache import (
@@ -1898,7 +1921,7 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
         client = await _rc.get_shared_async_redis()
         if client is None:
             return
-        body = _json.dumps(payload, default=str)
+        body = _json.dumps(jsonable_encoder(payload))
         await _rc.bounded_redis_call(
             lambda: client.setex(cache_key, GROUPED_FEED_TTL_SECONDS, body)
         )
