@@ -616,7 +616,13 @@ describe("honesty treatment", () => {
   it("says its own emptiness rather than rendering nothing", () => {
     const html = renderToStaticMarkup(<TournamentMatches entries={[]} />);
     expect(html).toContain('data-testid="matches-empty"');
-    expect(html).toContain("No matches scheduled");
+    // #2707: this used to assert "No matches scheduled". That string was the
+    // defect — the card printed it over five live US Open matches on
+    // 2026-09-03 — so the assertion is now the shape of the admission rather
+    // than the sentence that made it. The wording rules have their own suite in
+    // `tournamentEmptySlate2707.test.tsx`.
+    expect(html).toContain('data-empty-cause=');
+    expect(html).not.toContain("No matches scheduled");
   });
 });
 
