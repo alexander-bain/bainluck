@@ -304,6 +304,52 @@ export interface SportScoringVocab {
    * from a sport that could have had one, which is one line to add here).
    */
   hasDerivedSpread: boolean;
+  /**
+   * ═══ ux/1034 B5: DOES THE SCOREBOARD COUNT THE THING THE MARKET QUOTES? ═══
+   *
+   * Alex, on `/events/15293830` (Marozsan–Zheng, US Open) on 2026-09-02: the
+   * Score Differential widget's *"Actual Score Diff"* line *"sits flat"* beside
+   * a fluid win-probability chart, and *"the green projection is the books'
+   * game spread"*.
+   *
+   * He had the diagnosis exactly right, and it is one bug in three places. Our
+   * `events.home_score` / `away_score` for a tennis match are **SETS** — that
+   * match ended `0 — 3`. Everything the market quotes for it is in **GAMES**:
+   * `over_under` 34.8, `projected_home_score` 15.1 / `projected_away_score`
+   * 19.7, `Zheng -1.5 games`. So three widgets were plotting one unit against
+   * the other and printing the result as a fact:
+   *
+   *   - the Score Differential chart drew a ±3 set line under a ±5 game axis;
+   *   - the margin map graded `FINAL ZHE by 3+` (three SETS) against
+   *     `PRE-GAME ZHE by 1.5+` (one and a half GAMES);
+   *   - the totals map graded `FINAL 3 games` (three SETS, summed) against
+   *     `PRE-GAME 35` (thirty-five GAMES).
+   *
+   * `#2441` already stopped this page inventing a tennis POINT spread. This is
+   * the same defect from the other side: not a number we made up, but a real
+   * number read in the wrong unit — which is worse, because it looks sourced.
+   *
+   * ⚠️ **THE DEFAULT HERE IS `true`, UNLIKE `hasDerivedSpread`, AND THAT IS ON
+   * PURPOSE.** #2441's polarity is right for furniture we might invent: an
+   * unnamed sport should inherit no spread model. It is wrong for this
+   * question, because "the scoreboard counts what the market quotes" is true of
+   * very nearly every sport there is — rugby, cricket, AFL, handball — and
+   * false only where play is scored in nested units and the market quotes the
+   * inner one. Defaulting false would silently delete a true, useful line from
+   * every sport nobody has got round to declaring; defaulting true leaves the
+   * status quo everywhere except the case that was measured. The RARE thing is
+   * named, which is the same principle applied to a different distribution.
+   */
+  scoreboardCountsTheUnit: boolean;
+  /**
+   * What the scoreboard counts INSTEAD, plural, when it does not count `unit`.
+   *
+   * Empty where the question does not arise. It exists so the suppressed
+   * widgets can say which two units they are refusing to mix — "the scoreboard
+   * reports sets" is the whole explanation, and a widget that just goes quiet
+   * reads as broken.
+   */
+  scoreboardUnit: string;
 }
 
 /**
@@ -317,15 +363,15 @@ export interface SportScoringVocab {
 const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
   {
     match: ["baseball", "mlb"],
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true },
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
   },
   {
     match: ["hockey", "nhl"],
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -333,15 +379,15 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // `hasDerivedSpread: false` is what stops `BER +4.5` being drawn from a
     // points model over a sport with no points.
     match: ["tennis"],
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false },
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets" },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "" },
   },
 ];
 
@@ -360,6 +406,12 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   unitSingular: "",
   marginRange: 6,
   hasDerivedSpread: false,
+  // `true`, and see the field's own note for why this default runs the other
+  // way from `hasDerivedSpread`'s: an unnamed sport almost certainly does
+  // score in the unit its market quotes, and defaulting false would delete a
+  // true line from every sport nobody has declared yet.
+  scoreboardCountsTheUnit: true,
+  scoreboardUnit: "",
 };
 
 export function sportVocab(sportKey: string | undefined): SportScoringVocab {

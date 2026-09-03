@@ -88,6 +88,40 @@ PREDICATE_FIELD = "population_predicate_fingerprint"
 #: defect still in this gate's reach, since rule 3 only judges shrink.
 POPULATION_GROWTH_CEILING = 1.0
 
+#: The payload field a bumped candidate uses to DECLARE the population move it
+#: expects. Present only on a build whose ``population_version`` differs from the
+#: published one; on every other build it is meaningless and ignored.
+#:
+#: CAL-P982 (#1978). Until this queue a bumped version returned before Rules 2,
+#: 3 and 4 — an escape with no ceiling, so a bump that meant to remove 21.7% and
+#: one that removed 97% were the same artifact to this gate. The q269 batch is a
+#: deliberate shrink and genuinely needs the escape; what it does not need is an
+#: escape that authorises an arbitrary move. A bump now STATES what it expects
+#: and the gate holds it to that statement.
+#:
+#: Shape::
+#:
+#:     "population_version_declaration": {
+#:         "from_version": "q268",       # optional; the baseline it was measured on
+#:         "expected_drop_pct": 21.66,   # signed, positive = shrink
+#:         "tolerance_pct": 3.0,         # <= DECLARATION_MAX_TOLERANCE_PCT
+#:     }
+DECLARATION_FIELD = "population_version_declaration"
+
+#: The widest band a declaration may claim. A declaration is only worth having if
+#: it can be WRONG: ``tolerance_pct: 90`` would restore the unbounded escape
+#: while looking like a bound, so the gate refuses it as malformed rather than
+#: honouring it. Set at the ordinary no-bump drift band — a methodology change
+#: whose own author cannot predict its size to within ±5% has not been measured,
+#: and the answer to that is to measure it, not to widen the claim.
+DECLARATION_MAX_TOLERANCE_PCT = 5.0
+
+#: How many per-category rows the ledger record carries. The diff is written into
+#: ``calibration:main:phase_ledger`` on EVERY build, so it is bounded; it is
+#: sorted by absolute movement, so the bound keeps what mattered; and the tail it
+#: drops is counted rather than vanished (``category_diff_omitted``).
+LEDGER_CATEGORY_DIFF_LIMIT = 40
+
 #: A single category losing more than this share of its outcomes is a cohort
 #: collapse (the cricket canary), even when the total looks fine.
 CATEGORY_DROP_TOLERANCE = 0.20
@@ -473,6 +507,7 @@ def census(payload: Any) -> dict:
             "nonfinite_fields": [],
             "sections_missing": list(REQUIRED_SECTIONS),
             "cohorts": {},
+            "version_declaration": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -531,6 +566,12 @@ def census(payload: Any) -> dict:
         "nonfinite_fields": sorted(set(nonfinite_fields)),
         "sections_missing": [s for s in REQUIRED_SECTIONS if s not in payload],
         "cohorts": {"well_traded": well, "thin": thin},
+        # Carried RAW and unvalidated: `census` is the tolerant reduction and
+        # must not raise on a malformed artifact. The declaration is parsed at
+        # the one place its verdict can be recorded (`_read_declaration`), so a
+        # bad declaration becomes a named refusal instead of an exception inside
+        # the publisher.
+        "version_declaration": payload.get(DECLARATION_FIELD),
     }
 
 
@@ -557,6 +598,97 @@ def _ordering(well: dict, thin: dict) -> Optional[str]:
     return "well_traded_better" if gap > 0 else "thin_better"
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    """A real number, or ``None``. ``bool`` is not a number here."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _read_declaration(raw: Any) -> tuple[Optional[dict], Optional[str]]:
+    """Parse a bump's declaration into ``(parsed, problem)``; never raises.
+
+    Exactly one of the two is ``None``. A declaration that cannot be read is a
+    *problem*, never a silently ignored field — ignoring it would restore the
+    unbounded escape while the artifact still claims to be bounded, which is a
+    worse state than having no declaration at all.
+    """
+    if not isinstance(raw, dict):
+        return None, (
+            f"{DECLARATION_FIELD} must be a mapping stating the expected "
+            f"population move, got {type(raw).__name__}"
+        )
+
+    expected = _finite_number(raw.get("expected_drop_pct"))
+    if expected is None:
+        return None, (
+            f"{DECLARATION_FIELD}.expected_drop_pct is missing or not a finite "
+            f"number ({raw.get('expected_drop_pct')!r}) — a bump has to say how "
+            "much of the population it expects to remove (positive = shrink)"
+        )
+
+    tolerance = _finite_number(raw.get("tolerance_pct"))
+    if tolerance is None or tolerance <= 0:
+        return None, (
+            f"{DECLARATION_FIELD}.tolerance_pct is missing, non-finite or not "
+            f"positive ({raw.get('tolerance_pct')!r}) — a declaration with no "
+            "width cannot be satisfied and one with negative width is not a band"
+        )
+
+    if tolerance > DECLARATION_MAX_TOLERANCE_PCT:
+        return None, (
+            f"{DECLARATION_FIELD}.tolerance_pct is {tolerance}, wider than the "
+            f"{DECLARATION_MAX_TOLERANCE_PCT} limit — a band that admits almost "
+            "anything is the unbounded escape wearing a declaration's clothes; "
+            "measure the batch and state its size instead of widening the claim"
+        )
+
+    from_version = raw.get("from_version")
+    return (
+        {
+            "from_version": from_version if isinstance(from_version, str) else None,
+            "expected_drop_pct": expected,
+            "tolerance_pct": tolerance,
+        },
+        None,
+    )
+
+
+def _category_diff(cand: dict, prev: dict) -> list[dict]:
+    """Per-category before/after, biggest absolute mover first.
+
+    The gate has always computed this — for the rejection issue body, which only
+    a REFUSED build emits, and only into prose. CAL-P213 spent four days
+    unexplained because the durable run evidence recorded ``gate = refuse`` and
+    nothing about *which* cells fell, while the answer sat legible in a Sentry
+    message. Computing it once, here, makes it available to the issue body, the
+    ledger record and any later reader on equal terms.
+    """
+    rows: list[dict] = []
+    for name in sorted(
+        set(prev.get("categories", {})) | set(cand.get("categories", {}))
+    ):
+        prev_n = int(prev.get("categories", {}).get(name, 0))
+        cand_n = int(cand.get("categories", {}).get(name, 0))
+        rows.append(
+            {
+                "category": name,
+                "previous": prev_n,
+                "candidate": cand_n,
+                "delta": cand_n - prev_n,
+                # ``None``, not 0.0, when there is no baseline to fall from: a
+                # cell that did not exist has not dropped 0%.
+                "drop_pct": (
+                    round((prev_n - cand_n) / prev_n * 100, 2) if prev_n > 0 else None
+                ),
+            }
+        )
+    # Absolute movement, then name — a stable order, so a truncated read always
+    # sees the same rows and a diff of two ledger entries is meaningful.
+    rows.sort(key=lambda r: (-abs(r["delta"]), r["category"]))
+    return rows
+
+
 @dataclass
 class PublishVerdict:
     """The decision, the evidence behind it, and a stable alert fingerprint."""
@@ -580,6 +712,13 @@ class PublishVerdict:
     #: The durable probe's verdict, or ``None`` when the volatile baseline was
     #: usable and no probe was needed.
     baseline_probe: Optional[str] = None
+    #: Per-category before/after, biggest absolute mover first. Populated
+    #: whenever there is a baseline to diff against — on the PASS path too, not
+    #: only on refusal (CAL-P982). Empty when the comparison never happened
+    #: (first publish, unreadable baseline, structurally broken candidate).
+    category_diff: list[dict] = field(default_factory=list)
+    #: The bump's parsed declaration, when it carried a readable one.
+    declaration: Optional[dict] = None
 
     @property
     def codes(self) -> list[str]:
@@ -828,7 +967,140 @@ def evaluate_publish(
     if not verdict.ok:
         return verdict
 
+    # The diff is computed for every comparison that actually happened, and it is
+    # computed BEFORE the bump branch: an ADMITTED methodology change is exactly
+    # the build whose per-cell movement someone will want to read later, and it
+    # was the one case that recorded nothing at all.
+    verdict.category_diff = _category_diff(cand, prev)
+
+    # --- Rule 2-BUMP: the DECLARED escape (CAL-P982, #1978) ---
+    #
+    # This used to be `if verdict.version_bumped: return verdict` — one string
+    # changing waived every comparative rule below, without limit. The escape is
+    # necessary (a ruled methodology change legitimately moves the population and
+    # reshapes its cells; q269 takes crypto to zero by D12 and that is the
+    # ruling), but "necessary" is not "unbounded". A bump that uses the escape
+    # states the move it expects and is held to it.
+    #
+    # Rules 3 and 4 stay waived under a declared bump, deliberately. A change in
+    # WHICH ROWS QUALIFY reshapes individual categories by definition — under
+    # Rule 3 the q269 batch collects ten `category_collapse` codes and could
+    # never publish, which is the outcome this whole queue exists to prevent. So
+    # the per-category movement is RECORDED (`category_diff`) rather than
+    # enforced: legible to the next reader, not a veto.
     if verdict.version_bumped:
+        drift_pct = (cand_pop - prev_pop) / prev_pop * 100.0
+        drop_pct = -drift_pct  # positive = shrink, matching the declaration
+        raw_declaration = cand["version_declaration"]
+
+        if raw_declaration is None:
+            if abs(drift_pct) <= POPULATION_TOLERANCE * 100.0:
+                # The bump waived NOTHING: this move would have published under
+                # an unchanged version too. Declaring is the price of the escape,
+                # not a tax on renaming a version, so there is nothing to state.
+                observe(
+                    "version_bump_used_no_escape",
+                    f"population_version moved {prev['population_version']!r} -> "
+                    f"{cand['population_version']!r} on a {drift_pct:+.2f}% "
+                    f"population move, inside the ordinary "
+                    f"±{POPULATION_TOLERANCE * 100:.0f}% band — no comparative "
+                    "rule was waived, so no declaration was required",
+                    drift_pct=round(drift_pct, 2),
+                )
+                return verdict
+
+            reject(
+                "version_bump_undeclared",
+                f"population_version was bumped {prev['population_version']!r} -> "
+                f"{cand['population_version']!r} and the population moved "
+                f"{drift_pct:+.2f}% ({prev_pop:,} -> {int(cand_pop):,}), past the "
+                f"±{POPULATION_TOLERANCE * 100:.0f}% band — so this bump IS using "
+                f"the escape, and a bump that uses it must declare the move it "
+                f"expects in {DECLARATION_FIELD!r} "
+                "(expected_drop_pct + tolerance_pct). An undeclared bump "
+                "authorises an arbitrary change, which is the hole this rule "
+                "closes: it cannot tell a ruled 21.7% shrink from a lost cohort",
+                previous=prev_pop,
+                candidate=cand_pop,
+                drift_pct=round(drift_pct, 2),
+            )
+            return verdict
+
+        declaration, problem = _read_declaration(raw_declaration)
+        if problem is not None:
+            reject(
+                "version_declaration_malformed",
+                f"population_version was bumped {prev['population_version']!r} -> "
+                f"{cand['population_version']!r} but its declaration cannot be "
+                f"read: {problem}",
+            )
+            return verdict
+
+        verdict.declaration = declaration
+
+        # A declaration measured against a DIFFERENT baseline is CAL-P213's
+        # actual failure mode as a data structure: calibration-022 chained two
+        # population numbers taken from two different builds in two different
+        # failure states and read the difference as one continuous move. If the
+        # declaration names the build it was measured on, that name has to match
+        # the build we are actually replacing.
+        declared_from = declaration["from_version"]
+        if declared_from is not None and declared_from != prev["population_version"]:
+            reject(
+                "version_declaration_stale",
+                f"the declaration says it was measured against "
+                f"{declared_from!r}, but the artifact being replaced is "
+                f"{prev['population_version']!r} — a shrink measured on one "
+                "build and applied to another is two unrelated moves read as "
+                "one, so the declared size means nothing here; re-measure "
+                "against the published artifact",
+                declared_from=declared_from,
+                published_version=prev["population_version"],
+            )
+            return verdict
+
+        expected = declaration["expected_drop_pct"]
+        tolerance = declaration["tolerance_pct"]
+        overshoot = abs(drop_pct - expected)
+        if overshoot > tolerance:
+            reject(
+                "version_bump_exceeds_declaration",
+                f"the bump {prev['population_version']!r} -> "
+                f"{cand['population_version']!r} declared a {expected:+.2f}% "
+                f"population drop ±{tolerance:.2f}pp, but the candidate dropped "
+                f"{drop_pct:+.2f}% ({prev_pop:,} -> {int(cand_pop):,}) — "
+                f"{overshoot:.2f}pp outside its own declaration. The bump "
+                "authorises the change it stated, never whatever change arrived; "
+                "either the batch did something it was not measured doing, or "
+                "something else moved the population underneath it",
+                previous=prev_pop,
+                candidate=cand_pop,
+                declared_drop_pct=round(expected, 2),
+                actual_drop_pct=round(drop_pct, 2),
+                tolerance_pct=round(tolerance, 2),
+                overshoot_pp=round(overshoot, 2),
+            )
+            return verdict
+
+        # ADMITTED, and never silently — the same standard Rule 2 already holds
+        # itself to. An accepted escape that records nothing is precisely the
+        # uncheckable-read-as-clean shape, and the bump escape was the largest
+        # instance of it in this module.
+        observe(
+            "version_bump_within_declaration",
+            f"the bump {prev['population_version']!r} -> "
+            f"{cand['population_version']!r} dropped {drop_pct:+.2f}% "
+            f"({prev_pop:,} -> {int(cand_pop):,}), inside its declared "
+            f"{expected:+.2f}% ±{tolerance:.2f}pp — ADMITTED as the ruled "
+            "methodology change it declared itself to be; per-category movement "
+            "is recorded in the run's ledger record, not enforced, because a "
+            "change in which rows qualify reshapes cells by design",
+            previous=prev_pop,
+            candidate=cand_pop,
+            declared_drop_pct=round(expected, 2),
+            actual_drop_pct=round(drop_pct, 2),
+            tolerance_pct=round(tolerance, 2),
+        )
         return verdict
 
     # --- Rule 2: population drift, split by DIRECTION and by PREDICATE (#1955) ---
@@ -974,6 +1246,45 @@ def evaluate_publish(
         )
 
     return verdict
+
+
+def gate_ledger_record(verdict: PublishVerdict) -> dict:
+    """The gate's decision, in the shape that goes into the durable run evidence.
+
+    CAL-P982's rider. ``calibration:main:phase_ledger`` recorded
+    ``outcome.gate = "refuse"`` and the rejection CODES, and nothing about which
+    categories moved — so CAL-P213 sat unexplained for four days while the
+    answer was legible in a Sentry message that nothing durable retained. The
+    gate already computes the per-category diff; this is it, persisted.
+
+    JSON-safe by construction (the ledger is serialised), and BOUNDED: the diff
+    is capped at :data:`LEDGER_CATEGORY_DIFF_LIMIT` rows sorted by absolute
+    movement. The tail is counted, never silently dropped — a record that
+    truncates without saying so reads as "these are all the cells that moved",
+    which is the failure this rider exists to end.
+    """
+    diff = list(verdict.category_diff)
+    kept = diff[:LEDGER_CATEGORY_DIFF_LIMIT]
+    dropped = diff[LEDGER_CATEGORY_DIFF_LIMIT:]
+
+    return {
+        "ok": verdict.ok,
+        "codes": verdict.codes,
+        "observations": verdict.observation_codes,
+        "version_bumped": verdict.version_bumped,
+        "first_publish": verdict.first_publish,
+        "baseline_source": verdict.baseline_source,
+        "candidate_population": verdict.candidate.get("population"),
+        "published_population": verdict.published.get("population"),
+        "candidate_version": verdict.candidate.get("population_version"),
+        "published_version": verdict.published.get("population_version"),
+        "declaration": verdict.declaration,
+        "category_diff": kept,
+        "category_diff_omitted": len(dropped),
+        # The size of what was left out, so a reader can tell a trimmed tail of
+        # rounding noise from a trimmed tail that mattered.
+        "category_diff_omitted_outcomes": sum(abs(r["delta"]) for r in dropped),
+    }
 
 
 def rejection_issue_body(verdict: PublishVerdict, *, fingerprint_marker: str) -> str:

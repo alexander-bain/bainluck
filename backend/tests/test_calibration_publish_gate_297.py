@@ -238,13 +238,36 @@ def test_unexplained_population_explosion_is_rejected():
 # ---------------------------------------------------------------------------
 
 
-def test_version_bump_authorises_a_population_change():
-    verdict = evaluate_publish(
-        payload(outcomes=340_000, version="q297"), payload(outcomes=1_000_000, version="q267")
-    )
+def test_version_bump_authorises_a_population_change_it_DECLARES():
+    """CAL-P982 bounded this: the bump authorises the change it STATED.
+
+    Until then a bumped version returned before every comparative rule, so this
+    same call passed while saying nothing at all about the 66% it was removing.
+    """
+    from app.utils.calibration_publish_gate import DECLARATION_FIELD
+
+    candidate = payload(outcomes=340_000, version="q297")
+    candidate[DECLARATION_FIELD] = {
+        "from_version": "q267",
+        "expected_drop_pct": 66.0,
+        "tolerance_pct": 1.0,
+    }
+
+    verdict = evaluate_publish(candidate, payload(outcomes=1_000_000, version="q267"))
 
     assert verdict.ok, verdict.summary()
     assert verdict.version_bumped
+
+
+def test_version_bump_does_not_authorise_a_change_it_never_declared():
+    """The other arm of the rule above — see test_calibration_bump_declaration_982."""
+    verdict = evaluate_publish(
+        payload(outcomes=340_000, version="q297"),
+        payload(outcomes=1_000_000, version="q267"),
+    )
+
+    assert not verdict.ok
+    assert "version_bump_undeclared" in verdict.codes
 
 
 def test_version_bump_does_not_excuse_an_incomplete_build():
@@ -492,9 +515,18 @@ def test_a_recovered_durable_baseline_still_lets_a_healthy_build_through():
     assert verdict.baseline_source == "durable"
 
 
-def test_a_version_bump_still_authorises_a_move_against_durable():
+def test_a_version_bump_still_authorises_a_declared_move_against_durable():
+    """A recovered baseline is still a baseline — the declaration is measured
+    against IT, not against whatever the volatile cache had (CAL-P982)."""
+    from app.utils.calibration_publish_gate import DECLARATION_FIELD
+
     published = payload(outcomes=652_407, version="q267")
     candidate = payload(outcomes=703_980, version="q299")
+    candidate[DECLARATION_FIELD] = {
+        "from_version": "q267",
+        "expected_drop_pct": -7.9,  # +7.9% growth
+        "tolerance_pct": 1.0,
+    }
 
     verdict = evaluate_publish(candidate, None, durable_probe=_durable(published))
 

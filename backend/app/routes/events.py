@@ -11123,6 +11123,34 @@ def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     return commence_cap
 
 
+def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
+    """An event whose start is older than the whole requested window, still open.
+
+    live/035. `hours` is a FOCUS device for an upcoming or in-progress game:
+    "the last day of movement" is the interesting slice while the story is still
+    being told. Applied to an event that started days ago and never reached a
+    terminal status, it is not a focus — it is an arbitrary chord across a dead
+    event, and it clips the chart to whatever happens to fall inside it.
+
+    The Vallejo v Monfils specimen is the shape: `status='scheduled'`,
+    `commence_time` 2026-08-30 (a Kalshi ticker-derived midnight stand-in,
+    gotcha #14), the real match played on 09-01, and five days of venue price
+    history either side of a 48-hour window. Windowed, the page draws a stub of
+    a match it cannot even locate correctly; unwindowed, it draws the match.
+
+    Deliberately narrow. It fires only when `commence_time < now - hours`, so a
+    genuinely live game — whose start is by definition inside its own window —
+    is untouched, and an event with no `commence_time` is untouched. The end is
+    left OPEN rather than capped on `commence_time + max_duration`, because on
+    exactly this cohort `commence_time` is the field that is wrong: capping
+    there would clip the real match out in the name of trimming a stale tail.
+    The 3,000-row LIMIT is what bounds the response.
+    """
+    if event.commence_time is None:
+        return False
+    return event.commence_time < now - timedelta(hours=hours)
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -11269,11 +11297,26 @@ async def get_event_odds_history(
     # For live/scheduled events, apply a time window to keep responses focused.
     now = datetime.now(timezone.utc)
     is_finished = _event_is_really_finished(event, now)
+    # live/035: a past-start, never-settled event is served whole, not windowed.
+    is_stale_open = not is_finished and _event_started_long_ago_unsettled(
+        event, now, hours
+    )
 
-    if response and is_finished:
+    if response and (is_finished or is_stale_open):
         response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=300"
 
-    if is_finished:
+    end_cap = None
+    if is_stale_open:
+        # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
+        # why `commence_time` cannot be trusted to bound this cohort.
+        result = await db.execute(
+            select(OddsSnapshot)
+            .where(OddsSnapshot.event_id == event_id)
+            .order_by(OddsSnapshot.captured_at)
+            .limit(3000)
+        )
+        cutoff = None
+    elif is_finished:
         # Return snapshots up to 30 min after game end to exclude stale
         # prediction market data from hours/days after completion.
         #
@@ -12041,6 +12084,25 @@ async def get_event_odds_history(
             _domain_end = datetime.fromisoformat(history[-1]["timestamp"])
     else:
         _domain_end = now
+    if is_stale_open:
+        # live/035: on this cohort `commence_time` is the untrustworthy field
+        # (a Kalshi ticker-derived midnight, gotcha #14), so an axis anchored on
+        # it can open AFTER the data it is the axis for. Widen — never narrow —
+        # to contain the earliest point actually being served. #240's concern was
+        # a SLIVER axis on a young live game; widening cannot produce one, and
+        # this branch cannot reach a young live game by construction.
+        _earliest = min(
+            (
+                datetime.fromisoformat(pts[0]["timestamp"])
+                for pts in list(win_prob_history.values()) + [history]
+                if pts
+            ),
+            default=None,
+        )
+        if _earliest is not None and (
+            _domain_start is None or _earliest < _domain_start
+        ):
+            _domain_start = _earliest
     time_domain = None
     if _domain_start and _domain_end:
         if not is_finished and (
@@ -12104,6 +12166,58 @@ async def get_event_odds_history(
     except Exception as exc:  # noqa: BLE001 — moments are additive, never break history
         logger.warning("moments load failed for event %s: %s", event_id, exc)
 
+    # live/036 ruling (c) — THE CHART FILLS FOR THE PAGES PEOPLE ACTUALLY OPEN.
+    #
+    # The nightly sweep was narrowed (ruling (b)) to what a reader is LIKELY to
+    # reach, because the unnarrowed population — 44,315 events against a nightly
+    # budget of 60 and ~550 new a day — was a race it lost every night. This is
+    # the other half of that trade, and it is the half that makes the narrowing
+    # safe: whatever the nightly skipped, one person opening the page starts its
+    # fill. Likely-reached is pre-warmed; actually-reached is guaranteed.
+    #
+    # It is deliberately AFTER everything the response needs and deliberately
+    # additive: it enqueues a task and returns. This reader still gets the thin
+    # chart they were always going to get; the next reader gets the curve. It
+    # can neither slow this response meaningfully (one indexed MIN(), and only
+    # once the served series is already known to be short) nor fail it.
+    # THE DISPATCH LIVES HERE, NOT IN THE TASK MODULE, and that is not a style
+    # choice: `test_no_task_dispatches_another_task` fails any `.apply_async` under
+    # `app/tasks/`, because the scan that derives `RESULT_CONSUMER_TASKS` only
+    # reads routes — so a task that dispatches a task can grow a result consumer
+    # nobody declared and leave its status poll hanging forever. The planner
+    # decides and wins the claim; this line spends it.
+    on_demand_backfill = None
+    try:
+        from app.tasks.event_chart_backfill import plan_on_demand_fill
+
+        venue_points = sum(
+            len(points)
+            for source_key, points in win_prob_history.items()
+            if source_key in ("kalshi", "polymarket")
+        )
+        on_demand_backfill = await plan_on_demand_fill(
+            db, event, served_points=venue_points
+        )
+        if on_demand_backfill and on_demand_backfill.get("enqueue"):
+            from app.tasks import backfill_event_chart_history
+            from app.tasks.event_chart_backfill import release_on_demand_claim
+
+            try:
+                backfill_event_chart_history.apply_async(
+                    kwargs={"event_ids": [event_id], "limit": 1},
+                    queue="background",
+                )
+            except Exception:  # noqa: BLE001 — a broker hiccup must not hold the claim
+                # Hand the claim back. Keeping it would make one failed dispatch
+                # cost this chart its next six hours of eligibility.
+                release_on_demand_claim(event_id)
+                raise
+    except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
+        logger.warning(
+            "on-demand chart backfill consideration failed for event %s: %s",
+            event_id, exc,
+        )
+
     return {
         "event_id": event_id,
         "home_team": event.home_team_name,
@@ -12136,6 +12250,12 @@ async def get_event_odds_history(
         # or the merge dropped it. Retained as a diagnostic — "no UI reads it" is
         # the point, not a reason to strip it.
         "espn_snapshot_count": len(espn_history),
+        # live/036 (c): what the refill decided, or None when the chart was
+        # never a candidate. A diagnostic, like `espn_snapshot_count` above it —
+        # no client reads it, and the reason it is here is that "the chart is
+        # still thin" and "the refill declined and said why" are the two things
+        # you need side by side when this rail looks idle (gotcha #53).
+        "on_demand_backfill": on_demand_backfill,
     }
 
 

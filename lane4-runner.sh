@@ -77,11 +77,11 @@ Q=".claude/handoff/CERT-QUEUE.md"
 CERTLOG=".claude/handoff/CODEX-CERT-LOG.md"
 LOG_DIR=".claude/handoff/runner-logs"; mkdir -p "$LOG_DIR"
 
-PROMPT='Standing self-gated cert bus (launched by Alex via lane4-runner): run every subject in .claude/handoff/CERT-QUEUE.md whose block says "status: staged" and which has no verdict row banked in CODEX-CERT-LOG.md; bank verdicts and tokens in CODEX-REPORT-2.md and CODEX-CERT-LOG.md.
+PROMPT='Standing self-gated cert bus (launched by Alex via lane4-runner). FIRST read .claude/handoff/STANDING-NOTICES.md (items 8, 12, 16: no strike stops, append-only ledger, stop-lifts) and obey it over anything below. Then: run every subject in .claude/handoff/CERT-QUEUE.md whose block says "status: staged" and which has no verdict row banked in CODEX-CERT-LOG.md; bank verdicts and tokens in CODEX-REPORT-2.md and CODEX-CERT-LOG.md.
 
 SCOPE RULE — Alex ruling, 2026-08-31, BINDING ON EVERY VERDICT. Grade the SHIP: does the user-visible behaviour the branch claims actually hold? You may BLOCK on a GUARD (a test, fixture, assertion, comment or tripwire) ONLY IF that guard failing would let the SHIP regress silently. A guard that is merely incomplete against a hypothetical future attack is a FOLLOW-UP ISSUE, not a block: grant the token, and record the guard gap as a named follow-up in the same row. Measured basis for this rule: of the last 40 subjects, 9 GREEN and 31 BLOCK, and of those 31 blocks the ship was wrong 9 times while the guard was hollow 20 times. Two thirds of all rejections landed on scaffolding around a correct ship, and one anchor reached a fourth cert while being correct every time.
 
-THREE-STRIKE RULE: a subject blocked three times STOPS. Do not grade a fourth round; bank a row naming the chain and escalate to Fable instead.
+NO STRIKE STOP (Alex ruling 9/2, STANDING-NOTICES 8 and 16): a subject may be graded any number of times; a repair (`repairs: CERT-N`) always grades, and grades FIRST. Count strikes in the row for the record, never refuse to grade because of them.
 
 Bank a CERT-BUS-STATUS "DRAINED" row ONLY when the drained state is NEW — if the last banked row was already DRAINED and no verdict has issued since, print the count to the terminal and bank nothing. Re-running early, late, or twice is always safe. Never push, merge, or write production.'
 

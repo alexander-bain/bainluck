@@ -20,6 +20,20 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+class PolymarketHistoryUnavailable(RuntimeError):
+    """The venue could not be ASKED — transport, HTTP status, or unreadable body.
+
+    🔴 This exists because the alternative is the disease of gotcha #53: an empty
+    list is a real, meaningful answer from `/prices-history` ("this token has no
+    series"), and returning that same empty list for a timeout, a 429 or a 502
+    makes a failure indistinguishable from an absence. Every consumer that
+    counted `api_empty` was therefore counting outages as data gaps, and the
+    30-day drain used that count to advance a permanent checkpoint past events it
+    had never actually fetched. A caller that wants the old lenient behaviour must
+    now write the `except` itself, in the open, where the count can be kept.
+    """
+
+
 class PolymarketMarket(BaseModel):
     """A single Polymarket market (binary outcome within an event)."""
 
@@ -474,7 +488,14 @@ class PolymarketAPIService:
             fidelity: Granularity in minutes (e.g., 60 = hourly)
 
         Returns:
-            List of {"t": unix_timestamp, "p": price} dicts
+            List of {"t": unix_timestamp, "p": price} dicts. An EMPTY list is a
+            real answer: the venue was asked and holds no series for this token.
+
+        Raises:
+            PolymarketHistoryUnavailable: the venue could not be asked at all —
+                transport error, non-2xx status, or a body we cannot read. This
+                is deliberately NOT folded into the empty list; see the exception's
+                own docstring and gotcha #53.
         """
         try:
             response = await self.clob_client.get(
@@ -487,10 +508,20 @@ class PolymarketAPIService:
             )
             response.raise_for_status()
             data = response.json()
-            return data.get("history", [])
+            history = data.get("history", [])
         except Exception as e:
             logger.warning("Failed to get price history for token %s: %s", token_id, e)
-            return []
+            raise PolymarketHistoryUnavailable(
+                f"prices-history token={token_id} fidelity={fidelity}: "
+                f"{type(e).__name__}: {str(e)[:160]}"
+            ) from e
+        # A 200 whose body is not the documented shape is not "no history" either.
+        if not isinstance(history, list):
+            raise PolymarketHistoryUnavailable(
+                f"prices-history token={token_id} fidelity={fidelity}: "
+                f"history was {type(history).__name__}, not a list"
+            )
+        return history
 
     # =========================================================================
     # High-level fetchers

@@ -88,6 +88,10 @@ enum AnalyticsPrivacy {
         "discover_feed_cache", "discover_feed_first_render", "discover_feed_network",
         "sports_feed_stage", "sports_feed_first_render",
         "my_stuff_load", "my_stuff_first_render",
+        // The felt number, every screen, same packet as the web (latency/121).
+        // The three rails above it are per-surface and differently shaped; this
+        // one is the table.
+        "screen_timing",
         // Push (Queue 311 A4 / #1159) — the client half of the digest funnel.
         // The server emits `push_sent`; this is the open that joins to it.
         "push_opened",
@@ -129,6 +133,12 @@ enum AnalyticsPrivacy {
         "auth_ready_ms", "backend_elapsed_ms", "cache_store_ms", "cache_status",
         "cache_age_seconds", "cache_outcome", "required_data_ready_ms",
         "first_render_ms", "from_cache", "response_bytes", "app_build",
+        // Screen timing (latency/121). Every one of these is a duration, a
+        // count, or a bounded enum. `surface` is already allowed above and is a
+        // screen slug, never an id. `entry` is cold|warm and `device_class` is
+        // one of five coarse buckets — neither narrows to a person.
+        "entry", "shell_ms", "first_card_ms", "fold_ms", "interactive_ms",
+        "card_count", "device_class", "network_class",
         // Push funnel join key (Queue 311 A4 / #1159). `payload_id` is a
         // CAMPAIGN id of the form `digest-YYYYMMDD` — a date and a surface
         // name. It identifies which send this open belongs to, not who opened

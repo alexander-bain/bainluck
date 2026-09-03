@@ -194,6 +194,7 @@ class TestBeatScheduleCompleteness:
         "backfill-team-logos",
         "backfill-team-links",
         "match-prediction-markets",
+        "matching-reconciliation",
         "poll-live-prediction-markets",  # restored: WS not yet deployed, REST polling needed for pre-game snapshots
         "heartbeat",
         "collapse-odds-snapshots-daily",
@@ -346,6 +347,9 @@ class TestBeatScheduleCompleteness:
         # "resolve-winners",  # RETIRED 2026-07-06 (#991) — redundant with backfill_winners
         "digest-external-feature-requests-weekly",
         "compare-ws-shadow",
+        # live/035 — the nightly event-chart completeness sweep. Gotcha #12:
+        # this allowlist is the reason a new beat entry cannot land silently.
+        "backfill-thin-event-charts",
     }
 
     def test_no_missing_entries(self):

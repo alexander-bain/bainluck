@@ -659,6 +659,15 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.backfill_kalshi_volume",
     "app.tasks.backfill_polymarket_history",
     "app.tasks.backfill_polymarket_winners",
+    # live/035 — same family: a multi-minute network sweep over an EXPIRING
+    # population (Kalshi purges a settled market's candlesticks at ~47-86 days).
+    "app.tasks.backfill_event_chart_history",
+    "app.tasks.backfill_thin_event_charts",
+    # live/039 — the one-time 30-day drain. Same family again, and the longest
+    # runner of the three: re-triggered until it reports a TERMINAL verdict —
+    # `drained`, or `drained_with_failures` when it gave up on events the venue
+    # would not serve (live/042). Both stop the loop; only the first is clean.
+    "app.tasks.backfill_thirty_day_charts",
     "app.tasks.backfill_espn_win_prob",
     "app.tasks.backfill_team_identities",
     # #2077 (queue 419). Same class as `kalshi_cliff_drain` two lines up and
@@ -704,6 +713,11 @@ HEAVY_TASKS = {
     # fingerprints, stale Inbox, template-P1 share, blocked-in-Inbox, missing
     # area labels). Cheap + daily like its siblings; heavy queue for a free slot.
     "app.tasks.board_sentinel",
+    # #2706: the matching reconciliation job. Same shape as the sentinels above
+    # (read-only detect + deduped file) and it runs on the same cadence as the
+    # matcher it guards, so it belongs on the same queue as `match_prediction_markets`
+    # rather than contending for background's one effective slot.
+    "app.tasks.matching_reconciliation",
     # #1201/#1193/#1202: daily MLB schedule self-heal + coverage. Cheap and daily
     # like the sentinels, and it must fire promptly at 07:05 so the standing
     # inverted rows are healed before the 07:10 flow sentinel reads resolved_state.
@@ -1156,6 +1170,74 @@ def backfill_kalshi_history(self, limit: int = 500, mode: str = "resolved_zero")
     """Backfill historical prices from Kalshi candlesticks API for outcomes with sparse data."""
     from app.tasks.kalshi import _backfill_kalshi_price_history
     return _tracked_run("kalshi_history", _backfill_kalshi_price_history(limit, mode))
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_event_chart_history")
+def backfill_event_chart_history(self, event_ids=None, limit: int = 40, dry_run: bool = False):
+    """live/035: draw an event's whole win-prob lifetime from its venues' history.
+
+    For prediction-market-native events the `events` row is routinely created
+    AFTER the match it describes (the Vallejo v Monfils specimen: event minted
+    2026-09-01, market listed 2026-08-27), so every sampler-style win-prob writer
+    we have is structurally incapable of the pre-match and in-match curve. Kalshi
+    candlesticks and the Polymarket CLOB still hold it.
+
+    Called with `event_ids` for a named repair; called bare it selects the
+    thinnest charts still inside Kalshi's retention window.
+    """
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+    return _tracked_run(
+        "event_chart_backfill",
+        run_event_chart_backfill(event_ids, limit=limit, dry_run=dry_run),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thin_event_charts")
+def backfill_thin_event_charts(self, limit: int = 90):
+    """Nightly: pre-warm the thin charts a reader is likely to reach.
+
+    Bounded at both ends (gotcha #41): the floor keeps it off markets Kalshi has
+    provably purged, and inside that floor it works oldest-first so the at-risk
+    edge is reached before it expires rather than after.
+
+    live/036 (b): its population is no longer "every event we could fix". It is
+    the ±7-day reader window on reader-reachable sports — 1,152 events measured,
+    down from 44,315 — because the wide version lost ground every night and no
+    budget fixed that. Anything outside it fills on demand when someone opens
+    the page.
+    """
+    from app.tasks.event_chart_backfill import run_event_chart_backfill
+    return _tracked_run(
+        "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_thirty_day_charts")
+def backfill_thirty_day_charts(
+    self, limit: int = 200, dry_run: bool = False,
+    min_period_minutes=None, only_tier=None,
+):
+    """live/039: the ONE-TIME drain of the last 30 days of attached events.
+
+    Alex: "if we had Polymarket integration we could backfill all the events we
+    don't have probabilities for from the last 30 days."
+
+    Deliberately NOT on the beat schedule. The two steady-state rails already
+    exist — `backfill_thin_event_charts` pre-warms the ±7-day reader window and
+    `plan_on_demand_fill` catches what a reader opens — and this is the one-off
+    backlog bite those two were told to stop chasing. It checkpoints per tier in
+    Redis and is re-triggered until its verdict is TERMINAL: `drained` (every
+    event asked and answered) or `drained_with_failures` (it gave up on events
+    the venue would not serve). Anything else means there is more behind it.
+    """
+    from app.tasks.chart_backfill_thirty_day import run_thirty_day_chart_drain
+    return _tracked_run(
+        "thirty_day_chart_drain",
+        run_thirty_day_chart_drain(
+            limit=limit, dry_run=dry_run,
+            min_period_minutes=min_period_minutes, only_tier=only_tier,
+        ),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.backfill_kalshi_settled")
@@ -2867,6 +2949,26 @@ def board_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=300, name="app.tasks.matching_reconciliation")
+def matching_reconciliation(self, file_issues=True):
+    """Matching reconciliation (#2706): re-check the 709-pair golden set and the
+    three INVARIANTS-2026-09-02 queries against PRODUCTION every matching cycle,
+    and auto-file a deduped `matching-drift` issue per subject on any regression
+    or violation — closing it again on recovery, via the shared sentinel rail.
+
+    The CI gate catches a change to the matcher's logic before it merges; this
+    catches production data moving under a matcher nobody changed, which is how
+    every failure in the #2693 program actually arrived. Read-only against market
+    data: it files GitHub metadata and nothing else. A check that cannot RUN is
+    recorded as unmeasurable, never as GREEN, so a failed query can never close a
+    real issue."""
+    from app.tasks.matching_reconciliation import _run_matching_reconciliation
+    return _tracked_run(
+        "matching_reconciliation",
+        _run_matching_reconciliation(file_issues=file_issues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=60, time_limit=90, name="app.tasks.sentry_snapshot")
 def sentry_snapshot(self):
     """#237 Item 1: cache the top Sentry issues by 24h volume to Redis
@@ -3887,6 +3989,16 @@ celery_app.conf.beat_schedule = {
         # background slot at p95, the single biggest starver). Stated LITERALLY.
         "options": {"queue": "heavy"},
     },
+    "matching-reconciliation": {
+        "task": "app.tasks.matching_reconciliation",
+        # Every matching cycle, 7 minutes behind it. The matcher fires at
+        # :05/:20/:35/:50 and takes 337s p50, so :12 reads a cycle that has
+        # usually just finished; on a p95 run it reads the previous cycle's
+        # result instead, which is a staleness of one cycle and not a
+        # correctness problem for a read-only regression check.
+        "schedule": crontab(minute="12,27,42,57"),
+        "options": {"queue": "heavy"},
+    },
     # DISABLED: replaced by worker-ws WebSocket consumer (#836/#837).
     "poll-live-prediction-markets": {
         "task": "app.tasks.poll_live_prediction_markets",
@@ -4624,6 +4736,27 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.kalshi_cliff_drain",
         "schedule": crontab(minute=20),  # hourly, off the :00/:15/:30/:45 crowd
         "kwargs": {"limit": 400},
+        "options": {"queue": "background"},
+    },
+    # live/035: the nightly chart-completeness sweep. 08:40 UTC = 01:40 PDT —
+    # after the morning sentinels (07:10/07:25/07:40/07:45) have had the queue
+    # and before the day's slate starts creating new thin charts, so a run is
+    # never competing with an attended fold. Nightly rather than hourly because
+    # the population it drains is created by yesterday's finished events, not
+    # continuously; the cliff-drain one line up is the hourly rail for the
+    # genuinely expiring cohort.
+    # live/036 (b): `limit` raised 60 -> 90 when the population was narrowed to
+    # the reader window. It is sized against INFLOW, not against a backlog: the
+    # narrowed set measured 1,152 events turning over across its own 14-day
+    # window, so ~82 enter per day and 90 covers that with a little room. It is
+    # NOT sized higher, because the 900s soft limit at ~10s/event is the real
+    # bound (~90) and a nightly killed mid-event is worse than a nightly that
+    # leaves eight charts for tomorrow. What this misses, the on-demand fill on
+    # `/api/events/{id}/history` catches the moment someone opens the page.
+    "backfill-thin-event-charts": {
+        "task": "app.tasks.backfill_thin_event_charts",
+        "schedule": crontab(minute=40, hour=8),
+        "kwargs": {"limit": 90},
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------

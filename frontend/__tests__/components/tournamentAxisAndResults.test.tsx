@@ -937,9 +937,19 @@ describe("UX-P146 — the prior beside the result", () => {
   });
 
   it("prematchCoverage counts MATCHES, not players", () => {
+    // ux/1034 A3 added two more counts to this shape — WHY each priorless row
+    // has no prior. The claim this test was written for is the pair below and
+    // is unchanged: one MATCH has a prior, not two players.
     const two = [withPrior(0.62, 0.38), result({ matchup_key: "espn:2" })];
-    expect(prematchCoverage(two)).toEqual({ withPrior: 1, total: 2 });
-    expect(prematchCoverage([])).toEqual({ withPrior: 0, total: 0 });
+    const counted = prematchCoverage(two);
+    expect(counted.withPrior).toBe(1);
+    expect(counted.total).toBe(2);
+    expect(prematchCoverage([])).toEqual({
+      withPrior: 0,
+      total: 0,
+      heldWithoutOpening: 0,
+      untied: 0,
+    });
   });
 });
 

@@ -160,12 +160,24 @@ export interface TournamentPayload {
    * `unresolved` is the reason census (`MARKET_UNLINKED`, `NO_PINNED_MARKET`,
    * …) — kept on the type because a row with no link has to be a NAMED gap and
    * not a row that quietly stopped being clickable.
+   *
+   * `by_espn` is the SECOND channel (#2693 step 2): `ESPN competition id ->
+   * events.id`, dereferenced through `events.espn_id`. It exists because
+   * `by_matchup` structurally cannot serve the FINISHED list — `build_slate`
+   * retires a matchup the moment its match starts, so most finished rows have
+   * no register key left and 118 of 235 were inert. Kept as its own field and
+   * its own counts rather than merged in: a reader asking which channel routed
+   * a row must be able to tell, and `espn_unresolved.ESPN_ID_AMBIGUOUS` above
+   * zero is a step-2 regression that would be invisible inside a total.
    */
   event_links?: {
     by_matchup?: Record<string, number>;
     by_event?: Record<string, string>;
     linked?: number;
     unresolved?: Record<string, number> | null;
+    by_espn?: Record<string, number>;
+    espn_linked?: number;
+    espn_unresolved?: Record<string, number> | null;
   };
   /** "Thursday 27 August, 12:00 ET" — Alex's item 1. */
   draw_release_at?: string;

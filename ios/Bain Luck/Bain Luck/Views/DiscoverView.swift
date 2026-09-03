@@ -1215,6 +1215,15 @@ struct DiscoverView: View {
         .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
         .task {
             if vm.items.isEmpty {
+                // 🔴 ARM THE FELT-NUMBER RAIL HERE, on tab activation with an
+                // empty screen — NOT when the first card renders (CERT-782). Two
+                // things depend on it: this load's cold/warm label is claimed now
+                // rather than 20+ seconds later, and a load that renders NOTHING
+                // reports `no_card` instead of vanishing from the table. The
+                // `items.isEmpty` guard is load-bearing: a tab switch back to an
+                // already-populated Discover stamps no new render generation, so
+                // arming it would report a full screen as blank.
+                ScreenTimingSession.armScreen(surface: ScreenTimingSurface.discover)
                 await vm.load()
             }
             if resolutions.isEmpty {
@@ -1222,6 +1231,20 @@ struct DiscoverView: View {
                     resolutions = r.resolutions
                 }
             }
+        }
+        .onDisappear {
+            // The reader left. Stands the deadline down, and reports a screen they
+            // actually waited on and never saw a card in.
+            ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.discover)
+        }
+        .onChange(of: vm.loading) { _, loading in
+            // A load that resolved with no cards KNOWS why, and saying so keeps a
+            // legitimate empty state out of the failure bucket.
+            guard !loading, vm.items.isEmpty else { return }
+            ScreenTimingSession.reportOutcome(
+                surface: ScreenTimingSurface.discover,
+                outcome: vm.error == nil ? "empty" : "error"
+            )
         }
         .onChange(of: vm.firstRenderGeneration) { _, _ in
             // Generation-keyed acknowledgement (L2-212 Item 2 / C76): fires when the

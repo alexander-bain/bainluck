@@ -5,23 +5,31 @@ import React, { useMemo, useState } from "react";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   MAX_SERIES_COUNT,
-  TIMEFRAMES,
+  NO_WINDOW_STARTS,
+  RANGE_LABELS,
   axisSpanDays,
   axisTicks,
   axisWindow,
   chartGeometry,
+  chartRanges,
   chartSeriesFor,
   chartYLabels,
   chartableRows,
+  defaultChartRange,
   filterCandidates,
+  isChartWindow,
   legendName,
   pointsInTimeframe,
+  rangeDescription,
+  rangeIsDrawable,
+  rangeTimeframe,
   selectionIsDefault,
   seriesEndpoint,
+  seriesForRange,
   seriesPoints,
-  timeframeIsDrawable,
   type AxisTickTier,
-  type Timeframe,
+  type ChartRange,
+  type WindowStarts,
 } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import { formatBoardProbability, type TournamentRow } from "@/lib/tournament";
@@ -118,6 +126,7 @@ export default function ContenderChart({
   selection,
   onToggle,
   onReset,
+  windowStarts = NO_WINDOW_STARTS,
   initialPickerOpen = false,
   initialFilter = "",
 }: {
@@ -128,6 +137,13 @@ export default function ContenderChart({
   onToggle: (entityKey: string) => void;
   /** Back to the board's top three (ruling 5). Omitted, no reset is offered. */
   onReset?: () => void;
+  /**
+   * The days the main draw and qualifying began (ux/1034 A1), from
+   * `tournamentWindowStarts`. Omitted — or `null` on either side — and that
+   * chip is simply not offered, so a hub whose payload predates the field
+   * renders the four duration buttons it always had.
+   */
+  windowStarts?: WindowStarts;
   /** Capture seam: render with the picker already open. */
   initialPickerOpen?: boolean;
   /** Capture seam: render the picker already filtered — a static page cannot type. */
@@ -135,17 +151,45 @@ export default function ContenderChart({
 }) {
   const series = useMemo(() => chartSeriesFor(rows, selection), [rows, selection]);
 
-  // Default to the widest window. With the fields price-dark, the narrow
-  // windows are the empty ones, so opening on 1D would show a blank chart for a
-  // market that has a month of real history.
-  const [timeframe, setTimeframe] = useState<Timeframe>("ALL");
+  /**
+   * `null` means "whatever the default is", NOT a range (ux/1034 A1).
+   *
+   * The same reason the page holds the contender selection as `null`: the
+   * default is computed from the data, and pinning the computed value at first
+   * render would freeze the chart on whatever was true when it mounted. On this
+   * control that matters within one session — the draw pill swaps a 16-point
+   * men's field for a 9-point women's one, and a `DRAW` window that was
+   * drawable on the first is not guaranteed to be on the second.
+   */
+  const [range, setRange] = useState<ChartRange | null>(null);
   const [pickerOpen, setPickerOpen] = useState(initialPickerOpen);
   const [pickerExpanded, setPickerExpanded] = useState(false);
   const [filter, setFilter] = useState(initialFilter);
 
+  const ranges = useMemo(() => chartRanges(windowStarts), [windowStarts]);
+  const fallbackRange = useMemo(
+    () => defaultChartRange(series, windowStarts),
+    [series, windowStarts]
+  );
+  /* A chosen range the current payload no longer offers falls back rather than
+     drawing nothing — `QUAL` survives a draw change, an empty results section
+     across a refetch does not. */
+  const activeRange =
+    range !== null && ranges.includes(range) ? range : fallbackRange;
+
+  /* THE WINDOW IS A SMALLER SERIES (see `seriesFromDate`). Everything below
+     this line is the chart exactly as it was, drawing `ALL` of whatever it is
+     handed — no part of the geometry, the axis or the picker learns that a
+     tournament has a start date. */
+  const drawnSeries = useMemo(
+    () => seriesForRange(series, activeRange, windowStarts),
+    [series, activeRange, windowStarts]
+  );
+  const timeframe = rangeTimeframe(activeRange);
+
   const geometry = useMemo(
-    () => chartGeometry(series, timeframe, WIDTH, HEIGHT),
-    [series, timeframe]
+    () => chartGeometry(drawnSeries, timeframe, WIDTH, HEIGHT),
+    [drawnSeries, timeframe]
   );
 
   const available = useMemo(
@@ -163,7 +207,7 @@ export default function ContenderChart({
 
   if (series.length === 0) return null;
 
-  const drawable = series.some(
+  const drawable = drawnSeries.some(
     (entry) => pointsInTimeframe(entry.points, timeframe).length >= 2
   );
   // RULING 6 (UX-P139) gave the x-axis its ticks: it had nothing at all, so a
@@ -192,6 +236,7 @@ export default function ContenderChart({
       data-testid="contender-chart"
       data-draw={draw}
       data-timeframe={timeframe}
+      data-range={activeRange}
       data-live={anyLive ? "true" : "false"}
       data-selected={series.length}
     >
@@ -372,7 +417,7 @@ export default function ContenderChart({
               data-tier={tick.tier}
             />
           ))}
-          {series.map((entry) => {
+          {drawnSeries.map((entry) => {
             const points = seriesPoints(entry, geometry, timeframe);
             if (points === "") return null;
             const endpoint = seriesEndpoint(entry, geometry, timeframe);
@@ -479,21 +524,33 @@ export default function ContenderChart({
             </>
           )}
         </span>
-        <div className="flex gap-1" role="group" aria-label="Chart timeframe">
-          {TIMEFRAMES.map((option) => {
-            const enabled = timeframeIsDrawable(series, option);
-            const active = option === timeframe;
+        {/* THE RANGE CHIPS (ux/1034 A1). The two tournament windows first and
+            the four durations after, because the windows are what the reader
+            wants and the durations are what they fall back to — and because a
+            control whose default is its fifth item reads as an afterthought.
+            `tabular-nums` is dropped from the two word chips: it is there so
+            `1D` and `1M` occupy the same box, and it does nothing for `Draw`
+            except widen its spaces. */}
+        <div className="flex gap-1" role="group" aria-label="Chart range">
+          {ranges.map((option) => {
+            const enabled = rangeIsDrawable(series, option, windowStarts);
+            const active = option === activeRange;
+            const description = rangeDescription(option, windowStarts);
             return (
               <button
                 key={option}
                 type="button"
                 disabled={!enabled}
                 aria-pressed={active}
-                onClick={() => setTimeframe(option)}
+                aria-label={description ?? undefined}
+                title={description ?? undefined}
+                onClick={() => setRange(option)}
                 data-testid="chart-timeframe"
                 data-option={option}
                 data-active={active ? "true" : "false"}
-                className={`rounded px-1.5 py-0.5 text-[11px] tabular-nums ${
+                className={`rounded px-1.5 py-0.5 text-[11px] ${
+                  isChartWindow(option) ? "" : "tabular-nums "
+                }${
                   active
                     ? "font-bold text-text-primary"
                     : enabled
@@ -501,7 +558,7 @@ export default function ContenderChart({
                       : "cursor-not-allowed text-text-muted opacity-40"
                 }`}
               >
-                {option}
+                {RANGE_LABELS[option]}
               </button>
             );
           })}
