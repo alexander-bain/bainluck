@@ -441,10 +441,13 @@ async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
     """``(payload, reason)`` — a raise is "I could not read", never "not there"."""
     from app.services.durable_snapshots import read_snapshot_standalone
 
+    # Built outside the `try` so the awaited call is the only thing inside it —
+    # the shape `_read_plan` already uses, kept identical here on purpose.
+    read = read_snapshot_standalone(
+        identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
+    )
     try:
-        got = await read_snapshot_standalone(
-            identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
-        )
+        got = await read
     except Exception as exc:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
         logger.warning("%s undo read raised: %s", ISSUE, type(exc).__name__)
         return None, REASON_UNDO_UNREADABLE
