@@ -707,3 +707,223 @@ async def test_a_dry_run_never_reopens_the_tier(monkeypatch):
     assert redis.store[drain.TIER_DONE_KEY.format(tier=TIER)] == drain.DONE_CLEAN, (
         "a dry run deleted the tier's terminal marker"
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. CERT-836 — the reopen that was never CONFIRMED, and the write that heals it
+# ---------------------------------------------------------------------------
+#
+# 🔴 THE CASE A CALLBACK REPAIR CANNOT REACH, and the reason this file needed a
+# second section. Section 1 fixed the reopen's arguments. CERT-836 then found
+# that fixing the callback is not the same as the reopen having HAPPENED.
+#
+# `_with_redis` fails open by design — a Redis blip must cost a re-scan, not a
+# crashed drain — so ANY Redis exception makes `_fenced` answer `True`. That is
+# safe only while nothing LATER in the same run persists, and that assumption is
+# precisely what breaks here: if Redis dies for the single instant of the reopen
+# transaction and recovers immediately, the reopen is silently lost while every
+# write after it lands. The successful retry is removed, the cursor advances,
+# `drained` survives beside an empty hash, and the next trigger returns
+# `already_done` over everything behind it.
+#
+# Every guard in section 1 is green through this, and cannot be otherwise: their
+# Redis is healthy for the whole run, so the split never occurs. That is worth
+# stating plainly — a suite can be thorough about the mechanism it was written
+# for and blind to the one next to it.
+#
+# THE REPAIR IS NOT A BETTER REOPEN. It is to stop the invariant depending on a
+# separate write having succeeded: `_record_attempts` now deletes the terminal
+# marker UNCONDITIONALLY, inside the transaction that records attempts. The
+# reopen may be lost; the write that would otherwise have made the loss
+# permanent now carries the cure. `_settle_tier` writes the true marker
+# afterwards when the tier really has finished.
+
+
+class _BlipOnce:
+    """A Redis that fails exactly ONE transaction, then works perfectly.
+
+    Selected by the commands the block CONTAINS rather than by a call count:
+    a counter would move whenever anything upstream added a round trip, and the
+    test would silently start failing a different transaction than the one it
+    names. This fails the block that deletes the done key and touches no hash —
+    which is the reopen, and only the reopen.
+    """
+
+    def __init__(self, redis):
+        self.redis = redis
+        self.armed = True
+        self.fired = []
+        self._real = redis.pipeline
+        redis.pipeline = self._pipeline
+
+    def _pipeline(self, transaction=True):
+        pipe = self._real(transaction)
+        real_execute = pipe.execute
+
+        def execute():
+            names = [n for n, _a, _k in pipe._queued]
+            if (
+                self.armed
+                and "delete" in names
+                and "hdel" not in names
+                and "hset" not in names
+            ):
+                self.armed = False
+                self.fired.append(tuple(names))
+                raise ConnectionError("redis went away for one instant")
+            return real_execute()
+
+        pipe.execute = execute
+        return pipe
+
+
+async def test_a_reopen_lost_to_a_redis_blip_does_not_strand_the_tier(monkeypatch):
+    """🔴 CERT-836, VERBATIM: `done + retry` → the reopen's EXEC fails once →
+    Redis recovers → the retry succeeds → the page is not exhausted.
+
+    Prove the marker/retry pair is left recoverable and the second trigger
+    SCANS the next event instead of returning `already_done`.
+
+    RED-FIRST against `1b77900a` (the CERT-831 repair, with the correct
+    two-argument callback): second trigger returns
+    `{'status': 'drained', 'already_done': True}`, Redis holds `drained` with an
+    empty retry hash, and event 7008 is never filled.
+    """
+    drain = _drain()
+    redis = _contradicted(drain)
+    pages = _Pages(drain, present=[EVENT, EVENT + 1])
+    _wire_recovering_runner(monkeypatch, drain, redis, pages)
+    blip = _BlipOnce(redis)
+
+    await drain.run_thirty_day_chart_drain(limit=5, only_tier=TIER, dry_run=False)
+    second = await drain.run_thirty_day_chart_drain(
+        limit=5, only_tier=TIER, dry_run=False,
+    )
+
+    assert blip.fired, (
+        "the blip never fired — this test proved nothing. The reopen's "
+        "transaction shape changed and the selector no longer finds it."
+    )
+    assert not blip.armed
+
+    assert drain.TIER_DONE_KEY.format(tier=TIER) not in redis.store, (
+        "the reopen was lost to the blip AND nothing else cleared the marker — "
+        "the tier is now `drained` beside an empty retry hash, which is "
+        "self-consistent, so nothing will ever detect it again"
+    )
+    assert not second["tiers"][TIER].get("already_done"), (
+        "the second trigger short-circuited: every event behind the retry is "
+        "now permanently unreachable"
+    )
+    assert pages.filled == [EVENT, EVENT + 1], (
+        f"the event behind the retry was never scanned: filled={pages.filled}"
+    )
+
+
+async def test_the_blip_is_survivable_when_it_hits_the_ATTEMPTS_write_instead(
+    monkeypatch,
+):
+    """The other side of the same coin, and it must NOT be papered over.
+
+    If the blip takes the attempts write rather than the reopen, the retry is
+    NOT removed — so the tier still owes it, the pair stays contradictory, and
+    the next trigger re-opens and re-drains. That is the correct outcome (work
+    repeated, nothing lost) and it is the direction this whole module errs in.
+    Asserted so a future "fix" that swallows this case cannot call itself an
+    improvement.
+    """
+    drain = _drain()
+    redis = _contradicted(drain)
+    pages = _Pages(drain, present=[EVENT, EVENT + 1])
+    _wire_recovering_runner(monkeypatch, drain, redis, pages)
+
+    real_pipeline = redis.pipeline
+    state = {"armed": True, "fired": False}
+
+    def _pipeline(transaction=True):
+        pipe = real_pipeline(transaction)
+        real_execute = pipe.execute
+
+        def execute():
+            names = [n for n, _a, _k in pipe._queued]
+            if state["armed"] and "hdel" in names:
+                state["armed"] = False
+                state["fired"] = True
+                raise ConnectionError("redis went away for one instant")
+            return real_execute()
+
+        pipe.execute = execute
+        return pipe
+
+    redis.pipeline = _pipeline
+
+    await drain.run_thirty_day_chart_drain(limit=5, only_tier=TIER, dry_run=False)
+    assert state["fired"], "the blip never fired — this test proved nothing"
+
+    # The retry survives because its removal never landed. The tier therefore
+    # still owes work and cannot be terminal, whichever order a reader arrives
+    # in — which is the invariant, not the specific keys.
+    after = drain._read_checkpoint(TIER)
+    assert not (after.done and not after.retry), (
+        f"a terminal marker beside an empty retry hash: done={after.done!r}"
+    )
+
+    second = await drain.run_thirty_day_chart_drain(
+        limit=5, only_tier=TIER, dry_run=False,
+    )
+    assert not second["tiers"][TIER].get("already_done")
+
+
+def test_the_attempts_write_clears_the_marker_even_when_it_only_DROPS(monkeypatch):
+    """The unit under the two runner guards above.
+
+    The pre-CERT-836 code deleted the marker only when the pass ADDED a retry.
+    A pass that only DROPS one — the retry SUCCEEDED — left it, and that is the
+    branch the lost reopen falls through. Asserted directly so the reason the
+    delete is unconditional is visible without running the whole runner.
+    """
+    drain = _drain()
+    redis = _contradicted(drain)
+    redis.store[drain.TIER_LOCK_KEY.format(tier=TIER)] = "tok-1"
+
+    original, drain._with_redis = drain._with_redis, lambda _t, apply: apply(redis)
+    try:
+        outcome = drain._record_attempts(
+            TIER, [EVENT], [], {EVENT: 1}, 0, "tok-1",
+        )
+    finally:
+        drain._with_redis = original
+
+    assert outcome.held is True
+    assert outcome.owed == {}, "the retry succeeded and was dropped"
+    assert drain.TIER_DONE_KEY.format(tier=TIER) not in redis.store, (
+        "a pass that DROPS a retry must clear the terminal marker too — "
+        "leaving it is the branch CERT-836's lost reopen falls through"
+    )
+
+
+def test_the_give_up_counter_survives_the_unconditional_delete():
+    """CONTROL — the delete must not cost the tier its failure ending.
+
+    `drained_with_failures` is re-derived from the monotone give-up counter, so
+    deleting the marker is only safe while that counter is untouched. If this
+    ever goes red, the unconditional delete has turned an abandoned event into a
+    clean finish, which is CERT-773 again.
+    """
+    drain = _drain()
+    redis = _contradicted(drain, marker=drain.DONE_WITH_FAILURES)
+    redis.store[drain.GAVE_UP_KEY.format(tier=TIER)] = 4
+    redis.store[drain.TIER_LOCK_KEY.format(tier=TIER)] = "tok-1"
+
+    original, drain._with_redis = drain._with_redis, lambda _t, apply: apply(redis)
+    try:
+        outcome = drain._record_attempts(
+            TIER, [EVENT], [], {EVENT: 1}, 4, "tok-1",
+        )
+    finally:
+        drain._with_redis = original
+
+    assert redis.store[drain.GAVE_UP_KEY.format(tier=TIER)] == 4
+    assert outcome.gave_up_total == 4, (
+        "the count the settlement turns on must survive the marker delete"
+    )

@@ -754,11 +754,47 @@ def _record_attempts(
         # token comparison, the lease renewal and every write below are one
         # block that either all lands or none does. Same commands, same order,
         # one fewer seam.
+        # 🔴 AND THE DELETE IS UNCONDITIONAL — CERT-836, and it is the same
+        # lesson a third time: DO NOT MAKE TWO WRITES AGREE AFTER THE FACT,
+        # MAKE THEM ONE WRITE.
+        #
+        # CERT-831's repair fixed the reopen's callback, and CERT-836 then
+        # reproduced the case the callback repair cannot reach. `_with_redis`
+        # FAILS OPEN by design — a Redis blip must cost a re-scan, not a
+        # crashed drain — so a Redis exception makes `_fenced` answer `True`.
+        # That is safe only while nothing LATER in the same run persists, and
+        # it is exactly that assumption which breaks: if Redis dies for the
+        # single instant of the reopen transaction and recovers immediately,
+        # the reopen is silently lost while THIS transaction lands. The retry
+        # is removed, the cursor advances, the stale `drained` survives, and
+        # the next trigger returns `already_done` over everything behind it.
+        #
+        # Conditioning the delete on `added` was the bug: it made the marker's
+        # removal depend on the retry having FAILED, when the invariant it
+        # protects has nothing to do with success. Reaching this function means
+        # the tier is being actively drained, which means it is NOT terminal —
+        # a terminal marker short-circuits the runner long before here, and the
+        # only way past that short-circuit is the reopen, which wants the
+        # marker gone anyway. So the marker is deleted whenever attempts are
+        # recorded, in the transaction that records them.
+        #
+        # That makes the pair self-healing rather than dependent on a separate
+        # write having succeeded: the reopen may be lost to a blip, and the
+        # contradiction is still cleared by the very write that would otherwise
+        # have made it permanent. `_settle_tier` writes the true marker
+        # afterwards in the same pass when the tier really has finished, so
+        # nothing is lost — and a `drained_with_failures` is re-derived from the
+        # monotone give-up counter exactly as the note above already argues.
+        #
+        # Queued AFTER the hash writes and BEFORE the counter: the counter's
+        # reply must stay last (`results[-1]`, CERT-764), and keeping the delete
+        # adjacent to the hash write leaves the `added` block's command order
+        # exactly as CERT-794/795 pinned it.
         if dropped:
             pipe.hdel(key, *[str(e) for e in dropped])
         if added:
             pipe.hset(key, mapping=added)
-            pipe.delete(TIER_DONE_KEY.format(tier=tier))
+        pipe.delete(TIER_DONE_KEY.format(tier=tier))
         if gave_up:
             pipe.incrby(GAVE_UP_KEY.format(tier=tier), len(gave_up))
 

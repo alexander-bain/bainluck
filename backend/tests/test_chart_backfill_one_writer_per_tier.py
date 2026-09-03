@@ -140,7 +140,16 @@ def test_the_retry_delete_and_the_give_up_increment_are_one_transaction():
     assert len(redis.transactions) == 1, "one block, not a command per round trip"
     transactional, names = redis.transactions[0]
     assert transactional, "a pipeline without MULTI is batching, not atomicity"
-    assert names == ["hdel", "incrby"], names
+    # The `delete` joined this block at CERT-836: the terminal marker is now
+    # cleared by the write that records attempts, unconditionally, so a reopen
+    # lost to a one-instant Redis blip cannot leave a stale `drained` behind a
+    # retry this same transaction is removing. What this test is about is
+    # unchanged — one MULTI, and the counter's reply LAST so `results[-1]`
+    # still means what CERT-764 needs it to mean.
+    assert names == ["hdel", "delete", "incrby"], names
+    assert names[-1] == "incrby", (
+        "the give-up counter's reply must be last — the settlement reads it"
+    )
     assert len(redis.visible_states(TIER)) == 2, (
         "the whole pass must be ONE visible transition: the seeded state, then "
         "the settled one"
