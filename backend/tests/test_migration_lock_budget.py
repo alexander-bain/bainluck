@@ -27,6 +27,8 @@ import pytest
 
 from app.utils.migration_lock_budget import (
     DEFAULT_ATTEMPTS,
+    batch_is_retryable,
+    psycopg2_url,
     DEFAULT_BACKOFF_MS,
     DEFAULT_LOCK_TIMEOUT_MS,
     LOCK_TIMEOUT_CEILING_MS,
@@ -106,6 +108,11 @@ class TestResolveSettings:
         s = resolve_settings({"ALEMBIC_LOCK_TIMEOUT_MS": "5"})
         assert s.lock_timeout_ms == LOCK_TIMEOUT_FLOOR_MS
 
+    def test_a_configured_zero_backoff_is_honoured_not_overwritten(self):
+        # 0 is a legitimate "retry immediately". Treating it as unusable would
+        # silently substitute a two-second sleep for what the operator set.
+        assert resolve_settings({"ALEMBIC_LOCK_BACKOFF_MS": "0"}).backoff_ms == 0
+
     def test_attempts_are_at_least_one_so_migrations_always_run(self):
         assert resolve_settings({"ALEMBIC_LOCK_ATTEMPTS": "-3"}).attempts == (
             DEFAULT_ATTEMPTS
@@ -136,6 +143,60 @@ class TestTheBudgetFitsTheReleasePhase:
             )
         )
         assert worst < RELEASE_PHASE_BUDGET_S
+
+
+class TestBatchIsRetryable:
+    """CERT-789 follow-up: the version check alone does not prove nothing landed."""
+
+    def test_ordinary_transactional_migrations_may_be_retried(self):
+        assert batch_is_retryable(["def upgrade():\n    op.add_column('t', c)\n"])
+
+    def test_an_empty_batch_is_retryable(self):
+        assert batch_is_retryable([]) is True
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'op.execute("COMMIT")',
+            "op.execute('COMMIT')",
+            "with op.get_context().autocommit_block():",
+        ],
+    )
+    def test_a_script_that_commits_mid_flight_forfeits_the_retry(self, source):
+        # Alembic stamps the version at the END, so such a script can have
+        # applied real DDL while alembic_version still reads unchanged.
+        assert batch_is_retryable([source]) is False
+
+    def test_one_bad_script_disqualifies_the_whole_batch(self):
+        assert batch_is_retryable(["clean", 'op.execute("COMMIT")', "clean"]) is False
+
+    def test_an_undeterminable_batch_fails_closed(self):
+        # The retry is a convenience; the safety it rests on is not.
+        assert batch_is_retryable(None) is False
+
+    def test_the_three_real_offenders_are_actually_caught(self):
+        # Guards against the markers drifting from the files they describe: if
+        # someone renames the pattern, this reds instead of silently passing.
+        versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+        for name in (
+            "add_market_tags.py",
+            "add_taxonomy_tags.py",
+            "add_prov_play_enum_value.py",
+        ):
+            source = (versions / name).read_text(encoding="utf-8")
+            assert batch_is_retryable([source]) is False, name
+
+
+class TestPsycopg2Url:
+    def test_herokus_postgres_scheme_is_normalised(self):
+        assert psycopg2_url("postgres://u:p@h/db") == "postgresql://u:p@h/db"
+
+    def test_the_async_driver_is_stripped(self):
+        # Migrations run on psycopg2; leaving +asyncpg makes create_engine fail.
+        assert psycopg2_url("postgresql+asyncpg://u:p@h/db") == "postgresql://u:p@h/db"
+
+    def test_an_already_correct_url_is_untouched(self):
+        assert psycopg2_url("postgresql://u:p@h/db") == "postgresql://u:p@h/db"
 
 
 class TestShouldRetry:
@@ -275,7 +336,14 @@ class TestEnvPyArmsTheLockTimeout:
     ``create_engine``.
     """
 
-    def _run_env_py(self, monkeypatch, *, run_migrations=None):
+    def _run_env_py(
+        self,
+        monkeypatch,
+        *,
+        run_migrations=None,
+        pending_sources=None,
+        unknowable=False,
+    ):
         """Run ``env.py`` and report the connect_args of the MIGRATION connection.
 
         env.py opens more than one connection — the version probe gets its own —
@@ -286,10 +354,35 @@ class TestEnvPyArmsTheLockTimeout:
         ran on. Every connection mock is traced back to the engine that made it.
         """
         import alembic
+        import alembic.script
         import sqlalchemy
 
         captured = {"all_connect_args": [], "ran": 0}
         by_connection = {}
+
+        # env.py drops the retry unless it can SEE that every pending migration
+        # is transactional, so the batch has to be knowable for any retry test
+        # to mean anything. Default: one ordinary transactional migration.
+        sources = (
+            ["def upgrade():\n    op.add_column('t', sa.Column('c', sa.Integer()))\n"]
+            if pending_sources is None
+            else pending_sources
+        )
+        tmp = Path(__import__("tempfile").mkdtemp(prefix="lat215-versions-"))
+        revisions = []
+        for n, text_ in enumerate(sources):
+            path = tmp / f"rev_{n}.py"
+            path.write_text(text_, encoding="utf-8")
+            revisions.append(mock.Mock(path=str(path)))
+
+        fake_script_dir = mock.MagicMock()
+        fake_script_dir.iterate_revisions.return_value = revisions
+        from_config = (
+            mock.Mock(side_effect=RuntimeError("no script directory"))
+            if unknowable
+            else mock.Mock(return_value=fake_script_dir)
+        )
+        monkeypatch.setattr(alembic.script.ScriptDirectory, "from_config", from_config)
 
         def fake_create_engine(url, **kwargs):
             connect_args = kwargs.get("connect_args", {})
@@ -384,3 +477,45 @@ class TestEnvPyArmsTheLockTimeout:
         monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
         self._run_env_py(monkeypatch, run_migrations=flaky)
         assert state["n"] == 2, "env.py did not retry a transient lock timeout"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            'def upgrade():\n    op.execute("COMMIT")\n',
+            "def upgrade():\n    with op.get_context().autocommit_block():\n        pass\n",
+        ],
+    )
+    def test_a_batch_that_commits_mid_flight_loses_the_retry(self, monkeypatch, source):
+        # CERT-789 follow-up MIGRATION-LOCK-RETRY-PARTIAL-COMMIT: Alembic stamps
+        # the version at the END, so such a script can have applied real DDL
+        # while alembic_version still reads unchanged. The version check alone
+        # would wave the retry through and replay committed work.
+        state = {"n": 0}
+
+        def always_times_out():
+            state["n"] += 1
+            raise _LockTimeout()
+
+        monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
+        with pytest.raises(_LockTimeout):
+            self._run_env_py(
+                monkeypatch,
+                run_migrations=always_times_out,
+                pending_sources=[source],
+            )
+        assert state["n"] == 1, "a mid-flight-committing batch must not be replayed"
+
+    def test_an_unknowable_batch_loses_the_retry(self, monkeypatch):
+        # Fail closed: the retry is a convenience, its safety is not.
+        state = {"n": 0}
+
+        def always_times_out():
+            state["n"] += 1
+            raise _LockTimeout()
+
+        monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
+        with pytest.raises(_LockTimeout):
+            self._run_env_py(
+                monkeypatch, run_migrations=always_times_out, unknowable=True
+            )
+        assert state["n"] == 1, "an undeterminable batch must not be retried"

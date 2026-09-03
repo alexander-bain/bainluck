@@ -4,12 +4,18 @@ import logging
 import os
 from logging.config import fileConfig
 
+from pathlib import Path
+
 from alembic import context
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, pool, text
 
 from app.services.database import Base
 from app.utils.migration_lock_budget import (
+    MigrationLockSettings,
+    batch_is_retryable,
     lock_timeout_option,
+    psycopg2_url,
     resolve_settings,
     run_with_lock_retry,
 )
@@ -25,19 +31,14 @@ if config.config_file_name is not None:
 # Model metadata for autogenerate
 target_metadata = Base.metadata
 
-# Get database URL from environment
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/bainluck"
+# Get database URL from environment. Normalising Heroku's postgres:// and
+# stripping +asyncpg (migrations run on psycopg2) is shared with the
+# release-phase guard `scripts/assert_migrations_applied.py` -- two copies could
+# drift, and a guard that checks a DIFFERENT database than the migration ran on
+# is worse than no guard.
+DATABASE_URL = psycopg2_url(
+    os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/bainluck")
 )
-
-# Normalize Heroku's postgres:// to postgresql:// (psycopg2 format)
-# Alembic migrations use synchronous psycopg2, not asyncpg
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-# Strip asyncpg driver if present (use psycopg2 for migrations)
-if "+asyncpg" in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("+asyncpg", "", 1)
 
 
 def run_migrations_offline() -> None:
@@ -100,6 +101,24 @@ def _read_alembic_version(probe_timeout_ms: int = 5_000):
         engine.dispose()
 
 
+def _pending_migration_sources(current_revision):
+    """Source text of every migration this run would apply, or None if unknown.
+
+    ``None`` is a real answer, not an error swallowed: :func:`batch_is_retryable`
+    treats "cannot tell" as "do not retry". Failing closed here is deliberate —
+    the retry is a convenience, and the safety it depends on is not.
+    """
+    try:
+        script = ScriptDirectory.from_config(config)
+        return [
+            Path(revision.path).read_text(encoding="utf-8")
+            for revision in script.iterate_revisions("heads", current_revision)
+            if revision.path
+        ]
+    except Exception:  # noqa: BLE001 - see docstring; unknown must not raise
+        return None
+
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode using synchronous psycopg2.
 
@@ -110,6 +129,14 @@ def run_migrations_online() -> None:
     mechanism and the retry's safety argument: ``app/utils/migration_lock_budget``.
     """
     settings = resolve_settings(os.environ)
+    if not batch_is_retryable(_pending_migration_sources(_read_alembic_version())):
+        # A pending script commits before Alembic stamps the version, or we
+        # could not tell. Either way the version-unchanged check cannot prove
+        # nothing landed, so the retry is dropped rather than trusted.
+        settings = MigrationLockSettings(
+            lock_timeout_ms=settings.lock_timeout_ms, attempts=1, backoff_ms=0
+        )
+
     connect_args = _base_connect_args()
     connect_args["options"] = lock_timeout_option(settings.lock_timeout_ms)
 

@@ -83,7 +83,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, TypeVar
+from typing import Callable, Iterable, Mapping, Optional, TypeVar
 
 from app.utils.repair_lock_budget import is_lock_timeout
 
@@ -138,12 +138,18 @@ def _clamp(value: int, floor: int, ceiling: int) -> int:
     return max(floor, min(ceiling, value))
 
 
-def _read_int(env: Mapping[str, str], key: str, default: int) -> int:
+def _read_int(env: Mapping[str, str], key: str, default: int, minimum: int = 1) -> int:
     """Read an integer setting, falling back to ``default`` on anything unusable.
 
     A malformed ``ALEMBIC_LOCK_TIMEOUT_MS`` must not stop a deploy: the whole
     point of this module is that migrations keep landing. An unreadable value
     is treated as "not set", which lands on a default that is known to be safe.
+
+    ``minimum`` is 1 for the knobs where zero is meaningless (a zero-millisecond
+    lock timeout, a zero-attempt run) and 0 for the backoff, where "retry
+    immediately" is a legitimate thing to ask for. Rejecting a configured 0 as
+    "unusable" would silently substitute a two-second sleep for the value the
+    operator actually set.
     """
     raw = env.get(key)
     if raw is None:
@@ -152,7 +158,7 @@ def _read_int(env: Mapping[str, str], key: str, default: int) -> int:
         parsed = int(str(raw).strip())
     except (TypeError, ValueError):
         return default
-    return parsed if parsed > 0 else default
+    return parsed if parsed >= minimum else default
 
 
 def resolve_settings(env: Mapping[str, str]) -> MigrationLockSettings:
@@ -175,7 +181,9 @@ def resolve_settings(env: Mapping[str, str]) -> MigrationLockSettings:
             _read_int(env, "ALEMBIC_LOCK_ATTEMPTS", DEFAULT_ATTEMPTS), 1, 10
         ),
         backoff_ms=_clamp(
-            _read_int(env, "ALEMBIC_LOCK_BACKOFF_MS", DEFAULT_BACKOFF_MS), 0, 30_000
+            _read_int(env, "ALEMBIC_LOCK_BACKOFF_MS", DEFAULT_BACKOFF_MS, minimum=0),
+            0,
+            30_000,
         ),
     )
     return _fit_to_release_budget(settings)
@@ -211,6 +219,54 @@ def lock_timeout_option(lock_timeout_ms: int) -> str:
     rollback of any transaction inside it.
     """
     return f"-c lock_timeout={int(lock_timeout_ms)}"
+
+
+def psycopg2_url(raw: str) -> str:
+    """Normalise a ``DATABASE_URL`` to the sync psycopg2 spelling.
+
+    Defined once and shared by ``alembic/env.py`` and the release-phase guard
+    ``scripts/assert_migrations_applied.py``. Two copies of this could drift,
+    and a guard that checks a DIFFERENT database than the migration ran on is
+    worse than no guard: it would report "at head" about the wrong server.
+    """
+    url = raw
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    if "+asyncpg" in url:
+        url = url.replace("+asyncpg", "", 1)
+    return url
+
+
+#: Source markers for a migration that commits before Alembic stamps the
+#: version. ``add_market_tags`` and ``add_taxonomy_tags`` issue a bare
+#: ``op.execute("COMMIT")``; ``add_prov_play_enum_value`` uses
+#: ``autocommit_block()``.
+NON_TRANSACTIONAL_MARKERS = (
+    "autocommit_block",
+    'execute("COMMIT")',
+    "execute('COMMIT')",
+)
+
+
+def batch_is_retryable(sources: Optional[Iterable[str]]) -> bool:
+    """Whether the pending migrations may be re-run after a lock timeout.
+
+    The ``alembic_version``-unchanged check in :func:`should_retry` is necessary
+    but NOT sufficient, and this is the gap it leaves. Alembic stamps the
+    version at the END of a migration, so a script that commits in the middle
+    of itself can have applied real DDL while the version still reads unchanged
+    — the retry would then replay committed work believing nothing happened.
+    (Raised as CERT-789's ``MIGRATION-LOCK-RETRY-PARTIAL-COMMIT`` follow-up.)
+
+    ``None`` means the pending set could not be determined, and that answers
+    **False**: the whole value of the retry is that it is safe, so not knowing
+    has to cost the retry rather than the safety.
+    """
+    if sources is None:
+        return False
+    return not any(
+        marker in source for source in sources for marker in NON_TRANSACTIONAL_MARKERS
+    )
 
 
 def max_total_wait_s(settings: MigrationLockSettings) -> float:
