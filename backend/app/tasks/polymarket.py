@@ -2284,21 +2284,66 @@ def _extract_outcome_name(question: str, event_title: str) -> str:
 
 
 async def _sync_polymarket_resolved_status():
-    """Scan closed Polymarket events and update market status to 'resolved'.
+    """Mark finished Polymarket markets resolved, addressing Gamma by event id.
 
-    The regular polling task only fetches active events (active=True,
-    closed=False). Once a Polymarket event closes, we never see it again
-    and the market status stays 'open' in our DB. This blocks all
-    downstream pipelines (calibration, winner backfill, snapshot backfill).
+    The regular polling task only fetches active events, so once a Polymarket
+    event closes we never see it again and the market status stays ``open`` in
+    our DB. This blocks all downstream pipelines (calibration, winner backfill,
+    snapshot backfill). This task is the Polymarket equivalent of Kalshi's
+    settled events backfill Phase 1 (gotcha #97).
 
-    This task is the Polymarket equivalent of Kalshi's settled events
-    backfill Phase 1 (gotcha #97).
+    **#2637 — it could only ever see 2021, and this is the rewrite.** The scan
+    used to page ``/events?active=false&closed=true`` by ``offset`` up to
+    ``max_events = 100000``. Two measured facts made that structurally incapable
+    of reaching a recent event:
+
+    1. Gamma caps ``offset`` at 2000 (``offset=2100`` → HTTP 422 *"offset too
+       large, use /events/keyset for deeper pagination"*), so the ceiling was
+       unreachable by a factor of 50;
+    2. with no ``order`` param Gamma serves **oldest-first**, so every run spent
+       itself re-reading the same ~2,000 closed events from 2021.
+
+    Nothing newer was ever marked resolved. 32,090 markets across 22,092 events
+    were carried ``open`` while finished, some since 2020.
+
+    Adding ``order="startDate", ascending=False`` — the fix #219E applied to the
+    *active* scan — is the obvious repair and would have drained close to
+    nothing: on ``closed=true`` the newest reachable 2,000 events span ~1.5 days
+    and are essentially all hourly crypto, which ingest skips.
+
+    So the population is taken from **our own rows** instead. Every unresolved
+    Polymarket market yields a Gamma event id under
+    :data:`GAMMA_EVENT_ID_EXPR` (measured: all 40,004 of them, 22,092 distinct),
+    and ``/events?id=`` answers for any of them regardless of age — 9 of 9
+    probed across 2020→2026 returned 200, closed ones included, because Gamma
+    hides closed events from *list* endpoints only. The sweep is therefore
+    bounded by our database rather than by Gamma's ordering, and no crypto flood
+    can crowd it out. ~22k ids at 100 per request is ~221 calls, so a run
+    normally covers the whole population; the cursor exists for the run that
+    does not.
+
+    **What may be resolved is decided per leg, by the venue** — see
+    :func:`settled_legs`. A paged ``closed=true`` scan could take every condition
+    id it saw because the filter had vouched for them; a direct fetch has no
+    filter and returns live markets beside settled ones. Never by staleness: 407
+    of 779 sampled stuck rows are long-horizon futures ("Illinois Senate Election
+    Winner", ends 2026-11-03) that are legitimately open, and an age rule would
+    resolve every one of them.
     """
     import asyncio
+    import time as _time
     from app.services.polymarket_api import PolymarketAPIService
 
     import json as json_module
 
+    import httpx
+
+    from app.utils.polymarket_settlement_scan import (
+        GAMMA_EVENT_ID_EXPR,
+        GAMMA_MAX_IDS_PER_REQUEST,
+        STALE_OPEN_AGE_HOURS,
+        settled_legs,
+    )
     from app.utils.resolved_write_gate import (
         PROOF_WINNER,
         REASON_CLOSED_WITHOUT_TERMINAL_PRICE,
@@ -2307,15 +2352,33 @@ async def _sync_polymarket_resolved_status():
 
     _json_dumps = json_module.dumps
 
+    #: Wall budget for the id sweep. The Celery task's soft limit is 900s; this
+    #: leaves room for the closing census and the return trip.
+    _TIME_BUDGET_S = 600.0
+    _deadline = _time.monotonic() + _TIME_BUDGET_S
+
     stats = {
-        "events_fetched": 0, "markets_resolved": 0,
+        "events_requested": 0,
+        "events_returned": 0,
+        # Requested ids Gamma did not answer for. A real signal now, and only
+        # now: `get_events_by_ids` sends an explicit `limit`, so a short page no
+        # longer means "the batch was silently truncated" (gotcha #53).
+        "events_not_found": 0,
+        # Events Gamma returned with every leg still trading. Not a failure —
+        # the long-horizon-futures class — but it must be visible, because a run
+        # where this is the whole population resolved nothing for a good reason
+        # and a run where it is zero resolved nothing for a bad one.
+        "events_fully_open": 0,
+        "settled_legs_seen": 0,
+        "markets_resolved": 0,
         "outcomes_updated": 0,
         # CAL-P086A: the resolves this task made with no winner to write. Kept
         # beside `markets_resolved` rather than folded into it — a run that
         # resolves 5,000 markets and grades none must not report the same
         # headline as one that graded them all.
         "resolved_without_winner_proof": 0,
-        "already_resolved": 0, "not_in_db": 0, "errors": [],
+        "swept_full_population": False,
+        "errors": [],
     }
 
     async with get_task_session() as session:
@@ -2329,66 +2392,167 @@ async def _sync_polymarket_resolved_status():
         if total_open == 0:
             logger.info("Polymarket status sync: no open markets, skipping")
             return {**stats, "skipped": True}
+        stats["unresolved_before"] = total_open
+
+        # The needle, taken before the sweep so the run's own effect on it is
+        # readable rather than inferred.
+        stats["stale_open_before"] = (
+            await session.execute(
+                text("""
+                    SELECT count(*) FROM futures_markets fm
+                    WHERE fm.source = 'polymarket'
+                      AND fm.status = 'open'
+                      AND fm.commence_time
+                          < now() - make_interval(hours => :stale_hours)
+                """),
+                {"stale_hours": STALE_OPEN_AGE_HOURS},
+            )
+        ).scalar()
 
     service = PolymarketAPIService()
     try:
         from app.tasks.redis_state import get_redis_client
         _rc = get_redis_client()
-        _offset_key = "bainluck:polymarket_sync_offset"
-        offset = int(_rc.get(_offset_key) or 0)
-        max_events = 100000
-        zero_update_pages = 0
 
-        while stats["events_fetched"] < max_events:
-            try:
-                events_data = await service.get_events(
-                    active=False, closed=True,
-                    limit=100, offset=offset,
+        # The offset cursor the old scan carried is meaningless to this one, and
+        # a stale key that still parses is worse than no key. Dropped once, here,
+        # rather than left for a future reader to interpret.
+        _rc.delete("bainluck:polymarket_sync_offset")
+
+        _cursor_key = "bainluck:polymarket_resolved_sync:cursor"
+        try:
+            cursor = int(_rc.get(_cursor_key) or 0)
+        except (TypeError, ValueError):
+            cursor = 0
+
+        # The whole population, read ONCE, ascending by id.
+        #
+        # Not re-queried per batch, and the difference is the run: the DISTINCT
+        # over the 40k unresolved rows costs ~1.5s, and paying it 221 times
+        # would spend more wall clock on bookkeeping than on Gamma. 22k numeric
+        # strings is ~1.5 MB of plain data held in a local — never ORM rows,
+        # which do not survive the commit boundaries below (gotcha #6).
+        #
+        # Ascending id is a stable total order over the exact population, so
+        # every id is visited before any is revisited — the property gotcha #41
+        # is actually about. Neither end starves: rows leave the set as they
+        # resolve, and the cursor wraps at the tail. `::bigint` is safe because
+        # all 22,092 ids are numeric (measured); the regex keeps it that way if
+        # that ever stops being true.
+        async with get_task_session() as session:
+            all_ids = [
+                row[0]
+                for row in (
+                    await session.execute(
+                        # The DISTINCT is INSIDE and the ORDER BY is outside,
+                        # and it has to be that way round: under
+                        # `SELECT DISTINCT`, Postgres requires every ORDER BY
+                        # expression to appear in the select list, so
+                        # `SELECT DISTINCT eid ... ORDER BY eid::bigint` is not
+                        # a slow query, it is a syntax error — one that this
+                        # task's broad `except` would have swallowed into a
+                        # `task_error` and reported as a run that drained
+                        # nothing. Verified against production 2026-09-02.
+                        text(f"""
+                            SELECT eid FROM (
+                                SELECT DISTINCT {GAMMA_EVENT_ID_EXPR} AS eid
+                                  FROM futures_markets fm
+                                 WHERE fm.source = 'polymarket'
+                                   AND fm.status != 'resolved'
+                            ) s
+                            WHERE eid ~ '^[0-9]+$'
+                            ORDER BY eid::bigint
+                        """)
+                    )
+                ).fetchall()
+            ]
+        stats["population_events"] = len(all_ids)
+
+        pending = [eid for eid in all_ids if int(eid) > cursor]
+        if not pending and cursor:
+            # Resuming past the tail — the population shrank under the cursor.
+            # Wrap immediately rather than reporting an empty sweep.
+            _rc.delete(_cursor_key)
+            cursor = 0
+            pending = all_ids
+
+        while True:
+            if _time.monotonic() >= _deadline:
+                logger.info(
+                    "Polymarket status sync: time budget reached, cursor at %s",
+                    cursor,
                 )
+                break
+
+            batch_ids = pending[:GAMMA_MAX_IDS_PER_REQUEST]
+            pending = pending[GAMMA_MAX_IDS_PER_REQUEST:]
+
+            if not batch_ids:
+                # The tail. Wrap so the next run starts from the oldest id
+                # again, and say so — "swept the whole population and found
+                # nothing left to resolve" and "gave up early" are different
+                # runs and must not return the same shape.
+                _rc.delete(_cursor_key)
+                stats["swept_full_population"] = True
+                break
+
+            stats["events_requested"] += len(batch_ids)
+
+            try:
+                raw_events = await service.get_events_by_ids(batch_ids)
+            except httpx.HTTPStatusError as e:
+                # 429 keeps the cursor so the next run resumes here; never
+                # swallowed into a generic skip (gotcha #36).
+                if e.response.status_code == 429:
+                    stats["errors"].append(f"rate_limited at cursor {cursor}")
+                    logger.warning(
+                        "Polymarket status sync: 429 at cursor %s, stopping",
+                        cursor,
+                    )
+                    break
+                stats["errors"].append(
+                    f"batch at cursor {cursor}: HTTP {e.response.status_code}"
+                )
+                break
             except Exception as e:
-                stats["errors"].append(f"API page {offset}: {e}")
-                break
+                # One bad batch must not wipe the run (gotcha #42) — advance
+                # past it and keep going.
+                stats["errors"].append(f"batch at cursor {cursor}: {e}")
+                cursor = int(batch_ids[-1])
+                _rc.setex(_cursor_key, 86400 * 7, str(cursor))
+                await asyncio.sleep(0.3)
+                continue
 
-            if not events_data:
-                break
+            stats["events_returned"] += len(raw_events)
+            stats["events_not_found"] += len(batch_ids) - len(raw_events)
 
-            stats["events_fetched"] += len(events_data)
-
-            condition_ids = []
-            # Map condition_id -> (yes_price, no_price)
+            # --- what the venue says is over, leg by leg --------------------
+            settled_cids: list[str] = []
             settlement_prices: dict[str, tuple[float, float | None]] = {}
-            for event_data in events_data:
-                for market in event_data.get("markets") or []:
-                    cid = market.get("conditionId")
-                    if cid:
-                        condition_ids.append(cid)
-                        # Parse outcomePrices — JSON-encoded string array
-                        raw_prices = market.get("outcomePrices", "[]")
-                        try:
-                            if isinstance(raw_prices, str):
-                                prices = json_module.loads(raw_prices)
-                            elif isinstance(raw_prices, list):
-                                prices = raw_prices
-                            else:
-                                prices = []
-                            if prices:
-                                yes_price = float(prices[0])
-                                no_price = float(prices[1]) if len(prices) > 1 else None
-                                settlement_prices[cid] = (yes_price, no_price)
-                        except (json_module.JSONDecodeError, ValueError, IndexError):
-                            pass
+            terminal_cids: list[str] = []
+            for raw in raw_events:
+                legs = settled_legs(raw)
+                if legs is None:
+                    continue
+                if not legs.settled_condition_ids:
+                    stats["events_fully_open"] += 1
+                    continue
+                settled_cids.extend(legs.settled_condition_ids)
+                settlement_prices.update(legs.settlement_prices)
+                terminal_cids.extend(legs.terminal_condition_ids)
+            stats["settled_legs_seen"] += len(settled_cids)
 
-            if condition_ids:
+            if settled_cids:
                 # Also include _yes/_no suffixed external_ids for sub-market
                 # outcome matching and condition_ids as market external_ids
                 # for sub-market FuturesMarket status resolution.
-                extended_cids = list(condition_ids)
-                for cid in condition_ids:
+                extended_cids = list(settled_cids)
+                for cid in settled_cids:
                     extended_cids.append(f"{cid}_yes")
                     extended_cids.append(f"{cid}_no")
 
                 # CAL-P086A (`C-WINNER-WRITER-1` [P0]). A closed Polymarket
-                # event does NOT imply a readable winner: codex's specimen is a
+                # market does NOT imply a readable winner: codex's specimen is a
                 # closed market quoting 0.60/0.40, which used to come through
                 # here as `markets_resolved: 1, outcomes_updated: 0` — resolved,
                 # ungraded, and indistinguishable in the database from a market
@@ -2396,15 +2560,10 @@ async def _sync_polymarket_resolved_status():
                 #
                 # Which rows have proof is already known at this point: it is
                 # exactly the terminal envelope the winner writes below use. So
-                # split the stamp by that same test rather than inventing a
-                # second one, and let each row record its own basis.
-                _terminal_cids = [
-                    cid
-                    for cid, (yes_price, _no) in settlement_prices.items()
-                    if yes_price >= 0.95 or yes_price <= 0.05
-                ]
-                _terminal_extended = list(_terminal_cids)
-                for cid in _terminal_cids:
+                # the stamp splits by that same test rather than a second one,
+                # and each row records its own basis.
+                _terminal_extended = list(terminal_cids)
+                for cid in terminal_cids:
                     _terminal_extended.append(f"{cid}_yes")
                     _terminal_extended.append(f"{cid}_no")
 
@@ -2458,28 +2617,24 @@ async def _sync_polymarket_resolved_status():
                         """),
                         {
                             "cids": extended_cids,
-                            "raw_cids": condition_ids,
+                            "raw_cids": settled_cids,
                             "terminal_cids": _terminal_extended,
-                            "terminal_raw": _terminal_cids,
+                            "terminal_raw": terminal_cids,
                             "proof_stamp": _proof_stamp,
                             "reason_stamp": _reason_stamp,
                         },
                     )
                     page_resolved = result.rowcount
 
-                    # How many of this page's resolves had no winner to write.
-                    # A count, not an estimate: it is the rows the CASE sent
-                    # down the reason branch. Reported so a run that resolves
-                    # thousands of ungradeable markets cannot read the same as
-                    # one that settled them (gotcha #53).
-                    _page_unproven = len(
-                        [
-                            cid
-                            for cid in condition_ids
-                            if cid not in set(_terminal_cids)
-                        ]
+                    # How many of this batch's settled legs had no winner to
+                    # write. A count, not an estimate: it is the legs the CASE
+                    # sent down the reason branch. Reported so a run that
+                    # resolves thousands of ungradeable markets cannot read the
+                    # same as one that settled them (gotcha #53).
+                    _terminal_set = set(terminal_cids)
+                    stats["resolved_without_winner_proof"] += len(
+                        [cid for cid in settled_cids if cid not in _terminal_set]
                     )
-                    stats["resolved_without_winner_proof"] += _page_unproven
 
                     # Batch update settlement prices + set is_winner + resolution_source.
                     # All settlement prices with yes_price >= 0.95 are winners;
@@ -2487,7 +2642,8 @@ async def _sync_polymarket_resolved_status():
                     page_outcomes_updated = 0
                     winner_cids = []
                     loser_cids = []
-                    for cid, (yes_price, no_price) in settlement_prices.items():
+                    for cid in terminal_cids:
+                        yes_price, _no_price = settlement_prices[cid]
                         if yes_price >= 0.95:
                             winner_cids.extend([cid, f"{cid}_yes"])
                             loser_cids.append(f"{cid}_no")
@@ -2544,23 +2700,19 @@ async def _sync_polymarket_resolved_status():
                         await session.commit()
                         stats["markets_resolved"] += page_resolved
                         stats["outcomes_updated"] += page_outcomes_updated
-                        zero_update_pages = 0
-                    else:
-                        zero_update_pages += 1
 
-            if zero_update_pages >= 100:
-                # Reset to start for next run
-                _rc.delete(_offset_key)
-                break
-
-            offset += 100
-            _rc.setex(_offset_key, 86400 * 7, str(offset))
+            # Advance past this batch whatever happened to it. A batch that
+            # resolved nothing is still swept — the old `zero_update_pages`
+            # counter existed to escape an offset walk that could not move, and
+            # a keyset cursor over our own rows has no such trap.
+            cursor = int(batch_ids[-1])
+            _rc.setex(_cursor_key, 86400 * 7, str(cursor))
             await asyncio.sleep(0.1)
 
-            if stats["events_fetched"] % 5000 == 0:
+            if stats["events_requested"] % 5000 == 0:
                 logger.info(
                     "Polymarket status sync: %d events, %d resolved, %d outcomes updated",
-                    stats["events_fetched"], stats["markets_resolved"],
+                    stats["events_requested"], stats["markets_resolved"],
                     stats["outcomes_updated"],
                 )
 
@@ -2569,9 +2721,61 @@ async def _sync_polymarket_resolved_status():
     finally:
         await service.close()
 
+    # The needle again, after. Both ends are recorded because the drop is the
+    # only thing that proves the run did anything to the class #2637 named, and
+    # a run that resolves markets outside that class must not read as progress
+    # against it.
+    try:
+        async with get_task_session() as session:
+            stats["stale_open_after"] = (
+                await session.execute(
+                    text("""
+                        SELECT count(*) FROM futures_markets fm
+                        WHERE fm.source = 'polymarket'
+                          AND fm.status = 'open'
+                          AND fm.commence_time
+                              < now() - make_interval(hours => :stale_hours)
+                    """),
+                    {"stale_hours": STALE_OPEN_AGE_HOURS},
+                )
+            ).scalar()
+    except Exception as e:
+        stats["errors"].append(f"census_after: {str(e)[:120]}")
+
+    # Publish the run for the #2637 needle
+    # (`GET /api/admin/polymarket/stale-open`). The census there can count the
+    # class but cannot tell an open market from a finished one — only this sweep
+    # asked the venue, so only this sweep can say how much of the class is real.
+    try:
+        from app.tasks.redis_state import get_redis_client
+        from app.utils.polymarket_settlement_scan import SYNC_SUMMARY_KEY
+
+        get_redis_client().setex(
+            SYNC_SUMMARY_KEY,
+            86400 * 7,
+            json_module.dumps(
+                {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    **{
+                        k: v
+                        for k, v in stats.items()
+                        if k != "errors"
+                    },
+                    "errors": stats["errors"][:5],
+                },
+                default=str,
+            ),
+        )
+    except Exception as e:
+        stats["errors"].append(f"summary_publish: {str(e)[:120]}")
+
     logger.info(
-        "Polymarket status sync: %d events fetched, %d markets resolved, %d outcomes updated",
-        stats["events_fetched"], stats["markets_resolved"], stats["outcomes_updated"],
+        "Polymarket status sync: %d events requested, %d returned, %d not found, "
+        "%d markets resolved, %d outcomes updated, stale-open %s -> %s",
+        stats["events_requested"], stats["events_returned"],
+        stats["events_not_found"], stats["markets_resolved"],
+        stats["outcomes_updated"], stats.get("stale_open_before"),
+        stats.get("stale_open_after"),
     )
     return stats
 

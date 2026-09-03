@@ -312,6 +312,34 @@ jobs:
             exit 1
           fi
 
+      - name: Polymarket settlement sweep SQL (real Postgres)
+        # #2637. The rewritten resolved-status sweep selects its population with
+        # `SELECT DISTINCT <expr> AS eid ... ORDER BY eid::bigint`, and under
+        # SELECT DISTINCT PostgreSQL requires every ORDER BY expression to
+        # appear in the select list — so that is a syntax error, not a slow
+        # query. All 23 of the task's unit guards passed against the broken
+        # form, because they drive the real function through a recording double
+        # that matches on the SQL string and never parses it.
+        #
+        # In production it would not even have crashed: the sweep is wrapped in
+        # a broad `except Exception` that files the failure into
+        # `stats["errors"]`, so it would have returned a clean summary saying it
+        # resolved nothing, every six hours, forever. That is precisely the
+        # "looks like a fix, drains 0 rows" outcome #2637 warns about.
+        #
+        # Real Postgres because the contract is a dialect one; no mock, ORM or
+        # source assertion can see it. Same skip-detection as the gates around
+        # it — pytest exits 0 when every test skips, so a gate that silently did
+        # not run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_resolved_candidate_sql_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/poly_settlement_sql.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/poly_settlement_sql.txt; then
+            echo "::error::polymarket settlement sweep SQL gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Movement window contract (real Postgres)
         # item 12 / lane1 Q482. `probability_change_24h` froze: all four writers
         # store a PER-WRITE delta and nothing recomputed it over a window, so a

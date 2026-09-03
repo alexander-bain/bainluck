@@ -127,6 +127,7 @@ from app.utils.futures_liveness import (
     VENUE_SETTLED_KEY,
     VENUE_SETTLED_NOW_SQL,
 )
+from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,11 @@ DEFAULT_MARKET_BUDGET = 500
 #: Polymarket ids per Gamma ``/events?id=..&id=..`` request. Verified against the
 #: live API 2026-08-25: repeated ``id`` params return the full nested markets
 #: payload for each event.
+#:
+#: 20 was Gamma's silent default page size, so this worked by coincidence rather
+#: than by bound — see ``get_events_by_ids``, which now sends ``limit`` and
+#: refuses over ``GAMMA_MAX_IDS_PER_REQUEST`` (#2637, measured 2026-09-02). Left
+#: at 20 because nothing here needs it larger; it is now safe to raise.
 POLYMARKET_ID_BATCH = 20
 
 #: Wall budget, well under the task's 540s soft limit. Bounds the LOOP; each
@@ -218,23 +224,14 @@ def _attempt_key(market_id: int) -> str:
 #: the first row inside the window.
 #: The Gamma **event** id, which is not always ``external_id``.
 #:
-#: Polymarket rows arrive from two ingest branches with two keying conventions,
-#: and this expression is the only place that difference is reconciled:
-#:
-#: * negRisk **field** rows (one market, many outcomes — the US Open winner
-#:   fields) carry the event id directly in ``external_id`` (``'139236'``).
-#: * decomposed **sub-market** rows (one market per question — every curated
-#:   prop) carry a ``0x`` *condition* id there instead; their event id lives in
-#:   ``market_metadata->>'polymarket_event_id'`` and in ``group_id``.
-#:
-#: ``/events?id=0x...`` does not resolve a condition id, so before this the whole
-#: sub-market convention was unreachable by the refresh path even when selected.
-_POLY_EVENT_ID_SQL = """
-        CASE WHEN fm.source = 'polymarket' THEN COALESCE(
-                 NULLIF(fm.market_metadata->>'polymarket_event_id', ''),
-                 NULLIF(substring(fm.group_id FROM '^polymarket:(.+)$'), ''),
-                 CASE WHEN fm.external_id ~ '^[0-9]+$' THEN fm.external_id END
-             ) END AS poly_event_id
+#: The reconciliation itself moved to
+#: :data:`app.utils.polymarket_settlement_scan.GAMMA_EVENT_ID_EXPR` when #2637's
+#: resolved-status sweep needed the same mapping. Two copies of "which Gamma
+#: event answers for this row" is how settlement truth drifts, so there is one,
+#: and this is the source-guarded, aliased form of it.
+_POLY_EVENT_ID_SQL = f"""
+        CASE WHEN fm.source = 'polymarket' THEN {GAMMA_EVENT_ID_EXPR} END
+            AS poly_event_id
 """
 
 _CANDIDATE_SQL = text(
