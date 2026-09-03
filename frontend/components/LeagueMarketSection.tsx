@@ -8,7 +8,7 @@ import AwardCard from "./AwardCard";
 import PropGroupCard from "./PropGroupCard";
 import QuantityGroup from "./QuantityGroup";
 import { probabilityHeat } from "@/lib/probabilityColors";
-import { binaryAnswer, cleanMarketName, dateLadder } from "@/lib/leagueCards";
+import { cleanMarketName, partitionLeagueMarkets } from "@/lib/leagueCards";
 import { earnsSectionHeader, earnsCountChip, type EntityTier } from "@/lib/entityPageChrome";
 
 interface LeagueMarketSectionProps {
@@ -27,6 +27,21 @@ interface LeagueMarketSectionProps {
    */
   sectionCount?: number;
   tier?: EntityTier | null;
+  /**
+   * UX-1052 item 8 — leave the yes/no markets to the caller.
+   *
+   * Alex: *"there is a SECOND Yes/No section at the bottom of the page."* There
+   * were three, because this component partitioned its OWN markets and drew its
+   * own block, so every section holding a binary grew one (55 in props, 9 in
+   * more_markets, 1 in awards — a header over a single row). A page that sets
+   * this collects the binaries across all its sections and renders ONE
+   * `LeagueBinaryBoard`.
+   *
+   * Defaults to false so the hub and every other caller behave exactly as
+   * before — a silent behaviour change on a caller this queue never looked at
+   * is not this queue's to make.
+   */
+  hoistBinaries?: boolean;
 }
 
 const SECTION_EMOJI: Record<string, string> = {
@@ -100,6 +115,7 @@ export default function LeagueMarketSection({
   markets,
   sectionCount,
   tier,
+  hoistBinaries = false,
 }: LeagueMarketSectionProps) {
   if (markets.length === 0) return null;
 
@@ -108,22 +124,15 @@ export default function LeagueMarketSection({
   // market" is a question about the market, and the answer decides which shared
   // component renders it. Order is preserved within each bucket, so the
   // backend's importance sort still governs.
-  const ladders: { market: LeagueMarket; ladder: NonNullable<ReturnType<typeof dateLadder>> }[] = [];
-  const binaries: { market: LeagueMarket; answer: NonNullable<ReturnType<typeof binaryAnswer>> }[] = [];
-  const cards: LeagueMarket[] = [];
-  for (const m of markets) {
-    const answer = binaryAnswer(m);
-    if (answer) {
-      binaries.push({ market: m, answer });
-      continue;
-    }
-    const ladder = dateLadder(m);
-    if (ladder) {
-      ladders.push({ market: m, ladder });
-      continue;
-    }
-    cards.push(m);
-  }
+  const partition = partitionLeagueMarkets(markets);
+  const { cards, ladders } = partition;
+  // UX-1052 item 8: when the page owns the board, this section draws none.
+  const binaries = hoistBinaries ? [] : partition.binaries;
+
+  // …and a section whose ONLY content was binaries now has nothing to draw. It
+  // must render nothing rather than a bare header over an empty grid — the
+  // "header over one card" defect (UX-P062 register E1) with zero cards.
+  if (cards.length === 0 && ladders.length === 0 && binaries.length === 0) return null;
 
   const cols = sectionKey === "series"
     ? "grid-cols-1 sm:grid-cols-2"

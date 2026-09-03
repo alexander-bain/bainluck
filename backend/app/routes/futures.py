@@ -1847,6 +1847,21 @@ async def get_playoff_grid(
     }
 
 
+#: How far a sparse history window is widened, and when. Slowly-polled futures
+#: (politics, economics, and every league's DIVISION markets) carry only a
+#: handful of snapshots in seven days, so a literal 7-day read charts nothing.
+#:
+#: MODULE SCOPE since UX-1052 item 7. It used to be a local inside
+#: `get_futures_history`, which is how `/multi-history` came to lack it — and
+#: `/multi-history` is the ONLY path a league page's stage tabs use, so the MLB
+#: "Division" tab printed "Limited price history available" over a market whose
+#: single-market endpoint served 5,065 points.
+_EXTEND_TIERS = [
+    (20, 720),   # <20 snapshots -> try 30 days
+    (10, 2160),  # <10 snapshots -> try 90 days
+]
+
+
 #: UX-1052 item 3 — how many players a placement grid puts on a FEED card.
 #: The concept page's version of the same grid shows 20; a strip card is a
 #: glance, and a 156-golfer table inside it is the five-card wall it replaced
@@ -2440,7 +2455,43 @@ async def get_multi_market_history(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     snap_result = await db.execute(snapshot_query)
-    snapshots = snap_result.scalars().all()
+    snapshots = list(snap_result.scalars().all())
+
+    # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
+    #
+    # Alex, on the MLB league page: the chart's "Division" tab says "Limited
+    # price history available". Measured on production 2026-09-03, that claim
+    # was an artefact of THIS endpoint, not of the data:
+    #
+    #   GET /api/futures/multi-history?market_ids=<13 division markets>&hours=168
+    #       → 50 outcomes, 0 history points, every one
+    #   GET /api/futures/199075/history?hours=168   (one of those 13)
+    #       → 5,065 history points
+    #
+    # `get_futures_history` widens a sparse window (`_EXTEND_TIERS`: under 20
+    # snapshots → 30 days, under 10 → 90 days) precisely because slowly-polled
+    # futures carry only a handful of points in seven days. This path never
+    # learned it, so the multi-market tabs — which are the ONLY way a league
+    # page charts a stage — went dark while the single-market page charted the
+    # very same market fine. Same tiers, same "only if it actually finds more"
+    # rule, so a genuinely empty stage still reports empty.
+    if len(snapshots) < _EXTEND_TIERS[0][0]:
+        for threshold, extended_hours in _EXTEND_TIERS:
+            if len(snapshots) >= threshold or extended_hours <= hours:
+                continue
+            ext_result = await db.execute(
+                select(FuturesOddsSnapshot)
+                .where(
+                    FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+                    FuturesOddsSnapshot.captured_at
+                    >= datetime.now(timezone.utc) - timedelta(hours=extended_hours),
+                )
+                .order_by(FuturesOddsSnapshot.captured_at)
+            )
+            extended = list(ext_result.scalars().all())
+            if len(extended) > len(snapshots):
+                snapshots = extended
+                hours = extended_hours
 
     # Build outcome_id -> merge_key lookup
     oid_to_merge_key: dict[int, str] = {}
@@ -3823,10 +3874,6 @@ async def get_futures_history(
     requested_hours = hours
     actual_hours = hours
     auto_extended = False
-    _EXTEND_TIERS = [
-        (20, 720),   # <20 snapshots → try 30 days
-        (10, 2160),  # <10 snapshots → try 90 days
-    ]
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
