@@ -1,0 +1,1802 @@
+[
+ {
+  "type": "concept",
+  "_corpus_slot": 1,
+  "data": {
+   "status": "live"
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 2,
+  "data": {
+   "id": 86832,
+   "status": "open",
+   "sport": "americanfootball_nfl"
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 3,
+  "data": {
+   "id": 197,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 4,
+  "data": {
+   "id": 15300441,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Minnesota Twins",
+   "away_team": "Detroit Tigers",
+   "current_odds": {
+    "home_probability": 0.166,
+    "away_probability": 0.834,
+    "home_rendered_percent": 17,
+    "away_rendered_percent": 83
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 5,
+  "data": {
+   "id": 15300843,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Los Angeles Dodgers",
+   "away_team": "St. Louis Cardinals",
+   "current_odds": {
+    "home_probability": 0.061,
+    "away_probability": 0.939,
+    "home_rendered_percent": 6,
+    "away_rendered_percent": 94
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 6,
+  "data": {
+   "id": 201,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 7,
+  "data": {
+   "id": 15300440,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Pittsburgh Pirates",
+   "away_team": "San Francisco Giants",
+   "current_odds": {
+    "home_probability": 0.227,
+    "away_probability": 0.773,
+    "home_rendered_percent": 23,
+    "away_rendered_percent": 77
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 8,
+  "data": {
+   "id": 15300469,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Kansas City Royals",
+   "away_team": "Miami Marlins",
+   "current_odds": {
+    "home_probability": 0.0613,
+    "away_probability": 0.9387,
+    "home_rendered_percent": 6,
+    "away_rendered_percent": 94
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 9,
+  "data": {
+   "id": 15293705,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Tatjana Maria",
+   "away_team": "Jelena Ostapenko",
+   "current_odds": {
+    "home_probability": 0.5159,
+    "away_probability": 0.4841,
+    "home_rendered_percent": 52,
+    "away_rendered_percent": 48
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 10,
+  "data": {
+   "id": 15300932,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Arizona Diamondbacks",
+   "away_team": "Philadelphia Phillies",
+   "current_odds": {
+    "home_probability": 0.9052,
+    "away_probability": 0.0948,
+    "home_rendered_percent": 91,
+    "away_rendered_percent": 9
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 11,
+  "data": {
+   "id": 15300668,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Tampa Bay Rays",
+   "away_team": "New York Mets",
+   "current_odds": {
+    "home_probability": 0.003,
+    "away_probability": 0.997,
+    "home_rendered_percent": 0,
+    "away_rendered_percent": 100
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 12,
+  "data": {
+   "id": 15300576,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Boston Red Sox",
+   "away_team": "Seattle Mariners",
+   "current_odds": {
+    "home_probability": 0.001,
+    "away_probability": 0.999,
+    "home_rendered_percent": 0,
+    "away_rendered_percent": 100
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 13,
+  "data": {
+   "id": 15300470,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Los Angeles Angels",
+   "away_team": "New York Yankees",
+   "current_odds": {
+    "home_probability": 0.443,
+    "away_probability": 0.557,
+    "home_rendered_percent": 44,
+    "away_rendered_percent": 56
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 14,
+  "data": {
+   "id": 15300437,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Texas Rangers",
+   "away_team": "Athletics",
+   "current_odds": {
+    "home_probability": 0.001,
+    "away_probability": 0.999,
+    "home_rendered_percent": 0,
+    "away_rendered_percent": 100
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 15,
+  "data": {
+   "id": 15301132,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Cleveland Guardians",
+   "away_team": "Toronto Blue Jays",
+   "current_odds": {
+    "home_probability": 0.5,
+    "away_probability": 0.5,
+    "home_rendered_percent": 50,
+    "away_rendered_percent": 50
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 16,
+  "data": {
+   "id": 15300836,
+   "status": "live",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Jan-Lennard Struff",
+   "away_team": "Francisco Cerundolo",
+   "current_odds": {
+    "home_probability": 0.5306,
+    "away_probability": 0.4694,
+    "home_rendered_percent": 53,
+    "away_rendered_percent": 47
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 17,
+  "data": {
+   "id": 52755659,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 18,
+  "data": {
+   "id": 200,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "tournament",
+  "_corpus_slot": 19,
+  "data": {}
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 20,
+  "data": {
+   "id": 15300468,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Chicago Cubs",
+   "away_team": "Milwaukee Brewers",
+   "current_odds": {
+    "home_probability": 0.162,
+    "away_probability": 0.838,
+    "home_rendered_percent": 16,
+    "away_rendered_percent": 84
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 21,
+  "data": {
+   "id": 15300190,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Rafael Jodar",
+   "away_team": "Bu Yunchaokete",
+   "current_odds": {
+    "home_probability": 0.0288,
+    "away_probability": 0.9712,
+    "home_rendered_percent": 3,
+    "away_rendered_percent": 97
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 22,
+  "data": {
+   "id": 34277839,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 23,
+  "data": {
+   "id": 56775477,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 24,
+  "data": {
+   "id": 114159,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 25,
+  "data": {
+   "id": 59759220,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 26,
+  "data": {
+   "id": 114584,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 27,
+  "data": {
+   "id": 15301148,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Baltimore Orioles",
+   "away_team": "Boston Red Sox",
+   "current_odds": {
+    "home_probability": 0.4675,
+    "away_probability": 0.5325,
+    "home_rendered_percent": 47,
+    "away_rendered_percent": 53
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 28,
+  "data": {
+   "id": 15299464,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Valentin Vacherot",
+   "away_team": "Kamil Majchrzak",
+   "current_odds": {
+    "home_probability": 0.5408,
+    "away_probability": 0.4592,
+    "home_rendered_percent": 54,
+    "away_rendered_percent": 46
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 29,
+  "data": {
+   "id": 182,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 30,
+  "data": {
+   "id": 210,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 31,
+  "data": {
+   "id": 2417016,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 32,
+  "data": {
+   "id": 4121126,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 33,
+  "data": {
+   "id": 15301133,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Houston Astros",
+   "away_team": "Chicago White Sox",
+   "current_odds": {
+    "home_probability": 0.5928,
+    "away_probability": 0.4072,
+    "home_rendered_percent": 59,
+    "away_rendered_percent": 41
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 34,
+  "data": {
+   "id": 31834253,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 35,
+  "data": {
+   "id": 23502,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 36,
+  "data": {
+   "id": 52756016,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 37,
+  "data": {
+   "id": 52756022,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 38,
+  "data": {
+   "id": 15301151,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Texas Rangers",
+   "away_team": "Tampa Bay Rays",
+   "current_odds": {
+    "home_probability": 0.4603,
+    "away_probability": 0.5397,
+    "home_rendered_percent": 46,
+    "away_rendered_percent": 54
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 39,
+  "data": {
+   "id": 15301135,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Kansas City Royals",
+   "away_team": "Miami Marlins",
+   "current_odds": {
+    "home_probability": 0.5155,
+    "away_probability": 0.4845,
+    "home_rendered_percent": 52,
+    "away_rendered_percent": 48
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 40,
+  "data": {
+   "id": 15301134,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Chicago Cubs",
+   "away_team": "Milwaukee Brewers",
+   "current_odds": {
+    "home_probability": 0.4861,
+    "away_probability": 0.5139,
+    "home_rendered_percent": 49,
+    "away_rendered_percent": 51
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 41,
+  "data": {
+   "id": 15300438,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Colorado Rockies",
+   "away_team": "Baltimore Orioles",
+   "current_odds": {
+    "home_probability": 0.232,
+    "away_probability": 0.768,
+    "home_rendered_percent": 23,
+    "away_rendered_percent": 77
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 42,
+  "data": {
+   "id": 6950895,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 43,
+  "data": {
+   "id": 186930,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 44,
+  "data": {
+   "id": 55674269,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 45,
+  "data": {
+   "id": 52756049,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 46,
+  "data": {
+   "id": 15293702,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Iva Jovi\u0107",
+   "away_team": "Magdalena Frech",
+   "current_odds": {
+    "home_probability": 0.5,
+    "away_probability": 0.5,
+    "home_rendered_percent": 50,
+    "away_rendered_percent": 50
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 47,
+  "data": {
+   "id": 52755651,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 48,
+  "data": {
+   "id": 15301147,
+   "status": "live",
+   "sport": "baseball_mlb",
+   "home_team": "Pittsburgh Pirates",
+   "away_team": "San Francisco Giants",
+   "current_odds": {
+    "home_probability": 0.6185,
+    "away_probability": 0.3815,
+    "home_rendered_percent": 62,
+    "away_rendered_percent": 38
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 49,
+  "data": {
+   "id": 15300682,
+   "status": "live",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Madison Keys",
+   "away_team": "Anna Bond\u00e1r",
+   "current_odds": {
+    "home_probability": 0.64,
+    "away_probability": 0.36,
+    "home_rendered_percent": 64,
+    "away_rendered_percent": 36
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 50,
+  "data": {
+   "id": 15300577,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Houston Astros",
+   "away_team": "Chicago White Sox",
+   "current_odds": {
+    "home_probability": 0.9971,
+    "away_probability": 0.0029,
+    "home_rendered_percent": 100,
+    "away_rendered_percent": 0
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 51,
+  "data": {
+   "id": 196,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 52,
+  "data": {
+   "id": 4121130,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 53,
+  "data": {
+   "id": 15203992,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 54,
+  "data": {
+   "id": 4121127,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 55,
+  "data": {
+   "id": 208,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 56,
+  "data": {
+   "id": 11371619,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 57,
+  "data": {
+   "id": 7448769,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 58,
+  "data": {
+   "id": 12337998,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 59,
+  "data": {
+   "id": 52756029,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 60,
+  "data": {
+   "id": 12046267,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 61,
+  "data": {
+   "id": 12573122,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 62,
+  "data": {
+   "id": 9413479,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 63,
+  "data": {
+   "id": 108597,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 64,
+  "data": {
+   "id": 202,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 65,
+  "data": {
+   "id": 31834301,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 66,
+  "data": {
+   "id": 15298329,
+   "status": "completed",
+   "sport": "soccer_chile_campeonato",
+   "home_team": "Deportes Limache",
+   "away_team": "\u00d1ublense",
+   "current_odds": {
+    "home_probability": 0.9971,
+    "away_probability": 0.0029,
+    "home_rendered_percent": 100,
+    "away_rendered_percent": 0
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 67,
+  "data": {
+   "id": 233,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 68,
+  "data": {
+   "id": 52756023,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 69,
+  "data": {
+   "id": 20569230,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 70,
+  "data": {
+   "id": 61470,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 71,
+  "data": {
+   "id": 2,
+   "status": "open",
+   "sport": "basketball_nba"
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 72,
+  "data": {
+   "id": 8,
+   "status": "open",
+   "sport": "icehockey_nhl"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 73,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 74,
+  "data": {
+   "id": 15300467,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Washington Nationals",
+   "away_team": "Atlanta Braves",
+   "current_odds": {
+    "home_probability": 0.001,
+    "away_probability": 0.999,
+    "home_rendered_percent": 0,
+    "away_rendered_percent": 100
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 75,
+  "data": {
+   "id": 40533,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 76,
+  "data": {
+   "id": 9459614,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 77,
+  "data": {
+   "id": 231,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 78,
+  "data": {
+   "id": 4121125,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 79,
+  "data": {
+   "id": 7217,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 80,
+  "data": {
+   "id": 215,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 81,
+  "data": {
+   "id": 4121124,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 82,
+  "data": {
+   "id": 217,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 83,
+  "data": {
+   "id": 102139,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 84,
+  "data": {
+   "id": 16757299,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 85,
+  "data": {
+   "id": 229,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 86,
+  "data": {
+   "id": 8122712,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 87,
+  "data": {
+   "id": 363922,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 88,
+  "data": {
+   "id": 33283475,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 89,
+  "data": {
+   "id": 15299723,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Ann Li",
+   "away_team": "Donna Vekic",
+   "current_odds": {
+    "home_probability": 0.9626,
+    "away_probability": 0.0374,
+    "home_rendered_percent": 96,
+    "away_rendered_percent": 4
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 90,
+  "data": {
+   "id": 52756021,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 91,
+  "data": {
+   "id": 129037,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 92,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 93,
+  "data": {
+   "id": 15299482,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Lloyd Harris",
+   "away_team": "Stefanos Tsitsipas",
+   "current_odds": {
+    "home_probability": 0.0539,
+    "away_probability": 0.9461,
+    "home_rendered_percent": 5,
+    "away_rendered_percent": 95
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 94,
+  "data": {
+   "id": 198,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 95,
+  "data": {
+   "id": 199,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 96,
+  "data": {
+   "id": 3970169,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 97,
+  "data": {
+   "id": 56775566,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 98,
+  "data": {
+   "id": 234,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 99,
+  "data": {
+   "id": 275,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 100,
+  "data": {
+   "id": 55674195,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 101,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 102,
+  "data": {
+   "id": 15299864,
+   "status": "live",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Naomi Osaka",
+   "away_team": "Katerina Siniakova",
+   "current_odds": {
+    "home_probability": 0.9401,
+    "away_probability": 0.0599,
+    "home_rendered_percent": 94,
+    "away_rendered_percent": 6
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 103,
+  "data": {
+   "id": 15299860,
+   "status": "live",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Felix Auger-Aliassime",
+   "away_team": "Karen Khachanov",
+   "current_odds": {
+    "home_probability": 0.6919,
+    "away_probability": 0.3081,
+    "home_rendered_percent": 69,
+    "away_rendered_percent": 31
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 104,
+  "data": {
+   "id": 15300875,
+   "status": "live",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Anastasia Potapova",
+   "away_team": "Leolia Jeanjean",
+   "current_odds": {
+    "home_probability": 0.6875,
+    "away_probability": 0.3125,
+    "home_rendered_percent": 69,
+    "away_rendered_percent": 31
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 105,
+  "data": {
+   "id": 15301184,
+   "status": "scheduled",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Benjamin Bonzi",
+   "away_team": "Ignacio Buse",
+   "current_odds": {
+    "home_probability": 0.4738,
+    "away_probability": 0.5262,
+    "home_rendered_percent": 47,
+    "away_rendered_percent": 53
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 106,
+  "data": {
+   "id": 15301164,
+   "status": "scheduled",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Zachary Svajda",
+   "away_team": "Arthur Gea",
+   "current_odds": {
+    "home_probability": 0.5335,
+    "away_probability": 0.4665,
+    "home_rendered_percent": 53,
+    "away_rendered_percent": 47
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 107,
+  "data": {
+   "id": 15300439,
+   "status": "completed",
+   "sport": "baseball_mlb",
+   "home_team": "Cleveland Guardians",
+   "away_team": "Toronto Blue Jays",
+   "current_odds": {
+    "home_probability": 0.001,
+    "away_probability": 0.999,
+    "home_rendered_percent": 0,
+    "away_rendered_percent": 100
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 108,
+  "data": {
+   "id": 15298556,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Denis Shapovalov",
+   "away_team": "Luca Van Assche",
+   "current_odds": {
+    "home_probability": 0.583,
+    "away_probability": 0.417,
+    "home_rendered_percent": 58,
+    "away_rendered_percent": 42
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 109,
+  "data": {
+   "id": 230,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 110,
+  "data": {
+   "id": 15299608,
+   "status": "live",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Lilli Tagger",
+   "away_team": "Amanda Anisimova",
+   "current_odds": {
+    "home_probability": 0.1892,
+    "away_probability": 0.8108,
+    "home_rendered_percent": 19,
+    "away_rendered_percent": 81
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 111,
+  "data": {
+   "id": 15300830,
+   "status": "live",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Maria Timofeeva",
+   "away_team": "Elise Mertens",
+   "current_odds": {
+    "home_probability": 0.1892,
+    "away_probability": 0.8108,
+    "home_rendered_percent": 19,
+    "away_rendered_percent": 81
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 112,
+  "data": {
+   "id": 15296367,
+   "status": "scheduled",
+   "sport": "soccer_spain_la_liga",
+   "home_team": "Real Sociedad",
+   "away_team": "Celta Vigo",
+   "current_odds": {
+    "home_probability": 0.7143,
+    "away_probability": 0.2857,
+    "home_rendered_percent": 71,
+    "away_rendered_percent": 29
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 113,
+  "data": {
+   "id": 15299609,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Xinyu Wang",
+   "away_team": "Anna Kalinskaya",
+   "current_odds": {
+    "home_probability": 0.3453,
+    "away_probability": 0.6547,
+    "home_rendered_percent": 35,
+    "away_rendered_percent": 65
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 114,
+  "data": {
+   "id": 55674194,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 115,
+  "data": {
+   "id": 181,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 116,
+  "data": {
+   "id": 232,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 117,
+  "data": {
+   "id": 6601311,
+   "status": "open",
+   "sport": "americanfootball_ncaaf"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 118,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 119,
+  "data": {
+   "id": 15299859,
+   "status": "live",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Luciano Darderi",
+   "away_team": "Dalibor Svrcina",
+   "current_odds": {
+    "home_probability": 0.6999,
+    "away_probability": 0.3001,
+    "home_rendered_percent": 70,
+    "away_rendered_percent": 30
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 120,
+  "data": {
+   "id": 15300833,
+   "status": "scheduled",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Qinwen Zheng",
+   "away_team": "Yulia Putintseva",
+   "current_odds": {
+    "home_probability": 0.6842,
+    "away_probability": 0.3158,
+    "home_rendered_percent": 68,
+    "away_rendered_percent": 32
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 121,
+  "data": {
+   "id": 15299607,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "James Duckworth",
+   "away_team": "Wu Yibing",
+   "current_odds": {
+    "home_probability": 0.4299,
+    "away_probability": 0.5701,
+    "home_rendered_percent": 43,
+    "away_rendered_percent": 57
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 122,
+  "data": {
+   "id": 15297201,
+   "status": "completed",
+   "sport": "soccer_england_league1",
+   "home_team": "Barnsley",
+   "away_team": "Blackpool",
+   "current_odds": {
+    "home_probability": 0.9907,
+    "away_probability": 0.0093,
+    "home_rendered_percent": 99,
+    "away_rendered_percent": 1
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 123,
+  "data": {
+   "id": 15299720,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Tomas Martin Etcheverry",
+   "away_team": "Jacob Fearnley",
+   "current_odds": {
+    "home_probability": 0.5745,
+    "away_probability": 0.4255,
+    "home_rendered_percent": 57,
+    "away_rendered_percent": 43
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 124,
+  "data": {
+   "id": 363923,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 125,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 126,
+  "data": {
+   "id": 15296088,
+   "status": "completed",
+   "sport": "soccer_efl_champ",
+   "home_team": "Burnley",
+   "away_team": "Middlesbrough",
+   "current_odds": {
+    "home_probability": 0.4595,
+    "away_probability": 0.5405,
+    "home_rendered_percent": 46,
+    "away_rendered_percent": 54
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 127,
+  "data": {
+   "id": 31834308,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 128,
+  "data": {
+   "id": 5,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 129,
+  "data": {
+   "id": 6,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 130,
+  "data": {
+   "id": 55674196,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 131,
+  "data": {
+   "id": 15301136,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Los Angeles Dodgers",
+   "away_team": "St. Louis Cardinals",
+   "current_odds": {
+    "home_probability": 0.7202,
+    "away_probability": 0.2798,
+    "home_rendered_percent": 72,
+    "away_rendered_percent": 28
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 132,
+  "data": {
+   "id": 15293898,
+   "status": "scheduled",
+   "sport": "baseball_mlb",
+   "home_team": "Los Angeles Dodgers",
+   "away_team": "St.Louis Cardinals",
+   "current_odds": {
+    "home_probability": 0.725,
+    "away_probability": 0.275,
+    "home_rendered_percent": 73,
+    "away_rendered_percent": 27,
+    "source": "aggregate"
+   }
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 133,
+  "data": {
+   "id": 59172755,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 134,
+  "data": {
+   "id": 15299857,
+   "status": "scheduled",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Alexander Blockx",
+   "away_team": "Marco Trungelliti",
+   "current_odds": {
+    "home_probability": 0.8177,
+    "away_probability": 0.1823,
+    "home_rendered_percent": 82,
+    "away_rendered_percent": 18
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 135,
+  "data": {
+   "id": 15299721,
+   "status": "completed",
+   "sport": "tennis_atp_us_open",
+   "home_team": "Matteo Berrettini",
+   "away_team": "Mariano Navone",
+   "current_odds": {
+    "home_probability": 0.6092,
+    "away_probability": 0.3908,
+    "home_rendered_percent": 61,
+    "away_rendered_percent": 39
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 136,
+  "data": {
+   "id": 15297202,
+   "status": "completed",
+   "sport": "soccer_england_league1",
+   "home_team": "Burton Albion",
+   "away_team": "Wimbledon",
+   "current_odds": {
+    "home_probability": 0.5508,
+    "away_probability": 0.4492,
+    "home_rendered_percent": 55,
+    "away_rendered_percent": 45
+   }
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 137,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 138,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 139,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "futures",
+  "_corpus_slot": 140,
+  "data": {
+   "id": 59700384,
+   "status": "open",
+   "sport": null
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 141,
+  "data": {
+   "id": 15299478,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Kimberly Birrell",
+   "away_team": "Ekaterina Alexandrova",
+   "current_odds": {
+    "home_probability": 0.226,
+    "away_probability": 0.774,
+    "home_rendered_percent": 23,
+    "away_rendered_percent": 77
+   }
+  }
+ },
+ {
+  "type": "tournament",
+  "_corpus_slot": 142,
+  "data": {}
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 143,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 144,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "tournament",
+  "_corpus_slot": 145,
+  "data": {}
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 146,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 147,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "concept",
+  "_corpus_slot": 148,
+  "data": {
+   "status": "upcoming"
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 149,
+  "data": {
+   "id": 15300832,
+   "status": "scheduled",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Maria Sakkari",
+   "away_team": "Yuliia Starodubtseva",
+   "current_odds": {
+    "home_probability": 0.6344,
+    "away_probability": 0.3656,
+    "home_rendered_percent": 63,
+    "away_rendered_percent": 37
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 150,
+  "data": {
+   "id": 15297780,
+   "status": "scheduled",
+   "sport": "soccer_france_ligue_one",
+   "home_team": "Toulouse",
+   "away_team": "Lille",
+   "current_odds": {
+    "home_probability": 0.3177,
+    "away_probability": 0.6823,
+    "home_rendered_percent": 32,
+    "away_rendered_percent": 68
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 151,
+  "data": {
+   "id": 15301181,
+   "status": "scheduled",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Nikola Bartunkova",
+   "away_team": "Tatjana Maria",
+   "current_odds": {
+    "home_probability": 0.6913,
+    "away_probability": 0.3087,
+    "home_rendered_percent": 69,
+    "away_rendered_percent": 31
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 152,
+  "data": {
+   "id": 15293348,
+   "status": "suspended",
+   "sport": "baseball_mlb",
+   "home_team": "Los Angeles Dodgers",
+   "away_team": "St.Louis Cardinals",
+   "current_odds": {
+    "home_probability": 0.01,
+    "away_probability": 0.99,
+    "home_rendered_percent": 1,
+    "away_rendered_percent": 99,
+    "source": "aggregate"
+   }
+  }
+ },
+ {
+  "type": "event",
+  "_corpus_slot": 153,
+  "data": {
+   "id": 15299610,
+   "status": "completed",
+   "sport": "tennis_wta_us_open",
+   "home_team": "Emma Navarro",
+   "away_team": "Caty McNally",
+   "current_odds": {
+    "home_probability": 0.9711,
+    "away_probability": 0.0289,
+    "home_rendered_percent": 97,
+    "away_rendered_percent": 3
+   }
+  }
+ },
+ {
+  "type": "tournament",
+  "_corpus_slot": 154,
+  "data": {}
+ }
+]

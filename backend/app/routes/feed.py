@@ -63,6 +63,7 @@ from app.models.models import (
     Team,
 )
 from app.services import get_db, get_db_rw
+from app.utils.live_first_page import hoist_live_events_into_first_page
 from app.utils.tonights_games import compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
@@ -1472,9 +1473,51 @@ def apply_discover_display_chain(
             )
     _tick("first_page_quality_floor")
 
+    # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
+    #
+    # The `include_tonights_games=discover_mode` gate above is correct and stays:
+    # Discover's lead is `compose_lead`'s job. What it leaves uncovered is the
+    # surface whose whole promise is games. On 2026-09-03 the served sports pool
+    # held NINE live priced events and exactly ONE was inside the twenty-item
+    # first paint; the other eight sat at slots 48 through 119, so "Live Now"
+    # named one of nine US Open matches and the reader had to paginate six times
+    # to find Osaka. Alex reported the harder version a day earlier: zero of six.
+    #
+    # It is not a scoring bug to be retuned. A finished MLB game scores 98 and a
+    # live US Open match 95, so completed deterministically beats live, and the
+    # `sort_time = now + 86400` live boost cannot intervene because `_rank_key`
+    # spends it only on EXACT score ties (#141/Item 1 de-saturated the scores out
+    # from under it — see that docstring).
+    #
+    # This runs LAST for the same reason the quality floor does: the window it
+    # reasons about is the first page of the SERVED order, so the only place it
+    # can be measured is the final one. It is a swap, not a filter — length is
+    # preserved and nothing is dropped, so it cannot empty a surface (#1091/#43)
+    # — and it is bounded at half the page, because the unbounded version is the
+    # 2026-08-21 esports incident recorded in the candidate query below.
+    live_first_page_meta = None
+    if not discover_mode:
+        items, live_first_page_meta = hoist_live_events_into_first_page(
+            items, first_page_size=min(20, limit)
+        )
+        if live_first_page_meta["unhoisted"]:
+            # Not a silent cap. A live game the reader cannot see on page one is
+            # the defect this pass exists to fix, so the case where the budget or
+            # the pool ran out must not log the same as a clean pass.
+            logger.warning(
+                "Sports first-page live completeness: %d live game(s) left "
+                "beyond the first page (%d hoisted, %d now in window, budget %d)",
+                live_first_page_meta["unhoisted"],
+                live_first_page_meta["hoisted"],
+                live_first_page_meta["live_in_window_after"],
+                live_first_page_meta["budget"],
+            )
+    _tick("live_first_page")
+
     return items, {
         "reviewed_filtered_count": reviewed_filtered_count,
         "first_page_quality_floor": first_page_floor_meta,
+        "live_first_page": live_first_page_meta,
     }
 
 
