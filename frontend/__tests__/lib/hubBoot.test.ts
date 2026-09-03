@@ -29,6 +29,8 @@ import { BOOT_AUTH_KEY_PREFIX, type FeedBootRecord } from "@/lib/discover/feedBo
 import {
   HUB_BOOT_CLAIM_TIMEOUT_MS,
   HUB_BOOT_GLOBAL,
+  HUB_SECTIONS_FIRST,
+  HUB_SECTIONS_REST,
   claimHubBoot,
   hubBootEligibleFromKeys,
   hubBootPath,
@@ -102,6 +104,71 @@ describe("the boot URL is the URL the hub really requests", () => {
 
   it("encodes a slug that needs encoding", () => {
     expect(hubBootPath("roland garros/x")).toBe("/api/tournaments/roland%20garros%2Fx");
+  });
+});
+
+// ═══ latency/135 — THE BOOT PARKS THE FIRST SCREEN, NOT THE PAGE ═══════════════════════════════
+//
+// The hub now asks for its payload in two halves. `claimHubBoot` matches on the WHOLE URL, so the
+// section is part of the identity this file exists to protect: a boot that parked `?sections=first`
+// against a page effect that asked for everything is not a wasted claim, it is two requests with
+// the slow one back on the critical path — LAT-P184's failure mode wearing a new parameter.
+describe("the split", () => {
+  it("boots the first screen, and that is the URL the page's first request uses", async () => {
+    const script = hubBootScript("https://api.example.test", SLUG);
+    const parked = `https://api.example.test${hubBootPath(SLUG, HUB_SECTIONS_FIRST)}`;
+    expect(script).toContain(`"${parked}"`);
+    expect(parked).toContain("?sections=first");
+
+    const seen: string[] = [];
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return fakeResponse({ body: PAYLOAD });
+    }) as unknown as typeof fetch;
+    await fetchTournament(SLUG, HUB_SECTIONS_FIRST);
+    expect(seen).toEqual([hubBootUrl(API_URL, SLUG, HUB_SECTIONS_FIRST)]);
+  });
+
+  it("the parked first-screen response is claimed by the first-screen request", async () => {
+    const seen: string[] = [];
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return fakeResponse({ body: { title: "SHOULD NOT BE FETCHED" } });
+    }) as unknown as typeof fetch;
+    parkBoot({
+      url: hubBootUrl(API_URL, SLUG, HUB_SECTIONS_FIRST),
+      response: Promise.resolve(fakeResponse({ body: PAYLOAD })),
+    });
+
+    await expect(fetchTournament(SLUG, HUB_SECTIONS_FIRST)).resolves.toEqual(PAYLOAD);
+    expect(seen).toEqual([]);
+  });
+
+  it("and NEVER by the second half's request, which asks for different bytes", async () => {
+    const seen: string[] = [];
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return fakeResponse({ body: PAYLOAD });
+    }) as unknown as typeof fetch;
+    parkBoot({
+      url: hubBootUrl(API_URL, SLUG, HUB_SECTIONS_FIRST),
+      response: Promise.resolve(fakeResponse({ body: { grids: "WRONG HALF" } })),
+    });
+
+    await expect(fetchTournament(SLUG, HUB_SECTIONS_REST)).resolves.toEqual(PAYLOAD);
+    expect(seen).toEqual([hubBootUrl(API_URL, SLUG, HUB_SECTIONS_REST)]);
+  });
+
+  it("the page asks for the first screen FIRST and the rest after it", () => {
+    const source = readSource("app/tournaments/[slug]/page.tsx");
+    const first = source.indexOf("fetchTournament(slug, HUB_SECTIONS_FIRST)");
+    const rest = source.indexOf("fetchTournament(slug, HUB_SECTIONS_REST)");
+    expect(first).toBeGreaterThan(-1);
+    expect(rest).toBeGreaterThan(first);
+    // CHAINED, not raced. Two parallel requests share one bandwidth-bound pipe on Slow 4G and the
+    // 67 KB half slows the 20 KB half down — the defect re-created one layer up. The `rest` call
+    // sits inside the `first` continuation, so its text is after the `.then(` that opens it.
+    expect(source.lastIndexOf(".then((payload)", rest)).toBeGreaterThan(first);
   });
 });
 
@@ -200,7 +267,11 @@ describe("the inline script", () => {
   const script = hubBootScript("https://api.example.test", SLUG);
 
   it("names the boot URL, the auth prefix and the slot", () => {
-    expect(script).toContain(`"https://api.example.test${hubBootPath(SLUG)}"`);
+    // latency/135: the parked URL carries the section. It is the whole identity `claimHubBoot`
+    // matches on, so it is asserted with the section rather than without it.
+    expect(script).toContain(
+      `"https://api.example.test${hubBootPath(SLUG, HUB_SECTIONS_FIRST)}"`
+    );
     expect(script).toContain(`"${BOOT_AUTH_KEY_PREFIX}"`);
     expect(script).toContain(`"${HUB_BOOT_GLOBAL}"`);
   });
@@ -230,8 +301,9 @@ describe("the inline script", () => {
     };
 
     const booted = run({});
-    expect(booted.calls).toEqual([`https://api.example.test${hubBootPath(SLUG)}`]);
-    expect(booted.parked?.url).toBe(`https://api.example.test${hubBootPath(SLUG)}`);
+    const bootUrl = `https://api.example.test${hubBootPath(SLUG, HUB_SECTIONS_FIRST)}`;
+    expect(booted.calls).toEqual([bootUrl]);
+    expect(booted.parked?.url).toBe(bootUrl);
 
     const signedIn = run({ [`${BOOT_AUTH_KEY_PREFIX}k:[DEFAULT]`]: "{}" });
     expect({ calls: signedIn.calls, parked: signedIn.parked }).toEqual({

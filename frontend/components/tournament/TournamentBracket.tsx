@@ -83,6 +83,7 @@ export default function TournamentBracket({
   drawReleaseLabel,
   mainDrawLabel,
   initialExpanded = false,
+  pending = false,
 }: {
   /** The players × rounds model, built server-side from the register. */
   grid?: PlayoffGridModel | null;
@@ -98,8 +99,29 @@ export default function TournamentBracket({
   mainDrawLabel?: string | null;
   /** Capture seam: render the grid's full field rather than the collapsed five. */
   initialExpanded?: boolean;
+  /**
+   * The grid's half of the payload is still in flight (latency/135).
+   *
+   * NOT the same state as "there is no grid", and the difference is a sentence
+   * a reader would read as false: the pre-draw notice below says who gets how
+   * far fills in *once the draw is made*, and the draw was made on 2026-08-27.
+   * A page that printed it for the second and a half between the two requests
+   * would be telling the reader the tournament had not started.
+   */
+  pending?: boolean;
 }) {
   const hasGrid = Boolean(grid && grid.rows.length > 0 && grid.columns.length > 0);
+
+  if (!hasGrid && pending) {
+    return (
+      <div
+        className="max-w-[80ch] rounded-2xl border border-dashed border-surface-border bg-surface-card px-4 py-4 text-[13px] text-text-secondary"
+        data-testid="bracket-pending"
+      >
+        Loading how far each player is expected to get…
+      </div>
+    );
+  }
 
   if (!hasGrid) {
     const boards = preDrawBoards ?? [];

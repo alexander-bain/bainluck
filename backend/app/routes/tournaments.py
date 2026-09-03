@@ -113,32 +113,107 @@ MAX_SERIES_ROWS = 20000
 #: `build_match_detail` counts it as `OVER_CAP`.
 MAX_MATCH_GROUP_ROWS = 400
 
+# ── THE TWO HALVES OF THIS PAGE (latency/135, #2846) ────────────────────────
+#
+# Alex, 2026-09-03, on the felt table: the hub is the slowest tab of every tab
+# we measure — p50 0.93 s, worst 1.69 s — and *"the first screen needs the slate
+# + live rows; grids/bracket/results can arrive second"*.
+#
+# MEASURED ON PRODUCTION THE SAME AFTERNOON, one response decomposed by
+# top-level key (902,423 bytes uncompressed / 86,838 gzipped):
+#
+#     grids    377,074  41.8%   the Bracket TAB — not on screen at all until a tap
+#     results  315,108  34.9%   260 finished matches, below the fold on a phone
+#     boards   126,665  14.0%   the chart, which IS the first element
+#     slate     59,989   6.6%   the day's matches
+#     the rest  23,587   2.6%
+#
+# So two thirds of this payload renders nothing a reader can see on the first
+# screen, and on a cold build it is also two thirds of the price list: `first`
+# needs 356 of the register's pinned outcome ids, `rest` adds the grid's 336
+# reaches.
+#
+# `?sections=first` and `?sections=rest` are those two halves. **No parameter
+# means both, byte-for-byte the payload this route has always served** — the
+# native app, `/by-event/{id}` and every existing test are on that path and this
+# change is invisible to them.
+#
+# THE SPLIT IS NOT FREE AND IT IS NOT PRETENDED TO BE. Two requests build the
+# register twice and load ~956 outcome prices between them against 692 for one
+# combined build. That is ~38% more server work in total, bought deliberately:
+# the second build overlaps the reader's first screen, which is the only clock
+# a reader has.
+SECTION_FIRST = "first"
+SECTION_REST = "rest"
+SECTION_GROUPS: tuple[str, ...] = (SECTION_FIRST, SECTION_REST)
 
-def _cache_key(slug: str) -> str:
-    return f"{CACHE_PREFIX}{slug}"
+#: The keys `rest` owns. Named so the guard suite can assert the split is
+#: exhaustive in BOTH directions — no key may go missing from the full response,
+#: and no first-screen key may drift into the second request.
+REST_SECTION_KEYS: tuple[str, ...] = ("grids", "results")
 
 
-async def _cache_get(slug: str) -> Optional[dict[str, Any]]:
+def _cache_key(slug: str, group: str = SECTION_FIRST) -> str:
+    # Per-group, because the whole point is that a first-screen request never
+    # touches the grid's 377 KB — including in Redis. One key holding both would
+    # mean every `sections=first` read still transferred and `json.loads`-ed the
+    # full payload out of Redis to throw two thirds of it away.
+    return f"{CACHE_PREFIX}{slug}:{group}"
+
+
+async def _cache_get(slug: str, group: str = SECTION_FIRST) -> Optional[dict[str, Any]]:
     try:
         from app.tasks.redis_state import get_async_redis_client
 
-        raw = await get_async_redis_client().get(_cache_key(slug))
+        raw = await get_async_redis_client().get(_cache_key(slug, group))
         if raw:
             return json.loads(raw)
     except Exception as exc:  # noqa: BLE001 — cache is an optimisation, never a gate
-        logger.warning("tournament cache read failed for %s: %s", slug, exc)
+        logger.warning("tournament cache read failed for %s/%s: %s", slug, group, exc)
     return None
 
 
-async def _cache_set(slug: str, payload: dict[str, Any]) -> None:
+async def _cache_set(
+    slug: str, payload: dict[str, Any], group: str = SECTION_FIRST
+) -> None:
     try:
         from app.tasks.redis_state import get_async_redis_client
 
         await get_async_redis_client().setex(
-            _cache_key(slug), CACHE_TTL_SECONDS, json.dumps(payload, default=str)
+            _cache_key(slug, group),
+            CACHE_TTL_SECONDS,
+            json.dumps(payload, default=str),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("tournament cache write failed for %s: %s", slug, exc)
+        logger.warning("tournament cache write failed for %s/%s: %s", slug, group, exc)
+
+
+def _merge_fragment(payload: dict[str, Any], fragment: dict[str, Any]) -> None:
+    """Fold one section group's fragment into the response being assembled.
+
+    FIRST WINS ON A COLLISION, and only meta keys can collide: both fragments
+    carry `slug` and `generated_at` so that either one is self-describing when
+    served alone.  When the two are built in one call they share a single `now`
+    and the rule is a no-op; when `first` came off a warm cache and `rest` was
+    just built, the reader gets the stamp belonging to the numbers it is
+    actually looking at rather than a fresher one describing a section below
+    the fold.
+
+    `event_links` is the one structural exception.  Its two channels are built
+    by different halves — `by_matchup` prices the day's card (`first`),
+    `by_espn` dereferences the finished list's competition ids (`rest`) — and a
+    plain overwrite would drop whichever landed first.  They are merged, so the
+    full response carries both channels exactly as it always has.
+    """
+    for key, value in fragment.items():
+        if key == "event_links" and isinstance(value, dict):
+            existing = payload.get("event_links")
+            if isinstance(existing, dict):
+                existing.update(value)
+                continue
+            payload["event_links"] = dict(value)
+            continue
+        payload.setdefault(key, value)
 
 
 async def _espn_results(slug: str) -> dict[str, Any]:
@@ -658,7 +733,11 @@ async def get_event_tournament(
 
 
 async def _hub_payload(
-    slug: str, spec: dict[str, Any], db: AsyncSession
+    slug: str,
+    spec: dict[str, Any],
+    db: AsyncSession,
+    *,
+    groups: tuple[str, ...] = SECTION_GROUPS,
 ) -> dict[str, Any]:
     """The tournament hub payload — built once, read by every tournament surface.
 
@@ -671,10 +750,68 @@ async def _hub_payload(
 
     It also means the extensions endpoint costs a dict lookup on a warm cache
     instead of a second full build.
+
+    ``groups`` selects which section groups to assemble — see ``SECTION_FIRST``
+    / ``SECTION_REST``.  Each is cached on its own key, so the phone's first
+    screen never reads the grid out of Redis to throw it away, and the default
+    is both: every caller that does not ask gets the whole payload it always
+    got.
     """
-    cached = await _cache_get(slug)
-    if cached is not None:
-        return cached
+    fragments: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+    for group in groups:
+        cached = await _cache_get(slug, group)
+        if cached is None:
+            missing.append(group)
+        else:
+            fragments[group] = cached
+
+    if missing:
+        for group, fragment in (
+            await _build_sections(slug, spec, db, groups=tuple(missing))
+        ).items():
+            await _cache_set(slug, fragment, group)
+            fragments[group] = fragment
+
+    # Merged in GROUP ORDER, never in the order the fragments were resolved —
+    # `_merge_fragment` gives the earlier group the shared meta keys and that
+    # rule only means anything if the sequence is fixed.
+    payload: dict[str, Any] = {}
+    for group in groups:
+        fragment = fragments.get(group)
+        if fragment:
+            _merge_fragment(payload, fragment)
+    return payload
+
+
+async def _build_sections(
+    slug: str,
+    spec: dict[str, Any],
+    db: AsyncSession,
+    *,
+    groups: tuple[str, ...],
+) -> dict[str, dict[str, Any]]:
+    """Assemble the requested section groups — one register read, shared.
+
+    Returns ``{group: fragment}``.  Asking for both is one build with one
+    ``now``, exactly as this route has always worked; asking for one builds only
+    what that half needs.
+
+    WHAT EACH HALF COSTS, IN THE ONLY CURRENCY THAT MATTERS HERE — the id list
+    ``_load_prices`` and ``load_latest_observed_at`` walk (one top-1 index probe
+    per outcome), measured against the committed 2026 register:
+
+        board   118    both halves (the grid is keyed on the board's own rows)
+        slate   232    both halves (a decided result prints its opening price)
+        props     6    first
+        reach   336    rest — the grid, and nothing else on the page
+
+    So ``first`` is 356 probes and ``rest`` is ~600, against 692 for the whole
+    page.  The saving on the FIRST request is the ship; the overlap is the price
+    and it is stated in ``SECTION_FIRST``'s comment rather than hidden here.
+    """
+    want_first = SECTION_FIRST in groups
+    want_rest = SECTION_REST in groups
 
     register = load_register(slug, spec["season"])
     if register is None:
@@ -759,20 +896,27 @@ async def _hub_payload(
     reach_outcome_ids = reg.reach_outcome_ids()
 
     now = datetime.now(timezone.utc)
-    prices = await _load_prices(
-        db,
-        sorted(
-            set(board_outcome_ids)
-            | set(slate_outcome_ids)
-            | set(prop_outcome_ids)
-            | set(reach_outcome_ids)
-            | set(authority_outcome_ids)
-        ),
-        now=now,
-    )
+    # ONLY WHAT THE REQUESTED HALVES WILL READ (latency/135). The board and
+    # slate ids are in both: the grid is keyed on the board's own rows, and a
+    # decided result prints the opening price of its matchup. The 336 reaches
+    # belong to the grid alone, and a first-screen request must not pay for
+    # them — that is the largest single line in this build.
+    wanted_ids: set[int] = set(board_outcome_ids) | set(slate_outcome_ids)
+    if want_first:
+        wanted_ids |= set(prop_outcome_ids) | set(authority_outcome_ids)
+    if want_rest:
+        wanted_ids |= set(reach_outcome_ids)
+    prices = await _load_prices(db, sorted(wanted_ids), now=now)
     # Trend lines are a board feature. Loading series for the slate's ~130
     # outcomes would triple the per-request scan to draw nothing.
-    series = await _load_series(db, board_outcome_ids, now=now)
+    #
+    # And the GRID does not draw one. `build_playoff_grid` reads a board row's
+    # identity and rank, never its trend, so a `rest`-only build skips this
+    # query outright rather than loading 15 days of snapshots to serialise
+    # nothing — see the guard in `test_tournament_sections_split.py`.
+    series = (
+        await _load_series(db, board_outcome_ids, now=now) if want_first else {}
+    )
 
     # Re-key the loaded prices onto the register's identity tuple. Anything the
     # query returned that the register does not pin simply has no key here and
@@ -795,7 +939,15 @@ async def _hub_payload(
     # carries its event id and the card can route to the standard event page
     # like any other game card. Never a name match — see
     # `utils/tournament_event_link`.
-    event_links = await resolve_matchup_events(db, register)
+    #
+    # FIRST-SCREEN ONLY. Its consumer is the slate row's `event_id`; the
+    # finished list reaches its events through `by_espn`, which `rest` resolves
+    # for itself off the ids `build_results` produces.
+    event_links = (
+        await resolve_matchup_events(db, register)
+        if want_first
+        else {"by_event": {}, "by_matchup": {}, "reason_counts": {}}
+    )
 
     # ONE READ, BOTH HALVES OF THE DAY (Q463). The cached ESPN payload carries
     # the decided matches AND the ones still to play; hoisted above the slate
@@ -804,146 +956,225 @@ async def _hub_payload(
     # `sync_tournament_results` was already discarding it.
     espn = await _espn_results(slug)
 
-    payload = build_boards(
+    # BOTH HALVES NEED THE BOARDS, AND ONLY ONE OF THEM SERVES THEM. The grid is
+    # keyed on the board's own rows — that is the "one ranking" property
+    # `build_playoff_grid` documents — so a `rest`-only build still assembles
+    # them, and then emits nothing but `grids` and `results`. It is pure Python
+    # over prices already loaded; the query it would have added (the trend
+    # series) is the one skipped above.
+    base = build_boards(
         register, prices=by_identity, series_by_outcome=series, now=now
     )
-    payload["slate"] = build_slate(
-        register,
-        prices=prices,
-        now=now,
-        event_ids=event_links["by_matchup"],
-        order_of_play=espn.get("order_of_play") or {},
-        # THE COMPLETENESS CONTEXT, NOT DISCARDED (CERT-517). The cached payload
-        # has always carried it; this route used to throw it away, which is what
-        # let a half-read scoreboard pass itself off as the whole one. A cached
-        # payload written before the flag existed reads as `False` — the safe
-        # side, since an unknown-completeness map is exactly the case where
-        # absence must not be trusted.
-        order_of_play_complete=espn.get("order_of_play_complete") is True,
-        authority_links=authority_links,
-    )
-    payload["props"] = build_props(register, prices=prices, now=now)
-    # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the
-    # boards, because the amendment makes cell provenance a correctness
-    # property: the grid must read the register and only the register, and a
-    # client assembling cells from three payload sections cannot be held to
-    # that. It also puts the two evals — column sums and monotonicity — next to
-    # the data they judge instead of in a component.
-    payload["grids"] = build_grids(
-        register, boards=payload.get("boards") or [], prices=prices, now=now
-    )
-    # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
-    # `draw_released`; populated by the same `ingest_tournament_draw.py` run, so
-    # Thursday is a data change and not a deploy.
-    payload["bracket"] = {
-        draw: build_bracket(register, prices=prices, draw=draw)
-        for draw in ("mens-singles", "womens-singles")
-    }
-    # Where to watch — a static per-tournament mapping, register-owned so it can
-    # be corrected without a deploy. Served verbatim; there is nothing to
-    # compute and nothing to get wrong at request time.
-    # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
-    # section rather than a field on the slate, because a slate structurally
-    # cannot hold a finished match — see `build_results`.
-    # `prices` so a finished match can print what the market said BEFORE it
-    # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
-    # outcome ids are already in the one `IN (...)` above, and the number used
-    # is `opening_probability`, which is loaded on the same row.
-    payload["results"] = build_results(register, results=espn, prices=prices)
-    # THE FINISHED LIST STOPS DEAD-ENDING (#2693 step 2). The market channel
-    # above cannot reach these rows — `build_slate` retires a matchup the moment
-    # its match starts, so a finished match usually has no matchup left to pin a
-    # market on. Its ESPN competition id survives, and since step 0 put an
-    # `espn_id` on the US Open events there is now a row to dereference it to.
-    # Resolved AFTER `build_results` because the ids come off its rows, and
-    # bounded by the spec's own `sport_keys` — see `resolve_espn_competition_events`.
-    espn_links = await resolve_espn_competition_events(
-        db,
-        [
-            match.get("espn_competition_id")
-            for match in (payload["results"].get("matches") or [])
-        ],
-        spec.get("sport_keys") or (),
-    )
-    # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).
-    #
-    # Alex: "opening = Kalshi -> Polymarket -> sportsbook blend, labelled by
-    # source. Never blank when any pre-match reading exists." ux/1034 A3 shipped
-    # the honesty half and left the number, because `opening_*` lives on the
-    # EVENT and `by_matchup` cannot reach a row the register no longer carries a
-    # matchup for — which is the row Alex read.
-    #
-    # `by_espn` above IS that missing channel, and it landed for a different
-    # reason (#2693 step 2, the finished list's dead-end links). Nothing new is
-    # queried to FIND the events; this loads the two opening columns off the ids
-    # that channel already resolved, bounded by them.
-    _opening_ids = sorted({int(v) for v in espn_links["by_espn"].values()})
-    _openings: dict[int, dict[str, Any]] = {}
-    if _opening_ids:
-        _rows = await db.execute(
-            select(
-                Event.id,
-                Event.home_team_name,
-                Event.away_team_name,
-                Event.opening_home_probability,
-                Event.opening_away_probability,
-            ).where(Event.id.in_(_opening_ids))
-        )
-        for _id, _home, _away, _oh, _oa in _rows.all():
-            _openings[int(_id)] = {
-                "home_team_name": _home,
-                "away_team_name": _away,
-                "opening_home_probability": _oh,
-                "opening_away_probability": _oa,
-            }
-    apply_books_prematch(
-        payload["results"], by_espn=espn_links["by_espn"], openings=_openings
-    )
-    payload["broadcasts"] = reg.broadcasts
-    # How many blank fixtures the overlay filled this request. Reported rather
-    # than inferred: a page whose cards are dark because no market exists and
-    # one whose cards are dark because the linker died look identical from the
-    # outside, and that is the exact confusion that let this ship broken for a
-    # day (gotcha #53).
-    payload["auto_linked_matchups"] = linked
-    payload["slug"] = slug
-    payload["title"] = spec["title"]
-    payload["subtitle"] = spec["subtitle"]
-    # WHEN THE DRAW HAPPENS (Alex's item 1). The pre-draw panel says the date
-    # and the time, not just that it has not happened yet.
-    payload["draw_release_at"] = spec["draw_release_at"]
-    payload["draw_release_label"] = spec["draw_release_label"]
-    payload["main_draw_starts_at"] = spec["main_draw_starts_at"]
-    payload["main_draw_label"] = spec["main_draw_label"]
-    # NO SILENT CAPS. `by_event` is what `/by-event/{id}` reads; the reason
-    # counts are what makes a fixture with no click-through a named gap rather
-    # than a row that quietly stopped being a link.
-    payload["event_links"] = {
-        # JSON has no integer keys and this payload round-trips through Redis,
-        # so the id side is stringified HERE rather than at each reader.
-        "by_event": {str(k): v for k, v in event_links["by_event"].items()},
-        "by_matchup": event_links["by_matchup"],
-        "linked": len(event_links["by_matchup"]),
-        "unresolved": event_links["reason_counts"],
-        # THE SECOND CHANNEL, KEPT SEPARATE. Not folded into `by_matchup`:
-        # the two are keyed on different identifiers, and a reader (or a
-        # sentinel) asking "how many finished matches link, and through what"
-        # must be able to tell an authority-id link from a market link. Its
-        # refusals are counted on their own terms for the same reason —
-        # `ESPN_ID_AMBIGUOUS` above zero is a step-2 regression, and it would be
-        # invisible summed into a total.
-        "by_espn": espn_links["by_espn"],
-        "espn_linked": len(espn_links["by_espn"]),
-        "espn_unresolved": espn_links["reason_counts"],
-    }
 
-    await _cache_set(slug, payload)
-    return payload
+    fragments: dict[str, dict[str, Any]] = {}
+
+    if want_first:
+        # ── THE FIRST SCREEN. The chart, the day's card, and the meta the page
+        # frames them with. Everything a phone renders above the fold before a
+        # reader has scrolled or tapped a tab.
+        first: dict[str, Any] = dict(base)
+        first["slate"] = build_slate(
+            register,
+            prices=prices,
+            now=now,
+            event_ids=event_links["by_matchup"],
+            order_of_play=espn.get("order_of_play") or {},
+            # THE COMPLETENESS CONTEXT, NOT DISCARDED (CERT-517). The cached
+            # payload has always carried it; this route used to throw it away,
+            # which is what let a half-read scoreboard pass itself off as the
+            # whole one. A cached payload written before the flag existed reads
+            # as `False` — the safe side, since an unknown-completeness map is
+            # exactly the case where absence must not be trusted.
+            order_of_play_complete=espn.get("order_of_play_complete") is True,
+            authority_links=authority_links,
+        )
+        # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
+        # `draw_released`; populated by the same `ingest_tournament_draw.py` run,
+        # so Thursday is a data change and not a deploy.
+        #
+        # First-screen despite the name: `lib/matchList.ts` joins these draw
+        # slots with the slate into the ONE match list ruling 4 requires, so a
+        # bracket arriving late would mean the day's card rendered twice — once
+        # short, once complete. It costs 39 bytes.
+        first["props"] = build_props(register, prices=prices, now=now)
+        # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
+        # `draw_released`; populated by the same `ingest_tournament_draw.py` run,
+        # so Thursday is a data change and not a deploy.
+        #
+        # First-screen despite the name: `lib/matchList.ts` joins these draw
+        # slots with the slate into the ONE match list ruling 4 requires, so a
+        # bracket arriving late would mean the day's card rendered twice — once
+        # short, once complete. It costs 39 bytes.
+        first["bracket"] = {
+            draw: build_bracket(register, prices=prices, draw=draw)
+            for draw in ("mens-singles", "womens-singles")
+        }
+        # Where to watch — a static per-tournament mapping, register-owned so it
+        # can be corrected without a deploy. Served verbatim; there is nothing to
+        # compute and nothing to get wrong at request time.
+        first["broadcasts"] = reg.broadcasts
+        # How many blank fixtures the overlay filled this request. Reported
+        # rather than inferred: a page whose cards are dark because no market
+        # exists and one whose cards are dark because the linker died look
+        # identical from the outside, and that is the exact confusion that let
+        # this ship broken for a day (gotcha #53).
+        first["auto_linked_matchups"] = linked
+        first["slug"] = slug
+        first["title"] = spec["title"]
+        first["subtitle"] = spec["subtitle"]
+        # WHEN THE DRAW HAPPENS (Alex's item 1). The pre-draw panel says the date
+        # and the time, not just that it has not happened yet.
+        first["draw_release_at"] = spec["draw_release_at"]
+        first["draw_release_label"] = spec["draw_release_label"]
+        first["main_draw_starts_at"] = spec["main_draw_starts_at"]
+        first["main_draw_label"] = spec["main_draw_label"]
+        # NO SILENT CAPS. `by_event` is what `/by-event/{id}` reads; the reason
+        # counts are what makes a fixture with no click-through a named gap
+        # rather than a row that quietly stopped being a link.
+        first["event_links"] = {
+            # JSON has no integer keys and this payload round-trips through
+            # Redis, so the id side is stringified HERE rather than at each
+            # reader.
+            "by_event": {str(k): v for k, v in event_links["by_event"].items()},
+            "by_matchup": event_links["by_matchup"],
+            "linked": len(event_links["by_matchup"]),
+            "unresolved": event_links["reason_counts"],
+        }
+        fragments[SECTION_FIRST] = first
+
+    if want_rest:
+        # ── WHAT ARRIVES SECOND. 76% of this page's bytes and none of its first
+        # screen: the playoff grid lives behind a tab tap, and the finished list
+        # is below the day's card on every viewport we render.
+        rest: dict[str, Any] = {
+            # Self-describing when served alone. `_merge_fragment` gives `first`
+            # the collision, so these two never displace the stamp on the
+            # numbers a reader is looking at.
+            "slug": slug,
+            "generated_at": now.isoformat(),
+        }
+        # THE PLAYOFF GRID (UX-P139). Built server-side, from `reaches` and the
+        # boards, because the amendment makes cell provenance a correctness
+        # property: the grid must read the register and only the register, and a
+        # client assembling cells from three payload sections cannot be held to
+        # that. It also puts the two evals — column sums and monotonicity — next
+        # to the data they judge instead of in a component.
+        rest["grids"] = build_grids(
+            register, boards=base.get("boards") or [], prices=prices, now=now
+        )
+        # DECIDED MATCHES, WITH THE SCORE (UX-P139, Alex's item 9). A separate
+        # section rather than a field on the slate, because a slate structurally
+        # cannot hold a finished match — see `build_results`.
+        # `prices` so a finished match can print what the market said BEFORE it
+        # (UX-P146, Alex on the UX-P145 artifact). No extra query: the matchup
+        # outcome ids are already in the one `IN (...)` above, and the number
+        # used is `opening_probability`, which is loaded on the same row.
+        rest["results"] = build_results(register, results=espn, prices=prices)
+        # THE FINISHED LIST STOPS DEAD-ENDING (#2693 step 2). The market channel
+        # above cannot reach these rows — `build_slate` retires a matchup the
+        # moment its match starts, so a finished match usually has no matchup
+        # left to pin a market on. Its ESPN competition id survives, and since
+        # step 0 put an `espn_id` on the US Open events there is now a row to
+        # dereference it to. Resolved AFTER `build_results` because the ids come
+        # off its rows, and bounded by the spec's own `sport_keys` — see
+        # `resolve_espn_competition_events`.
+        espn_links = await resolve_espn_competition_events(
+            db,
+            [
+                match.get("espn_competition_id")
+                for match in (rest["results"].get("matches") or [])
+            ],
+            spec.get("sport_keys") or (),
+        )
+        # THE BOOKS RUNG OF THE PRE-MATCH LADDER (#2747, ux/1036 Tier A).
+        #
+        # Alex: "opening = Kalshi -> Polymarket -> sportsbook blend, labelled by
+        # source. Never blank when any pre-match reading exists." ux/1034 A3
+        # shipped the honesty half and left the number, because `opening_*` lives
+        # on the EVENT and `by_matchup` cannot reach a row the register no longer
+        # carries a matchup for — which is the row Alex read.
+        #
+        # `by_espn` above IS that missing channel, and it landed for a different
+        # reason (#2693 step 2, the finished list's dead-end links). Nothing new
+        # is queried to FIND the events; this loads the two opening columns off
+        # the ids that channel already resolved, bounded by them.
+        _opening_ids = sorted({int(v) for v in espn_links["by_espn"].values()})
+        _openings: dict[int, dict[str, Any]] = {}
+        if _opening_ids:
+            _rows = await db.execute(
+                select(
+                    Event.id,
+                    Event.home_team_name,
+                    Event.away_team_name,
+                    Event.opening_home_probability,
+                    Event.opening_away_probability,
+                ).where(Event.id.in_(_opening_ids))
+            )
+            for _id, _home, _away, _oh, _oa in _rows.all():
+                _openings[int(_id)] = {
+                    "home_team_name": _home,
+                    "away_team_name": _away,
+                    "opening_home_probability": _oh,
+                    "opening_away_probability": _oa,
+                }
+        apply_books_prematch(
+            rest["results"], by_espn=espn_links["by_espn"], openings=_openings
+        )
+        # THE SECOND CHANNEL, KEPT SEPARATE. Not folded into `by_matchup`: the
+        # two are keyed on different identifiers, and a reader (or a sentinel)
+        # asking "how many finished matches link, and through what" must be able
+        # to tell an authority-id link from a market link. Its refusals are
+        # counted on their own terms for the same reason — `ESPN_ID_AMBIGUOUS`
+        # above zero is a step-2 regression, and it would be invisible summed
+        # into a total.
+        #
+        # It travels in the SAME fragment as the list it addresses. That is why
+        # `_merge_fragment` merges `event_links` rather than overwriting it: the
+        # finished list and its links must never be able to arrive apart.
+        rest["event_links"] = {
+            "by_espn": espn_links["by_espn"],
+            "espn_linked": len(espn_links["by_espn"]),
+            "espn_unresolved": espn_links["reason_counts"],
+        }
+        fragments[SECTION_REST] = rest
+
+    return fragments
+
+
+def _requested_groups(sections: Optional[str]) -> tuple[str, ...]:
+    """Parse `?sections=` — absent means the whole payload, as it always has.
+
+    An unknown name is a **400 and not a shrug**. The two consumers of this
+    parameter are our own document boot script and our own page effect; a
+    typo'd section that silently served the full payload would look like a
+    working split in every measurement while shipping none of the saving
+    (gotcha #53 — a response shape that cannot tell "everything" from "you asked
+    for something I do not have").
+    """
+    if sections is None:
+        return SECTION_GROUPS
+    names = tuple(part.strip() for part in sections.split(",") if part.strip())
+    unknown = [name for name in names if name not in SECTION_GROUPS]
+    if unknown or not names:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown section(s) {unknown or ['']}; "
+                f"valid: {', '.join(SECTION_GROUPS)}"
+            ),
+        )
+    # Deduplicated, and always in build order so the merge rule is stable
+    # whatever order the caller wrote them in.
+    return tuple(group for group in SECTION_GROUPS if group in names)
 
 
 @router.get("/{slug}")
-async def get_tournament(slug: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_tournament(
+    slug: str,
+    sections: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     spec = REGISTERED_TOURNAMENTS.get(slug)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"No registered tournament '{slug}'")
-    return await _hub_payload(slug, spec, db)
+    return await _hub_payload(slug, spec, db, groups=_requested_groups(sections))
