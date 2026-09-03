@@ -87,10 +87,20 @@ def _pair(market_id, correct, at_capture, title="A vs B", cls="attached-correct"
     }
 
 
+def _row(market_id, event_id, event_is_idless=None):
+    """One production row: the market, where it points, and whether that event
+    is the matcher's own id-less creation. ``None`` = provenance unknown (no
+    link, or an events row we could not read)."""
+    return (market_id, event_id, event_is_idless)
+
+
 def _run_golden(pairs, current_rows):
+    # Tolerate the 2-tuples the pre-provenance tests were written with: those
+    # cases turn on the pair, not on what it attached to.
+    rows = [r if len(r) == 3 else (r[0], r[1], None) for r in current_rows]
     with patch.object(mrec, "FIXTURE_PATH") as fp:
         fp.read_text.return_value = _fake_fixture(pairs)
-        return asyncio.run(mrec.check_golden_pairs(_Session([current_rows])))
+        return asyncio.run(mrec.check_golden_pairs(_Session([rows])))
 
 
 def test_a_pair_that_was_right_and_is_now_wrong_is_the_finding():
@@ -124,11 +134,102 @@ def test_a_pair_that_recovers_is_counted_but_does_not_file():
     assert out["recovered"] == 1
 
 
-def test_a_negative_pair_that_acquires_a_link_is_a_regression():
-    """550 of the 709 say "belongs on no event". Attaching one is a false attach."""
-    out = _run_golden([_pair(1, None, None, cls="a-no-event")], [(1, 999)])
+def test_a_negative_pair_that_attaches_to_an_idless_event_is_red():
+    """A negative pair that attaches to an event the MATCHER created is RED.
+
+    This test used to be ``..._that_acquires_a_link_is_a_regression``, and its
+    docstring read "550 of the 709 say 'belongs on no event'. Attaching one is a
+    false attach." THAT CLAIM WAS THE DEFECT, asserted. The old assertion is
+    deliberately not preserved: it encoded the conflation this change removes.
+    What survives is the half of it that is true — no outside source says this
+    event exists, so nothing corroborates the attachment.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, event_is_idless=True)],
+    )
     assert out["red"] is True
     assert out["rows"][0]["actual_event_id"] == 999
+    assert out["rows"][0]["verdict"] == "self_answered"
+    assert out["self_answered"] == 1
+    assert out["baseline_stale"] == 0
+
+
+def test_a_negative_pair_that_attaches_to_a_provider_anchored_fixture_is_not_red():
+    """The system getting BETTER must not be filed as the system breaking.
+
+    ``a-no-event`` means no event existed AT CAPTURE — the adjudicator's note is
+    "global 2+-token check; titles batch-read". When the fixture later shows up
+    from a provider and the market attaches to it, the baseline row is stale and
+    the matcher is right. Measured on production 2026-09-03: five of the 39 RED
+    rows were exactly this, including "Hamburg vs Mainz" landing on the real
+    Bundesliga ``Hamburger SV v FSV Mainz 05``.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, event_is_idless=False)],
+    )
+    assert out["red"] is False
+    assert out["count"] == 0
+    assert out["baseline_stale"] == 1
+    assert out["self_answered"] == 0
+    # And it must not ride along in the rows the issue body accuses.
+    assert out["rows"] == []
+
+
+def test_an_event_row_we_cannot_read_is_not_read_as_corroboration():
+    """Unknown provenance defaults to RED, not to "a provider vouched for it".
+
+    A dangling ``event_id`` returns NULL for the joined ``external_id IS NULL``
+    expression, which is indistinguishable from "anchored" if you test it
+    truthily. Absence of evidence is not corroboration (gotcha #53).
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, event_is_idless=None)],
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "self_answered"
+
+
+def test_a_positive_pair_that_leaves_its_adjudicated_event_is_a_regression():
+    """Provenance does not soften a POSITIVE pair. The audit knew the answer.
+
+    Even if the event it moved onto is provider-anchored, the pair had a
+    known-correct event and no longer points at it.
+    """
+    out = _run_golden(
+        [_pair(1, 500, 500)],
+        [_row(1, 999, event_is_idless=False)],
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "regressed"
+    assert out["regressed"] == 1
+    assert out["baseline_stale"] == 0
+
+
+def test_the_detail_line_reports_the_three_outcomes_separately():
+    """One RED number covering "we broke it" and "we fixed it" is unreadable.
+
+    The body is the only place the count is refreshed (see ``build_title``), so
+    the split has to survive into ``detail``.
+    """
+    out = _run_golden(
+        [
+            _pair(1, 500, 500),                        # regressed
+            _pair(2, None, None, cls="a-no-event"),    # self-answered
+            _pair(3, None, None, cls="a-no-event"),    # baseline stale
+        ],
+        [
+            _row(1, 999, event_is_idless=False),
+            _row(2, 998, event_is_idless=True),
+            _row(3, 997, event_is_idless=False),
+        ],
+    )
+    assert out["count"] == 2, "the stale-baseline row must not be accused"
+    assert "1 adjudicated pairs regressed" in out["detail"]
+    assert "1 negative pairs attached to an id-less event" in out["detail"]
+    assert "1 attached to a provider-anchored fixture" in out["detail"]
 
 
 def test_a_market_that_no_longer_exists_is_counted_not_accused():
