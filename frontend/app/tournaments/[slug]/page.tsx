@@ -466,6 +466,15 @@ export default function TournamentPage() {
                      from — `tournament_event_link` resolves it once, by id, and
                      both lists read that one answer. */
                   eventIds={data.event_links?.by_matchup}
+                  /* #2693 step 2: the map above still cannot reach most of this
+                     list, and structurally never could — `build_slate` retires
+                     a matchup the moment its match starts, so a FINISHED match
+                     usually has no matchup left to pin a market on. 118 of 235
+                     rows carried no register key at all. `by_espn` is the
+                     authority's own competition id dereferenced through
+                     `events.espn_id`, which lane1/057 put on the US Open rows;
+                     it is consulted only after the market channel declines. */
+                  espnEventIds={data.event_links?.by_espn}
                 />
 
                 {board && <TournamentBoard board={board} seriesColors={seriesColors} />}

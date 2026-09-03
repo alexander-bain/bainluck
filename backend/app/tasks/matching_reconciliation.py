@@ -21,6 +21,10 @@ WHAT IT CHECKS, every matching cycle:
   every 15 minutes would be noise, not signal.
 * **anchor_collision** — INVARIANTS-2026-09-02 query (a): one
   ``(source, source_id, id_kind)`` naming two events. Target 0.
+* **event_espn_id_collision** — one ESPN event id worn by two ``events`` rows.
+  Target 0 (#2693 step 2). The sibling of ``anchor_collision``, over the column
+  that actually steers ESPN's writes; that one reads 0 only because nothing had
+  written an anchor for these rows.
 * **market_multi_event** — query (b): one market linked to two events. Target 0.
   Open-scoped, deliberately: the unscoped form times out (fp fedd618081365d6b).
 * **receipt_coverage** — query (c)'s successor. (c) counted 996 markets with an
@@ -192,6 +196,44 @@ async def check_anchor_collision(session) -> dict:
     )
 
 
+async def check_event_espn_id_collision(session) -> dict:
+    """One ESPN event id worn by two ``events`` rows. Target 0 (#2693 step 2).
+
+    ``check_anchor_collision`` above asks the same question of
+    ``event_provider_anchors``, and it has always answered 0 — because nothing
+    had written an anchor for these rows. The column ``espn_sync`` actually
+    steers its writes through is ``events.espn_id``, and on 2026-09-02 that one
+    was worn by two or more rows for **196 ids, 430 rows**.
+
+    THIS CHECK IS THE DURABLE HALF OF THE REPAIR, and it exists because
+    CERT-784 asked the right question: a repair whose population an active
+    writer refills is not a repair. The writers are holder-checked now
+    (``espn_id_stamp``, #2017), but "we fixed every writer we found" is a claim
+    about a census, and this is the measurement that would notice a writer
+    nobody censused. It does not depend on the unique index existing — which
+    matters, because ``backend/Procfile`` wraps the release-phase Alembic run in
+    ``|| echo`` and so cannot fail a deploy on a missing migration (#2741).
+    """
+    rows = (await session.execute(text(
+        """
+        SELECT espn_id, count(*) AS n
+        FROM events
+        WHERE espn_id IS NOT NULL
+        GROUP BY espn_id
+        HAVING count(*) > 1
+        ORDER BY n DESC, espn_id
+        LIMIT 200
+        """
+    ))).all()
+    listed = [{"espn_id": r[0], "events": int(r[1])} for r in rows]
+    return _finding(
+        "event_espn_id_collision", bool(listed), len(listed),
+        f"{len(listed)} ESPN event id(s) worn by more than one events row — the "
+        "authority writes one game's status, clock and score onto two fixtures",
+        listed,
+    )
+
+
 async def check_market_multi_event(session) -> dict:
     """INVARIANTS (b): one market on two events. Open-scoped — see the module docstring."""
     rows = (await session.execute(text(
@@ -356,6 +398,7 @@ async def check_receipt_contradicts_link(session) -> dict:
 CHECKS = (
     check_golden_pairs,
     check_anchor_collision,
+    check_event_espn_id_collision,
     check_market_multi_event,
     check_receipt_coverage,
     check_linked_unsourced,
