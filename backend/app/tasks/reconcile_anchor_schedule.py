@@ -46,7 +46,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from app.utils.anchor_schedule import (
     AUTHORITY_MOVES_US,
@@ -86,6 +86,75 @@ DEFAULT_HORIZON = timedelta(days=120)
 #: shortfall is reported rather than left for the reader to notice.
 DEFAULT_LIMIT = 100
 
+#: What separates the two halves of a cursor. A kickoff renders as ISO-8601,
+#: which already contains ``-``, ``:`` and ``+``; ``|`` appears in none of them.
+CURSOR_SEPARATOR = "|"
+
+
+def encode_cursor(commence_time: datetime, event_id: int) -> str:
+    """Name the last row a page examined, so the next page can start after it.
+
+    The cursor is **both** sort keys, because ``commence_time`` alone does not
+    identify a row: the NFL slate puts twelve fixtures on the same 17:00
+    kickoff, and a cursor that carried only the clock would either re-examine
+    all twelve or skip the ones it had not reached. That is the same class of
+    bug as an OFFSET over a moving population, arrived at from the other side.
+    """
+    return f"{commence_time.isoformat()}{CURSOR_SEPARATOR}{event_id}"
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, int]:
+    """Read a cursor back, or raise ``ValueError`` naming what was wrong.
+
+    A malformed cursor is refused rather than ignored. Ignoring it would
+    silently restart the sweep at the oldest row, and the caller — a script
+    looping until ``next_cursor`` is None — would loop over page one forever
+    while every page reported a healthy census.
+    """
+    moment, separator, event_id = str(cursor).rpartition(CURSOR_SEPARATOR)
+    if not separator or not moment:
+        raise ValueError(
+            f"cursor must be '<iso8601>{CURSOR_SEPARATOR}<event_id>', got {cursor!r}"
+        )
+    try:
+        parsed = datetime.fromisoformat(moment)
+    except ValueError:
+        raise ValueError(f"cursor kickoff {moment!r} is not ISO-8601") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    try:
+        return parsed, int(event_id)
+    except ValueError:
+        raise ValueError(f"cursor event id {event_id!r} is not an integer") from None
+
+
+def _after_cursor(cursor: Optional[str]):
+    """The keyset predicate: strictly after ``(commence_time, event_id)``.
+
+    Keyset rather than OFFSET, and the reason is gotcha #41. This window's
+    floor is ``now - lookback``, so it MOVES between one page and the next: a
+    fixture that has since kicked off drops out from underneath, every later
+    row shifts down by one, and an OFFSET would step straight over a row that
+    was never examined. A keyset cursor names a position in the ordering rather
+    than a count from the start, so rows leaving the floor cannot displace it.
+
+    Written as the expanded ``a > t OR (a = t AND b > i)`` rather than a row
+    comparison ``(a, b) > (t, i)``. The two are the same predicate; the expanded
+    form is the one the read-only twin can also write into plain SQL, and the
+    two rails agreeing is worth more here than the tidier syntax.
+    """
+    from app.models.models import Event
+
+    if not cursor:
+        return ()
+    moment, event_id = decode_cursor(cursor)
+    return (
+        or_(
+            Event.commence_time > moment,
+            and_(Event.commence_time == moment, Event.id > event_id),
+        ),
+    )
+
 
 def _window(
     *,
@@ -118,6 +187,7 @@ async def _count_eligible(
     lookback: timedelta,
     horizon: timedelta,
     now: Optional[datetime] = None,
+    cursor: Optional[str] = None,
 ) -> int:
     """How many rows the window holds, ignoring ``limit``.
 
@@ -126,6 +196,11 @@ async def _count_eligible(
     number and both look finished. That is gotcha #53 in its second form —
     not an empty answer read as health, but a *partial* one. So the shortfall
     is measured and named, and a truncated run may not terminate ``complete``.
+
+    With ``cursor`` set this counts the rows AT OR AFTER that position, which
+    is what ``remaining`` means. Called both ways on every paged run: without
+    the cursor it is ``eligible``, the whole window, whose meaning must not
+    drift because a caller started paging.
     """
     from app.models.models import Event, Sport
 
@@ -134,6 +209,7 @@ async def _count_eligible(
         .select_from(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(*_window(lookback=lookback, horizon=horizon, now=now))
+        .where(*_after_cursor(cursor))
     )
     if sport:
         query = query.where(Sport.key == sport)
@@ -148,6 +224,7 @@ async def _load_rows(
     lookback: timedelta,
     horizon: timedelta,
     now: Optional[datetime] = None,
+    cursor: Optional[str] = None,
 ) -> list[AnchoredRow]:
     """The anchored, unfinished, near-future rows — oldest kickoff first.
 
@@ -156,6 +233,14 @@ async def _load_rows(
     have spent its budget on them (gotcha #41 asks what the ordering starts on;
     this population does not expire, so a floor is enough and a ceiling is not
     needed).
+
+    **The ordering carries ``Event.id`` as a tiebreaker and that is load-bearing
+    now that a cursor exists.** ``commence_time`` is not unique — an NFL Sunday
+    puts a dozen fixtures on one 17:00 kickoff — so ``ORDER BY commence_time``
+    alone leaves the order within a tie up to the plan. Two pages either side of
+    such a tie could then repeat rows or step over them, and the skipped row is
+    invisible: it is simply never examined, and the sweep reports a clean census
+    of the rows it did see.
     """
     from app.models.models import Event, Sport
 
@@ -173,7 +258,8 @@ async def _load_rows(
         )
         .join(Sport, Sport.id == Event.sport_id)
         .where(*_window(lookback=lookback, horizon=horizon, now=now))
-        .order_by(Event.commence_time)
+        .where(*_after_cursor(cursor))
+        .order_by(Event.commence_time, Event.id)
         .limit(limit)
     )
     if sport:
@@ -228,6 +314,7 @@ async def reconcile(
     sport: Optional[str] = None,
     lookback: timedelta = DEFAULT_LOOKBACK,
     horizon: timedelta = DEFAULT_HORIZON,
+    cursor: Optional[str] = None,
 ) -> dict[str, Any]:
     """Ask the authority about every anchored near-future row's kickoff.
 
@@ -236,6 +323,42 @@ async def reconcile(
     verdict census that explains the zero — "it returned" is not "it worked"
     (gotcha #53), and a rail that cannot tell a healthy population from an
     authority outage is a rail that reports health during an outage.
+
+    ═══ PAGING, AND THE ONE WORD A PAGE MAY NOT SAY ═══
+
+    ``limit`` is a router-timeout bound well under the population (100 against
+    685), so an unattended sweep is necessarily several calls. ``next_cursor``
+    makes them *consecutive* instead of each restarting at the oldest row; pass
+    it back as ``cursor`` until it comes back ``None``.
+
+    Three counts, and they are three different questions:
+
+    ``eligible``   the whole window, ignoring both cursor and limit. Its
+                   meaning is unchanged by paging — deliberately, because it is
+                   what a reviewer compares ``examined`` against.
+    ``remaining``  the rows at or after the cursor. Equal to ``eligible`` on the
+                   first page, which is why ``truncated`` keeps its old value
+                   on every call that does not page.
+    ``examined``   what THIS call looked at.
+
+    **``truncated`` is ``eligible > examined`` OR carrying a cursor at all, and
+    that is what stops a page from reporting an all-clear.** The second half is
+    not redundant. It is tempting to argue that a cursor has rows behind it by
+    construction and so ``examined`` is always short of ``eligible`` — but
+    ``eligible`` is recounted against ``now`` on every call, while the cursor
+    was minted against an earlier one. Rows the cursor skipped can age out
+    through the moving ``now - lookback`` floor between two calls of the same
+    sweep, and then ``eligible`` no longer counts them: a resumed cursor over a
+    one-row current tail measures ``eligible == examined == 1`` and the count
+    comparison alone would hand it ``no_work``. So cursor presence decides the
+    terminal directly rather than being inferred from a count that does not
+    remember it. ``no_work`` and ``complete`` remain reachable only from a
+    single unpaged call that saw the entire window, which is the only situation
+    in which either is true. Whether a *sweep* finished is the driver's finding
+    to report, not any one page's; ``has_more`` is what the driver loops on.
+
+    This is the same rule the empty-page branch above already applies with
+    ``bool(cursor)``; the two branches agree because it is one rule, not two.
     """
     from app.services.espn_api import get_espn_service
     from app.tasks.repair_authority_id_collisions import _fetch_record
@@ -243,17 +366,40 @@ async def reconcile(
     eligible = await _count_eligible(
         session, sport=sport, lookback=lookback, horizon=horizon
     )
+    remaining = (
+        eligible
+        if not cursor
+        else await _count_eligible(
+            session, sport=sport, lookback=lookback, horizon=horizon, cursor=cursor
+        )
+    )
     rows = await _load_rows(
-        session, sport=sport, limit=limit, lookback=lookback, horizon=horizon
+        session,
+        sport=sport,
+        limit=limit,
+        lookback=lookback,
+        horizon=horizon,
+        cursor=cursor,
     )
     if not rows:
         return {
             "measured": True,
-            "terminal": "no_work",
-            "reason": "no anchored, unfinished rows inside the window",
+            # A cursor that has run off the end of the window is the NORMAL way
+            # a sweep stops, not an empty population — so it may not borrow the
+            # word for one. `no_work` here would tell a driver that the whole
+            # window was clean when all it learned is that it reached the end.
+            "terminal": "no_work" if not cursor else "partial",
+            "reason": (
+                "no anchored, unfinished rows inside the window"
+                if not cursor
+                else "the cursor is past the last row in the window"
+            ),
             "applied": apply,
             "eligible": eligible,
-            "truncated": False,
+            "remaining": remaining,
+            "truncated": bool(cursor),
+            "has_more": False,
+            "next_cursor": None,
             **summarize_decisions([]),
         }
 
@@ -289,7 +435,17 @@ async def reconcile(
                 )
 
     pending = summary["by_verdict"][AUTHORITY_MOVES_US]
-    truncated = eligible > summary["examined"]
+    # A cursored call did not see the window: it deliberately skipped everything
+    # before the cursor, whether or not `eligible` still counts those rows now.
+    # `eligible` is recounted against a moving `now`, so it is not a record of
+    # what this call skipped and cannot be asked to stand in for one.
+    truncated = bool(cursor) or eligible > summary["examined"]
+    # `has_more` is about the CURSOR's tail; `truncated` is about the whole
+    # window. On the last page of a sweep they disagree — nothing follows, yet
+    # this call still saw a minority of the window — and both readings are true.
+    has_more = remaining > summary["examined"]
+    last = rows[-1]
+    next_cursor = encode_cursor(last.commence_time, last.event_id) if has_more else None
     # An authority that answered for nothing is not a clean population. The
     # terminal has to be able to say so, or a dark ESPN reads as "all agree".
     if summary["by_verdict"]["no_answer"] == summary["examined"]:
@@ -315,7 +471,10 @@ async def reconcile(
         "moved": moved,
         "stale": stale,
         "eligible": eligible,
+        "remaining": remaining,
         "truncated": truncated,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
         **summary,
     }
 
@@ -327,7 +486,19 @@ def summarize_for_operator(result: dict[str, Any]) -> str:
     often than they look like they should — the default limit is 200 and the
     window held 685 rows the day this was measured. A reviewer who is told only
     the first number will read a truncated pass as the whole story.
+
+    A truncated call has two different remedies and printing the wrong one
+    wastes the reader's next command: mid-sweep the answer is the cursor, and on
+    the last page there is no remedy at all because nothing is left to see. So
+    the advice is chosen on ``has_more``, not on ``truncated``.
+
+    **A result with no ``has_more`` at all keeps the pre-paging wording.** An
+    absent key is not a ``False`` one, and reading it as False would print "this
+    page ends the window" — the one sentence that says a sweep is finished — on
+    a summary that never measured whether it was. That is gotcha #53 in the
+    shape this module keeps meeting: a missing signal answered as a definite no.
     """
+    unknown = object()
     if not result.get("measured"):
         return f"UNMEASURED — {result.get('reason')}"
     verdicts = result.get("by_verdict") or {}
@@ -339,8 +510,18 @@ def summarize_for_operator(result: dict[str, Any]) -> str:
         if eligible is not None
         else f"examined={examined}"
     )
-    if result.get("truncated"):
-        reach += f" TRUNCATED (raise limit above {eligible} to see the rest)"
+    has_more = result.get("has_more", unknown)
+    if has_more is True:
+        reach += (
+            f" MORE ({result.get('remaining', 0) - (examined or 0)} after this page; "
+            f"pass cursor={result.get('next_cursor')})"
+        )
+    elif result.get("truncated"):
+        reach += (
+            " TAIL (this page ends the window; earlier pages hold the rest)"
+            if has_more is False
+            else f" TRUNCATED (raise limit above {eligible} to see the rest)"
+        )
     return (
         f"{result.get('terminal')}: {reach} "
         f"moved={result.get('moved', 0)} stale={result.get('stale', 0)} · {counts}"
