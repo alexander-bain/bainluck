@@ -346,8 +346,17 @@ public enum ScreenTimingSession {
 
 /// The per-screen wiring, in two words. `.screenTiming("discover")` on the
 /// screen, `.firstRealCard()` on the first real row it renders.
+///
+/// Deliberately NOT an `ObservableObject`, for two independent reasons. Nothing
+/// ever observes it — it is a handle passed down the environment and read
+/// imperatively, so a publisher would be dead weight that invalidates views for
+/// a measurement. And this target builds with
+/// `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES`, under which
+/// `ObservableObject` is NOT visible through SwiftUI's re-export of Combine —
+/// conforming to it here fails to build unless `import Combine` is added, which
+/// would be importing a framework to satisfy a protocol nothing needs.
 @MainActor
-public final class ScreenTimingBox: ObservableObject {
+public final class ScreenTimingBox {
     public private(set) var recorder: ScreenTimingRecorder?
     public init() {}
     func start(surface: String) {
@@ -381,7 +390,9 @@ private extension EnvironmentValues {
 
 private struct ScreenTimingModifier: ViewModifier {
     let surface: String
-    @StateObject private var box = ScreenTimingBox()
+    // `@State`, not `@StateObject`: the box is not observable (see its note), and
+    // `@State` gives the same "created once, survives re-renders" lifetime.
+    @State private var box = ScreenTimingBox()
 
     func body(content: Content) -> some View {
         content
