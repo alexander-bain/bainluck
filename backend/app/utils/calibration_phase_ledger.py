@@ -1509,7 +1509,12 @@ class PhaseLedger:
         return int(budget.unit_ms_worst)
 
     def statement_timeout_for_unit(
-        self, name: str, *, elapsed_ms: int, unit_ms: Optional[float] = None
+        self,
+        name: str,
+        *,
+        elapsed_ms: int,
+        unit_ms: Optional[float] = None,
+        ignore_phase_budget: bool = False,
     ) -> int:
         """The DB backstop for ONE unit of a unit-staged phase — CAL-P081 (#2052).
 
@@ -1553,8 +1558,27 @@ class PhaseLedger:
         Every branch still ends at ``min(phase_bound, ...)``, so a unit can no
         more outlive the beat than it could before, and with neither reference
         measured the phase bound stands unchanged (ruling 075).
+
+        **CAL-P994 / D45(A) — ``ignore_phase_budget``, and why it is not a
+        loosening.** Once the unit loop runs AFTER the publish, the ``futures``
+        phase record no longer describes it: the phase now completes in the time
+        a roster read and a fold take, so its measured budget converges on ~50 s
+        while a unit costs ~70 s (mean) and ~277 s (worst, both measured
+        2026-09-03). Left alone, ``min(phase_bound, unit_bound)`` would cancel
+        every unit at the cost of the phase that no longer contains it, and the
+        rebuild would stop converging a few beats after the reorder shipped —
+        silently, since a unit cancelled at its own bound is a known outcome the
+        loop skips past. So the deferred pass drops the PHASE term and keeps
+        both others: the deadline bound (unchanged, still inner to the Celery
+        soft limit) and the measured unit basis (unchanged). A unit still cannot
+        outlive the beat, and nothing here is bounded by a number nobody
+        measured.
         """
-        phase_bound = self.statement_timeout_for(name, elapsed_ms=elapsed_ms)
+        phase_bound = (
+            _statement_timeout_for(max(2, self.remaining_ms(elapsed_ms=elapsed_ms)))
+            if ignore_phase_budget
+            else self.statement_timeout_for(name, elapsed_ms=elapsed_ms)
+        )
         measured = unit_ms if unit_ms and unit_ms > 0 else self.measured_unit_ms(name)
         mean_basis = int(measured * STAGED_UNIT_OVERRUN_FACTOR) if measured and measured > 0 else 0
         worst = self.measured_unit_worst_ms(name)

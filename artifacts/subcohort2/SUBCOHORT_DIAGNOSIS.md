@@ -14,6 +14,203 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+# THE CERT BOARD — one cell, one cert (CAL-P993, 2026-09-03)
+
+> **THIS SECTION IS THE QUEUE.** Everything below the next `---` is the chronological
+> investigation stack that produced it, kept as evidence and no longer as ordering. Read this
+> table; read a `## STATUS` block only when you need the working for one cell.
+
+**Ranked on the PUBLISHED board, big to small** — `excess_outcomes = (ece − bar) × n`, the amount
+of wrongness a cell puts in front of readers. Read live off production with the lane's own
+instrument, `backend/scripts/calibration_scorecard.py --live`, against
+`generated_at 2026-09-03T04:33:51Z`, `population_version q269`, self-check
+`by_category 34/34 · by_source 7/7` reproduced exactly.
+
+**Board state:** `cells_at_bar 34 / 48` · `cells_queued 14` · `queued_excess_outcomes 200,573` ·
+headline `mce_closing_line 1.71 pp` (target 2.0, PASS).
+
+**A cell is done when three things are on the record, in this order and no other:**
+
+1. **MECHANISM NAMED** — not a description of the symptom. A named mechanism is one that predicts
+   a number before the fold is run.
+2. **FIX** — a change, guarded, with a red-first arm.
+3. **ECE BEFORE → AFTER, MEASURED ON PRODUCTION AFTER A PUBLISH.** Not a fold of a working tree.
+   A fold is what earns a fix its cert; only a published curve closes a cell, because the curve is
+   what a reader sees. The two are in different columns below and they never merge.
+
+🔴 **Eleven of the fourteen queued cells have no cert because they have no named mechanism yet.**
+That is the honest state of the board and it is written as `—`, not as "in progress".
+
+## The four NAMED cells
+
+| # | cell | mechanism (named) | fix | ece before → after |
+|---|---|---|---|---|
+| ★ | **polymarket/baseball** | **K′ `is_player_props_placeholder`** — three rules under one predicate: R1 the both-legs-0.5000 half-spike pair, R2 published-pair incoherence (two legs whose prices do not sum to ~1), R3 the props container. Named by CAL-P168; CAL-P119 pre-registered **4.71 → 2.71** | **SHIPPED.** CERT-652 → CERT-662, merged `2aac5843` 2026-09-01 | **4.71 → 2.85 pp** (n 45,252 → 15,496), **measured on production** at q269. **AT BAR.** Prediction 2.71 vs actual 2.85 — corroborated, *not isolated*: q269 also carries D5 de-dup, RULE E, D12 and the `odds_api_bookmaker` writer repair, and the population moved −66% |
+| 9 | **polymarket/basketball** (`quantity`) | 🔴 **THE BOARD'S NAMED MECHANISM IS REFUTED.** Rank 6 said "price-value (#1978), fallback share 0 EXECUTED, value pending". Measured: R1's class is **3.00 pp on 180 legs** here — for basketball the half-spike is *not* the mechanism. The real one is a **HALF-BOOK**: Polymarket writes only the Over from a real order book (**1,045 / 1,045 Overs carry a book; 652 / 1,045 Unders never showed a bid or a trade**), `POLY_PLACEHOLDER_EXCLUDE` is a PER-LEG rule, so it deletes 398 bookless Unders and publishes their Over partners alone — **407 orphan Overs at a mean 0.4966 that win 9.8%.** Venue-checked 3/3: the Overs really did lose, so this is not a grading defect | **BUILT, GUARDED, NOT COMMITTED.** C2 pair symmetry (one clause on `POLY_PLACEHOLDER_EXCLUDE`) + `tests/test_calibration_poly_pair_symmetry_992.py` (7 tests, all executing the real SQL). Banked `artifacts/cal-p992/C2-pair-symmetry-SHIPPABLE.patch`, verified to apply to HEAD. **Alex ruled calibration-027 = A.** Blocked on ruling 009 — and, since CAL-P993, on a second thing: see the STOP below | **4.43 → 2.25 pp** (n 7,591 → 7,130, gap +3.17 → +0.88) — **FOLDED through the producer's own chain, NOT on production.** `basketball/field` control moves zero rows. Sub-cohort `quantity` 15.43 → 8.85, gap **−9.45 → −0.35** |
+| 9b | **polymarket/basketball** (`container_member`) | Same half-book, same rule, one twentieth of the volume | Rides C2; nothing of its own | 9.99 → 9.53, gap −3.10 → −0.29 (folded). 🔴 **Still 9.53 over a 3.0 bar** — C2 removes the half-book bias and the residual miscalibration of the pairs that DO have two books **is not diagnosed**. This cell is NOT closed by C2 and must not be reported as such |
+| — | **polymarket/baseball/quantity** (the spike exclusion, sub-cohort of ★) | R1, the half-spike pair, in the cell where it WAS the mechanism (CAL-P094 measured 924 / 924 no-book Unders) | Shipped inside K′ | Published q269: **6.74 pp on n 5,730**, gap +1.88. ⚠️ **NOT comparable to the board's old `ece_eligible 15.86`** — that column folds the RAW cell (no dedup, no producer exclusions) restricted to truth-eligible rows; this folds what publishes. On basketball the two instruments disagree by 10 pp. **A before/after across them would be a fabrication and is not offered.** The parent cell ★ is the honest before/after |
+
+### 🛑 The STOP on cell 9, found by CAL-P993 and not by the freeze
+
+Lifting ruling 009 does **not** ship C2. The producer cancels roughly **one beat in three**, so the
+commit would land and the cell still would not publish — and a cell only closes on a published
+curve. Measured 2026-09-03 over the 168-beat ring: **23 beats died mid-unit and 21 of them had a
+Heroku release inside their own window**; the last four terminated **16–28 s** after one. Sentry
+names the exception `CancelledError()`. It is a deploy cycling `worker-heavy`, not calibration.
+
+Worse, and measured the same night: **the rolling restage cannot converge.** The served bank is
+**73% drifted within one hour and 100% drifted within four**; the rebuild that would replace it
+banks 5 units a beat and needs ~20 hours for 128. It therefore consumes ~87% of every beat's window
+buying a bank that is always fully drifted — and that window is precisely the exposure a deploy
+kills. Full working: `PROGRAM-CALIBRATION-REPORT-2.md` CAL-P993, `calibration-028` in alex-inbox.
+
+## The rest of the queue, big to small (live q269)
+
+No cell below has a named mechanism. Listed so the ordering is a fact rather than a memory, and so
+the next queue picks the top row rather than the most recently discussed one.
+
+| # | cell | class | ece | n | gap | bar | excess-outcomes | σ | mechanism |
+|---:|---|:-:|---:|---:|---:|---:|---:|---:|---|
+| 1 | kalshi/entertainment | C | 6.29 | 8,922 | +3.44 | 3.0 | **29,353** | 6.2 | — **LOCALIZED, NOT DIAGNOSED** (CAL-P994, page below). Three bins of ten carry 67% of it: bin 9 `95.4%→78.7%` n 1,104, bin 4 `46.4%→27.2%` n 837, bin 5 `52.4%→64.0%` n 899. Bundle-shape exclusion **REFUTED** by the payload's own census; the raw `field` probe **rejected** as a parallel rail. ⚠️ The old text here read `5.09 → 6.29, went the wrong way`: the same instrument reads **5.87 (q267) → 5.09 (q268) → 6.29 (q269)** — an oscillation, not a trend |
+| 2 | odds_api_bookmaker/basketball_nba | A | 5.18 | 10,186 | +1.03 | 2.5 | 27,298 | 5.4 | — |
+| 3 | kalshi/golf | B | 4.10 | 21,085 | +4.00 | 3.0 | 23,194 | 3.2 | — |
+| 4 | odds_api_bookmaker/baseball_mlb_preseason | A | 8.24 | 3,253 | −7.67 | 2.5 | 18,672 | 6.5 | — |
+| 5 | polymarket/cricket | B | 7.92 | 2,944 | −3.79 | 3.0 | 14,484 | 5.3 | — |
+| 6 | polymarket/economics | C | 4.36 | 9,656 | −0.56 | 3.0 | 13,132 | 2.7 | — |
+| 7 | odds_api_bookmaker/icehockey_nhl | A | 3.89 | 8,658 | +3.04 | 2.5 | 12,035 | 2.6 | — |
+| 8 | odds_api_bookmaker/basketball_wncaab | A | 6.05 | 3,382 | −0.35 | 2.5 | 12,006 | 4.1 | — |
+| **9** | **polymarket/basketball** | **B** | **4.43** | **7,591** | **+3.17** | **3.0** | **10,855** | **2.5** | **half-book — C2 built, blocked (above)** |
+| 10 | polymarket/golf | B | 5.18 | 4,339 | +3.82 | 3.0 | 9,459 | 2.9 | — |
+| 11 | kalshi/tech | C | 10.41 | 1,246 | −8.66 | 3.0 | 9,233 | 5.2 | — |
+| 12 | odds_api_bookmaker/basketball_wnba | A | 4.92 | 3,267 | +0.13 | 2.5 | 7,906 | 2.8 | — |
+| 13 | polymarket/hockey | B | 7.54 | 1,730 | +1.65 | 3.0 | 7,854 | 3.8 | — |
+| 14 | odds_api_bookmaker/basketball_euroleague | A | 5.39 | 1,762 | −4.53 | 2.5 | 5,092 | 2.4 | — |
+
+**Five cells crossed off at q269** and are no longer queued: `polymarket/baseball` (★ above),
+`kalshi/economics`, `polymarket/esports` (7.03 → 2.35), `polymarket/soccer`, `kalshi/crypto`.
+🔴 Only ★ has an isolated before/after; the other four crossed on a rebuild carrying several ships
+at once and **none of them may be claimed by a single cert**.
+
+**`measured_sigma`: 0 of 14 queued cells measured.** No queued cell is currently refuted by the
+sigma ledger, so `cells_at_bar_if_applied` equals `cells_at_bar` — the overlay is not flattering
+this board.
+
+---
+
+## CELL 1 — `kalshi/entertainment` — LOCALIZED, NOT DIAGNOSED (CAL-P994, 2026-09-03)
+
+> **Board contract check: this page does NOT promote the cell to column 1.** A mechanism is one
+> that predicts a number before the fold is run. Nothing here does. What this page buys is three
+> bins to aim at, two candidate mechanisms killed, and a correction to how the row is written.
+
+**Instrument:** the published payload itself (`/api/calibration`, `generated_at
+2026-09-03T04:33:51Z`, `q269`), folded the way `calibration_scorecard.py` folds it — ten bins per
+cell, pooled over `price_moved`. Reproduces the board's `ece 6.29 / n 8,922` to the printed digit.
+
+### Where the 6.29 actually is: three bins of ten carry 67% of it
+
+| bin | n | predicted | actual | err (pp) | error-outcomes |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 3,298 | 3.4% | 2.6% | 0.81 | 27 |
+| 1 | 882 | 13.6% | 10.7% | 2.93 | 26 |
+| 2 | 435 | 24.2% | 18.2% | 6.08 | 26 |
+| 3 | 307 | 34.5% | 30.9% | 3.58 | 11 |
+| **4** | **837** | **46.4%** | **27.2%** | **19.17** | **160** |
+| **5** | **899** | **52.4%** | **64.0%** | **11.55** | **104** |
+| 6 | 292 | 64.6% | 66.4% | 1.86 | 5 |
+| 7 | 403 | 74.6% | 78.7% | 4.04 | 16 |
+| 8 | 465 | 84.7% | 85.2% | 0.42 | 2 |
+| **9** | **1,104** | **95.4%** | **78.7%** | **16.64** | **184** |
+
+Bins 4, 5 and 9 are 448 of the 671 error-points. Two facts worth more than the total:
+
+* **Bin 9 is the single largest contributor and it is the cleanest signal on the page.** 1,104 legs
+  priced at a mean 95.4% win 78.7%. A one-in-five failure rate on a 95% price is not a binning
+  artifact at that n, and it is the same direction as the cell's signed `gap` (+3.44 — the cell
+  over-predicts).
+* **Bins 4 and 5 straddle 0.50 and point in OPPOSITE directions.** Pooled, the pair is n 1,736 at
+  49.4% predicted / 45.9% actual — a 3.5 pp error. Split at the bin boundary they contribute 264
+  error-points instead of ~61. Some of this cell's ECE is the bin edge, not the prices, and any fix
+  measured only on the total will be credited for arithmetic it did not do.
+
+The cell is strongly established either way: `sigma 6.2` on the scorecard is `excess_pp / se`, i.e.
+6.2 standard errors over the 3.0 bar, second only to `baseball_mlb_preseason` on the queue.
+`price_moved` does not split it (True 7.15 on n 6,570, False 6.73 on n 2,352).
+
+### Candidate 1 — the non-exclusive bundle shape. **REFUTED, by the payload's own census.**
+
+`nonexclusive_bundle_filter` currently applies to `esports, kalshi/crypto, kalshi/economics,
+polymarket/baseball` and not to entertainment, so "add entertainment to the exclusion" is the
+obvious first move. The payload's own `nonexclusive_bundle_census` says it would make the cell
+WORSE:
+
+```
+entertainment  published_n 12,330
+               would_exclude_n 5,872   would_exclude_ece 4.26
+               remainder_n     6,458   remainder_ece     9.49
+```
+
+The bundle cohort is the BETTER-calibrated half. Excluding it leaves a remainder at 9.49 pp. Do not
+queue this fix. (The census is category-scoped across sources, so it is evidence about the
+direction, not a prediction of the kalshi-only cell's post-fix number.)
+
+### Candidate 2 — `market_type='field'` legs priced at ~0.49. **REJECTED AS A PARALLEL RAIL.**
+
+A direct probe of `futures_outcomes` for this cell, restricted to legs priced 0.40–0.60, reads:
+
+| market_type | legs | winners | win rate | mean raw price |
+|---|---:|---:|---:|---:|
+| quantity | 2,348 | 742 | 31.6% | 0.4984 |
+| **field** | **1,577** | **186** | **11.8%** | **0.4908** |
+| unshaped | 528 | 187 | 35.4% | 0.4915 |
+| duel | 91 | 37 | 40.7% | 0.4942 |
+
+A 37 pp miss on `field` looks like the answer and **is not admissible as one.** That probe reads
+raw `COALESCE(calibration_probability, opening_probability)` with none of the curve's thirteen live
+exclusion filters and, decisively, without `mex_normalization` — which divides a resolved
+mutually-exclusive market's outcomes by their sum whenever it exceeds 1.15. A `field` leg at a raw
+0.49 inside an eight-way market may publish at 0.12. This is the parallel-rail trap
+`calibration_scorecard.py`'s own docstring is written about, and it is recorded here so the next
+reader does not re-find it and believe it.
+
+### What is actually owed, and it is a measurement, not a build
+
+Bin 9 has three live candidate mechanisms and one query separates them:
+
+1. **the coalesce fallback** (gotcha #144 / ruling 103) — the curve price is
+   `COALESCE(calibration_probability, opening_probability)`, and the payload's global
+   `closing_line_coverage` is `has_closing 16,172 / needs_closing 2,472 / total 18,644` — 13.3% of
+   markets are priced by an OPENING price standing in for a closing one. If that 13.3% is
+   concentrated in this cell's top bin, bin 9 is measuring stale openings on markets that moved;
+2. **a grading defect** — an entertainment market (awards, chart position, box office) resolved
+   against the wrong authority;
+3. **genuine Kalshi over-confidence on entertainment favourites**, which is a finding, not a bug.
+
+The separating query — fallback share and win rate per price bin for this cell — **timed out on
+`db-query` at the default budget** and is not retried here: it is measurement, it needs a chunked
+or `EXPLAIN`-shaped rewrite, and under LANE ROLES it belongs to the measurement lane. Parked in
+`.claude/handoff/PARKED-MEASUREMENTS.md` with the ship it would unblock named.
+
+### The board row should be re-written, and here is the correction
+
+The row reads **"WENT THE WRONG WAY: 5.09 → 6.29"**. On the only instrument with a stored history —
+`artifacts/calibration-scorecard/history.jsonl`, the same `calibration_scorecard.py --live` fold —
+the cell reads:
+
+| population | ece | n |
+|---|---:|---:|
+| q267 (2026-08-02) | **5.87** | 9,489 |
+| q268 (2026-09-02, `ARTIFACT-M-R-NEEDLES-20260902-01.md`) | **5.09** | — |
+| q269 (2026-09-03) | **6.29** | 8,922 |
+
+Three readings, not two: **5.87 → 5.09 → 6.29.** The cell oscillates by ±0.6–1.2 pp between
+rebuilds over a population that moved 9,489 → 8,922. "Went the wrong way" is one leg of an
+oscillation stated as a trend, and it was produced by picking the lower of the two prior readings
+as the baseline. The cell is still the board's largest by excess-outcomes and still 6.2σ over bar —
+its RANK is right and its NARRATIVE is not.
+
+---
+
 ## STATUS 2026-08-31 19:5xZ (CAL-P161) — **CHECK 1 IS NOT "REFUTED" ANYWHERE ON THE TOP OF THE BOARD. IT IS UNMEASURED — THE SAMPLE IT RESTS ON IS BIASED LOW BY A FACTOR WE HAVE ALREADY MEASURED AS ∞ (0.000 → 0.148 ON THE SAME CELL).**
 
 *Executes CAL-P160's board-wide method correction — re-bound every cell's check 1 as

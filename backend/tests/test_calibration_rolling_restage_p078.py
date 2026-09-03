@@ -497,6 +497,13 @@ class _FakeRunner:
         self.owner = OWNER
         self.generation = generation
         self._elapsed = 0
+        # CAL-P994 / D45(A): the loop's runner protocol grew a one-way flag for
+        # "this beat's unit loop belongs after the publish". A fake implements
+        # the protocol its subject uses (CAL-P076's banked lesson).
+        self.rebuild_deferred = False
+
+    def defer_rebuild(self):
+        self.rebuild_deferred = True
 
     def stage(self, _name):
         # Each unit read costs a slice of the window, which is what makes the
@@ -520,7 +527,7 @@ class _FakeRunner:
     def measured_unit_ms(self, _phase):
         return None
 
-    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None):
+    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None, deferred_rebuild=False):
         return None
 
 
@@ -583,9 +590,25 @@ class TestTheFrozenLoopActuallyReStages:
 
     @staticmethod
     async def _beat(pc, *, roster, window_ms, unit_n=3, generation=1):
+        """ONE production beat — which since CAL-P994 / D45(A) is TWO passes.
+
+        The publish pass runs the unit loop only when there is no complete
+        served bank to publish from; when there is one, it publishes from it and
+        defers the loop, and the orchestrator runs the loop afterwards on what is
+        left of the window. This helper models the BEAT rather than the call, so
+        every assertion below keeps asking its original question — "did this beat
+        re-stage, and did it publish?" — of the same subject it always asked it
+        of. ``unit_reads_before_publish`` is kept separately so a test can assert
+        WHICH pass did the reading, which is the reorder's whole content.
+        """
         db = _FakeDB(roster, unit_n=unit_n)
         runner = _FakeRunner(window_ms=window_ms, generation=generation)
         merged = await pc._run_staged_futures(db, runner, lambda frozen: "SELECT 2")
+        db.unit_reads_before_publish = db.unit_reads
+        if runner.rebuild_deferred:
+            await pc._run_staged_futures(
+                db, runner, lambda frozen: "SELECT 2", rebuild_only=True
+            )
         return merged, runner, db
 
     @pytest.mark.asyncio
@@ -610,6 +633,17 @@ class TestTheFrozenLoopActuallyReStages:
         )
         assert runner2.ledger.stages.get("staged:units_this_beat", 0) > 0
         assert second is not None, "and it must still publish while it rebuilds"
+        # CAL-P994 / D45(A). #2007's question is unchanged and still answered
+        # above — the census keeps advancing. What this queue adds is WHEN, and
+        # the two assertions are not the same one twice: a beat that re-staged
+        # before publishing would satisfy the three above and would still be
+        # spending the ~21 minutes a deploy kills.
+        assert runner2.rebuild_deferred, (
+            "a complete served bank must publish FIRST and rebuild second"
+        )
+        assert db2.unit_reads_before_publish == 0, (
+            "the publish pass ran the unit loop — the reorder is not in effect"
+        )
 
     @pytest.mark.asyncio
     async def test_the_curve_keeps_publishing_through_a_partial_rebuild(self, wiring):
@@ -620,25 +654,49 @@ class TestTheFrozenLoopActuallyReStages:
         first, _r, _d = await self._beat(pc, roster=roster, window_ms=10_000_000)
         assert first is not None
 
-        # A window that admits only a couple of units before it closes.
-        partial, runner, db = await self._beat(pc, roster=roster, window_ms=250)
+        # A window that admits only a couple of units before it closes. Widened
+        # from 250 by CAL-P994 / D45(A): the rebuild pass now starts AFTER the
+        # publish pass, so it pays the publish pass's stages and its own roster
+        # read before its first unit, and 250 no longer leaves room for one. The
+        # property is unchanged — stop early, keep serving — and the new
+        # boundary case (no window left at all for the rebuild) has a guard of
+        # its own in ``test_calibration_publish_first_994.py``.
+        partial, runner, db = await self._beat(pc, roster=roster, window_ms=450)
         assert 0 < db.unit_reads < _plan_size(roster), "the beat must stop early, not finish"
+        assert db.unit_reads_before_publish == 0, "and it must stop early AFTER publishing"
         assert partial is not None, "a partial rebuild took the curve dark"
 
     @pytest.mark.asyncio
     async def test_a_finished_rebuild_takes_over_and_the_payload_changes(self, wiring):
-        """The re-stage is not decorative: new rows reach the published census."""
+        """The re-stage is not decorative: new rows reach the published census.
+
+        **CAL-P994 / D45(A) moved this by exactly one beat, and that is the
+        reorder's whole cost — written here rather than argued about.** Beat 2's
+        rebuild now runs after beat 2 has already published, so beat 2 serves
+        beat 1's census and beat 3 is the first to serve the new one. The
+        property under test is unchanged: a completed rebuild reaches readers.
+        What changed is when, and one beat of freshness against a served bank
+        that is 100% drifted within four hours either way is the cheaper side of
+        the trade.
+        """
         pc, store, _saves = wiring
         roster = _roster(60)
 
         first, _r1, _d1 = await self._beat(pc, roster=roster, window_ms=10_000_000)
         firstn = _bucket_mass(first)
 
-        second, _r2, _d2 = await self._beat(
+        second, runner2, _d2 = await self._beat(
             pc, roster=roster, window_ms=10_000_000, unit_n=50
         )
-        secondn = _bucket_mass(second)
-        assert secondn > firstn, (
+        assert runner2.rebuild_deferred
+        assert _bucket_mass(second) == firstn, (
+            "beat 2 published something other than the census it was serving "
+            "when it started — the publish pass is not reading the served bank"
+        )
+
+        third, _r3, _d3 = await self._beat(pc, roster=roster, window_ms=10_000_000)
+        thirdn = _bucket_mass(third)
+        assert thirdn > firstn, (
             "a completed rebuild did not reach the published payload — the bank "
             "is still frozen, just with two of them"
         )
@@ -678,14 +736,22 @@ class TestTheFrozenLoopActuallyReStages:
         plan = _plan_size(roster)
         seen = []
         for _ in range(6):
+            # CAL-P994 / D45(A): a beat is two passes once a served bank exists.
+            # Driven inline rather than through ``_beat`` so the trace above can
+            # keep reporting per-beat cursor state between them.
             db = _FakeDB(roster)
             runner = _FakeRunner(window_ms=1300)
             merged = await pc._run_staged_futures(db, runner, lambda frozen: "SELECT 2")
+            if runner.rebuild_deferred:
+                await pc._run_staged_futures(
+                    db, runner, lambda frozen: "SELECT 2", rebuild_only=True
+                )
             cursor = store["cursor"]
             seen.append(
                 {
                     "ran": db.unit_reads,
                     "published": merged is not None,
+                    "deferred": runner.rebuild_deferred,
                     "served": len(cursor["served_units"]),
                     "building": len(cursor["committed_units"]),
                     "served_at": cursor["served_at"],

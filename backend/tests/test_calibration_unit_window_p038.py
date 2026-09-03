@@ -160,7 +160,7 @@ class _FakeRunner:
     def measured_unit_ms(self, _phase):
         return None
 
-    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None) -> int:
+    async def apply_unit_statement_timeout(self, _db, _phase, *, unit_ms=None, deferred_rebuild=False) -> int:
         left = self.ledger.remaining_ms(elapsed_ms=self._elapsed)
         self.timeouts_applied.append(left)
         return left
