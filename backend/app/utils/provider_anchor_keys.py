@@ -50,6 +50,27 @@ the three possible answers. The fix is three-valued, not two-valued:
 is most of the value here. A comparison that cannot say "I don't know" will say
 something else instead.
 
+## Amendment, 2026-09-03 (D55, #2879): the ANCHOR KEY no longer counts digits
+
+Everything above is the *comparison* of two raw `events.statpal_fixture_id`
+values, and it still stands: that column is an untagged union, the only thing
+distinguishing its two spaces is their length, and `compare_statpal_ids` has to
+read the length to say `INCOMPARABLE` honestly.
+
+The **anchor key** is a different question with a better answer available, and
+it no longer uses that reading. `statpal_anchor_key` is qualified by the
+**sport**, because the caller knows the sport for certain where the id's space
+was only ever inferred. Counting digits gave three wrong answers at once the
+moment a second sport arrived — NFL's 6-digit `contestid` filed into MLB's `s6`,
+tennis's 7-digit id anchorable nowhere, NBA/NHL unmeasured — and none of them
+raised. See `statpal_anchor_key` for the full argument and for the two-step
+sequence that removes the legacy branch.
+
+Read this way, the two functions disagree about nothing. One asks *"are these
+two values from the same space?"*, which only the values can answer. The other
+asks *"what is this fixture's identity?"*, which the caller can answer better
+than the value can.
+
 ## What this module deliberately does NOT do
 
 It does not absorb, does not write, does not read the database, and does not
@@ -182,23 +203,170 @@ def compare_statpal_ids(a: Optional[str], b: Optional[str]) -> str:
     return AGREE if str(a).strip() == str(b).strip() else CONFLICT
 
 
-def statpal_anchor_key(fixture_id: Optional[str]) -> Optional[AnchorKey]:
-    """The anchor row for a StatPal fixture id, namespace-qualified.
+def statpal_anchor_key(
+    fixture_id: Optional[str], sport_key: Optional[str] = None
+) -> Optional[AnchorKey]:
+    """The anchor row for a StatPal fixture id, qualified by its SPORT (D55).
 
-    Returns `None` — write nothing — when the namespace is unknown. That is the
-    Kalshi bare-prefix ruling applied to the provider it was not written for:
-    an unqualified `source_id` in a `(source, source_id, id_kind)` unique index
-    is an invitation for two different games to collide on one key, and the
-    consequence of that collision is an absorption, not a bad row.
+    ## Why the qualifier is the sport and not the id's shape (#2879, D55)
+
+    The original version chose its namespace by counting digits — `^\\d{6}$` was
+    `s6`, `^\\d{10}$` was `s10` — because the two id spaces we had measured
+    differed in length and nothing else was available to tell them apart. That
+    reading held exactly as long as one sport was in the table. It is wrong the
+    moment a second arrives, and it is wrong in three different directions at
+    once:
+
+      * **NFL `contestid`s are 6 digits** (`280445`-`280772`, measured 374 of
+        them on 2026-09-03). They would have been filed as `s6:` — MLB's space —
+        and the unique key `(source, source_id, id_kind)` spans every sport.
+      * **Tennis fixture ids are 7 digits** (`2629673`), matching neither
+        regex, so tennis resolved to `None` and was *not anchorable at all*.
+        Step 4 of the AUTHORITY program could have been built, tested, deployed
+        and stamped nothing.
+      * **NBA/NHL were simply unmeasured**, which is the same problem wearing a
+        different hat: a rule that must be re-verified against every future id
+        space is not a rule, it is a standing appointment.
+
+    Alex ruled the same shape for Kalshi on 2026-08-21 — a `game` anchor is
+    written only as `sport_key:game_id`, never bare — and `kalshi_anchor_key`
+    below has done it since. D55 (2026-09-03) applies it here: the qualifier is
+    the sport the fixture belongs to, which the caller knows for certain, rather
+    than a property of the id that we are inferring. **The sport is data we are
+    given; the namespace was a guess.**
+
+    So a key is `sport_key:fixture_id`, and with `source='statpal'` on the row
+    that is the `(provider, sport, id)` tuple D55 asks for.
+
+    ## The legacy branch, and when it is deleted
+
+    `sport_key=None` still returns the old digit-derived key. That is a
+    deliberate, temporary bridge and it is the only reason this change can ship
+    without darkening a live channel: the two production call sites are in
+    `event_registry.py`, which is lane1's file under D50, so they cannot be
+    updated in the same commit. The order is:
+
+        1. this change      — accept a sport, keep the old answer without one
+        2. lane1            — pass `sport_key=identity.sport_key` (two lines)
+        3. this lane again  — re-key the 91 live `s6:` MLB anchors, then DELETE
+                              the branch below and the digit path with it
+
+    Until step 3 lands, `anchor_channel.anchor_key_for_claim` logs every
+    unqualified StatPal request, so the bridge is *observable* rather than
+    merely tolerated. Deleting it before step 2 would strand every StatPal
+    anchor in the `NO_ANCHOR_CHANNEL` state that ruling 048's amendment exists
+    to forbid, which is a worse answer than one deploy of a logged fallback.
+
+    Refusing to write is still the correct failure for an id we cannot key:
+    `None` here means *write nothing and match nothing*, and a `game` anchor on
+    an unqualified id is the one outcome that can merge two real games.
     """
-    ns = statpal_namespace(fixture_id)
+    if fixture_id is None:
+        return None
+    token = str(fixture_id).strip()
+    if not token:
+        return None
+
+    # `None` means "this caller has not been updated yet" and takes the legacy
+    # branch. A sport_key that is PRESENT but blank means the caller tried to
+    # qualify and had nothing to qualify with, which is a different fact and
+    # gets the conservative answer: refuse. Collapsing the two would let a
+    # caller with an empty sport field fall silently back onto the digit rule —
+    # the exact silence this ruling is removing.
+    if sport_key is not None:
+        qualifier = str(sport_key).strip()
+        # A qualifier that is empty or carries the separator produces a key that
+        # cannot be split back apart, and `anchor_is_current` re-derives the
+        # sport from exactly that split. Refuse rather than emit a key its own
+        # reader will misread.
+        if not qualifier or ":" in qualifier:
+            return None
+        return AnchorKey(
+            source=SOURCE_STATPAL,
+            source_id=f"{qualifier}:{token}",
+            id_kind=ANCHOR_KIND_GAME,
+        )
+
+    # --- LEGACY BRIDGE, deleted at step 3 above (D55 / #2879) ---
+    ns = statpal_namespace(token)
     if ns is None:
         return None
     return AnchorKey(
         source=SOURCE_STATPAL,
-        source_id=f"{ns}:{str(fixture_id).strip()}",
+        source_id=f"{ns}:{token}",
         id_kind=ANCHOR_KIND_GAME,
     )
+
+
+#: The two digit-derived prefixes this module used before D55, as they appear in
+#: `event_provider_anchors.source_id`. Named here rather than rebuilt by the
+#: re-key script, so that deleting the legacy branch above and finding this
+#: constant's remaining readers is one grep instead of an archaeology exercise.
+STATPAL_LEGACY_SOURCE_ID_PREFIXES = (
+    f"{STATPAL_NS_SHORT}:",
+    f"{STATPAL_NS_LONG}:",
+)
+
+
+def statpal_bare_fixture_id(source_id: Optional[str]) -> Optional[str]:
+    """The unqualified fixture id inside a StatPal `source_id`, either shape.
+
+    `baseball_mlb:354453` and `s6:354453` both yield `354453`. `None` for a
+    value with no qualifier at all — which is not a shape this module has ever
+    written, and is exactly the bare `source_id` the whole file exists to
+    prevent.
+    """
+    if not source_id:
+        return None
+    token = str(source_id).strip()
+    if ":" not in token:
+        return None
+    bare = token.split(":", 1)[1].strip()
+    return bare or None
+
+
+def statpal_legacy_source_id(key: Optional[AnchorKey]) -> Optional[str]:
+    """The pre-D55 `source_id` the same fixture would have been written under.
+
+    Returns `None` when there is no such value: a non-StatPal key, a key that is
+    already legacy, or a fixture id whose digit count matched neither of the two
+    shapes the old rule knew — which is the tennis case, and is precisely why the
+    old rule had to go.
+
+    This exists for the transition read in `anchor_channel.find_event_by_anchor`
+    and for the re-key script, and it is deleted with them. It is written as a
+    derivation rather than a stored mapping on purpose: a mapping would have to
+    be maintained, and the whole point is that this has one job and then stops.
+    """
+    if key is None or key.source != SOURCE_STATPAL:
+        return None
+    if statpal_sport_from_source_id(key.source_id) is None:
+        return None  # already legacy — nothing to translate back to
+    bare = statpal_bare_fixture_id(key.source_id)
+    ns = statpal_namespace(bare)
+    if ns is None:
+        return None
+    return f"{ns}:{bare}"
+
+
+def statpal_sport_from_source_id(source_id: Optional[str]) -> Optional[str]:
+    """The sport qualifier of an already-written StatPal `source_id`, if it has one.
+
+    `None` for a legacy `s6:`/`s10:` key and for anything unsplittable. Used by
+    `anchor_channel.anchor_is_current`, which must re-derive a key from the bare
+    column value and needs the SAME qualifier the writer used — reading it back
+    off the stored key is exact and costs no lookup, where resolving the event's
+    sport would cost a query to answer a question the key already answers.
+    """
+    if not source_id:
+        return None
+    token = str(source_id).strip()
+    if ":" not in token:
+        return None
+    prefix = token.split(":", 1)[0]
+    if f"{prefix}:" in STATPAL_LEGACY_SOURCE_ID_PREFIXES:
+        return None
+    return prefix or None
 
 
 def kalshi_anchor_key(ticker: Optional[str]) -> Optional[AnchorKey]:
