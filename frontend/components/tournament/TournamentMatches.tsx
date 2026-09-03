@@ -26,6 +26,8 @@ import {
   formatMove,
   localDayKey,
   moveDirection,
+  slateEmptyState,
+  type SlateEmptyState,
   type SlateNotice,
 } from "@/lib/slate";
 
@@ -503,7 +505,7 @@ export default function TournamentMatches({
   eventIds,
   initialRound,
   initialExpanded = false,
-  emptyHint,
+  empty,
   notice,
 }: {
   entries: MatchListEntry[];
@@ -529,8 +531,16 @@ export default function TournamentMatches({
   initialExpanded?: boolean;
   /* UX-P154: `initialOpenMatchId` is gone with the drawer it opened. There is
      no per-row expanded state left to seed — the tap navigates. */
-  /** What to say when this draw has no matches at all. */
-  emptyHint?: string;
+  /**
+   * What to say when this draw has no matches at all (#2707).
+   *
+   * Was `emptyHint?: string`, a DETAIL line under a hard-coded "No matches
+   * scheduled" headline. The headline was the lie, so the headline had to
+   * become the caller's to own too — and it is computed by `slateEmptyState`
+   * rather than written at the call site, so that the rule about what an empty
+   * list may claim lives in one pure function a guard can reach (ruling 005).
+   */
+  empty?: SlateEmptyState;
   /**
    * The feed-wide honesty banner (`slateNotice`). Kept verbatim from
    * `TournamentSlate`: it is the ONLY thing that says "these are the last
@@ -545,16 +555,23 @@ export default function TournamentMatches({
   const [expanded, setExpanded] = React.useState(initialExpanded);
 
   if (entries.length === 0) {
+    // #2707: the fallback is the HEDGED state, not the confident one. A caller
+    // that passes nothing has told this component nothing about why the list is
+    // empty, and "No matches scheduled" was this component answering that
+    // question anyway — on 2026-09-03, over five live matches.
+    const state =
+      empty ?? slateEmptyState({ drawReleased: true, orderOfPlayListed: 0 });
     return (
       <section
         className="mt-6 rounded-2xl border border-surface-border bg-surface-card px-4 py-6 text-center"
         data-testid="matches-empty"
+        data-empty-cause={state.cause}
       >
-        <div className="text-[15px] font-semibold text-text-primary">No matches scheduled</div>
+        <div className="text-[15px] font-semibold text-text-primary">{state.headline}</div>
         <p className="mt-1 text-[13px] text-text-secondary">
           {/* Ruling 142: "Matches appear here as they are scheduled" described
               what the section would hold. The schedule is the fact. */}
-          {emptyHint ?? "Nothing is on right now. This is where the day's matches sit."}
+          {state.detail}
         </p>
       </section>
     );

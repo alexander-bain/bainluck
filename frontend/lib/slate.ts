@@ -251,10 +251,19 @@ export interface SlateData {
   /**
    * How many competitions the ESPN order-of-play overlay carried (Q463).
    *
-   * `0` with an empty list means the overlay is not reaching us; a positive
-   * number with an empty list means the tournament genuinely has nothing on.
-   * Before this the two were the same empty card, and the first of them ran
-   * for a full day (gotcha #53).
+   * `0` with an empty list means the overlay is not reaching us. Before this
+   * the two were the same empty card, and the first of them ran for a full day
+   * (gotcha #53).
+   *
+   * ⚠️ THE OTHER HALF OF THIS NOTE WAS WRONG AND IS DELETED (#2707). It read
+   * "a positive number with an empty list means the tournament genuinely has
+   * nothing on", and on 2026-09-03 this field was 625 with an empty list while
+   * five matches were on court. The count is competitions the authority is
+   * carrying, not competitions still to come, so it can never certify an empty
+   * day. What it does certify is that the authority still has this tournament
+   * on its board — which makes the empty list ours to explain. See
+   * `slateEmptyState`, which is now the only thing allowed to draw a
+   * conclusion from this number.
    */
   order_of_play_listed?: number;
   dropped: Record<string, number>;
@@ -440,6 +449,96 @@ export interface SlateNotice {
   tone: "stale" | "dark";
   headline: string;
   detail: string;
+}
+
+export interface SlateEmptyState {
+  headline: string;
+  detail: string;
+  /**
+   * Which of the three empty states this is, for the guards and for the DOM.
+   *
+   * - `pre-draw` — the fixtures do not exist yet. The only one of the three in
+   *   which "no matches" is a true sentence.
+   * - `unrendered` — the authority listed this tournament on today's board and
+   *   we published none of it. OUR failure, and the card says so.
+   * - `unlisted` — the authority listed nothing. Either the tournament is over
+   *   or the feed is dark, and an empty slate cannot tell those apart.
+   */
+  cause: "pre-draw" | "unrendered" | "unlisted";
+}
+
+/**
+ * WHAT AN EMPTY MATCH LIST IS ALLOWED TO SAY (#2707, defect class D27).
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * On 2026-09-03 at 17:27Z the US Open hub printed "No matches scheduled —
+ * Nothing is on right now" at phone width while Auger-Aliassime–Khachanov and
+ * four other rows were live on court. The payload behind it: `slate.count 0`,
+ * `order_of_play_listed 625`, `dropped {ALREADY_PLAYED 28, DECIDED 96}`.
+ *
+ * So the page did not report an empty day. It reported ITS OWN EMPTY OUTPUT as
+ * a fact about the world, and the reader has no way to tell the difference.
+ * That is the error-dressed-as-empty-data class, and the standing posture of
+ * this file — the server decides, the UI only decides how loudly to say so —
+ * says the UI may not upgrade "I rendered nothing" into "nothing exists".
+ *
+ * ═══ THE DISCRIMINATOR ═══
+ *
+ * `order_of_play_listed` was added by Q463 (gotcha #53) for exactly this, and
+ * the note on `SlateData` drew HALF the right conclusion from it. Verbatim:
+ * "a positive number with an empty list means the tournament genuinely has
+ * nothing on." That is the sentence this function exists to retire. 625 is a
+ * count of competitions the authority is carrying for this tournament — it is
+ * not a claim that any of them is upcoming, so it can be large on a day whose
+ * whole card we failed to render. It IS, however, proof that the authority
+ * still has this tournament on its board, which makes an empty list ours to
+ * explain rather than the world's.
+ *
+ * The `0` case stays deliberately hedged. A finished tournament and a dark
+ * feed produce the same zero, and the honest sentence covers both without
+ * pretending to know which: nothing is listed, and if a match is on we are not
+ * seeing it.
+ */
+export function slateEmptyState(args: {
+  /** Has the draw ceremony happened? Before it, the fixtures truly do not exist. */
+  drawReleased: boolean;
+  /** The payload's own words for when the draw lands — never a hard-coded weekday (UX-P145). */
+  mainDrawLabel?: string | null;
+  /**
+   * `slate.order_of_play_listed`. `undefined` on a payload written before the
+   * field existed, and read the same as `0` — hedged, never confident.
+   */
+  orderOfPlayListed?: number | null;
+}): SlateEmptyState {
+  if (!args.drawReleased) {
+    return {
+      cause: "pre-draw",
+      headline: "No matches scheduled yet",
+      detail: args.mainDrawLabel
+        ? `This is where the day's matches sit, and the draw fills them in ${args.mainDrawLabel}.`
+        : "This is where the day's matches sit, once the draw is made.",
+    };
+  }
+
+  const listed = args.orderOfPlayListed;
+  if (typeof listed === "number" && Number.isFinite(listed) && listed > 0) {
+    return {
+      cause: "unrendered",
+      headline: "We can't show today's schedule",
+      // Names OUR failure and does not soften it. A match may well be on right
+      // now; saying "nothing is on" here is the thing that broke.
+      detail:
+        "The schedule feed has this tournament on today's board, but none of it reached this list — so a match that is on right now would be missing. We're checking.",
+    };
+  }
+
+  return {
+    cause: "unlisted",
+    headline: "No matches listed right now",
+    detail:
+      "The schedule feed returned nothing for this tournament. If a match is on, we are not seeing it — we're checking.",
+  };
 }
 
 /** The visible admission, same posture as the board's. `null` when genuinely live. */
