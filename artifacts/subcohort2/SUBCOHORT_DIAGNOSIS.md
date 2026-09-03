@@ -14,6 +14,89 @@ fallback share` (#1978 class) → `de-vig vs venue` → `shape semantics (sum-to
 
 ---
 
+# THE CERT BOARD — one cell, one cert (CAL-P993, 2026-09-03)
+
+> **THIS SECTION IS THE QUEUE.** Everything below the next `---` is the chronological
+> investigation stack that produced it, kept as evidence and no longer as ordering. Read this
+> table; read a `## STATUS` block only when you need the working for one cell.
+
+**Ranked on the PUBLISHED board, big to small** — `excess_outcomes = (ece − bar) × n`, the amount
+of wrongness a cell puts in front of readers. Read live off production with the lane's own
+instrument, `backend/scripts/calibration_scorecard.py --live`, against
+`generated_at 2026-09-03T04:33:51Z`, `population_version q269`, self-check
+`by_category 34/34 · by_source 7/7` reproduced exactly.
+
+**Board state:** `cells_at_bar 34 / 48` · `cells_queued 14` · `queued_excess_outcomes 200,573` ·
+headline `mce_closing_line 1.71 pp` (target 2.0, PASS).
+
+**A cell is done when three things are on the record, in this order and no other:**
+
+1. **MECHANISM NAMED** — not a description of the symptom. A named mechanism is one that predicts
+   a number before the fold is run.
+2. **FIX** — a change, guarded, with a red-first arm.
+3. **ECE BEFORE → AFTER, MEASURED ON PRODUCTION AFTER A PUBLISH.** Not a fold of a working tree.
+   A fold is what earns a fix its cert; only a published curve closes a cell, because the curve is
+   what a reader sees. The two are in different columns below and they never merge.
+
+🔴 **Eleven of the fourteen queued cells have no cert because they have no named mechanism yet.**
+That is the honest state of the board and it is written as `—`, not as "in progress".
+
+## The four NAMED cells
+
+| # | cell | mechanism (named) | fix | ece before → after |
+|---|---|---|---|---|
+| ★ | **polymarket/baseball** | **K′ `is_player_props_placeholder`** — three rules under one predicate: R1 the both-legs-0.5000 half-spike pair, R2 published-pair incoherence (two legs whose prices do not sum to ~1), R3 the props container. Named by CAL-P168; CAL-P119 pre-registered **4.71 → 2.71** | **SHIPPED.** CERT-652 → CERT-662, merged `2aac5843` 2026-09-01 | **4.71 → 2.85 pp** (n 45,252 → 15,496), **measured on production** at q269. **AT BAR.** Prediction 2.71 vs actual 2.85 — corroborated, *not isolated*: q269 also carries D5 de-dup, RULE E, D12 and the `odds_api_bookmaker` writer repair, and the population moved −66% |
+| 9 | **polymarket/basketball** (`quantity`) | 🔴 **THE BOARD'S NAMED MECHANISM IS REFUTED.** Rank 6 said "price-value (#1978), fallback share 0 EXECUTED, value pending". Measured: R1's class is **3.00 pp on 180 legs** here — for basketball the half-spike is *not* the mechanism. The real one is a **HALF-BOOK**: Polymarket writes only the Over from a real order book (**1,045 / 1,045 Overs carry a book; 652 / 1,045 Unders never showed a bid or a trade**), `POLY_PLACEHOLDER_EXCLUDE` is a PER-LEG rule, so it deletes 398 bookless Unders and publishes their Over partners alone — **407 orphan Overs at a mean 0.4966 that win 9.8%.** Venue-checked 3/3: the Overs really did lose, so this is not a grading defect | **BUILT, GUARDED, NOT COMMITTED.** C2 pair symmetry (one clause on `POLY_PLACEHOLDER_EXCLUDE`) + `tests/test_calibration_poly_pair_symmetry_992.py` (7 tests, all executing the real SQL). Banked `artifacts/cal-p992/C2-pair-symmetry-SHIPPABLE.patch`, verified to apply to HEAD. **Alex ruled calibration-027 = A.** Blocked on ruling 009 — and, since CAL-P993, on a second thing: see the STOP below | **4.43 → 2.25 pp** (n 7,591 → 7,130, gap +3.17 → +0.88) — **FOLDED through the producer's own chain, NOT on production.** `basketball/field` control moves zero rows. Sub-cohort `quantity` 15.43 → 8.85, gap **−9.45 → −0.35** |
+| 9b | **polymarket/basketball** (`container_member`) | Same half-book, same rule, one twentieth of the volume | Rides C2; nothing of its own | 9.99 → 9.53, gap −3.10 → −0.29 (folded). 🔴 **Still 9.53 over a 3.0 bar** — C2 removes the half-book bias and the residual miscalibration of the pairs that DO have two books **is not diagnosed**. This cell is NOT closed by C2 and must not be reported as such |
+| — | **polymarket/baseball/quantity** (the spike exclusion, sub-cohort of ★) | R1, the half-spike pair, in the cell where it WAS the mechanism (CAL-P094 measured 924 / 924 no-book Unders) | Shipped inside K′ | Published q269: **6.74 pp on n 5,730**, gap +1.88. ⚠️ **NOT comparable to the board's old `ece_eligible 15.86`** — that column folds the RAW cell (no dedup, no producer exclusions) restricted to truth-eligible rows; this folds what publishes. On basketball the two instruments disagree by 10 pp. **A before/after across them would be a fabrication and is not offered.** The parent cell ★ is the honest before/after |
+
+### 🛑 The STOP on cell 9, found by CAL-P993 and not by the freeze
+
+Lifting ruling 009 does **not** ship C2. The producer cancels roughly **one beat in three**, so the
+commit would land and the cell still would not publish — and a cell only closes on a published
+curve. Measured 2026-09-03 over the 168-beat ring: **23 beats died mid-unit and 21 of them had a
+Heroku release inside their own window**; the last four terminated **16–28 s** after one. Sentry
+names the exception `CancelledError()`. It is a deploy cycling `worker-heavy`, not calibration.
+
+Worse, and measured the same night: **the rolling restage cannot converge.** The served bank is
+**73% drifted within one hour and 100% drifted within four**; the rebuild that would replace it
+banks 5 units a beat and needs ~20 hours for 128. It therefore consumes ~87% of every beat's window
+buying a bank that is always fully drifted — and that window is precisely the exposure a deploy
+kills. Full working: `PROGRAM-CALIBRATION-REPORT-2.md` CAL-P993, `calibration-028` in alex-inbox.
+
+## The rest of the queue, big to small (live q269)
+
+No cell below has a named mechanism. Listed so the ordering is a fact rather than a memory, and so
+the next queue picks the top row rather than the most recently discussed one.
+
+| # | cell | class | ece | n | gap | bar | excess-outcomes | σ | mechanism |
+|---:|---|:-:|---:|---:|---:|---:|---:|---:|---|
+| 1 | kalshi/entertainment | C | 6.29 | 8,922 | +3.44 | 3.0 | **29,353** | 6.2 | — 🔴 **WENT THE WRONG WAY**: 5.09 → 6.29 at q269. Now the board's largest cell. Undiagnosed |
+| 2 | odds_api_bookmaker/basketball_nba | A | 5.18 | 10,186 | +1.03 | 2.5 | 27,298 | 5.4 | — |
+| 3 | kalshi/golf | B | 4.10 | 21,085 | +4.00 | 3.0 | 23,194 | 3.2 | — |
+| 4 | odds_api_bookmaker/baseball_mlb_preseason | A | 8.24 | 3,253 | −7.67 | 2.5 | 18,672 | 6.5 | — |
+| 5 | polymarket/cricket | B | 7.92 | 2,944 | −3.79 | 3.0 | 14,484 | 5.3 | — |
+| 6 | polymarket/economics | C | 4.36 | 9,656 | −0.56 | 3.0 | 13,132 | 2.7 | — |
+| 7 | odds_api_bookmaker/icehockey_nhl | A | 3.89 | 8,658 | +3.04 | 2.5 | 12,035 | 2.6 | — |
+| 8 | odds_api_bookmaker/basketball_wncaab | A | 6.05 | 3,382 | −0.35 | 2.5 | 12,006 | 4.1 | — |
+| **9** | **polymarket/basketball** | **B** | **4.43** | **7,591** | **+3.17** | **3.0** | **10,855** | **2.5** | **half-book — C2 built, blocked (above)** |
+| 10 | polymarket/golf | B | 5.18 | 4,339 | +3.82 | 3.0 | 9,459 | 2.9 | — |
+| 11 | kalshi/tech | C | 10.41 | 1,246 | −8.66 | 3.0 | 9,233 | 5.2 | — |
+| 12 | odds_api_bookmaker/basketball_wnba | A | 4.92 | 3,267 | +0.13 | 2.5 | 7,906 | 2.8 | — |
+| 13 | polymarket/hockey | B | 7.54 | 1,730 | +1.65 | 3.0 | 7,854 | 3.8 | — |
+| 14 | odds_api_bookmaker/basketball_euroleague | A | 5.39 | 1,762 | −4.53 | 2.5 | 5,092 | 2.4 | — |
+
+**Five cells crossed off at q269** and are no longer queued: `polymarket/baseball` (★ above),
+`kalshi/economics`, `polymarket/esports` (7.03 → 2.35), `polymarket/soccer`, `kalshi/crypto`.
+🔴 Only ★ has an isolated before/after; the other four crossed on a rebuild carrying several ships
+at once and **none of them may be claimed by a single cert**.
+
+**`measured_sigma`: 0 of 14 queued cells measured.** No queued cell is currently refuted by the
+sigma ledger, so `cells_at_bar_if_applied` equals `cells_at_bar` — the overlay is not flattering
+this board.
+
+---
+
 ## STATUS 2026-08-31 19:5xZ (CAL-P161) — **CHECK 1 IS NOT "REFUTED" ANYWHERE ON THE TOP OF THE BOARD. IT IS UNMEASURED — THE SAMPLE IT RESTS ON IS BIASED LOW BY A FACTOR WE HAVE ALREADY MEASURED AS ∞ (0.000 → 0.148 ON THE SAME CELL).**
 
 *Executes CAL-P160's board-wide method correction — re-bound every cell's check 1 as
