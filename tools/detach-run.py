@@ -41,9 +41,14 @@ if pid > 0:
     os._exit(0)  # intermediate parent dies here, so the grandchild is reparented to init
 
 os.close(write_fd)
-fd = os.open(logfile, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+# 0o600: the log can carry whatever the detached command prints, which for a watcher includes
+# response bodies. Owner-only, not world-readable.
+fd = os.open(logfile, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 devnull = os.open(os.devnull, os.O_RDONLY)
 os.dup2(devnull, 0)
 os.dup2(fd, 1)
 os.dup2(fd, 2)
+# The dup2'd copies are what the exec'd process inherits; the originals are surplus descriptors.
+os.close(fd)
+os.close(devnull)
 os.execvp(argv[0], argv)

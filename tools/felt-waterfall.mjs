@@ -91,7 +91,17 @@ for (const r of rows) {
     `${String(r.status ?? '').padStart(6)}  ${short(r.url)}`
   );
 }
-const api = rows.filter((r) => r.url.includes('api.bainluck.com'));
+// Hostname equality, not `url.includes(...)`: a substring test would also match
+// `https://evil.example/?x=api.bainluck.com`, and a waterfall that mislabels which request is the
+// API call names the wrong thing as the critical path.
+const isApiHost = (u) => {
+  try {
+    return new URL(u).hostname === 'api.bainluck.com';
+  } catch {
+    return false;
+  }
+};
+const api = rows.filter((r) => isApiHost(r.url));
 if (api.length) {
   const firstApi = api[0];
   console.log(`\nFIRST API CALL starts at ${Math.round(firstApi.start)} ms, ${Math.round(firstApi.start - paints.fcp)} ms AFTER first paint — that gap is hydration, and it is dead time on the critical path.`);
