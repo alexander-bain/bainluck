@@ -1,5 +1,5 @@
 {
- "_provenance": "GET https://api.bainluck.com/api/tournaments/us-open, 2026-09-03T01:42Z. Trimmed to the fields ux/1034 A1 reads: the main-draw start, each board's top three trends, and every finished match's round + completion day (which is where the qualifying start is measured from). Nothing is edited.",
+ "_provenance": "GET https://api.bainluck.com/api/tournaments/us-open, 2026-09-03T01:42Z. Trimmed to the fields ux/1034 reads: the main-draw start, each board's top three trends, and every finished match's key, round, completion day, and per-player pre-match probability. Player images are dropped (a 300-char Wikipedia URL x 474 slots, and no assertion reads one); nothing else is edited.",
  "slug": "us-open",
  "title": "US Open 2026",
  "main_draw_starts_at": "2026-08-30T11:00:00-04:00",
@@ -369,1428 +369,6644 @@
  ],
  "results": {
   "count": 237,
+  "unregistered_pairs": 139,
+  "with_prematch": 111,
   "matches": [
    {
+    "matchup_key": "espn:184739",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T18:25Z"
+    "completed_at": "2026-08-25T18:25Z",
+    "score": "6-7, 6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "martyna-kubka",
+    "players": [
+     {
+      "entity_key": "annika-penickova",
+      "display_name": "Annika Penickova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "martyna-kubka",
+      "display_name": "Martyna Kubka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184657",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T18:45Z"
+    "completed_at": "2026-08-25T18:45Z",
+    "score": "7-6, 4-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "nicolai-budkov-kjaer",
+    "players": [
+     {
+      "entity_key": "nicolai-budkov-kjaer",
+      "display_name": "Nicolai Budkov Kjaer",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "maks-kasnikowski",
+      "display_name": "Maks Kasnikowski",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184733",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:05Z"
+    "completed_at": "2026-08-25T19:05Z",
+    "score": "6-4, 4-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "priscilla-hon",
+    "players": [
+     {
+      "entity_key": "priscilla-hon",
+      "display_name": "Priscilla Hon",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "alice-tubello",
+      "display_name": "Alice Tubello",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184736",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:10Z"
+    "completed_at": "2026-08-25T19:10Z",
+    "score": "6-4, 4-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "kristina-liutova",
+    "players": [
+     {
+      "entity_key": "tatiana-prozorova",
+      "display_name": "Tatiana Prozorova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kristina-liutova",
+      "display_name": "Kristina Liutova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184609",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:15Z"
+    "completed_at": "2026-08-25T19:15Z",
+    "score": "6-4, 3-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "andre-ilagan",
+    "players": [
+     {
+      "entity_key": "tristan-boyer",
+      "display_name": "Tristan Boyer",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "andre-ilagan",
+      "display_name": "Andre Ilagan",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184731",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:20Z"
+    "completed_at": "2026-08-25T19:20Z",
+    "score": "4-6, 7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "marina-bassols-ribera",
+    "players": [
+     {
+      "entity_key": "marina-bassols-ribera",
+      "display_name": "Marina Bassols Ribera",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "darya-astakhova",
+      "display_name": "Darya Astakhova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184734",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:30Z"
+    "completed_at": "2026-08-25T19:30Z",
+    "score": "4-6, 6-4, 7-5",
+    "completion": "final",
+    "winner_entity_key": "joanna-garland",
+    "players": [
+     {
+      "entity_key": "leyre-romero-gormaz",
+      "display_name": "Leyre Romero Gormaz",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "joanna-garland",
+      "display_name": "Joanna Garland",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184732",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:35Z"
+    "completed_at": "2026-08-25T19:35Z",
+    "score": "6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "mona-barthel",
+    "players": [
+     {
+      "entity_key": "mona-barthel",
+      "display_name": "Mona Barthel",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "whitney-osuigwe",
+      "display_name": "Whitney Osuigwe",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184649",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:40Z"
+    "completed_at": "2026-08-25T19:40Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "christopher-o-connell",
+    "players": [
+     {
+      "entity_key": "christopher-o-connell",
+      "display_name": "Christopher O'Connell",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "stefanos-sakellaridis",
+      "display_name": "Stefanos Sakellaridis",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184730",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T19:50Z"
+    "completed_at": "2026-08-25T19:50Z",
+    "score": "6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "francesca-jones",
+    "players": [
+     {
+      "entity_key": "nuria-brancaccio",
+      "display_name": "Nuria Brancaccio",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "francesca-jones",
+      "display_name": "Francesca Jones",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184660",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T20:35Z"
+    "completed_at": "2026-08-25T20:35Z",
+    "score": "6-1, 6-4",
+    "completion": "final",
+    "winner_entity_key": "borna-gojo",
+    "players": [
+     {
+      "entity_key": "borna-gojo",
+      "display_name": "Borna Gojo",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "zdenek-kolar",
+      "display_name": "Zdenek Kolar",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184699",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T20:50Z"
+    "completed_at": "2026-08-25T20:50Z",
+    "score": "7-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "julia-avdeeva",
+    "players": [
+     {
+      "entity_key": "katherine-sebov",
+      "display_name": "Katherine Sebov",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "julia-avdeeva",
+      "display_name": "Julia Avdeeva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184661",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T20:55Z"
+    "completed_at": "2026-08-25T20:55Z",
+    "score": "6-4, 3-0",
+    "completion": "retired",
+    "winner_entity_key": "federico-cina",
+    "players": [
+     {
+      "entity_key": "federico-cina",
+      "display_name": "Federico Cina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "luca-nardi",
+      "display_name": "Luca Nardi",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184713",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:00Z"
+    "completed_at": "2026-08-25T21:00Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "yeon-woo-ku",
+    "players": [
+     {
+      "entity_key": "astra-sharma",
+      "display_name": "Astra Sharma",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "yeon-woo-ku",
+      "display_name": "Yeon-Woo Ku",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184606",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:20Z"
+    "completed_at": "2026-08-25T21:20Z",
+    "score": "4-6, 6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "colton-smith",
+    "players": [
+     {
+      "entity_key": "andrea-pellegrino",
+      "display_name": "Andrea Pellegrino",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "colton-smith",
+      "display_name": "Colton Smith",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184700",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:20Z"
+    "completed_at": "2026-08-25T21:20Z",
+    "score": "6-3, 6-1",
+    "completion": "final",
+    "winner_entity_key": "katie-swan",
+    "players": [
+     {
+      "entity_key": "katrina-scott",
+      "display_name": "Katrina Scott",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "katie-swan",
+      "display_name": "Katie Swan",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184701",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:30Z"
+    "completed_at": "2026-08-25T21:30Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "mary-stoiana",
+    "players": [
+     {
+      "entity_key": "mary-stoiana",
+      "display_name": "Mary Stoiana",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "harmony-tan",
+      "display_name": "Harmony Tan",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184605",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:35Z"
+    "completed_at": "2026-08-25T21:35Z",
+    "score": "6-0, 6-3",
+    "completion": "final",
+    "winner_entity_key": "jerome-kym",
+    "players": [
+     {
+      "entity_key": "dan-added",
+      "display_name": "Dan Added",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jerome-kym",
+      "display_name": "Jerome Kym",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184714",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:35Z"
+    "completed_at": "2026-08-25T21:35Z",
+    "score": "6-3, 6-0",
+    "completion": "final",
+    "winner_entity_key": "storm-hunter",
+    "players": [
+     {
+      "entity_key": "maddison-inglis",
+      "display_name": "Maddison Inglis",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "storm-hunter",
+      "display_name": "Storm Hunter",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184711",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:40Z"
+    "completed_at": "2026-08-25T21:40Z",
+    "score": "6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "darja-semenistaja",
+    "players": [
+     {
+      "entity_key": "hayu-kinoshita",
+      "display_name": "Hayu Kinoshita",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "darja-semenistaja",
+      "display_name": "Darja Semenistaja",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184712",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T21:45Z"
+    "completed_at": "2026-08-25T21:45Z",
+    "score": "6-7, 6-1, 6-4",
+    "completion": "final",
+    "winner_entity_key": "alexandra-shubladze",
+    "players": [
+     {
+      "entity_key": "alexandra-shubladze",
+      "display_name": "Alexandra Shubladze",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "anastasiia-sobolieva",
+      "display_name": "Anastasiia Sobolieva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184753",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:00Z"
+    "completed_at": "2026-08-25T22:00Z",
+    "score": "7-5, 6-4",
+    "completion": "final",
+    "winner_entity_key": "sofia-costoulas",
+    "players": [
+     {
+      "entity_key": "jennifer-ruggeri",
+      "display_name": "Jennifer Ruggeri",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "sofia-costoulas",
+      "display_name": "Sofia Costoulas",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184654",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:20Z"
+    "completed_at": "2026-08-25T22:20Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "hugo-dellien",
+    "players": [
+     {
+      "entity_key": "hugo-dellien",
+      "display_name": "Hugo Dellien",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "moez-echargui",
+      "display_name": "Moez Echargui",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184752",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:35Z"
+    "completed_at": "2026-08-25T22:35Z",
+    "score": "6-2, 1-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "elvina-kalieva",
+    "players": [
+     {
+      "entity_key": "kristina-mladenovic",
+      "display_name": "Kristina Mladenovic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "elvina-kalieva",
+      "display_name": "Elvina Kalieva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184747",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:45Z"
+    "completed_at": "2026-08-25T22:45Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "vendula-valdmannova",
+    "players": [
+     {
+      "entity_key": "maria-lourdes-carle",
+      "display_name": "Maria Lourdes Carle",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "vendula-valdmannova",
+      "display_name": "Vendula Valdmannova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184636",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:50Z"
+    "completed_at": "2026-08-25T22:50Z",
+    "score": "2-6, 6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "andrew-johnson",
+    "players": [
+     {
+      "entity_key": "andrew-johnson",
+      "display_name": "Andrew Johnson",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "taro-daniel",
+      "display_name": "Taro Daniel",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184748",
     "draw": "womens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T22:50Z"
+    "completed_at": "2026-08-25T22:50Z",
+    "score": "7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "aliaksandra-sasnovich",
+    "players": [
+     {
+      "entity_key": "aliaksandra-sasnovich",
+      "display_name": "Aliaksandra Sasnovich",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "dalma-galfi",
+      "display_name": "Dalma Galfi",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184630",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T23:00Z"
+    "completed_at": "2026-08-25T23:00Z",
+    "score": "6-3, 7-6",
+    "completion": "final",
+    "winner_entity_key": "seong-chan-hong",
+    "players": [
+     {
+      "entity_key": "nikoloz-basilashvili",
+      "display_name": "Nikoloz Basilashvili",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "seong-chan-hong",
+      "display_name": "Seong-Chan Hong",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184638",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T23:00Z"
+    "completed_at": "2026-08-25T23:00Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "tristan-schoolkate",
+    "players": [
+     {
+      "entity_key": "tristan-schoolkate",
+      "display_name": "Tristan Schoolkate",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jack-secord",
+      "display_name": "Jack Secord",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184650",
     "draw": "mens-singles",
     "round": "Qualifying 1st Round",
     "source_round": "Qualifying 1st Round",
-    "completed_at": "2026-08-25T23:30Z"
+    "completed_at": "2026-08-25T23:30Z",
+    "score": "6-4, 6-7, 6-4",
+    "completion": "final",
+    "winner_entity_key": "liam-draxl",
+    "players": [
+     {
+      "entity_key": "liam-draxl",
+      "display_name": "Liam Draxl",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "nicolas-mejia",
+      "display_name": "Nicolas Mejia",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184664",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-3, 4-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "daniel-rincon",
+    "players": [
+     {
+      "entity_key": "jordan-lee",
+      "display_name": "Jordan Lee",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "daniel-rincon",
+      "display_name": "Daniel Rincon",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184681",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-4, 4-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "aziz-dougaz",
+    "players": [
+     {
+      "entity_key": "aziz-dougaz",
+      "display_name": "Aziz Dougaz",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kyrian-jacquet",
+      "display_name": "Kyrian Jacquet",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184754",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-2, 3-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "polina-iatcenko",
+    "players": [
+     {
+      "entity_key": "polina-iatcenko",
+      "display_name": "Polina Iatcenko",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "lucia-bronzetti",
+      "display_name": "Lucia Bronzetti",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184757",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "elena-pridankina",
+    "players": [
+     {
+      "entity_key": "rebecca-marino",
+      "display_name": "Rebecca Marino",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "elena-pridankina",
+      "display_name": "Elena Pridankina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184777",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-2, 3-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "jurij-rodionov",
+    "players": [
+     {
+      "entity_key": "jurij-rodionov",
+      "display_name": "Jurij Rodionov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "frederico-ferreira-silva",
+      "display_name": "Frederico Ferreira Silva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184787",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "7-5, 6-3",
+    "completion": "final",
+    "winner_entity_key": "robin-montgomery",
+    "players": [
+     {
+      "entity_key": "jeline-vandromme",
+      "display_name": "Jeline Vandromme",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "robin-montgomery",
+      "display_name": "Robin Montgomery",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184792",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "mariam-bolkvadze",
+    "players": [
+     {
+      "entity_key": "mariam-bolkvadze",
+      "display_name": "Mariam Bolkvadze",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "alevtina-ibragimova",
+      "display_name": "Alevtina Ibragimova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184796",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:05Z"
+    "completed_at": "2026-08-26T15:05Z",
+    "score": "5-7, 7-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "andrea-lazaro-garcia",
+    "players": [
+     {
+      "entity_key": "andrea-lazaro-garcia",
+      "display_name": "Andrea Lazaro Garcia",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "mai-hontama",
+      "display_name": "Mai Hontama",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184663",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:10Z"
+    "completed_at": "2026-08-26T15:10Z",
+    "score": "6-4, 6-7, 6-4",
+    "completion": "final",
+    "winner_entity_key": "jacob-fearnley",
+    "players": [
+     {
+      "entity_key": "luka-pavlovic",
+      "display_name": "Luka Pavlovic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jacob-fearnley",
+      "display_name": "Jacob Fearnley",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184786",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:10Z"
+    "completed_at": "2026-08-26T15:10Z",
+    "score": "6-4, 7-5",
+    "completion": "final",
+    "winner_entity_key": "carson-branstine",
+    "players": [
+     {
+      "entity_key": "carson-branstine",
+      "display_name": "Carson Branstine",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "linda-fruhvirtova",
+      "display_name": "Linda Fruhvirtova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184793",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T15:10Z"
+    "completed_at": "2026-08-26T15:10Z",
+    "score": "6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "anouk-koevermans",
+    "players": [
+     {
+      "entity_key": "linda-klimovicova",
+      "display_name": "Linda Klimovicova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "anouk-koevermans",
+      "display_name": "Anouk Koevermans",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184774",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T16:35Z"
+    "completed_at": "2026-08-26T16:35Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "vilius-gaubas",
+    "players": [
+     {
+      "entity_key": "marco-cecchinato",
+      "display_name": "Marco Cecchinato",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "vilius-gaubas",
+      "display_name": "Vilius Gaubas",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184804",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T16:40Z"
+    "completed_at": "2026-08-26T16:40Z",
+    "score": "6-3, 6-1",
+    "completion": "final",
+    "winner_entity_key": "gabriela-knutson",
+    "players": [
+     {
+      "entity_key": "gabriela-knutson",
+      "display_name": "Gabriela Knutson",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "dominika-salkova",
+      "display_name": "Dominika Salkova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184756",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T16:55Z"
+    "completed_at": "2026-08-26T16:55Z",
+    "score": "7-6, 7-6",
+    "completion": "final",
+    "winner_entity_key": "ekaterine-gorgodze",
+    "players": [
+     {
+      "entity_key": "ekaterine-gorgodze",
+      "display_name": "Ekaterine Gorgodze",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "despina-papamichail",
+      "display_name": "Despina Papamichail",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184673",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:10Z"
+    "completed_at": "2026-08-26T17:10Z",
+    "score": "2-6, 7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "otto-virtanen",
+    "players": [
+     {
+      "entity_key": "jack-pinnington-jones",
+      "display_name": "Jack Pinnington Jones",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "otto-virtanen",
+      "display_name": "Otto Virtanen",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184674",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:10Z"
+    "completed_at": "2026-08-26T17:10Z",
+    "score": "6-2, 7-6",
+    "completion": "final",
+    "winner_entity_key": "cristian-garin",
+    "players": [
+     {
+      "entity_key": "cristian-garin",
+      "display_name": "Cristian Garin",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "elias-ymer",
+      "display_name": "Elias Ymer",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184799",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:15Z"
+    "completed_at": "2026-08-26T17:15Z",
+    "score": "6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "julieta-pareja",
+    "players": [
+     {
+      "entity_key": "iryna-shymanovich",
+      "display_name": "Iryna Shymanovich",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "julieta-pareja",
+      "display_name": "Julieta Pareja",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184801",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:15Z"
+    "completed_at": "2026-08-26T17:15Z",
+    "score": "6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "lucrezia-stefanini",
+    "players": [
+     {
+      "entity_key": "lucrezia-stefanini",
+      "display_name": "Lucrezia Stefanini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "madison-brengle",
+      "display_name": "Madison Brengle",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184800",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:25Z"
+    "completed_at": "2026-08-26T17:25Z",
+    "score": "6-1, 6-3",
+    "completion": "final",
+    "winner_entity_key": "mia-ristic",
+    "players": [
+     {
+      "entity_key": "mia-ristic",
+      "display_name": "Mia Ristic",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "francisca-jorge",
+      "display_name": "Francisca Jorge",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184682",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:40Z"
+    "completed_at": "2026-08-26T17:40Z",
+    "score": "5-7, 7-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "harry-wendelken",
+    "players": [
+     {
+      "entity_key": "harry-wendelken",
+      "display_name": "Harry Wendelken",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "remy-bertola",
+      "display_name": "Remy Bertola",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184776",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T17:45Z"
+    "completed_at": "2026-08-26T17:45Z",
+    "score": "4-6, 6-1, 6-4",
+    "completion": "final",
+    "winner_entity_key": "toby-samuel",
+    "players": [
+     {
+      "entity_key": "billy-harris",
+      "display_name": "Billy Harris",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "toby-samuel",
+      "display_name": "Toby Samuel",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184763",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T18:20Z"
+    "completed_at": "2026-08-26T18:20Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "mackenzie-mcdonald",
+    "players": [
+     {
+      "entity_key": "mackenzie-mcdonald",
+      "display_name": "Mackenzie McDonald",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "thiago-seyboth-wild",
+      "display_name": "Thiago Seyboth Wild",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184791",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T18:20Z"
+    "completed_at": "2026-08-26T18:20Z",
+    "score": "5-7, 6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "himeno-sakatsume",
+    "players": [
+     {
+      "entity_key": "himeno-sakatsume",
+      "display_name": "Himeno Sakatsume",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "tyra-caterina-grant",
+      "display_name": "Tyra Caterina Grant",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184670",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T19:00Z"
+    "completed_at": "2026-08-26T19:00Z",
+    "score": "7-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "dalibor-svrcina",
+    "players": [
+     {
+      "entity_key": "alexis-galarneau",
+      "display_name": "Alexis Galarneau",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "dalibor-svrcina",
+      "display_name": "Dalibor Svrcina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184764",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T19:15Z"
+    "completed_at": "2026-08-26T19:15Z",
+    "score": "7-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "francesco-passaro",
+    "players": [
+     {
+      "entity_key": "tom-gentzsch",
+      "display_name": "Tom Gentzsch",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "francesco-passaro",
+      "display_name": "Francesco Passaro",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184803",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T19:45Z"
+    "completed_at": "2026-08-26T19:45Z",
+    "score": "6-0, 6-3",
+    "completion": "final",
+    "winner_entity_key": "bianca-andreescu",
+    "players": [
+     {
+      "entity_key": "veronika-podrez",
+      "display_name": "Veronika Podrez",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "bianca-andreescu",
+      "display_name": "Bianca Andreescu",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184758",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T19:55Z"
+    "completed_at": "2026-08-26T19:55Z",
+    "score": "6-7, 6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "mary-stoiana",
+    "players": [
+     {
+      "entity_key": "mary-stoiana",
+      "display_name": "Mary Stoiana",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "katie-swan",
+      "display_name": "Katie Swan",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184781",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T20:20Z"
+    "completed_at": "2026-08-26T20:20Z",
+    "score": "6-4, 5-7, 7-6",
+    "completion": "final",
+    "winner_entity_key": "heather-watson",
+    "players": [
+     {
+      "entity_key": "angela-fita-boluda",
+      "display_name": "Angela Fita Boluda",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "heather-watson",
+      "display_name": "Heather Watson",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184772",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T20:30Z"
+    "completed_at": "2026-08-26T20:30Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "rei-sakamoto",
+    "players": [
+     {
+      "entity_key": "alexandre-muller",
+      "display_name": "Alexandre Muller",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "rei-sakamoto",
+      "display_name": "Rei Sakamoto",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184672",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T20:55Z"
+    "completed_at": "2026-08-26T20:55Z",
+    "score": "7-5, 6-4",
+    "completion": "final",
+    "winner_entity_key": "christopher-o-connell",
+    "players": [
+     {
+      "entity_key": "christopher-o-connell",
+      "display_name": "Christopher O'Connell",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "nicolai-budkov-kjaer",
+      "display_name": "Nicolai Budkov Kjaer",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184779",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:10Z"
+    "completed_at": "2026-08-26T21:10Z",
+    "score": "7-6, 1-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "francesca-jones",
+    "players": [
+     {
+      "entity_key": "mona-barthel",
+      "display_name": "Mona Barthel",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "francesca-jones",
+      "display_name": "Francesca Jones",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184795",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:10Z"
+    "completed_at": "2026-08-26T21:10Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "martyna-kubka",
+    "players": [
+     {
+      "entity_key": "marina-bassols-ribera",
+      "display_name": "Marina Bassols Ribera",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "martyna-kubka",
+      "display_name": "Martyna Kubka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184678",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:15Z"
+    "completed_at": "2026-08-26T21:15Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "kei-nishikori",
+    "players": [
+     {
+      "entity_key": "michael-antonius",
+      "display_name": "Michael Antonius",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kei-nishikori",
+      "display_name": "Kei Nishikori",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:henrique-rocha-vs-lloyd-harris:2026-08-26",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:40Z"
+    "completed_at": "2026-08-26T21:40Z",
+    "score": "2-6, 6-2, 7-6",
+    "completion": "final",
+    "winner_entity_key": "lloyd-harris",
+    "players": [
+     {
+      "entity_key": "lloyd-harris",
+      "display_name": "Lloyd Harris",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.495
+     },
+     {
+      "entity_key": "henrique-rocha",
+      "display_name": "Henrique Rocha",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.505
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184677",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:50Z"
+    "completed_at": "2026-08-26T21:50Z",
+    "score": "6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "liam-draxl",
+    "players": [
+     {
+      "entity_key": "andrew-johnson",
+      "display_name": "Andrew Johnson",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "liam-draxl",
+      "display_name": "Liam Draxl",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:storm-hunter-vs-yeon-woo-ku:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T21:55Z"
+    "completed_at": "2026-08-26T21:55Z",
+    "score": "4-6, 7-6, 6-0",
+    "completion": "final",
+    "winner_entity_key": "storm-hunter",
+    "players": [
+     {
+      "entity_key": "storm-hunter",
+      "display_name": "Storm Hunter",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.575
+     },
+     {
+      "entity_key": "yeon-woo-ku",
+      "display_name": "Yeon-Woo Ku",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.425
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:pablo-llamas-ruiz-vs-vitaliy-sachko:2026-08-26",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:05Z"
+    "completed_at": "2026-08-26T22:05Z",
+    "score": "6-2, 4-6, 7-6",
+    "completion": "final",
+    "winner_entity_key": "pablo-llamas-ruiz",
+    "players": [
+     {
+      "entity_key": "pablo-llamas-ruiz",
+      "display_name": "Pablo Llamas Ruiz",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.665
+     },
+     {
+      "entity_key": "vitaliy-sachko",
+      "display_name": "Vitaliy Sachko",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.335
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:joanna-garland-vs-priscilla-hon:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:20Z"
+    "completed_at": "2026-08-26T22:20Z",
+    "score": "6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "joanna-garland",
+    "players": [
+     {
+      "entity_key": "joanna-garland",
+      "display_name": "Joanna Garland",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.5
+     },
+     {
+      "entity_key": "priscilla-hon",
+      "display_name": "Priscilla Hon",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.5
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:kristina-liutova-vs-lola-radivojevic:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:40Z"
+    "completed_at": "2026-08-26T22:40Z",
+    "score": "6-2, 5-7, 6-4",
+    "completion": "final",
+    "winner_entity_key": "kristina-liutova",
+    "players": [
+     {
+      "entity_key": "lola-radivojevic",
+      "display_name": "Lola Radivojevic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.345
+     },
+     {
+      "entity_key": "kristina-liutova",
+      "display_name": "Kristina Liutova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.655
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:federico-cina-vs-hugo-dellien:2026-08-26",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:45Z"
+    "completed_at": "2026-08-26T22:45Z",
+    "score": "6-3, 5-7, 7-5",
+    "completion": "final",
+    "winner_entity_key": "federico-cina",
+    "players": [
+     {
+      "entity_key": "hugo-dellien",
+      "display_name": "Hugo Dellien",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.22
+     },
+     {
+      "entity_key": "federico-cina",
+      "display_name": "Federico Cina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.78
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elvina-kalieva-vs-sofia-costoulas:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:50Z"
+    "completed_at": "2026-08-26T22:50Z",
+    "score": "3-6, 6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "elvina-kalieva",
+    "players": [
+     {
+      "entity_key": "sofia-costoulas",
+      "display_name": "Sofia Costoulas",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.475
+     },
+     {
+      "entity_key": "elvina-kalieva",
+      "display_name": "Elvina Kalieva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.525
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:aliaksandra-sasnovich-vs-vendula-valdmannova:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T22:55Z"
+    "completed_at": "2026-08-26T22:55Z",
+    "score": "5-7, 6-3, 6-1",
+    "completion": "final",
+    "winner_entity_key": "vendula-valdmannova",
+    "players": [
+     {
+      "entity_key": "aliaksandra-sasnovich",
+      "display_name": "Aliaksandra Sasnovich",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.51
+     },
+     {
+      "entity_key": "vendula-valdmannova",
+      "display_name": "Vendula Valdmannova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.49
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:seong-chan-hong-vs-tristan-schoolkate:2026-08-26",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T23:00Z"
+    "completed_at": "2026-08-26T23:00Z",
+    "score": "6-4, 7-6",
+    "completion": "final",
+    "winner_entity_key": "tristan-schoolkate",
+    "players": [
+     {
+      "entity_key": "seong-chan-hong",
+      "display_name": "Seong-Chan Hong",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.405
+     },
+     {
+      "entity_key": "tristan-schoolkate",
+      "display_name": "Tristan Schoolkate",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.595
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:alexandra-shubladze-vs-darja-semenistaja:2026-08-26",
     "draw": "womens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T23:05Z"
+    "completed_at": "2026-08-26T23:05Z",
+    "score": "7-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "darja-semenistaja",
+    "players": [
+     {
+      "entity_key": "alexandra-shubladze",
+      "display_name": "Alexandra Shubladze",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.645
+     },
+     {
+      "entity_key": "darja-semenistaja",
+      "display_name": "Darja Semenistaja",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.355
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:colton-smith-vs-jerome-kym:2026-08-26",
     "draw": "mens-singles",
     "round": "Qualifying 2nd Round",
     "source_round": "Qualifying 2nd Round",
-    "completed_at": "2026-08-26T23:25Z"
+    "completed_at": "2026-08-26T23:25Z",
+    "score": "7-6, 2-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "colton-smith",
+    "players": [
+     {
+      "entity_key": "colton-smith",
+      "display_name": "Colton Smith",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.395
+     },
+     {
+      "entity_key": "jerome-kym",
+      "display_name": "Jerome Kym",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.605
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:cristian-garin-vs-toby-samuel:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:45Z"
+    "completed_at": "2026-08-27T15:45Z",
+    "score": "4-6, 6-4, 5-0",
+    "completion": "retired",
+    "winner_entity_key": "toby-samuel",
+    "players": [
+     {
+      "entity_key": "cristian-garin",
+      "display_name": "Cristian Garin",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.335
+     },
+     {
+      "entity_key": "toby-samuel",
+      "display_name": "Toby Samuel",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.665
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:andrea-lazaro-garcia-vs-polina-iatcenko:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:45Z"
+    "completed_at": "2026-08-27T15:45Z",
+    "score": "7-5, 6-1",
+    "completion": "final",
+    "winner_entity_key": "polina-iatcenko",
+    "players": [
+     {
+      "entity_key": "andrea-lazaro-garcia",
+      "display_name": "Andrea Lazaro Garcia",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.425
+     },
+     {
+      "entity_key": "polina-iatcenko",
+      "display_name": "Polina Iatcenko",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.575
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:carson-branstine-vs-robin-montgomery:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:45Z"
+    "completed_at": "2026-08-27T15:45Z",
+    "score": "2-6, 6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "robin-montgomery",
+    "players": [
+     {
+      "entity_key": "robin-montgomery",
+      "display_name": "Robin Montgomery",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.74
+     },
+     {
+      "entity_key": "carson-branstine",
+      "display_name": "Carson Branstine",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.26
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:ekaterine-gorgodze-vs-gabriela-knutson:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:45Z"
+    "completed_at": "2026-08-27T15:45Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "gabriela-knutson",
+    "players": [
+     {
+      "entity_key": "ekaterine-gorgodze",
+      "display_name": "Ekaterine Gorgodze",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.29
+     },
+     {
+      "entity_key": "gabriela-knutson",
+      "display_name": "Gabriela Knutson",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.71
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:julieta-pareja-vs-lucrezia-stefanini:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:45Z"
+    "completed_at": "2026-08-27T15:45Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "lucrezia-stefanini",
+    "players": [
+     {
+      "entity_key": "lucrezia-stefanini",
+      "display_name": "Lucrezia Stefanini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.445
+     },
+     {
+      "entity_key": "julieta-pareja",
+      "display_name": "Julieta Pareja",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.555
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:andrea-guerrieri-vs-aziz-dougaz:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T15:55Z"
+    "completed_at": "2026-08-27T15:55Z",
+    "score": "6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "andrea-guerrieri",
+    "players": [
+     {
+      "entity_key": "andrea-guerrieri",
+      "display_name": "Andrea Guerrieri",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.465
+     },
+     {
+      "entity_key": "aziz-dougaz",
+      "display_name": "Aziz Dougaz",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.535
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:grigor-dimitrov-vs-otto-virtanen:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-27T16:30Z"
+    "completed_at": "2026-08-27T16:30Z",
+    "score": null,
+    "completion": "walkover",
+    "winner_entity_key": "grigor-dimitrov",
+    "players": [
+     {
+      "entity_key": "grigor-dimitrov",
+      "display_name": "Grigor Dimitrov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.735
+     },
+     {
+      "entity_key": "otto-virtanen",
+      "display_name": "Otto Virtanen",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.265
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184689",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "lloyd-harris",
+    "players": [
+     {
+      "entity_key": "pablo-llamas-ruiz",
+      "display_name": "Pablo Llamas Ruiz",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "lloyd-harris",
+      "display_name": "Lloyd Harris",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184807",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "storm-hunter",
+    "players": [
+     {
+      "entity_key": "storm-hunter",
+      "display_name": "Storm Hunter",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "darja-semenistaja",
+      "display_name": "Darja Semenistaja",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184814",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "6-4, 6-0",
+    "completion": "final",
+    "winner_entity_key": "kristina-liutova",
+    "players": [
+     {
+      "entity_key": "martyna-kubka",
+      "display_name": "Martyna Kubka",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kristina-liutova",
+      "display_name": "Kristina Liutova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:dalibor-svrcina-vs-mackenzie-mcdonald:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "4-6, 6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "dalibor-svrcina",
+    "players": [
+     {
+      "entity_key": "mackenzie-mcdonald",
+      "display_name": "Mackenzie McDonald",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.445
+     },
+     {
+      "entity_key": "dalibor-svrcina",
+      "display_name": "Dalibor Svrcina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.555
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:francesco-passaro-vs-shintaro-mochizuki:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "francesco-passaro",
+    "players": [
+     {
+      "entity_key": "francesco-passaro",
+      "display_name": "Francesco Passaro",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.48
+     },
+     {
+      "entity_key": "shintaro-mochizuki",
+      "display_name": "Shintaro Mochizuki",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.52
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:harry-wendelken-vs-vilius-gaubas:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "6-7, 7-6, 7-6",
+    "completion": "final",
+    "winner_entity_key": "harry-wendelken",
+    "players": [
+     {
+      "entity_key": "harry-wendelken",
+      "display_name": "Harry Wendelken",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.485
+     },
+     {
+      "entity_key": "vilius-gaubas",
+      "display_name": "Vilius Gaubas",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.515
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:jacob-fearnley-vs-jurij-rodionov:2026-08-27",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "4-6, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "jurij-rodionov",
+    "players": [
+     {
+      "entity_key": "jurij-rodionov",
+      "display_name": "Jurij Rodionov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.27
+     },
+     {
+      "entity_key": "jacob-fearnley",
+      "display_name": "Jacob Fearnley",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.73
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:anouk-koevermans-vs-mariam-bolkvadze:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "6-3, 7-6",
+    "completion": "final",
+    "winner_entity_key": "anouk-koevermans",
+    "players": [
+     {
+      "entity_key": "anouk-koevermans",
+      "display_name": "Anouk Koevermans",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.585
+     },
+     {
+      "entity_key": "mariam-bolkvadze",
+      "display_name": "Mariam Bolkvadze",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.415
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:arantxa-rus-vs-susan-bandecchi:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:05Z"
+    "completed_at": "2026-08-28T15:05Z",
+    "score": "1-6, 6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "arantxa-rus",
+    "players": [
+     {
+      "entity_key": "arantxa-rus",
+      "display_name": "Arantxa Rus",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.335
+     },
+     {
+      "entity_key": "susan-bandecchi",
+      "display_name": "Susan Bandecchi",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.665
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:himeno-sakatsume-vs-mia-ristic:2026-08-27",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T15:45Z"
+    "completed_at": "2026-08-28T15:45Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "himeno-sakatsume",
+    "players": [
+     {
+      "entity_key": "himeno-sakatsume",
+      "display_name": "Himeno Sakatsume",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.63
+     },
+     {
+      "entity_key": "mia-ristic",
+      "display_name": "Mia Ristic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.37
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184680",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T16:10Z"
+    "completed_at": "2026-08-28T16:10Z",
+    "score": "4-6, 7-5, 7-6",
+    "completion": "final",
+    "winner_entity_key": "tristan-schoolkate",
+    "players": [
+     {
+      "entity_key": "tristan-schoolkate",
+      "display_name": "Tristan Schoolkate",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "liam-draxl",
+      "display_name": "Liam Draxl",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184806",
     "draw": "mens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T16:10Z"
+    "completed_at": "2026-08-28T16:10Z",
+    "score": "6-4, 7-6",
+    "completion": "final",
+    "winner_entity_key": "rei-sakamoto",
+    "players": [
+     {
+      "entity_key": "rei-sakamoto",
+      "display_name": "Rei Sakamoto",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kei-nishikori",
+      "display_name": "Kei Nishikori",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184759",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T17:15Z"
+    "completed_at": "2026-08-28T17:15Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "francesca-jones",
+    "players": [
+     {
+      "entity_key": "joanna-garland",
+      "display_name": "Joanna Garland",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "francesca-jones",
+      "display_name": "Francesca Jones",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:184812",
     "draw": "womens-singles",
     "round": "Qualifying Final",
     "source_round": "Qualifying Final",
-    "completed_at": "2026-08-28T17:35Z"
+    "completed_at": "2026-08-28T17:35Z",
+    "score": "5-7, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "elvina-kalieva",
+    "players": [
+     {
+      "entity_key": "vendula-valdmannova",
+      "display_name": "Vendula Valdmannova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "elvina-kalieva",
+      "display_name": "Elvina Kalieva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:adam-walton-vs-wu-yibing:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:05Z"
+    "completed_at": "2026-08-30T15:05Z",
+    "score": "7-6, 6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "wu-yibing",
+    "players": [
+     {
+      "entity_key": "adam-walton",
+      "display_name": "Adam Walton",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "wu-yibing",
+      "display_name": "Wu Yibing",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:arthur-rinderknech-vs-sho-shimabukuro:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:05Z"
+    "completed_at": "2026-08-30T15:05Z",
+    "score": "6-7, 6-2, 7-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "arthur-rinderknech",
+    "players": [
+     {
+      "entity_key": "arthur-rinderknech",
+      "display_name": "Arthur Rinderknech",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.735
+     },
+     {
+      "entity_key": "sho-shimabukuro",
+      "display_name": "Sho Shimabukuro",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.265
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:hamad-medjedovic-vs-kamil-majchrzak:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:05Z"
+    "completed_at": "2026-08-30T15:05Z",
+    "score": "6-3, 6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "kamil-majchrzak",
+    "players": [
+     {
+      "entity_key": "hamad-medjedovic",
+      "display_name": "Hamad Medjedovic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.465
+     },
+     {
+      "entity_key": "kamil-majchrzak",
+      "display_name": "Kamil Majchrzak",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.535
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:jiri-lehecka-vs-pablo-carreno-busta:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:05Z"
+    "completed_at": "2026-08-30T15:05Z",
+    "score": "6-1, 7-6, 4-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "jiri-lehecka",
+    "players": [
+     {
+      "entity_key": "pablo-carreno-busta",
+      "display_name": "Pablo Carreno Busta",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.205
+     },
+     {
+      "entity_key": "jiri-lehecka",
+      "display_name": "Jiri Lehecka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.795
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:jasmine-paolini-vs-veronika-erjavec:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:05Z"
+    "completed_at": "2026-08-30T15:05Z",
+    "score": "6-3, 3-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "jasmine-paolini",
+    "players": [
+     {
+      "entity_key": "veronika-erjavec",
+      "display_name": "Veronika Erjavec",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.135678
+     },
+     {
+      "entity_key": "jasmine-paolini",
+      "display_name": "Jasmine Paolini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.864322
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182593",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:10Z"
+    "completed_at": "2026-08-30T15:10Z",
+    "score": "4-6, 6-4, 7-6",
+    "completion": "final",
+    "winner_entity_key": "polina-iatcenko",
+    "players": [
+     {
+      "entity_key": "polina-iatcenko",
+      "display_name": "Polina Iatcenko",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "renata-zarazua",
+      "display_name": "Renata Zarazua",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:aleksandr-shevchenko-vs-dino-prizmic:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:10Z"
+    "completed_at": "2026-08-30T15:10Z",
+    "score": "2-6, 6-3, 6-3, 5-7, 7-5",
+    "completion": "final",
+    "winner_entity_key": "dino-prizmic",
+    "players": [
+     {
+      "entity_key": "aleksandr-shevchenko",
+      "display_name": "Aleksandr Shevchenko",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.283582
+     },
+     {
+      "entity_key": "dino-prizmic",
+      "display_name": "Dino Prizmic",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.716418
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:daniel-merida-vs-marton-fucsovics:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:10Z"
+    "completed_at": "2026-08-30T15:10Z",
+    "score": "6-4, 6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "daniel-merida",
+    "players": [
+     {
+      "entity_key": "marton-fucsovics",
+      "display_name": "Marton Fucsovics",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.211055
+     },
+     {
+      "entity_key": "daniel-merida",
+      "display_name": "Daniel Merida",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.788945
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:barbora-krejcikova-vs-kamilla-rakhimova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:10Z"
+    "completed_at": "2026-08-30T15:10Z",
+    "score": "7-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "kamilla-rakhimova",
+    "players": [
+     {
+      "entity_key": "barbora-krejcikova",
+      "display_name": "Barbora Krejcikova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.755
+     },
+     {
+      "entity_key": "kamilla-rakhimova",
+      "display_name": "Kamilla Rakhimova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.245
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:donna-vekic-vs-talia-gibson:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T15:10Z"
+    "completed_at": "2026-08-30T15:10Z",
+    "score": "6-2, 4-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "donna-vekic",
+    "players": [
+     {
+      "entity_key": "donna-vekic",
+      "display_name": "Donna Vekic",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.517588
+     },
+     {
+      "entity_key": "talia-gibson",
+      "display_name": "Talia Gibson",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.482412
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elena-gabriela-ruse-vs-jessica-pegula:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T16:10Z"
+    "completed_at": "2026-08-30T16:10Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "jessica-pegula",
+    "players": [
+     {
+      "entity_key": "elena-gabriela-ruse",
+      "display_name": "Elena-Gabriela Ruse",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.123762
+     },
+     {
+      "entity_key": "jessica-pegula",
+      "display_name": "Jessica Pegula",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.876238
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182654",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T17:00Z"
+    "completed_at": "2026-08-30T17:00Z",
+    "score": "6-4, 6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "lloyd-harris",
+    "players": [
+     {
+      "entity_key": "jack-kennedy",
+      "display_name": "Jack Kennedy",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "lloyd-harris",
+      "display_name": "Lloyd Harris",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:jaume-munar-vs-terence-atmane:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T17:10Z"
+    "completed_at": "2026-08-30T17:10Z",
+    "score": "6-7, 3-6, 6-1, 7-6, 7-5",
+    "completion": "final",
+    "winner_entity_key": "jaume-munar",
+    "players": [
+     {
+      "entity_key": "terence-atmane",
+      "display_name": "Terence Atmane",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.595
+     },
+     {
+      "entity_key": "jaume-munar",
+      "display_name": "Jaume Munar",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.405
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:leylah-fernandez-vs-zhang-shuai:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T17:20Z"
+    "completed_at": "2026-08-30T17:20Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "leylah-fernandez",
+    "players": [
+     {
+      "entity_key": "leylah-fernandez",
+      "display_name": "Leylah Fernandez",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "zhang-shuai",
+      "display_name": "Zhang Shuai",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182623",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T17:45Z"
+    "completed_at": "2026-08-30T17:45Z",
+    "score": "6-3, 6-7, 6-2",
+    "completion": "final",
+    "winner_entity_key": "lanlana-tararudee",
+    "players": [
+     {
+      "entity_key": "lanlana-tararudee",
+      "display_name": "Lanlana Tararudee",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "elvina-kalieva",
+      "display_name": "Elvina Kalieva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:cameron-norrie-vs-luca-van-assche:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T18:00Z"
+    "completed_at": "2026-08-30T18:00Z",
+    "score": "6-7, 6-2, 6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "luca-van-assche",
+    "players": [
+     {
+      "entity_key": "cameron-norrie",
+      "display_name": "Cameron Norrie",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.659898
+     },
+     {
+      "entity_key": "luca-van-assche",
+      "display_name": "Luca Van Assche",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.340102
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182605",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T18:20Z"
+    "completed_at": "2026-08-30T18:20Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "marta-kostyuk",
+    "players": [
+     {
+      "entity_key": "storm-hunter",
+      "display_name": "Storm Hunter",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "marta-kostyuk",
+      "display_name": "Marta Kostyuk",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182634",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T18:25Z"
+    "completed_at": "2026-08-30T18:25Z",
+    "score": "6-3, 4-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "lucrezia-stefanini",
+    "players": [
+     {
+      "entity_key": "dayana-yastremska",
+      "display_name": "Dayana Yastremska",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "lucrezia-stefanini",
+      "display_name": "Lucrezia Stefanini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:emiliana-arango-vs-wang-xinyu:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T18:55Z"
+    "completed_at": "2026-08-30T18:55Z",
+    "score": "6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "wang-xinyu",
+    "players": [
+     {
+      "entity_key": "wang-xinyu",
+      "display_name": "Wang Xinyu",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.737374
+     },
+     {
+      "entity_key": "emiliana-arango",
+      "display_name": "Emiliana Arango",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.262626
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:jaime-faria-vs-jenson-brooksby:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T19:00Z"
+    "completed_at": "2026-08-30T19:00Z",
+    "score": "6-3, 7-6, 4-6, 1-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "jaime-faria",
+    "players": [
+     {
+      "entity_key": "jenson-brooksby",
+      "display_name": "Jenson Brooksby",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.540404
+     },
+     {
+      "entity_key": "jaime-faria",
+      "display_name": "Jaime Faria",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.459596
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:hanne-vandewinkel-vs-karolina-pliskova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T19:00Z"
+    "completed_at": "2026-08-30T19:00Z",
+    "score": "2-6, 7-5, 6-3",
+    "completion": "final",
+    "winner_entity_key": "karolina-pliskova",
+    "players": [
+     {
+      "entity_key": "karolina-pliskova",
+      "display_name": "Karolina Pliskova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.497462
+     },
+     {
+      "entity_key": "hanne-vandewinkel",
+      "display_name": "Hanne Vandewinkel",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.502538
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182657",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T19:20Z"
+    "completed_at": "2026-08-30T19:20Z",
+    "score": "6-2, 6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "toby-samuel",
+    "players": [
+     {
+      "entity_key": "tomas-machac",
+      "display_name": "Tomas Machac",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "toby-samuel",
+      "display_name": "Toby Samuel",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:denis-shapovalov-vs-miomir-kecmanovic:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T19:50Z"
+    "completed_at": "2026-08-30T19:50Z",
+    "score": "6-4, 4-6, 6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "denis-shapovalov",
+    "players": [
+     {
+      "entity_key": "denis-shapovalov",
+      "display_name": "Denis Shapovalov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.560606
+     },
+     {
+      "entity_key": "miomir-kecmanovic",
+      "display_name": "Miomir Kecmanovic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.439394
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:ekaterina-alexandrova-vs-mccartney-kessler:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T20:50Z"
+    "completed_at": "2026-08-30T20:50Z",
+    "score": "6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "ekaterina-alexandrova",
+    "players": [
+     {
+      "entity_key": "ekaterina-alexandrova",
+      "display_name": "Ekaterina Alexandrova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.60101
+     },
+     {
+      "entity_key": "mccartney-kessler",
+      "display_name": "McCartney Kessler",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.39899
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:carol-young-suh-lee-vs-katie-boulter:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T21:05Z"
+    "completed_at": "2026-08-30T21:05Z",
+    "score": "6-4, 3-6, 6-0",
+    "completion": "final",
+    "winner_entity_key": "katie-boulter",
+    "players": [
+     {
+      "entity_key": "katie-boulter",
+      "display_name": "Katie Boulter",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.560606
+     },
+     {
+      "entity_key": "carol-young-suh-lee",
+      "display_name": "Carol Young Suh Lee",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.439394
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:tomas-martin-etcheverry-vs-vit-kopriva:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T21:20Z"
+    "completed_at": "2026-08-30T21:20Z",
+    "score": "6-3, 6-4, 6-0",
+    "completion": "final",
+    "winner_entity_key": "tomas-martin-etcheverry",
+    "players": [
+     {
+      "entity_key": "vit-kopriva",
+      "display_name": "Vit Kopriva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.358586
+     },
+     {
+      "entity_key": "tomas-martin-etcheverry",
+      "display_name": "Tomas Martin Etcheverry",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.641414
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:alycia-parks-vs-taylah-preston:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T21:40Z"
+    "completed_at": "2026-08-30T21:40Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "taylah-preston",
+    "players": [
+     {
+      "entity_key": "alycia-parks",
+      "display_name": "Alycia Parks",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.5
+     },
+     {
+      "entity_key": "taylah-preston",
+      "display_name": "Taylah Preston",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.5
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elina-svitolina-vs-solana-sierra:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T23:05Z"
+    "completed_at": "2026-08-30T23:05Z",
+    "score": "6-1, 6-2",
+    "completion": "final",
+    "winner_entity_key": "elina-svitolina",
+    "players": [
+     {
+      "entity_key": "solana-sierra",
+      "display_name": "Solana Sierra",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.084158
+     },
+     {
+      "entity_key": "elina-svitolina",
+      "display_name": "Elina Svitolina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.915842
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:mariano-navone-vs-novak-djokovic:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-30T23:15Z"
+    "completed_at": "2026-08-30T23:15Z",
+    "score": "7-6, 5-7, 4-6, 6-2, 6-1",
+    "completion": "final",
+    "winner_entity_key": "mariano-navone",
+    "players": [
+     {
+      "entity_key": "novak-djokovic",
+      "display_name": "Novak Djokovic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.820896
+     },
+     {
+      "entity_key": "mariano-navone",
+      "display_name": "Mariano Navone",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.179104
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:alexander-bublik-vs-j-j-wolf:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T01:30Z"
+    "completed_at": "2026-08-31T01:30Z",
+    "score": "6-4, 6-2, 3-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "alexander-bublik",
+    "players": [
+     {
+      "entity_key": "j-j-wolf",
+      "display_name": "J.J. Wolf",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "alexander-bublik",
+      "display_name": "Alexander Bublik",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:sofia-kenin-vs-venus-williams:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T04:10Z"
+    "completed_at": "2026-08-31T04:10Z",
+    "score": "6-2, 7-6",
+    "completion": "final",
+    "winner_entity_key": "sofia-kenin",
+    "players": [
+     {
+      "entity_key": "sofia-kenin",
+      "display_name": "Sofia Kenin",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.853535
+     },
+     {
+      "entity_key": "venus-williams",
+      "display_name": "Venus Williams",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.146465
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182647",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "himeno-sakatsume",
+    "players": [
+     {
+      "entity_key": "himeno-sakatsume",
+      "display_name": "Himeno Sakatsume",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "anhelina-kalinina",
+      "display_name": "Anhelina Kalinina",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:aleksandar-kovacevic-vs-valentin-vacherot:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "6-2, 6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "valentin-vacherot",
+    "players": [
+     {
+      "entity_key": "aleksandar-kovacevic",
+      "display_name": "Aleksandar Kovacevic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.461538
+     },
+     {
+      "entity_key": "valentin-vacherot",
+      "display_name": "Valentin Vacherot",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.538462
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:arthur-fils-vs-stefanos-tsitsipas:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "4-6, 7-6, 6-1, 6-4",
+    "completion": "final",
+    "winner_entity_key": "stefanos-tsitsipas",
+    "players": [
+     {
+      "entity_key": "arthur-fils",
+      "display_name": "Arthur Fils",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.80303
+     },
+     {
+      "entity_key": "stefanos-tsitsipas",
+      "display_name": "Stefanos Tsitsipas",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.19697
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:cristina-bucsa-vs-sara-bejlek:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "7-5, 4-6, 6-1",
+    "completion": "final",
+    "winner_entity_key": "cristina-bucsa",
+    "players": [
+     {
+      "entity_key": "cristina-bucsa",
+      "display_name": "Cristina Bucsa",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.23
+     },
+     {
+      "entity_key": "sara-bejlek",
+      "display_name": "Sara Bejlek",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.77
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:karolina-muchova-vs-sinja-kraus:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "6-3, 6-0",
+    "completion": "final",
+    "winner_entity_key": "karolina-muchova",
+    "players": [
+     {
+      "entity_key": "karolina-muchova",
+      "display_name": "Karolina Muchova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.883838
+     },
+     {
+      "entity_key": "sinja-kraus",
+      "display_name": "Sinja Kraus",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.116162
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:mananchaya-sawangkaew-vs-panna-udvardy:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:05Z"
+    "completed_at": "2026-08-31T15:05Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "mananchaya-sawangkaew",
+    "players": [
+     {
+      "entity_key": "panna-udvardy",
+      "display_name": "Panna Udvardy",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.39899
+     },
+     {
+      "entity_key": "mananchaya-sawangkaew",
+      "display_name": "Mananchaya Sawangkaew",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.60101
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182673",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:10Z"
+    "completed_at": "2026-08-31T15:10Z",
+    "score": "6-7, 6-7, 6-0, 6-2, 7-6",
+    "completion": "final",
+    "winner_entity_key": "andrey-rublev",
+    "players": [
+     {
+      "entity_key": "andrey-rublev",
+      "display_name": "Andrey Rublev",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "otto-virtanen",
+      "display_name": "Otto Virtanen",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elsa-jacquemot-vs-marie-bouzkova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:10Z"
+    "completed_at": "2026-08-31T15:10Z",
+    "score": "6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "marie-bouzkova",
+    "players": [
+     {
+      "entity_key": "marie-bouzkova",
+      "display_name": "Marie Bouzkova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.885
+     },
+     {
+      "entity_key": "elsa-jacquemot",
+      "display_name": "Elsa Jacquemot",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.115
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:lilli-tagger-vs-tamara-korpatsch:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:10Z"
+    "completed_at": "2026-08-31T15:10Z",
+    "score": "6-0, 7-6",
+    "completion": "final",
+    "winner_entity_key": "lilli-tagger",
+    "players": [
+     {
+      "entity_key": "tamara-korpatsch",
+      "display_name": "Tamara Korpatsch",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.207071
+     },
+     {
+      "entity_key": "lilli-tagger",
+      "display_name": "Lilli Tagger",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.792929
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:aryna-sabalenka-vs-camila-osorio:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T15:40Z"
+    "completed_at": "2026-08-31T15:40Z",
+    "score": "6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "aryna-sabalenka",
+    "players": [
+     {
+      "entity_key": "camila-osorio",
+      "display_name": "Camila Osorio",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.085
+     },
+     {
+      "entity_key": "aryna-sabalenka",
+      "display_name": "Aryna Sabalenka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.915
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:emma-navarro-vs-lois-boisson:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T16:35Z"
+    "completed_at": "2026-08-31T16:35Z",
+    "score": "7-6, 6-7, 6-3",
+    "completion": "final",
+    "winner_entity_key": "emma-navarro",
+    "players": [
+     {
+      "entity_key": "lois-boisson",
+      "display_name": "Lois Boisson",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.277778
+     },
+     {
+      "entity_key": "emma-navarro",
+      "display_name": "Emma Navarro",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.722222
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:aoi-ito-vs-oksana-selekhmeteva:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T16:45Z"
+    "completed_at": "2026-08-31T16:45Z",
+    "score": "6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "oksana-selekhmeteva",
+    "players": [
+     {
+      "entity_key": "oksana-selekhmeteva",
+      "display_name": "Oksana Selekhmeteva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.60101
+     },
+     {
+      "entity_key": "aoi-ito",
+      "display_name": "Aoi Ito",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.39899
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:adrian-mannarino-vs-thiago-agustin-tirante:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T16:55Z"
+    "completed_at": "2026-08-31T16:55Z",
+    "score": "4-6, 3-6, 6-3, 6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "adrian-mannarino",
+    "players": [
+     {
+      "entity_key": "adrian-mannarino",
+      "display_name": "Adrian Mannarino",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.301508
+     },
+     {
+      "entity_key": "thiago-agustin-tirante",
+      "display_name": "Thiago Agustin Tirante",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.698492
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:james-duckworth-vs-matteo-arnaldi:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:10Z"
+    "completed_at": "2026-08-31T17:10Z",
+    "score": "5-7, 6-3, 6-2, 7-6",
+    "completion": "final",
+    "winner_entity_key": "james-duckworth",
+    "players": [
+     {
+      "entity_key": "james-duckworth",
+      "display_name": "James Duckworth",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.454545
+     },
+     {
+      "entity_key": "matteo-arnaldi",
+      "display_name": "Matteo Arnaldi",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.545455
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:raphael-collignon-vs-sebastian-gorzny:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:15Z"
+    "completed_at": "2026-08-31T17:15Z",
+    "score": "3-6, 6-3, 3-6, 6-3, 7-6",
+    "completion": "final",
+    "winner_entity_key": "sebastian-gorzny",
+    "players": [
+     {
+      "entity_key": "raphael-collignon",
+      "display_name": "Raphael Collignon",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.875
+     },
+     {
+      "entity_key": "sebastian-gorzny",
+      "display_name": "Sebastian Gorzny",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.125
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:kimberly-birrell-vs-petra-marcinko:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:20Z"
+    "completed_at": "2026-08-31T17:20Z",
+    "score": "3-6, 7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "kimberly-birrell",
+    "players": [
+     {
+      "entity_key": "petra-marcinko",
+      "display_name": "Petra Marcinko",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.451777
+     },
+     {
+      "entity_key": "kimberly-birrell",
+      "display_name": "Kimberly Birrell",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.548223
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182718",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:25Z"
+    "completed_at": "2026-08-31T17:25Z",
+    "score": "7-6, 6-0, 7-6",
+    "completion": "final",
+    "winner_entity_key": "jurij-rodionov",
+    "players": [
+     {
+      "entity_key": "giovanni-mpetshi-perricard",
+      "display_name": "Giovanni Mpetshi Perricard",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jurij-rodionov",
+      "display_name": "Jurij Rodionov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:carlos-alcaraz-vs-roman-safiullin:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:30Z"
+    "completed_at": "2026-08-31T17:30Z",
+    "score": "6-4, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "carlos-alcaraz",
+    "players": [
+     {
+      "entity_key": "carlos-alcaraz",
+      "display_name": "Carlos Alcaraz",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.835
+     },
+     {
+      "entity_key": "roman-safiullin",
+      "display_name": "Roman Safiullin",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.165
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:anna-blinkova-vs-anna-kalinskaya:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:30Z"
+    "completed_at": "2026-08-31T17:30Z",
+    "score": "6-4, 6-3",
+    "completion": "final",
+    "winner_entity_key": "anna-kalinskaya",
+    "players": [
+     {
+      "entity_key": "anna-kalinskaya",
+      "display_name": "Anna Kalinskaya",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.743719
+     },
+     {
+      "entity_key": "anna-blinkova",
+      "display_name": "Anna Blinkova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.256281
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182671",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:45Z"
+    "completed_at": "2026-08-31T17:45Z",
+    "score": "4-6, 6-2, 4-6, 7-5, 6-3",
+    "completion": "final",
+    "winner_entity_key": "jacob-fearnley",
+    "players": [
+     {
+      "entity_key": "jacob-fearnley",
+      "display_name": "Jacob Fearnley",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "martin-landaluce",
+      "display_name": "Martin Landaluce",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182765",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T17:55Z"
+    "completed_at": "2026-08-31T17:55Z",
+    "score": "6-4, 6-1, 6-0",
+    "completion": "final",
+    "winner_entity_key": "alex-michelsen",
+    "players": [
+     {
+      "entity_key": "federico-cina",
+      "display_name": "Federico Cina",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "alex-michelsen",
+      "display_name": "Alex Michelsen",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:maja-chwalinska-vs-taylor-townsend:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T18:05Z"
+    "completed_at": "2026-08-31T18:05Z",
+    "score": "6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "taylor-townsend",
+    "players": [
+     {
+      "entity_key": "taylor-townsend",
+      "display_name": "Taylor Townsend",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.675127
+     },
+     {
+      "entity_key": "maja-chwalinska",
+      "display_name": "Maja Chwalinska",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.324873
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182704",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T18:25Z"
+    "completed_at": "2026-08-31T18:25Z",
+    "score": "6-4, 6-3, 5-7, 5-7, 6-2",
+    "completion": "final",
+    "winner_entity_key": "dalibor-svrcina",
+    "players": [
+     {
+      "entity_key": "valentin-royer",
+      "display_name": "Valentin Royer",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "dalibor-svrcina",
+      "display_name": "Dalibor Svrcina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:damir-dzumhur-vs-hubert-hurkacz:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T18:25Z"
+    "completed_at": "2026-08-31T18:25Z",
+    "score": "6-4, 4-6, 6-1, 6-1",
+    "completion": "final",
+    "winner_entity_key": "hubert-hurkacz",
+    "players": [
+     {
+      "entity_key": "hubert-hurkacz",
+      "display_name": "Hubert Hurkacz",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.894472
+     },
+     {
+      "entity_key": "damir-dzumhur",
+      "display_name": "Damir Dzumhur",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.105528
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:amanda-anisimova-vs-ashlyn-krueger:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T18:25Z"
+    "completed_at": "2026-08-31T18:25Z",
+    "score": "6-1, 6-3",
+    "completion": "final",
+    "winner_entity_key": "amanda-anisimova",
+    "players": [
+     {
+      "entity_key": "amanda-anisimova",
+      "display_name": "Amanda Anisimova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.844221
+     },
+     {
+      "entity_key": "ashlyn-krueger",
+      "display_name": "Ashlyn Krueger",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.155779
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:nadia-podoroska-vs-simona-waltert:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T18:30Z"
+    "completed_at": "2026-08-31T18:30Z",
+    "score": "4-6, 7-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "nadia-podoroska",
+    "players": [
+     {
+      "entity_key": "simona-waltert",
+      "display_name": "Simona Waltert",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.654822
+     },
+     {
+      "entity_key": "nadia-podoroska",
+      "display_name": "Nadia Podoroska",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.345178
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182763",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:05Z"
+    "completed_at": "2026-08-31T19:05Z",
+    "score": "6-4, 6-7, 6-4, 3-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "rei-sakamoto",
+    "players": [
+     {
+      "entity_key": "rei-sakamoto",
+      "display_name": "Rei Sakamoto",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "aleksandar-vukic",
+      "display_name": "Aleksandar Vukic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:diane-parry-vs-viktorija-golubic:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:10Z"
+    "completed_at": "2026-08-31T19:10Z",
+    "score": "7-5, 6-4",
+    "completion": "final",
+    "winner_entity_key": "diane-parry",
+    "players": [
+     {
+      "entity_key": "diane-parry",
+      "display_name": "Diane Parry",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.535714
+     },
+     {
+      "entity_key": "viktorija-golubic",
+      "display_name": "Viktorija Golubic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.464286
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182664",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:20Z"
+    "completed_at": "2026-08-31T19:20Z",
+    "score": "6-2, 3-6, 6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "luciano-darderi",
+    "players": [
+     {
+      "entity_key": "harry-wendelken",
+      "display_name": "Harry Wendelken",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "luciano-darderi",
+      "display_name": "Luciano Darderi",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:brandon-nakashima-vs-sebastian-baez:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:20Z"
+    "completed_at": "2026-08-31T19:20Z",
+    "score": "6-2, 6-1, 6-0",
+    "completion": "final",
+    "winner_entity_key": "brandon-nakashima",
+    "players": [
+     {
+      "entity_key": "sebastian-baez",
+      "display_name": "Sebastian Baez",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.145729
+     },
+     {
+      "entity_key": "brandon-nakashima",
+      "display_name": "Brandon Nakashima",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.854271
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:daria-snigur-vs-diana-shnaider:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:25Z"
+    "completed_at": "2026-08-31T19:25Z",
+    "score": "6-0, 6-4",
+    "completion": "final",
+    "winner_entity_key": "diana-shnaider",
+    "players": [
+     {
+      "entity_key": "diana-shnaider",
+      "display_name": "Diana Shnaider",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.723618
+     },
+     {
+      "entity_key": "daria-snigur",
+      "display_name": "Daria Snigur",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.276382
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182643",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:35Z"
+    "completed_at": "2026-08-31T19:35Z",
+    "score": "7-5, 6-1",
+    "completion": "final",
+    "winner_entity_key": "catherine-mcnally",
+    "players": [
+     {
+      "entity_key": "catherine-mcnally",
+      "display_name": "Catherine McNally",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "anouk-koevermans",
+      "display_name": "Anouk Koevermans",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:matteo-berrettini-vs-stan-wawrinka:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:45Z"
+    "completed_at": "2026-08-31T19:45Z",
+    "score": "7-6, 7-6, 6-0",
+    "completion": "final",
+    "winner_entity_key": "matteo-berrettini",
+    "players": [
+     {
+      "entity_key": "stan-wawrinka",
+      "display_name": "Stan Wawrinka",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.217172
+     },
+     {
+      "entity_key": "matteo-berrettini",
+      "display_name": "Matteo Berrettini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.782828
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:alejandro-tabilo-vs-yannick-hanfmann:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:50Z"
+    "completed_at": "2026-08-31T19:50Z",
+    "score": "6-3, 6-2, 6-7, 6-3",
+    "completion": "final",
+    "winner_entity_key": "alejandro-tabilo",
+    "players": [
+     {
+      "entity_key": "alejandro-tabilo",
+      "display_name": "Alejandro Tabilo",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.577114
+     },
+     {
+      "entity_key": "yannick-hanfmann",
+      "display_name": "Yannick Hanfmann",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.422886
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:katie-volynets-vs-linda-noskova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T19:55Z"
+    "completed_at": "2026-08-31T19:55Z",
+    "score": "7-5, 6-1",
+    "completion": "final",
+    "winner_entity_key": "linda-noskova",
+    "players": [
+     {
+      "entity_key": "linda-noskova",
+      "display_name": "Linda Noskova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.743719
+     },
+     {
+      "entity_key": "katie-volynets",
+      "display_name": "Katie Volynets",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.256281
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:julia-grabher-vs-sorana-cirstea:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T20:50Z"
+    "completed_at": "2026-08-31T20:50Z",
+    "score": "6-3, 6-0",
+    "completion": "final",
+    "winner_entity_key": "sorana-cirstea",
+    "players": [
+     {
+      "entity_key": "sorana-cirstea",
+      "display_name": "Sorana Cirstea",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.89604
+     },
+     {
+      "entity_key": "julia-grabher",
+      "display_name": "Julia Grabher",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.10396
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:clara-tauson-vs-sloane-stephens:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T21:15Z"
+    "completed_at": "2026-08-31T21:15Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "sloane-stephens",
+    "players": [
+     {
+      "entity_key": "clara-tauson",
+      "display_name": "Clara Tauson",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.713568
+     },
+     {
+      "entity_key": "sloane-stephens",
+      "display_name": "Sloane Stephens",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.286432
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:liudmila-samsonova-vs-maya-joint:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T21:20Z"
+    "completed_at": "2026-08-31T21:20Z",
+    "score": "3-6, 6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "maya-joint",
+    "players": [
+     {
+      "entity_key": "liudmila-samsonova",
+      "display_name": "Liudmila Samsonova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.713568
+     },
+     {
+      "entity_key": "maya-joint",
+      "display_name": "Maya Joint",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.286432
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:ann-li-vs-antonia-ruzic:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T21:30Z"
+    "completed_at": "2026-08-31T21:30Z",
+    "score": "7-5, 6-1",
+    "completion": "final",
+    "winner_entity_key": "ann-li",
+    "players": [
+     {
+      "entity_key": "antonia-ruzic",
+      "display_name": "Antonia Ruzic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.238579
+     },
+     {
+      "entity_key": "ann-li",
+      "display_name": "Ann Li",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.761421
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:marco-trungelliti-vs-shang-juncheng:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T21:35Z"
+    "completed_at": "2026-08-31T21:35Z",
+    "score": "0-6, 7-6, 1-6, 6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "marco-trungelliti",
+    "players": [
+     {
+      "entity_key": "marco-trungelliti",
+      "display_name": "Marco Trungelliti",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "shang-juncheng",
+      "display_name": "Shang Juncheng",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:karen-khachanov-vs-roman-andres-burruchaga:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T21:45Z"
+    "completed_at": "2026-08-31T21:45Z",
+    "score": "6-3, 6-0, 6-1",
+    "completion": "final",
+    "winner_entity_key": "karen-khachanov",
+    "players": [
+     {
+      "entity_key": "karen-khachanov",
+      "display_name": "Karen Khachanov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.772727
+     },
+     {
+      "entity_key": "roman-andres-burruchaga",
+      "display_name": "Roman Andres Burruchaga",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.227273
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:facundo-diaz-acosta-vs-quentin-halys:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T22:10Z"
+    "completed_at": "2026-08-31T22:10Z",
+    "score": "6-4, 7-5, 6-7, 6-1",
+    "completion": "final",
+    "winner_entity_key": "quentin-halys",
+    "players": [
+     {
+      "entity_key": "facundo-diaz-acosta",
+      "display_name": "Facundo Diaz Acosta",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.251256
+     },
+     {
+      "entity_key": "quentin-halys",
+      "display_name": "Quentin Halys",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.748744
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elisabetta-cocciaretto-vs-katerina-siniakova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T22:40Z"
+    "completed_at": "2026-08-31T22:40Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "katerina-siniakova",
+    "players": [
+     {
+      "entity_key": "katerina-siniakova",
+      "display_name": "Katerina Siniakova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.638191
+     },
+     {
+      "entity_key": "elisabetta-cocciaretto",
+      "display_name": "Elisabetta Cocciaretto",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.361809
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:learner-tien-vs-nuno-borges:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T22:50Z"
+    "completed_at": "2026-08-31T22:50Z",
+    "score": "6-4, 6-1, 6-2",
+    "completion": "final",
+    "winner_entity_key": "learner-tien",
+    "players": [
+     {
+      "entity_key": "learner-tien",
+      "display_name": "Learner Tien",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.655
+     },
+     {
+      "entity_key": "nuno-borges",
+      "display_name": "Nuno Borges",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.345
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:iga-swiatek-vs-wang-xiyu:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T23:05Z"
+    "completed_at": "2026-08-31T23:05Z",
+    "score": "6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "iga-swiatek",
+    "players": [
+     {
+      "entity_key": "wang-xiyu",
+      "display_name": "Wang Xiyu",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "iga-swiatek",
+      "display_name": "Iga Swiatek",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:ben-shelton-vs-tallon-griekspoor:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T23:15Z"
+    "completed_at": "2026-08-31T23:15Z",
+    "score": "1-6, 6-1, 7-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "ben-shelton",
+    "players": [
+     {
+      "entity_key": "tallon-griekspoor",
+      "display_name": "Tallon Griekspoor",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.135678
+     },
+     {
+      "entity_key": "ben-shelton",
+      "display_name": "Ben Shelton",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.864322
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:felix-auger-aliassime-vs-rinky-hijikata:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T23:15Z"
+    "completed_at": "2026-08-31T23:15Z",
+    "score": "7-5, 4-6, 6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "felix-auger-aliassime",
+    "players": [
+     {
+      "entity_key": "rinky-hijikata",
+      "display_name": "Rinky Hijikata",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.133663
+     },
+     {
+      "entity_key": "felix-auger-aliassime",
+      "display_name": "Felix Auger-Aliassime",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.866337
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182668",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T23:20Z"
+    "completed_at": "2026-08-31T23:20Z",
+    "score": "3-6, 6-3, 6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "alexei-popyrin",
+    "players": [
+     {
+      "entity_key": "alexei-popyrin",
+      "display_name": "Alexei Popyrin",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "grigor-dimitrov",
+      "display_name": "Grigor Dimitrov",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182753",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-08-31T23:25Z"
+    "completed_at": "2026-08-31T23:25Z",
+    "score": "6-1, 6-4, 7-5",
+    "completion": "final",
+    "winner_entity_key": "jakub-mensik",
+    "players": [
+     {
+      "entity_key": "shintaro-mochizuki",
+      "display_name": "Shintaro Mochizuki",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jakub-mensik",
+      "display_name": "Jakub Mensik",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:frances-tiafoe-vs-martin-damm:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T01:00Z"
+    "completed_at": "2026-09-01T01:00Z",
+    "score": "6-4, 4-6, 3-6, 6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "frances-tiafoe",
+    "players": [
+     {
+      "entity_key": "frances-tiafoe",
+      "display_name": "Frances Tiafoe",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.775
+     },
+     {
+      "entity_key": "martin-damm",
+      "display_name": "Martin Damm",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.225
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:anastasia-zakharova-vs-naomi-osaka:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T02:20Z"
+    "completed_at": "2026-09-01T02:20Z",
+    "score": "7-6, 7-6",
+    "completion": "final",
+    "winner_entity_key": "naomi-osaka",
+    "players": [
+     {
+      "entity_key": "anastasia-zakharova",
+      "display_name": "Anastasia Zakharova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.113861
+     },
+     {
+      "entity_key": "naomi-osaka",
+      "display_name": "Naomi Osaka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.886139
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:flavio-cobolli-vs-francisco-comesana:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T15:05Z"
+    "completed_at": "2026-09-01T15:05Z",
+    "score": "3-6, 2-6, 6-3, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "flavio-cobolli",
+    "players": [
+     {
+      "entity_key": "flavio-cobolli",
+      "display_name": "Flavio Cobolli",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.795
+     },
+     {
+      "entity_key": "francisco-comesana",
+      "display_name": "Francisco Comesana",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.205
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:alina-korneeva-vs-madison-keys:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T15:40Z"
+    "completed_at": "2026-09-01T15:40Z",
+    "score": "7-5, 6-4",
+    "completion": "final",
+    "winner_entity_key": "madison-keys",
+    "players": [
+     {
+      "entity_key": "alina-korneeva",
+      "display_name": "Alina Korneeva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.275
+     },
+     {
+      "entity_key": "madison-keys",
+      "display_name": "Madison Keys",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.725
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:darwin-blanch-vs-taylor-fritz:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T17:45Z"
+    "completed_at": "2026-09-01T17:45Z",
+    "score": "6-3, 6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "taylor-fritz",
+    "players": [
+     {
+      "entity_key": "darwin-blanch",
+      "display_name": "Darwin Blanch",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.045226
+     },
+     {
+      "entity_key": "taylor-fritz",
+      "display_name": "Taylor Fritz",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.954774
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182597",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:45Z"
+    "completed_at": "2026-09-01T18:45Z",
+    "score": "2-6, 7-5, 6-2",
+    "completion": "final",
+    "winner_entity_key": "maria-sakkari",
+    "players": [
+     {
+      "entity_key": "robin-montgomery",
+      "display_name": "Robin Montgomery",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "maria-sakkari",
+      "display_name": "Maria Sakkari",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:ella-seidel-vs-yuliia-starodubtseva:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:45Z"
+    "completed_at": "2026-09-01T18:45Z",
+    "score": "6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "yuliia-starodubtseva",
+    "players": [
+     {
+      "entity_key": "ella-seidel",
+      "display_name": "Ella Seidel",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.301508
+     },
+     {
+      "entity_key": "yuliia-starodubtseva",
+      "display_name": "Yuliia Starodubtseva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.698492
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182627",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:50Z"
+    "completed_at": "2026-09-01T18:50Z",
+    "score": "6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "eva-lys",
+    "players": [
+     {
+      "entity_key": "eva-lys",
+      "display_name": "Eva Lys",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "gabriela-knutson",
+      "display_name": "Gabriela Knutson",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:corentin-moutet-vs-dane-sweeny:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:50Z"
+    "completed_at": "2026-09-01T18:50Z",
+    "score": "7-6, 6-4, 3-0",
+    "completion": "retired",
+    "winner_entity_key": "dane-sweeny",
+    "players": [
+     {
+      "entity_key": "corentin-moutet",
+      "display_name": "Corentin Moutet",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.742718
+     },
+     {
+      "entity_key": "dane-sweeny",
+      "display_name": "Dane Sweeny",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.257282
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:filip-misolic-vs-francisco-cerundolo:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:50Z"
+    "completed_at": "2026-09-01T18:50Z",
+    "score": "6-4, 6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "francisco-cerundolo",
+    "players": [
+     {
+      "entity_key": "francisco-cerundolo",
+      "display_name": "Francisco Cerundolo",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.915
+     },
+     {
+      "entity_key": "filip-misolic",
+      "display_name": "Filip Misolic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.085
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:belinda-bencic-vs-yulia-putintseva:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:50Z"
+    "completed_at": "2026-09-01T18:50Z",
+    "score": "4-6, 7-5, 6-3",
+    "completion": "final",
+    "winner_entity_key": "yulia-putintseva",
+    "players": [
+     {
+      "entity_key": "belinda-bencic",
+      "display_name": "Belinda Bencic",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.813131
+     },
+     {
+      "entity_key": "yulia-putintseva",
+      "display_name": "Yulia Putintseva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.186869
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elena-rybakina-vs-thea-frodin:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T18:50Z"
+    "completed_at": "2026-09-01T18:50Z",
+    "score": "6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "elena-rybakina",
+    "players": [
+     {
+      "entity_key": "elena-rybakina",
+      "display_name": "Elena Rybakina",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.934673
+     },
+     {
+      "entity_key": "thea-frodin",
+      "display_name": "Thea Frodin",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.065327
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:camilo-ugo-carabelli-vs-jan-lennard-struff:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T19:40Z"
+    "completed_at": "2026-09-01T19:40Z",
+    "score": "6-4, 6-3, 6-3",
+    "completion": "final",
+    "winner_entity_key": "jan-lennard-struff",
+    "players": [
+     {
+      "entity_key": "jan-lennard-struff",
+      "display_name": "Jan-Lennard Struff",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.646465
+     },
+     {
+      "entity_key": "camilo-ugo-carabelli",
+      "display_name": "Camilo Ugo Carabelli",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.353535
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:janice-tjen-vs-mirra-andreeva:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T19:45Z"
+    "completed_at": "2026-09-01T19:45Z",
+    "score": "6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "mirra-andreeva",
+    "players": [
+     {
+      "entity_key": "janice-tjen",
+      "display_name": "Janice Tjen",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.135678
+     },
+     {
+      "entity_key": "mirra-andreeva",
+      "display_name": "Mirra Andreeva",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.864322
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:arthur-fery-vs-lorenzo-musetti:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T20:25Z"
+    "completed_at": "2026-09-01T20:25Z",
+    "score": "6-3, 6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "lorenzo-musetti",
+    "players": [
+     {
+      "entity_key": "lorenzo-musetti",
+      "display_name": "Lorenzo Musetti",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.775
+     },
+     {
+      "entity_key": "arthur-fery",
+      "display_name": "Arthur Fery",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.225
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:elise-mertens-vs-kaitlin-quevedo:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T20:25Z"
+    "completed_at": "2026-09-01T20:25Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "elise-mertens",
+    "players": [
+     {
+      "entity_key": "elise-mertens",
+      "display_name": "Elise Mertens",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.845
+     },
+     {
+      "entity_key": "kaitlin-quevedo",
+      "display_name": "Kaitlin Quevedo",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.155
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:oleksandra-oliynykova-vs-reese-brantmeier:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T20:45Z"
+    "completed_at": "2026-09-01T20:45Z",
+    "score": "6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "oleksandra-oliynykova",
+    "players": [
+     {
+      "entity_key": "reese-brantmeier",
+      "display_name": "Reese Brantmeier",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.505051
+     },
+     {
+      "entity_key": "oleksandra-oliynykova",
+      "display_name": "Oleksandra Oliynykova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.494949
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182650",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T21:30Z"
+    "completed_at": "2026-09-01T21:30Z",
+    "score": "6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "anastasia-potapova",
+    "players": [
+     {
+      "entity_key": "darja-semenistaja",
+      "display_name": "Darja Semenistaja",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "anastasia-potapova",
+      "display_name": "Anastasia Potapova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:darja-vidmanova-vs-jessica-bouzas-maneiro:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T21:45Z"
+    "completed_at": "2026-09-01T21:45Z",
+    "score": "6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "jessica-bouzas-maneiro",
+    "players": [
+     {
+      "entity_key": "jessica-bouzas-maneiro",
+      "display_name": "Jessica Bouzas Maneiro",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.520202
+     },
+     {
+      "entity_key": "darja-vidmanova",
+      "display_name": "Darja Vidmanova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.479798
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182649",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T21:55Z"
+    "completed_at": "2026-09-01T21:55Z",
+    "score": "7-6, 6-2",
+    "completion": "final",
+    "winner_entity_key": "leolia-jeanjean",
+    "players": [
+     {
+      "entity_key": "leolia-jeanjean",
+      "display_name": "Leolia Jeanjean",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "arantxa-rus",
+      "display_name": "Arantxa Rus",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:adolfo-daniel-vallejo-vs-gael-monfils:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T23:05Z"
+    "completed_at": "2026-09-01T23:05Z",
+    "score": "2-6, 6-1, 6-2, 6-0",
+    "completion": "final",
+    "winner_entity_key": "gael-monfils",
+    "players": [
+     {
+      "entity_key": "gael-monfils",
+      "display_name": "Gael Monfils",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.465
+     },
+     {
+      "entity_key": "adolfo-daniel-vallejo",
+      "display_name": "Adolfo Daniel Vallejo",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.535
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:coco-gauff-vs-zeynep-sonmez:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-01T23:15Z"
+    "completed_at": "2026-09-01T23:15Z",
+    "score": "6-3, 6-4",
+    "completion": "final",
+    "winner_entity_key": "coco-gauff",
+    "players": [
+     {
+      "entity_key": "coco-gauff",
+      "display_name": "Coco Gauff",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.935323
+     },
+     {
+      "entity_key": "zeynep-sonmez",
+      "display_name": "Zeynep Sonmez",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.064677
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:alexander-zverev-vs-lorenzo-sonego:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T01:00Z"
+    "completed_at": "2026-09-02T01:00Z",
+    "score": "6-4, 3-6, 6-7, 7-5, 6-4",
+    "completion": "final",
+    "winner_entity_key": "alexander-zverev",
+    "players": [
+     {
+      "entity_key": "lorenzo-sonego",
+      "display_name": "Lorenzo Sonego",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.075377
+     },
+     {
+      "entity_key": "alexander-zverev",
+      "display_name": "Alexander Zverev",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.924623
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182639",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T01:50Z"
+    "completed_at": "2026-09-02T01:50Z",
+    "score": "6-1, 6-2",
+    "completion": "final",
+    "winner_entity_key": "alexandra-eala",
+    "players": [
+     {
+      "entity_key": "alexandra-eala",
+      "display_name": "Alexandra Eala",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "mary-stoiana",
+      "display_name": "Mary Stoiana",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182558",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:05Z"
+    "completed_at": "2026-09-02T15:05Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "leylah-fernandez",
+    "players": [
+     {
+      "entity_key": "leylah-fernandez",
+      "display_name": "Leylah Fernandez",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "mananchaya-sawangkaew",
+      "display_name": "Mananchaya Sawangkaew",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182561",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:05Z"
+    "completed_at": "2026-09-02T15:05Z",
+    "score": "6-4, 6-1",
+    "completion": "final",
+    "winner_entity_key": "jasmine-paolini",
+    "players": [
+     {
+      "entity_key": "lucrezia-stefanini",
+      "display_name": "Lucrezia Stefanini",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jasmine-paolini",
+      "display_name": "Jasmine Paolini",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182567",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:05Z"
+    "completed_at": "2026-09-02T15:05Z",
+    "score": "6-1, 6-1",
+    "completion": "final",
+    "winner_entity_key": "taylor-townsend",
+    "players": [
+     {
+      "entity_key": "taylah-preston",
+      "display_name": "Taylah Preston",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "taylor-townsend",
+      "display_name": "Taylor Townsend",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182575",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:05Z"
+    "completed_at": "2026-09-02T15:05Z",
+    "score": "6-1, 7-6",
+    "completion": "final",
+    "winner_entity_key": "diana-shnaider",
+    "players": [
+     {
+      "entity_key": "diana-shnaider",
+      "display_name": "Diana Shnaider",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "karolina-pliskova",
+      "display_name": "Karolina Pliskova",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182748",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:05Z"
+    "completed_at": "2026-09-02T15:05Z",
+    "score": "6-7, 6-2, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "daniel-merida",
+    "players": [
+     {
+      "entity_key": "andrey-rublev",
+      "display_name": "Andrey Rublev",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "daniel-merida",
+      "display_name": "Daniel Merida",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182544",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:10Z"
+    "completed_at": "2026-09-02T15:10Z",
+    "score": "6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "sorana-cirstea",
+    "players": [
+     {
+      "entity_key": "sorana-cirstea",
+      "display_name": "Sorana Cirstea",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "diane-parry",
+      "display_name": "Diane Parry",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182690",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:10Z"
+    "completed_at": "2026-09-02T15:10Z",
+    "score": "7-6, 6-2, 7-5",
+    "completion": "final",
+    "winner_entity_key": "arthur-rinderknech",
+    "players": [
+     {
+      "entity_key": "arthur-rinderknech",
+      "display_name": "Arthur Rinderknech",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jaume-munar",
+      "display_name": "Jaume Munar",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182746",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:10Z"
+    "completed_at": "2026-09-02T15:10Z",
+    "score": "6-3, 6-4, 6-4",
+    "completion": "final",
+    "winner_entity_key": "alex-michelsen",
+    "players": [
+     {
+      "entity_key": "alex-michelsen",
+      "display_name": "Alex Michelsen",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "brandon-nakashima",
+      "display_name": "Brandon Nakashima",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182771",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:10Z"
+    "completed_at": "2026-09-02T15:10Z",
+    "score": "6-1, 6-3, 7-5",
+    "completion": "final",
+    "winner_entity_key": "daniil-medvedev",
+    "players": [
+     {
+      "entity_key": "sebastian-gorzny",
+      "display_name": "Sebastian Gorzny",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "daniil-medvedev",
+      "display_name": "Daniil Medvedev",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182550",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T15:40Z"
+    "completed_at": "2026-09-02T15:40Z",
+    "score": "6-3, 6-1",
+    "completion": "final",
+    "winner_entity_key": "jessica-pegula",
+    "players": [
+     {
+      "entity_key": "sofia-kenin",
+      "display_name": "Sofia Kenin",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jessica-pegula",
+      "display_name": "Jessica Pegula",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:alex-molcan-vs-benjamin-bonzi:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T16:40Z"
+    "completed_at": "2026-09-02T16:40Z",
+    "score": "6-4, 3-6, 6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "benjamin-bonzi",
+    "players": [
+     {
+      "entity_key": "benjamin-bonzi",
+      "display_name": "Benjamin Bonzi",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.678392
+     },
+     {
+      "entity_key": "alex-molcan",
+      "display_name": "Alex Molcan",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.321608
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:botic-van-de-zandschulp-vs-jan-choinski:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T16:40Z"
+    "completed_at": "2026-09-02T16:40Z",
+    "score": "6-3, 6-1, 7-6",
+    "completion": "final",
+    "winner_entity_key": "botic-van-de-zandschulp",
+    "players": [
+     {
+      "entity_key": "botic-van-de-zandschulp",
+      "display_name": "Botic Van De Zandschulp",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.765
+     },
+     {
+      "entity_key": "jan-choinski",
+      "display_name": "Jan Choinski",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.235
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:daniel-altmaier-vs-zachary-svajda:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T16:40Z"
+    "completed_at": "2026-09-02T16:40Z",
+    "score": "6-3, 6-1, 6-7, 6-2",
+    "completion": "final",
+    "winner_entity_key": "zachary-svajda",
+    "players": [
+     {
+      "entity_key": "daniel-altmaier",
+      "display_name": "Daniel Altmaier",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.413265
+     },
+     {
+      "entity_key": "zachary-svajda",
+      "display_name": "Zachary Svajda",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.586735
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:daria-kasatkina-vs-paula-badosa:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T16:40Z"
+    "completed_at": "2026-09-02T16:40Z",
+    "score": "6-1, 6-4",
+    "completion": "final",
+    "winner_entity_key": "paula-badosa",
+    "players": [
+     {
+      "entity_key": "paula-badosa",
+      "display_name": "Paula Badosa",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.562814
+     },
+     {
+      "entity_key": "daria-kasatkina",
+      "display_name": "Daria Kasatkina",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.437186
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:ignacio-buse-vs-marcos-giron:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T16:45Z"
+    "completed_at": "2026-09-02T16:45Z",
+    "score": "3-6, 6-3, 6-3, 6-7, 6-1",
+    "completion": "final",
+    "winner_entity_key": "ignacio-buse",
+    "players": [
+     {
+      "entity_key": "ignacio-buse",
+      "display_name": "Ignacio Buse",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.525253
+     },
+     {
+      "entity_key": "marcos-giron",
+      "display_name": "Marcos Giron",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.474747
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182730",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T17:10Z"
+    "completed_at": "2026-09-02T17:10Z",
+    "score": "6-3, 5-7, 7-6, 7-5",
+    "completion": "final",
+    "winner_entity_key": "ben-shelton",
+    "players": [
+     {
+      "entity_key": "hubert-hurkacz",
+      "display_name": "Hubert Hurkacz",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "ben-shelton",
+      "display_name": "Ben Shelton",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182547",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T17:20Z"
+    "completed_at": "2026-09-02T17:20Z",
+    "score": "3-6, 6-2, 6-3",
+    "completion": "final",
+    "winner_entity_key": "emma-navarro",
+    "players": [
+     {
+      "entity_key": "catherine-mcnally",
+      "display_name": "Catherine McNally",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "emma-navarro",
+      "display_name": "Emma Navarro",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182714",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T17:20Z"
+    "completed_at": "2026-09-02T17:20Z",
+    "score": "6-3, 6-3, 3-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "tomas-martin-etcheverry",
+    "players": [
+     {
+      "entity_key": "jacob-fearnley",
+      "display_name": "Jacob Fearnley",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "tomas-martin-etcheverry",
+      "display_name": "Tomas Martin Etcheverry",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182580",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T17:40Z"
+    "completed_at": "2026-09-02T17:40Z",
+    "score": "6-1, 7-5",
+    "completion": "final",
+    "winner_entity_key": "marta-kostyuk",
+    "players": [
+     {
+      "entity_key": "sloane-stephens",
+      "display_name": "Sloane Stephens",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "marta-kostyuk",
+      "display_name": "Marta Kostyuk",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:mayar-sherif-vs-nikola-bartunkova:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T18:05Z"
+    "completed_at": "2026-09-02T18:05Z",
+    "score": "6-1, 6-2",
+    "completion": "final",
+    "winner_entity_key": "nikola-bartunkova",
+    "players": [
+     {
+      "entity_key": "mayar-sherif",
+      "display_name": "Mayar Sherif",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "nikola-bartunkova",
+      "display_name": "Nikola Bartunkova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182696",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T18:10Z"
+    "completed_at": "2026-09-02T18:10Z",
+    "score": "6-2, 6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "alex-de-minaur",
+    "players": [
+     {
+      "entity_key": "alex-de-minaur",
+      "display_name": "Alex de Minaur",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "andrea-guerrieri",
+      "display_name": "Andrea Guerrieri",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:fabian-marozsan-vs-michael-zheng:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T18:30Z"
+    "completed_at": "2026-09-02T18:30Z",
+    "score": "6-4, 6-4, 6-2",
+    "completion": "final",
+    "winner_entity_key": "michael-zheng",
+    "players": [
+     {
+      "entity_key": "michael-zheng",
+      "display_name": "Michael Zheng",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.560606
+     },
+     {
+      "entity_key": "fabian-marozsan",
+      "display_name": "Fabian Marozsan",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.439394
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182569",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T18:50Z"
+    "completed_at": "2026-09-02T18:50Z",
+    "score": "6-3, 6-0",
+    "completion": "final",
+    "winner_entity_key": "kamilla-rakhimova",
+    "players": [
+     {
+      "entity_key": "kamilla-rakhimova",
+      "display_name": "Kamilla Rakhimova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "oksana-selekhmeteva",
+      "display_name": "Oksana Selekhmeteva",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182531",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T19:30Z"
+    "completed_at": "2026-09-02T19:30Z",
+    "score": "6-1, 6-0",
+    "completion": "final",
+    "winner_entity_key": "karolina-muchova",
+    "players": [
+     {
+      "entity_key": "karolina-muchova",
+      "display_name": "Karolina Muchova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "katie-boulter",
+      "display_name": "Katie Boulter",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182641",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T20:45Z"
+    "completed_at": "2026-09-02T20:45Z",
+    "score": "6-4, 1-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "francesca-jones",
+    "players": [
+     {
+      "entity_key": "francesca-jones",
+      "display_name": "Francesca Jones",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "magda-linette",
+      "display_name": "Magda Linette",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182773",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T20:50Z"
+    "completed_at": "2026-09-02T20:50Z",
+    "score": "6-0, 6-4, 7-6",
+    "completion": "final",
+    "winner_entity_key": "denis-shapovalov",
+    "players": [
+     {
+      "entity_key": "luca-van-assche",
+      "display_name": "Luca Van Assche",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "denis-shapovalov",
+      "display_name": "Denis Shapovalov",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182775",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T21:20Z"
+    "completed_at": "2026-09-02T21:20Z",
+    "score": "6-7, 6-3, 7-6, 6-4",
+    "completion": "final",
+    "winner_entity_key": "stefanos-tsitsipas",
+    "players": [
+     {
+      "entity_key": "stefanos-tsitsipas",
+      "display_name": "Stefanos Tsitsipas",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "lloyd-harris",
+      "display_name": "Lloyd Harris",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182548",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T21:35Z"
+    "completed_at": "2026-09-02T21:35Z",
+    "score": "7-5, 2-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "anna-kalinskaya",
+    "players": [
+     {
+      "entity_key": "anna-kalinskaya",
+      "display_name": "Anna Kalinskaya",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "wang-xinyu",
+      "display_name": "Wang Xinyu",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182681",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T21:40Z"
+    "completed_at": "2026-09-02T21:40Z",
+    "score": "2-6, 6-2, 4-6, 6-3, 6-2",
+    "completion": "final",
+    "winner_entity_key": "jesper-de-jong",
+    "players": [
+     {
+      "entity_key": "francesco-passaro",
+      "display_name": "Francesco Passaro",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jesper-de-jong",
+      "display_name": "Jesper de Jong",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:jelena-ostapenko-vs-tatjana-maria:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T21:50Z"
+    "completed_at": "2026-09-02T21:50Z",
+    "score": "4-6, 6-1, 6-2",
+    "completion": "final",
+    "winner_entity_key": "tatjana-maria",
+    "players": [
+     {
+      "entity_key": "jelena-ostapenko",
+      "display_name": "Jelena Ostapenko",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.611111
+     },
+     {
+      "entity_key": "tatjana-maria",
+      "display_name": "Tatjana Maria",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.388889
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182587",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T22:00Z"
+    "completed_at": "2026-09-02T22:00Z",
+    "score": "6-1, 2-6, 6-3",
+    "completion": "final",
+    "winner_entity_key": "ekaterina-alexandrova",
+    "players": [
+     {
+      "entity_key": "ekaterina-alexandrova",
+      "display_name": "Ekaterina Alexandrova",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "kimberly-birrell",
+      "display_name": "Kimberly Birrell",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182776",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T22:05Z"
+    "completed_at": "2026-09-02T22:05Z",
+    "score": "6-4, 6-2, 6-4",
+    "completion": "final",
+    "winner_entity_key": "jiri-lehecka",
+    "players": [
+     {
+      "entity_key": "toby-samuel",
+      "display_name": "Toby Samuel",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "jiri-lehecka",
+      "display_name": "Jiri Lehecka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "womens-singles:iva-jovic-vs-magdalena-frech:2026-08-30",
     "draw": "womens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T22:15Z"
+    "completed_at": "2026-09-02T22:15Z",
+    "score": "7-5, 6-3",
+    "completion": "final",
+    "winner_entity_key": "iva-jovic",
+    "players": [
+     {
+      "entity_key": "magdalena-frech",
+      "display_name": "Magdalena Frech",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.247475
+     },
+     {
+      "entity_key": "iva-jovic",
+      "display_name": "Iva Jovic",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.752525
+     }
+    ]
    },
    {
+    "matchup_key": "mens-singles:carlos-taberner-vs-zizou-bergs:2026-08-30",
     "draw": "mens-singles",
     "round": "Round 1",
     "source_round": "Round 1",
-    "completed_at": "2026-09-02T22:25Z"
+    "completed_at": "2026-09-02T22:25Z",
+    "score": "6-3, 3-6, 6-2, 6-2",
+    "completion": "final",
+    "winner_entity_key": "zizou-bergs",
+    "players": [
+     {
+      "entity_key": "carlos-taberner",
+      "display_name": "Carlos Taberner",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": 0.07
+     },
+     {
+      "entity_key": "zizou-bergs",
+      "display_name": "Zizou Bergs",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": 0.93
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182759",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T22:40Z"
+    "completed_at": "2026-09-02T22:40Z",
+    "score": "7-5, 6-3, 6-1",
+    "completion": "final",
+    "winner_entity_key": "wu-yibing",
+    "players": [
+     {
+      "entity_key": "wu-yibing",
+      "display_name": "Wu Yibing",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "james-duckworth",
+      "display_name": "James Duckworth",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182539",
     "draw": "womens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T23:15Z"
+    "completed_at": "2026-09-02T23:15Z",
+    "score": "6-1, 6-1",
+    "completion": "final",
+    "winner_entity_key": "aryna-sabalenka",
+    "players": [
+     {
+      "entity_key": "polina-iatcenko",
+      "display_name": "Polina Iatcenko",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "aryna-sabalenka",
+      "display_name": "Aryna Sabalenka",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    },
    {
+    "matchup_key": "espn:182779",
     "draw": "mens-singles",
     "round": "Round 2",
     "source_round": "Round 2",
-    "completed_at": "2026-09-02T23:40Z"
+    "completed_at": "2026-09-02T23:40Z",
+    "score": "6-3, 6-1, 6-1",
+    "completion": "final",
+    "winner_entity_key": "alexander-bublik",
+    "players": [
+     {
+      "entity_key": "adrian-mannarino",
+      "display_name": "Adrian Mannarino",
+      "seed": null,
+      "is_winner": false,
+      "image": null,
+      "prematch_probability": null
+     },
+     {
+      "entity_key": "alexander-bublik",
+      "display_name": "Alexander Bublik",
+      "seed": null,
+      "is_winner": true,
+      "image": null,
+      "prematch_probability": null
+     }
+    ]
    }
   ]
  }
