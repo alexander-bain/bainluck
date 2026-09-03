@@ -571,6 +571,13 @@ async def reconcile_anchor_schedule_endpoint(
             "without raising `limit` past what the router will allow."
         ),
     ),
+    undo_identity: Optional[str] = Query(
+        None,
+        description=(
+            "Put one earlier apply's clocks BACK. Takes precedence over every "
+            "other argument, and is itself a dry run unless `apply` is true."
+        ),
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """#2693/#2697 — does each anchored row agree with its own anchor's kickoff?
@@ -603,8 +610,16 @@ async def reconcile_anchor_schedule_endpoint(
     from app.tasks.reconcile_anchor_schedule import (
         DEFAULT_LIMIT,
         reconcile,
+        restore,
         summarize_for_operator,
     )
+
+    # An undo is never also a derive: it replays a stored record and asks the
+    # authority nothing. Checked before the reconcile arguments are read so a
+    # stray `sport` or `cursor` cannot quietly turn a restore into a sweep.
+    if undo_identity:
+        result = await restore(db, undo_identity, apply=apply)
+        return {**result, "operator_line": summarize_for_operator(result)}
 
     # The module owns the bound, and it owns it for a reason a route cannot see
     # (the router-timeout arithmetic is in its docstring). A second copy of the
