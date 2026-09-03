@@ -275,6 +275,81 @@ class StagedFuturesIncomplete(RuntimeError):
     """
 
 
+#: Prefix for the gauge that says WHY a beat ended ``cancelled``.
+#:
+#: A prefix rather than a fixed key so the value is a NAME and not a code an
+#: operator has to look up, and so a cause this file has not thought of yet
+#: cannot be silently rendered as one it has. Read by a prefix scan in
+#: ``calibration_beat_gauge_sampler.select_gauges``, the same way
+#: ``staged:convergence_reason:`` already is — no fixed tuple can hold it.
+CANCEL_CAUSE_PREFIX = "beat:cancel_cause:"
+
+#: The beat ran out of window with units banked and nothing published. The
+#: DESIGNED partial: ``StagedFuturesIncomplete`` exists to say exactly this, and
+#: a beat ending this way is a build working as specified.
+CANCEL_CAUSE_INCOMPLETE = "incomplete"
+
+#: The RUNTIME took the worker away mid-phase — a deploy cycling ``worker-heavy``,
+#: a dyno restart, an operator pausing the process. Nothing about the build is
+#: wrong; it simply stopped existing.
+CANCEL_CAUSE_INTERRUPTED = "interrupted"
+
+
+def cancel_cause(exc: BaseException) -> Optional[str]:
+    """``incomplete`` | ``interrupted`` | ``None`` — WHY a beat ended cancelled.
+
+    CAL-P993, from calibration-028. :meth:`PhaseRunner.classify_failure` maps
+    ``StagedFuturesIncomplete`` and ``asyncio.CancelledError`` to the SAME
+    terminal, ``cancelled``, and both of them are correct to do so: neither is a
+    failure and neither should page anybody. But they are opposite facts about
+    the producer, and collapsing them cost this program a night.
+
+    * ``incomplete`` is the build saying *I did not finish, and that is the
+      design.* It is the number that answers "is the staged build converging?"
+    * ``interrupted`` is the build saying *I was killed.* It answers a question
+      about the DEPLOY CADENCE, not about calibration at all.
+
+    Measured on production 2026-09-03 over the 168-beat ring: **21 of the 23
+    ``interrupted`` beats had a Heroku release inside their own window**, and
+    the last four terminated 16-28 s after one. Ruling 009's freeze score read
+    all of them as the producer failing to converge, because the ring had no
+    field in which the difference could be written down. That is gotcha #53 in
+    its exact form — one word standing for two states — and ruling 075's second
+    clause is the rule it breaks.
+
+    Returns ``None`` for anything that is not a cancellation, so a caller can
+    write ``if cause is not None`` rather than testing the terminal twice.
+
+    Derived from the SAME predicates :meth:`PhaseRunner.classify_failure` uses,
+    in the same order, deliberately: a second copy of the classification would
+    be free to disagree with the terminal it is annotating, and an annotation
+    that contradicts its subject is worse than no annotation.
+    """
+    import asyncio
+
+    if isinstance(exc, StagedFuturesIncomplete):
+        return CANCEL_CAUSE_INCOMPLETE
+    if isinstance(exc, asyncio.CancelledError):
+        return CANCEL_CAUSE_INTERRUPTED
+    return None
+
+
+def describe_failure(exc: BaseException) -> str:
+    """``str(exc)``, or the class name when the exception has no message.
+
+    ``asyncio.CancelledError()`` renders as the empty string, and
+    ``PhaseLedger.fail`` stores ``detail or None`` — so every deploy-killed beat
+    since this rail was built has landed in the ledger with NO detail at all,
+    and the phase record read as if nothing had been recorded rather than as a
+    cancellation with an empty message. The class name is the minimum a reader
+    needs to tell those apart.
+
+    Truncated to the same 200 characters the ledger stores, here rather than at
+    the call site, so the bound travels with the description.
+    """
+    return (str(exc) or type(exc).__name__)[:200]
+
+
 def run_owner() -> str:
     """Who is building right now. Stable within a run, distinct across workers."""
     return f"{socket.gethostname()}:{os.getpid()}"
@@ -574,11 +649,21 @@ class PhaseRunner:
         return FAILED
 
     def abort(self, exc: BaseException) -> str:
-        """Close whatever phase was in flight, classified. Returns the status."""
+        """Close whatever phase was in flight, classified. Returns the status.
+
+        CAL-P993 (calibration-028) records the CAUSE beside the status. See
+        :func:`cancel_cause` for why ``cancelled`` alone is not an answer, and
+        :data:`CANCEL_CAUSE_PREFIX` for how it reaches the ring.
+        """
         status = self.classify_failure(exc)
         self.ledger.close_open_phase(
-            now_ms=self.elapsed_ms(), status=status, detail=str(exc)[:200]
+            now_ms=self.elapsed_ms(), status=status, detail=describe_failure(exc)
         )
+        cause = cancel_cause(exc)
+        if cause is not None:
+            # A gauge, not a stage: this is a LEVEL ("this beat ended that
+            # way"), and ``record_stage`` accumulates repeats.
+            self.ledger.record_gauge(f"{CANCEL_CAUSE_PREFIX}{cause}", 1)
         return status
 
     # -- resume / capture -----------------------------------------------------
