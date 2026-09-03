@@ -64,6 +64,11 @@ import {
   claimHubBoot,
   hubBootPath,
 } from "./tournament/hubBoot";
+import {
+  EVENT_BOOT_CLAIM_TIMEOUT_MS,
+  EVENT_BOOT_HISTORY_HOURS,
+  claimEventBoot,
+} from "./event/detailBoot";
 
 /** The API origin. Exported so `feedBoot.ts` builds its boot URL against the
  *  same value this module fetches from, rather than a second copy of the
@@ -276,10 +281,59 @@ export async function fetchEvents(params?: {
 }
 
 /**
+ * Claim the Event page's parse-time boot for one endpoint (LAT-P219, #2846).
+ *
+ * Shared by the four fetchers `app/events/[id]/page.tsx` calls before its hero can print an answer.
+ * One helper rather than four copies of the race: the only thing that differs between the four call
+ * sites is the endpoint string and the response type.
+ *
+ * Returns `null` for every "no usable boot" case — nothing parked, a different URL, a non-2xx, a
+ * rejected fetch, or a boot that never settled — and the caller falls through to `apiFetch`, which
+ * keeps its timeout, its retries and its typed errors.
+ *
+ * RACED, NOT AWAITED. A parked fetch is a bare `fetch()` in a script tag with no timeout and no
+ * retries; during a #2724 database spell, awaiting it would strand the reader on a skeleton for as
+ * long as the server held the connection, where the normal path would have given up and retried.
+ * `hubBoot.ts` documented that hazard first and this is the same deadline for the same reason.
+ */
+async function claimEventBooted<T>(endpoint: string): Promise<T | null> {
+  const booted = claimEventBoot(`${API_URL}${endpoint}`);
+  if (!booted?.response) return null;
+
+  const TIMED_OUT = Symbol("event-boot-timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const res = await Promise.race([
+      booted.response,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), EVENT_BOOT_CLAIM_TIMEOUT_MS);
+      }),
+    ]);
+    if (res !== TIMED_OUT && res.ok) {
+      return (await res.json()) as T;
+    }
+  } catch {
+    /* boot fetch failed — the caller's normal request below is the fallback */
+  } finally {
+    // `finally`, not a line after the race: a REJECTED boot skips straight to the catch, and a timer
+    // left armed there keeps a 20 s handle alive for a request nobody is waiting on.
+    if (timer) clearTimeout(timer);
+  }
+  return null;
+}
+
+/**
  * Fetch a single event by ID
+ *
+ * LAT-P219: on a cold `/events/{id}` load the document may already have this exact request in
+ * flight, issued at HTML parse time. `fetchEventsByIds` calls this in a loop and is unaffected — the
+ * claim is keyed on the exact URL, so at most the one booted id can match, and only once.
  */
 export async function fetchEvent(id: number): Promise<EventDetailResponse> {
-  return apiFetch<EventDetailResponse>(`/api/events/${id}`);
+  const endpoint = `/api/events/${id}`;
+  const booted = await claimEventBooted<EventDetailResponse>(endpoint);
+  if (booted) return booted;
+  return apiFetch<EventDetailResponse>(endpoint);
 }
 
 /**
@@ -303,9 +357,12 @@ export async function fetchEventHistory(
   id: number,
   hours = 24
 ): Promise<EventHistoryResponse> {
-  return apiFetch<EventHistoryResponse>(
-    `/api/events/${id}/history?hours=${hours}`
-  );
+  const endpoint = `/api/events/${id}/history?hours=${hours}`;
+  // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
+  // caller asking for a different `hours` simply finds no matching entry and falls through.
+  const booted = await claimEventBooted<EventHistoryResponse>(endpoint);
+  if (booted) return booted;
+  return apiFetch<EventHistoryResponse>(endpoint);
 }
 
 /**
@@ -1006,9 +1063,10 @@ export interface GameMarketsResponse {
 export async function fetchGameMarkets(
   eventId: number
 ): Promise<GameMarketsResponse> {
-  return apiFetch<GameMarketsResponse>(
-    `/api/events/${eventId}/game-markets`
-  );
+  const endpoint = `/api/events/${eventId}/game-markets`;
+  const booted = await claimEventBooted<GameMarketsResponse>(endpoint);
+  if (booted) return booted;
+  return apiFetch<GameMarketsResponse>(endpoint);
 }
 
 /**
@@ -1026,9 +1084,10 @@ export async function fetchRelatedEvents(
  * Fetch team championship progression for an event's teams
  */
 export async function fetchTeamProgression(eventId: number): Promise<TeamProgressionResponse> {
-  return apiFetch<TeamProgressionResponse>(
-    `/api/events/${eventId}/team-progression`
-  );
+  const endpoint = `/api/events/${eventId}/team-progression`;
+  const booted = await claimEventBooted<TeamProgressionResponse>(endpoint);
+  if (booted) return booted;
+  return apiFetch<TeamProgressionResponse>(endpoint);
 }
 
 /**

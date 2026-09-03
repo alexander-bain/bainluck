@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
@@ -404,7 +405,10 @@ export default function EventPage({ params }: EventPageProps) {
     mutate: refreshHistory,
   } = useSWR(
     ["history", eventId],
-    () => fetchEventHistory(eventId, 48),
+    // LAT-P219: the window is a shared constant, not a literal, so the URL this issues and the URL
+    // the document parks at parse time are one expression. Two builders that must stay equal is the
+    // exact shape of the LAT-P171/P172 duplicate-fetch defect.
+    () => fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
   );
 
