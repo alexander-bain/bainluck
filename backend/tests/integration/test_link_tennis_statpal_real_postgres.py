@@ -327,6 +327,13 @@ class TestApplyWritesBothShapes:
         `events.statpal_fixture_id` and refuses any anchor that disagrees. An
         anchor over a NULL column is stale on arrival, so every event that got
         an anchor must also carry the bare id.
+
+        Scoped to the ledger — the rows THIS RUN is responsible for. The seed
+        deliberately contains a counter-example (`anchor_squatter`, event 208,
+        `tennis:2631627` over a NULL column) because that is how event 207's
+        claim gets refused, and it is a live demonstration that the table can
+        hold a stale anchor. Asserting over the whole table would fail on that
+        row and say nothing about the subject.
         """
         cur = conn.cursor()
         _seed(cur)
@@ -334,11 +341,19 @@ class TestApplyWritesBothShapes:
         script.apply_links(cur, writable)
 
         cur.execute(
-            "SELECT a.source_id, e.statpal_fixture_id "
-            "FROM event_provider_anchors a JOIN events e ON e.id = a.event_id "
-            "WHERE a.source = 'statpal' AND a.id_kind = 'game'"
+            f"SELECT a.source_id, e.statpal_fixture_id "
+            f"FROM {LEDGER_TABLE} b "
+            f"JOIN event_provider_anchors a "
+            f"  ON a.event_id = b.event_id AND a.source_id = b.anchor_source_id "
+            f" AND a.source = 'statpal' AND a.id_kind = 'game' "
+            f"JOIN events e ON e.id = a.event_id"
         )
-        for source_id, column in cur.fetchall():
+        rows = cur.fetchall()
+        assert len(rows) == len(writable), (
+            "every ledger row must have its anchor — a zero-row scan would pass "
+            "this test vacuously"
+        )
+        for source_id, column in rows:
             assert column is not None, f"{source_id} anchors a NULL column"
             assert source_id == f"tennis:{column}"
         conn.rollback()

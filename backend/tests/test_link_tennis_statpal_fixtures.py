@@ -75,23 +75,35 @@ def _row(event_id, sport_key, home, away, when, **extra):
     }
 
 
-#: Production rows, 2026-09-03 evening, verbatim.
+#: Production rows as `events` held them at 2026-09-03 23:5xZ — real ids, real
+#: sport keys, real names, real commence times. Read out of production with
+#: `db-query`; only the last entry is constructed, and it says so.
 POOL = [
     _row(15301172, "tennis_atp_us_open", "Bu Yunchaokete", "Michael Zheng",
          "2026-09-03T22:05:00+00:00"),
+    # The twin. Same match, the player's name written the other way round, one
+    # hour earlier, under the generic key.
     _row(15302919, "tennis_other", "Yunchaokete Bu", "Michael Zheng",
          "2026-09-03T21:05:00+00:00"),
     _row(15301145, "tennis_atp_us_open", "Alex Michelsen", "Daniel Merida Aguilar",
          "2026-09-04T20:30:00+00:00"),
-    _row(15301300, "tennis_atp_us_open", "Botic van de Zandschulp", "Alex de Minaur",
-         "2026-09-03T22:05:00+00:00"),
-    _row(15301301, "tennis_atp_us_open", "Tomas Martin Etcheverry", "Mariano Navone",
-         "2026-09-03T21:40:00+00:00"),
-    _row(15301302, "tennis_atp_us_open", "Wu Yibing", "Carlos Alcaraz",
-         "2026-09-04T23:00:00+00:00"),
-    _row(15301303, "tennis_wta_us_open", "Maria Sakkari", "Yuliia Starodubtseva",
-         "2026-09-03T22:20:00+00:00"),
-    # A bystander: right names, wrong week. The window must exclude it.
+    _row(15301180, "tennis_atp_us_open", "Botic van de Zandschulp", "Alex de Minaur",
+         "2026-09-03T22:00:58+00:00"),
+    _row(15301245, "tennis_atp_us_open", "Tomas Martin Etcheverry", "Mariano Navone",
+         "2026-09-04T20:00:00+00:00"),
+    _row(15301243, "tennis_atp_us_open", "Wu Yibing", "Carlos Alcaraz",
+         "2026-09-04T17:00:00+00:00"),
+    _row(15300832, "tennis_wta_us_open", "Maria Sakkari", "Yuliia Starodubtseva",
+         "2026-09-03T22:13:53+00:00"),
+    _row(15301164, "tennis_atp_us_open", "Zachary Svajda", "Arthur Gea",
+         "2026-09-03T22:26:00+00:00"),
+    # A PROP MARKET ingested as an event row, verbatim from production. It shares
+    # one player with the real match and sits 23 hours away, so it is a live
+    # candidate for the same fixture — and it must never win one.
+    _row(15304077, "tennis_other", "Zachary Svajda", "Arthur Gea - Exact Score",
+         "2026-09-02T23:45:02+00:00"),
+    # CONSTRUCTED, and the only one: the same two players three months earlier.
+    # Production holds no such row today, and the window must exclude it anyway.
     _row(15200000, "tennis_atp", "Botic van de Zandschulp", "Alex de Minaur",
          "2026-06-03T12:00:00+00:00"),
 ]
@@ -122,12 +134,25 @@ class TestTheVerdicts:
     def test_an_ordinary_fixture_links_to_exactly_one_row(self):
         verdict, matches = classify_fixture(_by_players("B. Van De Zandschulp"), POOL)
         assert verdict == VERDICT_LINK
-        assert [m["id"] for m in matches] == [15301300]
+        assert [m["id"] for m in matches] == [15301180]
 
     def test_the_family_name_first_row_links(self):
         verdict, matches = classify_fixture(_by_players("Y. Wu"), POOL)
         assert verdict == VERDICT_LINK
-        assert matches[0]["id"] == 15301302
+        assert matches[0]["id"] == 15301243
+
+    def test_a_prop_market_row_never_wins_a_fixture(self):
+        """`"Arthur Gea - Exact Score"` is a real row in `events`, not a match.
+
+        It shares a player with the live match, sits inside the window, and would
+        be a second candidate under any rule that matched on one name or on a
+        surname appearing ANYWHERE. The surname must END or BEGIN our name, so
+        the trailing `- Exact Score` refuses it — and the verdict stays LINK
+        rather than becoming an ambiguity that blocks a real link.
+        """
+        verdict, matches = classify_fixture(_by_players("Z. Svajda"), POOL)
+        assert verdict == VERDICT_LINK
+        assert [m["id"] for m in matches] == [15301164]
 
     def test_a_fixture_a_day_out_still_links(self):
         """`A. Michelsen` v `D. Merida Aguilar` is listed today, played tomorrow.
@@ -160,7 +185,14 @@ class TestTheVerdicts:
         assert sorted(m["id"] for m in matches) == [15301172, 15302919]
 
     def test_a_fixture_we_do_not_hold_is_unmatched_not_forced(self):
-        verdict, matches = classify_fixture(_by_players("Z. Svajda"), POOL)
+        """Production held all seven singles, so this row is REMOVED to make one.
+
+        The nearest thing to a real specimen: with the real row gone, the prop
+        row `"Arthur Gea - Exact Score"` is the only thing left carrying either
+        player, and a matcher looking for something to link would take it.
+        """
+        pool = [c for c in POOL if c["id"] != 15301164]
+        verdict, matches = classify_fixture(_by_players("Z. Svajda"), pool)
         assert verdict == VERDICT_UNMATCHED
         assert matches == []
 
