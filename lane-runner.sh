@@ -266,6 +266,72 @@ if [ "$RESTOCK_ONCE" -eq 1 ]; then
   exit "$RC"
 fi
 
+# ─── CROSS-ROOT WRITE GRANT (integrator/135 item 2, 2026-09-04) ──────────────
+# A lane must be able to write handoff files in ~/bainluck. What grants that is a
+# settings file, not a flag (DAILY-OPERATIONS.md): each worktree carries
+# .claude/settings.json with permissions.additionalDirectories naming ~/bainluck.
+# `--add-dir` alone grants READ but not WRITE, and settings are read at LAUNCH
+# only — so this must happen here, before the session starts, not inside it.
+#
+# WHY IT IS THE RUNNER'S JOB. The file is per-worktree, and standing up a new lane
+# means remembering to copy it. `native` was created 9/3 without it and spent its
+# whole existence unable to file: every note it wrote went to a private
+# handoff-outbox/ that only a human copying by hand could deliver, and 8 had piled
+# up by 9/4. Nobody can see that failure from inside the lane — the session just
+# gets EPERM and works around it. Nor can another lane fix it: the writable set is
+# own-worktree + ~/bainluck (see the Integrator's own EPERM on ~/bainluck-dev), so
+# the ONE process that can reliably create this file is the runner that launches
+# the lane, in Alex's own shell. Doing it on every start also makes it self-healing
+# rather than a checklist item on `lanes.conf`.
+#
+# Conservative by construction: an existing grant is left byte-identical (no
+# rewrite, no reformat), a settings.json carrying OTHER keys is MERGED not
+# clobbered, and the integrator is skipped because its workdir IS ~/bainluck and
+# its own settings.local.json carries the reverse (~/bainluck-dev) grant.
+ensure_cross_root_grant () {
+  local WD="$1" GRANT="$HOME/bainluck" F
+  [ "$(cd "$WD" && pwd -P)" != "$(cd "$HOME/bainluck" && pwd -P)" ] || return 0
+  F="$WD/.claude/settings.json"
+  mkdir -p "$WD/.claude" 2>/dev/null || true
+  python3 - "$F" "$GRANT" <<'PY' || echo "[runner] WARNING: could not verify the cross-root write grant — this lane may be unable to write ~/bainluck/.claude/handoff/ (notes will land in handoff-outbox/)"
+import json, os, sys
+path, grant = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("settings.json is not an object")
+except FileNotFoundError:
+    data = None
+except Exception as exc:
+    # Never overwrite a file we failed to parse — it may hold a lane's real
+    # settings. Say so and leave it; a human fixes the JSON.
+    print("[runner] settings.json at %s is unreadable (%s) — leaving it alone" % (path, exc))
+    sys.exit(0)
+if data is None:
+    data = {"permissions": {"additionalDirectories": [grant]}}
+else:
+    perms = data.setdefault("permissions", {})
+    if not isinstance(perms, dict):
+        print("[runner] settings.json at %s has a non-object 'permissions' — leaving it alone" % path)
+        sys.exit(0)
+    dirs = perms.setdefault("additionalDirectories", [])
+    if not isinstance(dirs, list):
+        print("[runner] settings.json at %s has a non-list 'additionalDirectories' — leaving it alone" % path)
+        sys.exit(0)
+    if grant in dirs:
+        sys.exit(0)          # already granted: do not rewrite the file
+    dirs.append(grant)
+tmp = path + ".tmp.%d" % os.getpid()
+with open(tmp, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+os.replace(tmp, path)
+print("[runner] wrote the cross-root write grant (%s -> %s)" % (path, grant))
+PY
+}
+ensure_cross_root_grant "$WORKDIR"
+
 # stream-json → readable live lines. `claude -p` prints nothing until the end
 # unless asked for stream-json events; this renders them as they arrive:
 # assistant text, every tool call (name + gist), and a final result line.
