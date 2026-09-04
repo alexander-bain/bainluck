@@ -212,28 +212,37 @@ describe("UX-1052 item 4 — the share text gets the same treatment", () => {
   // `ActionBar` hands share text to a handler and never renders it, so the
   // wording is asserted on the builder the card calls — the reason it is a
   // named export rather than a template literal inline.
+  //
+  // CERT-867 amended what that buys. This section grades the SENTENCE; it
+  // cannot grade the ARGUMENTS, and the two are independently wrong-able. The
+  // wiring now has its own file (`ladderShareNoun867.test.tsx`), which captures
+  // the prop at the `ActionBar` boundary. Every call below therefore passes
+  // `"date"` explicitly: these are claims about the date card specifically, not
+  // about whatever kind the component happens to infer.
   it("reads forwards, names the leader, and says the ladder has more rungs", () => {
     expect(
-      buildLadderShareText("When will Apple release the iPhone 18?", "Before 2027", 0.15, 4),
+      buildLadderShareText("When will Apple release the iPhone 18?", "Before 2027", 0.15, 4, "date"),
     ).toBe(
       "When will Apple release the iPhone 18? — Before 2027 leads at 15% across 4 windows on Bain Luck.",
     );
   });
 
   it("no longer reads backwards as 'X is at Y% in <question>'", () => {
-    const text = buildLadderShareText("When will Apple release the iPhone 18?", "Before 2027", 0.15, 4);
+    const text = buildLadderShareText("When will Apple release the iPhone 18?", "Before 2027", 0.15, 4, "date");
     expect(text).not.toContain("is at 15% in When will Apple");
     expect(text.indexOf("When will Apple")).toBe(0);
   });
 
   it("says 'window' when there is only one", () => {
-    expect(buildLadderShareText("Q", "Before 2027", 0.5, 1)).toContain("across 1 window on");
+    expect(buildLadderShareText("Q", "Before 2027", 0.5, 1, "date")).toContain("across 1 window on");
   });
 
   it("is the text the card actually passes to its share action", () => {
-    // Reaching into the component would be a lie; instead prove the card
-    // renders the ladder branch (which is the only branch that builds it) and
-    // that the branch's inputs are the ones the builder is asserted on above.
+    // RETITLED IN PLACE BY CERT-867, not deleted, because the claim it makes is
+    // still true and still worth pinning — but it never justified its old name.
+    // It proves the ladder BRANCH renders with these inputs; it does not and
+    // cannot observe the share prop, which is exactly how the wrong rung noun
+    // shipped past it. The prop itself is asserted in `ladderShareNoun867`.
     const html = render();
     expect(html).toContain('data-card-format="heatmap"');
     expect(html).toContain("Before 2027");
