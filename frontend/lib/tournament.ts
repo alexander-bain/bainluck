@@ -343,3 +343,39 @@ export function formatTrendDelta(delta: number | null): string {
   const sign = points > 0 ? "+" : "";
   return `${sign}${points.toFixed(1)}`;
 }
+
+/**
+ * ═══ THE TWO HALVES, JOINED (latency/135) ═══════════════════════════════════
+ *
+ * The hub asks for its first screen and its second half as two requests —
+ * `?sections=first` (20 KB gzipped) then `?sections=rest` (67 KB) — because 77%
+ * of this payload renders nothing until a reader scrolls or taps the Bracket
+ * tab. This is where the second one lands.
+ *
+ * IT TAKES ONLY WHAT `rest` OWNS, and that is the whole design. A spread
+ * (`{...first, ...rest}`) would look identical in every test written against a
+ * fresh pair and be wrong on the case that actually happens: the two fragments
+ * are built from two requests, seconds apart, each with its own `generated_at`,
+ * and the second one describes sections BELOW the fold. Letting it overwrite
+ * the page's stamp would date the reader's live numbers by a section they
+ * cannot see. So the named keys are copied and nothing else is.
+ *
+ * `event_links` is merged rather than replaced for the mirror-image reason: its
+ * `by_matchup` channel addresses the day's card and arrives with `first`, its
+ * `by_espn` channel addresses the finished list and arrives with `rest`, and
+ * whichever one a plain assignment kept, the other list would go inert. That is
+ * #2568 and #2693 step 2 both re-broken by a spread operator, so it is asserted
+ * in `__tests__/lib/tournamentSections.test.ts` rather than trusted.
+ */
+export function mergeTournamentSections(
+  first: TournamentPayload,
+  rest: Partial<TournamentPayload> | null | undefined
+): TournamentPayload {
+  if (!rest) return first;
+  return {
+    ...first,
+    ...(rest.grids !== undefined ? { grids: rest.grids } : {}),
+    ...(rest.results !== undefined ? { results: rest.results } : {}),
+    event_links: { ...(first.event_links ?? {}), ...(rest.event_links ?? {}) },
+  };
+}

@@ -122,7 +122,14 @@ class TestTodaysRowsOpen:
         following the bound to the set it is filtered against, rather than by
         banning a spelling.
         """
-        source = inspect.getsource(tournaments._hub_payload)
+        # latency/135: the build moved to `_build_sections` — `_hub_payload` is
+        # now the cache/merge shell in front of it — so this follows the CALL,
+        # exactly as the two `_build_sections` scans above do. Reading the shell
+        # would not have failed loudly on a missing bound; it would have found no
+        # `_opening_ids` at all, which is why this asserts the anchor is present
+        # before it asserts anything about what surrounds it.
+        source = inspect.getsource(tournaments._build_sections)
+        assert "_opening_ids" in source, "the openings load moved — re-point this"
         opening = source.split("_opening_ids")[1].split("_openings")[0]
         assert "_result_comps" in opening, opening
 
@@ -244,7 +251,13 @@ class TestSlateContract:
         # tournament sections come out of the SAME build. `get_tournament` is
         # now a four-line slug check in front of it, so the assertions about
         # what the build does read the build.
-        source = inspect.getsource(tournaments._hub_payload)
+        #
+        # latency/135: and the build moved again, to `_build_sections` —
+        # `_hub_payload` is now the cache/merge shell in front of it. Same
+        # property, one more indirection, and it follows the CALL rather than
+        # the file position for the same reason `test_route_reads_captured_at_
+        # from_snapshots` does.
+        source = inspect.getsource(tournaments._build_sections)
         assert "matchup_outcome_ids" in source
         assert "board_outcome_ids" in source
         # Trend series stay a board concern; loading them for the slate's ~130
@@ -300,7 +313,11 @@ class TestAutoLinkedMatchups:
         # tournament sections come out of the SAME build. `get_tournament` is
         # now a four-line slug check in front of it, so the assertions about
         # what the build does read the build.
-        source = inspect.getsource(tournaments._hub_payload)
+        #
+        # latency/135: and again to `_build_sections`. The ordering property is
+        # unchanged and now matters MORE, not less — both section groups read
+        # the register view this line constructs.
+        source = inspect.getsource(tournaments._build_sections)
         assert source.index("apply_resolved_links") < source.index(
             "TournamentRegister(register)"
         )

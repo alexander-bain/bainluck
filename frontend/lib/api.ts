@@ -2523,8 +2523,20 @@ export async function fetchSourceIntelligence(): Promise<SourceIntelligenceData>
  * there is no nearest-tournament fallback, because that is exactly how the US
  * Open lost its own page to Cincinnati once already (#1793).
  */
-export async function fetchTournament(slug: string): Promise<TournamentPayload> {
-  const endpoint = hubBootPath(slug);
+export async function fetchTournament(
+  slug: string,
+  /**
+   * Which half of the payload (latency/135). Omitted means the whole thing, which is what every
+   * caller outside the hub page still asks for.
+   *
+   * `HUB_SECTIONS_FIRST` is the 20 KB (gzipped) first screen — the chart, the day's card and the
+   * meta around them; `HUB_SECTIONS_REST` is the grid and the finished list, 67 KB that render
+   * nothing until a reader scrolls or taps. The page asks for them in that order and merges with
+   * `mergeTournamentSections`.
+   */
+  sections?: string
+): Promise<TournamentPayload> {
+  const endpoint = hubBootPath(slug, sections);
 
   // LAT-P217 (staged loading, after LAT-P184). The document may already have this exact request in
   // flight — issued at HTML parse time, before a single chunk of the entry graph had executed. On

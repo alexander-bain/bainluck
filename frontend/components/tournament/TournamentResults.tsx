@@ -359,6 +359,7 @@ export default function TournamentResults({
   eventIds,
   espnEventIds,
   initialExpanded = false,
+  pending = false,
 }: {
   results: ResultsModel | null | undefined;
   draw: string;
@@ -394,12 +395,22 @@ export default function TournamentResults({
   roundCount?: number;
   /** Capture seam: render the full list rather than the collapsed five. */
   initialExpanded?: boolean;
+  /**
+   * The finished list's half of the payload is still in flight (latency/135).
+   *
+   * `resultsEmptyReason(undefined)` says "Results are not loaded.", which is
+   * true and reads as a fault. For the second and a half between the hub's two
+   * requests it is not a fault, it is a wait, and those are different sentences
+   * — the same distinction `bracket-pending` draws one tab over.
+   */
+  pending?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(initialExpanded);
   const matches = sortedResults(resultsForDraw(results, draw));
 
   if (matches.length === 0) {
-    const reason = resultsEmptyReason(results);
+    const reason =
+      pending && !results ? "Loading finished matches…" : resultsEmptyReason(results);
     // Nothing at all to say and no draw played: stay out of the way. Every
     // other empty is stated, because "why is this empty" has a different
     // answer each time and only one of them is "nothing has happened".

@@ -2126,7 +2126,9 @@ def test_the_route_hands_build_results_the_prices_it_already_loaded():
     test above still passes.
     """
     source = (Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py").read_text()
-    start = source.index("build_results(", source.index('payload["results"]'))
+    # latency/135 split the payload in two; the results section is assembled on
+    # the `rest` fragment now. Same call site, same argument, one rename.
+    start = source.index("build_results(", source.index('rest["results"]'))
     # Balanced-paren scan rather than "up to the first `)`" — the call is
     # multi-line and contains `_espn_results(slug)`, so the naive version reads
     # a window that stops before the argument it is checking for and fails on a
@@ -2517,7 +2519,8 @@ def test_the_route_hands_build_slate_the_order_of_play():
     source = (
         Path(__file__).resolve().parents[1] / "app" / "routes" / "tournaments.py"
     ).read_text()
-    call = _balanced_call(source, "build_slate(", after='payload["slate"]')
+    # latency/135: the slate is assembled on the `first` fragment now.
+    call = _balanced_call(source, "build_slate(", after='first["slate"]')
     assert "order_of_play=" in call
     # CERT-517: and the completeness context with it. The cached payload has
     # always carried `errors`/`tours_fetched`; this route DISCARDING them is the
