@@ -159,9 +159,42 @@ def _cancel_cause_prefix() -> str:
 
 CANCEL_CAUSE_PREFIX = _cancel_cause_prefix()
 
+#: The THIRD prefix, added by CAL-P1002: what happened to the CHECKPOINT, and why.
+#:
+#: 🔴 THE RING COULD SEE THE GOOD CASE AND NOT THE BAD ONE. ``_run_staged_futures``
+#: records ``staged:cursor_<action>`` for every action in
+#: ``{fresh, resume, invalidate}`` and ``staged:cursor_reason:<reason>`` beside
+#: it. Only ONE of those keys was ever captured — ``staged:cursor_resume``, a
+#: fixed name in :data:`OPERATIONAL_GAUGES`. So a beat that RESUMED its
+#: checkpoint said so on the banked row, and a beat that THREW THE CHECKPOINT
+#: AWAY banked a row on which the entire cursor decision is absent. The one
+#: event that costs a day of rebuild was the one event the ring could not name.
+#:
+#: Measured before this line was written, over the 168-beat ring
+#: (2026-09-04, CAL-P1002): three beats reset the bank to 5 from 36, 119 and 76,
+#: two of them also dropping a COMPLETE 128-unit served set. All three are among
+#: the ten rows carrying no cursor key at all. Two are explained by
+#: ``input_fingerprint`` moving across the beat — ruling 075's deploy cause,
+#: visible only because the fingerprint happens to be banked separately. **The
+#: third (2026-09-03 12:35 PT) has an UNCHANGED fingerprint and is therefore
+#: unattributable**, and it is the one that is still costing the curve its
+#: freshness. The write site's own CAL-P024 comment says why this hurts: *"the
+#: action alone is not diagnostic. Five distinct causes produce INVALIDATE."*
+#:
+#: WHY THIS ONE IS A LITERAL WHEN :data:`CANCEL_CAUSE_PREFIX` IS AN IMPORT.
+#: CAL-P993's rule — read the constant off the module that emits it, never
+#: retype it — is the better pattern and it is not available here: the emitter is
+#: ``precompute_calibration.py``, which **ruling 009 freezes**, and adding a
+#: constant to it would spend a bank wipe to save a string. The drift risk that
+#: rule guards against is covered instead by
+#: ``test_the_cursor_prefix_still_matches_the_frozen_writer``, which reads the
+#: writer's source and fails if the emitted literal ever moves. When the freeze
+#: lifts, promote this to the import and delete the guard.
+CURSOR_PREFIX = "staged:cursor_"
+
 #: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
 #: line here and nowhere else.
-CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX)
+CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX, CURSOR_PREFIX)
 
 
 def _required_disclosure_gauges() -> tuple[str, ...]:
@@ -234,6 +267,45 @@ def select_gauges(stages: Any) -> tuple[dict, list[str]]:
 
     missing = [n for n in REQUIRED_DISCLOSURE_GAUGES if n not in captured]
     return captured, missing
+
+
+#: The cursor actions ``_run_staged_futures`` can record. ``refuse`` is absent
+#: on purpose: that arm returns BEFORE the ledger write, so a refused beat banks
+#: no cursor key at all and must not be reported as one.
+CURSOR_ACTIONS = ("fresh", "resume", "invalidate")
+
+#: The suffix the reason keys carry, after :data:`CURSOR_PREFIX`.
+_CURSOR_REASON_INFIX = "reason:"
+
+
+def cursor_decision(gauges: Any) -> dict:
+    """``{"action": ..., "reason": ...}`` read off one banked gauge map. Pure.
+
+    Both values are ``None`` when the row carries no cursor key — which is a
+    REAL state, not a gap: the beat either refused (returning before the write)
+    or died before reaching it. Reporting that as ``"resume"``, or as an empty
+    string, would be the CAL-P028 collapse again, so the caller is handed the
+    absence and must say something honest about it.
+
+    Rows banked BEFORE CAL-P1002 carry at most ``staged:cursor_resume``, because
+    that one name was the only cursor key the sampler kept. So on historical
+    rows a ``None`` action means "not a resume" and nothing finer — which is
+    exactly the ambiguity this function exists to stop creating going forward,
+    and the reason it must never guess.
+    """
+    if not isinstance(gauges, dict):
+        return {"action": None, "reason": None}
+    action = None
+    reason = None
+    for key in gauges:
+        if not isinstance(key, str) or not key.startswith(CURSOR_PREFIX):
+            continue
+        suffix = key[len(CURSOR_PREFIX):]
+        if suffix.startswith(_CURSOR_REASON_INFIX):
+            reason = suffix[len(_CURSOR_REASON_INFIX):] or None
+        elif suffix in CURSOR_ACTIONS:
+            action = suffix
+    return {"action": action, "reason": reason}
 
 
 def _parse_stamp(value):
