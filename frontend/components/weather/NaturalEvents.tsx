@@ -62,7 +62,10 @@ function HurricaneTrackerSkeleton() {
         {Array.from({ length: 7 }).map((_, i) => (
           <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
             <div className="h-3 w-6 bg-gray-200 rounded animate-pulse mb-1" />
-            <div className="w-full bg-gray-200 rounded animate-pulse" style={{ height: `${20 + Math.sin(i * 0.8) * 40 + 30}%` }} />
+            {/* Uniform, not sinusoidal. A skeleton bar row whose heights vary
+                draws a distribution the data has not arrived to justify —
+                grey, but still a shape. ux/1069, #2960. */}
+            <div className="w-full bg-gray-200 rounded animate-pulse" style={{ height: "60%" }} />
           </div>
         ))}
       </div>

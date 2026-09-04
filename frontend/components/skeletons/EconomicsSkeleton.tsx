@@ -96,7 +96,7 @@ export default function EconomicsSkeleton() {
                   <div className="h-3 w-20 bg-gray-200 rounded animate-pulse mb-3" />
                   <div className="flex gap-1 items-end" style={{ height: 56 }}>
                     {Array.from({ length: 6 }).map((_, j) => (
-                      <div key={j} className="flex-1 bg-gray-200 rounded animate-pulse" style={{ height: `${20 + Math.random() * 60}%` }} />
+                      <div key={j} className="flex-1 bg-gray-200 rounded animate-pulse" style={{ height: "60%" }} />
                     ))}
                   </div>
                 </div>
@@ -139,7 +139,7 @@ export default function EconomicsSkeleton() {
                     <div className="h-3 w-16 bg-gray-200 rounded animate-pulse mb-2" />
                     <div className="flex gap-1 items-end" style={{ height: 40 }}>
                       {Array.from({ length: 4 }).map((_, j) => (
-                        <div key={j} className="flex-1 bg-gray-200 rounded animate-pulse" style={{ height: `${20 + Math.random() * 60}%` }} />
+                        <div key={j} className="flex-1 bg-gray-200 rounded animate-pulse" style={{ height: "60%" }} />
                       ))}
                     </div>
                   </div>
