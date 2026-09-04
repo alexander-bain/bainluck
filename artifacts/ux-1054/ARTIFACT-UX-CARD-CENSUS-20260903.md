@@ -22,22 +22,24 @@ Every row below was reached two ways and both had to agree:
 2. **Traced in source** from the route file down through the dispatcher to the leaf that draws the
    markup, so a row names the file that actually renders rather than the file that imports.
 
-**The headline count in the brief was ~30 distinct named card components. The measured number of
-distinct RENDERINGS is 29, but that is not the same set**, and the difference is the finding:
+**The brief's count was ~30 distinct named card components. The measured number of RENDERINGS is
+40, and it is not the same set** — that gap, in both directions, is the finding:
 
 | | |
 |---|---|
 | Files named `*Card*.tsx` under `frontend/components` | 32 |
-| …of those that are admin-only, skeletons, or shells (not a card) | 6 |
-| Renderings of an event/market card that a reader can reach | **29** |
-| …of which are NOT in a file named `*Card*` (rails, boards, grids, rows) | **11** |
+| …excluded here as not-a-card (`SkeletonCard`, `EventCardShell`, `EndOfFeedCard`, 3 × `admin/*Card`) | 6 |
+| **Renderings of an event/market card a reader can reach** | **40** |
+| …drawn by a file named `*Card*.tsx` (24 distinct files; `FeedCard` draws two of them) | 25 |
+| …drawn by something **not called a card** — rails, boards, grids, rows, tables | **15** |
 
-So a name-based count both **over**-counts (`SkeletonCard`, `EventCardShell`, `WildCards`,
-three admin cards) and **under**-counts by eleven — `LeagueGameRail`, `LeagueBinaryBoard`,
-`HubUpcomingRail`, `MatchupsRail`, `PropDivergenceRail`, `TournamentMatches`,
-`TournamentResults`, `TournamentBoard`, `PlayoffGrid`, `GolferRow`, `MoversRibbon` all draw a
-card and none of them is called one. **Any card-system proposal keyed on the filename will miss
-a third of the surface area.**
+So a name-based inventory **over**-counts by six and **under**-counts by fifteen:
+`LeagueGameRail`, `TournamentMatches`, `TournamentResults`, `MatchupsRail`, `HubUpcomingRail`,
+`GolferRow`, `MoversRibbon`, `PropDivergenceRail`, `TournamentProps`+`MatchProps`,
+`LeagueMarketSection`'s three internals, `TournamentBoard`, `PlayoffGrid`,
+`TournamentProgressionTable`, `TournamentBracket` and `LeagueBinaryBoard` each draw a card and
+none of them is called one. **Any card-system proposal keyed on the filename misses well over a
+third of the surface area.**
 
 The duplicate-filename observation in the brief holds and is worth stating precisely:
 
@@ -139,7 +141,7 @@ existing card *system* in the tree), `admin/DiagnosisCard`, `admin/LabelingCard`
 
 ## 3. What the census says, in four sentences
 
-1. **Three kinds have three or more independent implementations each.** A game is drawn eleven
+1. **Three kinds have six or more independent implementations each.** A game is drawn eleven
    ways, an outright eleven ways, a tournament grid six ways. None of them shares a layout
    primitive; `EventCardShell` is the only shared piece and only three renderings use it.
 2. **The `discover/` fork is a whole second product.** Four of the five most-used cards exist twice
@@ -148,7 +150,7 @@ existing card *system* in the tree), `admin/DiagnosisCard`, `admin/LabelingCard`
 3. **The vocabulary is not shared even where the layout is.** The same fact is called `Opened
    48/52` on G2, `Pre-match †` on G3/G1, a bare grey figure on G7, and `Proj 12-20` on G2's other
    footnote — four spellings of "what was expected before".
-4. **Eleven renderings are invisible to a filename-based inventory.** See §0.
+4. **Fifteen of the forty renderings are invisible to a filename-based inventory.** See §0.
 
 ---
 
