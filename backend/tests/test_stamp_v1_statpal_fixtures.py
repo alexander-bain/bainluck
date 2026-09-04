@@ -52,11 +52,16 @@ import pytest
 from app.services.statpal_api import StatPalAPIService
 from app.tasks.stamp_v1_statpal_fixtures import (
     BACK_TO_BACK_SEPARATION,
+    CLOSEST_SAME_PAIR_SEPARATION,
     LEAGUES,
     MATCH_WINDOW,
     MAX_SAFE_WINDOW,
+    MLB,
     NBA,
     NHL,
+    STATS_ID_ON_EVERY_FIXTURE,
+    STATS_ID_ON_NO_FIXTURE,
+    STATS_ID_ON_SOME_FIXTURES,
     VERDICT_AMBIGUOUS,
     VERDICT_ANCHOR_ONLY,
     VERDICT_CONTRADICTION,
@@ -190,21 +195,45 @@ def test_the_window_is_under_the_separation_the_schedule_itself_imposes():
     If `MATCH_WINDOW` ever grows past half the closest same-pair separation, one
     of our rows can reach BOTH meetings of a back-to-back and the second silently
     loses a race instead of being reported.
+
+    The ceiling is the TIGHTEST league's, not each league's own, because one
+    shared window has to clear the worst case. MLB's doubleheader (8h05m) binds
+    it, not NBA/NHL's 23h back-to-back — so a league added later with a tighter
+    pair than MLB's fails here rather than in production.
     """
+    assert BACK_TO_BACK_SEPARATION == min(CLOSEST_SAME_PAIR_SEPARATION.values())
     assert MAX_SAFE_WINDOW == BACK_TO_BACK_SEPARATION / 2
     assert MATCH_WINDOW < MAX_SAFE_WINDOW
 
 
+def test_every_league_this_module_serves_has_a_measured_closest_pair():
+    """A league with no measured separation is a league whose window is a guess.
+
+    :data:`CLOSEST_SAME_PAIR_SEPARATION` is what makes `MAX_SAFE_WINDOW` a
+    measurement rather than a habit, so adding a `LeagueSpec` without adding its
+    number silently widens the safety argument to cover a league nobody checked.
+    """
+    assert set(CLOSEST_SAME_PAIR_SEPARATION) == set(LEAGUES)
+    for sport_key, separation in CLOSEST_SAME_PAIR_SEPARATION.items():
+        assert separation > MATCH_WINDOW * 2, sport_key
+
+
 @pytest.mark.parametrize(
-    "sport,first_id,second_id",
-    [("nba", "1051930", "1051940"), ("nhl", "653442", "653448")],
+    "sport,sport_key,first_id,second_id",
+    [
+        ("nba", "basketball_nba", "1051930", "1051940"),
+        ("nhl", "icehockey_nhl", "653442", "653448"),
+    ],
 )
 def test_the_closest_two_meetings_in_the_season_really_are_that_close(
-    sport, first_id, second_id
+    sport, sport_key, first_id, second_id
 ):
     first, second = _by_id(sport, first_id), _by_id(sport, second_id)
     assert (first.home_team, first.away_team) == (second.home_team, second.away_team)
-    assert second.start_time - first.start_time == BACK_TO_BACK_SEPARATION
+    assert (
+        second.start_time - first.start_time
+        == CLOSEST_SAME_PAIR_SEPARATION[sport_key]
+    )
 
 
 def test_a_back_to_back_row_matches_its_own_night_and_only_its_own_night():
@@ -224,13 +253,18 @@ def test_a_back_to_back_row_matches_its_own_night_and_only_its_own_night():
 def test_a_row_halfway_between_a_back_to_back_matches_neither():
     """The proof that the window CANNOT reach both meetings.
 
-    A row placed 11.5h from each game is equidistant. Under any window at or
-    above `MAX_SAFE_WINDOW` it would match both and the pass would report an
-    ambiguity that is really a guess; under the window that ships it matches
-    nothing and is receipted as a row whose start time nobody can vouch for.
+    A row placed 11.5h from each game is equidistant between this NBA pair's two
+    meetings. Under any window at or above HALF THEIR OWN separation it would
+    match both and the pass would report an ambiguity that is really a guess;
+    under the window that ships it matches nothing and is receipted as a row
+    whose start time nobody can vouch for.
+
+    Half of this pair's separation, not `MAX_SAFE_WINDOW` — since MLB joined,
+    that constant is bounded by baseball's much tighter doubleheader, and a row
+    4h from an NBA tip-off is not equidistant between anything.
     """
     first, second = _by_id("nba", "1051930"), _by_id("nba", "1051940")
-    midpoint = first.start_time + MAX_SAFE_WINDOW
+    midpoint = first.start_time + CLOSEST_SAME_PAIR_SEPARATION["basketball_nba"] / 2
     pool = [_row(1, "Portland Trail Blazers", "Oklahoma City Thunder", midpoint)]
 
     assert classify_fixture(first, pool) == (VERDICT_UNMATCHED, [])
@@ -488,7 +522,11 @@ def test_the_retired_city_only_names_are_recognised_and_never_matchable():
 
 
 def test_a_sport_with_no_measured_roster_answers_no_rather_than_guessing():
-    assert not is_known_league_team("baseball_mlb", "Boston Red Sox")
+    """`baseball_mlb` used to be the example here and is now a measured roster,
+    so the example moved to a sport nothing has measured. The property under test
+    is unchanged: no roster means `False` for everything, which is the honest
+    answer to "is this one of the names I measured" when nothing was."""
+    assert not is_known_league_team("soccer_epl", "Arsenal")
     assert not is_known_league_team(None, "Boston Celtics")
 
 
@@ -497,32 +535,73 @@ def test_a_sport_with_no_measured_roster_answers_no_rather_than_guessing():
 # ---------------------------------------------------------------------------
 
 
-def test_the_two_leagues_are_registered_under_our_own_sport_keys():
-    assert set(LEAGUES) == {"basketball_nba", "icehockey_nhl"}
+def test_the_three_leagues_are_registered_under_our_own_sport_keys():
+    assert set(LEAGUES) == {"basketball_nba", "icehockey_nhl", "baseball_mlb"}
     assert LEAGUES["basketball_nba"].statpal_sport == "nba"
     assert LEAGUES["icehockey_nhl"].statpal_sport == "nhl"
-    assert LEAGUES["basketball_nba"].serves_stats_id is False
-    assert LEAGUES["icehockey_nhl"].serves_stats_id is True
+    assert LEAGUES["baseball_mlb"].statpal_sport == "mlb"
+    assert LEAGUES["basketball_nba"].stats_id_coverage == STATS_ID_ON_NO_FIXTURE
+    assert LEAGUES["icehockey_nhl"].stats_id_coverage == STATS_ID_ON_EVERY_FIXTURE
+    assert LEAGUES["baseball_mlb"].stats_id_coverage == STATS_ID_ON_SOME_FIXTURES
+
+
+def test_every_league_records_the_measurement_its_expectation_came_from():
+    """An expectation with no measurement behind it cannot be re-checked.
+
+    `stats_id_coverage` says what to expect; `stats_id_measured` says what was
+    seen and when. Without the second, the day the provider changes there is
+    nothing to compare against — only a bare count and a bare adjective.
+    """
+    for sport_key, spec in LEAGUES.items():
+        assert spec.stats_id_measured.strip(), sport_key
+        assert "2026-" in spec.stats_id_measured, sport_key
 
 
 def test_stats_id_coverage_is_reported_against_what_the_league_was_measured_to_serve():
-    """All-or-nothing on purpose: NHL serves it on 1404/1404 and NBA on 0/1206, so
-    a partial answer from either is a change worth a receipt rather than noise
-    under a threshold nobody measured."""
-    nhl = StampRun(sport_key=NHL.sport_key, stats_id_expected=True)
+    """All-or-nothing for the leagues measured that way: NHL serves it on
+    1404/1404 and NBA on 0/1206, so a single exception from either is a change
+    worth a receipt rather than noise under a threshold nobody measured."""
+    nhl = StampRun(
+        sport_key=NHL.sport_key, stats_id_coverage=STATS_ID_ON_EVERY_FIXTURE
+    )
     nhl.stats_id_present = 1404
     assert nhl.stats_id_as_expected
     nhl.stats_id_absent = 1
     assert not nhl.stats_id_as_expected
 
-    nba = StampRun(sport_key=NBA.sport_key, stats_id_expected=False)
+    nba = StampRun(sport_key=NBA.sport_key, stats_id_coverage=STATS_ID_ON_NO_FIXTURE)
     nba.stats_id_absent = 1206
     assert nba.stats_id_as_expected
     nba.stats_id_present = 1
     assert not nba.stats_id_as_expected
 
 
-def test_the_summary_names_its_sport_so_two_leagues_cannot_be_read_as_one():
+def test_a_partial_league_is_not_rounded_to_either_boolean():
+    """MLB serves `stats_id` on 198 of 227 and that is the expectation.
+
+    The two ways to get this wrong are both silent. Round it UP and 29 blank
+    games look like a provider outage every hour; round it DOWN and 198 real ids
+    are reported as an anomaly. What genuinely falsifies "partial" is the field
+    becoming universal or vanishing, and both of those read False here.
+
+    Deliberately no tolerance band around 87.2%: a band is a number nobody
+    measured, and the rate itself is published in `stats_id_measured` where a
+    reader can compare it against the counts without this property pretending to.
+    """
+    mlb = StampRun(sport_key=MLB.sport_key, stats_id_coverage=STATS_ID_ON_SOME_FIXTURES)
+    mlb.stats_id_present, mlb.stats_id_absent = 198, 29
+    assert mlb.stats_id_as_expected
+
+    # The provider starts serving it everywhere.
+    mlb.stats_id_present, mlb.stats_id_absent = 227, 0
+    assert not mlb.stats_id_as_expected
+
+    # The provider stops serving it at all.
+    mlb.stats_id_present, mlb.stats_id_absent = 0, 227
+    assert not mlb.stats_id_as_expected
+
+
+def test_the_summary_names_its_sport_so_three_leagues_cannot_be_read_as_one():
     summary = StampRun(sport_key=NBA.sport_key).summary()
     assert summary["sport_key"] == "basketball_nba"
-    assert summary["stats_id"]["expected"] == "on none"
+    assert summary["stats_id"]["expected"] == STATS_ID_ON_NO_FIXTURE

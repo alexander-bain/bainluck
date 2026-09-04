@@ -622,6 +622,7 @@ celery_app.conf.task_routes = {
     # queue: dark by construction, nothing reads either stamp.
     "app.tasks.stamp_nba_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
+    "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
@@ -3087,6 +3088,55 @@ def stamp_nhl_statpal_fixtures(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.stamp_mlb_statpal_fixtures")
+def stamp_mlb_statpal_fixtures(self, apply=True):
+    """Stamp each MLB row with the StatPal contest it is (#2867, D50 step 5).
+
+    Same module, same discipline, same ±1h window as the NBA and NHL stampers
+    above, and DARK in exactly the same way: it writes `events.statpal_fixture_id`
+    and the `('statpal', 'baseball_mlb:<id>', 'game')` anchor, nothing reads
+    either, and it NEVER creates a row.
+
+    MLB is the sport that was held back, and what held it back is now measured
+    rather than assumed. Its anchor is `livescores.oddsid`, not `livescores.id`:
+    13 of 16 live rows carry it and all 13 dereference to a `season-schedule.id`.
+    `livescores.id` is a separate space that looks exactly like `stats_id` — same
+    ten digits, same `1329` prefix, overlapping ranges, not one value in common —
+    which is why the anchor field is named per league and never read off the
+    shape of the number (D55).
+
+    Three differences from its two siblings, each of which widened the shared
+    module rather than carving out an exception:
+
+      * The three live rows whose `oddsid` is blank are recovered by both clubs
+        plus first pitch within ±1h, unique or refuse. Scored against the 13 rows
+        the anchor already resolves, that rule is 13/13 correct; the calendar-day
+        key everyone reaches for first is ambiguous on 4 of the same 13 and fuses
+        the doubleheader's two games onto one schedule row.
+      * `stats_id` is served on 198 of 227 games, so the expectation is
+        three-valued now. The blanks have no structure to exploit — `Finished`
+        games are filled 74.3% and `Not Started` 93.0%.
+      * A column value the schedule endpoint cannot resolve is `FOREIGN_ID_SPACE`,
+        not a contradiction. `sync-statpal-livescores` runs every 30 seconds and
+        writes the live-endpoint id, so both spaces are already in our column: of
+        222 distinct MLB values on production, 130 dereference to the schedule
+        and 92 to neither. That is a namespace bug with a different owner from a
+        matching bug, and it is receipted, never overwritten.
+
+    Its schedule is also a ROLLING ~17-day window rather than a season, so its
+    denominator moves daily and two days' rows are two different fortnights.
+
+    `apply=False` plans and writes nothing."""
+    from app.tasks.stamp_v1_statpal_fixtures import (
+        _run_stamp_mlb_statpal_fixtures,
+    )
+    return _tracked_run(
+        "stamp_mlb_statpal_fixtures",
+        _run_stamp_mlb_statpal_fixtures(apply=apply),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
@@ -5011,6 +5061,23 @@ celery_app.conf.beat_schedule = {
         # measure a StatPal live-state vocabulary that is not tennis.
         "task": "app.tasks.stamp_nhl_statpal_fixtures",
         "schedule": crontab(minute=19),
+        "options": {"queue": "background"},
+    },
+    "stamp-mlb-statpal-fixtures-hourly": {
+        # #2867 / D50 step 5. :21 by the same census, RUN over the assembled
+        # schedule on 2026-09-04 rather than read off this file (CERT-418): of
+        # 154 beat entries, :21 carries ZERO other crontab fires. It is outside
+        # the settlement sweep's :31–:47 window, 19 minutes after
+        # `sync-statpal-schedules-mlb` at :02, and two minutes clear of the NHL
+        # stamper at :19 and the NFL one at :23 — so the four StatPal readers sit
+        # at :17/:19/:21/:23 and no two ever run together.
+        #
+        # MLB is the only one of the four whose season is IN PROGRESS, so it is
+        # the first of them for which the `livescores` half of the read does any
+        # work at all, and the first that will exercise a StatPal live-state
+        # vocabulary. NHL's preseason opens 2026-09-19 and is the next.
+        "task": "app.tasks.stamp_mlb_statpal_fixtures",
+        "schedule": crontab(minute=21),
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {
