@@ -3,11 +3,17 @@ import Foundation
 // MARK: - Tournament hub (`GET /api/tournaments/{slug}`)
 //
 // The web hub's payload, decoded for the phone. It is a big response — 903 KB
-// raw / 86 KB gzipped for `us-open` on 2026-09-03 — and two of its four largest
-// members (`grids`, 404 KB; the per-row `trend` series inside `boards`, most of
-// its 136 KB) are deliberately NOT modelled here, because nothing on the phone
-// screen draws them. `JSONDecoder` still parses the whole tree; declaring fewer
-// keys saves the allocation, not the parse.
+// raw / 86 KB gzipped for `us-open` on 2026-09-03 — and its largest member
+// (`grids`, 404 KB) is deliberately NOT modelled here, because nothing on the
+// phone screen draws it. `JSONDecoder` still parses the whole tree; declaring
+// fewer keys saves the allocation, not the parse.
+//
+// The per-row `trend` series inside `boards` (most of its 136 KB) WAS in that
+// same list until the RACE chart landed (#2911): the phone now draws it, so it
+// is modelled. It is the one member here whose cost is worth restating — 36
+// contenders × ~30 daily points on the men's board — and `RaceChart.series`
+// keeps only the top three, so the allocation survives exactly as long as the
+// decode.
 //
 // Every probability on this endpoint is a 0–1 FRACTION, and a genuinely missing
 // price arrives as `null` — never as 0. So every probability below is `Double?`
@@ -25,6 +31,10 @@ nonisolated struct TournamentHubResponse: Decodable, Sendable {
     let generatedAt: String?
     let drawReleased: Bool?
     let mainDrawLabel: String?
+    /// When the main draw begins, as the register published it —
+    /// `2026-08-30T11:00:00-04:00`. The RACE chart's `Draw` window is anchored
+    /// on this and on nothing else; see `RaceChart.windowStarts`.
+    let mainDrawStartsAt: String?
     let slate: TournamentHubSlate?
     let results: TournamentHubResults?
     let boards: [TournamentHubBoard]
@@ -43,6 +53,7 @@ nonisolated struct TournamentHubResponse: Decodable, Sendable {
         generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
         drawReleased = try c.decodeIfPresent(Bool.self, forKey: .drawReleased)
         mainDrawLabel = try c.decodeIfPresent(String.self, forKey: .mainDrawLabel)
+        mainDrawStartsAt = try c.decodeIfPresent(String.self, forKey: .mainDrawStartsAt)
         slate = try c.decodeIfPresent(TournamentHubSlate.self, forKey: .slate)
         results = try c.decodeIfPresent(TournamentHubResults.self, forKey: .results)
         boards = (try? c.decodeIfPresent([TournamentHubBoard].self, forKey: .boards)) ?? []
@@ -53,7 +64,7 @@ nonisolated struct TournamentHubResponse: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case slug, title, subtitle, season, generatedAt, drawReleased, mainDrawLabel
-        case slate, results, boards, bracket, eventLinks, broadcasts
+        case mainDrawStartsAt, slate, results, boards, bracket, eventLinks, broadcasts
     }
 }
 
@@ -205,6 +216,9 @@ nonisolated struct TournamentHubResult: Decodable, Sendable, Identifiable {
     let matchupKey: String
     let drawLabel: String?
     let round: String?
+    /// The provider's own round name. Either field may be the one that says
+    /// "Qualifying 2nd Round", which is what dates the chart's `Quals` window.
+    let sourceRound: String?
     let players: [TournamentHubResultPlayer]
     let winnerEntityKey: String?
     let score: String?
@@ -220,6 +234,7 @@ nonisolated struct TournamentHubResult: Decodable, Sendable, Identifiable {
         matchupKey = try c.decode(String.self, forKey: .matchupKey)
         drawLabel = try c.decodeIfPresent(String.self, forKey: .drawLabel)
         round = try c.decodeIfPresent(String.self, forKey: .round)
+        sourceRound = try c.decodeIfPresent(String.self, forKey: .sourceRound)
         players = (try? c.decodeIfPresent([TournamentHubResultPlayer].self, forKey: .players)) ?? []
         winnerEntityKey = try c.decodeIfPresent(String.self, forKey: .winnerEntityKey)
         score = try c.decodeIfPresent(String.self, forKey: .score)
@@ -229,7 +244,7 @@ nonisolated struct TournamentHubResult: Decodable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case matchupKey, drawLabel, round, players, winnerEntityKey
+        case matchupKey, drawLabel, round, sourceRound, players, winnerEntityKey
         case score, completion, completedAt, espnCompetitionId
     }
 }
@@ -296,6 +311,11 @@ nonisolated struct TournamentHubBoardRow: Decodable, Sendable, Identifiable {
     let rank: Int?
     /// Change in the 0–1 fraction over the tournament's tracked window.
     let trendDelta: Double?
+    /// One reading per DAY this contender was priced — the RACE chart's line
+    /// (#2911). Sparse on purpose: a day with no reading is absent from the
+    /// array and stays a gap on the chart, never interpolated or carried
+    /// forward.
+    let trend: [TournamentHubTrendPoint]?
     let sourceCount: Int?
 
     var id: String { entityKey }
@@ -311,13 +331,43 @@ nonisolated struct TournamentHubBoardRow: Decodable, Sendable, Identifiable {
         probability = try c.decodeIfPresent(Double.self, forKey: .probability)
         rank = try c.decodeIfPresent(Int.self, forKey: .rank)
         trendDelta = try c.decodeIfPresent(Double.self, forKey: .trendDelta)
+        // Tolerant, like `image`: one malformed point must not cost the row its
+        // price, its name and its place on the board. A chart that cannot be
+        // drawn is a missing chart; a row that fails to decode is a missing
+        // contender, which is the worse failure by a distance.
+        trend = (try? c.decodeIfPresent([TournamentHubTrendPoint].self, forKey: .trend)) ?? nil
         sourceCount = try c.decodeIfPresent(Int.self, forKey: .sourceCount)
     }
 
     private enum CodingKeys: String, CodingKey {
         case entityKey, displayName, seed, country, image
-        case state, probability, rank, trendDelta, sourceCount
+        case state, probability, rank, trendDelta, trend, sourceCount
     }
+}
+
+/// One point on a contender's daily trend line.
+///
+/// `date` is a DAY (`2026-08-05`), not a timestamp, and is kept as the
+/// payload's own string: `YYYY-MM-DD` sorts lexicographically exactly as it
+/// sorts chronologically, so every window in `RaceChart` compares strings and
+/// no part of the chart has to hold an opinion about midnight UTC.
+nonisolated struct TournamentHubTrendPoint: Decodable, Sendable {
+    let date: String?
+    let probability: Double?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        probability = try c.decodeIfPresent(Double.self, forKey: .probability)
+    }
+
+    /// Test seam — the decoder is the only other way to build one.
+    init(date: String?, probability: Double?) {
+        self.date = date
+        self.probability = probability
+    }
+
+    private enum CodingKeys: String, CodingKey { case date, probability }
 }
 
 // MARK: - Links and broadcasts

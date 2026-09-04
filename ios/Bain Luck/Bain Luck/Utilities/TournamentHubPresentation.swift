@@ -73,6 +73,9 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let rows: [BoardRow]
         /// "Top 6 of 36 still in the draw" — shown only when rows were trimmed.
         let trimNote: String?
+        /// The RACE chart above the rows (#2911). Always present, because a
+        /// board that cannot be charted still says why in `emptyNote`.
+        let chart: RaceChartData
     }
 
     // MARK: Header
@@ -161,7 +164,13 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         results = Array(finished)
         resultsEmptyNote = finished.isEmpty ? "No completed matches yet." : nil
 
-        let boardSections = response.boards.compactMap { Self.boardSection($0) }
+        // The chart's two windows are facts about the TOURNAMENT, not about a
+        // board, so they are read once here and handed to every board.
+        let windowStarts = RaceChart.windowStarts(
+            mainDrawStartsAt: response.mainDrawStartsAt,
+            results: response.results?.matches ?? []
+        )
+        let boardSections = response.boards.compactMap { Self.boardSection($0, starts: windowStarts) }
         boards = boardSections
         boardsEmptyNote = boardSections.isEmpty
             ? "Nobody is priced to win the title yet." : nil
@@ -276,7 +285,10 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         )
     }
 
-    private static func boardSection(_ board: TournamentHubBoard) -> BoardSection? {
+    private static func boardSection(
+        _ board: TournamentHubBoard,
+        starts: RaceChartWindowStarts
+    ) -> BoardSection? {
         // Someone knocked out is not a contender; the board keeps them so the
         // web page can grey them, but a six-row phone list must spend its rows
         // on players still in the draw.
@@ -308,7 +320,44 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             },
             trimNote: ordered.count > shown.count
                 ? "Top \(shown.count) of \(ordered.count) still in the draw"
-                : nil
+                : nil,
+            chart: raceChart(ordered, starts: starts)
+        )
+    }
+
+    /// The board's top three as a RACE chart (#2911).
+    ///
+    /// Built from the SAME ordered rows the list below it draws, so the chart
+    /// and the list can never describe two different fields — and the legend
+    /// names the three, which is how a reader of a six-row list knows which
+    /// three have lines.
+    private static func raceChart(
+        _ ordered: [TournamentHubBoardRow],
+        starts: RaceChartWindowStarts
+    ) -> RaceChartData {
+        let series = RaceChart.series(from: ordered)
+        let ranges = RaceChart.availableRanges(starts: starts)
+        let drawable = ranges.filter { RaceChart.isDrawable(series, range: $0, starts: starts) }
+
+        // The two reasons a board has no chart are different facts and get
+        // different sentences. "Nobody is priced" is a market state; "one
+        // reading" is a history state, and a reader told the wrong one will go
+        // looking for the wrong thing.
+        let note: String?
+        if series.isEmpty {
+            note = "No contender on this board has a price to chart."
+        } else if drawable.isEmpty {
+            note = "Only one reading so far — there is no line to draw yet."
+        } else {
+            note = nil
+        }
+
+        return RaceChartData(
+            series: series,
+            ranges: ranges,
+            initialRange: RaceChart.defaultRange(series: series, starts: starts),
+            starts: starts,
+            emptyNote: note
         )
     }
 

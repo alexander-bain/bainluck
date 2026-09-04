@@ -30,11 +30,13 @@ import SwiftUI
 //
 // ═══ WHAT SURFACE CONSUMES IT TODAY, STATED PLAINLY ═══
 //
-// None yet. Checked 2026-08-28: the native app carries `DiscoverTournamentCard`,
-// `TournamentHeroCard`, `TournamentCompactRow` and `TournamentChartView`, all of
-// which render the golf-shaped feed payload — there is no native surface for the
-// tournament hub's boards, bracket grid, match slate or questions section, so
-// there is nothing here yet that receives `liquidity`.
+// None yet. Re-checked 2026-09-04: `DiscoverTournamentCard`,
+// `TournamentHeroCard` and `TournamentCompactRow` render the golf-shaped feed
+// payload and carry no `liquidity`. The tournament hub DOES have a native
+// surface now (`TournamentHubView`, native/003) and its board rows arrive with
+// `liquidity` on the wire — but `TournamentHubPresentation` does not model that
+// field, so nothing on the phone receives it yet. The hub's board card is where
+// this will land when it does.
 //
 // This ships anyway, and the reason is Alex's clause: designing the non-hover
 // reveal LATER means designing it against whatever layout arrives first, which
