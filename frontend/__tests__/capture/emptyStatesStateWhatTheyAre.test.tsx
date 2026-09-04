@@ -297,10 +297,12 @@ const SITES: Site[] = [
     retired: "Check back when your teams are playing",
   },
   {
-    site: "app/sports/[key] · no upcoming events",
+    site: "app/sports/[key] · no games",
     file: "app/sports/[key]/page.tsx",
     emptyState: "league-no-upcoming-events",
-    states: "This page lists scheduled games for this league.",
+    // #2948 — see the note in emptyStatesRenderTheirOwnBranch: the page lists
+    // finished games now, so the sentence stopped saying "scheduled".
+    states: "This page lists games for this league.",
     retired: "Check back later for more games",
   },
   {

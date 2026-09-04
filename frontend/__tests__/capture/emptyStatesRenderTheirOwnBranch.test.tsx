@@ -286,9 +286,13 @@ type PageCase = {
 
 const CASES: PageCase[] = [
   {
-    site: "app/sports/[key] · no upcoming events",
+    site: "app/sports/[key] · no games",
     emptyState: "league-no-upcoming-events",
-    states: "This page lists scheduled games for this league.",
+    // #2948 — the page now lists finished games too, in their own section, so
+    // the empty state stopped describing it as scheduled-only. The ANCHOR name
+    // is deliberately unchanged: two registries key on it, and renaming it
+    // would red them for a reason that has nothing to do with this ship.
+    states: "This page lists games for this league.",
     retired: "Check back later for more games",
     render: () =>
       renderInIsolation(
