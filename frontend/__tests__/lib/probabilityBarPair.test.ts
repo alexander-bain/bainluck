@@ -167,7 +167,9 @@ describe("the thresholds are the ones the palette justified", () => {
     // Redmean is not a true metric, so the triangle inequality does not licence
     // an argument here — this is measured instead. Worst real colour still
     // leaves 3 of 4 ladder members available.
-    let fewest = RESCUE_LADDER.length;
+    // Annotated: RESCUE_LADDER is `as const`, so `.length` is the literal type
+    // 4 and the narrowing below would not assign.
+    let fewest: number = RESCUE_LADDER.length;
     for (const c of COLORS) {
       const available = RESCUE_LADDER.filter((l) => distinct(l, c)).length;
       fewest = Math.min(fewest, available);
