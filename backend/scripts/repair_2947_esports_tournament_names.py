@@ -247,8 +247,19 @@ async def drop_collisions(session, plan):
                     # +/-2 days, the window the counterpart rate was measured
                     # over (0 of 366) — not the calendar day, which would be a
                     # looser test than the evidence this repair rests on.
-                    "AND commence_time BETWEEN :c - interval '2 days' "
-                    "                      AND :c + interval '2 days' LIMIT 1"
+                    #
+                    # CAST IS LOAD-BEARING, not decoration. A bare `:c - interval
+                    # '2 days'` sends an UNTYPED parameter, and Postgres resolves
+                    # the subtraction before it ever looks at `commence_time`: the
+                    # only `? - interval` operator it can pick is
+                    # `interval - interval`, so `:c` becomes an interval and the
+                    # whole predicate dies as
+                    # `operator does not exist: timestamp with time zone >= interval`.
+                    # Measured on the dyno 2026-09-04 — the first time this SQL had
+                    # ever reached real Postgres. sqlglot parses the uncast version
+                    # happily; only type resolution rejects it.
+                    "AND commence_time BETWEEN CAST(:c AS timestamptz) - interval '2 days' "
+                    "                      AND CAST(:c AS timestamptz) + interval '2 days' LIMIT 1"
                 ),
                 {
                     "eid": row["id"],
