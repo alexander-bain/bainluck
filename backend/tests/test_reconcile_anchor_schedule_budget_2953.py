@@ -37,6 +37,7 @@ asks it the time, so these tests are deterministic and instant.
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime, timezone
 
 import pytest
@@ -224,6 +225,26 @@ class TestTheDefaultLimitIsMeasured:
         default_page_cost = rail.DEFAULT_LIMIT * 0.59
         assert default_page_cost <= rail.EXAMINE_BUDGET_SECONDS
         assert rail.EXAMINE_BUDGET_SECONDS < 30.0
+
+    def test_the_endpoint_quotes_the_measured_cost_to_its_operator(self):
+        """CERT-890 follow-up `LANE1-094-OPENAPI-COST-DESCRIPTION`.
+
+        The tests above pin the arithmetic; this pins the number a human is
+        actually shown. `/docs` is where an operator decides what `limit` to
+        pass, and it went on advertising ~0.2s per call after the constants
+        were re-sized on the measured ~0.59s — so the one reader who could
+        still act on the wrong figure was the only one not told.
+        """
+        from app.routes.admin_events import reconcile_anchor_schedule_endpoint
+
+        description = (
+            inspect.signature(reconcile_anchor_schedule_endpoint)
+            .parameters["limit"]
+            .default.description
+        )
+
+        assert "0.59" in description
+        assert "0.2s" not in description
 
 
 @pytest.mark.asyncio

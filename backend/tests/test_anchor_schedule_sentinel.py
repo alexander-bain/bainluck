@@ -138,16 +138,40 @@ class _FakeRedis:
     def __init__(self):
         self.data: dict[str, bytes] = {}
         self.deletes = 0
+        # Which keys were written, in order. The two keys cannot be written
+        # atomically, so the ORDER is part of the contract (CERT-896).
+        self.write_order: list[str] = []
 
     def get(self, key):
         return self.data.get(key)
 
     def setex(self, key, ttl, value):
+        self.write_order.append(key)
         self.data[key] = value.encode() if isinstance(value, str) else value
 
     def delete(self, key):
         self.deletes += 1
+        self.write_order.append(key)
         self.data.pop(key, None)
+
+
+class _MarkerWriteFailsRedis(_FakeRedis):
+    """Everything works except writing the pass marker (CERT-896).
+
+    Two keys cannot be written atomically and both writes swallow their
+    exceptions, so one landing without the other is a state the mechanism has
+    to survive. This is the half that matters: the cursor advances and the
+    claim does not.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.fail_pass_writes = False
+
+    def setex(self, key, ttl, value):
+        if self.fail_pass_writes and key == sentinel.PASS_STATE_KEY:
+            raise RuntimeError("marker write failed")
+        super().setex(key, ttl, value)
 
 
 class _BrokenRedis:
@@ -424,6 +448,355 @@ class TestConsecutiveNightsContinueEachOther:
         assert state["complete"] is True
 
 
+class TestTheWindowPassIsWhatCloses:
+    """#2983. The close was gated on ONE unresumed run reaching the end of the
+    window, and no such night exists at this population: a fresh run cannot
+    cover 685 rows in a 300s deadline (night one measured 600/685,
+    ``stopped_by: deadline``), and the night that does reach the end got there
+    by resuming. So the sentinel could file and could never close, and #2978
+    would have stayed open after every row in it was repaired.
+
+    Coverage was never the defect — nights one and two together see the window.
+    Nothing recorded the UNION. These guards are for the thing that now does,
+    and they are written in pairs, because a mechanism that closes is only safe
+    if the ways it must NOT close are pinned at the same time:
+
+    * a two-night chain closes  ↔  a chain with no marker to continue does not;
+    * a fresh pass closes  ↔  a pass older than the bound does not;
+    * and the trap this mechanism creates if built naively — night one files
+      five drifting rows, night two sweeps a clean tail, and the close resolves
+      an issue whose five rows are still wrong.
+    """
+
+    @staticmethod
+    def _two_page_window():
+        """A window that takes exactly two one-page nights to cross."""
+
+        def window(cursor):
+            if cursor is None:  # the front slice, and there is more behind it
+                return _page(has_more=True, next_cursor="c1", eligible=999)
+            return _page(has_more=False, eligible=999)  # the tail ends the window
+
+        return window
+
+    @pytest.mark.asyncio
+    async def test_a_two_night_chain_closes_the_issue(self, monkeypatch):
+        """THE repair. Night one truncates on its budget; night two resumes and
+        reaches the end. Between them the window has been seen, so the pass is
+        complete and the clean bill may be filed.
+
+        Under the old `complete = stopped_by is None and not resumed` this fails
+        on night two: `resumed` is True, so `complete` is False and nothing is
+        ever closed. That is the ablation — the previous guards all pass against
+        a sentinel with no close path at all, because every one of them asserts
+        a single run's verdict.
+        """
+        redis = _FakeRedis()
+
+        first = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+        )
+        assert first["complete"] is False, "one night has not seen the window"
+        assert first["continuation"] == "c1"
+        assert first["filing"] is None
+
+        second = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+        )
+        assert second["resumed_from"] == "c1", "night two must be a RESUMED run"
+        assert second["complete"] is True, "the chain saw the window"
+        assert second["filing"] is not None and second["filing"]["red"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_finished_chain_clears_its_marker_so_the_next_pass_is_fresh(
+        self, monkeypatch
+    ):
+        """Otherwise a stale marker would let a later single tail-only run claim
+        a union it was never part of — the close bug, mirrored."""
+        redis = _FakeRedis()
+        for _ in range(2):
+            await _run_with_stub_session(
+                monkeypatch,
+                max_pages=1,
+                deadline_seconds=60.0,
+                redis=redis,
+                page_for=self._two_page_window(),
+            )
+        assert sentinel.PASS_STATE_KEY not in redis.data
+        assert sentinel.CURSOR_STATE_KEY not in redis.data
+
+    @pytest.mark.asyncio
+    async def test_a_resume_with_no_marker_to_continue_cannot_close(self, monkeypatch):
+        """The broken-chain arm, and the shape this repair actually ARRIVES in:
+        production is carrying a bare cursor written by the old code, with no
+        marker beside it. A run resuming onto that has a good position and no
+        provenance, so it sweeps and does not close."""
+        redis = _FakeRedis()
+        redis.setex(sentinel.CURSOR_STATE_KEY, 1, "written-by-the-old-code")
+
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=redis,
+        )
+        assert state["resumed_from"] == "written-by-the-old-code"
+        assert state["pass_open"] is False
+        assert state["complete"] is False
+        assert state["filing"] is None
+        assert "CHAIN-BROKEN" in sentinel._summarize(state)
+
+    @pytest.mark.asyncio
+    async def test_drift_on_night_one_is_not_closed_by_a_clean_night_two(
+        self, monkeypatch
+    ):
+        """The trap. Night one finds drift and files it; night two sweeps a
+        clean tail and reaches the end. The union has been seen — but five rows
+        in it are still wrong, so GREEN is the PASS's verdict, not the last
+        run's. Without this the repair would resolve live drift, which is worse
+        than the defect it fixes."""
+        redis = _FakeRedis()
+
+        def window(cursor):
+            if cursor is None:
+                return _page(
+                    moves=[_move(4242)], has_more=True, next_cursor="c1", eligible=999
+                )
+            return _page(has_more=False, eligible=999)
+
+        first = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert first["filing"]["red"] is True
+
+        second = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert second["moves"] == [], "night two's own slice is clean"
+        assert second["complete"] is True, "and the chain did reach the end"
+        assert second["pass_drift_seen"] is True
+        assert second["filing"] is None, "but the pass ends RED, so nothing closes"
+        assert second["terminal"] == "plan_only"
+
+    @pytest.mark.asyncio
+    async def test_a_pass_older_than_the_bound_does_not_close(self, monkeypatch):
+        """A close asserts the window is clean NOW. The oldest observation in a
+        chain is as old as the pass, so past the bound it is not evidence about
+        tonight — rows have been re-anchored since and the floor has moved days
+        beyond where the pass began."""
+        redis = _FakeRedis()
+
+        await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+            now=NOW,
+        )
+        late = NOW + timedelta(seconds=sentinel.MAX_PASS_AGE_SECONDS + 60)
+        state = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+            now=late,
+        )
+        assert state["resumed_from"] == "c1", "it still resumed — coverage is unharmed"
+        assert state["pass_expired"] is True
+        assert state["complete"] is False
+        assert state["filing"] is None
+        assert "PASS-EXPIRED" in sentinel._summarize(state)
+
+    @pytest.mark.asyncio
+    async def test_a_pass_inside_the_bound_still_closes(self, monkeypatch):
+        """Control for the arm above. Without it, an age bound of zero would
+        pass every expiry test while breaking the repair outright."""
+        redis = _FakeRedis()
+        await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+            now=NOW,
+        )
+        state = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+            now=NOW + timedelta(seconds=sentinel.MAX_PASS_AGE_SECONDS - 60),
+        )
+        assert state["pass_expired"] is False
+        assert state["complete"] is True
+        assert state["filing"]["red"] is False
+
+    @pytest.mark.asyncio
+    async def test_expiry_costs_the_close_and_never_the_position(self, monkeypatch):
+        """The regression this bound could easily cause. If an expired pass also
+        cleared the continuation, a window that has outgrown three nights of
+        budget would restart at the oldest row every cycle and its tail would
+        never be examined at all — CERT-843's blind spot with extra steps. So
+        the expired night must still hand its ADVANCED position on."""
+        redis = _FakeRedis()
+        await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+            now=NOW,
+        )
+        state = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=lambda cursor: _page(
+                has_more=True, next_cursor="c2", eligible=999
+            ),
+            now=NOW + timedelta(seconds=sentinel.MAX_PASS_AGE_SECONDS + 60),
+        )
+        assert state["pass_expired"] is True
+        assert state["continuation"] == "c2"
+        assert redis.data[sentinel.CURSOR_STATE_KEY] == b"c2", "position advanced"
+        assert sentinel.PASS_STATE_KEY not in redis.data, "claim voided"
+
+    @pytest.mark.asyncio
+    async def test_a_lost_marker_write_cannot_pair_a_stale_clean_claim_with_an_advanced_cursor(
+        self, monkeypatch
+    ):
+        """CERT-896, the named three-night reproduction.
+
+        The marker and the continuation are two keys and cannot be written
+        atomically, and both writes swallow their exceptions. So the pairing
+        can come apart in the one direction that is dangerous: the night that
+        finds drift advances the cursor, its ``drift_seen: true`` write fails,
+        and the store is left holding an ADVANCED position beside a STALE CLEAN
+        claim. The next clean tail then reaches the end of the window with
+        ``pass_drift_seen`` false — and, before the binding, closed an issue
+        whose rows are still wrong.
+
+        Ordering the writes marker-first makes this rarer; only binding the
+        marker to the cursor it was written beside makes it detectable.
+        """
+        redis = _MarkerWriteFailsRedis()
+
+        def window(cursor):
+            if cursor is None:
+                return _page(has_more=True, next_cursor="c1", eligible=999)
+            if cursor == "c1":  # the slice that finds the drift
+                return _page(
+                    moves=[_move(4242)], has_more=True, next_cursor="c2", eligible=999
+                )
+            return _page(has_more=False, eligible=999)  # a clean tail
+
+        night_one = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_one["continuation"] == "c1"
+
+        redis.fail_pass_writes = True
+        night_two = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_two["filing"]["red"] is True, "the drift was found and filed"
+        assert night_two["continuation"] == "c2"
+
+        # The state the fault leaves behind, asserted directly — without this
+        # the test could pass against a store where nothing came apart at all.
+        assert redis.data[sentinel.CURSOR_STATE_KEY] == b"c2", "position advanced"
+        assert b'"drift_seen": false' in redis.data[sentinel.PASS_STATE_KEY]
+        assert b'"cursor": "c1"' in redis.data[sentinel.PASS_STATE_KEY], "claim stale"
+
+        redis.fail_pass_writes = False
+        night_three = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_three["moves"] == [], "night three's own slice is clean"
+        assert night_three["resumed_from"] == "c2"
+        assert night_three["pass_open"] is False, "the claim names c1, the cursor is c2"
+        assert night_three["complete"] is False
+        assert night_three["filing"] is None, (
+            "a lost marker write must never produce a GREEN close — 4242 is "
+            "still drifting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_claim_is_always_written_before_the_position(self, monkeypatch):
+        """Defence in depth for the arm above, and the reason it is rarely
+        needed. The binding DETECTS the two keys coming apart; the ordering
+        decides which way they come apart when they do. Marker-first leaves a
+        claim naming a position the store does not hold — refused on sight.
+        Position-first leaves the dangerous pairing the reproduction above is
+        about. Asserted rather than described, because a comment about write
+        order survives an edit that reverses it."""
+        redis = _FakeRedis()
+        await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+        )
+        assert redis.write_order.index(
+            sentinel.PASS_STATE_KEY
+        ) < redis.write_order.index(sentinel.CURSOR_STATE_KEY)
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_marker_is_a_broken_chain_not_a_crash(
+        self, monkeypatch
+    ):
+        """Every marker failure degrades the same way — to "cannot close" —
+        without the caller having to reason about which one happened."""
+        redis = _FakeRedis()
+        redis.setex(sentinel.CURSOR_STATE_KEY, 1, "c1")
+        redis.setex(sentinel.PASS_STATE_KEY, 1, "{not json")
+
+        state = await _run_with_stub_session(
+            monkeypatch,
+            pages=[_page(has_more=False)],
+            max_pages=5,
+            deadline_seconds=60.0,
+            redis=redis,
+        )
+        assert state["measured"] is True
+        assert state["pass_open"] is False
+        assert state["filing"] is None
+
+
 class TestTheBudgetActuallyBounds:
     @pytest.mark.asyncio
     async def test_the_page_cap_stops_a_window_that_never_ends(self, monkeypatch):
@@ -602,6 +975,7 @@ async def _run_with_stub_session(
     seen_cursors: list | None = None,
     resume: bool = True,
     page_for=None,
+    now: datetime = NOW,
 ):
     """Drive ``_run_anchor_schedule_sentinel`` with the DB, Redis and GitHub stubbed.
 
@@ -653,6 +1027,6 @@ async def _run_with_stub_session(
         file_issues=True,
         max_pages=max_pages,
         deadline_seconds=deadline_seconds,
-        now=NOW,
+        now=now,
         resume=resume,
     )
