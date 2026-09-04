@@ -178,3 +178,24 @@ _to_delete/
 # dirty. The evidence CAL-P989 cites (after-needle.json, first-published-payload.json,
 # PUBLISHED.marker, the PNGs) is committed; the moving tail is not.
 artifacts/cal-p989/bank-cursor.jsonl
+
+# CAL-P998 / CERT-863 follow-up: `backend/artifacts/` is a CWD ACCIDENT, not a home.
+# Nothing under it had ever been tracked until this branch swept 89 cal-996 beat
+# captures (80,496 lines) into a two-file sweep fix, and 72 more were sitting
+# untracked beside them from the same still-running watcher. Two separate causes,
+# one directory:
+#
+#   1. Evidence captures written next to whatever `cd backend` shell produced them.
+#      Evidence belongs in `.claude/handoff/ARTIFACT-*`, which is where cal-996's
+#      own cert evidence already lives.
+#   2. `scripts/calibration_scorecard.py --record` resolves its history path
+#      RELATIVE TO CWD, so running it from `backend/` silently forks a SECOND
+#      series here while the canonical `artifacts/calibration-scorecard/history.jsonl`
+#      at the repo root goes un-appended — no error, exit 0. That fork had two real
+#      datapoints (2026-08-02, 2026-09-02) that the canonical series was missing;
+#      they were folded back in and the fork deleted. Run the scorecard from the
+#      REPO ROOT.
+#
+# Ignoring the directory is what stops the next `git add -A` from re-committing it.
+# Deliberate evidence can still be committed with `git add -f`.
+backend/artifacts/
