@@ -240,7 +240,7 @@ class TestTheBudgetIsSpentPerBand:
         for i in range(1440, 0, -1):
             venue.append((NOW - timedelta(minutes=i), 0.40 + (i % 89) * 0.001))
 
-        async def _legs(_session, _market):
+        async def _legs(_session, _market, **_kw):
             return [market]
 
         async def _captures(_session, _ids):

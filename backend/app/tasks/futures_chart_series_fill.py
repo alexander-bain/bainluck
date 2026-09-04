@@ -46,6 +46,7 @@ from app.utils.futures_chart_series import (
     compact_by_band,
     layer_tiers,
     normalize_points,
+    same_question,
     series_reach_summary,
     ticker_batches,
 )
@@ -403,21 +404,47 @@ async def kalshi_field_series(
 # ---------------------------------------------------------------------------
 
 
+#: How much of the smaller field two markets must share before one can speak for
+#: the other. Only ever applied INSIDE the identity fence — on its own it is the
+#: score that chose Cincinnati for the US Open at 0.879 (CERT-881).
+MIN_ROSTER_OVERLAP = 0.6
+
+#: A fenced-out candidate is worth naming in `stats`, but only a few: a category
+#: holds hundreds of rows this market will never pair with, and a diagnostic that
+#: is longer than the payload is a diagnostic nobody reads.
+MAX_REFUSALS_LOGGED = 5
+
+
 def _norm(name: Optional[str]) -> str:
     from app.utils.event_concept import _norm_player_name
 
     return _norm_player_name(name or "")
 
 
-async def find_venue_legs(session, market) -> list:
+async def find_venue_legs(session, market, *, stats: Optional[dict] = None) -> list:
     """Every market that prices the SAME question, one per venue.
 
     The evolution market is one venue's answer to a question both venues price —
     the US Open men's title is `KXATP-26USO` on Kalshi and event 139236 on
-    Polymarket, two `futures_markets` rows with no shared id. They are matched
-    the only way that survives a venue renaming its market: by the OUTCOME NAME
-    SET. Two tier-1 winner fields in the same sport category whose real outcome
-    names overlap heavily are the same field.
+    Polymarket, two `futures_markets` rows with no shared id.
+
+    TWO TESTS, IN THIS ORDER, AND THE ORDER IS THE WHOLE FIX:
+
+      1. **WHICH QUESTION** — `futures_chart_series.same_question()` on the two
+         market NAMES. A candidate that asks a different question is not a
+         candidate, however its roster reads.
+      2. **WHOSE ROSTER** — outcome-name overlap, ranked, inside that fence.
+         This is what survives a venue renaming its market, and it is the right
+         tie-breaker between two rows that already agree on the question.
+
+    🔴 **STEP 1 IS NOT A REFINEMENT OF STEP 2 (CERT-881).** Overlap alone chose
+    Polymarket's Cincinnati Open (29 of the Kalshi field's 33 names, 0.879) over
+    the real US Open (18 of 23, 0.783) for Kalshi's `KXATP-26USO`, and
+    `blend_venues()` then averaged Cincinnati's prices into the US Open chart.
+    One tour draws from one pool of players, so roster overlap is HIGHEST
+    between sibling tournaments — the score is most confident exactly where it
+    is most wrong. `same_question()` carries the measured population and the
+    other five wrong pairs this fence removes.
 
     Deliberately NOT `cross_source_matching.find_cross_source_markets`: that
     pairs BINARY questions by normalised question text and ranks by price delta,
@@ -454,13 +481,30 @@ async def find_venue_legs(session, market) -> list:
     legs = [market]
     seen_sources = {market.source}
     best_by_source: dict[str, tuple[float, Any]] = {}
+    refused: list[dict] = []
     for candidate in rows:
         names = {_norm(o.name) for o in (candidate.outcomes or []) if o.name}
         names.discard("")
         if len(names) < 4:
             continue
         overlap = len(own_names & names) / float(min(len(own_names), len(names)))
-        if overlap < 0.6:
+        # THE FENCE IS DECISIVE AND IT IS FIRST: `overlap` below this line can
+        # only RANK candidates that already asked the same question, and the
+        # refusal branch reads the score without ever acting on it — a fenced-out
+        # candidate is out at any score. It is recorded only when the score would
+        # have made it a leg, because those are the rows an operator needs to see
+        # and the other two hundred in the category are noise.
+        if not same_question(
+            market.name, candidate.name,
+            category=getattr(market, "llm_sport_category", None),
+        ):
+            if overlap >= MIN_ROSTER_OVERLAP and len(refused) < MAX_REFUSALS_LOGGED:
+                refused.append({
+                    "id": candidate.id, "name": candidate.name,
+                    "overlap": round(overlap, 4),
+                })
+            continue
+        if overlap < MIN_ROSTER_OVERLAP:
             continue
         prior = best_by_source.get(candidate.source)
         if prior is None or overlap > prior[0]:
@@ -471,6 +515,8 @@ async def find_venue_legs(session, market) -> list:
             continue
         legs.append(candidate)
         seen_sources.add(source)
+    if stats is not None and refused:
+        stats["identity_refused"] = refused
     return legs
 
 
@@ -575,7 +621,7 @@ async def build_market_series(
     owned: list[Any] = []
 
     try:
-        legs = await find_venue_legs(session, market)
+        legs = await find_venue_legs(session, market, stats=stats)
         stats["legs"] = [{"id": m.id, "source": m.source} for m in legs]
 
         captures = await capture_series_by_name(session, [m.id for m in legs])

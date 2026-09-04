@@ -101,6 +101,18 @@ STATE_FIELDS = frozenset({
 #: ``{"Finished": 4, "Set 2": 2, "Not Started": 47}``.
 STATPAL_LIVE_PREFIXES = ("set ", "in play", "live")
 STATPAL_FINISHED = ("finished", "final", "ended", "retired", "walkover")
+STATPAL_SCHEDULED = ("not started", "scheduled")
+
+#: 🔴 **ESPN'S WORDS, NOT OURS (CERT-881).** `espn_tennis.scoreboard_competitions`
+#: publishes exactly three states — ``upcoming``, ``in_progress``, ``decided`` —
+#: and `_states_disagree` compares StatPal's mapped word against that string. A
+#: translation that lands on any OTHER word makes two feeds that agree the match
+#: is over report a disagreement, and the page prints "score as of …" over a
+#: final score forever. There is no third vocabulary in this file; if ESPN's
+#: words change, these are the constants that change with them.
+STATE_UPCOMING = "upcoming"
+STATE_IN_PROGRESS = "in_progress"
+STATE_DECIDED = "decided"
 
 
 class MixedLineError(AssertionError):
@@ -140,22 +152,30 @@ def _statpal_bool(value: Any) -> bool:
 
 
 def statpal_state(raw_status: Any) -> Optional[str]:
-    """StatPal's status word mapped to OUR state vocabulary, or None.
+    """StatPal's status word translated into ESPN'S state vocabulary, or None.
 
     Returned for comparison only. It never reaches the payload — the payload's
     state is ESPN's — but the disagreement has to be nameable before it can be
     reported, and a rule that cannot describe the disagreement it handles is a
     rule nobody can check.
+
+    🔴 **THE TARGET VOCABULARY IS ESPN'S, AND THAT IS THE ENTIRE POINT.** This
+    used to answer ``"final"`` for ``Finished`` and ``"scheduled"`` for ``Not
+    Started`` — our words, for a value whose only consumer compares it to
+    ESPN's ``decided`` / ``upcoming``. Two feeds that agreed a match was over
+    therefore always disagreed, and every finished match on the board carried
+    the stale-score caveat. A translation that keeps its own dialect is not a
+    translation.
     """
     text = str(raw_status or "").strip().lower()
     if not text:
         return None
     if any(text.startswith(p) for p in STATPAL_LIVE_PREFIXES):
-        return "in_progress"
+        return STATE_IN_PROGRESS
     if any(word in text for word in STATPAL_FINISHED):
-        return "final"
-    if "not started" in text or "scheduled" in text:
-        return "scheduled"
+        return STATE_DECIDED
+    if any(word in text for word in STATPAL_SCHEDULED):
+        return STATE_UPCOMING
     return None
 
 

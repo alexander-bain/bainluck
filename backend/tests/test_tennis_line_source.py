@@ -176,11 +176,11 @@ class TestAMixedLineIsImpossible:
 class TestEspnOwnsTheState:
     def test_state_is_espns_even_when_the_score_is_statpals(self):
         espn = espn_payload()
-        espn["state"] = "final"
+        espn["state"] = "decided"
         espn["completion"] = "retired"
         out = select_line(espn=espn, statpal=statpal_payload(), has_statpal_anchor=True)
         assert out["source"] == SOURCE_STATPAL
-        assert out["state"] == "final"
+        assert out["state"] == "decided"
         assert out["completion"] == "retired"
         assert out["state_source"] == SOURCE_ESPN
 
@@ -188,14 +188,50 @@ class TestEspnOwnsTheState:
         """Alex's rule for the disagreement, exactly: ESPN's state, the linked
         source's last score, and that source's own "as of"."""
         espn = espn_payload()
-        espn["state"] = "final"                    # ESPN: the match is over
+        espn["state"] = "decided"                  # ESPN: the match is over
         statpal = statpal_payload()
         statpal["reported_state"] = "in_progress"  # StatPal: still on court
         out = select_line(espn=espn, statpal=statpal, has_statpal_anchor=True)
-        assert out["state"] == "final"
+        assert out["state"] == "decided"
         assert out["line"] == statpal["line"], "the last linked score was discarded"
         assert out["score_as_of"] == statpal["observed_at"]
         assert out["state_disagrees"] is True
+
+    def test_espn_decided_and_statpal_finished_agree(self):
+        """🔴 CERT-881, the control beside the case above.
+
+        The two feeds say the same thing in their own words — ESPN's `decided`,
+        StatPal's `Finished` — and a reader must see a plain final score, not a
+        score with an "as of" caveat hung on it. This failed for every finished
+        match on the board while `statpal_state` answered in our dialect
+        (`"final"`) instead of ESPN's, and it failed silently: nothing about the
+        payload looked wrong except the one line the page prints over it.
+
+        The StatPal side is built by `statpal_state` from the raw board word
+        rather than hand-written, so the test tracks the translation and cannot
+        be made to pass by a fixture that hard-codes the answer.
+        """
+        espn = espn_payload()
+        espn["state"] = "decided"
+        statpal = statpal_payload()
+        statpal["reported_state"] = statpal_state("Finished")
+        assert statpal["reported_state"] == "decided", (
+            "StatPal's finished word must translate into ESPN's vocabulary"
+        )
+        out = select_line(espn=espn, statpal=statpal, has_statpal_anchor=True)
+        assert out["state_disagrees"] is False, (
+            "two feeds that agree the match is over reported a disagreement"
+        )
+
+    def test_espn_upcoming_and_statpal_not_started_agree(self):
+        """The same failure at the other end of the match. `Not Started` used to
+        map to `"scheduled"`, a word ESPN's board never publishes."""
+        espn = espn_payload()
+        espn["state"] = "upcoming"
+        statpal = statpal_payload()
+        statpal["reported_state"] = statpal_state("Not Started")
+        out = select_line(espn=espn, statpal=statpal, has_statpal_anchor=True)
+        assert out["state_disagrees"] is False
 
     def test_agreement_does_not_raise_a_caveat(self):
         out = select_line(
@@ -412,9 +448,31 @@ class TestSetWinnerDerivation:
 class TestStatpalStateWords:
     @pytest.mark.parametrize("raw,expected", [
         ("Set 2", "in_progress"), ("Set 5", "in_progress"),
-        ("Finished", "final"), ("Retired", "final"), ("Walkover", "final"),
-        ("Not Started", "scheduled"),
+        ("Finished", "decided"), ("Retired", "decided"), ("Walkover", "decided"),
+        ("Not Started", "upcoming"),
         ("", None), (None, None), ("Something New", None),
     ])
     def test_maps_the_measured_vocabulary(self, raw, expected):
         assert statpal_state(raw) == expected
+
+    def test_every_word_it_answers_is_a_word_espn_publishes(self):
+        """🔴 The generalisation of CERT-881, held as an invariant.
+
+        A per-word table can be extended with a fourth word in our own dialect
+        and stay green. This asserts the RANGE: whatever `statpal_state` ever
+        learns to say, it says it in the vocabulary `_states_disagree` compares
+        against, which is ESPN's competition states and nothing else.
+        """
+        from app.utils import espn_tennis_anchor
+
+        espn_vocabulary = set(espn_tennis_anchor.STATUS_BY_SLATE_STATE)
+        board_words = [
+            "Set 1", "Set 2", "Set 3", "Set 4", "Set 5", "In Play", "Live",
+            "Finished", "Final", "Ended", "Retired", "Walkover",
+            "Not Started", "Scheduled",
+        ]
+        answered = {statpal_state(word) for word in board_words}
+        assert None not in answered, "a measured board word went untranslated"
+        assert answered <= espn_vocabulary, (
+            f"{answered - espn_vocabulary} is not a state ESPN publishes"
+        )
