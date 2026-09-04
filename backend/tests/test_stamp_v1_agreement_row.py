@@ -224,9 +224,27 @@ async def test_a_season_we_have_not_ingested_yet_is_not_an_identity_disagreement
         "beyond_our_last": 1,
         "unplaceable": 0,
     }
-    # Of the two games we hold, StatPal has one — a different question, and it
-    # is NOT the governing one.
+    # Of the two games we hold, StatPal has one — the different question.
     assert identity["ours_covered_pct"] == 50.0
+    # D63 = A (Alex, 2026-09-04) reversed which of the two decides for this
+    # sport, and this assertion is the reversal. NBA is scored on
+    # `ours_covered_pct` ALONE: `identity.pct` is 20.0 here and 3.40 in
+    # production, not because either side disagrees about a game but because
+    # StatPal publishes a season on day one and we ingest a rolling odds-driven
+    # slice. Scoring NBA on it would put the flip permanently out of reach for a
+    # reason that is not a disagreement — the unreachable-by-design failure that
+    # spec rule 5 exists to prevent.
+    #
+    # So the union number is still PUBLISHED (the gap between the two is the
+    # finding) and it does not appear in `numbers`, which is what "published,
+    # not governing" has to mean if it means anything.
+    governing = identity["governing"]
+    assert governing["numbers"] == ["ours_covered_pct"]
+    assert governing["values"] == {"ours_covered_pct": 50.0}
+    # 50.0 is below the bar, so this day resets the streak — and it is BELOW
+    # rather than the catastrophic-looking 20.0 that a `pct`-scored NBA would
+    # have reported.
+    assert governing["gate"] == "BELOW"
 
 
 async def test_the_split_is_reported_beside_the_percentage_and_never_inside_it(drive):

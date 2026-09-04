@@ -133,6 +133,16 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
             "unplaceable": 0,
         },
         "ours_covered_pct": 100.0,
+        # D63: NFL is scored on BOTH numbers, because both sides carry the same
+        # population and where the two questions have the same answer asking
+        # both is free. Here they do, and the day advances the streak.
+        "governing": {
+            "numbers": ["pct", "ours_covered_pct"],
+            "values": {"pct": 100.0, "ours_covered_pct": 100.0},
+            "bar_pct": 99.5,
+            "gate": "MEETS",
+            "why": "all governing numbers at or above 99.5%",
+        },
     }
     assert row["schedule"]["off_by_hours"] == 1
     assert row["schedule"]["within"] == 0
@@ -310,6 +320,22 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         # has no answer when we hold none, and 0.0 would read as a total
         # disagreement (the same reasoning as `_pct`).
         "ours_covered_pct": None,
+        # D63 + spec rule 6. `pct` IS scored here (0.0 — StatPal lists a game
+        # and we list none), but the other governing number has no denominator,
+        # and a sport does not half clear a bar. So the day is NO-SCORE: it
+        # carries the streak rather than resetting it. That is the conservative
+        # direction on both sides — a day we listed nothing proves nothing about
+        # whether StatPal can be trusted, so it must not advance a flip either.
+        "governing": {
+            "numbers": ["pct", "ours_covered_pct"],
+            "values": {"pct": 0.0, "ours_covered_pct": None},
+            "bar_pct": 99.5,
+            "gate": "NO-SCORE",
+            "why": (
+                "ours_covered_pct has no denominator to divide by, so this day "
+                "scores nothing and carries the streak unchanged (spec rule 6)"
+            ),
+        },
     }
     assert row["receipts"]["statpal_only"][0]["statpal_id"] == "280497"
 

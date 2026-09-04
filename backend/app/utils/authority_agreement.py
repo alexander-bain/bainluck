@@ -33,7 +33,13 @@ which, and reports the clock as its own bucket that gates nothing.
 
 WHAT A ROW SAYS
 ═══════════════
-  * ``identity`` — in both / StatPal-only / ours-only. The governing bucket.
+  * ``identity`` — in both / StatPal-only / ours-only. The governing bucket, and
+    it carries TWO numbers: ``pct`` over the union of both sides, and
+    ``ours_covered_pct`` over the games we list. Both are published for every
+    sport. ``identity.governing`` says which of them scores THIS sport's streak
+    and whether it clears the bar (D63; `GOVERNING_IDENTITY_NUMBERS`) — because
+    the answer differs by sport, and a reader picking one is a reader who can
+    pick the wrong one.
   * ``schedule`` — within the window / off by hours / a different day. Reported,
     never merged into identity (spec rule 2: a blend buried five real findings
     inside twenty-four non-findings).
@@ -95,6 +101,183 @@ SHADOW_STAMPERS: dict[str, str] = {
     "icehockey_nhl": "stamp_nhl_statpal_fixtures",
     "baseball_mlb": "stamp_mlb_statpal_fixtures",
 }
+
+#: The bar a governing number must clear, on seven consecutive daily rows, before
+#: a sport's authority may be flipped (ledger spec rule 1, D50). Stated once,
+#: here, so the row can carry its own verdict instead of a reader comparing.
+FLIP_BAR_PCT = 99.5
+
+#: WHICH of identity's two numbers a sport's seven-day streak is scored on.
+#: D63 = A (Alex, 2026-09-04): "NBA/NHL seven-day agreement = 'of the games WE
+#: list, StatPal has them'; NFL symmetric."
+#:
+#: `identity` is the governing BUCKET — that is the axis `governs` marks, against
+#: `schedule` and `anchors`, which report and gate nothing. D63 settles a second
+#: question the bucket flag cannot answer, because identity carries TWO numbers:
+#:
+#:   * ``pct`` — the UNION denominator. "Of every game either side lists, how
+#:     many does the other also list?" Meaningful only where both sides publish
+#:     the same population.
+#:   * ``ours_covered_pct`` — "of the games WE list, does StatPal have them?"
+#:     This is the question Alex's bar actually asks, and the only one reachable
+#:     where StatPal publishes a whole season on day one and we ingest a rolling
+#:     odds-driven slice.
+#:
+#: NFL is SYMMETRIC: both sides carry the same population, measured 99.69 against
+#: 99.38 on 9/4. So both numbers govern, and requiring both costs nothing —
+#: where the two questions have the same answer, asking both is free and asking
+#: only one throws away a real signal.
+#:
+#: NBA and NHL are NOT symmetric: 100.00 against 3.40. Scoring them on `pct`
+#: would hold a flip permanently out of reach for a reason that is not a
+#: disagreement about a single game — exactly the unreachable-by-design failure
+#: spec rule 5 exists to prevent.
+#:
+#: **A sport absent from this map has NO governing number and CANNOT clear the
+#: bar.** That is the point, not an oversight: this map is where a sport answers
+#: "which question decides my flip?", and a sport that has not answered it must
+#: not be scored by a default. Under D55 the answer is explicit or it is absent;
+#: a gap tags loudly and never silently passes. Absent today, each for a stated
+#: reason and neither by omission:
+#:
+#:   * ``baseball_mlb`` — joins the shadow today (program step 5) and has never
+#:     produced a row, so the shape of its two numbers is UNMEASURED. Its
+#:     `season-schedule` is a rolling ~17-day window (227 games) rather than a
+#:     season, so it is a priori neither NFL's case nor NBA's, and guessing which
+#:     would be the half-configured sport `LeagueSpec` exists to forbid. Decide
+#:     it from its first seven rows, not from this comment.
+#:   * ``tennis_atp`` / ``tennis_wta`` — the forward matcher has not landed, and
+#:     tennis is an existence authority rather than a time authority
+#:     (`ARTIFACT-AUTHORITY-20260903-TENNIS.md`).
+GOVERNING_IDENTITY_NUMBERS: dict[str, tuple[str, ...]] = {
+    "americanfootball_nfl": ("pct", "ours_covered_pct"),
+    "basketball_nba": ("ours_covered_pct",),
+    "icehockey_nhl": ("ours_covered_pct",),
+}
+
+#: The FOUR states of the flip gate. Only one of them advances a streak, and the
+#: other three are distinct facts that a three-state gate would have blurred:
+#:
+#:   * ``MEETS``    — measured, at or above the bar. Advances the streak.
+#:   * ``BELOW``    — measured, under the bar. Resets it.
+#:   * ``NO-SCORE`` — the read succeeded but there was nothing to divide by, so
+#:     `_pct` returned `None`. Carries the streak unchanged, exactly as
+#:     `READ-FAILED` does (spec rule 6). Collapsing this into `BELOW` would
+#:     reset a streak on a day nobody disagreed about anything — gotcha #53's
+#:     class, and the reason `_pct` refuses to return `0.0` in the first place.
+#:   * ``PENDING-NO-GOVERNING-NUMBER`` — the sport has not been told which of
+#:     its two numbers decides. Nothing to advance, nothing to reset.
+#:
+#: The last two are both "not advancing" and are still not the same thing: one
+#: is a quiet day, the other is an unanswered question, and only one of them is
+#: fixed by a ruling.
+GATE_MEETS = "MEETS"
+GATE_BELOW = "BELOW"
+GATE_NO_SCORE = "NO-SCORE"
+GATE_PENDING = "PENDING-NO-GOVERNING-NUMBER"
+
+#: The gate states that leave a seven-day streak exactly as it was. Published as
+#: a set rather than re-derived by each reader: whether a state pauses or resets
+#: a streak is a spec decision, not a rendering detail.
+GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})
+
+
+def _identity_block(
+    sport_key: str,
+    *,
+    both: int,
+    statpal_only: int,
+    ours_only: int,
+    denominator: int,
+    horizon: dict[str, int],
+) -> dict[str, Any]:
+    """The identity bucket, with its two numbers and the ruling on which decides.
+
+    Built here rather than inline so that `governing` is assembled from the very
+    same numbers the row publishes. A verdict computed from a second, parallel
+    derivation of `pct` is a verdict that can disagree with the figure printed
+    beside it.
+    """
+    identity: dict[str, Any] = {
+        "both": both,
+        "statpal_only": statpal_only,
+        "ours_only": ours_only,
+        "pct": _pct(both, denominator),
+        # `identity` is the governing BUCKET, against `schedule` and `anchors`.
+        # WHICH of its two numbers scores the streak is a separate question,
+        # answered per sport in `governing` below (D63).
+        "governs": True,
+        # Where the StatPal-only games fall against our own inventory.
+        # Reported, never subtracted — see `_statpal_only_by_horizon`.
+        "statpal_only_by_horizon": horizon,
+        # "Of the games WE hold, how many does StatPal also have?"
+        #
+        # A DIFFERENT question from `pct`. For a sport where both sides carry
+        # the same population it is nearly the same number (NFL: 99.69 against
+        # 99.38). For NBA and NHL, where StatPal publishes a season and we
+        # ingest a rolling odds-driven slice, it is 100.00 against 3.40 — and
+        # the gap between the two IS the finding, which is why both are printed
+        # and neither is blended into the other (spec rule 2).
+        #
+        # Under D63 this is the number that GOVERNS for NBA and NHL. It is still
+        # published for every sport, governing or not: the pair is the finding.
+        "ours_covered_pct": _pct(both, both + ours_only),
+    }
+    identity["governing"] = governing_identity(sport_key, identity)
+    return identity
+
+
+def governing_identity(sport_key: str, identity: dict[str, Any]) -> dict[str, Any]:
+    """Which identity number(s) gate this sport's flip, and whether they clear.
+
+    The verdict is computed HERE and published on the row, rather than left to
+    whoever reads the ledger (D46's pattern: move the scoring into the app and
+    let the bus read the number). Two readers comparing two percentages against
+    a remembered bar is how a sport gets scored on the wrong question — which is
+    the whole of what D63 fixes.
+    """
+    names = GOVERNING_IDENTITY_NUMBERS.get(sport_key)
+    if not names:
+        return {
+            "numbers": [],
+            "values": {},
+            "bar_pct": FLIP_BAR_PCT,
+            "gate": GATE_PENDING,
+            "why": (
+                f"{sport_key} has no governing identity number, so no daily row "
+                "can advance its streak. Both numbers are still published below; "
+                "what is missing is the ruling on which one decides."
+            ),
+        }
+    values = {name: identity[name] for name in names}
+    # `None` is not a low score, it is the absence of one, and it must reach the
+    # gate as its own state rather than being compared against the bar. A single
+    # unscored number makes the whole verdict NO-SCORE: a sport does not half
+    # clear a bar.
+    unscored = sorted(name for name, value in values.items() if value is None)
+    if unscored:
+        return {
+            "numbers": list(names),
+            "values": values,
+            "bar_pct": FLIP_BAR_PCT,
+            "gate": GATE_NO_SCORE,
+            "why": (
+                f"{', '.join(unscored)} has no denominator to divide by, so this "
+                "day scores nothing and carries the streak unchanged (spec rule 6)"
+            ),
+        }
+    below = sorted(name for name, value in values.items() if value < FLIP_BAR_PCT)
+    return {
+        "numbers": list(names),
+        "values": values,
+        "bar_pct": FLIP_BAR_PCT,
+        "gate": GATE_BELOW if below else GATE_MEETS,
+        "why": (
+            f"{', '.join(below)} below {FLIP_BAR_PCT}%"
+            if below
+            else f"all governing numbers at or above {FLIP_BAR_PCT}%"
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -408,26 +591,14 @@ def build_agreement_row(
                 "statpal_unusable_names": len(unusable_fixtures),
                 "our_unusable_names": len(unusable_rows),
             },
-            "identity": {
-                "both": both,
-                "statpal_only": len(statpal_only),
-                "ours_only": len(ours_only),
-                "pct": _pct(both, denominator),
-                "governs": True,
-                # Where the StatPal-only games fall against our own inventory.
-                # Reported, never subtracted — see `_statpal_only_by_horizon`.
-                "statpal_only_by_horizon": horizon,
-                # "Of the games WE hold, how many does StatPal also have?"
-                #
-                # A DIFFERENT question from `pct`, and it does not govern. For a
-                # sport where both sides carry the same population it is nearly
-                # the same number (NFL: 99.69 against 99.38). For NBA and NHL,
-                # where StatPal publishes a season and we ingest a rolling
-                # odds-driven slice, it is 100.00 against 3.40 — and the gap
-                # between the two IS the finding, which is why both are printed
-                # and neither is blended into the other (spec rule 2).
-                "ours_covered_pct": _pct(both, both + len(ours_only)),
-            },
+            "identity": _identity_block(
+                sport_key,
+                both=both,
+                statpal_only=len(statpal_only),
+                ours_only=len(ours_only),
+                denominator=denominator,
+                horizon=horizon,
+            ),
             "schedule": {
                 **schedule,
                 "governs": False,
@@ -490,8 +661,33 @@ def ledger_line(row: dict[str, Any], *, day: str, streak: str = "?/7") -> str:
         # a bus operator appends a catastrophic-looking row every morning for a
         # sport where the two sides agree about every game we hold.
         f"| covers={ident['ours_covered_pct']}% "
+        # D63: the two numbers above are BOTH published for every sport, and
+        # this field says which of them this sport is scored on and whether it
+        # clears. Rendered from the row's own verdict rather than recomputed,
+        # so the line can never disagree with the JSON it came from — and so a
+        # bus operator advances a streak by reading a word, not by remembering
+        # which question NBA is asked.
+        f"| gate={_gate_text(ident)} "
         f"| schedule={sched['within']}/{sched['off_by_hours']}/{sched['wrong_day']}"
         f"/{sched['time_missing']} "
         f"| anchors={row['anchors']['anchored']} "
         f"| streak={streak} | {READ_OK}"
     )
+
+
+def _gate_text(identity: dict[str, Any]) -> str:
+    """`gate=` as one unambiguous token, with the number it was decided on.
+
+    PENDING renders differently from BELOW on purpose. A sport with no governing
+    number and a sport measured under the bar are both "not advancing", and a
+    format that showed them alike would be a check whose pass and fail look the
+    same.
+    """
+    governing = identity.get("governing") or {}
+    gate = governing.get("gate", GATE_PENDING)
+    if gate == GATE_PENDING:
+        return GATE_PENDING
+    scored = ",".join(
+        f"{name}={governing['values'][name]}%" for name in governing["numbers"]
+    )
+    return f"{gate}({scored} vs {governing['bar_pct']}%)"
