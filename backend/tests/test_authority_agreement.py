@@ -357,6 +357,41 @@ def test_two_meetings_of_one_pair_pair_by_nearest_kickoff_not_by_arrival():
     assert row["schedule"]["wrong_day"] == 0
 
 
+def test_the_tiebreak_still_sorts_two_meetings_that_BOTH_disagree_on_the_clock():
+    """The join may not quietly become a kickoff filter with a fallback under it.
+
+    Both real Week-16/17 rows are five hours out, so a rule that only considers
+    pairs already within the write window has nothing left to sort and falls
+    through to arrival order — which here would marry December to January and
+    report two wrong-week defects that do not exist.
+
+    This is the mutation `_pair_within_key` is written against: the ±1h window
+    belongs to the STAMPER, and the moment it appears in the measurement, this
+    test is the one that goes red. The 1:1 case cannot catch it — with one
+    fixture and one row the fallback pairs them anyway and the mutant reads
+    identical.
+    """
+    row = _build(
+        [
+            _fixture("280751", "A Team", "B Team", _utc("2026-12-27T00:00:00")),
+            _fixture("280764", "A Team", "B Team", _utc("2027-01-03T00:00:00")),
+        ],
+        [
+            _row(1, "A Team", "B Team", _utc("2027-01-03T05:00:00")),
+            _row(2, "A Team", "B Team", _utc("2026-12-27T05:00:00")),
+        ],
+    )
+    assert row["identity"]["both"] == 2
+    assert row["schedule"]["off_by_hours"] == 2
+    assert row["schedule"]["wrong_day"] == 0, (
+        "the December fixture was paired with the January row — the join is "
+        "keyed on the kickoff again (spec rule 4)"
+    )
+    assert {r["delta_hours"] for r in row["receipts"]["schedule_disagreements"]} == {
+        5.0
+    }
+
+
 def test_a_repeat_pair_with_one_side_short_reports_the_leftover_not_a_crossing():
     row = _build(
         [
