@@ -134,7 +134,6 @@ from app.utils.repair_lock_budget import (  # noqa: E402
 # The row derivation is shared with `scripts/derive_event_create_plan.py` so the
 # local dry run and this rail cannot mint different addresses from one approval.
 from app.utils.event_create_derivation import (  # noqa: E402
-    MLB_SPORT_ID,
     TRUTH_SET_REGISTRY,
     DerivationRefused,
     anchors_from_rows,
@@ -142,6 +141,7 @@ from app.utils.event_create_derivation import (  # noqa: E402
     load_games,
     required_club_names,
     select_population,
+    sport_for,
     truth_set_path_for,
 )
 
@@ -705,23 +705,27 @@ async def repair(
         }
 
     try:
+        # The population names its own sport. Hardcoding MLB here was correct while
+        # every reviewed set was MLB and would have bound population 4's NFL game to
+        # a baseball sport row with nothing downstream complaining.
+        sport_id, sport_key = sport_for(population)
         wanted = select_population(truth, population)
         games = load_games(truth)
         names = required_club_names(wanted, games)
         club_rows = (
             await session.execute(
-                _RESOLVE_CLUBS_SQL, {"sport_id": MLB_SPORT_ID, "names": names}
+                _RESOLVE_CLUBS_SQL, {"sport_id": sport_id, "names": names}
             )
         ).all()
         unresolved = sorted(set(names) - {str(r[0]) for r in club_rows})
         if unresolved:
             raise DerivationRefused(
                 "CLUB_ANCHOR_NOT_UNIQUE",
-                f"{len(unresolved)} club(s) have no row in sport_id={MLB_SPORT_ID}",
+                f"{len(unresolved)} club(s) have no row in sport_id={sport_id}",
                 unanchored=unresolved,
             )
         anchors = anchors_from_rows(club_rows)
-        rows = build_rows(wanted, games, anchors, sport_id=MLB_SPORT_ID)
+        rows = build_rows(wanted, games, anchors, sport_id=sport_id)
     except DerivationRefused as refusal:
         return {"issue": "#1796", "apply": False, **refusal.as_payload()}
 
@@ -753,8 +757,8 @@ async def repair(
             # digests — so recording provenance later never re-addresses a
             # reviewed plan, and dropping this key never re-addressed one either.)
             "truth_set_hash": truth.get("truth_id_hash"),
-            "sport_id": MLB_SPORT_ID,
-            "sport_key": "baseball_mlb",
+            "sport_id": sport_id,
+            "sport_key": sport_key,
         },
     )
     gate_ok, no_longer_missing = create_gate(plan, live_missing)
