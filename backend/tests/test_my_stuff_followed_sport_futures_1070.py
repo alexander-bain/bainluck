@@ -64,13 +64,19 @@ FOLLOWED = {"golf", "tennis"}
 
 
 def admits(**overrides) -> bool:
-    """The predicate with a this-week golf market as the default subject."""
+    """The predicate with a this-week golf market as the default subject.
+
+    Defaults are the Omega European Masters Winner as production holds it:
+    tier 1, resolving Sunday, 193 golfers in the field.
+    """
     kwargs = {
         "category": "golf",
         "market_tier": 1,
         "resolution_date": NOW + timedelta(days=3),
         "followed_categories": FOLLOWED,
         "now": NOW,
+        "name": "Omega European Masters - Winner",
+        "outcome_count": 193,
     }
     kwargs.update(overrides)
     return my_stuff_admits_followed_sport(**kwargs)
@@ -86,17 +92,33 @@ class TestTheTournamentGridReachesTheFollower:
     def test_every_prop_in_this_weeks_grid_is_admitted(self, prop):
         """The grid is one tournament's five questions, not one headline.
 
-        Parametrised over the prop NAMES on purpose even though the predicate
-        never reads a name: the defect Alex reported was "only one golf card",
-        and the fix is worthless if it admits the Winner and drops the other
-        four. If the predicate ever grows a name-shaped condition, four of these
-        five go red and say which.
+        Every name is verbatim from production (2026-09-04): the predicate DOES
+        read the name now, so the five are checked one at a time. The defect
+        Alex reported was "only one golf card", and the fix is worthless if it
+        admits the Winner and drops the other four.
         """
-        assert admits(), f"the tournament's {prop} market is still unreachable"
+        assert admits(
+            name=f"Omega European Masters - {prop}"
+        ), f"the tournament's {prop} market is still unreachable"
 
-    def test_tennis_is_admitted_on_the_same_footing(self):
-        """Alex follows tennis too, and tennis has no teams either."""
-        assert admits(category="tennis")
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "2026 Women’s US Open Winner (Tennis)",
+            "2026 Men’s US Open Winner (Tennis)",
+            "US Open 2026: To Reach Quarterfinals (Men's Singles)",
+            "US Open 2026: To Reach Semifinals (Women's Singles)",
+            "US Open 2026: To Reach the Final (Men's Singles)",
+            "US Open 2026: To Reach Round of 16 (Women's Singles)",
+        ],
+    )
+    def test_tennis_is_admitted_on_the_same_footing(self, name):
+        """Alex follows tennis too, and tennis has no teams either.
+
+        The curly apostrophe in the two Winner names is production's own — a
+        normalisation that assumed ASCII would drop both.
+        """
+        assert admits(category="tennis", name=name, outcome_count=44)
 
     def test_a_followed_sport_needs_no_team_and_no_name_match(self):
         """The point of the whole change.
@@ -190,6 +212,102 @@ class TestTheWindowIsThisWeekNotThisDecade:
         assert admits(now=later, resolution_date=later + timedelta(days=2))
 
 
+class TestAFieldIsNotAMatch:
+    """The bound that decides whether this change is an improvement at all.
+
+    Measured on production 2026-09-04, the followed + windowed + not-an-award
+    rules alone admit 4,039 markets for someone who follows golf and tennis, and
+    3,802 of them are two-sided ITF satellite props. A page of those is worse
+    than the page Alex complained about.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Set 1 Winner: Stolarik vs Januchowski",
+            "Set 2 Winner: Potapova vs Semenistaja",
+            "Set 3 Winner: Jodar vs Bu",
+            "M15 Wuning: Zijiang Yang vs Yue Xia",
+        ],
+    )
+    def test_the_itf_set_props_that_would_have_flooded_the_page(self, name):
+        assert not admits(category="tennis", name=name, outcome_count=2)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "US Open ATP: Daniil Medvedev vs Arthur Rinderknech",
+            "US Open ATP: Ben Shelton vs Denis Shapovalov",
+            "US Open ATP: Alexander Bublik vs Tommy Paul",
+        ],
+    )
+    def test_a_match_with_many_outcomes_is_still_one_match(self, name):
+        """Why the count alone cannot be the rule.
+
+        These are per-match correct-score markets: 14 to 18 outcomes each, every
+        one of them about a single match between two named players. A pure
+        outcome-count bound admits all 208 of them. Both halves are needed, and
+        this is the half that is easy to drop as redundant.
+        """
+        assert not admits(category="tennis", name=name, outcome_count=18)
+
+    def test_a_bout_belongs_with_the_games_not_the_fields(self):
+        """ux/1070 item 2's ruling, applied to the other half of the page.
+
+        Two participants, two numbers and a date is the GAME archetype. It has a
+        home on My Stuff — Live Now and Upcoming — and it is not this section.
+        """
+        assert not admits(category="mma", name="Fight Night: Hooker vs Parnasse")
+
+    @pytest.mark.parametrize("form", ["vs", "vs.", "v.", "def.", "beats"])
+    def test_every_way_of_naming_two_participants(self, form):
+        assert not admits(name=f"Some Event: Alpha {form} Bravo")
+
+    def test_the_empty_shells_are_dropped(self):
+        """Six of the eighteen in-window golf markets have NO outcomes.
+
+        "DP World Tour: European Masters Winner" is the same tournament as
+        "Omega European Masters - Winner" from a second source, and it carries
+        zero outcomes — it renders as a card with a title and nothing under it
+        (the empty-card class, L2215). The grid Alex wants is the populated one.
+        """
+        assert not admits(
+            name="DP World Tour: European Masters Winner", outcome_count=0
+        )
+        assert not admits(
+            name="DP World Tour: European Masters Top 10", outcome_count=0
+        )
+
+    def test_two_entrants_is_a_match_however_it_is_named(self):
+        """The count catches what the name misses.
+
+        A two-outcome market that never says "vs" is still not a field, and the
+        section's promise is "who, out of everyone" — a question with two
+        possible answers is a different question.
+        """
+        assert not admits(outcome_count=2)
+        assert not admits(outcome_count=1)
+
+    def test_a_small_field_is_still_a_field(self):
+        """Three is the floor, not a preference for big draws.
+
+        "DP World Tour: European Masters First Round Leader" carries five, and a
+        final-day leaderboard shortlist is exactly the kind of card that should
+        be on the page on Sunday morning.
+        """
+        assert admits(name="European Masters First Round Leader", outcome_count=3)
+        assert admits(name="European Masters First Round Leader", outcome_count=5)
+
+    def test_an_unnamed_market_is_judged_on_its_field(self):
+        """A missing name is not evidence of a matchup, and not evidence against.
+
+        The name test can only ever exclude; with nothing to read it excludes
+        nothing, and the outcome count still has to be satisfied.
+        """
+        assert admits(name=None)
+        assert not admits(name=None, outcome_count=2)
+
+
 class TestAwardsAreNotSport:
     def test_the_pga_film_awards_do_not_ride_a_golf_follow(self):
         """The Producers Guild of America is also "PGA".
@@ -251,6 +369,38 @@ class TestTheRouteSubtractsTheTeamSports:
             "the admission is computed and then thrown away"
         )
 
+    def test_the_field_arguments_are_actually_passed(self):
+        """Both default to admitting nothing, so omitting them empties the page.
+
+        A silent empty section is the failure this pins: the route would still
+        compile, the predicate would still be correct, and the ship would be
+        invisible.
+
+        Anchored on the CALL rather than on the argument text. `name=market.name`
+        appears twenty times in this module and `market_name=market.name`
+        contains it as a substring, so the obvious pin is satisfied by lines
+        that have nothing to do with this one (gotcha: a residue scan matching a
+        substring of an unrelated call).
+        """
+        src = self._feed_source()
+        start = src.find("_followed_sport_market = my_stuff_admits_followed_sport(")
+        assert start != -1, "the predicate is not called at all"
+        # The call's OWN closing paren: the one at its statement indentation.
+        # `find(")")` lands inside `len(market.outcomes or [])` instead and cuts
+        # the slice mid-argument, which is a test that fails on correct code.
+        end = src.find("\n                )", start)
+        assert end != -1, "the call's argument list is not where it was"
+        call = src[start:end]
+        assert "name=market.name," in call, (
+            "the followed-sport admission no longer reads the market's name — "
+            "every two-sided match prop in the sport is back on the page"
+        )
+        assert "outcome_count=len(market.outcomes or [])," in call, (
+            "the followed-sport admission no longer reads the field size — the "
+            "empty-shell cards are back and the section renders titles with "
+            "nothing under them"
+        )
+
     def test_the_category_filters_no_longer_run_first(self):
         """Golf never reached the match gate; it was `continue`d above it.
 
@@ -309,6 +459,23 @@ class TestAgainstAlexsOwnFollows:
             resolution_date=NOW + timedelta(days=3),
             followed_categories=self._narrowed(),
             now=NOW,
+            name="Omega European Masters - Winner",
+            outcome_count=193,
+        )
+
+    def test_the_field_bound_defaults_to_admitting_nothing(self):
+        """A caller that forgets to pass the field shows an empty section.
+
+        Not a footgun — the direction of the default is the decision. Fail-open
+        here means 3,802 ITF set props on his page; fail-closed means a section
+        that is missing, which the page renders as absence rather than as noise.
+        """
+        assert not my_stuff_admits_followed_sport(
+            category="golf",
+            market_tier=1,
+            resolution_date=NOW + timedelta(days=3),
+            followed_categories=self._narrowed(),
+            now=NOW,
         )
 
     def test_the_vuelta_and_the_grand_prix_still_do_not(self):
@@ -319,6 +486,8 @@ class TestAgainstAlexsOwnFollows:
                 resolution_date=NOW + timedelta(days=3),
                 followed_categories=self._narrowed(),
                 now=NOW,
+                name="Vuelta a España - Winner",
+                outcome_count=176,
             ), f"{category} is back on a page that does not follow it"
 
     def test_a_random_mlb_market_still_needs_the_red_sox(self):
@@ -334,4 +503,6 @@ class TestAgainstAlexsOwnFollows:
             resolution_date=NOW + timedelta(days=3),
             followed_categories=self._narrowed(),
             now=NOW,
+            name="AL Pennant Winner",
+            outcome_count=15,
         )

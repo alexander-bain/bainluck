@@ -8381,6 +8381,10 @@ async def _score_futures(
                     resolution_date=_utc(market.resolution_date),
                     followed_categories=_my_stuff_follow_categories,
                     now=now,
+                    name=market.name,
+                    # Already loaded — `outcome_team_ids` above walks the same
+                    # list, so the field test costs no read.
+                    outcome_count=len(market.outcomes or []),
                 )
                 if not _followed_sport_market:
                     # Skip Tier 3 sports — same filter as events to avoid false

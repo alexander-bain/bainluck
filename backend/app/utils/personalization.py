@@ -639,6 +639,13 @@ MY_STUFF_FOLLOW_WINDOW_DAYS = 14
 _MY_STUFF_AWARD_TIER = 3
 
 
+#: A field needs more entrants than a match has sides. Below this a "field" is
+#: either a two-sided matchup or — for six of the eighteen in-window golf markets
+#: measured on 2026-09-04 — an empty shell with no outcomes at all, which renders
+#: as a card with nothing on it.
+_MY_STUFF_MIN_FIELD_OUTCOMES = 3
+
+
 def my_stuff_admits_followed_sport(
     *,
     category: str | None,
@@ -646,6 +653,8 @@ def my_stuff_admits_followed_sport(
     resolution_date: datetime | None,
     followed_categories: set[str],
     now: datetime,
+    name: str | None = None,
+    outcome_count: int = 0,
     window_days: int = MY_STUFF_FOLLOW_WINDOW_DAYS,
 ) -> bool:
     """Does a followed SPORT admit this futures market to My Stuff on its own?
@@ -657,7 +666,7 @@ def my_stuff_admits_followed_sport(
     10, Top 20, Make the Cut — and his My Stuff could show none of it
     (2026-09-04).
 
-    So a followed sport admits its own markets, bounded three ways, because
+    So a followed sport admits its own markets, bounded four ways, because
     "everything in golf" is a different page:
 
       * the sport must be FOLLOWED — `followed_categories` is the caller's,
@@ -666,17 +675,50 @@ def my_stuff_admits_followed_sport(
       * the market must resolve inside the window — this is "what is on this
         week", not the 2027 Ryder Cup — and an undated market is NOT admitted,
         because a missing date is not evidence of imminence;
-      * awards are excluded (`_MY_STUFF_AWARD_TIER`).
+      * awards are excluded (`_MY_STUFF_AWARD_TIER`);
+      * the market must be a FIELD, not one match — see below.
+
+    ═══ WHY THE FIELD BOUND IS THE LOAD-BEARING ONE ═══
+
+    The first three bounds admit 4,039 markets to a page for someone who follows
+    golf and tennis (production, 2026-09-04), and 3,802 of them are two-sided
+    match props: "Set 1 Winner: Stolarik vs Januchowski", over and over, from the
+    ITF satellite circuit. That page is worse than the one this whole queue is
+    fixing. So a followed sport admits a FIELD — a question about who, out of
+    everyone, does a thing — and never a question about one match:
+
+      * `outcome_count` at least `_MY_STUFF_MIN_FIELD_OUTCOMES`, which also drops
+        the empty shells (the "DP World Tour: European Masters" grid duplicates
+        the Omega European Masters one and carries zero outcomes);
+      * the name must not name two participants. A market about one match IS the
+        game archetype — two participants, two numbers, a date — and belongs with
+        the games, which is ux/1070 item 2's ruling applied to the other half of
+        the page. The count alone does not settle it: a per-match correct-score
+        market carries 14 to 18 outcomes and is still one match.
+
+    Measured together on the in-window population: golf 18 → 12 (the Omega
+    European Masters and Simmons Bank Open grids entire — Winner, Top 5, Top 10,
+    Top 20, Make the Cut — which is exactly what Alex asked for), tennis 4,021 →
+    11 (both US Open singles winners and the four To-Reach rounds per draw).
 
     `now` and `resolution_date` must agree about tzinfo; callers normalise with
     `_utc` before calling, because a naive/aware compare raises rather than
     answering the question.
     """
+    from app.utils.event_tennis import is_matchup_market
+
     if not category:
         return False
     if category.strip().lower() not in followed_categories:
         return False
     if market_tier == _MY_STUFF_AWARD_TIER:
+        return False
+    if outcome_count < _MY_STUFF_MIN_FIELD_OUTCOMES:
+        return False
+    # Sport-agnostic despite where it lives: the regex is "vs / v. / def. /
+    # beats", which names two participants in any sport. Shared rather than
+    # copied so a widening lands on both callers at once.
+    if is_matchup_market(name):
         return False
     if resolution_date is None:
         return False
