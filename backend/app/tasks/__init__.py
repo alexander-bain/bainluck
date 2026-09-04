@@ -613,6 +613,11 @@ celery_app.conf.task_routes = {
     # background-queue cadence would mean the first game of every session is
     # served from the wrong source for as long as that queue is backed up.
     "app.tasks.link_tennis_statpal_fixtures": {"queue": "realtime"},
+    # #2867 / D50. `background`, and the contrast with the line above is the
+    # point: the tennis link is on `realtime` because a live card reads it, and
+    # nothing reads the NFL stamp at all yet — it is dark by construction. Two
+    # HTTP reads and one bounded query, hourly, is not realtime-queue work.
+    "app.tasks.stamp_nfl_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
@@ -2914,6 +2919,37 @@ def link_tennis_statpal_fixtures(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.stamp_nfl_statpal_fixtures")
+def stamp_nfl_statpal_fixtures(self, apply=True):
+    """Stamp each NFL row with the StatPal contest it is (#2867, D50).
+
+    The identity half of StatPal-as-canonical, DARK: it writes BOTH
+    `events.statpal_fixture_id` and the
+    `('statpal', 'americanfootball_nfl:<contestid>', 'game')` anchor, and
+    nothing reads either yet. It NEVER creates a row — a StatPal contest we do
+    not hold is a receipt, not an insert, because that gap is a finding about
+    our ingestion and inventing the row would erase it.
+
+    Both team names exactly (StatPal's 32 and ours are the same 32 strings) plus
+    kickoff within ±1h, which is generous: all 16 measured Week-1 games agree to
+    the minute. Exactly one candidate or it writes nothing — two of our rows for
+    one contest is a duplicate, reported and not resolved (D35, #2693). Rows
+    holding a fabricated `statpal_live_...` id (#2963) are selected on purpose,
+    receipted, and never written to.
+
+    `apply=False` plans and writes nothing. The 240s soft limit is well clear of
+    the global 300s (#966); the work is two HTTP reads plus one bounded
+    candidate query, so it does not grow with the size of the events table."""
+    from app.tasks.stamp_nfl_statpal_fixtures import (
+        _run_stamp_nfl_statpal_fixtures,
+    )
+    return _tracked_run(
+        "stamp_nfl_statpal_fixtures",
+        _run_stamp_nfl_statpal_fixtures(apply=apply),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
@@ -4774,6 +4810,22 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.link_tennis_statpal_fixtures",
         "schedule": 600.0,
         "options": {"queue": "realtime"},
+    },
+    "stamp-nfl-statpal-fixtures-hourly": {
+        # #2867 / D50. Hourly, and the contrast with the tennis cadence above is
+        # deliberate. `season-schedule` is the WHOLE season in one call (374
+        # games measured 2026-09-03) — there is no per-day endpoint to walk and
+        # nothing to gain from walking one — so a ten-minute cadence would re-read
+        # January's schedule 144 times a day to learn nothing. The `livescores`
+        # arm is what wants a live cadence, and nothing reads the stamp yet, so
+        # an hour is the honest interval until a reader exists.
+        #
+        # Two HTTP reads and one bounded candidate query per pass. The candidate
+        # window is one hour either side of the outermost kickoff StatPal served,
+        # so it never walks the events table.
+        "task": "app.tasks.stamp_nfl_statpal_fixtures",
+        "schedule": 3600.0,
+        "options": {"queue": "background"},
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

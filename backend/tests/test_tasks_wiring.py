@@ -218,6 +218,8 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-livescores",
         # #2867 / D59 — the forward half of the tennis link (realtime, 10 min).
         "link-tennis-statpal-fixtures-10min",
+        # #2867 / D50 — NFL shadow stamps, dark (background, hourly).
+        "stamp-nfl-statpal-fixtures-hourly",
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
