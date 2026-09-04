@@ -8,7 +8,7 @@ Kalshi markets provide bid/ask spreads and last traded prices.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import httpx
 
@@ -291,6 +291,44 @@ _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
 # the tail of the list. `str.startswith` accepts a tuple; `sorted` is
 # stable, so within each group the original order is preserved.
 _PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+
+# ---------------------------------------------------------------------------
+# Series DISCOVERY (#2927 container principle, applied to series).
+#
+# The four constants above are a hand list, and `app/utils/kalshi_series_
+# selection.py` carries the measurement that says why that is now the binding
+# constraint rather than a safety net: Kalshi lists 140 tennis series, 39 of
+# them carry open events, the hand list names 4 — and those 4 were the only
+# tennis series in `futures_markets` whose newest row was from today. The US
+# Open doubles draw (32 KXATPDOUBLES + 22 KXWTADOUBLES open events at the
+# venue) was 0 open rows on our side, newest row five days cold.
+#
+# So membership becomes discovered. These constants are the BOUNDS on that
+# discovery, not the membership itself.
+# ---------------------------------------------------------------------------
+#: Tags whose series are discovered. Deliberately one tag: this is the widening
+#: knob, and a tag goes in only once its open-event population has been
+#: measured against the fetch budget. `Sports` in full is 3,648 series and
+#: 1,263 with open events — discovery scoped to the whole category would need
+#: ~380s of paging against a 240s budget, so "discover everything" is not a
+#: braver version of this, it is a beat that finishes nothing.
+_DISCOVERY_TAGS = ("Tennis",)
+#: Hard cap on series one beat may ADD. Today's tennis selection is ~30.
+_DISCOVERY_MAX_SERIES = 40
+#: Refuse a series holding more open events than one beat could drain.
+_DISCOVERY_MAX_OPEN_EVENTS = 100
+#: Events per page for a discovered series. `_MAIN_SCAN_PAGE_LIMIT`'s value and
+#: for its reason (#995 attempt-10): a 200-event nested page decoded in ~67s
+#: holding the GIL. Discovered series are fetched WITH nested markets, so they
+#: take the page size that was measured safe for nested pages, not the 200 the
+#: guaranteed floor uses for its mostly-stripped fetches.
+_DISCOVERY_PAGE_LIMIT = 50
+#: Per-series page ceiling, on top of the census-derived page count.
+_DISCOVERY_MAX_PAGES = 3
+#: Page ceiling for the census walk. Measured 2026-09-04: the whole open
+#: listing is 72 pages of 200 at `with_nested_markets=false` and exhausts in
+#: 17s. The ceiling is headroom over that, not a target.
+_DISCOVERY_CENSUS_MAX_PAGES = 120
 
 
 class KalshiAPIService(BaseAPIClient):
@@ -942,6 +980,245 @@ class KalshiAPIService(BaseAPIClient):
         logger.info("Discovered %d unique series tickers total (%d API requests)", len(tickers), request_count)
         return sorted(tickers)
 
+    async def census_open_series(
+        self,
+        deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
+    ) -> tuple[dict[str, int], dict]:
+        """Count OPEN events per series across the entire exchange listing.
+
+        This is the measurement that makes series discovery affordable. The
+        catalog says what EXISTS (3,648 sports series); this says what is
+        actually live right now (1,263 of them), which is the only population a
+        rescue loop can be sized against.
+
+        It is cheap for one reason: ``with_nested_markets=false``. The main scan
+        pages the same listing at 50/page WITH nested markets and has never once
+        walked it to the end — 24 of 24 beats in the ring read ``stop_reason:
+        max_pages``. Stripped of markets the same listing is 200/page and
+        exhausts in **72 pages / 17s measured 2026-09-04**, because the cost was
+        never the pagination, it was decoding nested markets we then throw away.
+        We are counting tickers here, so we ask for none.
+
+        Returns ``(counts, receipt)`` where ``counts`` maps a series prefix (the
+        ticker up to the first ``-``) to its open-event count. ``receipt``
+        carries ``exhausted`` — **the caller must not cache a census that is
+        False**. A truncated walk under-counts, and every series it never
+        reached looks dormant rather than missed; caching that would freeze the
+        exact gap this exists to find for the whole TTL.
+
+        Never raises: a census is a bounded improvement to the rescue, and a
+        rescue must not fail because an optimisation did.
+        """
+        import asyncio
+        import time as _time
+
+        counts: dict[str, int] = {}
+        cursor: Optional[str] = None
+        pages = 0
+        events_seen = 0
+        exhausted = False
+        error: Optional[str] = None
+        _t0 = _time.monotonic()
+
+        def _tick(sub: str) -> None:
+            if progress_cb is not None:
+                try:
+                    progress_cb(sub)
+                except Exception:
+                    # A dropped phase marker is acceptable; a census that fails
+                    # because its own telemetry failed is not (#995 attempt-9).
+                    pass
+
+        try:
+            while pages < _DISCOVERY_CENSUS_MAX_PAGES:
+                if deadline is not None and _time.monotonic() >= deadline:
+                    break
+                if pages:
+                    await asyncio.sleep(0.1)
+                _tick(f"fetch:census:p{pages}")
+                # A hung page is caught here rather than by the try below: the
+                # except only catches raises, not hangs (#995 attempt-7).
+                raw_events, cursor = await asyncio.wait_for(
+                    self.get_events(
+                        status="open",
+                        with_nested_markets=False,
+                        limit=200,
+                        cursor=cursor,
+                        deadline=deadline,
+                        progress_cb=progress_cb,
+                    ),
+                    timeout=30.0,
+                )
+                for ed in raw_events:
+                    prefix = event_series_ticker(ed.get("event_ticker") or "")
+                    if prefix:
+                        counts[prefix] = counts.get(prefix, 0) + 1
+                        events_seen += 1
+                pages += 1
+                if not cursor or not raw_events:
+                    exhausted = True
+                    break
+        except Exception as e:  # noqa: BLE001 — see docstring
+            error = f"{type(e).__name__}: {e}"
+            logger.warning("Kalshi open-series census stopped early: %s", error)
+
+        receipt = {
+            "pages": pages,
+            "events": events_seen,
+            "series": len(counts),
+            "exhausted": exhausted,
+            "elapsed_s": round(_time.monotonic() - _t0, 1),
+        }
+        if error:
+            receipt["error"] = error
+        logger.info("Kalshi open-series census: %s", receipt)
+        return counts, receipt
+
+    async def discover_series_for_tags(
+        self,
+        tags: Sequence[str],
+        deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
+    ) -> tuple[list[str], dict]:
+        """Every series ticker the venue lists for these tags.
+
+        Asks the venue what exists rather than reading it off our own ingest
+        tables — notice 26's rule, and the reason yesterday's "0 US Open doubles
+        markets on Kalshi" census was wrong: it measured our mirror. The answer
+        here is the venue's own catalog, so a series we have never held is
+        exactly as visible as one we have.
+
+        Never raises, for the same reason as the census.
+        """
+        import asyncio
+        import time as _time
+
+        tickers: list[str] = []
+        seen: set[str] = set()
+        per_tag: dict[str, int] = {}
+        requests = 0
+        error: Optional[str] = None
+
+        for tag in tags:
+            cursor: Optional[str] = None
+            page = 0
+            try:
+                while page < 5:
+                    if deadline is not None and _time.monotonic() >= deadline:
+                        break
+                    if requests:
+                        await asyncio.sleep(0.2)
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(f"fetch:discover:{tag}:p{page}")
+                        except Exception:
+                            # Telemetry must never fail the fetch it observes.
+                            pass
+                    series_list, cursor = await asyncio.wait_for(
+                        self.get_series(
+                            category=self.SPORTS_CATEGORIES[0],
+                            tags=tag,
+                            limit=200,
+                            cursor=cursor,
+                        ),
+                        timeout=30.0,
+                    )
+                    requests += 1
+                    for s in series_list:
+                        t = (s.get("ticker") or "").strip().upper()
+                        if t and t not in seen:
+                            seen.add(t)
+                            tickers.append(t)
+                            per_tag[tag] = per_tag.get(tag, 0) + 1
+                    page += 1
+                    if not cursor:
+                        break
+            except Exception as e:  # noqa: BLE001 — see docstring
+                error = f"{tag}: {type(e).__name__}: {e}"
+                logger.warning("Kalshi series discovery failed for tag %s: %s", tag, e)
+                continue
+
+        receipt = {"tags": list(tags), "per_tag": per_tag, "requests": requests}
+        if error:
+            receipt["error"] = error
+        return tickers, receipt
+
+    async def resolve_discovered_series(
+        self,
+        cached: Optional[dict] = None,
+        save: Optional[Callable[[dict], None]] = None,
+        deadline: Optional[float] = None,
+        progress_cb: Optional[Callable[[str], None]] = None,
+    ) -> tuple[list[tuple[str, int]], dict]:
+        """The discovered half of the rescue list, cached across beats.
+
+        On a cache hit this costs one Redis read and the beat spends its whole
+        budget fetching. On a miss it pays ~20s for a catalog read plus the
+        census walk, out of a reserve carved for exactly that (the #999/#2214
+        trade, made a third time): the main scan gives up the seconds, and its
+        cursor is resumable, so they are deferred rather than lost.
+
+        A partial census is used but never saved — see ``census_open_series``.
+
+        Returns ``(selected, receipt)`` with ``selected`` a list of
+        ``(series_ticker, pages)``.
+        """
+        from app.utils.kalshi_series_selection import select_discovered_series
+
+        if cached:
+            try:
+                sel = [
+                    (str(t).upper(), int(p))
+                    for t, p in (cached.get("selected") or [])
+                    if t
+                ]
+                if sel:
+                    receipt = dict(cached.get("receipt") or {})
+                    receipt["source"] = "cache"
+                    return sel, receipt
+            except Exception:
+                # A malformed cache entry is a reason to re-measure, never a
+                # reason to fail the fetch.
+                logger.warning("Kalshi discovery cache unreadable; re-measuring")
+
+        discovered, disc_receipt = await self.discover_series_for_tags(
+            _DISCOVERY_TAGS, deadline=deadline, progress_cb=progress_cb,
+        )
+        if not discovered:
+            return [], {"source": "live", "discovered": 0, "catalog": disc_receipt}
+
+        counts, census_receipt = await self.census_open_series(
+            deadline=deadline, progress_cb=progress_cb,
+        )
+
+        selected, receipt = select_discovered_series(
+            discovered=discovered,
+            open_counts=counts,
+            guaranteed=_SPORTS_SERIES_TICKERS,
+            heavy_tokens=_HEAVY_TOKENS,
+            max_series=_DISCOVERY_MAX_SERIES,
+            max_open_events=_DISCOVERY_MAX_OPEN_EVENTS,
+            page_limit=_DISCOVERY_PAGE_LIMIT,
+            max_pages=_DISCOVERY_MAX_PAGES,
+        )
+        receipt["source"] = "live"
+        receipt["catalog"] = disc_receipt
+        receipt["census"] = census_receipt
+
+        if save is not None and census_receipt.get("exhausted") and selected:
+            try:
+                save({"selected": [list(s) for s in selected], "receipt": receipt})
+            except Exception:
+                # A cache write is an optimisation. Failing to persist the
+                # measurement costs the next beat ~20s to re-measure; raising
+                # here would cost it the whole fetch.
+                pass
+        elif not census_receipt.get("exhausted"):
+            receipt["not_cached"] = "census_partial"
+
+        return selected, receipt
+
     async def get_all_events(
         self,
         categories: Optional[list[str]] = None,
@@ -950,6 +1227,8 @@ class KalshiAPIService(BaseAPIClient):
         start_cursor: Optional[str] = None,
         save_cursor: Optional[Callable[[Optional[str]], None]] = None,
         telemetry: Optional[dict] = None,
+        discovery_cache: Optional[dict] = None,
+        save_discovery: Optional[Callable[[dict], None]] = None,
     ) -> list[KalshiEvent]:
         """
         Fetch all open events across specified categories.
@@ -977,6 +1256,7 @@ class KalshiAPIService(BaseAPIClient):
                 deadline=deadline, progress_cb=progress_cb,
                 start_cursor=start_cursor, save_cursor=save_cursor,
                 telemetry=telemetry,
+                discovery_cache=discovery_cache, save_discovery=save_discovery,
             )
 
         # Step 1: Discover series tickers for these categories + tags
@@ -1042,6 +1322,8 @@ class KalshiAPIService(BaseAPIClient):
         start_cursor: Optional[str] = None,
         save_cursor: Optional[Callable[[Optional[str]], None]] = None,
         telemetry: Optional[dict] = None,
+        discovery_cache: Optional[dict] = None,
+        save_discovery: Optional[Callable[[dict], None]] = None,
     ) -> list[KalshiEvent]:
         """Fetch all events from Kalshi without category filtering (paginated).
 
@@ -1066,6 +1348,16 @@ class KalshiAPIService(BaseAPIClient):
         loses nothing — the next beat continues where this one stopped. When the
         listing is exhausted the saved cursor is None, so the scan wraps to the
         head next run.
+
+        ``discovery_cache`` / ``save_discovery`` (#2927): the same
+        caller-owns-Redis pattern for the DISCOVERED half of the rescue list.
+        The service stays network-pure and the caller decides the TTL, exactly
+        as it already does for the main-scan cursor. On a cache hit the whole
+        discovery stage costs one Redis read; on a miss it pays a catalog read
+        plus the census walk out of a reserve carved for it. See
+        ``app/utils/kalshi_series_selection.py`` for what discovery is FOR — in
+        one line, the hand list below names 4 tennis series and the venue
+        carries 39 live ones, so the US Open doubles draw was never fetchable.
         """
         import asyncio
         import time as _time
@@ -1108,13 +1400,92 @@ class KalshiAPIService(BaseAPIClient):
         # The backfill's seconds are not deferrable in the same way, because a
         # market-less event is dropped outright rather than resumed.
         _BACKFILL_RESERVE_S = 45.0
-        _main_scan_deadline = (
-            deadline - _RESCUE_RESERVE_S - _BACKFILL_RESERVE_S
-            if deadline is not None
-            else None
-        )
-        _supp_deadline = (
-            deadline - _BACKFILL_RESERVE_S if deadline is not None else None
+        # Series discovery, the same carve for the third time. Discovery is a
+        # strictly LATER stage than the guaranteed floor, so without a reserve
+        # of its own it inherits #999's and #2214's failure exactly: the floor
+        # expands to fill the rescue window, discovery's first deadline check
+        # fires immediately, and every beat adds zero discovered series —
+        # deterministically, while reporting a healthy fetch. Two carves:
+        #
+        #   _DISCOVERY_MEASURE_CAP_S  the catalog read + census walk. Paid only
+        #                             on a cache miss (~20s measured); on a hit
+        #                             it is handed straight back to the main
+        #                             scan, which is why the deadlines below are
+        #                             computed AFTER discovery has run.
+        #   _DISCOVERY_RESERVE_S      fetching the selected series. Collapses to
+        #                             zero when nothing was selected, so a tag
+        #                             with no live series costs the floor nothing.
+        _DISCOVERY_MEASURE_CAP_S = 35.0
+        _DISCOVERY_RESERVE_S = 25.0
+
+        def _progress(sub: str) -> None:
+            # #995 attempt-5 sub-phase marker: names the exact fetch call in
+            # flight, so if the poll still SIGKILLs the next run pinpoints the
+            # hanging page/endpoint (not just "fetch").
+            if progress_cb is not None:
+                try:
+                    progress_cb(sub)
+                except Exception:
+                    pass
+
+        # Resolve the discovered half of the rescue list BEFORE the main scan,
+        # so the seconds it does not spend are seconds the main scan gets.
+        _discovered_series: list[tuple[str, int]] = []
+        _discovery_receipt: dict = {"source": "disabled"}
+        # Opt-in at the call site, on the caller's cache handles. Discovery
+        # costs venue calls (a catalog read plus the census walk), and a caller
+        # with nowhere to persist the result would pay them every single beat
+        # and throw the answer away — so "no cache handles" means "this caller
+        # did not ask for discovery", not "measure it anyway". It also keeps the
+        # change additive for every existing caller and test: without the
+        # handles the fetch issues exactly the calls it always did.
+        _discovery_wired = discovery_cache is not None or save_discovery is not None
+        if _DISCOVERY_TAGS and not _discovery_wired:
+            _discovery_receipt = {"source": "not_wired"}
+        elif _DISCOVERY_TAGS:
+            _measure_deadline = None
+            if deadline is not None:
+                _measure_deadline = min(
+                    _time.monotonic() + _DISCOVERY_MEASURE_CAP_S,
+                    deadline
+                    - _RESCUE_RESERVE_S
+                    - _DISCOVERY_RESERVE_S
+                    - _BACKFILL_RESERVE_S,
+                )
+            try:
+                _discovered_series, _discovery_receipt = await asyncio.wait_for(
+                    self.resolve_discovered_series(
+                        cached=discovery_cache,
+                        save=save_discovery,
+                        deadline=_measure_deadline,
+                        progress_cb=_progress,
+                    ),
+                    # Belt to the deadline's braces: the deadline is checked
+                    # between pages and cannot interrupt one hung call.
+                    timeout=_DISCOVERY_MEASURE_CAP_S + 15.0,
+                )
+            except Exception as e:  # noqa: BLE001
+                _discovery_receipt = {
+                    "source": "failed", "error": f"{type(e).__name__}: {e}",
+                }
+                logger.warning("Kalshi series discovery failed: %s", e)
+
+        # main scan → guaranteed floor → discovered → market backfill, each
+        # stopping where the next one's floor begins. The arithmetic is a pure
+        # function because #999 and #2214 were both the same off-by-one-stage
+        # mistake and neither was visible in a test.
+        from app.utils.kalshi_series_selection import fetch_stage_deadlines
+
+        (
+            _main_scan_deadline,
+            _supp_deadline,
+            _disc_fetch_deadline,
+        ) = fetch_stage_deadlines(
+            deadline,
+            has_discovered=bool(_discovered_series),
+            rescue_reserve_s=_RESCUE_RESERVE_S,
+            discovery_reserve_s=_DISCOVERY_RESERVE_S,
+            backfill_reserve_s=_BACKFILL_RESERVE_S,
         )
 
         def _past_deadline() -> bool:
@@ -1136,15 +1507,11 @@ class KalshiAPIService(BaseAPIClient):
                 and _time.monotonic() >= _supp_deadline
             )
 
-        def _progress(sub: str) -> None:
-            # #995 attempt-5 sub-phase marker: names the exact fetch call in
-            # flight, so if the poll still SIGKILLs the next run pinpoints the
-            # hanging page/endpoint (not just "fetch").
-            if progress_cb is not None:
-                try:
-                    progress_cb(sub)
-                except Exception:
-                    pass
+        def _past_disc_fetch_deadline() -> bool:
+            return (
+                _disc_fetch_deadline is not None
+                and _time.monotonic() >= _disc_fetch_deadline
+            )
 
         all_events: dict[str, KalshiEvent] = {}  # Dedup by event_ticker
         cursor = start_cursor or None
@@ -1363,6 +1730,86 @@ class KalshiAPIService(BaseAPIClient):
                         break
             except Exception as e:
                 logger.debug("Supplementary fetch for %s failed: %s", st, e)
+        # ---- The DISCOVERED half of the rescue --------------------------
+        # Runs after the guaranteed floor and on a reserve the floor cannot
+        # touch, so a full floor never means zero discovered series.
+        #
+        # `status="open"` rather than the floor's `status=None`, and the two are
+        # not interchangeable here (gotcha #41 — ask what the ordering starts
+        # on). These series were SELECTED on a census of open events, and their
+        # page counts derive from that census: `KXATPDOUBLES` is 32 open events,
+        # one page. Unfiltered it is 255 events paginating expiry-DESC, so a
+        # one-page `status=None` fetch would spend its page on settled rows from
+        # August and return none of today's draw — a series that reads as
+        # covered and is empty.
+        _disc_added = 0
+        _disc_series_fetched = 0
+        for _dst, _dpages in _discovered_series:
+            if _past_disc_fetch_deadline():
+                _discovery_receipt["fetch_truncated_after"] = _disc_series_fetched
+                logger.warning(
+                    "Kalshi discovery reserve spent after %d/%d series",
+                    _disc_series_fetched, len(_discovered_series),
+                )
+                break
+            _progress(f"fetch:disc:{_dst}")
+            try:
+                _dcursor = None
+                for _dp in range(_dpages):
+                    if _past_disc_fetch_deadline():
+                        break
+                    await asyncio.sleep(0.2)
+                    _progress(f"fetch:disc:{_dst}:p{_dp}")
+                    _dpage, _dcursor = await asyncio.wait_for(
+                        self.get_events(
+                            status="open",
+                            series_ticker=_dst,
+                            with_nested_markets=True,
+                            limit=_DISCOVERY_PAGE_LIMIT,
+                            cursor=_dcursor,
+                            deadline=_disc_fetch_deadline,
+                            progress_cb=_progress,
+                        ),
+                        timeout=45.0,
+                    )
+                    try:
+                        _dparsed = await asyncio.wait_for(
+                            self._parse_events_offloaded(_dpage), timeout=60.0
+                        )
+                    except Exception:
+                        _progress(f"fetch:disc:{_dst}:p{_dp}:parse_timeout")
+                        _dparsed = []
+                    for parsed_event in _dparsed:
+                        if (
+                            parsed_event
+                            and parsed_event.event_ticker not in all_events
+                        ):
+                            all_events[parsed_event.event_ticker] = parsed_event
+                            _disc_added += 1
+                            # Queue 355 / #1845: `supplementary_events` is one
+                            # half of an identity the report CHECKS every beat
+                            # (main_scan + supplementary == events_fetched). A
+                            # third source of additions that did not roll into
+                            # it would break that identity on every beat that
+                            # discovered anything — the fetch would look wrong
+                            # precisely when it worked.
+                            supplemented += 1
+                    if not _dcursor:
+                        break
+                _disc_series_fetched += 1
+            except Exception as e:
+                logger.debug("Discovered-series fetch for %s failed: %s", _dst, e)
+
+        _discovery_receipt["series_fetched"] = _disc_series_fetched
+        _discovery_receipt["events_added"] = _disc_added
+        _tel["series_discovery"] = _discovery_receipt
+        if _disc_added:
+            logger.info(
+                "Kalshi series discovery added %d events from %d discovered "
+                "series (%s)", _disc_added, _disc_series_fetched,
+                ", ".join(t for t, _ in _discovered_series[:10]),
+            )
+
         if supplemented:
             logger.info("Supplementary series fetch added %d events", supplemented)
 
