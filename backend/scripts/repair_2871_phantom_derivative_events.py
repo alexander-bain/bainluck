@@ -100,6 +100,29 @@ CHILDREN, and why each disposition is what it is:
   phantom's garbage name. Re-pointing would put corners-derived taxonomy on the
   real event; deleting lets the survivor regenerate its own.
 
+THE RESIDUAL THIS LEAVES, MEASURED — a Branch B survivor can land on a date a
+few days off the fixture it describes, because a Polymarket commence_time is
+often the market's close time rather than the game's start (gotcha #14). The
+worked example is the one on the #2871 screenshot: the five `FC Thun /
+Lausanne-Sport` phantoms are stamped **Aug 30**, while the real fixture is
+`Thun / Lausanne-Sport` on **Sep 2** — 2.3 days away AND under a variant home
+name, so neither the window nor the exact-home test reaches it.
+
+The window was checked against widening rather than assumed. Day-gap from each
+Branch B group to its nearest exact-home counterpart:
+
+    2-3 days 98 | 3-5 days 164 | 5-8 days 164 | 8-30 days 961 | 30+ 183
+    | none at any date 2,448 (61%)
+
+There is no spike just outside ±2 days; the mass sits at 8-30 days, which is
+what "two clubs meet twice a season" looks like. Widening to ±5 days would
+absorb 262 groups and start merging genuinely distinct fixtures, so the window
+stands. The residual is ~98 groups (2.4% of Branch B) that end up as a second
+dated row for a pairing we already hold nearby — against 2-5 garbage-named rows
+each today. The name-variant half (`FC Thun` ≡ `Thun`, ~510 groups within ±7
+days) is team-identity work and belongs to lane1 under D39; recovering it here
+would manufacture the twins that rule is there to prevent.
+
 LIVE ROWS ARE DEFERRED, NOT SWEPT. Events currently `status='live'` are held
 back unless `--include-live`. They are transient — every one measured was a
 soccer phantom a few hours past commence, and `detect_and_close_stale_events`
