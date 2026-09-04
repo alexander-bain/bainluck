@@ -28,6 +28,10 @@ let sportCategories: [SportCategory] = [
     .init(id: "baseball", name: "MLB", sportPrefixes: ["baseball"], futuresCategories: ["baseball"], route: .leagueGrid(slug: "mlb")),
     .init(id: "hockey", name: "NHL", sportPrefixes: ["icehockey"], futuresCategories: ["hockey"], route: .leagueGrid(slug: "nhl")),
     .init(id: "soccer", name: "Soccer", sportPrefixes: ["soccer"], futuresCategories: ["soccer"], route: .leagueGrid(slug: "epl")),
+    // Tennis routes to the CATEGORY, not a league grid: `/api/leagues/tennis` answers 200 with
+    // `total_markets: 0`, while `/api/feed?sport=tennis` carries both tours plus the Slam futures
+    // (`tennis_atp` alone drops the WTA half and the futures). Same word, two different keys.
+    .init(id: "tennis", name: "Tennis", sportPrefixes: ["tennis"], futuresCategories: ["tennis"], route: .sportCategory(key: "tennis", name: "Tennis")),
     .init(id: "golf", name: "Golf", sportPrefixes: ["golf"], futuresCategories: ["golf"], route: .golfCategory),
     .init(id: "politics", name: "Politics", sportPrefixes: [], futuresCategories: ["politics"], route: .politics),
     .init(id: "entertainment", name: "Entmt", sportPrefixes: [], futuresCategories: ["entertainment"], route: .entertainment),
@@ -80,7 +84,7 @@ struct SportFilterChips: View {
         } label: {
             HStack(spacing: 4) {
                 if !isAll {
-                    Image(systemName: chipIcon(for: category.id))
+                    Image(systemName: Self.chipIcon(for: category.id))
                         .font(.system(size: 10))
                 }
                 Text(category.name)
@@ -95,13 +99,16 @@ struct SportFilterChips: View {
         }
     }
 
-    private func chipIcon(for key: String) -> String {
+    /// Static so a guard test can assert every chip has its own case rather than
+    /// silently rendering the generic `sportscourt` fallback (native/007).
+    static func chipIcon(for key: String) -> String {
         switch key {
         case "basketball": return "basketball.fill"
         case "football": return "football.fill"
         case "baseball": return "baseball.fill"
         case "hockey": return "hockey.puck.fill"
         case "soccer": return "soccerball"
+        case "tennis": return "tennis.racket"
         case "golf": return "figure.golf"
         case "politics": return "building.columns.fill"
         case "entertainment": return "film.fill"
