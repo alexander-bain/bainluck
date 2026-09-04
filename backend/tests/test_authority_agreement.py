@@ -124,6 +124,15 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
         "ours_only": 0,
         "pct": 100.0,
         "governs": True,
+        # Nothing is StatPal-only here, so every horizon bucket is empty — the
+        # split reports where the misses fall and there are none.
+        "statpal_only_by_horizon": {
+            "before_our_first": 0,
+            "inside_our_span": 0,
+            "beyond_our_last": 0,
+            "unplaceable": 0,
+        },
+        "ours_covered_pct": 100.0,
     }
     assert row["schedule"]["off_by_hours"] == 1
     assert row["schedule"]["within"] == 0
@@ -288,6 +297,19 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         "ours_only": 0,
         "pct": 0.0,
         "governs": True,
+        # We hold no timed row at all, so there is no span for the miss to be
+        # inside or outside of. `unplaceable`, never a confident "beyond our
+        # horizon" — an empty table has no horizon.
+        "statpal_only_by_horizon": {
+            "before_our_first": 0,
+            "inside_our_span": 0,
+            "beyond_our_last": 0,
+            "unplaceable": 1,
+        },
+        # `None`, not 0.0: "of the games we hold, how many does StatPal have"
+        # has no answer when we hold none, and 0.0 would read as a total
+        # disagreement (the same reasoning as `_pct`).
+        "ours_covered_pct": None,
     }
     assert row["receipts"]["statpal_only"][0]["statpal_id"] == "280497"
 
@@ -533,6 +555,10 @@ def test_the_ledger_line_carries_every_bucket_the_spec_names():
     assert line.startswith("2026-09-04 | americanfootball_nfl | denom=1 ")
     assert "statpal_placeholders:1" in line
     assert "identity=100.0% (1/0/0)" in line
+    # `covers=` beside `identity=`, because for NBA and NHL the two are 100% and
+    # 3.4% on the same day and a line carrying only the second reads as a
+    # catastrophe every morning (program step 3).
+    assert "covers=100.0%" in line
     assert "schedule=0/1/0/0" in line
     assert "streak=1/7" in line
     assert line.endswith(READ_OK)

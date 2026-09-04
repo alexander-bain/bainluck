@@ -220,6 +220,10 @@ class TestBeatScheduleCompleteness:
         "link-tennis-statpal-fixtures-10min",
         # #2867 / D50 — NFL shadow stamps, dark (background, hourly).
         "stamp-nfl-statpal-fixtures-hourly",
+        # #2867 / D50 step 3 — NBA and NHL shadow stamps, dark (background,
+        # hourly, :17 and :19 by minute census).
+        "stamp-nba-statpal-fixtures-hourly",
+        "stamp-nhl-statpal-fixtures-hourly",
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
