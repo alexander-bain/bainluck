@@ -34,7 +34,8 @@ requests in a single page load.
 ═══ THE FLAG IS NOT A CONSOLATION PRIZE ═══
 
 Coverage on the committed US Open register, measured 2026-09-03: **334 faces
-and 356 flags of 378 players**, and every player has at least one. ESPN's own
+and 356 flags of 378 players — 376 of 378 have at least one, and two (Joel
+Schwaerzler, Tomas Barrios) have neither and keep their initials.** ESPN's own
 athlete headshots are thin for tennis (40% men / 28% women, measured
 2026-08-27 — the endpoint genuinely returns ``headshot: null``), which is why
 the register's faces come from a verified census rather than from ESPN, and why
@@ -65,7 +66,11 @@ from typing import Any, Optional
 
 from app.utils.search_fixture_dedup import is_individual_sport
 from app.utils.slugify import slugify
-from app.utils.tournament_register import REGISTER_DIR, player_image
+from app.utils.tournament_register import (
+    REGISTER_DIR,
+    player_image,
+    validate_player_image,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +136,21 @@ def _build_index(paths: list[Path]) -> dict[str, dict[str, Optional[str]]]:
             key = player.get("entity_key")
             if not isinstance(key, str) or not key or key in index:
                 continue
+            # VALIDATE ON READ, not merely in the prose. The register is
+            # validated where it is written, but this module is a second reader
+            # of the same bytes and its whole licence to render a photo is that
+            # the block passed `verified_subject` and the host allowlist. A
+            # reader that only *says* it relies on that check would go on
+            # rendering an unverified block the day one appears — which is the
+            # 17-wrong-subjects failure, arriving through the side door.
+            findings = validate_player_image(player.get("image"))
+            if findings:
+                logger.warning(
+                    "participant image for %s refused by the register's own "
+                    "validator (%s) — that player keeps their initials",
+                    key, ",".join(findings),
+                )
+                continue
             image = player_image(player)
             if image is None:
                 continue
@@ -172,8 +192,9 @@ def participant_image(
 
     ``None`` means "we have no pinned answer for this person" and the card keeps
     its initials — the honest fallback, and the one already on screen. Either
-    URL may individually be ``None``: 22 of 378 registered players have a flag
-    and no face, and a flag alone still beats two letters.
+    URL may individually be ``None``: measured 2026-09-03, **42 of 378**
+    registered players have a flag and no face and **20** have a face and no
+    flag, so neither field may be treated as implying the other.
     """
     if not is_individual_sport(sport_key):
         return None

@@ -11,8 +11,9 @@ What is pinned here is the property, not the prose:
     team fixture never does — a club must not wear somebody's headshot;
   * the four keys are ALWAYS served, so "no photo of this player" and "this
     payload predates the field" stay different facts on the wire;
-  * a face and a flag are independent — 22 of 378 registered players have a
-    flag and no face, and a flag alone still beats two letters;
+  * a face and a flag are independent — measured 2026-09-03, 42 of 378 have a
+    flag and no face and 20 have a face and no flag, and a flag alone still
+    beats two letters;
   * a broken register degrades to initials, never to an exception on /api/feed;
   * a fixture register never beats a committed one.
 
@@ -53,12 +54,26 @@ def _register(tmp_path, players, name="us-open-2026.json"):
     return tmp_path
 
 
-def _player(entity_key, *, url=None, flag_url=None):
+def _player(entity_key, *, url=None, flag_url=None, **image_over):
+    """A register player whose image block PASSES the register's own validator.
+
+    Evidence and `verified_subject` are not decoration in these fixtures — the
+    resolver runs `validate_player_image` on read, so a block missing either is
+    correctly refused. Building fixtures that skip them would mean testing a
+    resolver against blocks the real register can never contain.
+    """
+    image = {
+        "url": url,
+        "flag_url": flag_url,
+        "verified_subject": True,
+        "evidence": {"kind": "player-image-census", "face_source": "wikipedia"},
+    }
+    image.update(image_over)
     return {
         "entity_key": entity_key,
         "draw": "womens-singles",
         "role": "contender",
-        "image": {"url": url, "flag_url": flag_url, "verified_subject": True},
+        "image": image,
     }
 
 
@@ -202,23 +217,23 @@ class TestTheIndex:
         ) is None
 
     def test_CONTROL_the_same_player_WITH_an_image_is_indexed(self, tmp_path):
-        _register(tmp_path, [_player("nobody-pictured", flag_url="https://x/f.png")])
+        _register(tmp_path, [_player("nobody-pictured", flag_url="https://a.espncdn.com/i/teamlogos/countries/500/x.png")])
 
         assert pi.participant_image(
             "Nobody Pictured", sport_key=WTA, directory=tmp_path
-        ) == {"image_url": None, "flag_url": "https://x/f.png"}
+        ) == {"image_url": None, "flag_url": "https://a.espncdn.com/i/teamlogos/countries/500/x.png"}
 
     def test_a_fixture_file_never_beats_a_committed_register(self, tmp_path):
         """`_`-prefixed files are fixtures — the convention `registered_market_ids`
         follows. A synthetic draw sorts BEFORE `us-open-…` and would otherwise
         win the collision and put a test photo on a live card."""
         (tmp_path / "_synthetic-draw.json").write_text(
-            json.dumps({"players": [_player("cristina-bucsa", url="https://FAKE")]})
+            json.dumps({"players": [_player("cristina-bucsa", url="https://upload.wikimedia.org/FAKE.jpg")]})
         )
-        _register(tmp_path, [_player("cristina-bucsa", url="https://real/face.jpg")])
+        _register(tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/real.jpg")])
 
         image = pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path)
-        assert image["image_url"] == "https://real/face.jpg"
+        assert image["image_url"] == "https://upload.wikimedia.org/real.jpg"
 
     def test_the_first_committed_register_wins_a_name_collision(self, tmp_path):
         """Two tournaments, one player, two pinned photos — the same person, so
@@ -226,16 +241,16 @@ class TestTheIndex:
         First file in sorted order wins, and that is asserted rather than
         assumed: without it the LAST file silently decides."""
         _register(
-            tmp_path, [_player("cristina-bucsa", url="https://a/first.jpg")],
+            tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/first.jpg")],
             name="a-open-2026.json",
         )
         _register(
-            tmp_path, [_player("cristina-bucsa", url="https://z/second.jpg")],
+            tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/second.jpg")],
             name="z-open-2026.json",
         )
 
         image = pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path)
-        assert image["image_url"] == "https://a/first.jpg"
+        assert image["image_url"] == "https://upload.wikimedia.org/first.jpg"
 
     def test_an_unreadable_register_degrades_to_initials_and_never_raises(
         self, tmp_path
@@ -263,7 +278,7 @@ class TestTheIndex:
     ):
         """One feed page asks this ~120 times. Re-reading two JSON files per
         card would put the register on the hot path of /api/feed."""
-        _register(tmp_path, [_player("cristina-bucsa", url="https://real/face.jpg")])
+        _register(tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/real.jpg")])
         builds: list[int] = []
         real = pi._build_index
         monkeypatch.setattr(
@@ -280,20 +295,20 @@ class TestTheIndex:
     ):
         """The other arm of the cache. "Never re-read until the dyno restarts"
         is how a corrected photo stays wrong for a day."""
-        _register(tmp_path, [_player("cristina-bucsa", url="https://old/face.jpg")])
+        _register(tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/old.jpg")])
         clock = {"t": 1000.0}
         monkeypatch.setattr(pi.time, "monotonic", lambda: clock["t"])
 
         first = pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path)
-        assert first["image_url"] == "https://old/face.jpg"
+        assert first["image_url"] == "https://upload.wikimedia.org/old.jpg"
 
         (tmp_path / "us-open-2026.json").write_text(
-            json.dumps({"players": [_player("cristina-bucsa", url="https://new.jpg")]})
+            json.dumps({"players": [_player("cristina-bucsa", url="https://upload.wikimedia.org/new.jpg")]})
         )
         clock["t"] += pi.INDEX_RECHECK_S + 1
 
         second = pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path)
-        assert second["image_url"] == "https://new.jpg"
+        assert second["image_url"] == "https://upload.wikimedia.org/new.jpg"
 
 
 # ---------------------------------------------------------------------------
@@ -313,14 +328,89 @@ class TestTheEvidenceIsNeverShipped:
     def test_the_committed_register_still_carries_the_coverage_this_relies_on(self):
         """Alex's ruling 8 gate is a measurement, so it is measured. If the
         register is ever rebuilt with thin coverage, half the cards go back to
-        initials and this says so instead of the site saying it."""
+        initials and this says so instead of the site saying it.
+
+        The exact numbers, measured 2026-09-03: **376 of 378 players drawable,
+        334 with a face.** NOT 378 — Joel Schwaerzler and Tomas Barrios carry
+        neither and keep their initials. The first version of this module's
+        prose said "every player has at least one"; the review measured it and
+        it was wrong by two, so the number is asserted here rather than
+        described anywhere.
+        """
         from app.utils.tournament_register import REGISTER_DIR
 
         index = pi._index(REGISTER_DIR)
         faces = sum(1 for v in index.values() if v["image_url"])
 
-        assert len(index) >= 300, f"only {len(index)} players carry an image"
-        assert faces >= 300, f"only {faces} players carry a face"
+        assert len(index) >= 370, f"only {len(index)} players are drawable"
+        assert faces >= 330, f"only {faces} players carry a face"
+
+    def test_the_two_players_with_no_image_are_named_and_still_undrawable(self):
+        """A coverage claim that rounds two people away is the claim that made
+        this a review finding. They are named so the number stays honest, and
+        so that a register update covering them shows up as a test to update
+        rather than as prose nobody re-measures."""
+        for name in ("Joel Schwaerzler", "Tomas Barrios"):
+            assert pi.participant_image(name, sport_key=ATP) is None, (
+                f"{name} is drawable now — good; update the coverage numbers "
+                f"in this file and in participant_images.py's docstring"
+            )
+
+
+class TestTheRegistersOwnValidatorRunsOnREAD:
+    """The licence to render a photo is that the block passed verification.
+
+    The register is validated where it is WRITTEN, but this module is a second
+    reader of the same bytes. A reader that only names the check in its prose
+    would go on rendering an unverified block the day one appears — the
+    17-wrong-subjects failure arriving through the side door.
+    """
+
+    def test_an_unverified_face_is_refused(self, tmp_path):
+        _register(tmp_path, [_player(
+            "cristina-bucsa", url="https://upload.wikimedia.org/x.jpg",
+            verified_subject=False,
+        )])
+
+        assert pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path) is None
+
+    def test_a_face_on_an_unlisted_HOST_is_refused(self, tmp_path):
+        """`ALLOWED_IMAGE_PREFIXES`. A register that grew a URL pointing
+        somewhere else is not a register this renders from."""
+        _register(tmp_path, [_player(
+            "cristina-bucsa", url="https://evil.example/face.jpg",
+        )])
+
+        assert pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path) is None
+
+    def test_a_block_with_no_evidence_is_refused(self, tmp_path):
+        """An image block with no evidence cannot say who checked it."""
+        player = _player("cristina-bucsa", url="https://upload.wikimedia.org/x.jpg")
+        player["image"].pop("evidence")
+        _register(tmp_path, [player])
+
+        assert pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path) is None
+
+    def test_CONTROL_the_same_block_verified_and_evidenced_IS_rendered(self, tmp_path):
+        """Without this arm every refusal above passes for a resolver that has
+        been reduced to refusing everything."""
+        _register(tmp_path, [_player(
+            "cristina-bucsa", url="https://upload.wikimedia.org/x.jpg",
+        )])
+
+        image = pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path)
+        assert image["image_url"] == "https://upload.wikimedia.org/x.jpg"
+
+    def test_one_refused_player_does_not_cost_the_others_their_faces(self, tmp_path):
+        """Gotcha: one bad item must never wipe a whole pass."""
+        bad = _player("cristina-bucsa", url="https://evil.example/face.jpg")
+        good = _player("himeno-sakatsume", url="https://upload.wikimedia.org/ok.jpg")
+        _register(tmp_path, [bad, good])
+
+        assert pi.participant_image(BUCSA, sport_key=WTA, directory=tmp_path) is None
+        assert pi.participant_image(
+            SAKATSUME, sport_key=WTA, directory=tmp_path
+        )["image_url"] == "https://upload.wikimedia.org/ok.jpg"
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +520,7 @@ class TestTheFeedActuallyServesIt:
         /api/feed to re-learn something that changes at deploy speed — and a
         cache that still stats every call is a cache in name only.
         """
-        _register(tmp_path, [_player("cristina-bucsa", url="https://real/face.jpg")])
+        _register(tmp_path, [_player("cristina-bucsa", url="https://upload.wikimedia.org/real.jpg")])
         listings: list[int] = []
         real = pi._register_paths
         monkeypatch.setattr(

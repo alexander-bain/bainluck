@@ -381,6 +381,30 @@ function EventFeedCard({
   const homeFlagImgUrl = showFlags ? flagUrl(data.home_team) : null;
   const awayFlagImgUrl = showFlags ? flagUrl(data.away_team) : null;
 
+  // ux/1052 item 5 — a tennis card showed initials because the payload carried
+  // no face. It does now (#2919), for one-on-one sports, pinned and verified
+  // server-side. PRECEDENCE, and the order matters:
+  //
+  //   1. the served headshot — a picture of the person, the best answer;
+  //   2. the served flag — what every draw sheet has printed for fifty years,
+  //      and the right answer for the 20 registered players with no face;
+  //   3. whatever the card already did — `flagUrl()` by country name for
+  //      international team sports, then `espnTeamLogoByName()`, then initials.
+  //
+  // Served values never override an existing crest for a TEAM sport, because
+  // the server only ever fills them for individual ones.
+  const homeServedFace = data.home_image_url ?? null;
+  const awayServedFace = data.away_image_url ?? null;
+  const homeServedFlag = data.home_flag_url ?? null;
+  const awayServedFlag = data.away_flag_url ?? null;
+  const homeParticipantUrl = homeServedFace || homeServedFlag || homeFlagImgUrl;
+  const awayParticipantUrl = awayServedFace || awayServedFlag || awayFlagImgUrl;
+  // A flag is laid out 20x15; a headshot is square. So "is this a flag?" must
+  // follow what we are ACTUALLY drawing, not what the sport usually gets — a
+  // headshot squashed into 20x15 is the bug this flag would cause.
+  const homeIsFlag = !homeServedFace && !!(homeServedFlag || homeFlagImgUrl);
+  const awayIsFlag = !awayServedFace && !!(awayServedFlag || awayFlagImgUrl);
+
   // Sport emoji
   const sportEmoji = data.sport ? getEmojiForLeague(data.sport) : null;
   const leagueName = data.sport ? getLeagueDisplay(data.sport) : null;
@@ -647,7 +671,7 @@ function EventFeedCard({
           <div className="flex-1 min-w-0">
             {/* Away team */}
             <div className="flex items-center gap-1.5 mb-0.5">
-              <TeamLogo url={awayFlagImgUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={!!awayFlagImgUrl} sport={data.sport} />
+              <TeamLogo url={awayParticipantUrl || data.away_team_data?.logo_small} name={data.away_team} color={data.away_team_data?.primary_color} isFlag={awayIsFlag} sport={data.sport} />
               <TeamNameLink
                 name={data.away_team}
                 sportKey={data.sport}
@@ -677,7 +701,7 @@ function EventFeedCard({
             </div>
             {/* Home team */}
             <div className="flex items-center gap-1.5">
-              <TeamLogo url={homeFlagImgUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={!!homeFlagImgUrl} sport={data.sport} />
+              <TeamLogo url={homeParticipantUrl || data.home_team_data?.logo_small} name={data.home_team} color={data.home_team_data?.primary_color} isFlag={homeIsFlag} sport={data.sport} />
               <TeamNameLink
                 name={data.home_team}
                 sportKey={data.sport}
