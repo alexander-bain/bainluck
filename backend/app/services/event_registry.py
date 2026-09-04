@@ -486,8 +486,8 @@ async def _find_existing(
 ) -> Optional[Event]:
     """Find an existing event via the 3-step cascade."""
 
-    # Step 1: Exact source ID lookup
-    event = await _find_by_source_id(session, identity.claim)
+    # Step 1: Exact source ID lookup, inside the claim's own sport (D55, #2879).
+    event = await _find_by_source_id(session, identity.claim, sport_id)
     if event:
         return event
 
@@ -544,16 +544,27 @@ async def _find_existing(
 async def _find_by_source_id(
     session: AsyncSession,
     claim: EventClaim,
+    sport_id: int,
 ) -> Optional[Event]:
-    """Step 1: Find event by this source's specific ID column."""
+    """Step 1: Find event by this source's specific ID column.
+
+    ``sport_id`` is REQUIRED, not defaulted. D55 (#2879) says an id is only an id
+    inside its sport, and a caller that may omit the sport is the same dishonest
+    bridge the qualified anchor key at Step 2 was built to remove: it would get
+    the old global lookup back by forgetting an argument.
+
+    Only the StatPal column is sport-scoped. ESPN ids and the odds_api
+    `external_id` are single global id spaces — the same token never names two
+    games — so scoping them would buy nothing and would turn a mis-sported row
+    into a silent second create. StatPal issues its fixture tokens PER SPORT, so
+    a 6-digit MLB fixture and a 6-digit NFL fixture collide on sight.
+    """
     if claim.source == "odds_api":
         result = await session.execute(
             select(Event).where(Event.external_id == claim.source_id)
         )
     elif claim.source == "statpal":
-        result = await session.execute(
-            select(Event).where(Event.statpal_fixture_id == claim.source_id)
-        )
+        return await _find_statpal_row_in_sport(session, claim, sport_id)
     elif claim.source == "espn":
         result = await session.execute(
             select(Event).where(Event.espn_id == claim.source_id)
@@ -563,6 +574,56 @@ async def _find_by_source_id(
         return None
 
     return result.scalar_one_or_none()
+
+
+async def _find_statpal_row_in_sport(
+    session: AsyncSession,
+    claim: EventClaim,
+    sport_id: int,
+) -> Optional[Event]:
+    """The StatPal arm of Step 1, scoped to the claim's own sport (D55, #2879).
+
+    CERT-853 blocked the sport-qualified anchor key because qualifying Step 2
+    left Step 1 answering first and answering globally: an NFL claim for StatPal
+    fixture `280445` returned the MLB event of the same token before the
+    qualified key was ever consulted. Ordering does not cure that — Step 1 has to
+    know the sport.
+
+    The rows are fetched once and compared here rather than filtered in SQL, for
+    two reasons. It is the refusal shape `find_event_by_anchor` already uses for
+    exactly this collision, so Step 1 and Step 2 report a cross-sport id the same
+    way; and it lets the refusal WARN. D55 requires a collision to raise or tag
+    and never to silently no-op, and a `WHERE sport_id = :x` would have made the
+    MLB row simply invisible. It also retires a latent crash: once NFL rows carry
+    StatPal ids, an unscoped `scalar_one_or_none()` over a colliding token raises
+    `MultipleResultsFound` on the registry's hot path.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Event).where(Event.statpal_fixture_id == claim.source_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    for row in rows:
+        if row.sport_id == sport_id:
+            return row
+
+    if rows:
+        logger.warning(
+            "D55/#2879: statpal fixture %r is carried by event(s) %s in sport(s) "
+            "%s, but the claim is sport %s — refusing the cross-sport absorption "
+            "at Step 1",
+            claim.source_id,
+            sorted(row.id for row in rows),
+            sorted({row.sport_id for row in rows}),
+            sport_id,
+        )
+
+    return None
 
 
 #: Providers with no id column on `events`. For these the anchor channel is not

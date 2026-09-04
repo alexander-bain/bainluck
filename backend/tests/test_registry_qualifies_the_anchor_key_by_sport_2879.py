@@ -46,6 +46,7 @@ this change is safe to deploy in the order it is being deployed:
 * **ESPN and Odds API are untouched**, because `sport_key` is a StatPal-only
   qualifier and every other provider ignores it.
 """
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -214,6 +215,160 @@ class TestTheWriteSideStopsCollidingAcrossSports:
         assert session.anchors == {
             ("statpal", f"tennis_atp:{TENNIS_FIXTURE_ID}", ANCHOR_KIND_GAME): event.id
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# RED without the Step 1 repair — the cascade answered before it knew the sport
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestStep1CannotAnswerBeforeTheSportIsKnown:
+    """CERT-853. A qualified anchor key buys nothing while Step 1 is global.
+
+    The two lines above qualify Step 2. Step 1 runs FIRST, and for StatPal it read
+    `WHERE statpal_fixture_id = :id` across every sport — so an NFL claim for
+    `280445` was answered by the MLB row of the same token and
+    `find_or_create_event` returned `created=False` before the qualified key was
+    ever derived. CERT-853 reproduced exactly that. Ordering does not cure it:
+    Step 1 is the step that has to know the sport.
+
+    Every test in the classes above calls `_find_by_anchor` directly, and that is
+    precisely how Step 1 escaped them. These run the WHOLE cascade.
+    """
+
+    @staticmethod
+    def _mlb_row_carrying_the_shared_token():
+        return _row(
+            event_id=MLB_ROW_ID, sport_id=MLB_SPORT_ID,
+            home="Miami Marlins", away="Boston Red Sox",
+            commence=GAME_TIME, status="scheduled",
+            statpal_fixture_id=SHARED_SIX_DIGITS, commence_time_source="statpal",
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_nfl_claim_never_absorbs_the_mlb_row_sharing_its_token(self):
+        """The exact reproduction CERT-853 blocked on, run end to end."""
+        mlb = self._mlb_row_carrying_the_shared_token()
+        session = _LegacyAwareAnchorSession(
+            source_matches={SHARED_SIX_DIGITS: mlb},
+            event_sports={MLB_ROW_ID: MLB_SPORT_ID},
+            sport_id=NFL_SPORT_ID,
+        )
+
+        event, created = await find_or_create_event(
+            session,
+            _identity(
+                "statpal", SHARED_SIX_DIGITS, sport_key="americanfootball_nfl",
+                home="Los Angeles Rams", away="San Francisco 49ers",
+            ),
+        )
+
+        assert created, (
+            "the NFL claim must CREATE; absorbing the MLB row is the #2879 "
+            "cross-sport merge the whole ruling exists to stop"
+        )
+        assert event.id != MLB_ROW_ID
+        assert event.sport_id == NFL_SPORT_ID
+        assert event.home_team_name == "Los Angeles Rams"
+
+        # And the new row is anchored under its OWN sport, so the next NFL poll
+        # of `280445` finds it at Step 2 instead of creating a third row.
+        assert (
+            "statpal", f"americanfootball_nfl:{SHARED_SIX_DIGITS}", ANCHOR_KIND_GAME
+        ) in session.anchors
+
+    @pytest.mark.asyncio
+    async def test_the_sport_that_owns_the_token_still_finds_its_row(self):
+        """The same-sport control. Green in both arms, and that is the point.
+
+        Scoping Step 1 must refuse the OTHER sport without also refusing the
+        owner — otherwise every StatPal poll re-creates the row it already has.
+        Without this the repair could 'pass' by breaking Step 1 outright.
+        """
+        mlb = self._mlb_row_carrying_the_shared_token()
+        session = _LegacyAwareAnchorSession(
+            source_matches={SHARED_SIX_DIGITS: mlb},
+            event_sports={MLB_ROW_ID: MLB_SPORT_ID},
+            sport_id=MLB_SPORT_ID,
+        )
+
+        event, created = await find_or_create_event(
+            session,
+            _identity(
+                "statpal", SHARED_SIX_DIGITS, sport_key="baseball_mlb",
+                home="Miami Marlins", away="Boston Red Sox",
+            ),
+        )
+
+        assert created is False
+        assert event is mlb
+
+    @pytest.mark.asyncio
+    async def test_the_refused_collision_leaves_a_receipt(self, caplog):
+        """D55: a collision raises or tags — it never silently no-ops.
+
+        A `WHERE sport_id = :x` would have fixed the absorption and made the MLB
+        row invisible at the same time, so the twin nobody can see is the twin
+        nobody fixes. Step 2 already WARNs on this exact collision
+        (`find_event_by_anchor`); Step 1 now reports it the same way.
+        """
+        mlb = self._mlb_row_carrying_the_shared_token()
+        session = _LegacyAwareAnchorSession(
+            source_matches={SHARED_SIX_DIGITS: mlb},
+            event_sports={MLB_ROW_ID: MLB_SPORT_ID},
+            sport_id=NFL_SPORT_ID,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="app.services.event_registry"):
+            await find_or_create_event(
+                session,
+                _identity(
+                    "statpal", SHARED_SIX_DIGITS, sport_key="americanfootball_nfl",
+                    home="Los Angeles Rams", away="San Francisco 49ers",
+                ),
+            )
+
+        receipts = [
+            record.getMessage() for record in caplog.records
+            if "D55/#2879" in record.getMessage()
+        ]
+        assert len(receipts) == 1, caplog.text
+        # Both sports and the incumbent row are named, so the receipt is
+        # actionable without a second query.
+        assert str(MLB_ROW_ID) in receipts[0]
+        assert str(MLB_SPORT_ID) in receipts[0]
+        assert str(NFL_SPORT_ID) in receipts[0]
+
+    @pytest.mark.asyncio
+    async def test_espn_step_1_is_deliberately_not_sport_scoped(self):
+        """The asymmetry is a decision, not an oversight — pin it.
+
+        StatPal issues fixture tokens per sport, so its ids collide. An ESPN id
+        is one global id space: the same token never names two games. Scoping
+        ESPN would buy nothing and would turn a mis-sported row into a silent
+        second create, which is the failure #2869 is already about.
+        """
+        espn_row = _row(
+            event_id=MLB_ROW_ID, sport_id=MLB_SPORT_ID,
+            home="Miami Marlins", away="Boston Red Sox",
+            commence=GAME_TIME, status="scheduled",
+            espn_id="401872657", commence_time_source="espn",
+        )
+        session = _LegacyAwareAnchorSession(
+            source_matches={"401872657": espn_row},
+            event_sports={MLB_ROW_ID: MLB_SPORT_ID},
+            sport_id=NFL_SPORT_ID,
+        )
+
+        event, created = await find_or_create_event(
+            session,
+            _identity(
+                "espn", "401872657", sport_key="americanfootball_nfl",
+                home="Los Angeles Rams", away="San Francisco 49ers",
+            ),
+        )
+
+        assert created is False
+        assert event is espn_row
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -106,7 +106,20 @@ class _FakeRegistrySession:
             or "WHERE events.espn_id =" in statement_text
         ):
             source_id = next(iter(compiled_params.values()))
-            return _FakeExecuteResult(scalar=self.source_matches.get(source_id))
+            match = self.source_matches.get(source_id)
+            # A `source_matches` value may be ONE event or a LIST of them. The
+            # list shape exists because D55 (#2879) made one StatPal token able
+            # to name a row in more than one sport, and the Step 1 arm that
+            # refuses that reads `.scalars().all()`. A double that could only
+            # ever hand back a single row could not fail the cross-sport
+            # control, which is the only assertion that matters here.
+            rows = [] if match is None else (
+                list(match) if isinstance(match, list) else [match]
+            )
+            return _FakeExecuteResult(
+                scalar=rows[0] if len(rows) == 1 else None,
+                rows=rows,
+            )
 
         if "FROM events" in statement_text and "events.commence_time BETWEEN" in statement_text:
             self.structured_params = compiled_params
@@ -441,7 +454,7 @@ class TestCrossSourceEventMatching:
         )
         session = _FakeRegistrySession(source_matches={claim.source_id: existing})
 
-        event = await _find_by_source_id(session, claim)
+        event = await _find_by_source_id(session, claim, 1)
 
         assert event is existing
         assert column_name in str(session.statements[-1])
@@ -451,7 +464,9 @@ class TestCrossSourceEventMatching:
     async def test_prediction_market_claims_do_not_run_source_id_lookup(self):
         session = _FakeRegistrySession()
 
-        event = await _find_by_source_id(session, EventClaim("kalshi", "KXNBA-EXAMPLE"))
+        event = await _find_by_source_id(
+            session, EventClaim("kalshi", "KXNBA-EXAMPLE"), 1
+        )
 
         assert event is None
         assert session.statements == []
