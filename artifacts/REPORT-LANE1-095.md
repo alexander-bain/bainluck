@@ -27,21 +27,37 @@ f22dc37a Merge lane1/094-the-clock-not-the-row-count @ 07ca1622… (CERT-890, #2
 `git merge-base --is-ancestor 07ca1622 origin/master` → **true** at 07:32Z. Master then moved on to
 `abc35bfa` (three further merges batched on top — CERT-891, CERT-892, CERT-875).
 
-### The owed post-deploy check is NOT yet dischargeable
+### The owed post-deploy check — DISCHARGED
 
-`/api/health` still reports **`commit: b6be5b88`** — the pre-CERT-890 sha. The Heroku release is
-serialized behind master CI and had not landed by session end. **The check is owed, not skipped.**
+The release landed 360s into a bounded poll (`/tmp/l1_deploy_poll.sh`, terminal condition =
+`merge-base --is-ancestor`, **not** "health returned something" — the 093 watcher trap).
+`/api/health` → `commit: abc35bfa`, and `git merge-base --is-ancestor 07ca1622 abc35bfa` is **true**
+(object fetched first; an unfetched descendant reads as not-deployed).
 
-What must be run, once `/api/health` reports a commit with `07ca1622` as an ancestor:
+The exact call CERT-890 required — **no `limit` parameter**, the call that returned a bare Heroku
+HTML 500 with no reason and no correlation_id before #2953:
 
 ```
-POST /api/admin/events/reconcile-anchor-schedule?sport=americanfootball_nfl     # NO limit param
-→ must return JSON with examined: 25 and a resumable next_cursor
+POST /api/admin/events/reconcile-anchor-schedule?sport=americanfootball_nfl
+→ HTTP 200, examined: 25, next_cursor: "2026-09-20T17:00:00+00:00|14782151", 13.87s wall
+   stopped_by: null · terminal: partial · has_more: true · eligible: 239 · applied: false
 ```
 
-Before #2953 that call 500'd with a bare Heroku HTML page (no reason, no correlation_id). A bounded
-poller (`/tmp/l1_deploy_poll.sh`, terminal condition = `merge-base --is-ancestor`, **not** "health
-returned something") was left running; **096 must confirm the result rather than assume it.**
+**25 examined and a resumable cursor — both required values met**, in 13.87s against Heroku's 30s
+router (the pre-fix default was ~59s of fetching). `stopped_by: null` means the row limit is the
+bound at 25 and the 18s deadline did not need to fire — the designed shape.
+
+**Third independent derivation of the Week-1 ship**, unasked-for, on page one:
+
+```
+14780595  espn 401873124  ours 2026-09-11T00:35Z  ESPN 2026-12-18T01:15Z  delta 98.03d
+14781140  espn 401873004  ours 2026-09-13T20:25Z  ESPN 2026-10-18T20:05Z  delta 34.99d
+agrees: 23 · teams_disagree: 0 · no_answer: 0 · applied: false
+```
+
+Banked as a new append-only ledger row `CERT-890 -- POST-DEPLOY DISCHARGED` (2026-09-04 07:50Z). The
+graded row at line 601 is **unedited** (notice 12). That row is explicitly *not* a merge note — the
+merge was integrator/135's and its note is theirs to append.
 
 **`143-merge-07ca1622….md` was still un-suffixed at session end** — the integrator had not marked it
 `.consumed`. That is the integrator's to do, not lane1's. Do not rename it.
