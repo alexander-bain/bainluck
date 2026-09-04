@@ -164,6 +164,106 @@ def event_commence_token(commence) -> str | None:
         return None
 
 
+#: A fight night's bouts run back to back — measured spacing on production
+#: 2026-09-04 is 15-30 minutes between bouts, and the longest real gap inside one
+#: card (prelims → main card) is under three hours. Two groups of bouts on
+#: ADJACENT UTC dates that are closer together than this are one card that
+#: crossed midnight, not two cards.
+ROLLOVER_MAX_GAP_HOURS = 4
+
+#: `YYMONDD` back to a date, for the adjacency half of the same test.
+_TOKEN_RE = re.compile(r"^(\d{2})([a-z]{3})(\d{2})$")
+
+
+def token_date(token: str | None):
+    """The calendar date a card date-token names, or None if it isn't one.
+
+    The inverse of `event_commence_token`, and it exists for one caller:
+    deciding whether two tokens are ADJACENT days. Nothing else may infer a
+    date from a token — a Kalshi ticker's date is the card's local date and its
+    `commence_time` is the resolution date (gotcha #14), so the two disagree
+    routinely and only the adjacency question is safe to ask of the string.
+    """
+    from datetime import date
+
+    if not token:
+        return None
+    m = _TOKEN_RE.match(token.strip().lower())
+    if not m:
+        return None
+    yy, mon, dd = m.groups()
+    try:
+        return date(2000 + int(yy), _MONTHS.index(mon) + 1, int(dd))
+    except (ValueError, IndexError):
+        return None
+
+
+def fold_rollover_tokens(
+    token_span: dict[str, tuple],
+    *,
+    max_gap_hours: int = ROLLOVER_MAX_GAP_HOURS,
+) -> dict[str, str]:
+    """Map every card date-token to the token that SURVIVES it.
+
+    ux/1070 item 2 / #1712 shape 1. A card is grouped by a UTC calendar date,
+    and a US fight night does not respect one: the Sept 19 card ran
+    22:15→03:15 UTC, so its prelims minted `event:ufc:26sep19` (6 fights) and
+    its main card — including the main event, Pantoja vs Van — minted
+    `event:ufc:26sep20` (7 fights). Alex saw the result as "six UFC cards
+    scattered" on one page. Measured on production 2026-09-04, four of the
+    eleven UFC concepts were the spillover halves of cards already listed:
+    26sep06 (1 fight, 2h55 after 26sep05's last), 26sep13 (3, 15 min),
+    26sep20 (7, 30 min) and 26sep23 (2, 20 min).
+
+    `token_span` is ``{token: (earliest_commence, latest_commence)}`` over every
+    bout the token holds, from BOTH sources — the fold has to be computed once
+    over the union or the Kalshi half and the events half could disagree about
+    which card a bout belongs to.
+
+    A day-later token folds into its predecessor when BOTH hold:
+
+    * the two tokens name ADJACENT calendar days, and
+    * the later group's first bout is within ``max_gap_hours`` of the earlier
+      group's last bout.
+
+    Adjacency alone would merge any two consecutive nights; contiguity alone
+    would merge a late US card into an Asian afternoon card on the same date.
+    Folds chain (a card spanning three tokens collapses onto the first), and a
+    token with no predecessor to fold into maps to itself — so the return value
+    is total and callers never need a `.get(token, token)`.
+    """
+    from datetime import timedelta
+
+    survivor: dict[str, str] = {t: t for t in token_span}
+    dated = [
+        (token_date(t), t)
+        for t in token_span
+        if token_date(t) is not None and all(token_span[t])
+    ]
+    dated.sort()
+    by_date = {d: t for d, t in dated}
+    gap = timedelta(hours=max_gap_hours)
+
+    for day, token in dated:
+        previous = by_date.get(day - timedelta(days=1))
+        if previous is None:
+            continue
+        earlier_last = token_span[previous][1]
+        later_first = token_span[token][0]
+        try:
+            if later_first - earlier_last > gap or later_first < earlier_last:
+                continue
+        except TypeError:  # naive/aware mix — never fold on an unanswerable test
+            continue
+        # Chase the chain so three tokens of one long night land on the first.
+        root = survivor[previous]
+        while survivor[root] != root:
+            root = survivor[root]
+        survivor[token] = root
+
+    return survivor
+
+
 def card_token(cfg: CombatSportConfig, external_id: str | None) -> str | None:
     """Lowercased card date-token from a card FIGHT ticker, or None if it isn't a
     fight market. e.g. (UFC) "kalshi:KXUFCFIGHT-26JUN20KAPHOR" -> "26jun20";
@@ -479,6 +579,42 @@ async def list_card_concepts(
     def _ct(f):
         return f["commence"] or datetime.min.replace(tzinfo=timezone.utc)
 
+    # #1712 shape 1 / ux/1070 item 2: collapse a card that crossed midnight UTC
+    # back into ONE card. Computed over both sources' times together (see
+    # `fold_rollover_tokens`) and applied to both dicts, so a Kalshi fight and
+    # the events row for the same bout cannot end up on different cards.
+    _spans: dict[str, tuple] = {}
+    for token, card in cards.items():
+        times = sorted(f["commence"] for f in card["fights"] if f["commence"])
+        if times:
+            _spans[token] = (times[0], times[-1])
+    for token, group in event_bouts.items():
+        times = sorted(e.commence_time for e in group if e.commence_time)
+        if not times:
+            continue
+        first, last = times[0], times[-1]
+        if token in _spans:
+            first = min(first, _spans[token][0])
+            last = max(last, _spans[token][1])
+        _spans[token] = (first, last)
+    _survivor = fold_rollover_tokens(_spans)
+    if any(t != s for t, s in _survivor.items()):
+        folded_cards: dict[str, dict] = {}
+        for token, card in cards.items():
+            keep = _survivor.get(token, token)
+            target = folded_cards.setdefault(
+                keep, {"token": keep, "fights": [], "titles": []}
+            )
+            target["fights"].extend(card["fights"])
+            target["titles"].extend(card["titles"])
+        cards = folded_cards
+        folded_bouts: dict[str, list] = {}
+        for token, group in event_bouts.items():
+            folded_bouts.setdefault(_survivor.get(token, token), []).extend(group)
+        for group in folded_bouts.values():
+            group.sort(key=lambda e: e.commence_time)
+        event_bouts = folded_bouts
+
     concepts: list[dict] = []
     for token in set(cards) | set(event_bouts):
         kalshi = cards.get(token)
@@ -538,7 +674,81 @@ async def list_card_concepts(
             -x["fight_count"],
         )
     )
-    return concepts[:limit]
+    concepts = concepts[:limit]
+    await _attach_headline_bouts(db, concepts)
+    return concepts
+
+
+async def _attach_headline_bouts(db: AsyncSession, concepts: list[dict]) -> None:
+    """Give each card its MAIN EVENT: two fighters, two numbers.
+
+    ux/1070 item 2. A fight card was shipping the shape of an outright race —
+    one name and one percentage, drawn from `_resolve_concept_leader`, which
+    reads the card's whole competitor list and returns its top entry. On a
+    field of 30 cyclists that is the favourite. On a card of ten two-sided
+    fights it is *the most lopsided fight on the card*, and it is routinely not
+    even in the bout the card is named after: measured on production
+    2026-09-04, `event:ufc:26sep10` was titled "Alexandre Pantoja vs Joshua Van"
+    and led with "Tai Tuivasa 84%", who is in a different fight.
+
+    A bout is the GAME archetype — two participants, two numbers, a date — so
+    the card carries its main event as one, and the renderer stops borrowing
+    the outright hero. Both sides come from the SAME two-sided market, so they
+    are one market's own pair and cannot be assembled from two sources into a
+    sum that is not 100 (#2582's class).
+
+    One batched read for every card in the page, best-effort: a card whose main
+    event has no priced market simply has no `headline_bout` and falls back to
+    exactly what it rendered before.
+    """
+    main_ids = [c["main_event_id"] for c in concepts if c.get("main_event_id")]
+    if not main_ids:
+        return
+
+    from app.models import FuturesMarket
+
+    try:
+        markets = list(
+            (
+                await db.execute(
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.id.in_(main_ids))
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+    except Exception:  # a hero is never worth failing the tier for
+        return
+
+    by_id = {m.id: m for m in markets}
+    for concept in concepts:
+        market = by_id.get(concept.get("main_event_id"))
+        outcomes = list(getattr(market, "outcomes", None) or [])
+        if len(outcomes) != 2:
+            continue  # not a two-sided bout — leave the card as it was
+        outcomes.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
+        competitors = [
+            {
+                "name": o.name,
+                "probability": (
+                    round(float(o.current_probability), 4)
+                    if o.current_probability is not None
+                    else None
+                ),
+            }
+            for o in outcomes
+        ]
+        if not all(c["name"] and c["probability"] is not None for c in competitors):
+            continue  # half a bout is not a bout
+        concept["headline_bout"] = {
+            "competitors": competitors,
+            "commence_time": (
+                market.commence_time.isoformat() if market.commence_time else None
+            ),
+        }
 
 
 class CombatEventAdapter:
@@ -548,6 +758,35 @@ class CombatEventAdapter:
     def __init__(self, cfg: CombatSportConfig):
         self.cfg = cfg
         self.domain = cfg.domain
+
+    def _folded_card_tokens(self, target: str, markets, bouts_by_token) -> set[str]:
+        """Every date-token that belongs to the card the slug names.
+
+        One token in the ordinary case; two when the card crossed midnight UTC
+        (#1712 shape 1). Either half of a folded card resolves to the whole of
+        it, so the pre-fold link keeps working.
+        """
+        spans: dict[str, tuple] = {}
+
+        def _widen(token, when):
+            if token is None or when is None:
+                return
+            first, last = spans.get(token, (when, when))
+            spans[token] = (min(first, when), max(last, when))
+
+        for m in markets:
+            if len(m.outcomes or []) != 2:
+                continue
+            _widen(card_token(self.cfg, m.external_id), m.commence_time)
+        for token, group in bouts_by_token.items():
+            for bout in group:
+                _widen(token, bout.commence_time)
+
+        survivor = fold_rollover_tokens(spans)
+        root = survivor.get(target, target)
+        tokens = {t for t, s in survivor.items() if s == root}
+        tokens.add(target)
+        return tokens
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
         from datetime import datetime, timezone
@@ -576,19 +815,34 @@ class CombatEventAdapter:
         )
         markets = list((await db.execute(q)).scalars().unique().all())
 
-        # Collect this card's Kalshi FIGHTS: ticker date-token == slug AND two-sided.
+        # Betting-odds-first schedule (events table): the authoritative fight-start
+        # time (overrides Kalshi's close date, gotcha #14) and the sole source for a
+        # card that Kalshi hasn't listed yet (T-5, before it floods).
+        bouts_by_token = await _list_event_bouts(cfg, db, now)
+
+        # #1712 shape 1: this page is grouped by the SAME token the feed card is,
+        # so it folds a midnight-crossing card the same way — computed here from
+        # the same two sources rather than passed in, because the two callers
+        # never share a request. Without this the feed would offer one card of 13
+        # fights and the page behind it would answer with the 6 that happened
+        # before midnight; a stale link to the spillover token resolves onto the
+        # whole card instead of half of it.
+        card_tokens = self._folded_card_tokens(target, markets, bouts_by_token)
+
+        # Collect this card's Kalshi FIGHTS: ticker date-token on the card AND
+        # two-sided.
         fights = []
         for m in markets:
-            if card_token(cfg, m.external_id) != target:
+            if card_token(cfg, m.external_id) not in card_tokens:
                 continue
             if len(m.outcomes or []) != 2:  # a real fight is two-sided
                 continue
             fights.append(m)
 
-        # Betting-odds-first schedule (events table): the authoritative fight-start
-        # time (overrides Kalshi's close date, gotcha #14) and the sole source for a
-        # card that Kalshi hasn't listed yet (T-5, before it floods).
-        bouts = (await _list_event_bouts(cfg, db, now)).get(target) or []
+        bouts = sorted(
+            (b for t in card_tokens for b in bouts_by_token.get(t, [])),
+            key=lambda e: e.commence_time,
+        )
 
         if not fights:
             # No Kalshi markets for this card — resolve from the schedule alone.
