@@ -27,11 +27,18 @@ LIB = Path("lib/copyBans.ts")
 
 TEST_PATTERN = "noReadingCopyClaims|shippedCopyBans|tournamentPlainLanguage"
 
+# ⚠️ THE ANCHORS BELOW WERE RE-CUT WHEN THIS BRANCH WAS REBASED ONTO MASTER
+# (ruling 088, UX-P231 repair). `ca454ddf` added `PRICE_FORMAT_BANS` to
+# `ALL_COPY_BANS`, so the literal this battery pins had to grow that line or
+# every mutant would report ANCHOR NOT UNIQUE (0 hits) and score nothing. The
+# MEANING of each mutant is unchanged; D still loses exactly ONE group in the
+# hand-copy (now the newly-landed one) and H still re-spells the list CORRECTLY.
 FENCED = """export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
   ...TRADING_VOCAB_BANS,
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
+  ...PRICE_FORMAT_BANS,
 ];"""
 
 DERIVED = """export const NO_READING_COPY_BANS: CopyBan[] = [
@@ -74,11 +81,15 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
   ...JARGON_BANS,
   ...TRADING_VOCAB_BANS,
   ...VENUE_BANS,
+  ...FUTURE_PROMISE_BANS,
   ...HISTORY_CLAIM_BANS,
 ];""",
         "KILL",
         "the derived list re-spelled by hand and one group lost in the copy — "
-        "the exact drift `concept_sources` and UX-P177's `cycling` paid for",
+        "the exact drift `concept_sources` and UX-P177's `cycling` paid for. "
+        "Post-rebase the lost group is `PRICE_FORMAT_BANS`, which is the "
+        "sharpest possible form of this mutant: the group that landed on master "
+        "while this branch waited is exactly the one a hand-copy forgets",
     ),
     (
         "E",
@@ -111,6 +122,7 @@ MUTANTS: list[tuple[str, str, str, str, str]] = [
   ...TRADING_VOCAB_BANS,
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
+  ...PRICE_FORMAT_BANS,
   ...HISTORY_CLAIM_BANS,
 ];""",
         "SURVIVE",
