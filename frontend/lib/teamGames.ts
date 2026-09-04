@@ -60,12 +60,41 @@ function dayKey(iso: string | null): string {
 }
 
 /**
+ * Leagues where two games against the same opponent on one calendar day is a
+ * real thing that happens. Today that is baseball and nothing else.
+ *
+ * An ALLOWLIST, deliberately, not a "not NFL" denylist: a denylist silently
+ * re-breaks for every league added later, and the failure mode is a lie told
+ * confidently (see below). Matched case-insensitively against the `league`
+ * route segment.
+ */
+const DOUBLEHEADER_LEAGUES = new Set(["mlb"]);
+
+/**
  * Assign 1-based game numbers to doubleheaders. Only games that share an
  * opponent AND calendar day with at least one sibling get a number; solo games
  * are omitted from the map (so the caller renders no G-chip for them).
  * Ordering within a day is by commence_time ascending.
+ *
+ * **`league` is required, and outside {@link DOUBLEHEADER_LEAGUES} the answer is
+ * always `{}` (#2866).** Ungated, this function was the last step that turned a
+ * DATA defect into a plausible product feature: the Bears page carried
+ * `@ Tennessee Titans G1` and `@ Tennessee Titans G2`, same day, same 24–15
+ * result — five cards for three real games — because 47 of 50 NFL preseason
+ * rows exist twice and this grouped them into a "doubleheader". NFL teams do
+ * not play twice in a day, so the chips were not describing the schedule, they
+ * were explaining away a duplicate.
+ *
+ * **This does not fix the duplicate and must not be read as fixing it.** The
+ * pair still renders twice; it just no longer arrives dressed as deliberate.
+ * The data half is `matching-symptom` under D35 and belongs to #2693.
  */
-export function assignGameNumbers(games: TeamGameBrief[]): Record<number, number> {
+export function assignGameNumbers(
+  games: TeamGameBrief[],
+  league: string,
+): Record<number, number> {
+  if (!DOUBLEHEADER_LEAGUES.has((league || "").toLowerCase())) return {};
+
   const groups = new Map<string, TeamGameBrief[]>();
   for (const g of games) {
     const dk = dayKey(g.commence_time);
