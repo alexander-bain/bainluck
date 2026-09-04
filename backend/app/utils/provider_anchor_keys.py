@@ -298,6 +298,60 @@ def statpal_anchor_key(
     )
 
 
+#: The one sport whose StatPal id space is COARSER than our `sports.key`
+#: vocabulary. See :func:`statpal_id_space`.
+STATPAL_ID_SPACE_TENNIS = "tennis"
+
+#: Prefix of every `sports.key` that is served by StatPal's single `tennis`
+#: endpoint family (`tennis/daily/{token}`, `tennis/livescores`). Matched as a
+#: prefix rather than enumerated because the tournament-suffixed keys are minted
+#: per event (`tennis_atp_us_open`, `tennis_wta_wimbledon`, …) and an enumeration
+#: would silently mis-space the next Slam we add.
+_TENNIS_SPORT_KEY_PREFIX = "tennis"
+
+
+def statpal_id_space(sport_key: Optional[str]) -> Optional[str]:
+    """The StatPal ID SPACE a `sports.key` draws its fixture ids from.
+
+    D55 says the anchor key is `(provider, sport, id)`, and `statpal_anchor_key`
+    takes that middle term from the caller. The question this function answers is
+    *which* sport name is the honest one to pass, and for every sport but one the
+    answer is "ours" — `baseball_mlb`, `americanfootball_nfl` and StatPal's `mlb`
+    and `nfl` are 1:1, so passing `sports.key` straight through names the space
+    exactly (which is what `rekey_statpal_anchors_2879.py` does, and it stays
+    correct).
+
+    **Tennis is not 1:1, and passing `sports.key` there would break the property
+    D55 exists to protect.** StatPal serves all of tennis from one endpoint family
+    and numbers every match in one sequence: US Open match `2631673` and a
+    Winston-Salem match are neighbours in the same run of integers. Our side
+    splits the same matches across a growing set of keys — `tennis_atp`,
+    `tennis_wta`, `tennis_other`, plus one per tournament (`tennis_atp_us_open`,
+    `tennis_wta_wimbledon`, …), 30,115 rows over ~30 keys measured 2026-09-03.
+
+    Qualifying by `sports.key` would therefore write `tennis_atp:2631673` and
+    `tennis_atp_us_open:2631673` as two DIFFERENT keys for one StatPal match. The
+    unique index `(source, source_id, id_kind)` would accept both, and the
+    `COLLISION` that is this system's only *proof* that two of our rows are one
+    game would never fire — on the sport where our duplicate rows are split
+    across a generic and a tournament key, which is exactly the shape that makes
+    them duplicates. Fragmenting one provider namespace into thirty is the same
+    defect as collapsing thirty into one, arrived at from the other end.
+
+    So: every `tennis*` key maps to `tennis`, and everything else is itself.
+    `None` in, `None` out — a caller with no sport still has no sport, and
+    `statpal_anchor_key` refuses an empty qualifier rather than inventing one.
+    """
+    if sport_key is None:
+        return None
+    token = str(sport_key).strip()
+    if not token:
+        return token
+    if token.lower().startswith(_TENNIS_SPORT_KEY_PREFIX):
+        return STATPAL_ID_SPACE_TENNIS
+    return token
+
+
 #: The two digit-derived prefixes this module used before D55, as they appear in
 #: `event_provider_anchors.source_id`. Named here rather than rebuilt by the
 #: re-key script, so that deleting the legacy branch above and finding this
