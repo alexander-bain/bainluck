@@ -24,9 +24,21 @@ interface RaceToTitleChartProps {
   endDate?: string | null;
 }
 
+// live/059: the range switch is the reader's half of the layered series. The
+// envelope now carries ONE variable-resolution line per contender — 1-minute for
+// the last day, hourly for the last month, 12-hourly back to the market's
+// listing — so each switch is a client-side filter over the same points and each
+// one lands on the resolution it is named for. The backend allocates its point
+// budget against exactly these bands (`futures_chart_series.RANGE_BANDS`), so
+// adding a switch here without a band there gets a range nobody budgeted for.
+//
+// "1M" is new, and "All" now means it: before this the envelope only carried a
+// 7-day window, so "All" and "7d" drew the same line. Measured on the US Open
+// men's title, 2026-09-04: All reaches 2026-01-03, the market's listing.
 const RANGES: { label: string; hours: number }[] = [
-  { label: "24h", hours: 24 },
-  { label: "7d", hours: 168 },
+  { label: "1D", hours: 24 },
+  { label: "1W", hours: 168 },
+  { label: "1M", hours: 720 },
   { label: "All", hours: 0 }, // 0 = no time filter
 ];
 // L2-138 (Alex's corrected ruling): default line set = genuine contenders

@@ -454,6 +454,11 @@ async def attach_competitor_history(
         )
     ).all()
     if not out_rows:
+        # live/059: no outcomes means no SAMPLED series to build, but the venue
+        # cache is keyed by NAME and does not need one. The early return used to
+        # take the venue history with it.
+        apply_venue_history(evolution_market_id, competitors)
+        _reconcile_history_to_blend(competitors)
         return
     id_to_name = {r[0]: r[1] for r in out_rows}
     outcome_ids = list(id_to_name.keys())
@@ -489,6 +494,12 @@ async def attach_competitor_history(
         )
     ).all()
     if not snap_rows:
+        # Same reason as the `out_rows` guard above: a market we have never
+        # sampled is exactly the market the venue history is FOR (the CLOB holds
+        # eight months of a title race we started watching last week), so this
+        # return must not skip past it.
+        apply_venue_history(evolution_market_id, competitors)
+        _reconcile_history_to_blend(competitors)
         return
 
     # Group by outcome → consensus (mean across bookmakers) per captured_at.
@@ -568,7 +579,144 @@ async def attach_competitor_history(
             c["outcome_id"] = entry["outcome_id"]
             c["history"] = entry["history"]
 
+    # live/059: where the VENUES' own price history has been fetched and cached,
+    # it replaces the sampled series above. Last, so it overrides; best-effort,
+    # so a cold cache or a dead Redis leaves every line exactly as it was.
+    apply_venue_history(evolution_market_id, competitors)
+
     _reconcile_history_to_blend(competitors)
+
+
+def apply_venue_history(evolution_market_id, competitors: list[dict]) -> int:
+    """Swap in the cached venue-history series for any competitor that has one.
+
+    live/059. Our `futures_odds_snapshots` readings are a SAMPLER — the futures
+    poll writes roughly one point per 78 minutes, and on a Kalshi field quoted in
+    whole cents that renders a week of a US Open title race as a staircase with
+    fifteen treads (measured 2026-09-03: Alcaraz 129 points, 15 distinct values,
+    20 changes). The venues publish the minutes we missed and the months before
+    we were looking; `tasks/futures_chart_series_fill` fetches and layers them on
+    a beat, off the request path, and caches the result per market.
+
+    This is the read side, and it is deliberately the LAST thing that touches
+    `history` before `_reconcile_history_to_blend`:
+
+      * it LAYERS rather than replaces, and it layers with the same
+        `futures_chart_series.layer_tiers` the fill used — one layering rule in
+        the codebase, not two. The venue series owns the shape of the past; the
+        sampled series owns the last mile to now. That split is exactly what
+        lets the cache be hours old without the chart's right-hand edge ever
+        being hours old, and it is why the cache TTL can be 36 hours instead of
+        a number that would need a beat this system cannot afford;
+      * a competitor with no cached series keeps the sampled one untouched, so a
+        partial fill degrades to the old chart for the outcomes it missed rather
+        than blanking them;
+      * `_reconcile_history_to_blend` still runs afterwards, so the last point is
+        still anchored to the number the leaderboard shows. One question, one
+        number — the venue history changes the SHAPE of the line, never where it
+        ends.
+
+    Returns the number of competitors whose series gained venue points (0 on a
+    cold cache), which is what the guard tests assert on.
+    """
+    if not evolution_market_id or not competitors:
+        return 0
+    try:
+        from app.tasks.futures_chart_series_fill import (
+            STALE_REFRESH_AFTER_SECONDS,
+            cache_age_seconds,
+            read_cached_series,
+        )
+        from app.utils.futures_chart_series import compact_series, layer_tiers
+
+        payload = read_cached_series(evolution_market_id)
+    except Exception:  # noqa: BLE001 — a cache miss never costs the page
+        return 0
+
+    age = cache_age_seconds(payload) if payload else None
+    if not payload or age is None or age > STALE_REFRESH_AFTER_SECONDS:
+        # Nobody has fetched this market's venue history recently. Ask ONCE — the
+        # claim is SET NX, so a hundred simultaneous page views buy one fill, not
+        # a hundred. This page still renders whatever it has; the next one gets
+        # the fresher series. Note the ask is not `return` — a STALE payload is
+        # still worth layering in, and the request below falls through to use it.
+        _request_venue_history_fill(evolution_market_id)
+    if not payload:
+        return 0
+
+    series = payload.get("outcomes") or {}
+    if not series:
+        return 0
+    outcome_ids = payload.get("outcome_ids") or {}
+
+    from datetime import datetime as _dt
+
+    def _parse(ts: str):
+        try:
+            return _dt.fromisoformat(ts)
+        except (TypeError, ValueError):
+            return None
+
+    applied = 0
+    for c in competitors:
+        key = _norm_player_name(c.get("name"))
+        ascii_key = _ascii_player_name(c.get("name"))
+        points = series.get(key) or series.get(ascii_key)
+        if not points or len(points) < 2:
+            continue
+        # A line the renderer cannot key is a line it does not draw
+        # (`competitorsToOutcomeHistory` skips any competitor without an
+        # `outcome_id`), so a venue match that the sampled pass missed supplies
+        # its own id rather than being silently dropped.
+        if c.get("outcome_id") is None:
+            oid = outcome_ids.get(key) or outcome_ids.get(ascii_key)
+            if oid is not None:
+                c["outcome_id"] = oid
+            else:
+                continue
+        venue = [
+            (parsed, float(prob))
+            for parsed, prob in (
+                (_parse(ts), prob) for ts, prob in points
+            )
+            if parsed is not None and prob is not None
+        ]
+        if len(venue) < 2:
+            continue
+        sampled = [
+            (parsed, float(pt["probability"]))
+            for parsed, pt in (
+                (_parse(pt.get("timestamp", "")), pt)
+                for pt in (c.get("history") or [])
+            )
+            if parsed is not None and pt.get("probability") is not None
+        ]
+        merged = compact_series(layer_tiers([venue, sampled]))
+        if len(merged) < 2:
+            continue
+        c["history"] = [
+            {"timestamp": ts.isoformat(), "probability": round(p, 6)}
+            for ts, p in merged
+        ]
+        applied += 1
+    return applied
+
+
+def _request_venue_history_fill(evolution_market_id) -> None:
+    """Ask the background lane to (re)build this market's venue history, once."""
+    try:
+        from app.tasks.futures_chart_series_fill import claim_on_demand_fill
+
+        if not claim_on_demand_fill(evolution_market_id):
+            return
+        from app.tasks import fill_futures_chart_series
+
+        fill_futures_chart_series.apply_async(
+            kwargs={"market_ids": [int(evolution_market_id)]},
+            queue="background",
+        )
+    except Exception:  # noqa: BLE001 — a dispatch failure is not a page failure
+        pass
 
 
 def _reconcile_history_to_blend(competitors: list[dict]) -> None:

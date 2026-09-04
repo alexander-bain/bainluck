@@ -566,6 +566,64 @@ class KalshiAPIService(BaseAPIClient):
 
         return markets, next_cursor
 
+    async def get_markets_candlesticks_raw(
+        self,
+        tickers: list[str],
+        period_interval: int = 60,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+    ) -> dict[str, list[dict]]:
+        """Raw candlesticks for MANY tickers in one request, keyed by ticker.
+
+        Added for live/059. `GET /markets/candlesticks` has always taken a
+        `market_tickers` LIST; :meth:`get_market_candlesticks_raw` throws that
+        away by reading `markets[0]`, which is correct for its one caller and
+        wasteful for a caller that wants a whole winner field. Drawing the top
+        twelve outcomes of the US Open men's title at three granularities is 36
+        requests one at a time and 3 batched.
+
+        🔴 **THE RESPONSE IS NOT IN REQUEST ORDER AND IS NOT THE SAME LENGTH.**
+        Measured against the live endpoint 2026-09-04: asking for
+        `ALC,NOSUCHXYZ,SHE` returns TWO entries, ordered `SHE, ALC`. A caller
+        that zips the response against its own ticker list therefore mislabels
+        every series after the first gap — Shelton's 9% curve drawn as Alcaraz's
+        43% one, silently, with no error anywhere. The only safe key is each
+        entry's own `market_ticker` field, which is what this returns, and a
+        ticker the venue omitted is simply absent from the dict rather than
+        present and empty (an omission and an empty series are different facts —
+        gotcha #53).
+
+        Raises on transport/HTTP failure rather than swallowing, so a chunked
+        caller can count the window it lost instead of recording it as "no data".
+        """
+        import time as _time
+
+        if not tickers:
+            return {}
+        if start_ts is None:
+            start_ts = int(_time.time()) - 90 * 86400
+        if end_ts is None:
+            end_ts = int(_time.time())
+
+        response = await self.client.get(
+            f"{self.BASE_URL}/markets/candlesticks",
+            params={
+                "market_tickers": ",".join(tickers),
+                "period_interval": period_interval,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        out: dict[str, list[dict]] = {}
+        for entry in data.get("markets") or []:
+            ticker = entry.get("market_ticker")
+            if not ticker:
+                continue
+            out[ticker] = entry.get("candlesticks") or []
+        return out
+
     async def get_market_candlesticks_raw(
         self,
         ticker: str,

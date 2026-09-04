@@ -680,6 +680,11 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # population (Kalshi purges a settled market's candlesticks at ~47-86 days).
     "app.tasks.backfill_event_chart_history",
     "app.tasks.backfill_thin_event_charts",
+    # live/059 — the outright-chart sibling of the two above. Same family: a
+    # multi-minute paced network sweep, this one over tier-1 winner FIELDS
+    # rather than games, filling the venue price history the futures sampler
+    # cannot see between its ~78-minute readings.
+    "app.tasks.fill_futures_chart_series",
     # live/039 — the one-time 30-day drain. Same family again, and the longest
     # runner of the three: re-triggered until it reports a TERMINAL verdict —
     # `drained`, or `drained_with_failures` when it gave up on events the venue
@@ -1232,6 +1237,30 @@ def backfill_thin_event_charts(self, limit: int = 90):
     from app.tasks.event_chart_backfill import run_event_chart_backfill
     return _tracked_run(
         "thin_event_charts", run_event_chart_backfill(None, limit=limit)
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.fill_futures_chart_series")
+def fill_futures_chart_series(self, market_ids=None, limit: int = 25, dry_run: bool = False):
+    """live/059: draw an outright's race from the VENUES' minutes, not our glance.
+
+    `futures_odds_snapshots` is a sampler — roughly one reading per 78 minutes —
+    and Kalshi quotes a 33-way field in whole cents, so a week of the US Open
+    men's title race renders as fifteen distinct values (measured 2026-09-03:
+    Alcaraz 129 points, 20 changes). The CLOB serves 1,441 one-minute points for
+    the last day and reaches the January listing at `fidelity=720`; Kalshi's
+    candlesticks serve 816 one-minute points for the same day. This fetches
+    both, layers them fine-tier-first, blends the venues into the one number the
+    doctrine requires, and caches the result per market.
+
+    Called with `market_ids` for a named fill (the concept page's on-demand
+    claim does exactly that); called bare it walks the eligible tier-1 outright
+    population.
+    """
+    from app.tasks.futures_chart_series_fill import run_futures_chart_series_fill
+    return _tracked_run(
+        "futures_chart_series",
+        run_futures_chart_series_fill(market_ids, limit=limit, dry_run=dry_run),
     )
 
 
@@ -4964,6 +4993,29 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_thin_event_charts",
         "schedule": crontab(minute=40, hour=8),
         "kwargs": {"limit": 90},
+        "options": {"queue": "background"},
+    },
+    # --- live/059: the outright chart's venue history --------------------------
+    #
+    # SIZED AGAINST ITS POPULATION, WHICH IS SIZED AGAINST WHAT A READER SCRUBS.
+    # Measured 2026-09-04: 1,113 tier-1 open Kalshi/Polymarket fields exist, and
+    # 107 of them resolve inside the 30-day horizon `eligible_market_ids` warms.
+    # 12 markets an hour is 288 fills a day over 107 markets — every race gets
+    # re-fetched roughly every nine hours, and the gap between a fetch and now is
+    # covered by the sampled captures the read path layers on top. It is NOT
+    # sized to keep every market minute-fresh: the page somebody is actually
+    # reading triggers its own on-demand refill the moment its series is older
+    # than three hours, which is a far better use of the same requests.
+    #
+    # :13 is chosen, not defaulted. Odd, so the `*/2` fire misses it; not a
+    # multiple of 5, 10, 15, 20 or 30, so every recurring background beat misses
+    # it too; and minute 13 carries no fixed-minute crontab anywhere in the
+    # assembled schedule (CERT-418's rule: a minute is only clear if the FULL
+    # schedule says so, not if the daily beats do).
+    "fill-futures-chart-series": {
+        "task": "app.tasks.fill_futures_chart_series",
+        "schedule": crontab(minute=13),
+        "kwargs": {"limit": 12},
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------

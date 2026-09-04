@@ -152,6 +152,29 @@ if (waitFor) {
 }
 await page.waitForTimeout(settleMs);
 
+// --click "1M": press a control before shooting. Added for live/059, whose ship
+// is a RANGE SWITCH — "ALL reaches the draw" cannot be photographed without
+// pressing All, and a rail that can only shoot the default view can only ever
+// prove the default.
+//
+// It FAILS LOUD. `tools/look.sh` shipped a version whose click target was
+// unquoted in the shell, so a multi-word label arrived as four argv entries,
+// only the first was ever looked for, and the un-clicked page was photographed
+// and read as a clean pass (ux/1052). A click that does not land must not
+// produce a PNG — exiting here is the only way the caller finds out.
+const clickTarget = arg("click", null);
+if (clickTarget) {
+  const btn = page.getByRole("button", { name: clickTarget, exact: true });
+  const n = await btn.count().catch(() => 0);
+  if (!n) {
+    console.error(`FATAL: no button named ${JSON.stringify(clickTarget)} to click`);
+    await browser.close();
+    process.exit(4);
+  }
+  await btn.first().click();
+  await page.waitForTimeout(1200);
+}
+
 // The cookie banner covers real content in every full-page shot.
 for (const label of ["Accept", "Got it", "OK"]) {
   const btn = page.getByRole("button", { name: label });

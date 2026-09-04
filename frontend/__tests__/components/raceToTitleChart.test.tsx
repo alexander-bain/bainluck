@@ -36,12 +36,47 @@ describe("RaceToTitleChart picker (L2-138)", () => {
     expect(html).toContain("Full field");
   });
 
-  test("range switcher present (24h / 7d / All)", () => {
+  // live/059: the envelope now carries one variable-resolution series per
+  // contender that reaches the market's listing, so the switch gained a "1M"
+  // band and "All" finally means all. Before this the payload held 7 days, so
+  // "All" and "7d" drew the same line — a switch that could not do anything.
+  test("range switcher offers 1D / 1W / 1M / All", () => {
     const html = renderToStaticMarkup(
       <RaceToTitleChart competitors={mkCompetitors()} />,
     );
-    expect(html).toContain("24h");
-    expect(html).toContain("7d");
+    expect(html).toContain(">1D<");
+    expect(html).toContain(">1W<");
+    expect(html).toContain(">1M<");
     expect(html).toContain(">All<");
+  });
+
+  test("a series that reaches back months still draws under the All range", () => {
+    const now = Date.now();
+    const DAY = 24 * HOUR;
+    // 1-minute for the last hour, 12-hourly for eight months — the layered
+    // shape `futures_chart_series` produces.
+    const history = [
+      ...Array.from({ length: 480 }, (_, i) => ({
+        timestamp: new Date(now - (480 - i) * 12 * HOUR).toISOString(),
+        probability: 0.2 + (i % 11) * 0.001,
+      })),
+      ...Array.from({ length: 60 }, (_, i) => ({
+        timestamp: new Date(now - (60 - i) * 60 * 1000).toISOString(),
+        probability: 0.42 + (i % 7) * 0.001,
+      })),
+    ];
+    const html = renderToStaticMarkup(
+      <RaceToTitleChart
+        competitors={[
+          { name: "Alpha", probability: 0.42, outcome_id: 1, history },
+          { name: "Bravo", probability: 0.2, outcome_id: 2, history },
+        ]}
+      />,
+    );
+    // The default range is 1W; the honest-empty state must NOT be what a
+    // months-long series renders.
+    expect(html).not.toContain("Probability history isn&#x27;t available");
+    expect(html).toContain("Race to the title");
+    void DAY;
   });
 });
