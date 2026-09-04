@@ -28,6 +28,11 @@ import {
   dataForPrincipal,
 } from "@/lib/myStuffIdentity";
 import { classifyMyStuffOutcome, reportMyStuffTelemetry } from "@/lib/myStuffTelemetry";
+import {
+  PROGRESSION_STAGES,
+  detectMarketTypeFromName,
+  extractMarketType,
+} from "@/lib/myStuffProgression";
 import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
 export default function MyStuffPage() {
@@ -576,35 +581,6 @@ interface MergedTeamFuture {
   bestChange: number | null;
   /** Extracted market_type from canonical_market_key (e.g., "championship", "make_playoffs"). */
   marketType: string | null;
-}
-
-// Playoff progression stages — order determines funnel display.
-// Labels match ProgressionLadder demo style (short, no "Make"/"Win" prefix).
-const PROGRESSION_STAGES: Record<string, { order: number; label: string }> = {
-  make_playoffs: { order: 1, label: "Playoffs" },
-  division_winner: { order: 2, label: "Division" },
-  conference_winner: { order: 3, label: "Conf Finals" },
-  championship: { order: 4, label: "Champion" },
-};
-
-/** Extract market_type from canonical_market_key (format: sport:league:type:season). */
-function extractMarketType(key: string | null | undefined): string | null {
-  if (!key) return null;
-  const parts = key.split(":");
-  return parts.length >= 3 ? parts[2] : null;
-}
-
-/**
- * Detect market type from market name when canonical_market_key is missing.
- * Mirrors backend _MARKET_TYPE_PATTERNS in futures_categorization.py.
- */
-function detectMarketTypeFromName(name: string): string | null {
-  const n = name.toLowerCase();
-  if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
-  if (/division\s*(winner|champion|title)|\b(afc|nfc|al|nl)\s+(east|west|north|south|central)\b/i.test(n)) return "division_winner";
-  if (/conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b/i.test(n) && !/seed|#\d|mvp/i.test(n)) return "conference_winner";
-  if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
-  return null;
 }
 
 /** Convert hex color (e.g. "1D428A" or "#1D428A") to RGB string (e.g. "29, 66, 138"). */
