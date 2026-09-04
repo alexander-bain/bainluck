@@ -39,7 +39,7 @@ were unstamped under **D42's Friday clause** and **D51 = B(b)** (backup written
 first, one-command restore shipped): all 11 are finished fixtures — the newest
 kicked off 2026-05-29 — so no live score, clock or status lost a channel. The
 backup, the exact statement and the restore are
-``artifacts/LANE1-114-UNSTAMP-BACKUP-2769.md``; the population is **#2769**.
+``artifacts/LANE1-113-UNSTAMP-BACKUP-2769.md``; the population is **#2769**.
 
 **Re-run the pre-check immediately before the release anyway.** Zero on Friday
 morning is not zero at release time: nothing in the database enforces the
