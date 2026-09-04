@@ -87,6 +87,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -164,6 +165,10 @@ UNDO_IDENTITY_PREFIX = "repair:authority_id_collisions:undo"
 # mean the other thing — cannot be read by the v2 restore at all. It reads as
 # MISSING rather than being silently reinterpreted as a receipt.
 UNDO_SCHEMA = "authority-id-collisions-undo/v2"
+
+#: The payload key holding the token of the invocation that owns the record.
+#: The durable store will only let that invocation replace it (CERT-856).
+UNDO_OWNER_KEY = "invocation"
 
 #: An undo must outlive the incident that needs it, not the day. Deliberately
 #: far longer than `PLAN_MAX_AGE_S`: the two artifacts have opposite duties —
@@ -418,17 +423,35 @@ async def _read_plan() -> tuple[Optional[dict[str, Any]], str]:
     return payload, "ok"
 
 
-def undo_identity_for(plan_hash: str, *, at: datetime) -> str:
-    """A dated, one-per-apply identity for the undo record.
+def new_undo_invocation() -> str:
+    """A fresh token for ONE apply. Never derived from the work it is about.
 
-    Carries the timestamp AND the plan hash because both questions get asked:
-    "what did I run at 4pm" and "what did that plan do". Second-resolution is
-    enough — two applies of the same plan inside one second would be the same
-    write twice, and the `AND espn_id = :contested` compare already makes the
-    second a no-op.
+    CERT-856: the clock and the plan hash are the two things a concurrent apply
+    has an IDENTICAL copy of, so an identity built from them alone is the same
+    identity in both runs. Reproduced exactly on the sibling rail — the second
+    run cleared nothing (`ESPN_ID_MOVED` for every row, the compare doing its
+    job), receipted nothing, and wrote `rows: []` over the first run's real
+    receipt. The apply that had genuinely unstamped a row could no longer be
+    reversed. The token is the one thing the two runs cannot agree on.
     """
-    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{str(plan_hash)[:12]}"
+    return uuid.uuid4().hex[:12]
+
+
+def undo_identity_for(plan_hash: str, *, at: datetime, invocation: str) -> str:
+    """A one-per-INVOCATION identity for the undo record.
+
+    Carries the timestamp, the plan hash and the invocation token, because all
+    three questions get asked: "what did I run at 4pm", "what did that plan do",
+    and "which of the two runs that started together". Millisecond resolution
+    narrows the window; the token closes it.
+
+    ``invocation`` is required rather than defaulted because the record's owner
+    must be the SAME token (:data:`UNDO_OWNER_KEY`); a default here would let a
+    caller build an identity nobody owns and lose the store's refusal with it.
+    """
+    at_utc = at.astimezone(timezone.utc)
+    stamp = f"{at_utc.strftime('%Y%m%dT%H%M%S')}.{at_utc.microsecond // 1000:03d}Z"
+    return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{str(plan_hash)[:12]}:{invocation}"
 
 
 def undo_row_for(plan_row: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +473,7 @@ def undo_payload(
     planned: list[dict[str, Any]],
     receipted: list[dict[str, Any]],
     complete: bool,
+    invocation: str,
 ) -> dict[str, Any]:
     """The v2 record. ``rows`` is the RECEIPT; ``rows_planned`` is the intent.
 
@@ -463,6 +487,10 @@ def undo_payload(
         "plan_hash": str(plan_hash),
         "taken_at": taken_at.isoformat(),
         "sport": sport,
+        # WHOSE record this is. The durable store reads this key and refuses a
+        # replacement from anyone else (CERT-856), so it is not a label — it is
+        # the thing that keeps a concurrent apply from erasing this receipt.
+        UNDO_OWNER_KEY: invocation,
         # THE RECEIPT — rows whose unstamp returned a row id AND committed.
         # A planned row that turned out to be `ESPN_ID_MOVED` is not here, and
         # that absence is the whole fix: an undo may only put back an id it can
@@ -477,8 +505,48 @@ def undo_payload(
     }
 
 
+def _undo_envelope(identity: str, payload: dict[str, Any]):
+    from app.utils.durable_state import DurableEnvelope
+
+    return DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="repair:authority-id-collisions:undo",
+    )
+
+
+def _undo_owner(payload: dict[str, Any]) -> Optional[str]:
+    """The invocation token this record belongs to, or ``None``.
+
+    ``None`` is never written. A record with no owner is one the store cannot
+    protect, so building one is a bug, not a degraded mode.
+    """
+    owner = payload.get(UNDO_OWNER_KEY)
+    return str(owner) if owner else None
+
+
+def _classify_undo_write(identity: str, status: Optional[str]) -> tuple[bool, str]:
+    """One reading of a durable stage dict, shared by both write paths."""
+    if status == "ok":
+        return True, "ok"
+    if status == "occupied":
+        return False, (
+            f"undo persist OCCUPIED: identity {identity} already holds a record "
+            f"written by a DIFFERENT invocation and was left untouched; that "
+            f"record is somebody else's receipt and this apply has none"
+        )
+    if status == "superseded":
+        return False, (
+            f"undo persist SUPERSEDED: identity {identity} already holds a newer "
+            f"row, so the record on file is not this apply's"
+        )
+    return False, f"undo persist rejected: {status}"
+
+
 async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]:
-    """Persist one apply's undo record. ``superseded`` is a FAILURE here.
+    """Persist one apply's undo record. ``superseded``/``occupied`` are FAILURES.
 
     `_save_plan` counts ``superseded`` as success, and for a plan that is
     right: it means a good copy of a NEWER plan is on disk, so the durability
@@ -486,31 +554,31 @@ async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]
     holds somebody else's content, so the undo on file is not this apply's, and
     accepting it would hand an operator a restore command that puts back the
     wrong rows. Only ``ok`` means "your record is the one stored".
-    """
-    from app.services.durable_snapshots import publish_snapshot_standalone
-    from app.utils.durable_state import DurableEnvelope
 
-    envelope = DurableEnvelope.build(
-        identity=identity,
-        schema_version=UNDO_SCHEMA,
-        payload=payload,
-        complete=True,
-        source="repair:authority-id-collisions:undo",
+    ``occupied`` (CERT-856) is that same failure caught one step earlier: the
+    store declined to overwrite the other apply's receipt, so the loss is a
+    refusal here rather than a discovery when somebody tries to restore.
+    """
+    from app.services.durable_snapshots import (
+        publish_owned_snapshot_standalone as _publish,
     )
+
+    owner = _undo_owner(payload)
+    if owner is None:
+        return False, (
+            f"undo persist REFUSED: the record for {identity} carries no "
+            f"{UNDO_OWNER_KEY}, so the store could not protect it from a "
+            f"concurrent apply"
+        )
+    # Envelope built outside the `try` so the awaited call is the only thing
+    # inside it — same reason as `_read_undo` below.
+    envelope = _undo_envelope(identity, payload)
     try:
-        result = await publish_snapshot_standalone(envelope)
+        result = await _publish(envelope, owner_key=UNDO_OWNER_KEY, owner=owner)
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("%s undo persist raised: %s", ISSUE, type(exc).__name__)
         return False, f"undo persist raised: {type(exc).__name__}"
-    status = result.get("status")
-    if status == "ok":
-        return True, "ok"
-    if status == "superseded":
-        return False, (
-            f"undo persist SUPERSEDED: identity {identity} already holds a newer "
-            f"row, so the record on file is not this apply's"
-        )
-    return False, f"undo persist rejected: {status}"
+    return _classify_undo_write(identity, result.get("status"))
 
 
 async def _save_undo_co_commit(
@@ -528,29 +596,33 @@ async def _save_undo_co_commit(
     Anything short of ``ok`` rolls the transaction back, which takes the data
     write with it — the caller is left with nothing written and nothing claimed,
     which is the only state that needs no reconciliation.
-    """
-    from app.services.durable_snapshots import publish_snapshot_in_txn
-    from app.utils.durable_state import DurableEnvelope
 
-    envelope = DurableEnvelope.build(
-        identity=identity,
-        schema_version=UNDO_SCHEMA,
-        payload=payload,
-        complete=True,
-        source="repair:authority-id-collisions:undo",
-    )
+    Since CERT-856 the stage is also OWNED: only the invocation that wrote the
+    record may replace it, so a concurrent apply landing on the same identity is
+    refused here (``occupied``) and rolled back, rather than quietly replacing a
+    receipt somebody else is relying on.
+    """
+    from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+    owner = _undo_owner(payload)
+    if owner is None:
+        await session.rollback()
+        return False, (
+            f"undo persist REFUSED: the record for {identity} carries no "
+            f"{UNDO_OWNER_KEY}; write rolled back"
+        )
     try:
-        stage = await publish_snapshot_in_txn(session, envelope)
+        stage = await publish_owned_snapshot_in_txn(
+            session,
+            _undo_envelope(identity, payload),
+            owner_key=UNDO_OWNER_KEY,
+            owner=owner,
+        )
         status = stage.get("status")
         if status != "ok":
             await session.rollback()
-            if status == "superseded":
-                return False, (
-                    f"undo persist SUPERSEDED: identity {identity} already holds "
-                    f"a newer row, so the record on file is not this apply's; "
-                    f"the accompanying write was rolled back"
-                )
-            return False, f"undo persist rejected: {status}; write rolled back"
+            ok, note = _classify_undo_write(identity, status)
+            return ok, f"{note}; write rolled back"
         await session.commit()
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("%s undo co-commit raised: %s", ISSUE, type(exc).__name__)
@@ -786,7 +858,13 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
     # disk. The order is the whole point: a backup written afterwards is a
     # backup that does not exist for exactly the run that crashed halfway.
     undo_at = datetime.now(timezone.utc)
-    undo_identity = undo_identity_for(str(plan_hash), at=undo_at)
+    # ONE token for this apply, in the identity AND in the record. The identity
+    # keeps a concurrent apply from choosing the same slot; the record's copy
+    # keeps the store from letting it write there anyway (CERT-856).
+    undo_invocation = new_undo_invocation()
+    undo_identity = undo_identity_for(
+        str(plan_hash), at=undo_at, invocation=undo_invocation
+    )
     planned_rows = [undo_row_for(r) for r in stored["rows"]]
 
     def _record(receipted: list[dict[str, Any]], *, complete: bool) -> dict[str, Any]:
@@ -797,6 +875,7 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
             planned=planned_rows,
             receipted=receipted,
             complete=complete,
+            invocation=undo_invocation,
         )
 
     # The record exists before the first write with an EMPTY receipt: at this
@@ -924,7 +1003,9 @@ async def _apply(session, plan_hash: Optional[str]) -> dict[str, Any]:
             f"rows wearing a contested id {before['rows_wearing']} -> "
             f"{after['rows_wearing']}. Reversible: the {len(receipted)} row(s) this "
             f"apply actually cleared are receipted in its OWN dated record "
-            f"{undo_identity}, which no later plan or apply overwrites. The "
+            f"{undo_identity} — one identity per invocation, and the store "
+            f"refuses a replacement from any other invocation, so no later plan "
+            f"or apply overwrites it. The "
             f"{len(moved)} ESPN_ID_MOVED row(s) are NOT in it — this apply did not "
             f"clear them, so the restore must not put their ids back. Restore with "
             f"undo_command."

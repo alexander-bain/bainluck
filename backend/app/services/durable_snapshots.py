@@ -86,6 +86,58 @@ _SELECT_SQL = text(
     """
 )
 
+_OWNED_UPSERT_SQL = text(
+    """
+    INSERT INTO durable_state_snapshots
+        (identity, schema_version, generation, generated_at, payload,
+         checksum, complete, source, updated_at)
+    VALUES
+        (:identity, :schema_version, :generation, :generated_at,
+         CAST(:payload AS jsonb), :checksum, :complete, :source, NOW())
+    ON CONFLICT (identity) DO UPDATE SET
+        schema_version = EXCLUDED.schema_version,
+        generation     = EXCLUDED.generation,
+        generated_at   = EXCLUDED.generated_at,
+        payload        = EXCLUDED.payload,
+        checksum       = EXCLUDED.checksum,
+        complete       = EXCLUDED.complete,
+        source         = EXCLUDED.source,
+        updated_at     = NOW()
+    WHERE durable_state_snapshots.generation <= EXCLUDED.generation
+      AND durable_state_snapshots.payload ->> :owner_key = :owner
+    RETURNING generation
+    """
+)
+# ^ CREATE-WITHOUT-OVERWRITE (CERT-856). The generation guard alone answers
+# "is my copy newer" — the right question for a snapshot whose identity names a
+# THING (one calibration bank, one sentinel scorecard), where every writer is
+# producing the same thing and the freshest wins. It is the wrong question for a
+# record whose identity names an EVENT: two applies that collide on one identity
+# are not two versions of one receipt, they are two different receipts, and
+# letting the later one win destroys the earlier one's only proof of what it did.
+#
+# The extra predicate says a row may only be replaced by the invocation that
+# WROTE it. An absent conflicting row is created (the INSERT arm, no predicate);
+# a row belonging to somebody else — or to nobody, because it predates owners —
+# fails ``payload ->> :owner_key = :owner`` (NULL is not equal to anything) and
+# is left exactly as it stands. Fail-closed by construction: the way to lose the
+# guard is to delete it, not to forget a case.
+
+_SELECT_OWNER_SQL = text(
+    """
+    SELECT generation, payload ->> :owner_key AS owner
+    FROM durable_state_snapshots
+    WHERE identity = :identity
+    """
+)
+
+#: A write refused because the identity already holds SOMEBODY ELSE'S record.
+#: Deliberately not folded into ``superseded``: superseded means "a good copy of
+#: this same thing is already there, durability is satisfied", and occupied means
+#: the exact opposite — your record was not stored and the one on file is not
+#: about your run.
+STATUS_OCCUPIED = "occupied"
+
 
 async def publish_snapshot_in_txn(db: AsyncSession, envelope: DurableEnvelope) -> dict:
     """Stage the row in the CALLER'S open transaction. Never commits, never
@@ -184,6 +236,138 @@ async def publish_snapshot(db: AsyncSession, envelope: DurableEnvelope) -> dict:
             "error": str(exc)[:200],
         }
     return stage
+
+
+async def publish_owned_snapshot_in_txn(
+    db: AsyncSession,
+    envelope: DurableEnvelope,
+    *,
+    owner_key: str,
+    owner: str,
+) -> dict:
+    """:func:`publish_snapshot_in_txn`, but only ``owner`` may replace the row.
+
+    Same never-commits / never-rolls-back / never-raises contract. The one added
+    outcome is ``occupied``: the identity already holds a record whose
+    ``payload[owner_key]`` is not ``owner``, so nothing was written and the row
+    on file is untouched.
+
+    CERT-856. Two applies deriving the same identity in the same instant is not
+    a hypothetical — the callers salt their identity with a per-invocation token
+    now, but a receipt that can be silently replaced is one bad salt away from
+    being unrestorable, and the population that would notice is "the operator
+    reversing a production write". So the store refuses the replacement rather
+    than the caller promising never to ask for one.
+    """
+    if not owner:
+        # An unowned write to an owned identity cannot be told apart from a
+        # legacy row on the way back in, so it is refused rather than stored.
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": "ValueError",
+            "error": "owned publish requires a non-empty owner",
+        }
+    params = {
+        "identity": envelope.identity,
+        "schema_version": envelope.schema_version,
+        "generation": envelope.generation,
+        "generated_at": envelope.generated_at,
+        "payload": canonical_json(envelope.payload),
+        "checksum": envelope.checksum,
+        "complete": envelope.complete,
+        "source": envelope.source,
+        "owner_key": owner_key,
+        "owner": owner,
+    }
+    try:
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = {DURABLE_WRITE_TIMEOUT_MS}")
+        )
+        result = await db.execute(_OWNED_UPSERT_SQL, params)
+        written = result.scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001 — classified for the caller, not swallowed
+        logger.warning(
+            "durable owned publish failed for %s (generation %s): %s",
+            envelope.identity, envelope.generation, exc,
+        )
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+
+    if written is not None:
+        return {
+            "status": "ok",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+        }
+
+    # Nothing was written. TWO different reasons can put us here and the caller
+    # gets told which: our generation lost the race (``superseded``), or the row
+    # is somebody else's (``occupied``). A read that itself fails resolves to
+    # ``occupied`` — "I could not establish that this record is mine" must never
+    # read as "it is mine".
+    stage = {
+        "status": STATUS_OCCUPIED,
+        "identity": envelope.identity,
+        "generation": envelope.generation,
+    }
+    try:
+        row = (
+            await db.execute(
+                _SELECT_OWNER_SQL,
+                {"identity": envelope.identity, "owner_key": owner_key},
+            )
+        ).mappings().first()
+    except Exception as exc:  # noqa: BLE001 — the refusal stands either way
+        logger.warning(
+            "durable owned publish could not classify the refusal for %s: %s",
+            envelope.identity, exc,
+        )
+        stage["owner"] = None
+        return stage
+    if row is not None:
+        stage["owner"] = row["owner"]
+        if row["owner"] == owner:
+            stage["status"] = "superseded"
+    return stage
+
+
+async def publish_owned_snapshot_standalone(
+    envelope: DurableEnvelope, *, owner_key: str, owner: str
+) -> dict:
+    """:func:`publish_owned_snapshot_in_txn` on its own short-lived session."""
+    from app.tasks.base import get_task_session
+
+    try:
+        async with get_task_session() as db:
+            stage = await publish_owned_snapshot_in_txn(
+                db, envelope, owner_key=owner_key, owner=owner
+            )
+            if stage["status"] == "ok":
+                await db.commit()
+            else:
+                # Nothing of ours landed; leave the transaction clean rather
+                # than committing a no-op over somebody else's record.
+                await db.rollback()
+            return stage
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "durable owned publish could not complete for %s: %s",
+            envelope.identity, exc,
+        )
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
 
 
 async def publish_snapshot_standalone(envelope: DurableEnvelope) -> dict:

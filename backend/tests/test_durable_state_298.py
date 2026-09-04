@@ -578,6 +578,284 @@ class TestPublishSnapshot:
         assert store["calibration:main"] == newer.generation
 
 
+class TestPublishOwnedSnapshot:
+    """CERT-856 — the store's half of "a receipt is not a version".
+
+    The generation guard answers "is my copy newer", which is the right question
+    for an identity naming a THING: one calibration bank, one sentinel
+    scorecard, every writer producing the same thing, freshest wins. It is the
+    wrong question for an identity naming an EVENT. Two applies that land on one
+    identity are not two versions of one receipt — they are two receipts, and
+    the second one winning destroys the first one's only proof of what it did.
+
+    Measured, on the sibling rails: an apply unstamped row 11 and stored receipt
+    ``[11]``; a same-instant run that cleared nothing reused the identity and
+    replaced it with ``rows: []``, ``receipt_complete: true``. The row was
+    durably cleared and no longer restorable.
+    """
+
+    OWNER_KEY = "invocation"
+
+    def _envelope(self, owner="inv-a", generation_at=NOW, rows=()):
+        return ds.DurableEnvelope.build(
+            identity="repair:x:undo:1",
+            schema_version="v1",
+            payload={"rows": list(rows), self.OWNER_KEY: owner},
+            generated_at=generation_at,
+            source="repair:x:undo",
+        )
+
+    def test_the_upsert_carries_the_owner_predicate_beside_the_generation_one(self):
+        """Both, not either. Dropping the owner predicate restores CERT-856;
+        dropping the generation predicate restores the stale-writer defect the
+        table was built for."""
+        from app.services.durable_snapshots import _OWNED_UPSERT_SQL
+
+        sql = " ".join(str(_OWNED_UPSERT_SQL).split())
+        assert "ON CONFLICT (identity) DO UPDATE" in sql
+        assert "WHERE durable_state_snapshots.generation <= EXCLUDED.generation" in sql
+        assert "durable_state_snapshots.payload ->> :owner_key = :owner" in sql
+        assert "RETURNING generation" in sql
+        assert "DELETE" not in sql.upper()
+        assert "CAST(:payload AS jsonb)" in sql
+        assert ":payload::jsonb" not in sql
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "written", [ds.generation_for(NOW), None], ids=["ok", "refused"]
+    )
+    async def test_it_NEVER_ends_the_callers_transaction(self, written):
+        """Same contract as the unowned in-txn write, swept over both terminal
+        arms — a commit hidden on the refusal path would split the data write
+        from its receipt again, which is CERT-851 restored."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = written
+        result.mappings.return_value.first.return_value = None
+        db.execute.return_value = result
+
+        await publish_owned_snapshot_in_txn(
+            db, self._envelope(), owner_key=self.OWNER_KEY, owner="inv-a"
+        )
+
+        db.commit.assert_not_awaited()
+        db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_empty_owner_never_reaches_the_database(self):
+        """An unowned write to an owned identity is indistinguishable from a
+        legacy row on the way back in, so it is refused rather than stored."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        db = AsyncMock()
+        stage = await publish_owned_snapshot_in_txn(
+            db, self._envelope(), owner_key=self.OWNER_KEY, owner=""
+        )
+
+        assert stage["status"] == "error"
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_classify_read_resolves_to_occupied_not_superseded(self):
+        """"I could not establish that this record is mine" must never read as
+        "it is mine". Both are refusals, but only `superseded` tells an operator
+        a good copy of THEIR run is on file."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        calls = {"n": 0}
+
+        async def _execute(stmt, params=None):
+            calls["n"] += 1
+            if calls["n"] <= 2:  # SET LOCAL, then the upsert
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+            raise RuntimeError("the classify read fell over")
+
+        db = AsyncMock()
+        db.execute.side_effect = _execute
+
+        stage = await publish_owned_snapshot_in_txn(
+            db, self._envelope(), owner_key=self.OWNER_KEY, owner="inv-a"
+        )
+        assert stage["status"] == "occupied"
+
+    # --- The predicate, emulated end to end ---------------------------------
+
+    def _store_backed_db(self, store):
+        """A database whose upsert obeys BOTH predicates, as the SQL does."""
+
+        def _execute(stmt, params=None):
+            result = MagicMock()
+            if params is None:  # SET LOCAL statement_timeout
+                result.scalar_one_or_none.return_value = None
+                return result
+            sql = " ".join(str(stmt).split())
+            existing = store.get(params["identity"])
+            if sql.startswith("SELECT"):
+                result.mappings.return_value.first.return_value = (
+                    None
+                    if existing is None
+                    else {
+                        "generation": existing["generation"],
+                        "owner": json.loads(existing["payload"]).get(
+                            params["owner_key"]
+                        ),
+                    }
+                )
+                return result
+            owned = existing is None or json.loads(existing["payload"]).get(
+                params["owner_key"]
+            ) == params["owner"]
+            fresh = existing is None or existing["generation"] <= params["generation"]
+            if owned and fresh:
+                store[params["identity"]] = dict(params)
+                result.scalar_one_or_none.return_value = params["generation"]
+            else:
+                result.scalar_one_or_none.return_value = None
+            return result
+
+        db = AsyncMock()
+        db.execute.side_effect = _execute
+        return db
+
+    @pytest.mark.asyncio
+    async def test_THE_REGRESSION_a_second_invocation_cannot_replace_the_first(self):
+        """The measured CERT-856 sequence, at the store.
+
+        A wins the identity with a real receipt; B arrives LATER (so the
+        generation guard alone would wave it through) with an empty one. B is
+        refused and A's receipt is still on disk, unaltered.
+        """
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        store: dict = {}
+        db = self._store_backed_db(store)
+
+        a = await publish_owned_snapshot_in_txn(
+            db, self._envelope(owner="inv-a", rows=[11]),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+        b = await publish_owned_snapshot_in_txn(
+            db, self._envelope(owner="inv-b", generation_at=NOW + timedelta(seconds=1)),
+            owner_key=self.OWNER_KEY, owner="inv-b",
+        )
+
+        assert a["status"] == "ok"
+        assert b["status"] == "occupied", "a second invocation overwrote the receipt"
+        assert b["owner"] == "inv-a"
+        assert json.loads(store["repair:x:undo:1"]["payload"])["rows"] == [11]
+
+    @pytest.mark.asyncio
+    async def test_CONTROL_the_SAME_invocation_may_advance_its_own_record(self):
+        """Without this arm the refusal above passes for a store that refuses
+        every update — which would break the rails outright, since each one
+        writes an empty claim first and fills it in row by row."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        store: dict = {}
+        db = self._store_backed_db(store)
+
+        await publish_owned_snapshot_in_txn(
+            db, self._envelope(owner="inv-a"),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+        second = await publish_owned_snapshot_in_txn(
+            db,
+            self._envelope(
+                owner="inv-a", generation_at=NOW + timedelta(seconds=1), rows=[11, 22]
+            ),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+
+        assert second["status"] == "ok"
+        assert json.loads(store["repair:x:undo:1"]["payload"])["rows"] == [11, 22]
+
+    @pytest.mark.asyncio
+    async def test_its_own_older_generation_is_superseded_not_occupied(self):
+        """The generation guard still applies WITHIN one owner — a retry
+        carrying an older copy must not walk back a newer one — and losing that
+        race is reported as `superseded`, since a good copy of this run's record
+        genuinely is on file."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        store: dict = {}
+        db = self._store_backed_db(store)
+
+        await publish_owned_snapshot_in_txn(
+            db, self._envelope(owner="inv-a", rows=[11, 22]),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+        stale = await publish_owned_snapshot_in_txn(
+            db,
+            self._envelope(owner="inv-a", generation_at=NOW - timedelta(hours=6)),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+
+        assert stale["status"] == "superseded"
+        assert json.loads(store["repair:x:undo:1"]["payload"])["rows"] == [11, 22]
+
+    @pytest.mark.asyncio
+    async def test_a_row_that_predates_owners_is_left_alone(self):
+        """Fail-closed. A legacy record carries no owner key, so `->> = :owner`
+        is NULL and never true: it is never silently adopted and overwritten."""
+        from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+        store = {
+            "repair:x:undo:1": {
+                "generation": ds.generation_for(NOW - timedelta(days=1)),
+                "payload": json.dumps({"rows": [99]}),
+            }
+        }
+        db = self._store_backed_db(store)
+
+        stage = await publish_owned_snapshot_in_txn(
+            db, self._envelope(owner="inv-a"),
+            owner_key=self.OWNER_KEY, owner="inv-a",
+        )
+
+        assert stage["status"] == "occupied"
+        assert json.loads(store["repair:x:undo:1"]["payload"])["rows"] == [99]
+
+    @pytest.mark.asyncio
+    async def test_the_standalone_variant_commits_a_win_and_rolls_back_a_refusal(self):
+        from app.services.durable_snapshots import publish_owned_snapshot_standalone
+
+        for status, commits, rollbacks in (("ok", 1, 0), ("occupied", 0, 1)):
+            db = AsyncMock()
+            sessions = _one_shot_session(db)
+
+            with pytest.MonkeyPatch.context() as mp:
+                async def _stage(_db, _env, *, owner_key, owner, _s=status):
+                    return {"status": _s, "identity": _env.identity}
+
+                mp.setattr(
+                    "app.services.durable_snapshots.publish_owned_snapshot_in_txn",
+                    _stage,
+                )
+                mp.setattr("app.tasks.base.get_task_session", sessions)
+                stage = await publish_owned_snapshot_standalone(
+                    self._envelope(), owner_key=self.OWNER_KEY, owner="inv-a"
+                )
+
+            assert stage["status"] == status
+            assert db.commit.await_count == commits
+            assert db.rollback.await_count == rollbacks
+
+
+def _one_shot_session(db):
+    """`get_task_session()` as an async context manager yielding ``db``."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _sessions():
+        yield db
+
+    return _sessions
+
+
 class TestReadSnapshot:
     @pytest.mark.asyncio
     async def test_absent_row_is_missing(self):

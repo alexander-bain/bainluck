@@ -79,6 +79,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -151,6 +152,10 @@ EXCLUDED_SPORT_KEYS = frozenset({"tennis_atp", "tennis_wta"})
 # proof a repair can be taken back.
 UNDO_IDENTITY_PREFIX = "repair:anchor_schedule:undo"
 UNDO_SCHEMA = "anchor-schedule-undo/v1"
+
+#: The payload key holding the token of the invocation that owns the record.
+#: The durable store will only let that invocation replace it (CERT-856).
+UNDO_OWNER_KEY = "invocation"
 
 #: An undo must outlive the incident that needs it, not the day.
 UNDO_MAX_AGE_S = 365 * 86400
@@ -420,22 +425,47 @@ def undo_row_for(decision, row) -> dict[str, Any]:
     }
 
 
-def undo_identity_for(rows: list[dict[str, Any]], *, at: datetime) -> str:
-    """A dated, one-per-apply identity, salted by what the apply is about to do.
+def new_undo_invocation() -> str:
+    """A fresh token for ONE apply. Never derived from the work it is about.
 
-    The timestamp answers "what did I run at 4pm" and the digest answers "which
-    run moved these rows". Second-resolution plus the digest is enough: two
-    applies of the same moves in one second would be the same write twice, and
-    the restore's compare already makes the second a no-op.
+    CERT-856: everything an apply knows about itself — the clock, the plan, the
+    move set — is shared with the apply running beside it, so an identity built
+    only from those is the SAME identity, and the second apply's empty receipt
+    replaced the first one's real one. The token is the one thing two concurrent
+    applies cannot agree on.
     """
-    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return uuid.uuid4().hex[:12]
+
+
+def undo_identity_for(
+    rows: list[dict[str, Any]], *, at: datetime, invocation: str
+) -> str:
+    """A one-per-INVOCATION identity, salted by what the apply is about to do.
+
+    Three parts, each answering a question that gets asked: the timestamp for
+    "what did I run at 4pm", the digest for "which run moved these rows", and
+    the invocation token for "which of the two runs that started together".
+
+    The token is not decoration. Before CERT-856 this was second-resolution plus
+    the digest, on the reasoning that two applies of the same moves in one
+    second are the same write twice — which is true of the WRITE and false of
+    the RECORD: the second run finds the clocks already moved, receipts nothing,
+    and its empty record replaced the first run's populated one at the shared
+    identity. Reproduced exactly, and the restore then reverted nothing.
+
+    ``invocation`` is required rather than defaulted because the record's owner
+    must be the SAME token (:data:`UNDO_OWNER_KEY`); a default here would let a
+    caller build an identity nobody owns and lose the store's refusal with it.
+    """
+    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    stamp = f"{stamp}.{at.astimezone(timezone.utc).microsecond // 1000:03d}Z"
     digest = hashlib.sha256(
         json.dumps(
             [[r["event_id"], r["after"]] for r in rows], sort_keys=True,
             separators=(",", ":"),
         ).encode()
     ).hexdigest()[:12]
-    return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{digest}"
+    return f"{UNDO_IDENTITY_PREFIX}:{stamp}:{digest}:{invocation}"
 
 
 def undo_payload(
@@ -445,6 +475,7 @@ def undo_payload(
     planned: list[dict[str, Any]],
     receipted: list[dict[str, Any]],
     complete: bool,
+    invocation: str,
 ) -> dict[str, Any]:
     """``rows`` is the RECEIPT; ``rows_planned`` is the intent.
 
@@ -460,6 +491,10 @@ def undo_payload(
         "rail": "reconcile_anchor_schedule",
         "taken_at": taken_at.isoformat(),
         "sport": sport,
+        # WHOSE record this is. The durable store reads this key and refuses a
+        # replacement from anyone else (CERT-856), so it is not a label — it is
+        # the thing that keeps a concurrent apply from erasing this receipt.
+        UNDO_OWNER_KEY: invocation,
         # THE RECEIPT — moves whose UPDATE matched a row. A planned move that
         # came back `stale` is not here, and that absence is the point.
         "rows": list(receipted),
@@ -469,39 +504,77 @@ def undo_payload(
     }
 
 
-async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]:
-    """Persist one apply's record. ``superseded`` is a FAILURE here.
-
-    A plan may count ``superseded`` a success — it means a good copy of a NEWER
-    plan is on disk, so the durability contract holds. For an undo it is the
-    opposite: the row at that identity holds somebody else's content, so the
-    record on file is not this apply's, and accepting it would hand an operator
-    a restore that puts back the wrong clocks.
-    """
-    from app.services.durable_snapshots import publish_snapshot_standalone
+def _undo_envelope(identity: str, payload: dict[str, Any]):
     from app.utils.durable_state import DurableEnvelope
 
-    envelope = DurableEnvelope.build(
+    return DurableEnvelope.build(
         identity=identity,
         schema_version=UNDO_SCHEMA,
         payload=payload,
         complete=True,
         source="repair:anchor-schedule:undo",
     )
-    try:
-        result = await publish_snapshot_standalone(envelope)
-    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
-        logger.warning("anchor-schedule undo persist raised: %s", type(exc).__name__)
-        return False, f"undo persist raised: {type(exc).__name__}"
-    status = result.get("status")
+
+
+def _undo_owner(payload: dict[str, Any]) -> Optional[str]:
+    """The invocation token this record belongs to, or ``None``.
+
+    ``None`` is never written. A record with no owner is one the store cannot
+    protect, so building one is a bug, not a degraded mode.
+    """
+    owner = payload.get(UNDO_OWNER_KEY)
+    return str(owner) if owner else None
+
+
+def _classify_undo_write(identity: str, status: Optional[str]) -> tuple[bool, str]:
+    """One reading of a durable stage dict, shared by both write paths."""
     if status == "ok":
         return True, "ok"
+    if status == "occupied":
+        return False, (
+            f"undo persist OCCUPIED: identity {identity} already holds a record "
+            f"written by a DIFFERENT invocation and was left untouched; that "
+            f"record is somebody else's receipt and this apply has none"
+        )
     if status == "superseded":
         return False, (
             f"undo persist SUPERSEDED: identity {identity} already holds a newer "
             f"row, so the record on file is not this apply's"
         )
     return False, f"undo persist rejected: {status}"
+
+
+async def _save_undo(identity: str, payload: dict[str, Any]) -> tuple[bool, str]:
+    """Persist one apply's record. ``superseded`` and ``occupied`` are FAILURES.
+
+    A plan may count ``superseded`` a success — it means a good copy of a NEWER
+    plan is on disk, so the durability contract holds. For an undo it is the
+    opposite: the row at that identity holds somebody else's content, so the
+    record on file is not this apply's, and accepting it would hand an operator
+    a restore that puts back the wrong clocks. ``occupied`` (CERT-856) is the
+    same failure caught one step earlier — the store declined to overwrite the
+    other apply's receipt rather than reporting the loss afterwards.
+    """
+    from app.services.durable_snapshots import (
+        publish_owned_snapshot_standalone as _publish,
+    )
+
+    owner = _undo_owner(payload)
+    if owner is None:
+        return False, (
+            f"undo persist REFUSED: the record for {identity} carries no "
+            f"{UNDO_OWNER_KEY}, so the store could not protect it from a "
+            f"concurrent apply"
+        )
+    # Envelope built outside the `try` so the awaited call is the only thing
+    # inside it — same reason as `_read_undo` next door.
+    envelope = _undo_envelope(identity, payload)
+    try:
+        result = await _publish(envelope, owner_key=UNDO_OWNER_KEY, owner=owner)
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        logger.warning("anchor-schedule undo persist raised: %s", type(exc).__name__)
+        return False, f"undo persist raised: {type(exc).__name__}"
+    return _classify_undo_write(identity, result.get("status"))
 
 
 async def _save_undo_co_commit(
@@ -519,29 +592,33 @@ async def _save_undo_co_commit(
     Anything short of ``ok`` rolls the transaction back, which takes every move
     in the batch with it. That is the D51 posture stated plainly — a schedule
     move that cannot be taken back is not a move this rail makes unattended.
-    """
-    from app.services.durable_snapshots import publish_snapshot_in_txn
-    from app.utils.durable_state import DurableEnvelope
 
-    envelope = DurableEnvelope.build(
-        identity=identity,
-        schema_version=UNDO_SCHEMA,
-        payload=payload,
-        complete=True,
-        source="repair:anchor-schedule:undo",
-    )
+    Since CERT-856 the stage is also OWNED: only the invocation that wrote the
+    record may replace it, so a concurrent apply landing on the same identity is
+    refused here (``occupied``) and rolled back, rather than quietly replacing a
+    receipt somebody else is relying on.
+    """
+    from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+    owner = _undo_owner(payload)
+    if owner is None:
+        await session.rollback()
+        return False, (
+            f"undo persist REFUSED: the record for {identity} carries no "
+            f"{UNDO_OWNER_KEY}; moves rolled back"
+        )
     try:
-        stage = await publish_snapshot_in_txn(session, envelope)
+        stage = await publish_owned_snapshot_in_txn(
+            session,
+            _undo_envelope(identity, payload),
+            owner_key=UNDO_OWNER_KEY,
+            owner=owner,
+        )
         status = stage.get("status")
         if status != "ok":
             await session.rollback()
-            if status == "superseded":
-                return False, (
-                    f"undo persist SUPERSEDED: identity {identity} already holds "
-                    f"a newer row, so the record on file is not this apply's; the "
-                    f"moves were rolled back"
-                )
-            return False, f"undo persist rejected: {status}; moves rolled back"
+            ok, note = _classify_undo_write(identity, status)
+            return ok, f"{note}; moves rolled back"
         await session.commit()
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning(
@@ -829,12 +906,19 @@ async def reconcile(
         # that claims otherwise is the defect CERT-846 found next door.
         if movers:
             undo_at = datetime.now(timezone.utc)
-            undo_identity = undo_identity_for(planned, at=undo_at)
+            # ONE token for this apply, in the identity AND in the record. The
+            # identity keeps a concurrent apply from choosing the same slot; the
+            # record's copy keeps the store from letting it write there anyway.
+            undo_invocation = new_undo_invocation()
+            undo_identity = undo_identity_for(
+                planned, at=undo_at, invocation=undo_invocation
+            )
 
             def _record(rows_receipted, *, complete):
                 return undo_payload(
                     taken_at=undo_at, sport=sport, planned=planned,
                     receipted=rows_receipted, complete=complete,
+                    invocation=undo_invocation,
                 )
 
             saved, note = await _save_undo(undo_identity, _record([], complete=False))

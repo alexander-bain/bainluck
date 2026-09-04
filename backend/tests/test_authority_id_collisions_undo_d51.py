@@ -29,6 +29,7 @@ passes for a rail that never writes at all.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from app.tasks import repair_authority_id_collisions as rail
@@ -87,6 +88,12 @@ def _wire_saves(monkeypatch, save):
 
     monkeypatch.setattr(rail, "_save_undo_co_commit", _co_commit)
 
+
+#: Every payload the rail hands its writers carries the owner token, so every
+#: guard that calls one directly has to as well — a payload without it is
+#: refused before the store is reached, which would make these tests pass for
+#: the wrong reason.
+OWNED = {"rows": [], rail.UNDO_OWNER_KEY: "inv0"}
 
 CENSUS_BEFORE = [(164, 352)]
 CENSUS_AFTER = [(163, 350)]
@@ -264,30 +271,80 @@ class TestSupersededIsNotASuccessfulBackup:
     def _publish(self, monkeypatch, status):
         import app.services.durable_snapshots as ds
 
-        async def _fake(envelope):
+        async def _fake(envelope, *, owner_key, owner):
             return {"status": status, "identity": envelope.identity}
 
-        monkeypatch.setattr(ds, "publish_snapshot_standalone", _fake)
+        monkeypatch.setattr(ds, "publish_owned_snapshot_standalone", _fake)
 
     def test_superseded_is_reported_as_a_failed_backup(self, monkeypatch):
         self._publish(monkeypatch, "superseded")
-        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", {"rows": []}))
+        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", OWNED))
         assert ok is False
         assert "SUPERSEDED" in note
 
+    def test_occupied_is_reported_as_a_failed_backup(self, monkeypatch):
+        """CERT-856. The identity holds another invocation's receipt, which the
+        store refused to overwrite — so this apply has no record and must not
+        proceed. Named apart from `superseded`: that one means a newer copy of
+        the same thing, this one means a record about somebody else's run."""
+        self._publish(monkeypatch, "occupied")
+        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", OWNED))
+        assert ok is False
+        assert "OCCUPIED" in note
+
+    def test_a_payload_with_no_owner_is_refused_before_the_store(self, monkeypatch):
+        """An unowned record is one the store cannot protect. Writing it anyway
+        would restore the CERT-856 defect for that record alone, silently."""
+        import app.services.durable_snapshots as ds
+
+        reached: list[object] = []
+
+        async def _fake(envelope, *, owner_key, owner):
+            reached.append(envelope)
+            return {"status": "ok", "identity": envelope.identity}
+
+        monkeypatch.setattr(ds, "publish_owned_snapshot_standalone", _fake)
+        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", {"rows": []}))
+
+        assert ok is False
+        assert rail.UNDO_OWNER_KEY in note
+        assert reached == [], "an unowned record reached the durable store"
+
     def test_CONTROL_ok_is_a_successful_backup(self, monkeypatch):
         self._publish(monkeypatch, "ok")
-        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", {"rows": []}))
+        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", OWNED))
         assert ok is True
+
+    def test_the_owner_it_passes_the_store_is_the_records_own_token(
+        self, monkeypatch
+    ):
+        """The store's refusal keys off this argument. A constant here would
+        leave every record owned by the same 'writer' and protect nothing."""
+        import app.services.durable_snapshots as ds
+
+        seen: list[tuple] = []
+
+        async def _fake(envelope, *, owner_key, owner):
+            seen.append((owner_key, owner))
+            return {"status": "ok", "identity": envelope.identity}
+
+        monkeypatch.setattr(ds, "publish_owned_snapshot_standalone", _fake)
+        asyncio.run(
+            rail._save_undo(
+                "repair:x:undo:1", {"rows": [], rail.UNDO_OWNER_KEY: "abc123"}
+            )
+        )
+
+        assert seen == [(rail.UNDO_OWNER_KEY, "abc123")]
 
     def test_a_raise_is_a_failed_backup_and_is_never_swallowed(self, monkeypatch):
         import app.services.durable_snapshots as ds
 
-        async def _boom(envelope):
+        async def _boom(envelope, *, owner_key, owner):
             raise RuntimeError("database is gone")
 
-        monkeypatch.setattr(ds, "publish_snapshot_standalone", _boom)
-        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", {"rows": []}))
+        monkeypatch.setattr(ds, "publish_owned_snapshot_standalone", _boom)
+        ok, note = asyncio.run(rail._save_undo("repair:x:undo:1", OWNED))
         assert ok is False
         assert "RuntimeError" in note
 
@@ -310,16 +367,16 @@ class TestTheCoCommitHelperItself:
     def _stage(self, monkeypatch, status):
         import app.services.durable_snapshots as ds
 
-        async def _fake(db, envelope):
+        async def _fake(db, envelope, *, owner_key, owner):
             return {"status": status, "identity": envelope.identity}
 
-        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _fake)
+        monkeypatch.setattr(ds, "publish_owned_snapshot_in_txn", _fake)
 
     def test_ok_commits_exactly_once_and_never_rolls_back(self, monkeypatch):
         self._stage(monkeypatch, "ok")
         session = _FakeSession([])
         ok, note = asyncio.run(
-            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+            rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED)
         )
 
         assert (ok, note) == (True, "ok")
@@ -331,7 +388,7 @@ class TestTheCoCommitHelperItself:
         self._stage(monkeypatch, "superseded")
         session = _FakeSession([])
         ok, note = asyncio.run(
-            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+            rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED)
         )
 
         assert ok is False
@@ -339,13 +396,48 @@ class TestTheCoCommitHelperItself:
         assert session.commits == 0, "an unreceipted write was committed"
         assert session.rollbacks == 1
 
+    def test_occupied_rolls_the_write_back_and_does_NOT_commit(self, monkeypatch):
+        """CERT-856. The store declined to overwrite another invocation's
+        receipt, so this row has no record of its own — and a row cleared
+        without a record is precisely what D51 forbids."""
+        self._stage(monkeypatch, "occupied")
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED)
+        )
+
+        assert ok is False
+        assert "OCCUPIED" in note
+        assert session.commits == 0, "an unreceipted write was committed"
+        assert session.rollbacks == 1
+
+    def test_an_unowned_record_is_refused_and_rolls_the_write_back(self, monkeypatch):
+        import app.services.durable_snapshots as ds
+
+        reached: list[object] = []
+
+        async def _fake(db, envelope, *, owner_key, owner):
+            reached.append(envelope)
+            return {"status": "ok", "identity": envelope.identity}
+
+        monkeypatch.setattr(ds, "publish_owned_snapshot_in_txn", _fake)
+        session = _FakeSession([])
+        ok, note = asyncio.run(
+            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+        )
+
+        assert ok is False
+        assert rail.UNDO_OWNER_KEY in note
+        assert reached == [], "an unowned record reached the durable store"
+        assert (session.commits, session.rollbacks) == (0, 1)
+
     def test_an_error_status_rolls_the_write_back_and_does_NOT_commit(
         self, monkeypatch
     ):
         self._stage(monkeypatch, "error")
         session = _FakeSession([])
         ok, note = asyncio.run(
-            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+            rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED)
         )
 
         assert ok is False
@@ -355,13 +447,13 @@ class TestTheCoCommitHelperItself:
     def test_a_raise_rolls_back_and_is_never_swallowed(self, monkeypatch):
         import app.services.durable_snapshots as ds
 
-        async def _boom(db, envelope):
+        async def _boom(db, envelope, *, owner_key, owner):
             raise RuntimeError("database is gone")
 
-        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _boom)
+        monkeypatch.setattr(ds, "publish_owned_snapshot_in_txn", _boom)
         session = _FakeSession([])
         ok, note = asyncio.run(
-            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
+            rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED)
         )
 
         assert ok is False
@@ -380,15 +472,13 @@ class TestTheCoCommitHelperItself:
 
         seen: list[object] = []
 
-        async def _fake(db, envelope):
+        async def _fake(db, envelope, *, owner_key, owner):
             seen.append(db)
             return {"status": "ok", "identity": envelope.identity}
 
-        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _fake)
+        monkeypatch.setattr(ds, "publish_owned_snapshot_in_txn", _fake)
         session = _FakeSession([])
-        asyncio.run(
-            rail._save_undo_co_commit(session, "repair:x:undo:1", {"rows": []})
-        )
+        asyncio.run(rail._save_undo_co_commit(session, "repair:x:undo:1", OWNED))
 
         assert seen == [session], "the receipt was staged on a different session"
 
@@ -401,15 +491,48 @@ class TestTheCoCommitHelperItself:
 class TestTheUndoIdentityIsDatedAndDistinct:
     def test_two_applies_do_not_share_a_record(self):
         a = rail.undo_identity_for(
-            "hash1", at=datetime(2026, 9, 3, 16, 0, 0, tzinfo=timezone.utc)
+            "hash1", at=datetime(2026, 9, 3, 16, 0, 0, tzinfo=timezone.utc),
+            invocation="inv",
         )
         b = rail.undo_identity_for(
-            "hash2", at=datetime(2026, 9, 3, 16, 30, 0, tzinfo=timezone.utc)
+            "hash2", at=datetime(2026, 9, 3, 16, 30, 0, tzinfo=timezone.utc),
+            invocation="inv",
         )
         assert a != b
 
+    def test_THE_REGRESSION_the_same_plan_at_the_same_instant_does_not_share_one(self):
+        """CERT-856, at the identity. The clock and the plan hash are exactly
+        the two things a concurrent apply holds an identical copy of, so an
+        identity made of them alone is ONE identity in both runs — and the run
+        that cleared nothing wrote its empty receipt over the run that had.
+        """
+        at = datetime(2026, 9, 3, 16, 0, 0, 500_000, tzinfo=timezone.utc)
+
+        a = rail.undo_identity_for("h", at=at, invocation=rail.new_undo_invocation())
+        b = rail.undo_identity_for("h", at=at, invocation=rail.new_undo_invocation())
+
+        assert a != b, "two concurrent applies would write to one record"
+
+    def test_the_token_is_never_derived_from_the_work(self):
+        """A "nonce" computed from the plan is not a nonce. Sixteen draws with
+        every input held fixed must be sixteen different tokens."""
+        assert len({rail.new_undo_invocation() for _ in range(16)}) == 16
+
+    def test_the_identity_fits_the_column_it_is_stored_in(self):
+        """`durable_state_snapshots.identity` is varchar(120), and this rail's
+        prefix is the longer of the two. An overflow raises at the INSERT — when
+        a repair is trying to back itself up, the worst moment to find out."""
+        ident = rail.undo_identity_for(
+            "0123456789abcdef" * 4,
+            at=datetime.now(timezone.utc),
+            invocation=rail.new_undo_invocation(),
+        )
+        assert len(ident) <= 120, ident
+
     def test_the_identity_is_never_the_single_rotating_plan_slot(self):
-        ident = rail.undo_identity_for("h", at=datetime.now(timezone.utc))
+        ident = rail.undo_identity_for(
+            "h", at=datetime.now(timezone.utc), invocation="inv"
+        )
         assert ident != rail.PLAN_IDENTITY
         assert ident.startswith(rail.UNDO_IDENTITY_PREFIX)
 
@@ -907,3 +1030,199 @@ class TestAV1RecordCannotBeReadAsAReceipt:
         assert out["rows_in_record"] == 1
         assert out["rows_planned_in_record"] == 2
         assert "ESPN_ID_MOVED" in out["note"]
+
+
+# ---------------------------------------------------------------------------
+# 8. CERT-856 — two applies in the same instant, and only one receipt survives.
+# ---------------------------------------------------------------------------
+
+
+class _OwnedStore:
+    """The durable table's two write predicates, over a dict.
+
+    Emulated rather than stubbed, because the property under test lives in the
+    interaction between the rail and the store: a stub that always returns
+    ``ok`` proves the rail can write, which is not the question. The predicates
+    here are the ones in ``_OWNED_UPSERT_SQL``, and a guard in
+    ``test_durable_state_298.py`` pins that SQL against this reading.
+    """
+
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    def _write(self, envelope, owner_key, owner):
+        if not owner:
+            return {"status": "error", "identity": envelope.identity}
+        existing = self.rows.get(envelope.identity)
+        if existing is not None:
+            if existing["payload"].get(owner_key) != owner:
+                return {
+                    "status": "occupied",
+                    "identity": envelope.identity,
+                    "owner": existing["payload"].get(owner_key),
+                }
+            if existing["generation"] > envelope.generation:
+                return {"status": "superseded", "identity": envelope.identity}
+        self.rows[envelope.identity] = {
+            "generation": envelope.generation,
+            # Copied: the rail hands over lists it goes on appending to.
+            "payload": json.loads(json.dumps(envelope.payload)),
+        }
+        return {"status": "ok", "identity": envelope.identity}
+
+    def install(self, monkeypatch, module):
+        import app.services.durable_snapshots as ds
+
+        async def _standalone(envelope, *, owner_key, owner):
+            return self._write(envelope, owner_key, owner)
+
+        async def _in_txn(db, envelope, *, owner_key, owner):
+            return self._write(envelope, owner_key, owner)
+
+        monkeypatch.setattr(ds, "publish_owned_snapshot_standalone", _standalone)
+        monkeypatch.setattr(ds, "publish_owned_snapshot_in_txn", _in_txn)
+
+        async def _read(identity):
+            row = self.rows.get(identity)
+            if row is None:
+                return None, module.REASON_UNDO_MISSING
+            return row["payload"], "ok"
+
+        monkeypatch.setattr(module, "_read_undo", _read)
+
+
+def _freeze(monkeypatch, module, at):
+    """Both applies believe they started at the same instant — the condition
+    the identity used to be derived from, and nothing else."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return at
+
+    monkeypatch.setattr(module, "datetime", _Frozen)
+
+
+SAME_INSTANT = datetime(2026, 9, 3, 16, 0, 0, 500_000, tzinfo=timezone.utc)
+
+
+class TestTwoAppliesInOneInstant:
+    """CERT-856, reproduced at the rail and caught by both layers.
+
+    Measured on the blocked sha: run one unstamped row 11 and stored receipt
+    ``[11]``; a same-instant run that cleared nothing derived the SAME identity
+    and replaced that record with ``rows: []``, ``receipt_complete: true``. The
+    unstamp was durable and the restore then put nothing back.
+
+    Two arms, because the repair has two layers and either alone would let a
+    regression through:
+
+      * the identity is per-INVOCATION, so the collision does not happen; and
+      * the store refuses a replacement from another invocation, so if the
+        identity ever did collide the first receipt still survives.
+
+    The second arm forces the collision to prove the second layer is load
+    bearing rather than dead code behind a good salt.
+    """
+
+    def _run(self, monkeypatch, store, rows):
+        monkeypatch.setattr(rail, "_read_plan", _plan_reader())
+        session = _FakeSession([CENSUS_BEFORE, *rows, CENSUS_AFTER])
+        out = asyncio.run(rail.repair(session, apply=True, plan_hash="abc123def456"))
+        return out, session
+
+    def test_THE_REGRESSION_the_second_apply_cannot_erase_the_firsts_receipt(
+        self, monkeypatch
+    ):
+        """Identity collision FORCED — same instant, same plan, same token."""
+        store = _OwnedStore()
+        store.install(monkeypatch, rail)
+        _freeze(monkeypatch, rail, SAME_INSTANT)
+        # The COLLISION is forced at the identity, not at the token: each run
+        # still draws its own owner, exactly as it will in production, and the
+        # two are made to land on one slot anyway. Forcing the token instead
+        # would give both runs the same OWNER too, and the store would let the
+        # second one through — a test that passes for the defect.
+        monkeypatch.setattr(
+            rail, "undo_identity_for",
+            lambda *a, **k: "repair:authority_id_collisions:undo:collide",
+        )
+
+        # Run one clears row 11; row 22 had already moved.
+        first, _ = self._run(monkeypatch, store, [[(11,)], []])
+        assert first["unstamped"] == 1
+        assert first["rows_receipted"] == 1
+        identity = first["undo_identity"]
+        assert store.rows[identity]["payload"]["rows"][0]["event_id"] == 11
+
+        # Run two, in the same instant, finds nothing left to clear.
+        second, session = self._run(monkeypatch, store, [[], []])
+
+        assert second["refused"] is True, "the twin apply was allowed to proceed"
+        assert second["reason_codes"] == [rail.REASON_UNDO_UNWRITTEN]
+        assert "OCCUPIED" in second["undo_note"]
+        assert _unstamps(session) == [], "the refused apply still cleared a row"
+
+        receipt = store.rows[identity]["payload"]
+        assert [r["event_id"] for r in receipt["rows"]] == [11], (
+            "the second apply replaced the first apply's receipt with its own"
+        )
+        assert receipt["receipt_complete"] is True
+
+    def test_and_the_surviving_receipt_still_RESTORES(self, monkeypatch):
+        """A record that survived and cannot be replayed is not a survivor.
+
+        This is the arm that would have failed on the blocked sha: the row was
+        durably unstamped and the restore put nothing back.
+        """
+        store = _OwnedStore()
+        store.install(monkeypatch, rail)
+        _freeze(monkeypatch, rail, SAME_INSTANT)
+        # The COLLISION is forced at the identity, not at the token: each run
+        # still draws its own owner, exactly as it will in production, and the
+        # two are made to land on one slot anyway. Forcing the token instead
+        # would give both runs the same OWNER too, and the store would let the
+        # second one through — a test that passes for the defect.
+        monkeypatch.setattr(
+            rail, "undo_identity_for",
+            lambda *a, **k: "repair:authority_id_collisions:undo:collide",
+        )
+
+        first, _ = self._run(monkeypatch, store, [[(11,)], []])
+        self._run(monkeypatch, store, [[], []])
+
+        restore = _FakeSession([CENSUS_AFTER, [(11,)], CENSUS_BEFORE])
+        out = asyncio.run(
+            rail.repair(
+                restore, apply=True, undo_identity=first["undo_identity"]
+            )
+        )
+
+        assert out["restamped"] == 1
+        written = {p["event_id"]: p["prior"] for _, p in _restamps(restore)}
+        assert written == {11: "401856667"}
+
+    def test_CONTROL_with_real_tokens_the_twin_gets_its_OWN_record(
+        self, monkeypatch
+    ):
+        """The first layer, on its own. Nothing is forced here: the same instant
+        and the same plan must still yield two identities and two records, so
+        the store's refusal is a backstop and not the everyday path — an apply
+        blocked by its own twin would be a new outage, not a fix.
+        """
+        store = _OwnedStore()
+        store.install(monkeypatch, rail)
+        _freeze(monkeypatch, rail, SAME_INSTANT)
+
+        first, _ = self._run(monkeypatch, store, [[(11,)], []])
+        second, _ = self._run(monkeypatch, store, [[], [(22,)]])
+
+        assert first["undo_identity"] != second["undo_identity"]
+        assert first["rows_receipted"] == 1 and second["rows_receipted"] == 1
+        assert len(store.rows) == 2
+        by_identity = {
+            k: [r["event_id"] for r in v["payload"]["rows"]]
+            for k, v in store.rows.items()
+        }
+        assert by_identity[first["undo_identity"]] == [11]
+        assert by_identity[second["undo_identity"]] == [22]
