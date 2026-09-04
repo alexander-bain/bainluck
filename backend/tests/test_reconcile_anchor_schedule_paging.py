@@ -492,6 +492,55 @@ class TestTheOperatorLineNamesTheRightRemedy:
         assert "CURSOR-HERE" in line
         assert "585 after this page" in line
 
+    def test_a_stale_zero_count_is_not_printed_beside_a_cursor(self):
+        """CERT-890 follow-up `LANE1-094-BUDGET-TAIL-COUNT-COPY`.
+
+        `has_more` can be true while `remaining - examined` is <= 0, by exactly
+        one route: the clock cut the page with un-examined rows in hand, so
+        `budget_cut_tail` outranked a `remaining` count taken separately from
+        the rows. Rendering that as `MORE (0 after this page)` while handing
+        back a cursor tells an operator reading in a hurry to stop paging one
+        page early — which is the abandoned tail the OR was added to prevent,
+        reinstated in the copy.
+        """
+        line = rail.summarize_for_operator(
+            {
+                "measured": True,
+                "terminal": "partial",
+                "examined": 30,
+                "eligible": 30,
+                "remaining": 30,  # stale: recounted after the page settled
+                "has_more": True,  # budget_cut_tail outranked it
+                "stopped_by": "budget",
+                "next_cursor": "CURSOR-HERE",
+                "by_verdict": {},
+            }
+        )
+
+        assert "0 after this page" not in line
+        assert "at least 1 after this page" in line
+        assert "CURSOR-HERE" in line, "the cursor must still be handed over"
+
+    def test_a_real_positive_count_is_still_printed_as_the_number(self):
+        """Control. Without it, "at least 1" everywhere would pass the arm
+        above while throwing away the count operators actually page by."""
+        line = rail.summarize_for_operator(
+            {
+                "measured": True,
+                "terminal": "partial",
+                "examined": 25,
+                "eligible": 685,
+                "remaining": 685,
+                "has_more": True,
+                "stopped_by": "budget",
+                "next_cursor": "CURSOR-HERE",
+                "by_verdict": {},
+            }
+        )
+
+        assert "660 after this page" in line
+        assert "at least 1" not in line
+
     def test_on_the_last_page_it_does_not_tell_you_to_raise_the_limit(self):
         """There is nothing left to see; advising a bigger page wastes a command."""
         line = rail.summarize_for_operator(

@@ -557,9 +557,15 @@ async def reconcile_anchor_schedule_endpoint(
         ge=1,
         le=1000,
         description=(
-            "Rows to examine, oldest kickoff first. One ESPN call each (~0.2s), "
-            "so anything much above the default risks Heroku's 30s router "
-            "timeout. Scope with `sport` instead of raising it."
+            # The figure an operator sizes `limit` by, so it is the MEASURED
+            # one (#2953). It said ~0.2s until 2026-09-04 — wrong by 3x, and
+            # the constants had already been re-sized on the real number, which
+            # left the only reader who could still act on the stale figure the
+            # only one not told.
+            "Rows to examine, oldest kickoff first. One ESPN call each "
+            "(~0.59s, measured against production), so anything much above the "
+            "default risks Heroku's 30s router timeout. Scope with `sport` "
+            "instead of raising it."
         ),
     ),
     sport: Optional[str] = Query(None, description="Restrict to one sport key"),

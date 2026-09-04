@@ -1203,10 +1203,16 @@ def summarize_for_operator(result: dict[str, Any]) -> str:
     # this function's docstring warns about, now reachable for a second reason.
     on_budget = result.get("stopped_by") == "budget"
     if has_more is True:
-        reach += (
-            f" MORE ({result.get('remaining', 0) - (examined or 0)} after this page; "
-            f"pass cursor={result.get('next_cursor')})"
-        )
+        tail = (result.get("remaining") or 0) - (examined or 0)
+        # `has_more` can be true while this subtraction is <= 0, and only one
+        # way: the clock cut the page with un-examined rows in hand, so
+        # `budget_cut_tail` outranked a `remaining` taken separately from the
+        # rows (see the `has_more` computation). The count is stale, not zero.
+        # Printing "0 after this page" beside a cursor tells an operator in a
+        # hurry to stop paging one page early — reinstating, in the copy, the
+        # abandoned tail the OR exists to prevent.
+        after = f"{tail} after this page" if tail > 0 else "at least 1 after this page"
+        reach += f" MORE ({after}; pass cursor={result.get('next_cursor')})"
         if on_budget:
             # Deliberately does not contain the phrase "raise limit" even to
             # negate it: this line is read in a hurry off a terminal, and a
