@@ -585,6 +585,36 @@ jobs:
             exit 1
           fi
 
+      - name: "#2879 rekey apply/rollback round trip (real Postgres)"
+        # CERT-847. `scripts/rekey_statpal_anchors_2879.py` runs unattended
+        # under D51, which is granted only to a repair that "writes a backup
+        # first and ships a one-command restore". Its restore was a single
+        # UPDATE keyed on `a.id = b.id` — which cannot resurrect the row its
+        # own DELETE arm removes, and that arm is the USUAL case once lane1's
+        # step 2 is live. Reproduction: deleted `s6:354453`, rollback restored
+        # 0, and reported success.
+        #
+        # Why the service container and nothing cheaper: the claim is a round
+        # trip through a DELETE that must reappear verbatim. A mock cursor
+        # invents the rowcount that decides whether the delete fired; only the
+        # server enforces `uq_anchor_source_id` when the legacy row goes back
+        # beside the D55 row that superseded it; and only a real INSERT against
+        # the real DDL can show that `id` and `first_seen_at` came back
+        # unchanged rather than silently re-defaulted.
+        #
+        # Two-armed: `test_the_update_arm_alone_cannot_pass_this` executes the
+        # ORIGINAL one-statement restore and requires it to leave the row gone,
+        # so a green run means the repair was proved necessary, not that
+        # nothing objected. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_rekey_statpal_anchors_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/rekey2879.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/rekey2879.txt; then
+            echo "::error::#2879 rekey round-trip gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
