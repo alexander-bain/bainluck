@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import zlib
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -437,18 +438,97 @@ async def test_a_stalled_redis_is_bounded_and_still_serves(cold_worker_redis):
     assert elapsed_ms < 4 * pic.REDIS_READ_DEADLINE_MS, elapsed_ms
 
 
+@pytest.mark.parametrize(
+    "planted",
+    [
+        pytest.param("{not json", id="a_predecessors_uncompressed_string"),
+        pytest.param(b"\x78\x9c not a zlib stream", id="a_truncated_write"),
+        pytest.param(
+            zlib.compress(b"{not json", 1), id="a_valid_stream_holding_garbage"
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_a_malformed_envelope_is_a_miss_not_a_crash(cold_worker_redis):
+async def test_a_malformed_envelope_is_a_miss_not_a_crash(cold_worker_redis, planted):
     """Anything can be in a Redis key: a truncated write, a predecessor's
-    format, another lane's typo."""
+    format, another lane's typo.
+
+    LAT-P221 gives the value TWO layers — a zlib stream carrying JSON — so the
+    cases are parametrized rather than merged: a fix that only guarded the JSON
+    would pass the third case and crash on the first two."""
     key = ("all", (), 55_561)
     builder = _Counter([_concept_card()])
-    cold_worker_redis.store[pic.redis_key_for("concepts", key)] = "{not json"
+    cold_worker_redis.store[pic.redis_key_for("concepts", key)] = planted
 
     out = await pic.get_or_build("concepts", key, builder)
 
     assert out == builder.value
     assert builder.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_an_entry_that_inflates_past_the_decode_budget_is_refused_unread(
+    cold_worker_redis, monkeypatch
+):
+    """The decode bound is a bound on the READER, not a promise about the writer.
+
+    A 1 KB Redis value can inflate to a hundred megabytes, and the whole point
+    of `MAX_ENVELOPE_BYTES` is that no worker spends its event loop finding that
+    out (gotcha #38). So `wire_decode` stops the inflation at the budget rather
+    than measuring the result afterwards."""
+    monkeypatch.setattr(pic, "MAX_ENVELOPE_BYTES", 1024)
+    key = ("all", (), 55_567)
+    # Compresses to ~100 bytes; inflates to 64 KB, 64x the budget.
+    bomb = zlib.compress(json.dumps({"v": 1, "blob": "x" * 65536}).encode(), 1)
+    assert len(bomb) < 1024, "the fixture has to be SMALL to prove anything"
+    cold_worker_redis.store[pic.redis_key_for("concepts", key)] = bomb
+    builder = _Counter([_concept_card()])
+
+    out = await pic.get_or_build("concepts", key, builder)
+
+    assert out == builder.value
+    assert builder.calls == 1, "an over-budget stream was inflated and read"
+    assert pic.wire_decode(bomb) is None
+
+
+@pytest.mark.asyncio
+async def test_an_over_storage_cap_artifact_is_refused_rather_than_published(
+    cold_worker_redis, monkeypatch
+):
+    """The second of the two bounds LAT-P221 separated. Redis is a shared 100 MB
+    LRU, so an artifact can be well inside the decode budget and still be too
+    antisocial to store — and the refusal must be for THAT reason, measured on
+    the compressed blob, not on the JSON."""
+    monkeypatch.setattr(pic, "MAX_ENVELOPE_BYTES", 64 * 1024 * 1024)
+    monkeypatch.setattr(pic, "MAX_STORED_BYTES", 256)
+    # Random-ish text so zlib cannot squeeze it under the storage cap.
+    incompressible = "".join(f"{i:x}" for i in range(20_000))
+    builder = _Counter([{"blob": incompressible}])
+
+    out = await pic.get_or_build("concepts", ("bulky", (), 2), builder)
+
+    assert out == builder.value
+    assert cold_worker_redis.sets == 0
+    assert pic.shared_build_stats()["cross_worker_publish_refused"] == 1
+
+    # Same contract as the decode-cap refusal: the LOCAL tier is unaffected.
+    assert (await pic.get_or_build("concepts", ("bulky", (), 2), builder)) == out
+    assert builder.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_what_redis_holds_is_compressed_not_raw_json(cold_worker_redis):
+    """The storage bound can stay at the 2 MB that was always right for Redis
+    only because the stored form is a zlib stream. If a future edit publishes
+    raw JSON again, the artifact this whole cycle is about stops fitting."""
+    key = ("all", (), 55_568)
+    await pic.get_or_build("concepts", key, _Counter([_concept_card()]))
+
+    stored = cold_worker_redis.store[pic.redis_key_for("concepts", key)]
+
+    assert isinstance(stored, bytes), "the stored value is not the wire form"
+    assert b'"stored_wall"' not in stored, "the envelope went to Redis as raw JSON"
+    assert json.loads(pic.wire_decode(stored))["ns"] == "concepts"
 
 
 @pytest.mark.asyncio
@@ -504,9 +584,9 @@ async def test_an_entry_older_than_the_ttl_is_refused_by_the_readers_wall_clock(
     await pic.get_or_build("concepts", key, builder, ttl_s=60.0)
 
     redis_key = pic.redis_key_for("concepts", key)
-    envelope = json.loads(cold_worker_redis.store[redis_key])
+    envelope = json.loads(pic.wire_decode(cold_worker_redis.store[redis_key]))
     envelope["stored_wall"] = envelope["stored_wall"] - 3600
-    cold_worker_redis.store[redis_key] = json.dumps(envelope)
+    cold_worker_redis.store[redis_key] = pic.wire_encode(json.dumps(envelope))
 
     pic.clear_shared_builds()
     out = await pic.get_or_build("concepts", key, builder, ttl_s=60.0)
@@ -525,9 +605,9 @@ async def test_a_clock_ahead_writer_is_read_as_fresh_not_as_stale(cold_worker_re
     await pic.get_or_build("concepts", key, builder)
 
     redis_key = pic.redis_key_for("concepts", key)
-    envelope = json.loads(cold_worker_redis.store[redis_key])
+    envelope = json.loads(pic.wire_decode(cold_worker_redis.store[redis_key]))
     envelope["stored_wall"] = envelope["stored_wall"] + 30
-    cold_worker_redis.store[redis_key] = json.dumps(envelope)
+    cold_worker_redis.store[redis_key] = pic.wire_encode(json.dumps(envelope))
 
     pic.clear_shared_builds()
     await pic.get_or_build("concepts", key, builder)

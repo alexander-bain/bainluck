@@ -143,6 +143,7 @@ import json
 import logging
 import os
 import time
+import zlib
 from contextvars import ContextVar
 from datetime import date, datetime
 from decimal import Decimal
@@ -246,7 +247,7 @@ SHARED_TIER_NAMES: frozenset[str] = frozenset(
 #: Redis key prefix. The version segment is bumped whenever the envelope or the
 #: wire codec changes shape, so a deploy that changes either cannot read a
 #: predecessor's entries — the old keys simply expire under their own `EX`.
-REDIS_KEY_PREFIX = "feed:pic:v1"
+REDIS_KEY_PREFIX = "feed:pic:v2"
 
 #: Bounds on the Redis hop. Deliberately tighter than the shared 600ms
 #: `REQUEST_REDIS_OP_DEADLINE_MS`: this hop is speculative (it is trying to
@@ -255,11 +256,56 @@ REDIS_KEY_PREFIX = "feed:pic:v1"
 REDIS_READ_DEADLINE_MS = 250
 REDIS_PUBLISH_DEADLINE_MS = 250
 
-#: Hard cap on one encoded envelope. The decode holds the GIL for its whole
-#: C-level parse (gotcha #38), so an unbounded payload would trade a DB stage
-#: for an event-loop stall — which is how a latency fix becomes a latency bug.
-#: Measured artifacts sit far below this; the cap is the bound, not the target.
-MAX_ENVELOPE_BYTES = 2 * 1024 * 1024
+# --- LAT-P221 (#2971): ONE CAP WAS SERVING TWO UNRELATED BOUNDS -------------
+#
+# A single `MAX_ENVELOPE_BYTES = 2 MB` was checked against the JSON envelope and
+# used as both "how long may the decode hold the GIL" and "how much of Redis may
+# one artifact occupy". Those are different quantities with different units, and
+# conflating them is what silently un-shared the feed's most expensive artifact.
+#
+# MEASURED IN PRODUCTION, 2026-09-04. The `market_load` snapshot — the hydrated
+# Discover candidate base — encodes to a **2.79 MB envelope** (700 markets /
+# 6,904 outcomes, sized with this module's own codec on real sampled rows). So
+# `_publish_cross_worker` refused it on EVERY build, and the artifact never left
+# the worker that made it. Production agreed: `x-feed-shared` listed
+# `canonical_counts,concepts` and never `market_load`, and the only reuse ever
+# observed for it was `x-feed-shared-tier: local`.
+#
+# The cost of that refusal is the whole cold feed. `futures.market_load` is
+# 692-775 ms of a 1,537-1,982 ms cache-miss request; on the requests that did
+# reuse it from L1 the same stage cost 68-71 ms and the whole request cost
+# 735-774 ms. 47% of production feed requests miss.
+#
+# It rotted rather than broke: LAT-P174 sized this artifact at ~1.2 MB for 2,223
+# outcomes. The outcome population is now 6,904 — 3.1x — and nothing compared
+# the artifact against its own cap. `test_market_load_publishes_at_production_scale`
+# is that comparison, and it is why this cannot rot again in silence.
+#
+#: The DECODE bound: how much JSON one reader may parse in one go. The parse
+#: holds the GIL for its whole C-level run (gotcha #38), so this is an
+#: event-loop-stall budget, not a memory budget. Measured on the real artifact:
+#: decompress + `json.loads` + `_decode` costs ~10.4 ms/MB, so 6 MB is ~62 ms
+#: locally and ~150 ms on a Standard-2X dyno — weighed, as LAT-P103 requires,
+#: not against a hit but against the 692-775 ms rebuild it replaces, which holds
+#: the GIL longer than the parse does. Enforced on BOTH sides: the publisher
+#: refuses to write more than this, and `wire_decode` refuses to inflate past it
+#: so a foreign or corrupt entry cannot stall a worker either.
+MAX_ENVELOPE_BYTES = 6 * 1024 * 1024
+
+#: The STORAGE bound: how much of Redis one artifact may occupy. Redis is a
+#: shared 100 MB LRU — Celery's state lives in the same instance — so an
+#: artifact that fits the decode budget can still be antisocial. This keeps the
+#: old 2 MB number, because 2 MB was always the defensible answer to THIS
+#: question; it was only ever the wrong answer to the other one.
+MAX_STORED_BYTES = 2 * 1024 * 1024
+
+#: The stored wire form is a zlib stream, not the raw JSON. Level 1, because the
+#: ratio is what matters and the last 20% of it is not worth 2x the CPU:
+#: measured on the real `market_load` envelope, L1 gives 4.2x (2.79 MB -> 0.59 MB)
+#: for 9.3 ms compress / 1.9 ms decompress, against L6's 5.0x for 20.6 ms.
+#: Compression is what lets the storage bound stay at 2 MB while the decode bound
+#: rises — the artifact's Redis footprint goes DOWN, not up.
+WIRE_COMPRESS_LEVEL = 1
 
 _PLAIN_SCALARS = (bool, int, float, str, datetime, date, Decimal)
 _MAX_DEPTH = 16
@@ -294,9 +340,7 @@ def assert_plain_data(value: Any) -> None:
         if isinstance(node, dict):
             for k, v in node.items():
                 if k is not None and not isinstance(k, _KEY_SCALARS):
-                    raise NotPlainData(
-                        f"dict key of type {type(k).__name__} at {path}"
-                    )
+                    raise NotPlainData(f"dict key of type {type(k).__name__} at {path}")
                 _walk(v, depth + 1, f"{path}[{k!r}]")
             return
         if isinstance(node, (list, tuple)):
@@ -473,6 +517,37 @@ def encode_shared_payload(value: Any) -> str:
 def decode_shared_payload(raw: str) -> Any:
     """Inverse of `encode_shared_payload`."""
     return _decode(json.loads(raw))
+
+
+def wire_encode(envelope_json: str) -> bytes:
+    """The bytes that go into Redis for one envelope."""
+    return zlib.compress(envelope_json.encode("utf-8", "replace"), WIRE_COMPRESS_LEVEL)
+
+
+def wire_decode(raw: Any) -> Optional[str]:
+    """Inverse of `wire_encode`, or `None` for anything that is not our wire form.
+
+    `None` covers every way a Redis value can fail to be one of ours — a
+    predecessor's uncompressed JSON, another lane's typo, a truncated write, a
+    stream that inflates past the decode budget. The caller treats all of them
+    as a miss and builds, which is what it would have done anyway.
+
+    The inflation is BOUNDED, not just checked afterwards: `decompressobj`
+    stops at `MAX_ENVELOPE_BYTES + 1` bytes, so a foreign entry cannot spend a
+    worker's event loop expanding before we get the chance to reject it.
+    """
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        return None
+    try:
+        inflated = zlib.decompressobj().decompress(bytes(raw), MAX_ENVELOPE_BYTES + 1)
+    except zlib.error:
+        return None
+    if len(inflated) > MAX_ENVELOPE_BYTES:
+        return None
+    try:
+        return inflated.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -699,14 +774,8 @@ async def _read_cross_worker(
         _stats["cross_worker_misses"] += 1
         return False, None
 
-    raw = result.value
-    if isinstance(raw, (bytes, bytearray)):
-        try:
-            raw = raw.decode("utf-8")
-        except Exception:
-            _stats["cross_worker_failures"] += 1
-            return False, None
-    if not isinstance(raw, str):
+    raw = wire_decode(result.value)
+    if raw is None:
         _stats["cross_worker_failures"] += 1
         return False, None
 
@@ -786,11 +855,29 @@ async def _publish_cross_worker(
         separators=(",", ":"),
         ensure_ascii=False,
     )
+    # Two bounds, two reasons (LAT-P221). The decode budget is checked on the
+    # JSON, because that is what a reader has to parse; the storage budget is
+    # checked on the compressed blob, because that is what Redis has to hold.
     size = len(envelope.encode("utf-8", "replace"))
     if size > MAX_ENVELOPE_BYTES:
         logger.warning(
-            "shared build: namespace=%s envelope %s bytes over cap — local tier only",
+            "shared build: namespace=%s envelope %s bytes over decode cap %s "
+            "— local tier only",
             namespace,
+            size,
+            MAX_ENVELOPE_BYTES,
+        )
+        _stats["cross_worker_publish_refused"] += 1
+        return
+
+    blob = wire_encode(envelope)
+    if len(blob) > MAX_STORED_BYTES:
+        logger.warning(
+            "shared build: namespace=%s stored %s bytes over storage cap %s "
+            "(envelope %s) — local tier only",
+            namespace,
+            len(blob),
+            MAX_STORED_BYTES,
             size,
         )
         _stats["cross_worker_publish_refused"] += 1
@@ -810,7 +897,7 @@ async def _publish_cross_worker(
     # the bound. Ceil so a sub-second TTL still produces a legal expiry.
     expire_s = max(1, int(ttl_s) + 1)
     result = await _rc.bounded_redis_call(
-        lambda: client.set(redis_key, envelope, ex=expire_s),
+        lambda: client.set(redis_key, blob, ex=expire_s),
         deadline_ms=REDIS_PUBLISH_DEADLINE_MS,
         treat_none_as_miss=False,
     )
