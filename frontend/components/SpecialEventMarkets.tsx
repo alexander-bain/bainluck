@@ -17,6 +17,12 @@ import {
 interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
   eventStatus?: string;
+  /**
+   * Sets already played out, for a match still in progress. The event page
+   * passes it for tennis only; everything else leaves it undefined and no row
+   * changes. See `buildMarketSection`'s `completedSets`.
+   */
+  completedSets?: number;
 }
 
 function OutcomeBar({
@@ -30,12 +36,16 @@ function OutcomeBar({
   settled: boolean;
 }) {
   const percent = Math.round(outcome.prob * 100);
+  // A finished GAME settles every row; a finished SET settles only the rows
+  // that asked about it. Both end in the same render, because both are the same
+  // statement to a reader: this number stopped being a chance.
+  const frozen = settled || outcome.decided === true;
 
   // A settled row loses the bar, exactly as `PropTravelBar`'s `ResolvedMark`
   // does. A filled bar is a picture of a live distribution; leaving it up and
   // only re-wording the caption keeps the lie in the part of the row a reader
   // actually looks at.
-  if (settled) {
+  if (frozen) {
     return (
       <div className="flex items-baseline gap-2 text-xs">
         <div className={`flex-1 ${rank === 0 ? "font-semibold" : "text-text-secondary"}`}>
@@ -105,8 +115,15 @@ function PropMiniCard({ item, settled }: { item: MarketCard; settled: boolean })
   );
 }
 
-export default function SpecialEventMarkets({ data, eventStatus }: SpecialEventMarketsProps) {
-  const section = useMemo(() => buildMarketSection(data.other), [data.other]);
+export default function SpecialEventMarkets({
+  data,
+  eventStatus,
+  completedSets,
+}: SpecialEventMarketsProps) {
+  const section = useMemo(
+    () => buildMarketSection(data.other, { completedSets }),
+    [data.other, completedSets],
+  );
 
   // #2086. `eventStatus` has been DECLARED on this component's props and PASSED
   // by the event page since the section shipped — and destructured by nobody, so

@@ -72,6 +72,87 @@ export interface ParsedPropLabel {
 const PROP_LABEL_RE = /^(.+?):\s*(.+?)\s+O\/U\s+(\d+(?:\.\d+)?)\s*$/;
 
 /**
+ * Separators a child title may be joined to its parent's with, once the parent
+ * has been removed: `Parent: Child`, `Parent - Child`, `Parent — Child`,
+ * `Parent · Child`, or the tennis case, a bare space.
+ */
+const PREFIX_JOINERS = /^[\s:·\-–—|]+/;
+
+/** `Total Sets: O/U 2.5` → `Total Sets O/U 2.5`. */
+const COLON_BEFORE_OU = /:\s+(?=O\/U\b)/;
+
+/** Escape a wire string so it can be spliced into a RegExp as a literal. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The outcome's own name, with its card's name removed from the front.
+ *
+ * ── THE WIRE, VERBATIM (live US Open match `15301138`, 2026-09-04 09:58 PT) ──
+ *
+ *     market_name  US Open WTA: Jessica Pegula vs Leylah Fernandez
+ *     outcome_name US Open WTA: Jessica Pegula vs Leylah Fernandez Set 2 Winner
+ *     outcome_name US Open WTA: Jessica Pegula vs Leylah Fernandez Set 1 Winner
+ *     outcome_name US Open WTA: Jessica Pegula vs Leylah Fernandez Game Spread +/-4.5
+ *     outcome_name US Open WTA: Jessica Pegula vs Leylah Fernandez Total Sets: O/U 2.5
+ *     outcome_name US Open WTA: Jessica Pegula vs Leylah Fernandez Match O/U 21.5
+ *
+ * A Polymarket tennis event is a parent market with nested children (gotcha
+ * #18), and every child arrives carrying the parent's whole title. Printed
+ * unaltered inside a card ALREADY HEADED with that title, each row wrapped over
+ * four lines on a phone and the thing that distinguished it — `Set 2 Winner` —
+ * came last, after 46 characters the reader had already read on the line above.
+ *
+ * Two properties that must survive edits here:
+ *
+ * - **A row never loses its name.** If the child title is nothing but the
+ *   parent's, the original string is kept: a blank label is worse than a
+ *   repetitive one.
+ * - **Only a real prefix is removed.** The match is anchored at position 0 and
+ *   compared on collapsed whitespace/case, so `Yes`, `No`, `Jessica Pegula` and
+ *   every MLB/NFL prop label — none of which begin with their market's name —
+ *   come through byte-identical.
+ */
+export function stripCardPrefix(
+  marketName: string | null | undefined,
+  outcomeName: string | null | undefined,
+): string {
+  const outcome = (outcomeName ?? "").trim();
+  const market = (marketName ?? "").trim();
+  if (!outcome || !market) return outcome;
+
+  // Built from the market's own tokens with `\s+` between them, so the match is
+  // insensitive to case and to run-length of whitespace while still being
+  // anchored: only a genuine prefix is consumed, and the REMAINDER keeps the
+  // wire's own casing.
+  const prefix = new RegExp(
+    `^${market.split(/\s+/).map(escapeRegExp).join("\\s+")}`,
+    "i",
+  );
+  const head = prefix.exec(outcome);
+  if (!head) return outcome;
+
+  const rest = outcome.slice(head[0].length).replace(PREFIX_JOINERS, "").trim();
+  if (!rest) return outcome;
+  return rest.replace(COLON_BEFORE_OU, " ");
+}
+
+/**
+ * The set a row is about — `Set 1 Winner` → 1 — or null when it names no set.
+ *
+ * Anchored, so `Set Handicap +/-1.5` (no number) and `Total Sets O/U 2.5` (the
+ * word is not first) are both correctly null: neither is about one named set,
+ * and neither is decided by a set finishing.
+ */
+export function setNumberFromLabel(label: string | null | undefined): number | null {
+  const match = /^set\s*(\d+)\b/i.exec((label ?? "").trim());
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
  * The player, statistic and threshold encoded in a Polymarket prop label, or
  * null when the label carries none.
  *
@@ -147,6 +228,12 @@ export interface MergedOutcome {
   source: string;
   /** How many wire rows agreed on this price. Drives the `Nx` badge. */
   sourceCount: number;
+  /**
+   * The question this row asks is already answered — a set that has been played
+   * out — so its number is a last quote, not a chance. The renderer treats it
+   * exactly as it treats a row on a finished game (#2086): no bar.
+   */
+  decided?: boolean;
 }
 
 export interface OutcomeMergeResult {
@@ -235,6 +322,47 @@ const CATEGORY_ORDER = [
   "Other Markets",
 ];
 
+/** The most sets a tennis match can contain — five, and only in the men's draw. */
+const MAX_SETS_IN_A_MATCH = 5;
+
+/**
+ * How many sets are already over, for a tennis event, from the scores the
+ * game-markets payload already carries.
+ *
+ * A tennis event's `home_score`/`away_score` are SETS WON (measured on the live
+ * US Open match `15301138`, 09:58 PT 2026-09-04: `0` / `1` while the second set
+ * was being played, with Fernandez a set up). Their sum is therefore the number
+ * of completed sets, and it is the only fact this needs — not who won them,
+ * which these two numbers cannot say once both sides have one.
+ *
+ * **It refuses rather than guesses.** A sum above five is not a set count in any
+ * tennis match ever played, so a payload whose scores turn out to be games or
+ * points returns 0 and nothing is marked decided. Every non-tennis sport returns
+ * 0 by the same door.
+ */
+export function completedSetsForTennis(
+  sport: string | null | undefined,
+  scores: { home_score?: number | null; away_score?: number | null } | null | undefined,
+): number {
+  if (!/^tennis/i.test((sport ?? "").trim())) return 0;
+  const home = scores?.home_score;
+  const away = scores?.away_score;
+  if (typeof home !== "number" || typeof away !== "number") return 0;
+  if (!Number.isFinite(home) || !Number.isFinite(away) || home < 0 || away < 0) return 0;
+  const total = Math.floor(home) + Math.floor(away);
+  return total > MAX_SETS_IN_A_MATCH ? 0 : total;
+}
+
+export interface MarketSectionOptions {
+  /**
+   * Sets already played out in this match — the caller's number, never read
+   * here. A tennis event's `home_score`/`away_score` ARE the sets each side has
+   * won, so their sum is the count of sets that are over; every other sport
+   * passes nothing and no row is ever marked decided.
+   */
+  completedSets?: number;
+}
+
 /**
  * Build the whole section: filter, categorise, merge, and report honest counts.
  *
@@ -243,8 +371,12 @@ const CATEGORY_ORDER = [
  * matchup. Everything else keeps the original `categorizeMarketName` path, so
  * NFL, golf and novelty payloads are untouched.
  */
-export function buildMarketSection(rows: OtherMarketRow[] | undefined | null): MarketSection {
+export function buildMarketSection(
+  rows: OtherMarketRow[] | undefined | null,
+  options: MarketSectionOptions = {},
+): MarketSection {
   const all = rows ?? [];
+  const completedSets = Math.max(0, Math.floor(options.completedSets ?? 0));
   const winProb = findWinProbMarkets(all);
   const kept = all.filter(
     (m) => !isRedundantWithMarketMaps(m) && !winProb.has(m.market_name || ""),
@@ -262,7 +394,13 @@ export function buildMarketSection(rows: OtherMarketRow[] | undefined | null): M
   const draftOrder: string[] = [];
 
   for (const row of kept) {
-    const parsed = parsePropLabel(row.outcome_name);
+    // De-prefix BEFORE parsing, not after. `parsePropLabel` is non-greedy on
+    // its first group, so `US Open WTA: … Total Sets: O/U 2.5` parsed to
+    // player `US Open WTA` — a TOUR printed in a slot headed "Player Props ·
+    // by statistic". Stripping the parent title first leaves `Total Sets O/U
+    // 2.5`, which correctly parses as no player prop at all.
+    const named = stripCardPrefix(row.market_name, row.outcome_name);
+    const parsed = parsePropLabel(named);
 
     const title = parsed ? PLAYER_PROPS_CATEGORY : categorizeMarketName(row.market_name || "").category;
     const subtitle = parsed ? "by statistic" : categorizeMarketName(row.market_name || "").subtitle;
@@ -271,7 +409,7 @@ export function buildMarketSection(rows: OtherMarketRow[] | undefined | null): M
     // not, because a statistic carries several (0.5 and 1.5 both occur live).
     const label = parsed
       ? `${parsed.player} O/U ${parsed.threshold}`
-      : row.outcome_name || "Unknown";
+      : named || "Unknown";
 
     let draft = drafts.get(title);
     if (!draft) {
@@ -298,7 +436,17 @@ export function buildMarketSection(rows: OtherMarketRow[] | undefined | null): M
 
     const cards: MarketCard[] = draft.cardOrder.map((name) => {
       const merged = mergeOutcomes(draft.cards.get(name) as LabeledRow[]);
-      const outcomes = [...merged.outcomes].sort((a, b) => b.prob - a.prob);
+      const outcomes = [...merged.outcomes]
+        .map((o) => {
+          // "Settled means settled" applies inside a live match too: set 1 is
+          // over the moment either player has banked a set, so its row stops
+          // drawing a live bar at 0% and states a last quote instead.
+          const setNumber = setNumberFromLabel(o.label);
+          return setNumber !== null && setNumber <= completedSets
+            ? { ...o, decided: true }
+            : o;
+        })
+        .sort((a, b) => b.prob - a.prob);
       renderedOutcomes += outcomes.length;
       categoryWithheld += merged.withheld;
       return { name, outcomes, withheld: merged.withheld };
