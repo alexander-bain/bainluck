@@ -5,9 +5,28 @@
 # Stop a lane: Ctrl-C in its window (always safe — state lives in files;
 # interrupted queues re-queue automatically on next start).
 
+#
+# --dry-run: print the windows this WOULD open (and skip the orphan reap
+# entirely — the reap kills processes and has no business running in a rehearsal).
+# Use it to check the lane list without opening a dozen Terminal windows.
+
 set -u
-R="$HOME/bainluck/lane-runner.sh"
+# The lane list, the worktree mapping and the runner paths live in ONE file,
+# sourced by this script and by lanes-supervisor.sh. See lanes.conf for why.
+# Found NEXT TO THIS SCRIPT first: lanes.conf is a tracked sibling, so any
+# checkout of the repo is self-contained (CI has no ~/bainluck, and neither does
+# a throwaway worktree). $HOME is the fallback for a copy of this script that got
+# separated from its conf. LANES_CONF overrides both.
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONF="${LANES_CONF:-$SELF_DIR/lanes.conf}"
+[ -f "$CONF" ] || CONF="$HOME/bainluck/lanes.conf"
+[ -f "$CONF" ] || { echo "missing $CONF — cannot know which lanes to start"; exit 1; }
+. "$CONF"
+R="$LANE_RUNNER"
 [ -x "$R" ] || chmod +x "$R"
+
+DRYRUN=0
+[ "${1:-}" = "--dry-run" ] && DRYRUN=1
 
 # Reap orphaned headless sessions before launching — but only Bain Luck ones.
 # A runner killed by Ctrl-C or a closed window can leave its claude session alive
@@ -29,6 +48,9 @@ R="$HOME/bainluck/lane-runner.sh"
 # other repos and the old reap killed those too. Anything unmatched is reported,
 # never killed — the safe direction here is under-reaping.
 PIDDIR="$HOME/bainluck/.claude/handoff/runner-pids"
+if [ "$DRYRUN" -eq 1 ]; then
+  echo "[dry-run] skipping orphan reap and pgid garbage collection (both kill/delete)"
+else
 PS_SNAP=$(ps -axo pid=,ppid=,pgid=,command=)
 OWNED_PGIDS=$(cat "$PIDDIR"/*.pgid 2>/dev/null | tr -cd '0-9\n' | grep -v '^$' | sort -u | tr '\n' ',')
 
@@ -100,27 +122,46 @@ for F in "$PIDDIR"/*.pgid; do
   P=$(tr -cd '0-9' < "$F")
   if [ -z "$P" ] || ! echo "$LIVE_PGIDS" | grep -qx "$P"; then rm -f "$F"; fi
 done
+fi   # end of the reap/GC block skipped by --dry-run
 
 launch () {
+  if [ "$DRYRUN" -eq 1 ]; then echo "[dry-run] would open Terminal window: $1"; return 0; fi
   osascript -e "tell application \"Terminal\" to do script \"$1\"" >/dev/null
 }
 
-# ORDER IS LOAD-BEARING, 2026-08-31 (Fable). lane-runner.sh serves LANES in the
-# order given and takes the first inbox with work. With `lane1 integrator`, lane1
-# — which restocks its own inbox instantly — was checked first every cycle and the
-# integrator NEVER got a turn: 11 lane1 sessions today against 1 integrator session,
-# while thirteen certified branches sat unshipped on master for six hours.
-# `integrator` FIRST. It only has work when a merge is actually waiting, so it
-# cannot starve lane1; lane1 gets every cycle the integrator does not need.
-# They still share one runner because they share ~/bainluck and must never run
-# concurrently there.
-launch "$R $HOME/bainluck integrator lane1"
-launch "$R $HOME/bainluck-dev/ux ux"
-launch "$R $HOME/bainluck-dev/latency latency"
-launch "$R $HOME/bainluck-dev/calibration calibration"
-# authority (D50, 9/3): StatPal-as-canonical, built dark, one sport at a time.
-launch "$R $HOME/bainluck-dev/authority authority"
+# ONE WINDOW PER LANE, 2026-09-03 (Alex). The previous line here was
+# `launch "$R $HOME/bainluck integrator lane1"` — one runner serving two inboxes
+# from the master tree, because lane1 used to work in ~/bainluck too. lane1 has
+# had its own worktree since 9/2, so that pairing was stale: it made lane1 wait
+# on the integrator's sessions for no reason, and it is not what the supervisor
+# relaunches, so a supervisor restart silently changed the topology.
+#
+# Lanes are independent now. Each gets its own runner, its own window, and its
+# own worktree (the integrator alone works in the master tree). The list and the
+# worktree mapping are in lanes.conf so this script and lanes-supervisor.sh
+# cannot disagree about which lanes exist.
+N=0
+for L in $LANES_ALL; do
+  D="$(lane_dir "$L")"
+  if [ ! -d "$D" ]; then
+    # Loud, never silent: a missing worktree is why a lane vanishes after a
+    # reboot, and an unopened window looks exactly like a lane with no work.
+    echo "SKIPPED lane '$L' — no worktree at $D. Create it, then re-run this script."
+    continue
+  fi
+  launch "$R $D $L"
+  N=$((N + 1))
+done
 
-echo "One Terminal window opened per lane, streaming live."
+# The cert bus: LANE4_GRADERS identical headless graders (lanes.conf).
+G=0
+while [ "$G" -lt "$LANE4_GRADERS" ]; do
+  launch "$LANE4_RUNNER"
+  G=$((G + 1))
+done
+
+echo "$((N + LANE4_GRADERS)) Terminal windows opened — $N lanes plus $LANE4_GRADERS cert graders, streaming live."
+echo "Also run the supervisor once, in its own window, so a lane that dies comes back:"
+echo "  caffeinate -i ~/bainluck/lanes-supervisor.sh"
 echo "If a lane is already running in another window, close the duplicate:"
 echo "the runners take queues atomically, so duplicates waste nothing but a window."
