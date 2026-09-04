@@ -49,7 +49,8 @@ LANES=("$@")
 # tree. Production never sets it.
 HANDOFF="${LANE_HANDOFF:-$HOME/bainluck/.claude/handoff}"
 LOGDIR="$HANDOFF/runner-logs"
-mkdir -p "$LOGDIR"
+# No log dir for a rehearsal: --dry-run writes nothing at all, anywhere.
+[ "$DRYRUN" -eq 1 ] || mkdir -p "$LOGDIR"
 
 # Ownership record for the orphan reaper in start-lanes.sh. Sessions spawned by
 # this runner inherit its process group, and re-parenting to launchd changes
@@ -67,6 +68,12 @@ mkdir -p "$LOGDIR"
 # window is a live process's lifetime, not forever — and why the reap still also
 # requires ppid 1 and a headless-claude argv. Under-reaping is the safe direction.
 PIDDIR="$HANDOFF/runner-pids"
+# Ownership records are claimed ONLY by a runner that will actually start
+# sessions. --dry-run and --restock-once spawn nothing, so claiming a pgid would
+# be a lie the orphan reaper later acts on — and the GC below DELETES files, so a
+# rehearsal could disown a live runner's sessions. A rehearsal leaves the handoff
+# tree byte-identical; that is what makes it safe to run against production state.
+if [ "$DRYRUN" -eq 0 ] && [ "$RESTOCK_ONCE" -eq 0 ]; then
 mkdir -p "$PIDDIR"
 # GC before claiming: drop records whose process group has no live member. List
 # the files BEFORE snapshotting ps — the reverse order races the sibling runners
@@ -80,8 +87,11 @@ for F in $STALE; do
 done
 RUNNER_PGID=$(ps -o pgid= -p $$ | tr -d ' ')
 echo "$RUNNER_PGID" > "$PIDDIR/runner-$$.pgid"
+fi
 for L in "${LANES[@]}"; do
-  mkdir -p "$HANDOFF/runner-inbox/$L"
+  # A rehearsal does not conjure an inbox either — maybe_restock reports a
+  # missing one, which is the honest answer for a lane that has no inbox.
+  [ "$DRYRUN" -eq 1 ] || mkdir -p "$HANDOFF/runner-inbox/$L"
   # Crash recovery: a .running file means a prior runner died mid-session
   # (reboot, closed laptop). Re-queue it — directives are self-gated, so
   # re-running is always safe.

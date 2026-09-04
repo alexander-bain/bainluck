@@ -316,8 +316,13 @@ def do_rescue(rec, dry):
             print(f"    CONFLICT rebasing {branch} — left untouched, needs a human:\n"
                   f"      {p.stdout.strip().splitlines()[-1] if p.stdout.strip() else p.stderr.strip()[:200]}")
             return False
+        # cwd is the REBASED WORKTREE's backend, never REPO's. This ran in the
+        # shared checkout in the first version, which is the worst shape a gate
+        # can take: it tests a tree the rescue did not produce, then moves the
+        # branch and calls the untested rebase green. The shared tree also holds
+        # other lanes' uncommitted work, so its result is not even reproducible.
         t = subprocess.run(["python3", "-m", "pytest", "-q", *tests],
-                           cwd=str(REPO / "backend"), capture_output=True, text=True, timeout=1800)
+                           cwd=str(wt / "backend"), capture_output=True, text=True, timeout=1800)
         new_sha = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                                  capture_output=True, text=True).stdout.strip()
         # Exit code 1 is a real test failure; ANYTHING ELSE is a story about the

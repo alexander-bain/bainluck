@@ -493,6 +493,87 @@ def test_restock_actually_writes_the_directive(tmp_path):
     assert len(list(inbox.glob("RESTOCK-*.md"))) == 1
 
 
+def test_dry_run_leaves_the_handoff_tree_byte_identical(tmp_path):
+    """A rehearsal must not write ANYWHERE in the handoff tree.
+
+    CERT-874 follow-up: --dry-run claimed a process-group ownership record under
+    `runner-pids/` and ran that directory's garbage collector. Both are real
+    writes, and the GC DELETES — so a rehearsal could disown a live runner's
+    sessions and hand them to the orphan reaper. It also created the log dir and
+    any missing inbox. A rehearsal is only safe to point at production state if
+    it leaves that state untouched.
+    """
+    handoff = _handoff(tmp_path)
+
+    def snapshot():
+        return {
+            str(p.relative_to(handoff)): (p.stat().st_size, p.stat().st_mtime_ns)
+            for p in sorted(handoff.rglob("*")) if p.is_file()
+        }
+
+    before = snapshot()
+    rc, out = _restock(handoff)
+    assert rc == 0, out
+    assert snapshot() == before, "dry-run modified the handoff tree"
+    assert not (handoff / "runner-pids").exists(), "dry-run claimed a pgid ownership record"
+    assert not (handoff / "runner-logs").exists(), "dry-run created a log directory"
+
+
+def test_rescue_runs_its_tests_in_the_rebased_worktree(monkeypatch, tmp_path):
+    """The pytest a rescue runs must execute in the REBASED tree, not the checkout.
+
+    CERT-874 BLOCK: `do_rescue` rebased into a throwaway worktree and then ran
+    pytest with `cwd=REPO/backend`. That is the worst shape a gate can take — it
+    tests a tree the rescue did not produce, sees green, moves the branch, and
+    reports an UNTESTED rebase as verified. The shared checkout also carries other
+    lanes' uncommitted work, so its result is not even reproducible.
+
+    Driven with the real subprocess boundary mocked, so nothing is rebased here.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("stranded_sweep", REPO / "tools" / "stranded-sweep.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    calls = []
+
+    def fake_git(*args, check=True):
+        calls.append(("git", args))
+        return 0, "", ""
+
+    def fake_run(cmd, **kw):
+        calls.append((tuple(cmd), kw.get("cwd")))
+
+        class R:
+            returncode = 0
+            stdout = "0" * 40
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(mod, "git", fake_git)
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    rec = {"branch": "lane1/q999-demo", "ref": "origin/lane1/q999-demo", "pr": 1,
+           "files": ["backend/app/routes/feed.py"]}
+    mod.do_rescue(rec, dry=False)
+
+    pytest_calls = [(c, cwd) for c, cwd in
+                    [(c, w) for c, w in calls if isinstance(c, tuple) and c and c[0] != "git"]
+                    if "pytest" in c]
+    assert len(pytest_calls) == 1, f"expected one pytest invocation, got {pytest_calls}"
+    cwd = pytest_calls[0][1]
+    assert cwd is not None, "pytest ran with no explicit cwd — it would inherit the caller's"
+    assert "stranded-sweep-" in cwd, (
+        f"rescue ran its tests in {cwd}, which is not the rebased worktree — "
+        "it would greenlight an untested rebase"
+    )
+    assert not cwd.startswith(str(REPO / "backend")), (
+        f"rescue ran its tests in the shared checkout ({cwd}); that tree is not "
+        "what the rebase produced and holds other lanes' uncommitted work"
+    )
+
+
 def test_restock_dry_run_does_not_requeue_running_directives(tmp_path):
     """A rehearsal must not touch a live lane's in-flight work.
 
