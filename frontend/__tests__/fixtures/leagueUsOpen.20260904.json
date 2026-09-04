@@ -1,0 +1,1250 @@
+{
+ "count": 32,
+ "events": [
+  {
+   "away_score": 3,
+   "away_team": "Carlos Alcaraz",
+   "commence_time": "2026-09-03T00:30:18+00:00",
+   "completed_at": "2026-09-03T03:20:19.973820+00:00",
+   "current_odds": {
+    "away_probability": 0.9018,
+    "bookmaker_count": 9,
+    "captured_at": "2026-09-03T03:15:18.591074+00:00",
+    "home_probability": 0.0982,
+    "over_under": 33.0,
+    "projected_away_score": 20.9,
+    "projected_home_score": 12.1,
+    "spread": 8.7
+   },
+   "ei": {
+    "emoji": "\ud83d\udcca",
+    "label": "Average",
+    "metadata": {
+     "comeback_factor": 0.6961,
+     "lead_changes": 0,
+     "raw_ei": 0.388,
+     "snapshot_count": 339
+    },
+    "raw_score": 39,
+    "score": 49,
+    "status": "competitive"
+   },
+   "external_id": "3d7f66066eb306e7857fc16682a103f6",
+   "hero_probability": 0.0982,
+   "hero_probability_away": 0.9018,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Jaime Faria",
+   "id": 15299605,
+   "opening_odds": {
+    "away_probability": 0.9018,
+    "favorite": "away",
+    "home_probability": 0.0982,
+    "over_under": 32.5,
+    "spread": 7.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Francisco Cerundolo",
+   "commence_time": "2026-09-03T15:07:00+00:00",
+   "completed_at": "2026-09-03T19:10:06.815330+00:00",
+   "current_odds": {
+    "away_probability": 0.9712,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-03T19:06:38.749791+00:00",
+    "home_probability": 0.0288,
+    "over_under": 44.5,
+    "projected_away_score": 23.8,
+    "projected_home_score": 20.8,
+    "spread": 3.0
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Incredible",
+    "metadata": {
+     "comeback_factor": 0.3659,
+     "lead_changes": 12,
+     "raw_ei": 1.1727,
+     "snapshot_count": 484
+    },
+    "raw_score": 68,
+    "score": 92,
+    "status": "incredible"
+   },
+   "external_id": "d32a85d0b459314b9dee1b507f9dcae2",
+   "hero_probability": 0.0288,
+   "hero_probability_away": 0.9712,
+   "hero_probability_source": "blend",
+   "home_score": 2,
+   "home_team": "Jan-Lennard Struff",
+   "id": 15300836,
+   "opening_odds": {
+    "away_probability": 0.6092,
+    "favorite": "away",
+    "home_probability": 0.3908,
+    "over_under": 37.5,
+    "spread": 3.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Karen Khachanov",
+   "commence_time": "2026-09-03T15:08:33+00:00",
+   "completed_at": "2026-09-03T18:29:00.084040+00:00",
+   "current_odds": {
+    "away_probability": 0.2878,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-03T18:24:02.351830+00:00",
+    "home_probability": 0.7122,
+    "over_under": 39.0,
+    "projected_away_score": 20.8,
+    "projected_home_score": 18.2,
+    "spread": 2.5
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.1497,
+     "lead_changes": 1,
+     "raw_ei": 0.7682,
+     "snapshot_count": 400
+    },
+    "raw_score": 55,
+    "score": 79,
+    "status": "exciting"
+   },
+   "external_id": "8d7429f908e1378299c5938aa4a06fa5",
+   "hero_probability": 0.7122,
+   "hero_probability_away": 0.2878,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Felix Auger-Aliassime",
+   "id": 15299860,
+   "opening_odds": {
+    "away_probability": 0.2878,
+    "favorite": "home",
+    "home_probability": 0.7122,
+    "over_under": 39.5,
+    "spread": -4.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 1,
+   "away_team": "Dalibor Svrcina",
+   "commence_time": "2026-09-03T15:10:00+00:00",
+   "completed_at": "2026-09-03T18:59:59.281546+00:00",
+   "current_odds": {
+    "away_probability": 0.0431,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-03T18:54:34.134193+00:00",
+    "home_probability": 0.9569,
+    "over_under": 40.1,
+    "projected_away_score": 18.2,
+    "projected_home_score": 21.9,
+    "spread": -3.7
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Incredible",
+    "metadata": {
+     "comeback_factor": 0.4632,
+     "lead_changes": 10,
+     "raw_ei": 1.3211,
+     "snapshot_count": 470
+    },
+    "raw_score": 73,
+    "score": 94,
+    "status": "incredible"
+   },
+   "external_id": "387e143b914f1924407c3911ae2eec86",
+   "hero_probability": 0.9569,
+   "hero_probability_away": 0.0431,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Luciano Darderi",
+   "id": 15299859,
+   "opening_odds": {
+    "away_probability": 0.4344,
+    "favorite": "home",
+    "home_probability": 0.5656,
+    "over_under": 38.0,
+    "spread": -2.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 0,
+   "away_team": "Mattia Bellucci",
+   "commence_time": "2026-09-03T18:05:42+00:00",
+   "completed_at": "2026-09-03T19:53:28.819690+00:00",
+   "current_odds": {
+    "away_probability": 0.1401,
+    "bookmaker_count": 9,
+    "captured_at": "2026-09-03T19:48:10.579735+00:00",
+    "home_probability": 0.8599,
+    "over_under": 27.0,
+    "projected_away_score": 7.9,
+    "projected_home_score": 19.1,
+    "spread": -11.2
+   },
+   "ei": {
+    "emoji": "\ud83d\ude34",
+    "label": "Quiet",
+    "metadata": {
+     "comeback_factor": 0.8438,
+     "lead_changes": 0,
+     "raw_ei": 0.1787,
+     "snapshot_count": 209
+    },
+    "raw_score": 27,
+    "score": 26,
+    "status": "quiet"
+   },
+   "external_id": "de81b7eaff562548a98086afe77b8553",
+   "hero_probability": 0.8599,
+   "hero_probability_away": 0.1401,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Taylor Fritz",
+   "id": 15300837,
+   "opening_odds": {
+    "away_probability": 0.1401,
+    "favorite": "home",
+    "home_probability": 0.8599,
+    "over_under": 33.5,
+    "spread": -7.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 1,
+   "away_team": "Lorenzo Musetti",
+   "commence_time": "2026-09-03T18:25:00+00:00",
+   "completed_at": "2026-09-03T21:05:21.046798+00:00",
+   "current_odds": {
+    "away_probability": 0.9165,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-03T21:06:34.263791+00:00",
+    "home_probability": 0.0835,
+    "over_under": 31.5,
+    "projected_away_score": 14.3,
+    "projected_home_score": 17.2,
+    "spread": -2.8
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.0631,
+     "lead_changes": 1,
+     "raw_ei": 0.7498,
+     "snapshot_count": 324
+    },
+    "raw_score": 55,
+    "score": 79,
+    "status": "exciting"
+   },
+   "external_id": "fb353fc871a2ec743a1bb2ec42f4408c",
+   "hero_probability": 0.0835,
+   "hero_probability_away": 0.9165,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Dane Sweeny",
+   "id": 15300834,
+   "opening_odds": {
+    "away_probability": 0.9165,
+    "favorite": "away",
+    "home_probability": 0.0835,
+    "over_under": 28.5,
+    "spread": 8.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 1,
+   "away_team": "Jurij Rodionov",
+   "commence_time": "2026-09-03T18:25:24+00:00",
+   "completed_at": "2026-09-03T21:00:15.000515+00:00",
+   "current_odds": {
+    "away_probability": 0.1468,
+    "bookmaker_count": 9,
+    "captured_at": "2026-09-03T20:59:18.556121+00:00",
+    "home_probability": 0.8532,
+    "over_under": 34.6,
+    "projected_away_score": 14.0,
+    "projected_home_score": 20.6,
+    "spread": -6.6
+   },
+   "ei": {
+    "emoji": "\ud83d\udcca",
+    "label": "Average",
+    "metadata": {
+     "comeback_factor": 0.7931,
+     "lead_changes": 0,
+     "raw_ei": 0.3155,
+     "snapshot_count": 308
+    },
+    "raw_score": 36,
+    "score": 42,
+    "status": "competitive"
+   },
+   "external_id": "0848e831888372afebbf3089bb05921a",
+   "hero_probability": 0.8532,
+   "hero_probability_away": 0.1468,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Jakub Mensik",
+   "id": 15299862,
+   "opening_odds": {
+    "away_probability": 0.1468,
+    "favorite": "home",
+    "home_probability": 0.8532,
+    "over_under": 33.5,
+    "spread": -6.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Alejandro Tabilo",
+   "commence_time": "2026-09-03T18:45:00+00:00",
+   "completed_at": "2026-09-03T22:08:26.883185+00:00",
+   "current_odds": {
+    "away_probability": 0.9699,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-03T22:07:34.193588+00:00",
+    "home_probability": 0.0301,
+    "over_under": 41.4,
+    "projected_away_score": 21.6,
+    "projected_home_score": 19.8,
+    "spread": 1.9
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.3587,
+     "lead_changes": 2,
+     "raw_ei": 0.68,
+     "snapshot_count": 377
+    },
+    "raw_score": 52,
+    "score": 75,
+    "status": "exciting"
+   },
+   "external_id": "71eb62bb4f4f84c25362f99e1f6f8dd0",
+   "hero_probability": 0.0301,
+   "hero_probability_away": 0.9699,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Alexei Popyrin",
+   "id": 15299856,
+   "opening_odds": {
+    "away_probability": 0.604,
+    "favorite": "away",
+    "home_probability": 0.396,
+    "over_under": 40.5,
+    "spread": 2.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Flavio Cobolli",
+   "commence_time": "2026-09-03T18:57:46+00:00",
+   "completed_at": "2026-09-03T21:47:51.604299+00:00",
+   "current_odds": {
+    "away_probability": 0.7884,
+    "bookmaker_count": 10,
+    "captured_at": "2026-09-03T21:45:00.102972+00:00",
+    "home_probability": 0.2116,
+    "over_under": 38.3,
+    "projected_away_score": 21.6,
+    "projected_home_score": 16.8,
+    "spread": 4.8
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.5915,
+     "lead_changes": 0,
+     "raw_ei": 0.6607,
+     "snapshot_count": 339
+    },
+    "raw_score": 51,
+    "score": 73,
+    "status": "exciting"
+   },
+   "external_id": "169f73795d8667bb9fd442d999e8e709",
+   "hero_probability": 0.2116,
+   "hero_probability_away": 0.7884,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Tristan Schoolkate",
+   "id": 15300835,
+   "opening_odds": {
+    "away_probability": 0.7884,
+    "favorite": "away",
+    "home_probability": 0.2116,
+    "over_under": 37.5,
+    "spread": 5.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 1,
+   "away_team": "Marco Trungelliti",
+   "commence_time": "2026-09-03T19:18:30+00:00",
+   "completed_at": "2026-09-03T22:08:26.883185+00:00",
+   "current_odds": {
+    "away_probability": 0.0311,
+    "bookmaker_count": 9,
+    "captured_at": "2026-09-03T22:03:04.914252+00:00",
+    "home_probability": 0.9689,
+    "over_under": 34.0,
+    "projected_away_score": 13.2,
+    "projected_home_score": 20.8,
+    "spread": -7.5
+   },
+   "ei": {
+    "emoji": "\ud83d\ude34",
+    "label": "Quiet",
+    "metadata": {
+     "comeback_factor": 0.8088,
+     "lead_changes": 0,
+     "raw_ei": 0.2962,
+     "snapshot_count": 338
+    },
+    "raw_score": 34,
+    "score": 38,
+    "status": "quiet"
+   },
+   "external_id": "00a3bd37bc163f9a3c46874b6a89ae0a",
+   "hero_probability": 0.9689,
+   "hero_probability_away": 0.0311,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Alexander Blockx",
+   "id": 15299857,
+   "opening_odds": {
+    "away_probability": 0.1727,
+    "favorite": "home",
+    "home_probability": 0.8273,
+    "over_under": 34.5,
+    "spread": -6.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 0,
+   "away_team": "Ignacio Buse",
+   "commence_time": "2026-09-03T21:01:28+00:00",
+   "completed_at": "2026-09-03T23:07:35.787058+00:00",
+   "current_odds": {
+    "away_probability": 0.5217,
+    "bookmaker_count": 9,
+    "captured_at": "2026-09-03T23:03:12.895237+00:00",
+    "home_probability": 0.4783,
+    "over_under": 31.9,
+    "projected_away_score": 12.9,
+    "projected_home_score": 19.0,
+    "spread": -6.1
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Must-Watch",
+    "metadata": {
+     "comeback_factor": 0.4721,
+     "lead_changes": 1,
+     "raw_ei": 0.78,
+     "snapshot_count": 251
+    },
+    "raw_score": 56,
+    "score": 80,
+    "status": "incredible"
+   },
+   "external_id": "84a6e59f618b02ae5dee4f9317303ea3",
+   "hero_probability": 0.4783,
+   "hero_probability_away": 0.5217,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Benjamin Bonzi",
+   "id": 15301184,
+   "opening_odds": {
+    "away_probability": 0.5217,
+    "favorite": "away",
+    "home_probability": 0.4783,
+    "over_under": 38.5,
+    "spread": 1.3
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 0,
+   "away_team": "Alex de Minaur",
+   "commence_time": "2026-09-03T22:00:58+00:00",
+   "completed_at": "2026-09-04T01:00:07.557254+00:00",
+   "current_odds": {
+    "away_probability": 0.0288,
+    "bookmaker_count": 10,
+    "captured_at": "2026-09-04T00:49:17.009329+00:00",
+    "home_probability": 0.9712,
+    "over_under": 34.6,
+    "projected_away_score": 17.8,
+    "projected_home_score": 16.9,
+    "spread": 0.9
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Incredible",
+    "metadata": {
+     "comeback_factor": 0.2451,
+     "lead_changes": 5,
+     "raw_ei": 1.0745,
+     "snapshot_count": 342
+    },
+    "raw_score": 66,
+    "score": 91,
+    "status": "incredible"
+   },
+   "external_id": "c0751e5d782a2bf76a7dc22a6a6bd11e",
+   "hero_probability": 0.9712,
+   "hero_probability_away": 0.0288,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Botic van de Zandschulp",
+   "id": 15301180,
+   "opening_odds": {
+    "away_probability": 0.7183,
+    "favorite": "away",
+    "home_probability": 0.2817,
+    "over_under": 37.0,
+    "spread": 5.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 1,
+   "away_team": "Jesper De Jong",
+   "commence_time": "2026-09-03T22:25:00+00:00",
+   "completed_at": "2026-09-04T02:08:24.183926+00:00",
+   "current_odds": {
+    "away_probability": 0.3102,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T02:03:19.608870+00:00",
+    "home_probability": 0.6898,
+    "over_under": 38.3,
+    "projected_away_score": 17.3,
+    "projected_home_score": 21.0,
+    "spread": -3.6
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Must-Watch",
+    "metadata": {
+     "comeback_factor": 0.4737,
+     "lead_changes": 2,
+     "raw_ei": 0.8582,
+     "snapshot_count": 454
+    },
+    "raw_score": 59,
+    "score": 84,
+    "status": "incredible"
+   },
+   "external_id": "b8a888b85f08cccb5f3a6dc08e20d413",
+   "hero_probability": 0.6898,
+   "hero_probability_away": 0.3102,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Zizou Bergs",
+   "id": 15301216,
+   "opening_odds": {
+    "away_probability": 0.3102,
+    "favorite": "home",
+    "home_probability": 0.6898,
+    "over_under": 37.5,
+    "spread": -4.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Arthur Gea",
+   "commence_time": "2026-09-03T22:26:00+00:00",
+   "completed_at": "2026-09-04T01:05:08.620981+00:00",
+   "current_odds": {
+    "away_probability": 0.9699,
+    "bookmaker_count": 10,
+    "captured_at": "2026-09-04T00:59:44.665539+00:00",
+    "home_probability": 0.0301,
+    "over_under": 38.2,
+    "projected_away_score": 20.4,
+    "projected_home_score": 17.8,
+    "spread": 2.6
+   },
+   "ei": {
+    "emoji": "\ud83d\udd25",
+    "label": "Must-Watch",
+    "metadata": {
+     "comeback_factor": 0.2381,
+     "lead_changes": 1,
+     "raw_ei": 0.9529,
+     "snapshot_count": 316
+    },
+    "raw_score": 62,
+    "score": 87,
+    "status": "incredible"
+   },
+   "external_id": "58f9ccb8193f27ca4b3f7666951845d5",
+   "hero_probability": 0.0301,
+   "hero_probability_away": 0.9699,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Zachary Svajda",
+   "id": 15301164,
+   "opening_odds": {
+    "away_probability": 0.4319,
+    "favorite": "home",
+    "home_probability": 0.5681,
+    "over_under": 38.5,
+    "spread": -1.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Learner Tien",
+   "commence_time": "2026-09-03T23:05:09+00:00",
+   "completed_at": "2026-09-04T01:41:41.903602+00:00",
+   "current_odds": {
+    "away_probability": 0.803,
+    "bookmaker_count": 10,
+    "captured_at": "2026-09-04T01:26:49.086600+00:00",
+    "home_probability": 0.197,
+    "over_under": 31.9,
+    "projected_away_score": 19.4,
+    "projected_home_score": 12.5,
+    "spread": 6.9
+   },
+   "ei": {
+    "emoji": "\ud83d\udcca",
+    "label": "Average",
+    "metadata": {
+     "comeback_factor": 0.7962,
+     "lead_changes": 0,
+     "raw_ei": 0.3587,
+     "snapshot_count": 290
+    },
+    "raw_score": 38,
+    "score": 46,
+    "status": "competitive"
+   },
+   "external_id": "93f7500d41836f113c7cb2101d9408cd",
+   "hero_probability": 0.197,
+   "hero_probability_away": 0.803,
+   "hero_probability_source": "blend",
+   "home_score": 0,
+   "home_team": "Gael Monfils",
+   "id": 15300873,
+   "opening_odds": {
+    "away_probability": 0.803,
+    "favorite": "away",
+    "home_probability": 0.197,
+    "over_under": 34.5,
+    "spread": 6.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 3,
+   "away_team": "Michael Zheng",
+   "commence_time": "2026-09-03T23:28:48+00:00",
+   "completed_at": "2026-09-04T02:08:24.183926+00:00",
+   "current_odds": {
+    "away_probability": 0.9762,
+    "bookmaker_count": 10,
+    "captured_at": "2026-09-04T02:06:26.555468+00:00",
+    "home_probability": 0.0238,
+    "over_under": 36.5,
+    "projected_away_score": 20.5,
+    "projected_home_score": 16.0,
+    "spread": 4.5
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.5094,
+     "lead_changes": 0,
+     "raw_ei": 0.7112,
+     "snapshot_count": 317
+    },
+    "raw_score": 53,
+    "score": 76,
+    "status": "exciting"
+   },
+   "external_id": "e2e596914b5f8addcac5350db8f0880b",
+   "hero_probability": 0.0238,
+   "hero_probability_away": 0.9762,
+   "hero_probability_source": "blend",
+   "home_score": 1,
+   "home_team": "Bu Yunchaokete",
+   "id": 15301172,
+   "opening_odds": {
+    "away_probability": 0.625,
+    "favorite": "away",
+    "home_probability": 0.375,
+    "over_under": 38.5,
+    "spread": 3.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": 2,
+   "away_team": "Quentin Halys",
+   "commence_time": "2026-09-04T01:36:58+00:00",
+   "completed_at": "2026-09-04T06:17:15.925949+00:00",
+   "current_odds": {
+    "away_probability": 0.0314,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:14:47.543126+00:00",
+    "home_probability": 0.9686,
+    "over_under": 41.2,
+    "projected_away_score": 18.3,
+    "projected_home_score": 22.9,
+    "spread": -4.7
+   },
+   "ei": {
+    "emoji": "\u26a1",
+    "label": "Exciting",
+    "metadata": {
+     "comeback_factor": 0.5569,
+     "lead_changes": 0,
+     "raw_ei": 0.7578,
+     "snapshot_count": 560
+    },
+    "raw_score": 55,
+    "score": 79,
+    "status": "exciting"
+   },
+   "external_id": "81d5598e13c2fcfce4989d037947f018",
+   "hero_probability": 0.9686,
+   "hero_probability_away": 0.0314,
+   "hero_probability_source": "blend",
+   "home_score": 3,
+   "home_team": "Alexander Zverev",
+   "id": 15300939,
+   "opening_odds": {
+    "away_probability": 0.1701,
+    "favorite": "home",
+    "home_probability": 0.8299,
+    "over_under": 37.5,
+    "spread": -5.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "completed"
+  },
+  {
+   "away_score": null,
+   "away_team": "Tommy Paul",
+   "commence_time": "2026-09-04T16:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.6091,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T04:41:01.690885+00:00",
+    "home_probability": 0.3909,
+    "over_under": 40.0,
+    "projected_away_score": 21.5,
+    "projected_home_score": 18.5,
+    "spread": 3.1
+   },
+   "external_id": "eb01df701c23be867f95c42c3cdf3290",
+   "hero_probability": 0.3909,
+   "hero_probability_away": 0.6091,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Alexander Bublik",
+   "id": 15301242,
+   "opening_odds": {
+    "away_probability": 0.6091,
+    "favorite": "away",
+    "home_probability": 0.3909,
+    "over_under": 40.0,
+    "spread": 3.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Arthur Rinderknech",
+   "commence_time": "2026-09-04T16:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.2928,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T05:58:49.219720+00:00",
+    "home_probability": 0.7072,
+    "over_under": 37.9,
+    "projected_away_score": 16.7,
+    "projected_home_score": 21.2,
+    "spread": -4.6
+   },
+   "external_id": "244838dd6ed33ec1b01fb5c9552242b0",
+   "hero_probability": 0.7072,
+   "hero_probability_away": 0.2928,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Daniil Medvedev",
+   "id": 15301156,
+   "opening_odds": {
+    "away_probability": 0.2928,
+    "favorite": "home",
+    "home_probability": 0.7072,
+    "over_under": 38.0,
+    "spread": -4.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Carlos Alcaraz",
+   "commence_time": "2026-09-04T17:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.906,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:11:48.043433+00:00",
+    "home_probability": 0.094,
+    "over_under": 32.2,
+    "projected_away_score": 19.9,
+    "projected_home_score": 12.3,
+    "spread": 7.5
+   },
+   "external_id": "b1f7ff4461e49d2d99edb43713b5dc81",
+   "hero_probability": 0.094,
+   "hero_probability_away": 0.906,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Wu Yibing",
+   "id": 15301243,
+   "opening_odds": {
+    "away_probability": 0.906,
+    "favorite": "away",
+    "home_probability": 0.094,
+    "over_under": 32.5,
+    "spread": 7.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Mariano Navone",
+   "commence_time": "2026-09-04T20:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5101,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T05:41:18.953559+00:00",
+    "home_probability": 0.4899,
+    "over_under": 38.9,
+    "projected_away_score": 19.5,
+    "projected_home_score": 19.4,
+    "spread": 0.0
+   },
+   "external_id": "c54ec41ffa7197a418bc22c602705e45",
+   "hero_probability": 0.4899,
+   "hero_probability_away": 0.5101,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Tomas Martin Etcheverry",
+   "id": 15301245,
+   "opening_odds": {
+    "away_probability": 0.5101,
+    "favorite": "even",
+    "home_probability": 0.4899,
+    "over_under": 39.0,
+    "spread": null
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Daniel Merida Aguilar",
+   "commence_time": "2026-09-04T20:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3997,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:02:17.567285+00:00",
+    "home_probability": 0.6003,
+    "over_under": 38.9,
+    "projected_away_score": 18.1,
+    "projected_home_score": 20.7,
+    "spread": -2.6
+   },
+   "external_id": "cd79358c4254d25e0c6f97a73a6bcc14",
+   "hero_probability": 0.6003,
+   "hero_probability_away": 0.3997,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Alex Michelsen",
+   "id": 15301145,
+   "opening_odds": {
+    "away_probability": 0.3997,
+    "favorite": "home",
+    "home_probability": 0.6003,
+    "over_under": 38.5,
+    "spread": -2.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Stefanos Tsitsipas",
+   "commence_time": "2026-09-04T21:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3785,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:04:47.601602+00:00",
+    "home_probability": 0.6215,
+    "over_under": 39.8,
+    "projected_away_score": 18.4,
+    "projected_home_score": 21.4,
+    "spread": -3.1
+   },
+   "external_id": "c883811c20c0f29b0ba37d31ed6adb44",
+   "hero_probability": 0.6215,
+   "hero_probability_away": 0.3785,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Jiri Lehecka",
+   "id": 15301222,
+   "opening_odds": {
+    "away_probability": 0.3785,
+    "favorite": "home",
+    "home_probability": 0.6215,
+    "over_under": 39.5,
+    "spread": -3.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Frances Tiafoe",
+   "commence_time": "2026-09-04T23:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.6405,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:03:47.971682+00:00",
+    "home_probability": 0.3595,
+    "over_under": 40.4,
+    "projected_away_score": 21.9,
+    "projected_home_score": 18.5,
+    "spread": 3.4
+   },
+   "external_id": "5ebaa7ca70301167541b1c8721de3ee4",
+   "hero_probability": 0.3595,
+   "hero_probability_away": 0.6405,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Valentin Vacherot",
+   "id": 15301244,
+   "opening_odds": {
+    "away_probability": 0.6405,
+    "favorite": "away",
+    "home_probability": 0.3595,
+    "over_under": 40.5,
+    "spread": 3.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Denis Shapovalov",
+   "commence_time": "2026-09-05T00:30:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.225,
+    "bookmaker_count": 11,
+    "captured_at": "2026-09-04T06:05:48.577679+00:00",
+    "home_probability": 0.775,
+    "over_under": 38.5,
+    "projected_away_score": 16.7,
+    "projected_home_score": 21.8,
+    "spread": -5.1
+   },
+   "external_id": "33c32753620466a1bdfc7d867baccbe4",
+   "hero_probability": 0.775,
+   "hero_probability_away": 0.225,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Ben Shelton",
+   "id": 15301215,
+   "opening_odds": {
+    "away_probability": 0.2446,
+    "favorite": "home",
+    "home_probability": 0.7554,
+    "over_under": 38.5,
+    "spread": -5.0
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Dane Sweeny",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.195,
+    "bookmaker_count": 8,
+    "captured_at": "2026-09-04T05:19:51.874836+00:00",
+    "home_probability": 0.805,
+    "over_under": 33.2,
+    "projected_away_score": 13.0,
+    "projected_home_score": 20.2,
+    "spread": -7.2
+   },
+   "external_id": "e513bb819953e9a2dde3b09859119274",
+   "hero_probability": 0.805,
+   "hero_probability_away": 0.195,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Luciano Darderi",
+   "id": 15304231,
+   "opening_odds": {
+    "away_probability": 0.1825,
+    "favorite": "home",
+    "home_probability": 0.8175,
+    "over_under": 33.0,
+    "spread": -7.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Flavio Cobolli",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5203,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-04T06:16:17.826207+00:00",
+    "home_probability": 0.4797,
+    "over_under": 40.2,
+    "projected_away_score": 20.5,
+    "projected_home_score": 19.7,
+    "spread": 0.8
+   },
+   "external_id": "46c9fb0b0a11d55479f393e8e1c4710b",
+   "hero_probability": 0.4797,
+   "hero_probability_away": 0.5203,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Alexander Blockx",
+   "id": 15304381,
+   "opening_odds": {
+    "away_probability": 0.5203,
+    "favorite": "away",
+    "home_probability": 0.4797,
+    "over_under": 40.5,
+    "spread": 0.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Francisco Cerundolo",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.1934,
+    "bookmaker_count": 8,
+    "captured_at": "2026-09-04T05:37:50.458099+00:00",
+    "home_probability": 0.8066,
+    "over_under": 36.5,
+    "projected_away_score": 15.4,
+    "projected_home_score": 21.1,
+    "spread": -5.8
+   },
+   "external_id": "b78a2994c6495039aa689e943ff2e194",
+   "hero_probability": 0.8066,
+   "hero_probability_away": 0.1934,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Taylor Fritz",
+   "id": 15304209,
+   "opening_odds": {
+    "away_probability": 0.1935,
+    "favorite": "home",
+    "home_probability": 0.8066,
+    "over_under": 36.5,
+    "spread": -5.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Botic van de Zandschulp",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5883,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-04T06:13:17.927697+00:00",
+    "home_probability": 0.4117,
+    "over_under": 39.8,
+    "projected_away_score": 21.2,
+    "projected_home_score": 18.7,
+    "spread": 2.5
+   },
+   "external_id": "9fe6cf78efce0c0255eec3353bf470fb",
+   "hero_probability": 0.4117,
+   "hero_probability_away": 0.5883,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Zizou Bergs",
+   "id": 15304420,
+   "opening_odds": {
+    "away_probability": 0.5883,
+    "favorite": "away",
+    "home_probability": 0.4117,
+    "over_under": 39.5,
+    "spread": 2.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Benjamin Bonzi",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3429,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-04T05:39:18.903787+00:00",
+    "home_probability": 0.6571,
+    "over_under": 38.5,
+    "projected_away_score": 17.5,
+    "projected_home_score": 21.0,
+    "spread": -3.5
+   },
+   "external_id": "2b34ae91d8c12ab0edcd7aaf19c74e07",
+   "hero_probability": 0.6571,
+   "hero_probability_away": 0.3429,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Karen Khachanov",
+   "id": 15304379,
+   "opening_odds": {
+    "away_probability": 0.3429,
+    "favorite": "home",
+    "home_probability": 0.6571,
+    "over_under": 38.5,
+    "spread": -3.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Arthur Gea",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.3817,
+    "bookmaker_count": 6,
+    "captured_at": "2026-09-04T05:31:50.039891+00:00",
+    "home_probability": 0.6183,
+    "over_under": 38.8,
+    "projected_away_score": 17.7,
+    "projected_home_score": 21.2,
+    "spread": -3.5
+   },
+   "external_id": "86a04b4a1a3485f3d6912825a9d0dde7",
+   "hero_probability": 0.6183,
+   "hero_probability_away": 0.3817,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Michael Zheng",
+   "id": 15304419,
+   "opening_odds": {
+    "away_probability": 0.3816,
+    "favorite": "home",
+    "home_probability": 0.6183,
+    "over_under": 38.5,
+    "spread": -3.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  },
+  {
+   "away_score": null,
+   "away_team": "Learner Tien",
+   "commence_time": "2026-09-05T15:00:00+00:00",
+   "completed_at": null,
+   "current_odds": {
+    "away_probability": 0.5715,
+    "bookmaker_count": 7,
+    "captured_at": "2026-09-04T06:01:18.079696+00:00",
+    "home_probability": 0.4285,
+    "over_under": 40.5,
+    "projected_away_score": 21.3,
+    "projected_home_score": 19.2,
+    "spread": 2.2
+   },
+   "external_id": "6ae5fc5af940894326eb9be2a2dc4900",
+   "hero_probability": 0.4285,
+   "hero_probability_away": 0.5715,
+   "hero_probability_source": "blend",
+   "home_score": null,
+   "home_team": "Jakub Mensik",
+   "id": 15304445,
+   "opening_odds": {
+    "away_probability": 0.5715,
+    "favorite": "away",
+    "home_probability": 0.4285,
+    "over_under": 40.5,
+    "spread": 2.5
+   },
+   "sport": "tennis_atp_us_open",
+   "status": "scheduled"
+  }
+ ]
+}
