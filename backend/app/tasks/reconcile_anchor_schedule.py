@@ -79,6 +79,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time as _time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -111,17 +112,42 @@ DEFAULT_HORIZON = timedelta(days=120)
 #: anything else — and the wall clock that matters is Heroku's 30-second router
 #: timeout, because the only caller today is an admin endpoint.
 #:
-#: Measured 2026-09-03: ~0.2s per ``summary?event=`` call, so the original 200
-#: would have spent ~45s and been killed with an H12 *after the writes had
-#: already committed* — the worst shape a destructive endpoint can have. 100 is
-#: ~20s, inside the window with room for the query and the JSON.
+#: Re-measured 2026-09-04 against production (#2953), because the first number
+#: here was wrong by 3x and the bound built on it could not be reached: a timed
+#: sweep of the NFL window returned 10 rows in 5.66s, 20 in 11.52s and 40 in
+#: 23.32s — **~0.59s per** ``summary?event=`` **call**, near-zero fixed cost, not
+#: the ~0.2s this comment used to claim. So the old 100 was ~59s of ESPN against
+#: a 30-second router: every caller who omitted ``limit`` got a bare Heroku error
+#: page with no ``reason`` and no ``correlation_id``, and on ``apply`` it was the
+#: worst shape a destructive endpoint can have — killed *after* the writes.
+#:
+#: 25 is ~15s, which leaves the other half of the router window for the count
+#: query, the writes, the undo record and the JSON.
+#:
+#: THIS NUMBER IS NOT THE SAFETY. It is the ordinary page size; the safety is
+#: :data:`EXAMINE_BUDGET_SECONDS`, which stops the loop on the clock no matter
+#: what ``limit`` a caller passes. A row count can only ever be a guess at a
+#: duration — that guess is exactly what #2953 was.
 #:
 #: It is SMALLER THAN THE POPULATION and that is the point of ``eligible``:
 #: the window held 685 anchored rows that day (239 NFL alone), so even an
 #: unfiltered run at any router-safe limit sees a minority of them. Scope with
 #: ``sport`` rather than raising this. See :func:`_count_eligible` for why the
 #: shortfall is reported rather than left for the reader to notice.
-DEFAULT_LIMIT = 100
+DEFAULT_LIMIT = 25
+
+#: The bound that actually holds, and the reason ``limit`` no longer has to.
+#:
+#: ``reconcile`` spends its wall clock one ESPN call at a time, so it can check
+#: the clock between calls and stop. 18s of fetching leaves ~12s of the 30-second
+#: router window for everything that is not fetching. A caller who passes
+#: ``limit=500`` now gets a truncated page and a cursor instead of an H12.
+#:
+#: Stopping early is NOT an error and not a silent shortfall: the rows the
+#: deadline cut off were never asked about, so they are dropped from this call's
+#: population entirely — ``examined`` counts only rows that got an answer, and
+#: ``next_cursor`` points at the last one that did. See ``stopped_by``.
+EXAMINE_BUDGET_SECONDS = 18.0
 
 #: What separates the two halves of a cursor. A kickoff renders as ISO-8601,
 #: which already contains ``-``, ``:`` and ``+``; ``|`` appears in none of them.
@@ -880,14 +906,41 @@ async def reconcile(
             "truncated": bool(cursor),
             "has_more": False,
             "next_cursor": None,
+            # Served on this path too so the key never reads as "this payload
+            # predates the field": a page with no rows examined nothing, and
+            # nothing is not the same discovery as "the clock stopped me".
+            "stopped_by": None,
             **summarize_decisions([]),
         }
 
     service = get_espn_service()
     decisions = []
+    stopped_by: Optional[str] = None
+    started_at = _time.monotonic()
     for row in rows:
         record = await _fetch_record(service, [row.sport_key], row.espn_id)
         decisions.append(schedule_decision(row, record))
+        # Checked AFTER the append, so a call always carries at least one
+        # answered row: `rows[-1]` below is what builds `next_cursor`, and a
+        # page that examined nothing would have no cursor to hand its
+        # successor and would loop the driver forever on the same page.
+        if _time.monotonic() - started_at >= EXAMINE_BUDGET_SECONDS:
+            stopped_by = "budget"
+            break
+
+    # The tail the deadline cut off was never asked about. Trimming `rows` to
+    # the answered prefix is what keeps that honest downstream WITHOUT touching
+    # any of the reporting below: `examined` comes from `decisions`, `truncated`
+    # and `has_more` compare it against `eligible`/`remaining`, and `next_cursor`
+    # is built from `rows[-1]`. Leave `rows` at full length and every one of
+    # those silently counts rows nobody looked at — the un-examined tail would
+    # be reported as agreeing, and the cursor would skip it for good.
+    # Did the deadline actually leave rows on the table, or did it trip on the
+    # very last one? Recorded BEFORE the trim, because after it the two cases
+    # are indistinguishable and only the first one owes the caller a cursor.
+    budget_cut_tail = stopped_by == "budget" and len(decisions) < len(rows)
+    if stopped_by is not None:
+        rows = rows[: len(decisions)]
 
     summary = summarize_decisions(decisions)
     moved, stale = 0, 0
@@ -1013,11 +1066,18 @@ async def reconcile(
     # before the cursor, whether or not `eligible` still counts those rows now.
     # `eligible` is recounted against a moving `now`, so it is not a record of
     # what this call skipped and cannot be asked to stand in for one.
-    truncated = bool(cursor) or eligible > summary["examined"]
+    truncated = bool(cursor) or eligible > summary["examined"] or budget_cut_tail
     # `has_more` is about the CURSOR's tail; `truncated` is about the whole
     # window. On the last page of a sweep they disagree — nothing follows, yet
     # this call still saw a minority of the window — and both readings are true.
-    has_more = remaining > summary["examined"]
+    #
+    # `budget_cut_tail` is ORed in rather than left to the comparison because
+    # `remaining` is a COUNT taken separately from the rows: when the deadline
+    # cuts a page short we have direct evidence of an un-examined row in hand,
+    # and that evidence must outrank a count that could be stale by a settle.
+    # Without it a short page can report `has_more: false`, hand back no cursor,
+    # and the sweep abandons its tail while every field looks healthy.
+    has_more = remaining > summary["examined"] or budget_cut_tail
     last = rows[-1]
     next_cursor = encode_cursor(last.commence_time, last.event_id) if has_more else None
     # An authority that answered for nothing is not a clean population. The
@@ -1049,6 +1109,12 @@ async def reconcile(
         "truncated": truncated,
         "has_more": has_more,
         "next_cursor": next_cursor,
+        # Why this page is the length it is. `None` means the page ran to its
+        # `limit` normally; "budget" means the clock ended it early and the
+        # short `examined` is the deadline working, not the population thinning.
+        # Named to match the sibling driver's vocabulary in
+        # `anchor_schedule_sentinel`, which already reports `stopped_by`.
+        "stopped_by": stopped_by,
         # The undo is quoted as an IDENTITY and a runnable line, not as a
         # reassurance. An operator who has to go and find out how to reverse a
         # write does not have a reversible write. Absent on a dry run and on an
@@ -1122,17 +1188,32 @@ def summarize_for_operator(result: dict[str, Any]) -> str:
         else f"examined={examined}"
     )
     has_more = result.get("has_more", unknown)
+    # A page the CLOCK ended is not a page `limit` ended, and the two have
+    # opposite remedies. Saying "raise limit" to someone whose page stopped at
+    # 18 seconds sends them to make the next one time out — the precise mistake
+    # this function's docstring warns about, now reachable for a second reason.
+    on_budget = result.get("stopped_by") == "budget"
     if has_more is True:
         reach += (
             f" MORE ({result.get('remaining', 0) - (examined or 0)} after this page; "
             f"pass cursor={result.get('next_cursor')})"
         )
+        if on_budget:
+            # Deliberately does not contain the phrase "raise limit" even to
+            # negate it: this line is read in a hurry off a terminal, and a
+            # skimmed negation is the advice.
+            reach += (
+                " [ended on the time budget — page again; a bigger page will not help]"
+            )
     elif result.get("truncated"):
-        reach += (
-            " TAIL (this page ends the window; earlier pages hold the rest)"
-            if has_more is False
-            else f" TRUNCATED (raise limit above {eligible} to see the rest)"
-        )
+        if on_budget:
+            reach += " BUDGET (this page ended on the clock, not on limit)"
+        else:
+            reach += (
+                " TAIL (this page ends the window; earlier pages hold the rest)"
+                if has_more is False
+                else f" TRUNCATED (raise limit above {eligible} to see the rest)"
+            )
     return (
         f"{result.get('terminal')}: {reach} "
         f"moved={result.get('moved', 0)} stale={result.get('stale', 0)} · {counts}"

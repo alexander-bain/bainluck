@@ -250,14 +250,23 @@ class TestTheWindow:
         assert rail.DEFAULT_HORIZON >= timedelta(days=98)
 
     def test_the_default_limit_fits_inside_the_router_timeout(self):
-        """One ESPN call per row at ~0.2s, against Heroku's 30-second cutoff.
+        """One ESPN call per row, against Heroku's 30-second cutoff.
 
         The only caller is an admin endpoint, so a limit whose run cannot return
         is not a limit — and worse here than usual, because ``apply`` commits
         its writes before the router gives up, leaving an operator with an H12
         and no idea what landed.
+
+        THE PER-ROW COST HERE IS MEASURED, AND IT USED TO BE GUESSED. This
+        assertion read ``* 0.2`` until #2953, which is where the guess lived:
+        re-measured against production on 2026-09-04 the real cost is ~0.59s
+        (10 rows/5.66s, 20/11.52s, 40/23.32s), so the 100 this test was passing
+        was ~59 seconds against a 30-second router. A test that carries its own
+        unverified constant cannot fail when the world moves — the whole bound
+        now belongs to ``EXAMINE_BUDGET_SECONDS``, and
+        ``test_reconcile_anchor_schedule_budget_2953.py`` owns the ordering.
         """
-        assert rail.DEFAULT_LIMIT * 0.2 < 25
+        assert rail.DEFAULT_LIMIT * 0.59 < 15
 
 
 class TestReachIsReported:
