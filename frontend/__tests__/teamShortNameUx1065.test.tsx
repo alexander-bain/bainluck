@@ -161,6 +161,23 @@ describe("UX-1065: the reported defect", () => {
     expect(pair.home).not.toBe(pair.away);
   });
 
+  it("two teams sharing a MASCOT both fall back to their full names", () => {
+    // The pair clause exists for this and nothing else: 22 distinct teams in
+    // the corpus end in "Bulldogs", and both of these are real SEC sides, so
+    // this fixture is an ordinary Saturday rather than a hypothetical. Without
+    // the clause the card reads "Bulldogs" against "Bulldogs".
+    const pair = teamShortNames(
+      { name: "Georgia Bulldogs" },
+      { name: "Mississippi State Bulldogs" },
+    );
+    expect(pair).toEqual({
+      home: "Georgia Bulldogs",
+      away: "Mississippi State Bulldogs",
+    });
+    expect(NAMES).toContain("Georgia Bulldogs");
+    expect(NAMES).toContain("Mississippi State Bulldogs");
+  });
+
   it("squad and suffix markers do not become the whole name", () => {
     expect(teamShortName("Chaves B")).toBe("Chaves B");
     expect(teamShortName("Brian Norman Jr")).toBe("Brian Norman Jr");
