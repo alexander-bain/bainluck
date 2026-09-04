@@ -24,6 +24,7 @@
  */
 
 import { probabilityHeat } from "@/lib/probabilityColors";
+import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 
 export interface QuantityRung {
   /** Stable key (outcome id or the threshold string). */
@@ -36,6 +37,13 @@ export interface QuantityRung {
   highlighted?: boolean;
   /** Numeric value used for ascending sort when `sort` is on. */
   value?: number;
+  /**
+   * UX-1052 item 4 — 24h movement as a wire fraction, rendered as a small
+   * ± points chip beside the label. Alex, on the date-bucket card: "the leader
+   * marked and the mover marked". Absent or sub-rounding movement prints
+   * nothing (`isRenderedMove`), so a 0.003-point drift never becomes a badge.
+   */
+  movement?: number | null;
 }
 
 /** A single bar in the "where it lands" distribution heat-strip. */
@@ -62,6 +70,22 @@ interface QuantityGroupProps {
   onRungSelect?: (rung: QuantityRung) => void;
   /** Sort rungs ascending by `value` (design shows ≥60 → ≥95 top-to-bottom). */
   sort?: boolean;
+  /**
+   * UX-1052 item 2 — what `sort` sorts BY.
+   *
+   * "value" (default) is the threshold ladder's reading: a cumulative question
+   * read low-to-high. "probability" is the discrete distribution's reading —
+   * an exact-score market has no ordinal axis to climb, and taking the first
+   * four rungs in scoreline order gives "0–0, 0–1, 0–2, 0–3", which is an
+   * alphabetisation rather than a story. Most likely first.
+   */
+  sortBy?: "value" | "probability";
+  /**
+   * A plain footer line, e.g. "12 more scorelines". Unlike `lineLabel` it
+   * carries no swatch and makes no claim about a highlighted rung — it exists
+   * so a capped ladder can say it is capped instead of silently ending.
+   */
+  footnote?: string;
   /** Glance zoom for Discover cards: fewer rungs, tighter spacing, no distribution. */
   compact?: boolean;
   /**
@@ -96,6 +120,8 @@ export default function QuantityGroup({
   distribution,
   onRungSelect,
   sort = true,
+  sortBy = "value",
+  footnote,
   compact = false,
   bare = false,
   maxRungs,
@@ -106,6 +132,9 @@ export default function QuantityGroup({
   let ordered = rungs;
   if (sort) {
     ordered = [...rungs].sort((a, b) => {
+      if (sortBy === "probability") {
+        return (b.probability ?? -1) - (a.probability ?? -1);
+      }
       const av = a.value ?? Number.NEGATIVE_INFINITY;
       const bv = b.value ?? Number.NEGATIVE_INFINITY;
       return av - bv;
@@ -168,6 +197,21 @@ export default function QuantityGroup({
               >
                 {rung.label}
               </span>
+              {/* UX-1052 item 4 — "the mover marked". Rendered only when the
+                  movement actually PRINTS as a move, so a rounding residue
+                  cannot become an arrow (UX-P275). */}
+              {isRenderedMove(rung.movement) && (
+                <span
+                  className={[
+                    "shrink-0 font-mono text-[11px] font-bold tabular-nums",
+                    (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary",
+                  ].join(" ")}
+                  aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
+                >
+                  {(rung.movement ?? 0) > 0 ? "▲" : "▼"}
+                  {formatMovementPoints(rung.movement)}
+                </span>
+              )}
               <span className="flex-1 h-[18px] rounded-md bg-surface-elevated overflow-hidden">
                 <span
                   className={`block h-full rounded-md ${heat.bar}`}
@@ -194,6 +238,12 @@ export default function QuantityGroup({
         <div className="flex items-center gap-1.5 pt-2 mt-1.5 border-t border-surface-elevated">
           <span className="w-2 h-2 rounded-[2px] bg-accent-brand shrink-0" />
           <span className="text-[11px] text-text-muted">{lineLabel}</span>
+        </div>
+      )}
+
+      {footnote && (
+        <div className="pt-2 mt-1.5 border-t border-surface-elevated">
+          <span className="text-[11px] text-text-muted">{footnote}</span>
         </div>
       )}
 
@@ -256,6 +306,13 @@ function QuantityDistribution({ bins }: { bins: QuantityDistributionBin[] }) {
  * `threshold_groups` payload shape). Formats "≥ N unit" labels, sorts ascending,
  * and marks the top rung by probability as the reference line when none is
  * explicitly flagged.
+ *
+ * UX-1052 item 2 — an outcome may carry an explicit `label`, which is used
+ * verbatim (exact-score rows send the scoreline, "2–3"). Alex's rule for this
+ * queue: **a rung that cannot be labelled is not rendered.** An outcome with
+ * neither a label nor a real threshold is DROPPED rather than given a made-up
+ * "≥ 0" — that invented rung is the defect being fixed, and re-deriving it here
+ * from a zeroed `threshold_value` would put it straight back.
  */
 export function buildThresholdRungs(
   outcomes: {
@@ -265,14 +322,30 @@ export function buildThresholdRungs(
     threshold_value: number;
     threshold_unit?: string;
     threshold_direction?: string;
+    label?: string | null;
   }[],
 ): QuantityRung[] {
-  return outcomes.map((o) => ({
-    key: o.outcome_id,
-    label: formatThresholdLabel(o.threshold_value, o.threshold_unit, o.threshold_direction),
-    probability: o.probability,
-    value: o.threshold_value,
-  }));
+  const rungs: QuantityRung[] = [];
+  outcomes.forEach((o) => {
+    const explicit = (o.label ?? "").trim();
+    if (explicit) {
+      rungs.push({
+        key: o.outcome_id,
+        label: explicit,
+        probability: o.probability,
+        value: o.threshold_value,
+      });
+      return;
+    }
+    if (o.threshold_direction === "exact") return; // labelled or nothing
+    rungs.push({
+      key: o.outcome_id,
+      label: formatThresholdLabel(o.threshold_value, o.threshold_unit, o.threshold_direction),
+      probability: o.probability,
+      value: o.threshold_value,
+    });
+  });
+  return rungs;
 }
 
 function formatThresholdLabel(

@@ -218,10 +218,35 @@ function PlayerSearch({
   );
 }
 
-/** Extract short display name — last word for long names, full for short */
+/**
+ * The shortest label a last-word abbreviation is allowed to produce.
+ *
+ * UX-1052 item 7. Alex, on the MLB league page's odds-movement chart: *"'AL/NL
+ * Champ' tab shows a team called 'D'."* He was reading this list. Kalshi stores
+ * its MLB team outcomes as city-plus-initial — `"Los Angeles D"`, `"New York
+ * Y"`, `"Chicago C"` (gotcha #16) — and `"Los Angeles D"` is three words, so
+ * the last-word rule below handed the reader the single letter `D` and called
+ * it a team.
+ *
+ * The abbreviated NAMES are a data defect and belong to the identity lane; what
+ * this component owns is not turning one into a label that names nothing. Three
+ * characters is the floor because every real last word clears it ("Rays",
+ * "Cardinals", "Thunder") and no initial or league suffix does ("D", "Y",
+ * "FC") — and when a name cannot be shortened honestly, the full string is
+ * still true.
+ */
+const MIN_SHORT_NAME_CHARS = 3;
+
+/** Extract short display name — last word for long names, full for short. */
 function shortName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/);
   if (parts.length <= 2) return fullName;
   // For 3+ word names (e.g., "Oklahoma City Thunder"), use last word
-  return parts[parts.length - 1];
+  const last = parts[parts.length - 1];
+  // …unless the last word is an initial or a bare suffix, in which case it is
+  // not a shorter name for anything. Keep the whole string.
+  if (last.replace(/[^\p{L}\p{N}]/gu, "").length < MIN_SHORT_NAME_CHARS) {
+    return fullName;
+  }
+  return last;
 }

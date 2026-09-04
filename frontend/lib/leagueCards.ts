@@ -244,3 +244,76 @@ export function cleanMarketName(name: string): string {
     .replace(/\s*(2024|2025|2026)(-\d+)?\s*$/i, "")
     .trim();
 }
+
+// ---------------------------------------------------------------------------
+// 4. Partitioning a section's markets — UX-1052 item 8
+// ---------------------------------------------------------------------------
+
+/** One yes/no market with the single answer it has. */
+export interface LeagueBinary {
+  market: LeagueMarket;
+  answer: NonNullable<ReturnType<typeof binaryAnswer>>;
+}
+
+/** One date-bucket market with its ladder. */
+export interface LeagueLadder {
+  market: LeagueMarket;
+  ladder: NonNullable<ReturnType<typeof dateLadder>>;
+}
+
+export interface LeaguePartition {
+  cards: LeagueMarket[];
+  ladders: LeagueLadder[];
+  binaries: LeagueBinary[];
+}
+
+/**
+ * Split a list of league markets into the three shapes ruling 047 names.
+ *
+ * Lifted out of `LeagueMarketSection` for UX-1052 item 8. Alex, shopping the
+ * MLB league page: *"there is a SECOND Yes/No section at the bottom of the
+ * page."* There were three. The partition ran INSIDE each section, so every
+ * section that happened to contain a binary grew its own "Yes / no" block —
+ * measured on `/api/leagues/baseball_mlb` on 2026-09-03: **55 binaries in
+ * `props`, 9 in `more_markets`, and 1 lonely one in `awards`**, which is a
+ * header over a single row.
+ *
+ * "Which markets are yes/no questions" is a question about markets, not about
+ * sections, so the page can now ask it once across all of them and render one
+ * board. Order within each bucket is preserved, so a caller that partitions a
+ * single section still gets the backend's importance sort.
+ */
+export function partitionLeagueMarkets(markets: LeagueMarket[]): LeaguePartition {
+  const cards: LeagueMarket[] = [];
+  const ladders: LeagueLadder[] = [];
+  const binaries: LeagueBinary[] = [];
+  for (const market of markets) {
+    const answer = binaryAnswer(market);
+    if (answer) {
+      binaries.push({ market, answer });
+      continue;
+    }
+    const ladder = dateLadder(market);
+    if (ladder) {
+      ladders.push({ market, ladder });
+      continue;
+    }
+    cards.push(market);
+  }
+  return { cards, ladders, binaries };
+}
+
+/**
+ * The reading order for the merged yes/no board: most likely first.
+ *
+ * Merging three sections destroys the backend's per-section importance sort —
+ * "the 4th most important award prop" and "the 30th most important prop" have
+ * no shared scale. Probability does, and on a board of one-line questions it is
+ * the thing a reader is scanning for. An unpriced question sorts last rather
+ * than being dropped: the question is real even when the price is missing.
+ */
+export function sortBinariesByAnswer(binaries: LeagueBinary[]): LeagueBinary[] {
+  return [...binaries].sort(
+    (a, b) => (b.answer.probability ?? -1) - (a.answer.probability ?? -1),
+  );
+}

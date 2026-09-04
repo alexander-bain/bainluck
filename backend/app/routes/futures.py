@@ -1847,6 +1847,29 @@ async def get_playoff_grid(
     }
 
 
+#: How far a sparse history window is widened, and when. Slowly-polled futures
+#: (politics, economics, and every league's DIVISION markets) carry only a
+#: handful of snapshots in seven days, so a literal 7-day read charts nothing.
+#:
+#: MODULE SCOPE since UX-1052 item 7. It used to be a local inside
+#: `get_futures_history`, which is how `/multi-history` came to lack it — and
+#: `/multi-history` is the ONLY path a league page's stage tabs use, so the MLB
+#: "Division" tab printed "Limited price history available" over a market whose
+#: single-market endpoint served 5,065 points.
+_EXTEND_TIERS = [
+    (20, 720),   # <20 snapshots -> try 30 days
+    (10, 2160),  # <10 snapshots -> try 90 days
+]
+
+
+#: UX-1052 item 3 — how many players a placement grid puts on a FEED card.
+#: The concept page's version of the same grid shows 20; a strip card is a
+#: glance, and a 156-golfer table inside it is the five-card wall it replaced
+#: wearing a different shape. The card prints `row_total` so the depth of the
+#: real field is stated rather than hidden.
+PLACEMENT_GRID_FEED_ROWS = 8
+
+
 def _market_has_priced_outcome(market: dict) -> bool:
     """Does this grouped-feed market carry a probability the card can print?
 
@@ -2020,6 +2043,8 @@ async def grouped_feed(
     even if the beat is broken.
     """
     from ..utils.market_grouping import (
+        detect_exact_score_groups,
+        detect_placement_groups,
         detect_stat_prop_groups,
         detect_playoff_progression_groups,
         detect_threshold_groups,
@@ -2112,6 +2137,17 @@ async def grouped_feed(
     stat_prop_groups = detect_stat_prop_groups(market_dicts)
     playoff_groups = detect_playoff_progression_groups(market_dicts)
     threshold_groups = detect_threshold_groups(outcome_dicts)
+    # UX-1052 item 2 — exact-score outcomes are a discrete distribution over
+    # scorelines. `extract_threshold` now refuses them, so without this they
+    # would simply vanish from the strip; with it they keep their card and gain
+    # rung labels that are the actual outcomes ("2–3"), which is what Alex
+    # asked for: "show the real scorelines or the real thresholds."
+    exact_score_groups = detect_exact_score_groups(outcome_dicts)
+    # UX-1052 item 3 — one tournament's placement questions are ONE grid.
+    # Alex: five near-identical Omega European Masters cards (Winner / Top 5 /
+    # Top 10 / Top 20 / Make the Cut) listing the same golfers — "group them
+    # into a beautiful grid."
+    placement_groups = detect_placement_groups(market_dicts)
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
@@ -2166,11 +2202,24 @@ async def grouped_feed(
             "market_count": len(group_markets),
         })
 
-    for scope, outcomes in threshold_groups.items():
-        if len(outcomes) < 2:
-            continue
-        for o in outcomes:
-            grouped_outcome_ids.add(o["id"])
+    for tournament_key, grid in placement_groups.items():
+        # The grid CONSUMES its markets: leaving them ungrouped would put the
+        # five cards back underneath the thing built to replace them.
+        for mid in grid["market_ids"]:
+            grouped_market_ids.add(mid)
+        feed_items.append({
+            "type": "placement_grid",
+            "group_key": f"placement:{tournament_key}",
+            "title": grid["tournament"],
+            "columns": grid["columns"],
+            # The card shows a readable field and says how deep the real one is.
+            "rows": grid["rows"][:PLACEMENT_GRID_FEED_ROWS],
+            "row_total": grid["row_total"],
+            "market_count": len(grid["market_ids"]),
+            "sources": grid["sources"],
+        })
+
+    def _group_title(outcomes: list[dict], scope: str) -> str:
         # #1102: build a context-carrying title from the parent market name
         # (strip the specific numeric threshold, preserve case for the entity),
         # falling back to the shared stem for legacy/context-free groups.
@@ -2184,12 +2233,50 @@ async def grouped_feed(
             title = re.sub(r"\s{2,}", " ", title).strip(" :–-·?")
             if not title:
                 title = market_name
-        else:
-            title = scope.replace("#", "").strip()
+            return title
+        return scope.replace("#", "").strip()
+
+    for scope, outcomes in exact_score_groups.items():
+        if len(outcomes) < 2:
+            continue
+        for o in outcomes:
+            grouped_outcome_ids.add(o["id"])
         feed_items.append({
             "type": "threshold",
+            # UX-1052 item 2 — the discriminator the renderer reads. Kept
+            # inside the `threshold` row type on purpose: the strip's
+            # fail-closed admission (`propStripAdmission`) refuses any row type
+            # it does not recognise, so a brand-new type would have silently
+            # dropped every exact-score card instead of relabelling it.
+            "kind": "exact_score",
+            "group_key": f"exact_score:{scope}",
+            "title": _group_title(outcomes, scope),
+            "points": [
+                {
+                    "id": o["id"],
+                    "name": o["name"],
+                    "probability": o.get("probability"),
+                    # The rung label IS the outcome. No threshold is claimed.
+                    "label": o["score_label"],
+                    "threshold_value": 0,
+                    "threshold_unit": "",
+                    "threshold_direction": "exact",
+                }
+                for o in outcomes
+            ],
+            "outcome_count": len(outcomes),
+        })
+
+    for scope, outcomes in threshold_groups.items():
+        if len(outcomes) < 2:
+            continue
+        for o in outcomes:
+            grouped_outcome_ids.add(o["id"])
+        feed_items.append({
+            "type": "threshold",
+            "kind": "threshold",
             "group_key": f"threshold:{scope}",
-            "title": title,
+            "title": _group_title(outcomes, scope),
             "points": [
                 {
                     "id": o["id"],
@@ -2253,6 +2340,8 @@ async def grouped_feed(
             "stat_prop": len(stat_prop_groups),
             "playoff_progression": len(playoff_groups),
             "threshold": len(threshold_groups),
+            "exact_score": len(exact_score_groups),
+            "placement_grid": len(placement_groups),
         },
     }
 
@@ -2366,7 +2455,43 @@ async def get_multi_market_history(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     snap_result = await db.execute(snapshot_query)
-    snapshots = snap_result.scalars().all()
+    snapshots = list(snap_result.scalars().all())
+
+    # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
+    #
+    # Alex, on the MLB league page: the chart's "Division" tab says "Limited
+    # price history available". Measured on production 2026-09-03, that claim
+    # was an artefact of THIS endpoint, not of the data:
+    #
+    #   GET /api/futures/multi-history?market_ids=<13 division markets>&hours=168
+    #       → 50 outcomes, 0 history points, every one
+    #   GET /api/futures/199075/history?hours=168   (one of those 13)
+    #       → 5,065 history points
+    #
+    # `get_futures_history` widens a sparse window (`_EXTEND_TIERS`: under 20
+    # snapshots → 30 days, under 10 → 90 days) precisely because slowly-polled
+    # futures carry only a handful of points in seven days. This path never
+    # learned it, so the multi-market tabs — which are the ONLY way a league
+    # page charts a stage — went dark while the single-market page charted the
+    # very same market fine. Same tiers, same "only if it actually finds more"
+    # rule, so a genuinely empty stage still reports empty.
+    if len(snapshots) < _EXTEND_TIERS[0][0]:
+        for threshold, extended_hours in _EXTEND_TIERS:
+            if len(snapshots) >= threshold or extended_hours <= hours:
+                continue
+            ext_result = await db.execute(
+                select(FuturesOddsSnapshot)
+                .where(
+                    FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+                    FuturesOddsSnapshot.captured_at
+                    >= datetime.now(timezone.utc) - timedelta(hours=extended_hours),
+                )
+                .order_by(FuturesOddsSnapshot.captured_at)
+            )
+            extended = list(ext_result.scalars().all())
+            if len(extended) > len(snapshots):
+                snapshots = extended
+                hours = extended_hours
 
     # Build outcome_id -> merge_key lookup
     oid_to_merge_key: dict[int, str] = {}
@@ -3749,10 +3874,6 @@ async def get_futures_history(
     requested_hours = hours
     actual_hours = hours
     auto_extended = False
-    _EXTEND_TIERS = [
-        (20, 720),   # <20 snapshots → try 30 days
-        (10, 2160),  # <10 snapshots → try 90 days
-    ]
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 

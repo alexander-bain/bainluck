@@ -49,9 +49,34 @@ _THRESHOLD_SIMPLE_RE = re.compile(
     \s*
     (°[FCK]|%|points?|goals?|runs?|yards?|mph|mm|inches|feet|degrees?)?  # optional unit
     \s*
-    (?:or\s+(?:more|above|higher|greater|less|below|lower|fewer)|\+|-|\s+and\s+above|\s+and\s+below)
+    (?:or\s+(?:more|above|higher|greater|less|below|lower|fewer)|\+|-(?!\s*\d)|\s+and\s+above|\s+and\s+below)
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+
+# UX-1052 item 2 — an exact SCORELINE: two integers joined by a dash, with a
+# non-digit on each side so a decimal ("2.5-3.5") or a longer run of digits
+# cannot masquerade as one. Kept deliberately narrow: this pattern's only job
+# is to tell "0 - 3" apart from a threshold, and a false positive here silently
+# deletes a real threshold rung.
+_SCORELINE_RE = re.compile(
+    r"""
+    (?<![\d.\-])     # not inside a longer number, a decimal, or an ISO date
+    (\d{1,2})        # home goals / sets
+    \s*[-–—]\s*      # hyphen, en dash or em dash
+    (\d{1,2})        # away goals / sets
+    (?![\d.\-])      # ditto on the trailing side ("2026-09-03" must not match)
+    """,
+    re.VERBOSE,
+)
+
+# The trailing verb that marks the text BEFORE a scoreline as the WINNER rather
+# than as one side of a fixture: "Iva Jovic wins 2-1" (Polymarket tennis) vs
+# "AC Milan 0 - 3 Benfica" (Polymarket soccer). Two different label problems —
+# see `_scoreline_label`.
+_SCORELINE_ACTOR_TAIL_RE = re.compile(
+    r"\s*(?:to\s+win|wins|win|beats|def\.?|defeats)\s*[:\-–—]?\s*$",
+    re.IGNORECASE,
 )
 
 # Player stat props: "PlayerName: 25+ Points" or "PlayerName: Points Over 25.5"
@@ -297,6 +322,70 @@ def _normalize_playoff_stage(stage: str, action: str) -> tuple[str, int]:
     return (f"{action} {stage.title()}", 1)
 
 
+def extract_scoreline(name: str) -> Optional[tuple[int, int]]:
+    """
+    Extract an exact SCORELINE from an outcome name, e.g.
+
+        "AC Milan 0 - 3 Sport Lisboa e Benfica"  → (0, 3)
+        "FC Emmen 1 - 1 FC Volendam"             → (1, 1)
+
+    Returns (home_goals, away_goals) in the order they appear, or None.
+
+    UX-1052 item 2. This exists because ``_THRESHOLD_SIMPLE_RE`` accepts a bare
+    ``-`` as a threshold suffix, so every Polymarket "Exact Score" outcome
+    parsed as a threshold on its FIRST number: "AC Milan 0 - 3 Benfica" became
+    ``≥ 0``, "3 - 1" and "3 - 2" both became ``≥ 3``. Alex, shopping /sports on
+    2026-09-03: the ladder showed "≥ 0, ≥ 1, ≥ 2, ≥ 2" — "rung labels are not
+    the outcomes."
+
+    A scoreline is not a threshold in either direction, so the parser must
+    REFUSE it rather than pick one of its two numbers. The refusal is enforced
+    at the top of `extract_threshold`; the parsed pair is what
+    `detect_exact_score_groups` labels the rungs with.
+    """
+    if not name:
+        return None
+    m = _SCORELINE_RE.search(name)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
+
+
+def _scoreline_label(name: str) -> Optional[str]:
+    """
+    The rung label for an exact-score outcome — UX-1052 item 2.
+
+    Two shapes reach this, and only one of them is unambiguous from the score
+    alone:
+
+        "AC Milan 2 - 3 Sport Lisboa e Benfica"  → "2–3"
+            Both sides are named IN the outcome, in the same order as the card
+            title, so the bare score reads correctly.
+
+        "Iva Jovic wins 2-1"                     → "Iva Jovic 2–1"
+            The score alone would collide: "Magdalena Frech wins 2-1" is a
+            different outcome with the same digits. Labelling both "2–1" would
+            reproduce the exact defect this queue is fixing — duplicate rung
+            labels that are not the outcomes — one layer down.
+
+    Returns None when there is no scoreline.
+    """
+    if not name:
+        return None
+    m = _SCORELINE_RE.search(name)
+    if not m:
+        return None
+    score = f"{int(m.group(1))}–{int(m.group(2))}"
+
+    before = name[: m.start()].strip()
+    after = name[m.end():].strip()
+    # Text on BOTH sides ⇒ a fixture, and the score is the whole story.
+    if after:
+        return score
+    actor = _SCORELINE_ACTOR_TAIL_RE.sub("", before).strip(" :·-–—")
+    return f"{actor} {score}" if actor else score
+
+
 def extract_threshold(name: str) -> Optional[tuple[float, str, str]]:
     """
     Extract a numeric threshold from a market outcome or title name.
@@ -308,6 +397,12 @@ def extract_threshold(name: str) -> Optional[tuple[float, str, str]]:
         - direction: "above" or "below" or "exact"
     """
     if not name:
+        return None
+
+    # UX-1052 item 2 — a SCORELINE is not a threshold. "2 - 1" carries two
+    # numbers and no direction; reading either one as "≥ N" invents a claim the
+    # market never made. Refuse before any pattern gets a chance to guess.
+    if extract_scoreline(name):
         return None
 
     # Try primary pattern first
@@ -477,6 +572,254 @@ def detect_threshold_groups(
         if len(group) >= 2:
             group.sort(key=lambda x: x["threshold_value"])
             result[scope] = group
+
+    return result
+
+
+def detect_exact_score_groups(
+    outcomes: list[dict],
+) -> dict[str, list[dict]]:
+    """
+    Detect EXACT SCORE groups among a list of outcomes — UX-1052 item 2.
+
+    An exact-score market ("AC Milan vs. Benfica - Exact Score") is a discrete
+    distribution over scorelines, not a ladder of cumulative thresholds. Before
+    this existed the outcomes fell into `detect_threshold_groups`, which read
+    the first integer of "AC Milan 2 - 3 Benfica" as a threshold and printed
+    "≥ 2" — a label that is not the outcome, and that collides with every other
+    scoreline sharing a home score.
+
+    Each outcome dict should have at minimum:
+        - id: int
+        - name: str (e.g. "AC Milan 2 - 3 Sport Lisboa e Benfica")
+        - market_id: int
+    Optionally (strongly preferred, same scoping rules as thresholds):
+        - market_name: str
+        - group_id: str
+        - probability: float | None
+
+    Returns:
+        Dict mapping scope_key → list of outcome dicts, MOST LIKELY FIRST
+        (only groups with 2+ scoreline outcomes). Each dict gains:
+        - score_home: int
+        - score_away: int
+        - score_label: str  — the rung label, e.g. "2–3" (en dash)
+
+    Ordering is by probability descending, not by scoreline. On a 16-rung
+    exact-score market the glance card shows the first four rungs, and the four
+    most likely scorelines are the story; the first four in scoreline order are
+    "0–0, 0–1, 0–2, 0–3", which is an alphabetisation, not a reading.
+    """
+    by_scope: dict[str, list[dict]] = {}
+
+    for o in outcomes:
+        name = o.get("name", "")
+        score = extract_scoreline(name)
+        if not score:
+            continue
+
+        group_id = o.get("group_id")
+        market_name = o.get("market_name")
+        if group_id:
+            scope = f"group:{group_id}"
+        elif market_name:
+            scope = market_name.strip().lower()
+        else:
+            # No parent context: a bare scoreline cannot be scoped to a game,
+            # and pooling scorelines across unrelated matches is the #1102
+            # defect. Refuse rather than guess.
+            continue
+
+        home, away = score
+        by_scope.setdefault(scope, []).append({
+            **o,
+            "score_home": home,
+            "score_away": away,
+            "score_label": _scoreline_label(name) or f"{home}–{away}",
+        })
+
+    result = {}
+    for scope, group in by_scope.items():
+        if len(group) >= 2:
+            group.sort(
+                key=lambda x: (
+                    -(x.get("probability") or 0.0),
+                    x["score_home"],
+                    x["score_away"],
+                )
+            )
+            result[scope] = group
+
+    return result
+
+
+# ── PLACEMENT GRID DETECTION (UX-1052 item 3) ──
+
+#: The placement questions a tournament asks about the SAME field of players,
+#: in the order a reader climbs them: hardest first. `key` is the grid column
+#: id, `label` is its header. Mirrors `FINISH_POSITION_COLUMNS` in
+#: `frontend/lib/eventConceptDisplay.ts`, which is the concept page's version of
+#: this same grid — the two are one design, and the ordering must not diverge.
+PLACEMENT_COLUMNS: list[tuple[str, str]] = [
+    ("winner", "Winner"),
+    ("top_5", "Top 5"),
+    ("top_10", "Top 10"),
+    ("top_20", "Top 20"),
+    ("top_40", "Top 40"),
+    ("make_cut", "Make cut"),
+]
+
+_PLACEMENT_SUFFIX_RE = re.compile(
+    r"""
+    ^\s*(?:
+        (?P<winner>winner|to\s+win|outright(?:\s+winner)?)
+      | top\s*(?P<top>\d{1,2})(?:\s+finish)?
+      | (?P<cut>make(?:\s+the)?\s+cut|to\s+make\s+the\s+cut)
+    )\s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+#: Minimum distinct placement questions before a set of markets is worth a grid.
+#: Alex: "Same for any tournament with ≥3 placement markets." Below that the
+#: grid is a table with one column — worse than the cards it replaces.
+PLACEMENT_GRID_MIN_COLUMNS = 3
+
+
+def parse_placement_market(name: str) -> Optional[tuple[str, str]]:
+    """
+    Split a placement market name into (tournament, column_key) — UX-1052 item 3.
+
+        "Omega European Masters - Top 10 Finish"  → ("Omega European Masters", "top_10")
+        "Omega European Masters - Winner"         → ("Omega European Masters", "winner")
+        "Omega European Masters - Make the Cut"   → ("Omega European Masters", "make_cut")
+
+    Returns None when the name is not a recognised placement question, which is
+    the common case — the refusal is what keeps unrelated "X - Y" markets (every
+    Polymarket "A vs. B - Exact Score" on the same strip) out of the grid.
+    """
+    if not name or " - " not in name:
+        return None
+    tournament, _, suffix = name.rpartition(" - ")
+    tournament = tournament.strip()
+    if not tournament:
+        return None
+    m = _PLACEMENT_SUFFIX_RE.match(suffix)
+    if not m:
+        return None
+    if m.group("winner"):
+        return (tournament, "winner")
+    if m.group("cut"):
+        return (tournament, "make_cut")
+    top = f"top_{int(m.group('top'))}"
+    if top not in {k for k, _ in PLACEMENT_COLUMNS}:
+        return None
+    return (tournament, top)
+
+
+def detect_placement_groups(
+    markets: list[dict],
+) -> dict[str, dict]:
+    """
+    Group a tournament's placement markets into ONE grid — UX-1052 item 3.
+
+    Alex, shopping /sports on 2026-09-03: five near-identical cards for the
+    Omega European Masters (Winner, Top 5, Top 10, Top 20, Make the Cut), each
+    listing the same handful of golfers. "Group them into a beautiful grid …
+    players down, markets across, the way the US Open bracket grid works."
+
+    Each market dict should have at minimum:
+        - id: int
+        - name: str  ("Omega European Masters - Top 10 Finish")
+        - outcomes: list of {id, name, probability}
+    Optionally: source, sport, category.
+
+    Returns:
+        Dict mapping tournament key → a grid descriptor:
+            {
+              "tournament": str,
+              "market_ids": [int, ...],
+              "columns": [{"key": str, "label": str}, ...],   # ordered
+              "rows": [{"name": str, "values": {col_key: prob|None}}, ...],
+              "row_total": int,
+              "sources": [str, ...],
+            }
+        Only tournaments with >= PLACEMENT_GRID_MIN_COLUMNS distinct columns.
+
+    Rows are ordered by the WINNER column descending where it exists, else by
+    the strongest value the player carries anywhere in the grid. A player with
+    no odds in a column gets ``None`` — rendered as "—", never fabricated,
+    which is the same rule the concept page's ladder already follows.
+    """
+    by_tournament: dict[str, dict] = {}
+
+    for m in markets:
+        parsed = parse_placement_market(m.get("name") or "")
+        if not parsed:
+            continue
+        tournament, column = parsed
+        key = tournament.lower()
+        entry = by_tournament.setdefault(
+            key,
+            {"tournament": tournament, "market_ids": [], "columns": {},
+             "players": {}, "sources": []},
+        )
+        if column in entry["columns"]:
+            # Two sources for one question: keep the first and do not double the
+            # column. Cross-source reconciliation is the blend's job, not the
+            # grid's ("the blend is the product").
+            continue
+        entry["columns"][column] = True
+        entry["market_ids"].append(m.get("id"))
+        source = m.get("source")
+        if source and source not in entry["sources"]:
+            entry["sources"].append(source)
+        for o in m.get("outcomes") or []:
+            player = (o.get("name") or "").strip()
+            if not player:
+                continue
+            prob = o.get("probability")
+            if prob is None:
+                continue
+            entry["players"].setdefault(player, {})[column] = float(prob)
+
+    result: dict[str, dict] = {}
+    for key, entry in by_tournament.items():
+        ordered_columns = [
+            {"key": k, "label": label}
+            for k, label in PLACEMENT_COLUMNS
+            if k in entry["columns"]
+        ]
+        if len(ordered_columns) < PLACEMENT_GRID_MIN_COLUMNS:
+            continue
+        if not entry["players"]:
+            continue
+
+        column_keys = [c["key"] for c in ordered_columns]
+
+        def _rank(item):
+            _, values = item
+            win = values.get("winner")
+            best = max((v for v in values.values() if v is not None), default=0.0)
+            # Winner-first, then the strongest number the player carries. A
+            # player absent from the winner market still sorts sensibly instead
+            # of sinking to the bottom of a grid they lead a column of.
+            return (-(win if win is not None else -1.0), -best)
+
+        rows = [
+            {"name": player,
+             "values": {c: values.get(c) for c in column_keys}}
+            for player, values in sorted(entry["players"].items(), key=_rank)
+        ]
+
+        result[key] = {
+            "tournament": entry["tournament"],
+            "market_ids": [i for i in entry["market_ids"] if i is not None],
+            "columns": ordered_columns,
+            "rows": rows,
+            "row_total": len(rows),
+            "sources": entry["sources"],
+        }
 
     return result
 

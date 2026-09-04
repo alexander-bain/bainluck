@@ -27,9 +27,11 @@ import type {
 } from "@/lib/types";
 import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
 import { gridCellsToProgression } from "@/lib/gridCellState";
+import { partitionLeagueMarkets } from "@/lib/leagueCards";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
+import LeagueBinaryBoard from "@/components/LeagueBinaryBoard";
 import LeagueGameRail from "@/components/LeagueGameRail";
 import type { PositionOption } from "@/components/EvolutionView";
 import MoversRibbon from "@/components/MoversRibbon";
@@ -363,6 +365,18 @@ export default function LeagueShowcasePage() {
   const marketSections = Object.entries(leagueMarkets?.sections ?? {});
   const gridTeams = grid?.teams?.length ?? 0;
 
+  // UX-1052 item 8 — every yes/no question on the page, collected ONCE.
+  // `LeagueMarketSection` used to partition its own markets and draw its own
+  // block, so the MLB page carried three: 55 binaries in `props`, 9 in
+  // `more_markets`, and 1 in `awards` (a header over a single row). Alex saw
+  // two of them and asked for the duplicate to go.
+  // Not a `useMemo`: this sits below the page's early returns, where a hook
+  // cannot go (react-hooks/rules-of-hooks), and the work is a linear pass over
+  // the ~120 markets already in memory.
+  const hoistedBinaries = marketSections.flatMap(
+    ([, markets]) => partitionLeagueMarkets(markets as LeagueMarket[]).binaries,
+  );
+
   // How many CONTAINERS the page is actually rendering — what a section header has
   // to distinguish itself from (spec §4). Counted here rather than inside each
   // section, because "am I the only thing on this page?" is a page-level question.
@@ -538,9 +552,17 @@ export default function LeagueShowcasePage() {
               markets={markets as LeagueMarket[]}
               sectionCount={renderedSectionCount}
               tier={tier}
+              hoistBinaries
             />
           ))
         }
+
+        {/* UX-1052 item 8 — ONE yes/no board for the whole page.
+            Alex: "there is a SECOND Yes/No section at the bottom of the page."
+            There were three, one per section that happened to hold a binary.
+            The partition is a question about markets, not about sections, so it
+            is asked once here. */}
+        <LeagueBinaryBoard binaries={hoistedBinaries} />
 
         {/* Upcoming Tournaments (golf) */}
         {upcomingTournaments.length > (heroTournament && tournamentStatus(heroTournament) === "upcoming" ? 1 : 0) && (

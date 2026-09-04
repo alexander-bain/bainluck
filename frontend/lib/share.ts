@@ -97,3 +97,70 @@ export async function shareContent(
 
   return null;
 }
+
+/**
+ * What KIND of ladder a `threshold_heatmap` card is drawing.
+ *
+ * One card shape covers two axes. "Before October · Before 2027" is a ladder in
+ * TIME; "$480 · $490 · $500" is a ladder in MAGNITUDE. The backend already
+ * tells them apart — `discover_card_archetypes._date_bucket_points` stamps
+ * every date rung `source: "date_bucket"` — and it returns the date points
+ * WHOLE and FIRST, so a ladder is homogeneous by construction and never half
+ * of each. That is what makes one kind per card a safe reading.
+ */
+export type LadderKind = "date" | "threshold";
+
+/**
+ * The rung noun that is TRUE of each ladder kind.
+ *
+ * A table rather than a ternary so that adding a third axis is a line here
+ * instead of a second place to forget.
+ */
+const LADDER_RUNG_NOUN: Record<LadderKind, string> = {
+  date: "window",
+  threshold: "outcome",
+};
+
+/**
+ * The share sentence for a ladder card — UX-1052 item 4, repaired by CERT-867.
+ *
+ * Alex, on the original: *"the share text ('Before 2027 is at 15% in When will
+ * Apple…') gets the same treatment."* Two things were wrong with it. It reads
+ * backwards — the answer arrives before the question — and it hands the reader
+ * the single number the card itself had just been criticised for showing,
+ * saying nothing about the ladder the card now draws.
+ *
+ * One sentence, question first, leader named, and a count of rungs so the
+ * reader knows there is a distribution behind it.
+ *
+ * CERT-867: that count used to be spelled "N windows" unconditionally, because
+ * the sentence was written for the date card it shipped with. `threshold_heatmap`
+ * is not only the date card. On the live feed the day this was repaired, SIX of
+ * six heatmap cards were magnitude ladders and NONE was a date ladder, so the
+ * only sentences this function actually produced told readers that a share
+ * price and a box-office gross had "5 windows" and "6 windows".
+ *
+ * `kind` therefore has NO DEFAULT. A default is what turns the next call site
+ * into a silent re-acquisition of this bug, and there is exactly one call site,
+ * so requiring it costs nothing.
+ *
+ * Exported rather than inlined because `ActionBar` takes share text as a prop
+ * and never renders it. Note what that does NOT buy: asserting this builder
+ * proves the SENTENCE is well-formed and says nothing about which arguments the
+ * card hands it — which is precisely how the wrong noun shipped green. The
+ * wiring is held by a component-level share-action regression that captures the
+ * prop (`ladderShareNoun867.test.tsx`), not by this export.
+ */
+export function buildLadderShareText(
+  marketName: string,
+  leaderLabel: string,
+  leaderProbability: number,
+  rungCount: number,
+  kind: LadderKind,
+): string {
+  const noun = LADDER_RUNG_NOUN[kind];
+  return (
+    `${marketName} — ${leaderLabel} leads at ${formatShareProbability(leaderProbability)} ` +
+    `across ${rungCount} ${noun}${rungCount === 1 ? "" : "s"} on Bain Luck.`
+  );
+}

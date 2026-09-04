@@ -40,6 +40,27 @@ function isShowableProbability(p: number | null | undefined): boolean {
 }
 
 /**
+ * UX-1052 item 2 — can this ladder rung be LABELLED?
+ *
+ * Alex's rule, filing the exact-score ladders: "a rung that cannot be labelled
+ * is not rendered." `buildThresholdRungs` enforces it in the renderer by
+ * dropping such points; this is the same test at the admission boundary, so
+ * the count beside "Player Props & Progressions" cannot claim a card that the
+ * renderer then declines to draw — the #2646 class this module was written for.
+ *
+ * A point is labelable when the backend sent an explicit label (exact-score
+ * scorelines) or when it is a genuine directional threshold the client can
+ * format as "≥ N". A point marked `exact` with no label is neither.
+ */
+function isLabelableRung(p: {
+  label?: string | null;
+  threshold_direction?: string;
+}): boolean {
+  if ((p?.label ?? "").trim()) return true;
+  return p?.threshold_direction !== "exact";
+}
+
+/**
  * Does this grouped-feed row carry at least one number the card can print?
  *
  * FAIL CLOSED. An unrecognised `type` returns `false`: a row shape this build
@@ -55,8 +76,18 @@ export function groupedFeedRowHasNumber(item: GroupedFeedItem): boolean {
         isShowableProbability(o?.probability),
       );
     case "threshold":
-      return (item.points ?? []).some((p) =>
-        isShowableProbability(p?.probability),
+      return (item.points ?? []).some(
+        (p) => isShowableProbability(p?.probability) && isLabelableRung(p),
+      );
+    case "placement_grid":
+      // UX-1052 item 3. Every cell may legitimately be "—" for a given player,
+      // so the row is not the unit — the GRID needs at least one real number
+      // somewhere, and at least one column to put it under.
+      return (
+        (item.columns ?? []).length > 0 &&
+        (item.rows ?? []).some((r) =>
+          Object.values(r?.values ?? {}).some(isShowableProbability),
+        )
       );
     case "stat_prop":
       return (item.lines ?? []).some((l) =>

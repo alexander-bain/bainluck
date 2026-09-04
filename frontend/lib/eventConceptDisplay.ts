@@ -20,6 +20,50 @@ export function statusLabel(status: string): string {
   }
 }
 
+/**
+ * UX-1052 item 1 — the sport glyph beside a concept card's domain label.
+ *
+ * The card printed a hardcoded 🥊 next to whatever `domain` said, so /sports
+ * Live Now read "Vuelta a España 2026 · 🥊 CYCLING" (Alex, 2026-09-03 shop).
+ * Every registered adapter domain gets its own glyph here; an unregistered
+ * domain gets NO glyph rather than a wrong one — the same discipline as the
+ * ladder rungs in this queue: a thing that cannot be labelled is not rendered.
+ *
+ * Keys are the `domain` values the concept adapters emit
+ * (`backend/app/utils/event_*.py`: soccer, cycling, election, f1, golf,
+ * tennis, awards) plus the aliases the feed classifier can hand us.
+ */
+const DOMAIN_EMOJI: Record<string, string> = {
+  awards: "🏆",
+  baseball: "⚾",
+  basketball: "🏀",
+  boxing: "🥊",
+  cricket: "🏏",
+  cycling: "🚴",
+  election: "🗳",
+  f1: "🏎",
+  football: "🏈",
+  golf: "⛳",
+  hockey: "🏒",
+  mma: "🥋",
+  motorsports: "🏎",
+  olympics: "🏅",
+  soccer: "⚽",
+  tennis: "🎾",
+};
+
+/**
+ * The glyph for a concept domain, or null when we have none.
+ *
+ * Callers MUST render nothing when this is null. Returning a generic fallback
+ * would reproduce the defect in a quieter register — a glyph that is merely
+ * unrelated instead of actively wrong.
+ */
+export function conceptDomainEmoji(domain?: string | null): string | null {
+  if (!domain) return null;
+  return DOMAIN_EMOJI[domain.trim().toLowerCase()] ?? null;
+}
+
 /** L2-147: domains whose winner-field / named-field rows are individual PEOPLE, so
  *  a Wikipedia headshot is meaningful (the leaderboard already opts golf in; this
  *  extends the same signal to the props section). Team/region/numeric fields are

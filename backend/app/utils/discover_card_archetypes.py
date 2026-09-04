@@ -129,6 +129,143 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
     return value * _suffix_multiplier(label), unit, direction
 
 
+# ── DATE BUCKETS (UX-1052 item 4) ──
+#
+# Alex, on the Discover card "When will Apple release the iPhone 18?":
+#
+#     "Multi-outcome date questions are unreadable … shows one number (15%,
+#      'Before 2027') … Design: outcomes as ordered bars (Before Oct · Before
+#      2027 · …) with the leader marked and the mover marked. Applies to every
+#      date-bucket / multi-outcome futures card, not this one."
+#
+# The card's outcomes are "Before April", "Before July", "Before October",
+# "Before 2027". None of them is a threshold: `_compact_value_thresholds`
+# refuses bare years by design (2020-2099 without a unit -- the guard that stops
+# "2026-27 Stanley Cup" scoring a rung at 27), and a month name carries no
+# number at all. So the ladder came back empty, the market had only two
+# card-eligible outcomes after the fabricated-book filter, and the card fell
+# through to the one-number Variant A.
+#
+# A date bucket IS a rung -- its axis is time rather than magnitude. Parsing it
+# as one puts the question on the ladder the design already has for "by WHEN"
+# (`threshold_heatmap` + `QuantityGroup wideLabels`), in chronological order.
+
+_MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8,
+    "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+_DATE_BUCKET_RE = re.compile(
+    r"""
+    ^\s*
+    (?:(?P<lead>before|by|prior\s+to|on\s+or\s+before|in|during|after|from)\s+)?
+    (?:
+        (?P<month>[a-z]+)\s+(?P<monthyear>\d{4})
+      | (?P<month2>[a-z]+)
+      | (?P<year>\d{4})
+    )
+    (?:\s+(?P<tail>or\s+later|or\s+earlier|or\s+after|or\s+before))?
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _parse_date_bucket(label: str) -> tuple[int | None, int] | None:
+    """Parse a date-bucket outcome label into ``(year_or_None, month)``.
+
+        "Before October"     -> (None, 10)
+        "Before 2027"        -> (2027, 1)
+        "March 2027"         -> (2027, 3)
+        "2029 or later"      -> (2029, 1)
+
+    Returns None for anything that is not confidently a date bucket. The
+    refusal is the load-bearing half: this parser runs over every outcome label
+    on the site, and a false positive turns a candidate field into a fake
+    timeline.
+    """
+    m = _DATE_BUCKET_RE.match(label or "")
+    if not m:
+        return None
+    if m.group("monthyear"):
+        month = _MONTHS.get(m.group("month").lower())
+        return (int(m.group("monthyear")), month) if month else None
+    if m.group("month2"):
+        # A bare month name only -- no year to anchor it yet.
+        month = _MONTHS.get(m.group("month2").lower())
+        if not month:
+            return None
+        # A lone month with no qualifier ("October") is a label, not a bucket;
+        # require the "before/by/after" framing that makes it a cutoff.
+        return (None, month) if m.group("lead") else None
+    year = int(m.group("year"))
+    if not 1900 <= year <= 2999:
+        return None
+    return (year, 1)
+
+
+def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ladder rungs for a set of date-bucket outcomes, chronologically ordered.
+
+    Returns [] unless EVERY outcome parses. A partial timeline is worse than
+    none: the rungs it can place look authoritative while the ones it cannot
+    are silently missing, which is the class of defect this queue is clearing.
+    """
+    if len(outcomes) < 2:
+        return []
+
+    parsed: list[tuple[dict[str, Any], int | None, int]] = []
+    for outcome in outcomes:
+        label = _clean_text(outcome.get("name") or outcome.get("label"))
+        got = _parse_date_bucket(label)
+        if got is None:
+            return []
+        parsed.append((outcome, got[0], got[1]))
+
+    years = [y for _, y, _ in parsed if y is not None]
+    if years and any(y is None for _, y, _ in parsed):
+        # "Before October" alongside "Before 2027" means October of the year
+        # BEFORE the first dated bucket -- that is what makes the sequence a
+        # sequence. Anchoring month-only buckets to the earliest named year
+        # minus one is the only reading under which they precede it.
+        anchor = min(years) - 1
+    elif years:
+        anchor = None
+    else:
+        # No year anywhere: relative month order is still a correct ladder.
+        anchor = 2000
+
+    points: list[dict[str, Any]] = []
+    for outcome, year, month in parsed:
+        resolved_year = year if year is not None else anchor
+        if resolved_year is None:
+            return []
+        points.append(
+            {
+                "source": "date_bucket",
+                "label": _clean_text(outcome.get("name") or outcome.get("label")),
+                "value": resolved_year * 100 + month,
+                "unit": "date",
+                "direction": "before",
+                "probability": (
+                    outcome.get("probability")
+                    if outcome.get("probability") is not None
+                    else outcome.get("current_probability")
+                ),
+                "movement": (
+                    outcome.get("movement")
+                    if outcome.get("movement") is not None
+                    else outcome.get("probability_change_24h")
+                ),
+            }
+        )
+    points.sort(key=lambda p: float(p["value"]))
+    return points
+
+
 def _ladder_is_scale_coherent(points: list[dict[str, Any]]) -> bool:
     magnitudes = [abs(float(p["value"])) for p in points if p.get("value")]
     if len(magnitudes) < 2:
@@ -142,6 +279,15 @@ def _threshold_points(
     outcomes: list[dict[str, Any]],
     outcome_count: int | None,
 ) -> list[dict[str, Any]]:
+    # UX-1052 item 4 -- a date question is a ladder whose axis is time. Tried
+    # FIRST, and returned whole: a set of date buckets must never be half-read
+    # as magnitudes ("Before 2027" scoring a rung at 2027 beside a month that
+    # scores nothing) -- which is exactly what the numeric parser below would do
+    # if the year guard were ever relaxed.
+    date_points = _date_bucket_points(outcomes)
+    if date_points:
+        return date_points
+
     points: list[dict[str, Any]] = []
 
     for outcome in outcomes:
