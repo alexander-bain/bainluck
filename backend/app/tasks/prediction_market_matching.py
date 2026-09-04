@@ -4385,7 +4385,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     from app.models.models import Event, Sport, Team
     from app.utils.prediction_market_matching import (
         match_teams_to_event, _strip_sport_name_prefix, _strip_championship_suffix,
-        bracket_refusal_reason,
+        bracket_refusal_reason, question_refusal_reason,
     )
 
     if not matchup or not matchup.team_a:
@@ -4463,6 +4463,16 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         logger.debug(
             "Refusing auto-create from '%s' (#2993) — %s",
             market.name, bracket_reason,
+        )
+        return None
+
+    # #3026: a question is not a game. Same boundary and the same reason it sits
+    # here rather than in the parser — these are the strings the stamp writes.
+    question_reason = question_refusal_reason(team_a, team_b)
+    if question_reason:
+        logger.debug(
+            "Refusing auto-create from '%s' (#3026) — %s",
+            market.name, question_reason,
         )
         return None
 
