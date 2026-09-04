@@ -48,6 +48,7 @@ from app.tasks.link_tennis_statpal_fixtures import (
     PRIOR_PAIRED,
     PRIOR_STATES_THAT_ARE_A_LINK,
     PRIOR_UNANCHORED,
+    PRIOR_VANISHED,
     classify_prior,
 )
 
@@ -215,8 +216,29 @@ class TestTheLinkVocabularyCannotDriftOpen:
             PRIOR_UNANCHORED,
             PRIOR_FOREIGN_SPORT,
             PRIOR_MULTIPLE_HOLDERS,
+            PRIOR_VANISHED,
         ]
         assert len(set(states)) == len(states)
+
+    def test_vanished_is_not_a_link_and_is_not_produced_by_the_classifier(self):
+        """CERT-895 repair. It is the absence of a holder, not a kind of holder.
+
+        `classify_prior` is only ever called with at least one holder — it is
+        built from rows the server returned — so `VANISHED` cannot come from
+        here. It is minted by the post-lost-race re-read when the id it just
+        lost to has no holder at all, and it is emphatically not a link.
+        """
+        assert PRIOR_VANISHED not in PRIOR_STATES_THAT_ARE_A_LINK
+
+        produced = {
+            classify_prior(FIXTURE, [_holder(301, "tennis_atp", TENNIS_ANCHOR)])["state"],
+            classify_prior(FIXTURE, [_holder(301, "tennis_atp")])["state"],
+            classify_prior(FIXTURE, [_holder(303, "baseball_mlb")])["state"],
+            classify_prior(
+                FIXTURE, [_holder(301, "tennis_atp"), _holder(302, "tennis_atp")]
+            )["state"],
+        }
+        assert PRIOR_VANISHED not in produced
 
     def test_a_new_prior_state_cannot_arrive_unclassified(self):
         """The guard shaped like `test_link_tennis_write_outcomes`'s.
@@ -237,6 +259,7 @@ class TestTheLinkVocabularyCannotDriftOpen:
             PRIOR_UNANCHORED,
             PRIOR_FOREIGN_SPORT,
             PRIOR_MULTIPLE_HOLDERS,
+            PRIOR_VANISHED,
         }, (
             "a prior state was added or renamed. Decide whether it means the "
             f"fixture is linked before it reaches production: {sorted(declared)}"

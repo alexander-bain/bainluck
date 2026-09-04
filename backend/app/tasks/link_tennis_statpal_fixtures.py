@@ -105,6 +105,17 @@ production 2026-09-04 the day this shipped: 213 tennis scalars, 213 anchors, so
 the new bucket is empty and no count moves — it is the NEXT half-link it exists
 to catch, and 10,941 non-tennis rows already carry a StatPal scalar for the
 cross-sport arm to eventually collide with.
+
+**And the question is asked FIRST, not on the miss path** (CERT-895). Putting it
+inside the unmatched arm looked safe — a fixture we hold cannot be its own
+candidate, because `CANDIDATES` filters `statpal_fixture_id IS NULL`. That is
+true of the HOLDER and silent about every other row: a second row matching the
+same two players IS a candidate, so the loop would stamp the scalar onto it and
+manufacture the two-rows-for-one-id duplicate this task exists to report. If we
+hold the id in any form, this pass writes nothing for that fixture. For the same
+reason a LOST race re-reads the pair instead of assuming the winner finished:
+losing the `IS NULL` guard proves somebody claimed the column, not that anybody
+anchored it.
 """
 
 from __future__ import annotations
@@ -304,6 +315,12 @@ PRIOR_FOREIGN_SPORT = "FOREIGN_SPORT"
 #: Two or more of our rows hold the same scalar. `events.statpal_fixture_id` has
 #: a plain index, not a unique one, so nothing at the schema level forbids it.
 PRIOR_MULTIPLE_HOLDERS = "MULTIPLE_HOLDERS"
+#: We LOST the column race and then nobody held the id at all (CERT-895 repair).
+#: Produced by the post-rollback re-read, never by `classify_prior` — it is not a
+#: property of a holder, it is the absence of one where a holder just was. The
+#: honest reading is "the winner wrote the scalar and then rolled back", i.e. its
+#: anchor was refused. Not a link, and not a miss we can fix on this pass.
+PRIOR_VANISHED = "VANISHED"
 
 #: The one prior state that means the fixture is genuinely linked and this pass
 #: has nothing to do. A whitelist for the same reason `COMMITTABLE_OUTCOMES` is
@@ -470,6 +487,19 @@ def classify_prior(fixture_id: str, holders: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _record_prior(run: LinkRun, fixture: StatPalFixture, prior: dict[str, Any]) -> None:
+    """Count a fixture we ALREADY hold the id for, in the bucket it belongs to.
+
+    CERT-895 repair. Shared by the two places that reach this conclusion — the
+    top of the loop, and the re-read after a lost race — so the two cannot drift
+    into disagreeing about which prior states are a link.
+    """
+    if prior["state"] in PRIOR_STATES_THAT_ARE_A_LINK:
+        run.already_linked += 1
+    else:
+        run.unpaired.append(_receipt(fixture, **prior))
+
+
 async def _already_linked(
     session, fixtures: list[StatPalFixture]
 ) -> dict[str, dict[str, Any]]:
@@ -579,24 +609,36 @@ async def _run_link_tennis_statpal_fixtures(
             if verdict == VERDICT_DOUBLES:
                 run.doubles_skipped += 1
                 continue
+
+            # ── ASKED BEFORE THE CANDIDATE IS CONSIDERED, not only on the miss
+            # path (CERT-895 repair). ─────────────────────────────────────────
+            #
+            # This used to sit inside the `VERDICT_UNMATCHED` arm, on the
+            # reasoning that an already-linked fixture has no candidate BY
+            # CONSTRUCTION: `CANDIDATES` filters `statpal_fixture_id IS NULL`, so
+            # the row holding the id cannot be offered back. That reasoning is
+            # true about THE HOLDER and says nothing about any OTHER row.
+            #
+            # A second row matching the same two players inside ±36h is a
+            # candidate, and the loop would link the fixture to it — writing the
+            # scalar onto a second row while the first still holds it. The
+            # outcome is a MULTIPLE_HOLDERS duplicate, MANUFACTURED by the task
+            # whose new job is to report that state, and reported as
+            # `linked: 1, unpaired: 0`. The half-link case is worse still: the
+            # broken row stays broken and now has a twin.
+            #
+            # So the question is asked FIRST. If we already hold this id in any
+            # form, this pass writes nothing for this fixture — it reports what
+            # it holds. Repairing a half-link is not this task's to do (D35,
+            # #2693); manufacturing a second one certainly is not.
+            prior = linked_already.get(fixture.fixture_id)
+            if prior is not None:
+                _record_prior(run, fixture, prior)
+                continue
+
             if verdict == VERDICT_UNMATCHED:
-                # Asked BEFORE the receipt is written, not after. A fixture we
-                # linked on an earlier pass has no candidate by construction —
-                # `CANDIDATES` filters `statpal_fixture_id IS NULL` — so without
-                # this it reports as "StatPal has a match we do not hold", which
-                # is the opposite of the truth and drowns the real misses.
-                prior = linked_already.get(fixture.fixture_id)
-                if prior is not None:
-                    # CERT-883 FOLLOW-UP `AUTHORITY-008-PAIR-AWARE-ALREADY-LINKED`.
-                    # Holding the id is not the same as being linked to it. Only
-                    # a scalar with its matching anchor is a link; the rest are
-                    # named findings, because the whole point of this branch is
-                    # to stop a real problem reading as a success.
-                    if prior["state"] in PRIOR_STATES_THAT_ARE_A_LINK:
-                        run.already_linked += 1
-                    else:
-                        run.unpaired.append(_receipt(fixture, **prior))
-                    continue
+                # Nobody holds this id and nothing matched: a genuine miss, which
+                # is the signal the classification above exists to keep clean.
                 run.unmatched.append(_receipt(fixture))
                 continue
             if verdict == VERDICT_AMBIGUOUS:
@@ -636,8 +678,26 @@ async def _run_link_tennis_statpal_fixtures(
                 continue
 
             if outcome == LOST_RACE:
-                run.already_linked += 1
+                # CERT-895 repair. Losing the `IS NULL` guard proves only that
+                # SOMETHING claimed the column between our candidate query and
+                # our write. It does not prove the winner finished the job.
+                #
+                # Counting it as `already_linked` unconditionally asserted a pair
+                # we never looked at, and the winner has three other endings: it
+                # committed both shapes (a real link), it wrote the scalar and
+                # rolled back on a refused anchor (then nobody holds it and this
+                # is not a link either), or a third writer left a half-link. So
+                # the pair is RE-READ after the rollback and classified like any
+                # other prior — the one place in this task that learns something
+                # by asking twice, because the state genuinely changed underneath.
                 await session.rollback()
+                reread = await _already_linked(session, [fixture])
+                _record_prior(
+                    run,
+                    fixture,
+                    reread.get(fixture.fixture_id)
+                    or {"state": PRIOR_VANISHED, "event_id": candidate["id"]},
+                )
                 continue
 
             if outcome not in COMMITTABLE_OUTCOMES:

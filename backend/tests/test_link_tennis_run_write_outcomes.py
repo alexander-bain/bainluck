@@ -109,18 +109,29 @@ class RecordingSession:
 
     def __init__(self, *, candidates, holders, update_rowcount=1):
         self._candidates = candidates
-        self._holders = holders
+        # A SEQUENCE of answers, because the task asks twice: once up front for
+        # the batch, and again after a lost race, when the whole point is that
+        # the world changed underneath (CERT-895 repair). A plain list is
+        # wrapped so the common case reads unchanged.
+        if holders and isinstance(holders[0], tuple):
+            holders = [holders]
+        self._holders = list(holders) or [[]]
         self._update_rowcount = update_rowcount
         self.commits = 0
         self.rollbacks = 0
         self.updates: list[dict] = []
+        self.holder_reads = 0
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         if sql == task.CANDIDATES:
             return FakeResult(self._candidates)
         if sql == task.SCALAR_HOLDERS:
-            return FakeResult(self._holders)
+            # Last answer repeats, so a test that does not care about the
+            # re-read does not have to say anything about it.
+            answer = self._holders[min(self.holder_reads, len(self._holders) - 1)]
+            self.holder_reads += 1
+            return FakeResult(answer)
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -297,22 +308,71 @@ class TestTheLoopCommitsOnlyWhatTheWhitelistAllows:
 
 
 class TestTheRefusalsThatAreNotAnchorOutcomes:
-    async def test_losing_the_column_race_rolls_back_and_is_not_a_link(
+    async def test_losing_the_column_race_rolls_back_and_re_reads_the_pair(
         self, drive
     ):
         """`UPDATE ... WHERE statpal_fixture_id IS NULL` touched no row.
 
-        Another pass claimed it in between. Counted as already linked, never as
-        a success of this pass, and never committed.
+        CERT-895 repair. Another pass claimed the column between our candidate
+        query and our write. This used to count `already_linked` on the spot —
+        asserting a pair nobody had looked at. Now the pair is RE-READ after the
+        rollback; here the winner finished the job, so it really is a link.
         """
         summary, session = await drive(
-            anchor_channel.WROTE, update_rowcount=0
+            anchor_channel.WROTE,
+            update_rowcount=0,
+            holders=[
+                [],  # the up-front batch read: nobody held it yet
+                [(FIXTURE_ID, 777, "tennis_atp_us_open", f"tennis:{FIXTURE_ID}")],
+            ],
         )
 
         assert session.commits == 0
         assert session.rollbacks == 1
         assert summary["linked"] == 0
         assert summary["already_linked"] == 1
+        assert summary["unpaired"] == 0
+        assert session.holder_reads == 2, (
+            "the pair must be asked for a SECOND time after the race is lost — "
+            "the first answer is known to be out of date, that is what losing means"
+        )
+
+    async def test_losing_the_race_to_a_half_link_is_not_counted_as_linked(
+        self, drive
+    ):
+        """The winner wrote the scalar and left no anchor.
+
+        Counting this as `already_linked` — which is what the unconditional
+        increment did — reports a healthy pass over a row that is broken in
+        exactly the way this whole ship exists to surface.
+        """
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            update_rowcount=0,
+            holders=[[], [(FIXTURE_ID, 777, "tennis_atp_us_open", None)]],
+        )
+
+        assert session.commits == 0
+        assert summary["already_linked"] == 0
+        assert summary["unpaired"] == 1
+        assert summary["unpaired_receipts"][0]["state"] == task.PRIOR_UNANCHORED
+
+    async def test_losing_the_race_to_a_writer_that_then_rolled_back(self, drive):
+        """Nobody holds the id on the re-read.
+
+        The winner claimed the column and then refused its own anchor, so it
+        rolled the scalar back too. We lost a race to a pass that gave up. That
+        is neither a link nor a state any counter had a name for, so it gets
+        one rather than being folded into a success.
+        """
+        summary, session = await drive(
+            anchor_channel.WROTE, update_rowcount=0, holders=[[], []]
+        )
+
+        assert session.commits == 0
+        assert summary["already_linked"] == 0
+        assert summary["unpaired"] == 1
+        assert summary["unpaired_receipts"][0]["state"] == task.PRIOR_VANISHED
 
     async def test_a_raising_anchor_write_rolls_back_and_is_receipted(
         self, drive
@@ -384,6 +444,110 @@ class TestTheLoopBranchesOnTheNewPriorState:
         )
 
         assert summary["already_linked"] == 0
+        assert summary["unpaired"] == 1
+        assert summary["unpaired_receipts"][0]["state"] == task.PRIOR_FOREIGN_SPORT
+
+    async def test_a_half_link_plus_a_matching_candidate_writes_nothing(
+        self, drive
+    ):
+        """🔴 CERT-895's finding, as a regression. The one that mattered.
+
+        The prior check used to live INSIDE the `VERDICT_UNMATCHED` arm, on the
+        reasoning that a fixture we already hold cannot have a candidate —
+        `CANDIDATES` filters `statpal_fixture_id IS NULL`. True of the HOLDER;
+        silent about every other row.
+
+        Here event 301 holds `2631673` with no anchor, and event 302 is a
+        DIFFERENT row matching the same two players inside the window. The loop
+        reached `VERDICT_LINK`, never asked about the holder, and wrote the
+        scalar onto 302 — manufacturing the two-rows-for-one-id duplicate this
+        task's new job is to REPORT, and reporting it as `linked: 1`.
+        """
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[
+                (
+                    302,
+                    "tennis_atp_us_open",
+                    "Botic van de Zandschulp",
+                    "Alex de Minaur",
+                    START,
+                    1,
+                )
+            ],
+            holders=[(FIXTURE_ID, 301, "tennis_atp_us_open", None)],
+        )
+
+        assert session.updates == [], (
+            "the task wrote the scalar onto a SECOND row while the first still "
+            "held it — it manufactured the duplicate it exists to report"
+        )
+        assert session.commits == 0
+        assert summary["linked"] == 0
+        assert summary["unpaired"] == 1
+        assert summary["unpaired_receipts"][0]["state"] == task.PRIOR_UNANCHORED
+        assert summary["unpaired_receipts"][0]["event_id"] == 301, (
+            "the receipt must name the row that HOLDS the id, not the candidate "
+            "we declined to write"
+        )
+
+    async def test_a_paired_prior_plus_a_matching_candidate_writes_nothing(
+        self, drive
+    ):
+        """Same shape, healthy holder. Still no second write.
+
+        A genuinely-linked fixture whose players also match some other row is
+        the commonest way the above would fire in production — and linking the
+        second row would break a working link's uniqueness to fix nothing.
+        """
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[
+                (
+                    302,
+                    "tennis_atp_us_open",
+                    "Botic van de Zandschulp",
+                    "Alex de Minaur",
+                    START,
+                    1,
+                )
+            ],
+            holders=[
+                (FIXTURE_ID, 301, "tennis_atp_us_open", f"tennis:{FIXTURE_ID}")
+            ],
+        )
+
+        assert session.updates == []
+        assert session.commits == 0
+        assert summary["linked"] == 0
+        assert summary["already_linked"] == 1
+        assert summary["unpaired"] == 0
+
+    async def test_a_cross_sport_holder_blocks_the_write_too(self, drive):
+        """An NFL row holding the integer must not license a tennis write.
+
+        This is the arm where refusing is arguable — the tennis fixture really
+        is unlinked. It is refused anyway: writing would put the same scalar on
+        two rows in two sports, which is strictly harder to diagnose later than
+        the reported collision. D35 — file it, do not resolve it.
+        """
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[
+                (
+                    302,
+                    "tennis_atp_us_open",
+                    "Botic van de Zandschulp",
+                    "Alex de Minaur",
+                    START,
+                    1,
+                )
+            ],
+            holders=[(FIXTURE_ID, 999, "baseball_mlb", None)],
+        )
+
+        assert session.updates == []
+        assert summary["linked"] == 0
         assert summary["unpaired"] == 1
         assert summary["unpaired_receipts"][0]["state"] == task.PRIOR_FOREIGN_SPORT
 
