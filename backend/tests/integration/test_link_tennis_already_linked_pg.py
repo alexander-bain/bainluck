@@ -224,8 +224,15 @@ class TestTheAlreadyLinkedLookup:
         async with pg_engine.begin() as conn:
             await _seed(conn)
 
+        # 2631600..2631669 — 70 ids that are deliberately NOT seeded, so the
+        # batch is mostly misses, which is the real pass shape. BOTH seeded ids
+        # are then appended explicitly: `range(70)` stops at 2631669 and reaches
+        # neither of them, so asserting on an id the batch never carried would
+        # test the seed rather than the statement.
         batch = [_fixture(str(2631600 + n), "a", "b") for n in range(70)]
         batch.append(_fixture("2631673", "B. Van De Zandschulp", "A. De Minaur"))
+        batch.append(_fixture("2631674", "a", "b"))
+        assert len(batch) == 72
 
         async with AsyncSession(pg_engine) as session:
             found = await _already_linked(session, batch)
