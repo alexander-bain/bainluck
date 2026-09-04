@@ -220,6 +220,53 @@ def concept_filter_for_category(
     return True, None
 
 
+def concept_filter_for_follows(
+    followed_categories: Collection[str] | None,
+) -> tuple[bool, tuple[str, ...] | None]:
+    """Translate MY STUFF's follow list into a concept-tier filter.
+
+    The third sibling of `concept_filter_for_tags` / `concept_filter_for_category`,
+    and it exists for the same reason the other two do — with one difference that
+    matters: this one's default is CLOSED.
+
+    ux/1070 item 1 (Alex, 2026-09-04 7:00am shop). My Stuff filters its events
+    half to the viewer's teams (`_score_events`, `my_teams_only`) and its futures
+    half to the same (`_score_futures`), and then two later tiers were appended
+    to the SAME item list with no personalization gate at all: the concept tier
+    and the golf tier. So a page whose contract is "only what you follow" served
+    the Vuelta a España in Live Now and a Formula 1 Grand Prix in Upcoming to a
+    viewer who follows Boston teams, PGA golf and tennis. Neither was a mapping
+    leak — no follow of his selected them; the tier simply never asked.
+
+    A `sport:` tag or a `/categories/` slug narrows a tier that is otherwise
+    global, so silence there rightly means "everything". A follow list is the
+    whole content contract of the page, so silence here means NOTHING: a viewer
+    who follows no concept sport gets no concept tier, never the global one.
+
+    Returns the same ``(skip, sport_filter)`` shape as its siblings:
+
+    * **no followed categories** -> ``(True, None)``. Skipped.
+    * **followed categories naming at least one source** -> ``(False, (alias, …))``
+      selecting exactly those sources.
+    * **followed categories naming none of them** -> ``(True, None)``.
+
+    `followed_categories` are LLM sport categories (`mma`, `golf`, `tennis`, …)
+    as `app.utils.personalization.followed_sport_categories` derives them from
+    the viewer's onboarding affinities — compared against each source's own
+    `category`, which is the field `select_open_markets` reads its markets by.
+    Cycling and motorsports have no onboarding affinity to be high on today, so
+    they cannot be followed and this returns them to nobody; the moment
+    onboarding grows one, the same comparison admits it with no edit here.
+    """
+    wanted = {str(c).strip().lower() for c in followed_categories or () if c}
+    if not wanted:
+        return True, None
+    labels = {s.label for s in CONCEPT_SOURCES if s.category in wanted}
+    if not labels:
+        return True, None
+    return False, concept_filter_for_sources(labels)
+
+
 def concept_sources_named(
     sport_filter: str | Collection[str] | None,
 ) -> frozenset[str]:

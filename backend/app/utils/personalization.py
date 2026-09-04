@@ -585,6 +585,48 @@ def _semantic_dismiss_token_set(tokens) -> set[str]:
     }
 
 
+def followed_sport_categories(
+    sport_affinities: dict[str, float] | None,
+    *,
+    threshold: float = HIGH_AFFINITY_THRESHOLD,
+) -> set[str]:
+    """The LLM sport CATEGORIES the viewer has positively opted into.
+
+    ux/1070 item 1. Everywhere else in this module an affinity is a dial — it
+    scales a score up or down and nothing is ever excluded by it. My Stuff is
+    the one surface where the question is not "how much" but "is this yours at
+    all", so it needs a boolean read of the same dial, in one place, rather than
+    each caller picking its own cut.
+
+    The cut is `HIGH_AFFINITY_THRESHOLD`, the value this module already calls a
+    positive signal: onboarding's four steps are 1.0 "love it", 0.3
+    "sometimes", 0.1 "if wild", 0.0 "nah", so this admits "love it" and nothing
+    else. A page that promises only what you follow may not fill itself with
+    what you said you'd watch if it got wild.
+
+    Keys are affinity keys as onboarding writes them (`mma_mixed_martial_arts`,
+    `golf_pga`, `tennis_atp_us_open`, `basketball_nba`, …) and are resolved to
+    categories through `SPORT_PREFIX_TO_LLM_CATEGORY` — the same map the rest of
+    the codebase reads a sport key's category from. Non-sport affinity keys
+    (`tech`, `politics`, `culture`, …) have no sport prefix and drop out, which
+    is correct: they are Discover interests, not sports you follow.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    followed: set[str] = set()
+    for affinity_key, value in (sport_affinities or {}).items():
+        try:
+            if float(value) < threshold:
+                continue
+        except (TypeError, ValueError):
+            continue
+        root = str(affinity_key).split("_")[0].lower()
+        category = SPORT_PREFIX_TO_LLM_CATEGORY.get(root)
+        if category:
+            followed.add(category)
+    return followed
+
+
 def _lookup_sport_affinity(
     sport_key: str,
     sport_affinities: dict[str, float],

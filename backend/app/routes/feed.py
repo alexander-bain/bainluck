@@ -2759,9 +2759,33 @@ async def get_feed(
             _timings, _started_at, _previous_at, "team_enrichment"
         )
 
+        # ux/1070 item 1 — MY STUFF'S CONTENT CONTRACT, read ONCE for both of
+        # the tiers below.
+        #
+        # The events half of this build is filtered to the viewer's teams and
+        # the futures half to the same. The two tiers that follow — golf
+        # tournaments and event concepts — were appended to the SAME item list
+        # with no personalization gate whatsoever, so the page that promises
+        # "only what you follow" served a cycling grand tour in Live Now and a
+        # Formula 1 Grand Prix in Upcoming to a viewer who follows Boston teams,
+        # PGA golf and tennis (Alex, 2026-09-04 7:00am shop). Nothing leaked
+        # through a follow: neither tier ever asked what he follows.
+        #
+        # Empty is a real answer here. On My Stuff a viewer with no high sport
+        # affinity gets NO concept tier and NO golf tier, rather than the global
+        # one — the opposite default from a `sport:` tag or a category slug,
+        # which narrow a tier that is legitimately global elsewhere.
+        _my_stuff_follows: set[str] = set()
+        if my_teams_only:
+            from app.utils.personalization import followed_sport_categories
+
+            _my_stuff_follows = followed_sport_categories(ctx.sport_affinities)
+
         # === SCORE GOLF TOURNAMENTS ===
         # Skip golf tournaments if a non-golf sport tag is active
         _skip_golf = not include_events
+        if my_teams_only and "golf" not in _my_stuff_follows:
+            _skip_golf = True
         if static_tag_filter:
             sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
             if sport_tags and "sport:golf" not in sport_tags:
@@ -2851,6 +2875,29 @@ async def get_feed(
                 # is a way of saying a source, not the source.
                 _narrow_skip, _concept_sport_filter = narrow_concept_filters(
                     _concept_sport_filter, _cat_concept_filter
+                )
+                _skip_concepts = _skip_concepts or _narrow_skip
+        if my_teams_only:
+            # ux/1070 item 1: My Stuff's follow list is a third claim about this
+            # tier, and it is the one that closes by default — see
+            # `_my_stuff_follows` above. Narrowed through the same
+            # source-identity intersection the tag and category claims use, so a
+            # viewer who follows MMA gets the UFC source and nothing else, and a
+            # viewer who follows neither MMA nor motorsports nor cycling gets no
+            # concept tier at all rather than the global one.
+            from app.utils.event_concept_population import (
+                concept_filter_for_follows,
+                narrow_concept_filters as _narrow_concept_filters,
+            )
+
+            _follow_skip, _follow_filter = concept_filter_for_follows(
+                _my_stuff_follows
+            )
+            if _follow_skip:
+                _skip_concepts = True
+            else:
+                _narrow_skip, _concept_sport_filter = _narrow_concept_filters(
+                    _concept_sport_filter, _follow_filter
                 )
                 _skip_concepts = _skip_concepts or _narrow_skip
         if not _skip_concepts:
