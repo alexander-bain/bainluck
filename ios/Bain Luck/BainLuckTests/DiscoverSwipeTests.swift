@@ -113,7 +113,7 @@ final class DiscoverSwipeTests: XCTestCase {
     ///
     /// It comes back for two real reasons, both in `DiscoverView`:
     /// `filteredItems` backfills the least-recently-dismissed whenever dismissal
-    /// would drop the feed below `feedFloor` (8), and pull-to-refresh calls
+    /// would drop the feed below `feedFloor`, and pull-to-refresh calls
     /// `dismissedAt.removeAll()`. Either way the same `gi.id` re-renders, and
     /// `ForEach(id:)` + `.id(gi.id)` hand it back the SAME `@State`.
     func testLegacyStateIsPermanentlyDeadAfterOneCommit() {
