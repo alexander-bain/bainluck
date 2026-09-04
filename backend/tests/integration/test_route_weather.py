@@ -87,21 +87,35 @@ class _MockScalars:
 
 
 class _MockResult:
-    def __init__(self, items):
+    """One mocked SQLAlchemy Result serving BOTH query shapes this route uses.
+
+    `scalars()` yields the entity rows (markets); `all()` yields the COLUMN
+    rows, which since ux/1069 (#2960) is a second, different query — the
+    `futures_odds_snapshots` capture history behind the sparkline. They are not
+    the same rows and must not be served from the same list: `all()` used to
+    hand the markets back, and a caller unpacking a market into
+    `(outcome_id, bookmaker, probability)` gets a TypeError, not a wrong answer.
+
+    `rows` defaults to empty, which is the honest default for these fixtures:
+    no captures ⇒ `history: []` ⇒ no sparkline.
+    """
+
+    def __init__(self, items, rows=None):
         self._scalars = _MockScalars(items)
+        self._rows = list(rows or [])
 
     def scalars(self):
         return self._scalars
 
     def all(self):
-        return self._scalars.all()
+        return self._rows
 
     def first(self):
         return self._scalars.first()
 
 
-def _query_result(items):
-    return _MockResult(items)
+def _query_result(items, rows=None):
+    return _MockResult(items, rows)
 
 
 # ============================================================================
