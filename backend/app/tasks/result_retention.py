@@ -114,6 +114,14 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.enrich_market_hooks",
         "app.tasks.enrich_taxonomy_llm",
         "app.tasks.ensure_perf_indexes",
+        # live/059: dispatched from `event_concept.apply_venue_history` when a
+        # concept page finds its venue-history cache cold or stale. NOBODY POLLS
+        # IT — the page renders the series it has and the next view gets the
+        # fresher one — but it is declared anyway rather than carved out of the
+        # derivation, because the guard's whole value is that the derived set and
+        # the declared set match mechanically. An exception here is an exception
+        # for every future dispatch too.
+        "app.tasks.fill_futures_chart_series",
         "app.tasks.fix_outcome_names",
         "app.tasks.flow_sentinel",
         "app.tasks.grid_register_sentinel",

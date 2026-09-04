@@ -355,6 +355,8 @@ class TestBeatScheduleCompleteness:
         # live/035 — the nightly event-chart completeness sweep. Gotcha #12:
         # this allowlist is the reason a new beat entry cannot land silently.
         "backfill-thin-event-charts",
+        # live/059 — the outright chart's venue-history warmer.
+        "fill-futures-chart-series",
     }
 
     def test_no_missing_entries(self):

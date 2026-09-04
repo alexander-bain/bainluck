@@ -1185,7 +1185,25 @@ def free_background_slots(
 #: printed value — `explicit 67 implicit 45 total 112` — is what stands here. It
 #: was not obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above
 #: remain accurate as written.
-BACKGROUND_BEAT_COUNT = 112
+#:
+#: 🔴 live/059 (2026-09-03): 112 → 113, explicit 67 → 68, fall-through UNMOVED at
+#: 45 — the new beat names its queue rather than defaulting into it, the benign
+#: direction. `fill-futures-chart-series`, `crontab(minute=13)`, `limit=12`,
+#: explicitly routed to `background`.
+#:
+#: ITS COST, declared here because this is where costs are declared. One indexed
+#: query over tier-1 open Kalshi/Polymarket winner fields resolving inside 30
+#: days (107 rows, measured 2026-09-04, against 1,113 unfiltered), one Redis
+#: `ZMSCORE`, then at most 12 markets × ~34 paced HTTP reads to Polymarket's CLOB
+#: and Kalshi's candlestick endpoint. NO DB WRITES AT ALL — the result is a Redis
+#: cache, deliberately not `futures_odds_snapshots`, whose 38 readers include the
+#: calibration build. `background` rather than `heavy` for the same reason
+#: `sync-tennis-from-espn` is: the wall is network latency, not database work,
+#: and it holds no connection while it waits.
+#:
+#: The census below was RUN over the assembled `beat_schedule` and printed
+#: `explicit 68 implicit 45 total 113`. It was not obtained by adding 1 (#1910).
+BACKGROUND_BEAT_COUNT = 113
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
