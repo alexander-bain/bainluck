@@ -93,6 +93,7 @@ from app.utils import (
     get_season_multiplier,
 )
 from app.utils.highlights import parse_game_progress
+from app.utils.participant_images import participant_images_for_event
 from app.utils.futures_highlights import (
     compute_futures_highlight,
     CATEGORY_BASE_SCORES,
@@ -6367,6 +6368,21 @@ async def _score_events(
                 now=now,
             )
             event_data["sport_label"] = _get_sport_label(sport_key)
+            # ux/1052 item 5: a tennis card showed initials because the payload
+            # carried no face, not because the renderer refused to draw one.
+            # Individual sports only, resolved from the pinned-and-verified
+            # tournament register — never from a name lookup, which returns the
+            # wrong person with a photo at HTTP 200 (17 of 378 measured), and
+            # never from the browser (#1600: ~600 failed requests on one draw).
+            # All four keys are served even when all four are null; see the
+            # helper for why absence and "no photo" must not look alike.
+            event_data.update(
+                participant_images_for_event(
+                    home_team=event.home_team_name,
+                    away_team=event.away_team_name,
+                    sport_key=sport_key,
+                )
+            )
             # #490: confidence signal (1-3 bars) for game cards — driven by how
             # many win-prob sources priced the game and whether the line moved
             # off open. Volume isn't a game-card signal, so it's omitted.

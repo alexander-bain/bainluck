@@ -967,6 +967,23 @@ export interface FeedEventData {
   };
   home_team_data?: TeamData;
   away_team_data?: TeamData;
+  /**
+   * ux/1052 item 5 — a participant's pinned headshot and country flag, for
+   * one-on-one sports (tennis today). Server-resolved from the verified
+   * tournament register; NEVER looked up client-side (#1600: one draw fired
+   * ~600 failing requests, and a bare-name lookup returns the wrong person
+   * with a photo at HTTP 200).
+   *
+   * All four are served whenever the payload is current, so `undefined` means
+   * "pre-#2919 build" and `null` means "we looked and there is no photo of
+   * this player" — the card must not treat those alike. A face and a flag are
+   * independent: measured 2026-09-03, 42 of 378 registered players have a flag
+   * and no face, and 20 have a face and no flag.
+   */
+  home_image_url?: string | null;
+  away_image_url?: string | null;
+  home_flag_url?: string | null;
+  away_flag_url?: string | null;
   highlight?: {
     label: string;
   };
