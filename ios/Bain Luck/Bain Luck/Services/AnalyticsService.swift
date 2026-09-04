@@ -344,6 +344,28 @@ enum AnalyticsService {
         ])
     }
 
+    /// The Sports main request's NETWORK trace — the sibling of
+    /// `discover_feed_network`, and the one thing the Sports rails were missing
+    /// (native/006). `cache_status` is the server's `X-Feed-Cache` arm, or
+    /// `client_ttl` when the call never left the device; a first-card time read
+    /// without it can be off by 4x purely on which arm the launch landed on.
+    ///
+    /// No `item_count` here on purpose: `sports_feed_stage` reports the count for
+    /// the same request milliseconds later, and one honest source beats two that
+    /// can disagree. Carries no PII, token, session, market text, or raw query.
+    nonisolated static func trackSportsFeedNetwork(_ trace: APIClient.RequestTrace) {
+        log("sports_feed_network", [
+            "cache_status": trace.cacheStatus,
+            "backend_elapsed_ms": trace.backendElapsedMs ?? -1,
+            "auth_ready_ms": trace.authReadyMs,
+            "network_ms": trace.networkMs,
+            "decode_ms": trace.decodeMs,
+            "response_bytes": trace.responseBytes,
+            "app_build": appBuild(),
+            "surface": "sports",
+        ])
+    }
+
     /// The on-screen first-render milestone for the native Sports tab (L2-209 Item 2
     /// / C68). Deliberately distinct from `sports_feed_stage`'s `data_ready_ms`
     /// (model assignment): this fires from the FIRST renderable Sports card's SwiftUI

@@ -49,6 +49,41 @@ actor APIClient {
         let timestamp: Date
     }
 
+    /// What a single GET revealed about the SERVER's cache and its own build cost
+    /// (native/006, latency's first-card ask). The feed is cache-fronted and the
+    /// two arms are ~4x apart, so a first-card number with no arm attached cannot
+    /// be read: the same client code takes 0.4s on `hit` and 2.1s on `miss`.
+    ///
+    /// `cacheStatus` is the server's `X-Feed-Cache` verbatim (`hit` / `stale_hit` /
+    /// `miss`), EXCEPT for the sentinel `client_ttl`, which means this call never
+    /// left the device — it was served from `responseCache` — and therefore reports
+    /// nothing about the server at all. That distinction is the whole point of the
+    /// field, so it is a named value rather than an absence.
+    struct RequestTrace: Sendable {
+        let cacheStatus: String
+        let backendElapsedMs: Double?
+        let authReadyMs: Double
+        let networkMs: Double
+        let decodeMs: Double
+        let responseBytes: Int
+
+        /// A local-cache serve, which reports nothing about the server (see above).
+        static let clientTTL = "client_ttl"
+        /// A response that carried no `X-Feed-Cache` at all.
+        static let unknownArm = "unknown"
+
+        /// The arm a response's header claims. Deliberately `unknown` — never
+        /// `miss` — for an absent header: a surface that does not emit the header
+        /// must not be silently counted into the expensive arm, which is how a
+        /// cache-hit-rate number quietly becomes a fiction.
+        static func arm(fromHeader header: String?) -> String {
+            guard let header, !header.trimmingCharacters(in: .whitespaces).isEmpty else {
+                return unknownArm
+            }
+            return header
+        }
+    }
+
     /// Disk-backed last-good Discover feed cache (L2-197 / #1465). Persists the
     /// raw offset-0 `/api/feed` body so a repeat launch can render a first card
     /// immediately instead of blocking on the 9–13s cold server miss (#1459).
@@ -248,7 +283,8 @@ actor APIClient {
     private func fetch<T: Decodable & Sendable>(
         _ path: String,
         query: [String: String] = [:],
-        cacheTTL: TimeInterval? = nil
+        cacheTTL: TimeInterval? = nil,
+        trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
         // Check cache
         let cacheKey: String?
@@ -261,7 +297,15 @@ actor APIClient {
             cacheKey = key
             if let entry = responseCache[key],
                Date().timeIntervalSince(entry.timestamp) < ttl {
-                return try decoder.decode(T.self, from: entry.data)
+                let decodeStart = Date()
+                let value = try decoder.decode(T.self, from: entry.data)
+                // A local-cache serve is reported, not skipped: a silent trace here
+                // would make a warm tab-switch indistinguishable from a server hit.
+                trace?(RequestTrace(
+                    cacheStatus: RequestTrace.clientTTL, backendElapsedMs: nil, authReadyMs: 0,
+                    networkMs: 0, decodeMs: Date().timeIntervalSince(decodeStart) * 1000,
+                    responseBytes: entry.data.count))
+                return value
             }
         } else {
             cacheKey = nil
@@ -277,10 +321,15 @@ actor APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
+        // Measured over the token read alone, exactly as `fetchRaw` does it, so the
+        // two rails' `auth_ready_ms` mean the same thing.
+        let authStart = Date()
         if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        let authReadyMs = Date().timeIntervalSince(authStart) * 1000
 
+        let netStart = Date()
         let data: Data
         let response: URLResponse
         do {
@@ -288,11 +337,13 @@ actor APIClient {
         } catch {
             throw APIError.networkError(underlying: error)
         }
+        let networkMs = Date().timeIntervalSince(netStart) * 1000
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8)
             throw APIError.httpError(statusCode: http.statusCode, body: body)
         }
+        let http = response as? HTTPURLResponse
 
         // Store in cache
         if let key = cacheKey {
@@ -301,7 +352,17 @@ actor APIClient {
         }
 
         do {
-            return try decoder.decode(T.self, from: data)
+            let decodeStart = Date()
+            let value = try decoder.decode(T.self, from: data)
+            trace?(RequestTrace(
+                cacheStatus: RequestTrace.arm(
+                    fromHeader: http?.value(forHTTPHeaderField: "X-Feed-Cache")),
+                backendElapsedMs: http?.value(forHTTPHeaderField: "X-Feed-Elapsed-Ms").flatMap(Double.init),
+                authReadyMs: authReadyMs,
+                networkMs: networkMs,
+                decodeMs: Date().timeIntervalSince(decodeStart) * 1000,
+                responseBytes: data.count))
+            return value
         } catch {
             throw APIError.decodingError(underlying: error)
         }
@@ -613,7 +674,8 @@ actor APIClient {
         eventPct: Double? = nil,
         mode: String? = nil,
         tags: [String]? = nil,
-        cacheTTL: TimeInterval? = 30
+        cacheTTL: TimeInterval? = 30,
+        trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> FeedResponse {
         var q: [String: String] = [
             "limit": "\(limit)",
@@ -630,7 +692,7 @@ actor APIClient {
            let str = String(data: data, encoding: .utf8) {
             q["tags"] = str
         }
-        return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL)
+        return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL, trace: trace)
     }
 
     /// Fetch the offset-0 Discover feed AND persist its raw body as last-good for

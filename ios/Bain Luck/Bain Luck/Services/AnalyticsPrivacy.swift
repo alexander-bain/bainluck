@@ -86,7 +86,7 @@ enum AnalyticsPrivacy {
         "discover_tuning_reset", "feed_card_suppressed", "prediction_submit",
         // Latency rails
         "discover_feed_cache", "discover_feed_first_render", "discover_feed_network",
-        "sports_feed_stage", "sports_feed_first_render",
+        "sports_feed_stage", "sports_feed_first_render", "sports_feed_network",
         "my_stuff_load", "my_stuff_first_render",
         // The felt number, every screen, same packet as the web (latency/121).
         // The three rails above it are per-surface and differently shaped; this

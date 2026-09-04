@@ -207,7 +207,7 @@ struct EventCardView: View {
         VStack(spacing: 6) {
             teamRow(
                 name: event.awayTeam,
-                logo: event.awayTeamData?.logoSmall,
+                avatar: event.avatar(home: false),
                 color: awayColor,
                 record: event.awayTeamData?.record,
                 score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
@@ -219,7 +219,7 @@ struct EventCardView: View {
 
             teamRow(
                 name: event.homeTeam,
-                logo: event.homeTeamData?.logoSmall,
+                avatar: event.avatar(home: true),
                 color: homeColor,
                 record: event.homeTeamData?.record,
                 score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
@@ -229,14 +229,15 @@ struct EventCardView: View {
         }
     }
 
-    private func teamRow(name: String, logo: String?, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
+    private func teamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
         HStack(spacing: 8) {
             TeamLogoView(
-                url: logo,
+                url: avatar.url,
                 teamName: name,
                 color: color,
                 size: isLive ? 28 : 24,
-                sportKey: event.sport
+                sportKey: event.sport,
+                isPhotograph: avatar.isPhotograph
             )
             Text(name)
                 .font(.subheadline)

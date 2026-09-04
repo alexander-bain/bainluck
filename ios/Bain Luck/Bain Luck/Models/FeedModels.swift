@@ -444,6 +444,52 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     // `confidence_tier`/`confidence_score` via the decoder's .convertFromSnakeCase.
     let confidenceTier: String?
     let confidenceScore: Double?
+    /// Server-resolved participant imagery for INDIVIDUAL sports (#2919 /
+    /// `utils/participant_images.py`), decoded from `home_image_url` /
+    /// `away_image_url` / `home_flag_url` / `away_flag_url`. Every event carries
+    /// all four keys and any of them may be null — deliberately, so "the server
+    /// didn't say" and "there is no photo" cannot be confused. Team sports get
+    /// nulls and keep their crests.
+    ///
+    /// The web has drawn these since 2026-09-03; the phone drew "A" and "Q" for
+    /// the same match because these four keys were the only fields on the payload
+    /// the native model did not decode.
+    let homeImageUrl: String?
+    let awayImageUrl: String?
+    let homeFlagUrl: String?
+    let awayFlagUrl: String?
+}
+
+/// What a card should draw in one participant's avatar slot, and how.
+nonisolated struct ParticipantAvatar: Sendable, Equatable {
+    /// Nil hands the decision back to the view's own ladder (client-derived flag →
+    /// ESPN-by-name → coloured initials), i.e. exactly the pre-#2919 behaviour.
+    let url: String?
+    /// True ONLY for a served headshot. A headshot is a portrait; a crest and a
+    /// flag are not. Fitting a portrait into a square slot letterboxes it into a
+    /// sliver about half the width of the crest beside it — measured on the
+    /// simulator the first time faces landed, and the reason this flag follows
+    /// what is actually being drawn rather than what the sport usually gets.
+    let isPhotograph: Bool
+
+    static let none = ParticipantAvatar(url: nil, isPhotograph: false)
+}
+
+extension FeedEventData {
+    /// The avatar for one side, in the web's precedence (`FeedCard.tsx`:394-400):
+    /// served headshot → served flag → the team crest this card already had.
+    ///
+    /// Ordered this way on purpose: a served flag beats a crest only because the
+    /// server sends flags for individual sports alone, where there is no crest to
+    /// displace. A team card is therefore unchanged by these keys.
+    func avatar(home: Bool) -> ParticipantAvatar {
+        let face = home ? homeImageUrl : awayImageUrl
+        if let face, !face.isEmpty { return ParticipantAvatar(url: face, isPhotograph: true) }
+        let flag = home ? homeFlagUrl : awayFlagUrl
+        if let flag, !flag.isEmpty { return ParticipantAvatar(url: flag, isPhotograph: false) }
+        let crest = home ? homeTeamData?.logoSmall : awayTeamData?.logoSmall
+        return ParticipantAvatar(url: crest, isPhotograph: false)
+    }
 }
 
 // MARK: - Feed Futures Data
