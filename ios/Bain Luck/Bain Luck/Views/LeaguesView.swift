@@ -58,6 +58,35 @@ private let allLeagues: [LeagueInfo] = [
 
 private let groupOrder = ["Major US Leagues", "College", "Other US Leagues", "Soccer", "Individual"]
 
+// MARK: - Featured tournament hubs
+
+private struct FeaturedTournament: Identifiable {
+    let slug: String
+    let title: String
+    let subtitle: String
+    let icon: String
+
+    var id: String { slug }
+}
+
+/// Tournament hubs promoted to the top of Browse.
+///
+/// HAND-MAINTAINED, and that is the known limitation rather than the design:
+/// `REGISTERED_TOURNAMENTS` lives on the server and is not exposed as a list, so
+/// the phone cannot ask which hubs exist or which one is being played this week.
+/// A slug listed here stays listed after its final — the hub itself degrades
+/// honestly (it keeps serving results and the finished board), but Browse will
+/// keep offering the US Open in March until either this list is edited or the
+/// API grows an index. Tracked as a follow-up; not worth blocking the hub on.
+private let featuredTournaments: [FeaturedTournament] = [
+    FeaturedTournament(
+        slug: "us-open",
+        title: "US Open",
+        subtitle: "Live matches, results, title odds",
+        icon: "tennis.racket"
+    ),
+]
+
 private struct CategoryLink: Identifiable {
     let id: String
     let label: String
@@ -113,6 +142,15 @@ struct LeaguesView: View {
 
     private var featuredGrid: some View {
         LazyVGrid(columns: adaptiveColumns(minimum: 230), spacing: 14) {
+            ForEach(featuredTournaments) { tournament in
+                BrowseFeatureCard(
+                    title: tournament.title,
+                    subtitle: tournament.subtitle,
+                    icon: tournament.icon,
+                    color: .yellow,
+                    route: .tournamentHub(slug: tournament.slug, name: tournament.title)
+                )
+            }
             BrowseFeatureCard(
                 title: "Futures Markets",
                 subtitle: "All prediction markets",
