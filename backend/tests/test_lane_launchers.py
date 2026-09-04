@@ -206,10 +206,24 @@ def test_start_lanes_covers_the_real_roster_with_no_skips():
 
 def test_start_lanes_dry_run_does_not_reap():
     """--dry-run must never kill a process; the orphan reap is the destructive step."""
-    rc, out = run(START, "--dry-run")
+    rc, out = run(START, "--dry-run", env={"LANES_CONF": str(CONF)})
     assert rc == 0, out
     assert "skipping orphan reap" in out
     assert "Reaping orphaned" not in out
+
+
+@pytest.mark.parametrize("script", [START, SUPERVISOR])
+def test_launchers_find_their_conf_next_to_themselves(script, tmp_path):
+    """A checkout must be self-contained: no LANES_CONF, no ~/bainluck.
+
+    Caught by CI, which checks out to /home/runner/work/bainluck and has no home
+    directory copy — the launchers looked only under $HOME and died with
+    "missing /home/runner/bainluck/lanes.conf". The same hole would hit any
+    throwaway worktree. lanes.conf is a tracked sibling; find it there first.
+    """
+    rc, out = run(script, "--dry-run", env={"HOME": str(tmp_path), "LANES_CONF": ""})
+    assert rc == 0, out
+    assert "missing" not in out, out
 
 
 def test_start_lanes_is_loud_about_a_missing_worktree(tmp_path):

@@ -11,7 +11,11 @@
 # start-lanes.sh sources too — this file and that one carried separate copies until
 # 2026-09-03 and drifted six lanes against seven against nine actual.
 set -u
-CONF="${LANES_CONF:-$HOME/bainluck/lanes.conf}"   # overridable for the guard test only
+# Next to this script first, $HOME as fallback, LANES_CONF overrides both — see
+# the same block in start-lanes.sh for why.
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONF="${LANES_CONF:-$SELF_DIR/lanes.conf}"
+[ -f "$CONF" ] || CONF="$HOME/bainluck/lanes.conf"
 [ -f "$CONF" ] || { echo "missing $CONF — cannot know which lanes to supervise"; exit 1; }
 . "$CONF"
 R="$LANE_RUNNER"

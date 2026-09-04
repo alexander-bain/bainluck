@@ -13,7 +13,13 @@
 set -u
 # The lane list, the worktree mapping and the runner paths live in ONE file,
 # sourced by this script and by lanes-supervisor.sh. See lanes.conf for why.
-CONF="${LANES_CONF:-$HOME/bainluck/lanes.conf}"   # overridable for the guard test only
+# Found NEXT TO THIS SCRIPT first: lanes.conf is a tracked sibling, so any
+# checkout of the repo is self-contained (CI has no ~/bainluck, and neither does
+# a throwaway worktree). $HOME is the fallback for a copy of this script that got
+# separated from its conf. LANES_CONF overrides both.
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONF="${LANES_CONF:-$SELF_DIR/lanes.conf}"
+[ -f "$CONF" ] || CONF="$HOME/bainluck/lanes.conf"
 [ -f "$CONF" ] || { echo "missing $CONF — cannot know which lanes to start"; exit 1; }
 . "$CONF"
 R="$LANE_RUNNER"
