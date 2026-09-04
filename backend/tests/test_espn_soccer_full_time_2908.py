@@ -40,6 +40,42 @@ sat `live` or `suspended` more than four hours past their own kickoff.
 
 The repair reads the field ESPN publishes for this — `status.type.state`, with
 `completed` — which `_parse_header_scores` has already read since #980/#981.
+
+── PROVENANCE (`LIVE-060-EVIDENCE-PROVENANCE`, CERT-904 follow-up) ────────────
+
+CERT-904 granted this ship's token and named one evidence defect: the trimmed
+Lille–Toulouse fixture below carried the id `704946`, which is not that match's
+ESPN id, under a comment claiming it was "the exact fixture from the bug
+report". It is now the real one, `401876468`, with ESPN's real team ids and its
+real kickoff instant; every literal in it came out of the response, not out of a
+keyboard. Each fixture below now says in its own comment whether it was CAPTURED
+or CONSTRUCTED, because a fixture that claims a provenance it does not have is
+evidence you cannot re-derive.
+
+Fixing that turned up a second prose defect, in the same family. Both this
+module and `espn_terminal_state`'s docstring named **`STATUS_CANCELED`** as the
+`state="post" / completed=False` case the fix must refuse. That name was never
+measured. A census of **5,672 soccer fixtures** across 34 ESPN leagues,
+2026-02-01 → 2026-09-04, returns it **zero** times, and returns four names the
+original evidence did not mention:
+
+    STATUS_FULL_TIME    5,572   post  completed=True    "FT"
+    STATUS_FINAL_PEN       57   post  completed=True    "FT-Pens"
+    STATUS_FINAL_AET        7   post  completed=True    "AET"
+    STATUS_SCHEDULED       28   pre   completed=False   (kickoff time)
+    STATUS_POSTPONED        7   post  completed=False   "Postponed"
+    STATUS_ABANDONED        1   post  completed=False   "Abandoned"
+    STATUS_CANCELED         0   —     —                 (never observed)
+
+That census makes the ship BIGGER than it was certified as, and the extra part
+is already shipped: `STATUS_FINAL_PEN` and `STATUS_FINAL_AET` are two more names
+the old parser could not read, so 64 more finished matches were stuck on the
+rail for the same reason. Both settle correctly under the `state`+`completed`
+rule, and both are asserted below off their real payloads. The refusal side is
+now asserted off the two `completed=False` terminals that actually occur —
+a postponed fixture and an ABANDONED one, which is the harder of the two: it
+has a real clock ("22'") and a real period, so only `completed` tells it from a
+match that finished.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -57,13 +93,15 @@ KICKOFF = NOW - timedelta(hours=2)
 # The production payloads
 # ---------------------------------------------------------------------------
 
-#: `soccer/fra.1` scoreboard, Lille at Toulouse, re-fetched 2026-09-04. The exact
-#: fixture from the bug report, trimmed to the keys the parser reads.
+#: CAPTURED — `soccer/fra.1?dates=20260903`, event `401876468`, fetched
+#: 2026-09-04. The exact fixture from the bug report, trimmed to the keys the
+#: parser reads; every value below is verbatim from that response, including
+#: ESPN's own event id, team ids and kickoff instant.
 LILLE_TOULOUSE_FULL_TIME = {
-    "id": "704946",
+    "id": "401876468",
     "name": "Lille at Toulouse",
     "shortName": "LILL @ TOU",
-    "date": "2026-09-03T19:00Z",
+    "date": "2026-09-03T18:45Z",
     "status": {
         "clock": 5400.0,
         "displayClock": "90'+5'",
@@ -76,17 +114,130 @@ LILLE_TOULOUSE_FULL_TIME = {
     },
     "competitions": [{
         "competitors": [
-            {"homeAway": "home", "score": "0", "team": {"id": "1", "name": "Toulouse"}},
-            {"homeAway": "away", "score": "1", "team": {"id": "2", "name": "Lille"}},
+            {"homeAway": "home", "score": "0", "team": {"id": "179", "name": "Toulouse"}},
+            {"homeAway": "away", "score": "1", "team": {"id": "166", "name": "Lille"}},
         ],
     }],
 }
 
-#: The same shape a match IN PLAY carries. ESPN's second-half state word is not
-#: `STATUS_IN_PROGRESS` either, which is why this is a fixture and not an
-#: assumption.
+#: CAPTURED — `soccer/ned.1?dates=20260524`, event `401873227`, fetched
+#: 2026-09-04. A cup tie decided on penalties: `STATUS_FINAL_PEN`, a SECOND
+#: terminal name the old parser could not read. 57 of them in the census.
+AJAX_UTRECHT_FINAL_PEN = {
+    "id": "401873227",
+    "name": "FC Utrecht at Ajax Amsterdam",
+    "shortName": "UTR @ AJA",
+    "date": "2026-05-24T10:15Z",
+    "status": {
+        "clock": 7200.0,
+        "displayClock": "120'",
+        "period": 5,
+        "type": {
+            "id": "47", "name": "STATUS_FINAL_PEN", "state": "post",
+            "completed": True, "description": "Final Score - After Penalties",
+            "detail": "FT-Pens", "shortDetail": "FT-Pens",
+        },
+    },
+    "competitions": [{
+        "competitors": [
+            {"homeAway": "home", "score": "1", "team": {"id": "139", "name": "Ajax Amsterdam"}},
+            {"homeAway": "away", "score": "1", "team": {"id": "153", "name": "FC Utrecht"}},
+        ],
+    }],
+}
+
+#: CAPTURED — `soccer/eng.2?dates=20260512`, event `401871356`, fetched
+#: 2026-09-04. Decided in extra time: `STATUS_FINAL_AET`, the THIRD terminal
+#: name. Its `detail` is "AET", a terminal period word, which is what makes it
+#: the sharpest case for the no-terminal-word-on-a-live-row assertion below.
+SOUTHAMPTON_MIDDLESBROUGH_FINAL_AET = {
+    "id": "401871356",
+    "name": "Middlesbrough at Southampton",
+    "shortName": "MID @ SOU",
+    "date": "2026-05-12T19:00Z",
+    "status": {
+        "clock": 7200.0,
+        "displayClock": "120'+7'",
+        "period": 4,
+        "type": {
+            "id": "45", "name": "STATUS_FINAL_AET", "state": "post",
+            "completed": True, "description": "Final Score - After Extra Time",
+            "detail": "AET", "shortDetail": "AET",
+        },
+    },
+    "competitions": [{
+        "competitors": [
+            {"homeAway": "home", "score": "2", "team": {"id": "376", "name": "Southampton"}},
+            {"homeAway": "away", "score": "1", "team": {"id": "369", "name": "Middlesbrough"}},
+        ],
+    }],
+}
+
+#: 🔴 CAPTURED — `soccer/por.1?dates=20260816`, event `401885480`, fetched
+#: 2026-09-04. Must NOT settle. A postponed fixture is `state="post"` too —
+#: with `completed=False`, because nothing was played.
+BRAGA_GIL_VICENTE_POSTPONED = {
+    "id": "401885480",
+    "name": "Gil Vicente at Braga",
+    "shortName": "GVFC @ SCB",
+    "date": "2026-08-16T19:30Z",
+    "status": {
+        "clock": 0.0,
+        "displayClock": "0'",
+        "type": {
+            "id": "6", "name": "STATUS_POSTPONED", "state": "post",
+            "completed": False, "description": "Postponed",
+            "detail": "Postponed", "shortDetail": "Postponed",
+        },
+    },
+    "competitions": [{
+        "competitors": [
+            {"homeAway": "home", "score": "0", "team": {"id": "2994", "name": "Braga"}},
+            {"homeAway": "away", "score": "0", "team": {"id": "3699", "name": "Gil Vicente"}},
+        ],
+    }],
+}
+
+#: 🔴 CAPTURED — `soccer/fra.1?dates=20260517`, event `746714`, fetched
+#: 2026-09-04. THE HARD REFUSAL, and the reason `completed` is the load-bearing
+#: half: this match was abandoned at 22', so unlike a postponement it carries a
+#: real running clock and a real period. Nothing but `completed=False`
+#: distinguishes it from a match that ran its course. (Its six-digit id is
+#: genuine — ESPN still serves the old numbering for pre-2026-27 fra.1 rows.)
+NANTES_TOULOUSE_ABANDONED = {
+    "id": "746714",
+    "name": "Toulouse at Nantes",
+    "shortName": "TOU @ NAN",
+    "date": "2026-05-17T19:00Z",
+    "status": {
+        "clock": 1320.0,
+        "displayClock": "22'",
+        "period": 1,
+        "type": {
+            "id": "27", "name": "STATUS_ABANDONED", "state": "post",
+            "completed": False, "description": "Abandoned",
+            "detail": "Abandoned", "shortDetail": "ABN",
+        },
+    },
+    "competitions": [{
+        "competitors": [
+            {"homeAway": "home", "score": "0", "team": {"id": "165", "name": "Nantes"}},
+            {"homeAway": "away", "score": "0", "team": {"id": "179", "name": "Toulouse"}},
+        ],
+    }],
+}
+
+#: CONSTRUCTED, and labelled so on purpose — this is the one fixture here that
+#: is not a capture. A match IN PLAY cannot be re-fetched after the fact: the
+#: census window holds no `state="in"` row, because every fixture in it has
+#: since finished. The `status.type` block is ESPN's documented in-play shape
+#: (`STATUS_SECOND_HALF`, id 3), and the identity is the bug report's second
+#: stuck card, Celta Vigo at Real Sociedad. **Its ids are synthetic** and are
+#: written in an obviously non-ESPN form so no later reader mistakes them for
+#: captured values. What it is here to prove is one thing only, and that thing
+#: does not depend on its identity: `state="in"` must never settle.
 SOCCER_SECOND_HALF = {
-    "id": "704947",
+    "id": "SYNTHETIC-IN-PLAY-1",
     "name": "Celta Vigo at Real Sociedad",
     "shortName": "CEL @ RS",
     "date": "2026-09-03T21:00Z",
@@ -100,34 +251,35 @@ SOCCER_SECOND_HALF = {
     },
     "competitions": [{
         "competitors": [
-            {"homeAway": "home", "score": "0", "team": {"id": "3", "name": "Real Sociedad"}},
-            {"homeAway": "away", "score": "0", "team": {"id": "4", "name": "Celta Vigo"}},
+            {"homeAway": "home", "score": "0",
+             "team": {"id": "SYNTHETIC-HOME", "name": "Real Sociedad"}},
+            {"homeAway": "away", "score": "0",
+             "team": {"id": "SYNTHETIC-AWAY", "name": "Celta Vigo"}},
         ],
     }],
 }
 
-#: 🔴 The one that must NOT settle. A cancelled or postponed fixture is also
-#: `state="post"` — with `completed=False`, because nothing was played.
-SOCCER_CANCELLED = {
-    "id": "704948",
-    "name": "Nantes at Lens",
-    "shortName": "NAN @ LEN",
-    "date": "2026-09-03T19:00Z",
-    "status": {
-        "displayClock": "0'",
-        "period": 0,
-        "type": {
-            "id": "5", "name": "STATUS_CANCELED", "state": "post",
-            "completed": False, "detail": "Canceled", "shortDetail": "Canceled",
-        },
-    },
-    "competitions": [{
-        "competitors": [
-            {"homeAway": "home", "score": None, "team": {"id": "5", "name": "Lens"}},
-            {"homeAway": "away", "score": None, "team": {"id": "6", "name": "Nantes"}},
-        ],
-    }],
+#: Every terminal name the census observed, and how the fix must treat it. The
+#: fixture set is checked against this table so a name cannot be added to one
+#: without the other.
+CENSUS_TERMINALS = {
+    "STATUS_FULL_TIME": True,
+    "STATUS_FINAL_PEN": True,
+    "STATUS_FINAL_AET": True,
+    "STATUS_POSTPONED": False,
+    "STATUS_ABANDONED": False,
 }
+
+#: The three that settle, and the two that must not.
+SETTLING_PAYLOADS = (
+    LILLE_TOULOUSE_FULL_TIME,
+    AJAX_UTRECHT_FINAL_PEN,
+    SOUTHAMPTON_MIDDLESBROUGH_FINAL_AET,
+)
+NON_SETTLING_PAYLOADS = (
+    BRAGA_GIL_VICENTE_POSTPONED,
+    NANTES_TOULOUSE_ABANDONED,
+)
 
 
 @pytest.fixture
@@ -160,12 +312,52 @@ class TestTheParserReadsTheAuthoritysOwnState:
         assert event.status_detail == "FT"
         assert event.clock == "90'+5'"
 
-    def test_a_cancelled_match_does_not_parse_as_post(self, client):
+    @pytest.mark.parametrize(
+        "payload", SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]
+    )
+    def test_every_completed_terminal_name_soccer_uses_parses_as_post(
+        self, client, payload
+    ):
+        """The census's three `completed=True` names, not just the one the bug
+        report happened to land on. `STATUS_FINAL_PEN` and `STATUS_FINAL_AET`
+        were equally unreadable to the old name-only parser — 64 more finished
+        matches with no way off the rail — and neither was named in CERT-904's
+        evidence."""
+        event = client._parse_event(payload)
+        assert event is not None
+        assert event.status == "post", (
+            f"{payload['status']['type']['name']} did not reach the settle branch"
+        )
+
+    @pytest.mark.parametrize(
+        "payload", NON_SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]
+    )
+    def test_a_match_nobody_finished_does_not_parse_as_post(self, client, payload):
         """`state="post"` alone would stamp a Final and a 0-0 on a match nobody
-        played — a false LIVE traded for a false FINAL (the CERT-752 class)."""
-        event = client._parse_event(SOCCER_CANCELLED)
+        played — a false LIVE traded for a false FINAL (the CERT-752 class).
+
+        Both real: a postponement never kicked off, and an ABANDONED match did —
+        it stopped at 22' carrying a live clock and period 1, so `completed` is
+        the only field that separates it from a result."""
+        event = client._parse_event(payload)
         assert event is not None
         assert event.status != "post"
+
+    def test_the_fixture_set_is_the_measured_vocabulary(self):
+        """🔴 The provenance guard (`LIVE-060-EVIDENCE-PROVENANCE`). The
+        original evidence asserted the refusal over `STATUS_CANCELED`, a name a
+        5,672-fixture census across 34 leagues returns ZERO times. Tying the
+        fixtures to the census means the next name can only be added to one by
+        being added to both."""
+        covered = {
+            p["status"]["type"]["name"]: p["status"]["type"]["completed"]
+            for p in SETTLING_PAYLOADS + NON_SETTLING_PAYLOADS
+        }
+        assert covered == CENSUS_TERMINALS
+        assert "STATUS_CANCELED" not in covered, (
+            "STATUS_CANCELED was never observed in the census — a fixture "
+            "asserting over it is asserting over an invented payload"
+        )
 
     def test_an_in_play_match_is_not_settled(self, client):
         event = client._parse_event(SOCCER_SECOND_HALF)
@@ -294,14 +486,31 @@ class TestTheLiveNowRailStopsCarryingFinishedMatches:
         assert stats.get("espn_completed") is None
         assert event.period == "63'"
 
-    async def test_a_cancelled_match_is_not_given_a_final(self, client):
-        event, _stats, session = await _sync(client, SOCCER_CANCELLED)
+    @pytest.mark.parametrize(
+        "payload", NON_SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]
+    )
+    async def test_a_match_nobody_finished_is_not_given_a_final(self, client, payload):
+        event, _stats, session = await _sync(client, payload)
 
         assert event.status == "live", (
-            "a cancelled fixture was settled — that stamps a Final and a blank "
-            "score on a match nobody played"
+            f"{payload['shortName']} was settled — that stamps a Final and a "
+            "blank score on a match nobody played out"
         )
         assert "completed_at" not in _written(session)
+
+    @pytest.mark.parametrize(
+        "payload", SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]
+    )
+    async def test_every_completed_terminal_closes_its_row(self, client, payload):
+        """The rail loses the card for all three names, not only the one in the
+        bug report — with a completion stamp in every case."""
+        event, stats, session = await _sync(client, payload)
+
+        assert event.status == "completed"
+        written = _written(session)
+        assert written.get("status") == "completed"
+        assert written.get("completed_at") is not None
+        assert stats.get("espn_completed") == 1
 
     async def test_no_terminal_period_word_survives_on_a_live_row(self, client):
         """The acceptance criterion as the reader states it: no card in the rail
@@ -310,8 +519,12 @@ class TestTheLiveNowRailStopsCarryingFinishedMatches:
         Stated over the payloads rather than over one of them, so a future ESPN
         vocabulary added to the fixtures above is covered without a new test.
         """
-        terminal_words = {"ft", "final", "aet", "full time"}
-        for payload in (LILLE_TOULOUSE_FULL_TIME, SOCCER_SECOND_HALF, SOCCER_CANCELLED):
+        terminal_words = {"ft", "final", "aet", "ft-pens", "full time"}
+        for payload in (
+            *SETTLING_PAYLOADS,
+            *NON_SETTLING_PAYLOADS,
+            SOCCER_SECOND_HALF,
+        ):
             event, _stats, _session = await _sync(client, payload)
             period = (event.period or "").strip().lower()
             if period in terminal_words:
