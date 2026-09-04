@@ -147,10 +147,15 @@ describe("UX-1065 / CERT-908 — RelatedFutures renders a team's NAME", () => {
     expect(away).toBe("Celtics");
   });
 
-  it("CONTROL: the club word is the discriminator, not the sport", () => {
-    // Sheffield Wednesday is an English club whose last word IS its
-    // distinctive name, so it must still shorten — asymmetrically, against a
-    // side that cannot. Proves the rule keys on the WORD, not on "is soccer".
+  it("the pair may be asymmetric: only the side with a club word gives up", () => {
+    // NOT a control — it was labelled one in the first draft of this file and
+    // the red arm caught the lie: `Bradford City` shortens to `City` on the
+    // parent, so this test is arm-dependent and is part of the ship.
+    //
+    // What it pins is that the repair is per-side rather than per-card.
+    // Forcing BOTH sides to their full name whenever either falls back would
+    // be the easy over-correction, and it would cost "Wednesday", which IS
+    // that club's distinctive name.
     const [home, away] = teamHeadings(
       renderFor("Bradford City", "Sheffield Wednesday"),
     );
@@ -158,16 +163,49 @@ describe("UX-1065 / CERT-908 — RelatedFutures renders a team's NAME", () => {
     expect(away).toBe("Wednesday");
   });
 
-  it("two clubs that shorten to the same word both keep their full names", () => {
-    // The pair-collision arm. One side alone cannot see this: each of these
-    // would independently shorten to a two-letter token, and the card would
-    // read "FC" against "FC".
+  it("CONTROL: a trailing club word that is also a mascot still shortens", () => {
+    // "Rangers" and "Kings" are deliberately absent from the club-word set:
+    // they are trailing MASCOTS in North American leagues as well as English
+    // club words, so shortening them is right more often than it is wrong.
+    // Green on both arms — this is behaviour the repair must not change.
     const [home, away] = teamHeadings(
-      renderFor("Austin FC", "Charlotte FC"),
+      renderFor("Texas Rangers", "Los Angeles Kings"),
     );
+    expect(home).toBe("Rangers");
+    expect(away).toBe("Kings");
+  });
+
+  it("two clubs whose SHORT names collide both keep their full names", () => {
+    // THIS is the pair-collision arm, and picking the fixture correctly is the
+    // whole point of the test.
+    //
+    // The obvious specimen — "Austin FC" vs "Charlotte FC" — does NOT exercise
+    // it. "FC" is two characters, so the length test rejects it and both sides
+    // fall back before the collision clause is ever consulted. A card built on
+    // that pair stays green when the pair decision is removed entirely, which
+    // is measured: counter-case A (single-side helper at every display site)
+    // leaves an FC fixture GREEN.
+    //
+    // The MASCOT case is what only the pair can see. 22 distinct teams in the
+    // committed corpus end in "Bulldogs"; each side shortens legitimately, and
+    // it is only looking at them TOGETHER that shows the card would read
+    // "Bulldogs" against "Bulldogs". Georgia v Mississippi State is an
+    // ordinary SEC fixture, not a hypothetical.
+    const [home, away] = teamHeadings(
+      renderFor("Georgia Bulldogs", "Mississippi State Bulldogs"),
+    );
+    expect(home).toBe("Georgia Bulldogs");
+    expect(away).toBe("Mississippi State Bulldogs");
+    expect(home).not.toBe(away);
+  });
+
+  it("the length test alone handles FC v FC (green on both arms, kept as a boundary)", () => {
+    // Deliberately NOT labelled a control of the collision clause — see above.
+    // It pins the length test's own boundary so a "fix" that raised the <= 2
+    // threshold could not satisfy the suite.
+    const [home, away] = teamHeadings(renderFor("Austin FC", "Charlotte FC"));
     expect(home).toBe("Austin FC");
     expect(away).toBe("Charlotte FC");
-    expect(home).not.toBe(away);
   });
 
   it("a squad qualifier is not a team name either", () => {
