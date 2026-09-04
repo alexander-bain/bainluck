@@ -615,6 +615,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#2867 tennis link apply/rollback round trip (real Postgres)"
+        # `scripts/link_tennis_statpal_anchors_2867.py` runs unattended under
+        # D51 on the same terms as the #2879 re-key above, and CERT-847 is the
+        # precedent for what a restore proves when nothing executes it.
+        #
+        # It writes TWO shapes per link — an UPDATE on `events.statpal_fixture_id`
+        # and an INSERT into `event_provider_anchors` — and they undo
+        # differently. Four things only the server decides: whether
+        # `ON CONFLICT DO NOTHING` against `uq_anchor_source_id` is a no-op or a
+        # raise; whether the delete arm's `anchor_existed_before` scoping really
+        # leaves a pre-existing anchor standing; the three-valued `IS DISTINCT
+        # FROM` logic every restore runs through because the normal prior value
+        # is NULL; and psycopg2's `%s` paramstyle on the real statements.
+        #
+        # Two-armed: `test_a_partial_undo_is_reported_rather_than_called_clean`
+        # drives the rollback into the state where BOTH write statements return
+        # a clean rowcount and nothing raises, and requires the post-condition
+        # query to report it as still-applied. Same skip-detection as every gate
+        # here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_link_tennis_statpal_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/tennislink2867.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tennislink2867.txt; then
+            echo "::error::#2867 tennis link round-trip gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

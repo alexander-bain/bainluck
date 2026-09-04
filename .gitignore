@@ -75,6 +75,12 @@ coverage.xml
 *.sqlite
 *.db
 
+# ...except data a DEPLOYED script reads. `backend/scripts/data/` is vendored on
+# purpose: `.claude/handoff/` is not deployed, so a one-off repair whose input
+# lives only there finds nothing on a Heroku dyno, applies zero rows and reports
+# a clean run (gotcha #53). A blanket `*.csv` silently produced exactly that.
+!backend/scripts/data/*.csv
+
 # Logs
 *.log
 logs/

@@ -607,6 +607,12 @@ celery_app.conf.task_routes = {
     "app.tasks.sync_mlb_win_probability": {"queue": "realtime"},
     "app.tasks.sync_statpal_live_plays": {"queue": "realtime"},
     "app.tasks.sync_statpal_livescores": {"queue": "realtime"},
+    # #2867 / D59. On `realtime` for a correctness reason, not a cost one: the
+    # link is what lets a live tennis card read its score line from StatPal, and
+    # a match that starts unlinked shows the ESPN line until the next pass. A
+    # background-queue cadence would mean the first game of every session is
+    # served from the wrong source for as long as that queue is backed up.
+    "app.tasks.link_tennis_statpal_fixtures": {"queue": "realtime"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
@@ -2882,6 +2888,32 @@ def anchor_schedule_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.link_tennis_statpal_fixtures")
+def link_tennis_statpal_fixtures(self, apply=True):
+    """Link each new StatPal tennis fixture to our event row (#2867, D59).
+
+    The forward half of the tennis link: reads `livescores` + `daily/d1`+`d2`
+    through the authority door, matches on the normalized player pair inside a
+    ±36h window, and stamps BOTH `events.statpal_fixture_id` and the
+    `('statpal', 'tennis:<id>', 'game')` anchor. Exactly one candidate or it
+    writes nothing — two of our rows for one StatPal match is a duplicate, and
+    it is reported rather than resolved (D35, #2693). Doubles are refused
+    before the question is asked.
+
+    `apply=False` plans and writes nothing. The 240s soft limit is well clear of
+    the realtime queue's cadence and of the global 300s (#966); the work is
+    three HTTP reads plus one bounded candidate query, so it does not grow with
+    the size of the tennis table."""
+    from app.tasks.link_tennis_statpal_fixtures import (
+        _run_link_tennis_statpal_fixtures,
+    )
+    return _tracked_run(
+        "link_tennis_statpal_fixtures",
+        _run_link_tennis_statpal_fixtures(apply=apply),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
@@ -4726,6 +4758,22 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.anchor_schedule_sentinel",
         "schedule": crontab(minute=40, hour=6),  # Daily 06:40 UTC
         "options": {"queue": "heavy"},
+    },
+    "link-tennis-statpal-fixtures-10min": {
+        # #2867 / D59. Every 10 minutes, and the cadence is bounded by what
+        # StatPal serves, not by what we would like: the spec refreshes `daily`
+        # every 12h, so the schedule arms contribute nothing faster than that.
+        # The `livescores` arm is the reason for a live cadence — it is the only
+        # place a match appears on the day it is played, and an unlinked live
+        # match shows the ESPN score line until the next pass.
+        #
+        # Three HTTP reads and one bounded candidate query per pass. It does not
+        # walk the 30,115-row tennis table: `statpal_fixture_id IS NULL` plus the
+        # date window is the whole predicate, so an already-linked row is never
+        # revisited and the cost does not grow with the tournament.
+        "task": "app.tasks.link_tennis_statpal_fixtures",
+        "schedule": 600.0,
+        "options": {"queue": "realtime"},
     },
     "recategorize-other-daily": {
         "task": "app.tasks.recategorize_other",

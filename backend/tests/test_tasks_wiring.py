@@ -216,6 +216,8 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-injuries",
         "sync-statpal-live-plays",
         "sync-statpal-livescores",
+        # #2867 / D59 — the forward half of the tennis link (realtime, 10 min).
+        "link-tennis-statpal-fixtures-10min",
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
