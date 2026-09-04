@@ -143,6 +143,59 @@ def anchor_provenance(external_id: str | None, event_row_missing: bool = False) 
         return "synthesized"
     return "unknown"
 
+
+#: THE RE-ADJUDICATION. ``anchor_provenance`` answers "does anyone outside us
+#: say this event exists" — a property of the DESTINATION ALONE. It cannot
+#: answer "is this the destination this market belongs on", because the market
+#: is not in its scope: no teams, no sport, no kickoff, no market id. Promoting
+#: on provenance by itself therefore accepts ANY provider-anchored event,
+#: including one with the wrong teams in the wrong sport in the wrong week.
+#:
+#: So a later attachment is promoted out of RED only when a human has
+#: adjudicated THIS market onto THIS event. The map is that adjudication, and it
+#: is the whole of it: an attachment that is not in here is RED, whatever the
+#: destination's id looks like.
+#:
+#: Adjudicated 2026-09-03 against production, one row at a time. Each was the
+#: only fixture in the database with that team pair, and the Kalshi rows were
+#: confirmed by TICKER-DERIVED date (gotcha #14 — a Kalshi ``commence_time`` is
+#: usually the close, so the stored value is not the evidence; the ticker is):
+#:
+#: * 59173320 "Campbell vs East Tennessee St." (kalshi
+#:   ``KXNCAAFGAME-26AUG29CAMPETSU``) -> 15294048 East Tennessee State
+#:   Buccaneers v Campbell Fighting Camels, ``americanfootball_ncaaf_fcs``,
+#:   2026-08-29 21:30Z. Ticker date == event date; both FCS programs.
+#: * 59692113 "Vitória SC vs. Casa Pia AC - Exact Score" (polymarket 926708)
+#:   -> 15297976 Vitória SC v Casa Pia, ``soccer_portugal_primeira_liga``,
+#:   2026-09-06 17:00Z. Sole Vitória/Casa Pia fixture in the table.
+#: * 59692121 "FC Alverca vs. SC Braga - Exact Score" (polymarket 926700)
+#:   -> 15299112 Alverca v Braga, ``soccer_portugal_primeira_liga``,
+#:   2026-09-05 17:00Z. Sole Alverca/Braga fixture in the table.
+#: * 59700394 "Hamburg vs Mainz" (kalshi ``KXBUNDESLIGAGAME-26SEP06HSVM05``)
+#:   -> 15291033 Hamburger SV v FSV Mainz 05,
+#:   ``soccer_germany_bundesliga``, 2026-09-06 13:30Z. Ticker date == event
+#:   date; HSV/M05 == the ticker's team codes.
+#: * 59700643 "Ipswich Town vs Liverpool: Spread" (kalshi
+#:   ``KXEPLSPREAD-26SEP04IPSLFC``) -> 15291104 Ipswich Town v Liverpool,
+#:   ``soccer_epl``, 2026-09-04 19:00Z. Ticker date == event date; IPS/LFC ==
+#:   the ticker's team codes.
+#:
+#: The two Polymarket props carry a ``commence_time`` of their own creation
+#: minute, so time is deliberately NOT part of their evidence; the unique team
+#: pair inside one league is.
+#:
+#: GROWING THIS MAP IS AN ADJUDICATION, NOT A SILENCING. A guard asserts every
+#: key is a pair the audit recorded as belonging on NO event, so an entry can
+#: never be used to make a real regression disappear, and asserts the map's
+#: exact contents, so a row cannot be added without the diff saying so.
+ACCEPTED_ATTACHMENTS: dict[int, int] = {
+    59173320: 15294048,
+    59692113: 15297976,
+    59692121: 15299112,
+    59700394: 15291033,
+    59700643: 15291104,
+}
+
 #: A market this old without a single price snapshot is not "sourced".
 #: 90 minutes: two 15-minute matching cycles plus the 2-minute live poll's
 #: worst case, with room for a slow backfill — short enough to satisfy the
@@ -213,25 +266,40 @@ async def check_golden_pairs(session) -> dict:
     Liverpool: Spread" onto the real EPL fixture. The check was reporting the
     matcher's successes as its failures.
 
-    So a later attachment is judged by WHAT IT ATTACHED TO:
+    So a later attachment is judged by WHAT IT ATTACHED TO, and it takes BOTH
+    halves to leave RED — that the destination is real, and that it is the right
+    destination for THIS market:
 
-    * **corroborated** — an outside SCHEDULE PROVIDER anchors the fixture
-      (``anchor_provenance`` above; measured today that means an Odds API event
-      id, 96.7% of which carry bookmaker odds). The matcher is independently
-      confirmed, the baseline row is merely stale, and it is reported as
-      ``baseline_stale`` and never RED.
+    * **accepted** — a human adjudicated this market onto this event
+      (``ACCEPTED_ATTACHMENTS``) *and* an outside SCHEDULE PROVIDER still
+      anchors it (``anchor_provenance``; today that means an Odds API event id,
+      96.7% of which carry bookmaker odds). Reported as ``baseline_stale`` and
+      never RED: the matcher is right and the baseline row is what is out of
+      date.
+    * **unadjudicated** — provider-anchored, but nobody has adjudicated this
+      market onto this event. RED. Provenance is a property of the destination
+      alone: it cannot tell "Hawaii vs Stanford landed on the real
+      Hawaii/Stanford fixture" from "…landed on a real fixture in another sport
+      three weeks away", because the market is not in its scope. Reading it as
+      acceptance is what this check used to do, and it accepted every
+      provider-anchored event in the database.
     * **uncorroborated** — nothing outside the matcher says this event exists.
       RED, as ``self_answered``, and each row carries the provenance that put it
       there: ``idless`` (the matcher created the event and matched its own
       creation), ``market_derived`` (a prediction-market-derived event, which is
       the same self-answer one step removed), ``unknown`` (an id vocabulary
-      nobody has adjudicated) or ``unreadable``. The id-less-claim rule
-      (gotcha #32 / ruling 048) means such a row can never be absorbed or
-      reconciled later, so it is permanent.
+      nobody has adjudicated) or ``unreadable``. Checked before acceptance, so
+      an accepted row that LOSES its anchor reports the loss rather than
+      passing. The id-less-claim rule (gotcha #32 / ruling 048) means such a row
+      can never be absorbed or reconciled later, so it is permanent.
 
-    The discriminator is deliberately an allowlist and not ``external_id IS NOT
-    NULL``: the proxy would read all 21,978 prediction-market-derived events as
-    outside corroboration.
+    The provenance discriminator is itself deliberately an allowlist and not
+    ``external_id IS NOT NULL``: the proxy would read all 21,978
+    prediction-market-derived events as outside corroboration.
+
+    THE DEFAULT IS RED. A negative pair that changes is accused unless both
+    halves are satisfied, which is the only shape that cannot quietly widen: a
+    new attachment nobody has looked at is exactly the thing worth looking at.
 
     A POSITIVE pair — one the audit adjudicated onto a specific event — is
     unchanged: it had a known-correct answer, and losing it is a regression with
@@ -260,7 +328,7 @@ async def check_golden_pairs(session) -> dict:
         for r in rows
     }
 
-    regressed, self_answered, baseline_stale = [], [], []
+    regressed, self_answered, unadjudicated, baseline_stale = [], [], [], []
     recovered, vanished = [], []
     by_provenance: dict[str, int] = {}
     for mid, was_ok in baseline.items():
@@ -287,19 +355,34 @@ async def check_golden_pairs(session) -> dict:
             provenance = anchor_provenance(external_id, bool(event_missing))
             row["anchor_provenance"] = provenance
             by_provenance[provenance] = by_provenance.get(provenance, 0) + 1
-            if provenance in CORROBORATING_PROVENANCE:
-                # An outside schedule provider anchors this fixture now, so the
-                # matcher is confirmed and the baseline row is what is stale.
+            accepted = ACCEPTED_ATTACHMENTS.get(mid)
+            if accepted is not None:
+                # Say where the adjudication put it, so a row that MOVED off an
+                # accepted destination reads as that and not as a fresh attach.
+                row["accepted_event_id"] = accepted
+            if provenance not in CORROBORATING_PROVENANCE:
+                # Nothing outside the matcher corroborates it. Checked first
+                # because it is the stronger finding: an accepted attachment
+                # that has LOST its provider anchor is news, not a pass.
+                row["verdict"] = "self_answered"
+                self_answered.append(row)
+            elif accepted == actual:
+                # A human adjudicated THIS market onto THIS event, and an
+                # outside schedule provider still anchors it. The matcher is
+                # confirmed and the baseline row is what is stale.
                 row["verdict"] = "baseline_stale"
                 baseline_stale.append(row)
             else:
-                # Nothing outside the matcher corroborates it.
-                row["verdict"] = "self_answered"
-                self_answered.append(row)
+                # Provider-anchored, but nobody has adjudicated this market onto
+                # this event. The destination's id says the FIXTURE is real; it
+                # says nothing about whether it is the right fixture for this
+                # market, which is the question the golden set exists to answer.
+                row["verdict"] = "unadjudicated"
+                unadjudicated.append(row)
         elif not was_ok and now_ok:
             recovered.append(mid)
 
-    red_rows = regressed + self_answered
+    red_rows = regressed + self_answered + unadjudicated
     # Name WHICH uncorroborated provenance, so "the matcher invented the event"
     # and "an id vocabulary nobody has adjudicated" never hide in one number.
     uncorroborated = ", ".join(
@@ -308,17 +391,19 @@ async def check_golden_pairs(session) -> dict:
         if name not in CORROBORATING_PROVENANCE
     )
     detail = (
-        f"{len(regressed)} adjudicated pairs regressed and {len(self_answered)} "
+        f"{len(regressed)} adjudicated pairs regressed, {len(self_answered)} "
         f"negative pairs attached to an event no outside provider corroborates "
-        f"({uncorroborated or 'none'}), of {len(baseline)} pairs "
-        f"({len(baseline_stale)} attached to a schedule-provider-anchored "
-        f"fixture that did not exist at capture — baseline stale, not a "
-        f"regression; {len(recovered)} recovered, "
-        f"{len(vanished)} markets no longer exist)"
+        f"({uncorroborated or 'none'}), and {len(unadjudicated)} attached to a "
+        f"provider-anchored event nobody has adjudicated them onto, of "
+        f"{len(baseline)} pairs ({len(baseline_stale)} sit on one of the "
+        f"{len(ACCEPTED_ATTACHMENTS)} adjudicated-accepted fixtures that did not "
+        f"exist at capture — baseline stale, not a regression; "
+        f"{len(recovered)} recovered, {len(vanished)} markets no longer exist)"
     )
     out = _finding("golden", bool(red_rows), len(red_rows), detail, red_rows)
     out["regressed"] = len(regressed)
     out["self_answered"] = len(self_answered)
+    out["unadjudicated"] = len(unadjudicated)
     out["baseline_stale"] = len(baseline_stale)
     out["by_provenance"] = by_provenance
     out["recovered"] = len(recovered)
@@ -579,15 +664,16 @@ def fingerprint_for(key: str) -> str:
 #: ``fingerprint_for``, applied to the title. A new check must add its key here;
 #: ``build_title`` refuses an unknown one rather than inventing a title.
 SUBJECTS = {
-    # Names BOTH classes the golden check files RED, because since L1B-019 it
-    # files two: a pair that lost a known-correct answer (regressed), and a
-    # negative pair that later attached to an event no schedule provider
-    # anchors (self-answered). A subject naming only the first would send a
-    # triager looking for regressions on a board where, measured 2026-09-03,
-    # all 34 RED rows are the second kind and 0 are regressions.
+    # Names EVERY class the golden check files RED, because it files three: a
+    # pair that lost a known-correct answer (regressed), a negative pair that
+    # attached to an event nobody adjudicated it onto (unadjudicated), and one
+    # that attached to an event no schedule provider anchors (self-answered). A
+    # subject naming only the first would send a triager looking for
+    # regressions on a board where, measured 2026-09-03, all 34 RED rows are
+    # the third kind and 0 are regressions.
     "golden": (
-        "adjudicated pairs have regressed, or sit on an event no schedule "
-        "provider vouches for"
+        "adjudicated pairs have regressed, or sit on an unadjudicated event, "
+        "or on one no schedule provider vouches for"
     ),
     "anchor_collision": "one anchor key names more than one event",
     "event_espn_id_collision": "one ESPN event id is worn by more than one events row",
