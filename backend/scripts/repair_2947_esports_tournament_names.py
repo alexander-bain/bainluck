@@ -28,13 +28,30 @@ WHAT IT WILL NOT TOUCH, and why each one is a deliberate refusal:
     fixture's market.
 
   * A row whose clean name would COLLIDE — with a clean event that already
-    exists, or with another row in this same plan. Five pairs collide with each
-    other (all `closed`, identical `commence_time` to the second): they are
-    pre-existing twins, lane1's under #2693, and renaming both would turn two
-    obviously-broken rows into two convincing identical ones. That is the exact
-    failure CERT-880 ruled against, and the reason this check runs over the full
-    population rather than a sample. Measured 2026-09-04: 0 clean counterparts
-    exist, so the only collisions are the five internal pairs.
+    exists, or with another row in this same plan. Renaming both halves of a
+    collision would turn two obviously-broken rows into two convincing identical
+    ones, the exact failure CERT-880 ruled against, which is why this check runs
+    over the full population and never a sample.
+
+THE DISPOSITION IS PRE-REGISTERED, AND THE SCRIPT REFUSES TO DISAGREE WITH IT.
+`EXPECTED` below is what a production replay of THIS code measured (CERT-900,
+2026-09-04). `--apply` refuses if the live plan differs, so the claim in this
+docstring and the result on the dyno cannot silently drift apart; restating the
+claim takes an explicit `--expect-plan N`. Correcting the record on how that
+number was arrived at:
+
+  * A pre-registered claim of "0 clean counterparts" was WRONG, and wrong in an
+    instructive way. It was measured esports-vs-esports, while `drop_collisions`
+    scopes its clash query to ALL events — a counterpart in another sport was
+    invisible to the measurement but is visible to the code. The replay found 3.
+    A measurement scoped narrower than the predicate it is measuring under-reports.
+
+  * The replay reported no TWIN_WITHIN_PLAN drops, though a SQL pass over the
+    same population found five same-second pairs (#2693, lane1's). The two are
+    reconcilable — a pair whose second half does not reconstruct never reaches
+    the collision check, and 14 rows do not reconstruct — but that is a
+    hypothesis, not a measurement. The run settles it: `twins` is in `EXPECTED`
+    at 0, so a single twin trips the guard and stops the apply.
 
   * Anything outside `events.home_team_name` / `.away_team_name`. Those are the
     only two columns holding the pollution — `teams` has 0 polluted rows
@@ -88,7 +105,31 @@ BAK_TABLE = "bak_2947_event_names"
 # predicate broke, not that the work is done.
 MIN_EXPECTED_POPULATION = 300
 
+# The pre-registered disposition, measured by a production replay of this code
+# (CERT-900, 2026-09-04). `--apply` refuses unless the live plan matches, so the
+# docstring's claim and the dyno's result cannot drift apart unnoticed.
+EXPECTED = {
+    "population": 366,
+    "plan": 349,
+    "no_reconstruct": 14,
+    "clean_counterpart": 3,
+    "twins": 0,
+}
+
 CHUNK = 200
+
+
+def disposition_drift(measured: dict, expect_plan=None) -> dict:
+    """Buckets that disagree with the pre-registered disposition.
+
+    Returns {bucket: (expected, measured)} — empty means the run matches the
+    claim in the docstring and may proceed. `expect_plan` restates ONE number
+    deliberately; it never relaxes the other buckets.
+    """
+    expected = dict(EXPECTED)
+    if expect_plan is not None:
+        expected["plan"] = expect_plan
+    return {k: (expected[k], v) for k, v in measured.items() if expected[k] != v}
 
 
 def _fingerprint(stored_home: str, stored_away: str, team_a: str, team_b: str) -> bool:
@@ -296,6 +337,23 @@ async def run(args):
         print(f"  dropped as collisions               : {len(dropped)}")
         print(f"  TO RENAME                           : {len(plan)}")
 
+        measured = {
+            "population": population,
+            "plan": len(plan),
+            "no_reconstruct": len(skipped),
+            "clean_counterpart": sum(
+                1 for _, why in dropped if why.startswith("CLEAN_COUNTERPART_EXISTS")
+            ),
+            "twins": sum(1 for _, why in dropped if why == "TWIN_WITHIN_PLAN"),
+        }
+        drift = disposition_drift(measured, args.expect_plan)
+        print("disposition (expected -> measured):")
+        for key, value in measured.items():
+            expected_value, flag = (
+                (drift[key][0], "  <- DRIFT") if key in drift else (value, "")
+            )
+            print(f"    {key:18} {expected_value:>5} -> {value:>5}{flag}")
+
         for row, why in dropped:
             print(f"    SKIP {row['id']}  {why}  -> {row['new_home']} vs {row['new_away']}")
         for event_id, home, away, why in skipped[:20]:
@@ -327,6 +385,16 @@ async def run(args):
             print("DRY RUN — nothing written. Re-run with --backup --apply.")
             return 0
 
+        if drift and not args.limit:
+            print(
+                "REFUSING: the plan does not match the pre-registered disposition — "
+                + ", ".join(f"{k} {exp}->{got}" for k, (exp, got) in drift.items())
+                + ".\nThis is the guard working, not a bug: the population moved, or "
+                "a claim in the docstring is wrong. Read the rows above, decide which, "
+                "then re-run with --expect-plan N to restate the claim deliberately."
+            )
+            return 6
+
         written = await apply_plan(session, plan)
         print(f"APPLIED: {written} events renamed (planned {len(plan)})")
         print(
@@ -342,6 +410,13 @@ def main():
     p.add_argument("--apply", action="store_true", help="write the renames (needs --backup)")
     p.add_argument("--limit", type=int, default=0, help="plan at most N events (testing)")
     p.add_argument("--allow-small", action="store_true", help="bypass the population floor")
+    p.add_argument(
+        "--expect-plan",
+        type=int,
+        default=None,
+        help="restate the expected rename count when the population has legitimately "
+        "moved; without it a plan differing from EXPECTED refuses to apply",
+    )
     args = p.parse_args()
     sys.exit(asyncio.run(run(args)))
 

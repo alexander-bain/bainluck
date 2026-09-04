@@ -313,3 +313,70 @@ def test_repair_refuses_apply_without_backup():
 def test_the_population_floor_exists_so_an_empty_run_cannot_report_success():
     """gotcha #53 — an empty result is a response shape, not an absence."""
     assert repair.MIN_EXPECTED_POPULATION >= 300
+
+
+# ---------------------------------------------------------------------------
+# L1B-030-REPAIR-TAIL-17 — the claim and the result must agree
+# ---------------------------------------------------------------------------
+
+def test_the_disposition_is_pre_registered_and_adds_up():
+    """Every row of the population lands in exactly one bucket.
+
+    The pre-registered numbers come from CERT-900's production replay. If they
+    do not partition the population, the claim is incoherent before the script
+    even runs.
+    """
+    e = repair.EXPECTED
+    assert e["plan"] + e["no_reconstruct"] + e["clean_counterpart"] + e["twins"] == (
+        e["population"]
+    ), f"the pre-registered buckets do not sum to the population: {e}"
+
+
+def test_the_docstring_claim_matches_the_registered_numbers():
+    """The prose and the constant are the same claim, so neither can rot alone."""
+    source = (_SCRIPTS / "repair_2947_esports_tournament_names.py").read_text()
+    assert "The replay found 3." in source
+    assert repair.EXPECTED["clean_counterpart"] == 3
+    assert "14 rows do not reconstruct" in source
+    assert repair.EXPECTED["no_reconstruct"] == 14
+
+
+def test_a_run_matching_the_registered_disposition_has_no_drift():
+    assert repair.disposition_drift(dict(repair.EXPECTED)) == {}
+
+
+@pytest.mark.parametrize("bucket", ["population", "plan", "no_reconstruct", "clean_counterpart", "twins"])
+def test_any_bucket_moving_is_drift(bucket):
+    """BEHAVIOURAL. Every bucket is guarded, not just the plan count."""
+    measured = dict(repair.EXPECTED)
+    measured[bucket] += 1
+    drift = repair.disposition_drift(measured)
+    assert bucket in drift, f"{bucket} moved by one and the guard did not notice"
+
+
+def test_expect_plan_restates_one_number_and_relaxes_nothing_else():
+    """--expect-plan is a restated claim, not a blanket --force."""
+    measured = {**repair.EXPECTED, "plan": 300}
+    assert repair.disposition_drift(measured, expect_plan=300) == {}
+
+    also_twins = {**repair.EXPECTED, "plan": 300, "twins": 2}
+    drift = repair.disposition_drift(also_twins, expect_plan=300)
+    assert "twins" in drift and "plan" not in drift, (
+        "--expect-plan let a twin through; it must only restate the plan count"
+    )
+
+
+def test_the_drift_guard_runs_before_the_write():
+    source = (_SCRIPTS / "repair_2947_esports_tournament_names.py").read_text()
+    apply_at = source.index("written = await apply_plan")
+    refuse_at = source.index("REFUSING: the plan does not match")
+    assert refuse_at < apply_at, "the drift guard runs after the write — it guards nothing"
+
+
+def test_a_twin_is_registered_at_zero_so_one_trips_the_guard():
+    """The replay reported no twins while a SQL pass found five same-second pairs.
+
+    That contradiction is unresolved, so it is registered at 0 deliberately: the
+    run settles it, and a single twin stops the apply instead of being absorbed.
+    """
+    assert repair.EXPECTED["twins"] == 0
