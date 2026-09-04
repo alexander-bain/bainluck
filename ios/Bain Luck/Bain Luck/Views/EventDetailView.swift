@@ -198,6 +198,7 @@ struct EventDetailView: View {
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
                                      refreshCountdown: refreshCountdown,
                                      refreshInterval: refreshInterval,
+                                     refreshStreaming: vm.streamDelivering,
                                      forcedDomain: sharedChartDomain,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history)
@@ -1051,20 +1052,37 @@ struct EventDetailView: View {
 
     // MARK: - Refresh Countdown
 
+    private var refreshIndicator: RefreshIndicator {
+        Self.refreshIndicator(
+            status: vm.event?.status,
+            streamDelivering: vm.streamDelivering,
+            lastLoadedAt: vm.lastLoadedAt,
+            interval: refreshInterval,
+            now: Date())
+    }
+
+    @ViewBuilder
     private var refreshRing: some View {
-        let total = max(refreshInterval, 1)
-        let progress = Double(total - refreshCountdown) / Double(total)
-        let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
-        return ZStack {
-            Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 2)
-            Circle().trim(from: 0, to: progress)
-                .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Text("\(refreshCountdown)")
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundStyle(.secondary)
+        switch refreshIndicator {
+        case .hidden:
+            EmptyView()
+        case .streaming:
+            LivePushDot(diameter: 22)
+        case .countdown(let seconds):
+            let total = max(refreshInterval, 1)
+            let progress = Double(total - seconds) / Double(total)
+            let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
+            ZStack {
+                Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 2)
+                Circle().trim(from: 0, to: progress)
+                    .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text("\(seconds)")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 22, height: 22)
         }
-        .frame(width: 22, height: 22)
     }
 
     /// Auto-refresh cadence in seconds. Only live events poll (the VM installs a
@@ -1076,6 +1094,41 @@ struct EventDetailView: View {
     /// pages perform no periodic reload, so they must not show a cycling countdown
     /// that implies freshness work that never happens (C43 P2).
     static func showsRefreshCountdown(status: String?) -> Bool { status == "live" }
+
+    /// What the refresh control is entitled to say.
+    ///
+    /// C43 established that a countdown may only appear when a request is
+    /// actually scheduled. Live push (#2687) then introduced a third state that
+    /// broke the same rule from the other side: while the stream is delivering
+    /// the VM stands the 30-second poll DOWN entirely, so `lastLoadedAt` stops
+    /// advancing, `refreshRemaining` walks to 0 — and the ring sits at a full
+    /// green circle reading "Next update: 0" for the rest of the match. The page
+    /// is the freshest it has ever been and its own chrome reads as stuck.
+    ///
+    /// So the control has three states, not two: nothing scheduled and nothing
+    /// pushed (hidden), a poll scheduled (count down to it), or a stream
+    /// delivering (say so, and count down to nothing).
+    enum RefreshIndicator: Equatable {
+        case hidden
+        case countdown(Int)
+        case streaming
+    }
+
+    static func refreshIndicator(
+        status: String?,
+        streamDelivering: Bool,
+        lastLoadedAt: Date?,
+        interval: Int,
+        now: Date
+    ) -> RefreshIndicator {
+        guard showsRefreshCountdown(status: status) else { return .hidden }
+        // Order matters: a delivering stream outranks the poll clock, because
+        // the poll is not running. Asking "is the countdown zero" first would
+        // reintroduce the freeze the moment a stream connected mid-cycle.
+        if streamDelivering { return .streaming }
+        return .countdown(
+            refreshRemaining(lastLoadedAt: lastLoadedAt, interval: interval, now: now))
+    }
 
     /// Seconds until the next scheduled auto-refresh, derived from the LAST ACTUAL
     /// load completion (`vm.lastLoadedAt`) — never a self-resetting timer that fakes
@@ -1100,29 +1153,41 @@ struct EventDetailView: View {
     }
 
     /// Circular countdown indicator matching web's SVG ring
+    @ViewBuilder
     private func refreshCountdownView() -> some View {
-        let progress = Double(refreshInterval - refreshCountdown) / Double(refreshInterval)
-        let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
-
-        return HStack(spacing: 6) {
-            if !isFinished {
-                Text("Next update:")
+        switch refreshIndicator {
+        case .hidden:
+            EmptyView()
+        case .streaming:
+            HStack(spacing: 6) {
+                Text("Updating live")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                LivePushDot(diameter: 28)
             }
-            ZStack {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.15), lineWidth: 2.5)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(.linear(duration: 0.5), value: progress)
-                Text("\(refreshCountdown)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.primary)
+        case .countdown(let seconds):
+            let progress = Double(refreshInterval - seconds) / Double(refreshInterval)
+            let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
+            HStack(spacing: 6) {
+                if !isFinished {
+                    Text("Next update:")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                ZStack {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.15), lineWidth: 2.5)
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(ringColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.linear(duration: 0.5), value: progress)
+                    Text("\(seconds)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                }
+                .frame(width: 28, height: 28)
             }
-            .frame(width: 28, height: 28)
         }
     }
 }
