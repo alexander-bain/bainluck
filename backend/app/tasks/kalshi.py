@@ -3890,25 +3890,38 @@ async def _create_settled_market(
         # 2026-09-04). `gradeable_winner` is three-state: None means the venue has
         # not answered, and neither column is written at all.
         graded_cols = graded_columns(m.status, m.result)
-        out_stmt = (
-            pg_insert(FuturesOutcome)
-            .values(
-                market_id=market_id,
-                external_id=m.ticker,
-                name=(outcome_name or m.ticker)[:300],
-                current_probability=prob,
-                current_american_odds=american,
-                volume=int(m.volume) if m.volume is not None else None,
-                **graded_cols,
-            )
-            .on_conflict_do_update(
-                index_elements=["market_id", "external_id"],
-                # NEVER writes `is_winner`/`resolution_source` when the venue has
-                # not answered: an ungraded re-poll must not erase a grade a real
-                # settlement already established (gotcha #21).
-                set_={"last_updated": func.now(), **graded_cols},
-            )
+        base_stmt = pg_insert(FuturesOutcome).values(
+            market_id=market_id,
+            external_id=m.ticker,
+            name=(outcome_name or m.ticker)[:300],
+            current_probability=prob,
+            current_american_odds=american,
+            volume=int(m.volume) if m.volume is not None else None,
+            **graded_cols,
         )
+        # The conflict path is a RESOLUTION write or it is nothing. Splatting an
+        # empty `graded_cols` into `set_` would have left `last_updated =
+        # func.now()` standing alone — a bare touch-stamp on a row where nothing
+        # changed, which is #2024's exact surface, and
+        # `tests/test_futures_stamp_semantics.py` caught it in CI: its census of
+        # poll touch-stamps went 5 -> 6 because this block stopped naming
+        # `resolution_source`. The census was right, so the semantics are fixed
+        # rather than the count bumped. An ungraded re-run now touches the row
+        # not at all, so it cannot refresh the staleness gate `routes/playoffs.py`
+        # drops outcomes on either.
+        if graded_cols:
+            out_stmt = base_stmt.on_conflict_do_update(
+                index_elements=["market_id", "external_id"],
+                set_={
+                    "is_winner": graded_cols["is_winner"],
+                    "resolution_source": graded_cols["resolution_source"],
+                    "last_updated": func.now(),
+                },
+            )
+        else:
+            out_stmt = base_stmt.on_conflict_do_nothing(
+                index_elements=["market_id", "external_id"]
+            )
         await session.execute(out_stmt)
         stats["outcomes_created"] += 1
 
