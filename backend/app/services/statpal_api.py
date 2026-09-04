@@ -436,6 +436,37 @@ class StatPalAPIService(BaseAPIClient):
 
         return await self.get_fixtures(sport)
 
+    async def get_live_fixtures(self, sport: str) -> list[StatPalFixture]:
+        """`livescores` through the authority door — the half `daily` cannot serve.
+
+        `get_schedule_fixtures("tennis", …)` reaches d-7…d-1 and d1…d7 and there
+        is **no d0**: it answers HTTP 500, so today's order of play is
+        unobtainable from `daily` (ARTIFACT-AUTHORITY-20260903-TENNIS §1a). Only
+        `livescores` knows a match on the day it is played, and today's play is
+        exactly what D59's live score line is about.
+
+        Why not fix `get_live_scores` instead: tennis's `tournament` is a LIST
+        where every other sport serves a dict, so `_parse_fixtures` returns `[]`
+        and tennis livescores has always been dark. Teaching the SHARED parser
+        that shape would not add a reader — it would hand 57 tennis fixtures to
+        `sync_statpal_live_scores`, which iterates `STATPAL_SPORT_MAPPING` and
+        writes what it gets, on the next beat. That is a live-ingestion change
+        with its own review, not a side effect of building a linker; the same
+        argument that gave `get_schedule_fixtures` its own door applies here
+        unchanged.
+
+        Raises:
+            StatPalUpstreamError: the read failed. "No games are live" and "we
+                could not ask" must not arrive as the same empty list (gotcha
+                #53) — a linker that treats a 500 as an empty slate reports a
+                clean run in which nothing was linked.
+        """
+        data = await self._get(sport, "livescores")
+        self._require_answer(sport, "livescores", data)
+        if sport == "tennis":
+            return self._parse_tennis_daily(data)
+        return self._parse_fixtures(data, sport)
+
     @staticmethod
     def _require_answer(sport: str, endpoint: str, data) -> None:
         """Turn `_get`'s None into a raise on the authority read path.
