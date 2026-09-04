@@ -34,6 +34,7 @@ import {
   suspendedSummary,
 } from "@/lib/eventState";
 import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
+import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -373,9 +374,12 @@ function EventFeedCard({
     data.current_odds?.home_rendered_percent,
   );
 
-  // Team colors for probability bar
+  // Team colors for the probability bar. Decided as a PAIR (#2962): a bar with
+  // two halves is one decision, not two, or the halves can agree — or, as they
+  // did here for months, both vanish. `probabilityBarPair` owns the rule.
   const homeColor = data.home_team_data?.primary_color ?? null;
   const awayColor = data.away_team_data?.primary_color ?? null;
+  const barPair = probabilityBarPair(awayColor, homeColor);
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(data.sport);
@@ -772,22 +776,34 @@ function EventFeedCard({
             longer the muted "Opened X/Y" text below: as of ux/1036 it is a
             number beside each team name, above. */}
         {!isFinished && !isSuspended && barHomeProb !== null && barAwayProb !== null && (
-          <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex">
+          <div className="w-full h-1.5 rounded-full overflow-hidden mt-2 flex" data-testid="feed-card-prob-bar">
+            {/* #2962 — both segments are decided together, and at ONE opacity.
+                This used to read `awayColor || "var(--color-text-muted)"` and
+                `homeColor || "var(--color-accent-brand)"`; neither property has
+                ever been defined, so both halves painted nothing and the bar
+                was invisible on every card that lacked a team colour — which,
+                since `/api/feed` never serializes `home_team_data`, is every
+                card. `probabilityBarPair` guarantees two real, visible,
+                distinguishable colours. Do NOT reintroduce a per-side opacity:
+                the old 0.3 put the away default at 1.28:1 against the card,
+                below the visibility floor the helper enforces. */}
             <div
               className="h-full transition-all rounded-l-full"
               style={{
                 width: `${Math.round(barAwayProb * 100)}%`,
-                backgroundColor: awayColor || "var(--color-text-muted)",
-                opacity: awayColor ? 0.7 : 0.3,
+                backgroundColor: barPair.away,
+                opacity: SEGMENT_OPACITY,
               }}
+              data-bar-segment="away"
             />
             <div
               className="h-full transition-all rounded-r-full"
               style={{
                 width: `${Math.round(barHomeProb * 100)}%`,
-                backgroundColor: homeColor || "var(--color-accent-brand)",
-                opacity: homeColor ? 0.7 : 0.5,
+                backgroundColor: barPair.home,
+                opacity: SEGMENT_OPACITY,
               }}
+              data-bar-segment="home"
             />
           </div>
         )}
