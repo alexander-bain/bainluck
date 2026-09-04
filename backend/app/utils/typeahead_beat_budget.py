@@ -1245,7 +1245,33 @@ def free_background_slots(
 #: compute here, and rather than `realtime` because NOTHING READS THE STAMP YET —
 #: it is identity written dark under D50, and a beat with no reader has no claim
 #: on the live queue.
-BACKGROUND_BEAT_COUNT = 114
+#:
+#: 🔴 live/059's beat, carried here by live/061's SPLIT of the chart work off its
+#: migration-bearing tennis base (2026-09-04): `fill-futures-chart-series`,
+#: `crontab(minute=13)`, `limit=12`, explicitly routed to `background`.
+#:
+#: ITS COST, declared here because this is where costs are declared. One indexed
+#: query over tier-1 open Kalshi/Polymarket winner fields resolving inside 30
+#: days (107 rows, measured 2026-09-04, against 1,113 unfiltered), one Redis
+#: `ZMSCORE`, then at most 12 markets × ~34 paced HTTP reads to Polymarket's CLOB
+#: and Kalshi's candlestick endpoint. NO DB WRITES AT ALL — the result is a Redis
+#: cache, deliberately not `futures_odds_snapshots`, whose 38 readers include the
+#: calibration build. `background` rather than `heavy` for the same reason
+#: `sync-tennis-from-espn` is: the wall is network latency, not database work,
+#: and it holds no connection while it waits.
+#:
+#: 🔴 RE-DERIVATION AT THE SPLIT (live/059 chart work → current master, 2026-09-04):
+#: **INT-158's collision for the FIFTH time.** live/059 counted 112 → 113 against
+#: its own base; master had meanwhile reached 114 via CAL-P998 and authority/009.
+#: 113 is the number that is wrong on the composed tree, because all three beats
+#: exist there. The census below was RUN over the assembled `beat_schedule` on the
+#: SPLIT tree and printed `explicit 70 implicit 45 total 115`. That is what stands
+#: here. It was not obtained by adding 1 to 114 (#1910), and the run is quoted in
+#: the split commit's message. The fall-through half is UNMOVED at **45** — the
+#: chart beat names its queue rather than defaulting into it, the benign
+#: direction this guard reserves. All prior lanes' cost declarations above remain
+#: accurate as written.
+BACKGROUND_BEAT_COUNT = 115
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
