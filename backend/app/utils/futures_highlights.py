@@ -8,7 +8,8 @@ on interestingness (0-100) for the unified feed.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from functools import lru_cache
+from typing import NamedTuple, Optional
 
 
 # Market tier weights (lower tier number = more important)
@@ -323,6 +324,14 @@ _ELECTION_MARKET_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The allowlist-inversion keyword set, previously an inline `re.search(...)` with
+# a literal pattern inside the scoring path. Same pattern, same flags, hoisted to
+# module scope so it lives beside its siblings and is asked via the shared memo.
+_NON_MAJOR_ELECTION_KEYWORD_RE = re.compile(
+    r"\b(election|winner|nominee|primary|caucus)\b",
+    re.IGNORECASE,
+)
+
 _SPORTS_POSTSEASON_STORY_RE = re.compile(
     r"(?=.*\b(advance|reach|make|win|winner)\b)"
     r"(?=.*\b("
@@ -331,6 +340,64 @@ _SPORTS_POSTSEASON_STORY_RE = re.compile(
     r")\b)",
     re.IGNORECASE,
 )
+
+
+class _NameVerdicts(NamedTuple):
+    """Every pattern question this module asks of a market NAME, answered once.
+
+    One field per pattern above, in the order the scorer asks them.
+    """
+
+    boring: bool
+    obscure_election: bool
+    minor_sport_event: bool
+    election_market: bool
+    major_election: bool
+    non_major_election_keyword: bool
+    cultural_gravity_t1: bool
+    cultural_gravity_t2: bool
+    compelling_hits: int
+    sports_postseason_story: bool
+    minor_league: bool
+    top_tier_soccer: bool
+
+
+@lru_cache(maxsize=8192)
+def _name_verdicts(market_name: str) -> _NameVerdicts:
+    """Answer every name-only pattern question, memoised on the name.
+
+    The scorer runs over the same market names on every Discover build, and each
+    of these answers depends on **the name string and nothing else** — not price,
+    status, time, outcomes, source count, volume, tier or category. The patterns
+    themselves are module constants compiled at import and never rewritten, so a
+    verdict cannot go stale inside a process, and changing a pattern means editing
+    this file, which means a deploy, which means a fresh process and an empty
+    cache. The key is the whole input, so a renamed market is a different key and
+    can never be served an old verdict. (LAT-P225, #3030.)
+
+    `compelling_hits` is the full count over `_COMPELLING_PATTERNS`; the caller
+    still applies its own `min(..., 3)` and its own boring-market gate, so the
+    scoring arithmetic is untouched.
+    """
+    return _NameVerdicts(
+        boring=bool(_BORING_PATTERNS.search(market_name)),
+        obscure_election=bool(_OBSCURE_ELECTION_PATTERNS.search(market_name)),
+        minor_sport_event=bool(_MINOR_SPORT_EVENT_PATTERNS.search(market_name)),
+        election_market=bool(_ELECTION_MARKET_RE.search(market_name)),
+        major_election=bool(_MAJOR_ELECTION_RE.search(market_name)),
+        non_major_election_keyword=bool(
+            _NON_MAJOR_ELECTION_KEYWORD_RE.search(market_name)
+        ),
+        cultural_gravity_t1=bool(_CULTURAL_GRAVITY_T1.search(market_name)),
+        cultural_gravity_t2=bool(_CULTURAL_GRAVITY_T2.search(market_name)),
+        compelling_hits=sum(1 for p in _COMPELLING_PATTERNS if p.search(market_name)),
+        sports_postseason_story=bool(
+            _SPORTS_POSTSEASON_STORY_RE.search(market_name)
+        ),
+        minor_league=bool(_MINOR_LEAGUE_PATTERNS.search(market_name)),
+        top_tier_soccer=bool(_TOP_TIER_SOCCER_RE.search(market_name)),
+    )
+
 
 # Scoring weights
 FUTURES_WEIGHTS = {
@@ -399,12 +466,12 @@ class FuturesHighlightResult:
 
 def is_minor_league_market(market_name: str) -> bool:
     """Check if a futures market name indicates a minor/lower-tier league."""
-    return bool(_MINOR_LEAGUE_PATTERNS.search(market_name))
+    return _name_verdicts(market_name).minor_league
 
 
 def is_top_tier_soccer_market(market_name: str) -> bool:
     """Check if a soccer futures market has broad/top-tier audience interest."""
-    return bool(_TOP_TIER_SOCCER_RE.search(market_name or ""))
+    return _name_verdicts(market_name or "").top_tier_soccer
 
 
 def compute_futures_highlight(
@@ -454,6 +521,10 @@ def compute_futures_highlight(
     _market_name = market_name or ""
     _name_lower = _market_name.lower()
     _sport_lower = (sport_category or "").lower()
+    # Every name-only pattern question, asked once and memoised on the name
+    # (LAT-P225). The guards below are unchanged, so the same branches fire on
+    # the same markets — this only stops re-asking a settled question.
+    _v = _name_verdicts(_market_name)
 
     base = CATEGORY_BASE_SCORES.get(_sport_lower, 0)
     if base == 0 and _sport_lower:
@@ -468,17 +539,17 @@ def compute_futures_highlight(
     # the branch never fired. Removed (RANK-1 dead-code cleanup, #141/Item 3).
 
     # === Boring market penalty (overrides compelling) ===
-    if _market_name and _BORING_PATTERNS.search(_market_name):
+    if _market_name and _v.boring:
         result.score += BORING_PENALTY
         result.reasons.append("boring_pattern")
 
     # === Obscure election penalty ===
-    if _market_name and _OBSCURE_ELECTION_PATTERNS.search(_market_name):
+    if _market_name and _v.obscure_election:
         result.score += OBSCURE_ELECTION_PENALTY
         result.reasons.append("obscure_election")
 
     # === Minor sport event penalty ===
-    if _market_name and _MINOR_SPORT_EVENT_PATTERNS.search(_market_name):
+    if _market_name and _v.minor_sport_event:
         result.score += MINOR_SPORT_EVENT_PENALTY
         result.reasons.append("minor_sport_event")
 
@@ -493,8 +564,8 @@ def compute_futures_highlight(
     if (
         _sport_lower == "politics"
         and _market_name
-        and _ELECTION_MARKET_RE.search(_market_name)
-        and not _MAJOR_ELECTION_RE.search(_market_name)
+        and _v.election_market
+        and not _v.major_election
     ):
         result.score += FOREIGN_LOCAL_ELECTION_PENALTY
         result.reasons.append("foreign_local_election")
@@ -503,8 +574,8 @@ def compute_futures_highlight(
     if (
         _sport_lower == "politics"
         and _market_name
-        and re.search(r"\b(election|winner|nominee|primary|caucus)\b", _market_name, re.IGNORECASE)
-        and not _MAJOR_ELECTION_RE.search(_market_name)
+        and _v.non_major_election_keyword
+        and not _v.major_election
         and "obscure_election" not in result.reasons
         and "foreign_local_election" not in result.reasons
     ):
@@ -513,21 +584,21 @@ def compute_futures_highlight(
 
     # === Cultural gravity boost (high-interest culture/entertainment) ===
     if "boring_pattern" not in result.reasons and _market_name:
-        if _CULTURAL_GRAVITY_T1.search(_market_name):
+        if _v.cultural_gravity_t1:
             result.score += CULTURAL_GRAVITY_T1_BOOST
             result.reasons.append("cultural_gravity_t1")
-        elif _CULTURAL_GRAVITY_T2.search(_market_name):
+        elif _v.cultural_gravity_t2:
             result.score += CULTURAL_GRAVITY_T2_BOOST
             result.reasons.append("cultural_gravity_t2")
 
     # === Compelling market boost (skip if boring) ===
     if "boring_pattern" not in result.reasons and _market_name:
-        compelling_hits = sum(1 for p in _COMPELLING_PATTERNS if p.search(_market_name))
+        compelling_hits = _v.compelling_hits
         if compelling_hits > 0:
             result.score += COMPELLING_BOOST * min(compelling_hits, 3)
             result.reasons.append(f"compelling_x{min(compelling_hits, 3)}")
 
-    if _market_name and _SPORTS_POSTSEASON_STORY_RE.search(_market_name):
+    if _market_name and _v.sports_postseason_story:
         result.score += SPORTS_POSTSEASON_STORY_BOOST
         result.reasons.append("sports_postseason_story")
 
