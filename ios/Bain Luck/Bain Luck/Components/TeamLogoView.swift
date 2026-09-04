@@ -8,6 +8,12 @@ struct TeamLogoView: View {
     var size: CGFloat = 28
     /// Optional sport key for ESPN logo fallback (e.g., "basketball_nba")
     var sportKey: String? = nil
+    /// Whether `url` is a PHOTOGRAPH OF A PERSON rather than a crest or a flag
+    /// (#2919 native half). A crest is transparent art that must be shown whole,
+    /// so it fits; a portrait head-and-shoulders shot fitted into a square slot
+    /// becomes a letterboxed sliver, so it fills and is cropped square. Defaults
+    /// to false, which is every existing call site unchanged.
+    var isPhotograph: Bool = false
 
     @State private var image: PlatformImage?
     @State private var loadFailed = false
@@ -29,10 +35,18 @@ struct TeamLogoView: View {
     var body: some View {
         Group {
             if let image {
-                Image(platformImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: size, height: size)
+                if isPhotograph {
+                    Image(platformImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: size, height: size)
+                        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+                } else {
+                    Image(platformImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: size, height: size)
+                }
             } else if loadFailed && triedEspnFallback {
                 initialsFallback
             } else if resolvedURL == nil {

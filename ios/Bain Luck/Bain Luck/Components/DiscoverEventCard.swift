@@ -30,13 +30,22 @@ struct NativeEventDiscoverCard: View {
     var onContextExpand: (() -> Void)? = nil
     var onContextCollapse: (() -> Void)? = nil
 
-    private var awayColor: Color {
-        Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+    /// This card's slate/blue defaults are where `ProbabilityBarPalette`'s came
+    /// from — it was the one card that already used a *pair* rather than one
+    /// colour twice, so the palette adopts its values and Discover looks
+    /// unchanged. What it gains is the collision arm: two crests that do not
+    /// read apart (or one crest sitting on this card's own default) no longer
+    /// produce a flat bar. #2902.
+    private var barColors: (away: Color, home: Color) {
+        ProbabilityBarPalette.colors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
     }
 
-    private var homeColor: Color {
-        Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
-    }
+    private var awayColor: Color { barColors.away }
+
+    private var homeColor: Color { barColors.home }
 
     private var sportKey: String {
         event.sport?.split(separator: "_").first.map(String.init)?.lowercased() ?? "sports"
@@ -171,7 +180,7 @@ struct NativeEventDiscoverCard: View {
                     HStack(alignment: .center, spacing: 0) {
                         heroTeam(
                             name: event.awayTeam,
-                            logo: event.awayTeamData?.logoSmall,
+                            avatar: event.avatar(home: false),
                             color: awayColor,
                             score: event.awayScore,
                             alignment: .leading
@@ -186,7 +195,7 @@ struct NativeEventDiscoverCard: View {
 
                         heroTeam(
                             name: event.homeTeam,
-                            logo: event.homeTeamData?.logoSmall,
+                            avatar: event.avatar(home: true),
                             color: homeColor,
                             score: event.homeScore,
                             alignment: .trailing
@@ -329,17 +338,25 @@ struct NativeEventDiscoverCard: View {
 
     private func heroTeam(
         name: String,
-        logo: String?,
+        avatar: ParticipantAvatar,
         color: Color,
         score: Int?,
         alignment: HorizontalAlignment
     ) -> some View {
         VStack(spacing: 6) {
-            if let logo, let url = URL(string: logo) {
+            if let logo = avatar.url, let url = URL(string: logo) {
                 AsyncImage(url: url) { img in
-                    img.resizable().scaledToFit()
+                    // A crest is shown whole; a headshot fills the slot and is
+                    // cropped, because a portrait scaled to FIT a square becomes a
+                    // sliver (see `ParticipantAvatar.isPhotograph`).
+                    if avatar.isPhotograph {
+                        img.resizable().scaledToFill()
+                    } else {
+                        img.resizable().scaledToFit()
+                    }
                 } placeholder: { EmptyView() }
                 .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: avatar.isPhotograph ? 12 : 0, style: .continuous))
                 .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
             } else {
                 RoundedRectangle(cornerRadius: 12)

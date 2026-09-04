@@ -397,10 +397,14 @@ struct EventDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    /// #2902 — the same both-sides-one-grey fallback the Sports card had, on the
+    /// hero bar of every tennis and golf event page. One palette, one contract:
+    /// the pair always reads apart. See `ProbabilityBarPalette`.
     private func teamColors(_ event: EventDetail) -> (away: Color, home: Color) {
-        let away = Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280")
-        let home = Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280")
-        return (away, home)
+        ProbabilityBarPalette.colors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
     }
 
     // MARK: - Chart Header Bar (v2: title + freshness)

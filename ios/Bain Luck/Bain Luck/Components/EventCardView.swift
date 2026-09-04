@@ -24,8 +24,18 @@ struct EventCardView: View {
     private var awayWon: Bool { isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0) }
     private var homeWon: Bool { isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0) }
 
-    private var awayColor: Color { Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280") }
-    private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
+    /// #2902 — these two used to fall back to the SAME grey, so every card
+    /// whose sides have no brand colour (all tennis, all golf pairings, any
+    /// unmapped team) drew a bar with no visible split. The palette guarantees
+    /// the pair reads apart; see `ProbabilityBarPalette`.
+    private var barColors: (away: Color, home: Color) {
+        ProbabilityBarPalette.colors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
+    }
+    private var awayColor: Color { barColors.away }
+    private var homeColor: Color { barColors.home }
 
     #if os(macOS)
     @State private var isHovered = false
@@ -197,7 +207,7 @@ struct EventCardView: View {
         VStack(spacing: 6) {
             teamRow(
                 name: event.awayTeam,
-                logo: event.awayTeamData?.logoSmall,
+                avatar: event.avatar(home: false),
                 color: awayColor,
                 record: event.awayTeamData?.record,
                 score: (isLive || isFinished || isSuspended) ? event.awayScore : nil,
@@ -209,7 +219,7 @@ struct EventCardView: View {
 
             teamRow(
                 name: event.homeTeam,
-                logo: event.homeTeamData?.logoSmall,
+                avatar: event.avatar(home: true),
                 color: homeColor,
                 record: event.homeTeamData?.record,
                 score: (isLive || isFinished || isSuspended) ? event.homeScore : nil,
@@ -219,14 +229,15 @@ struct EventCardView: View {
         }
     }
 
-    private func teamRow(name: String, logo: String?, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
+    private func teamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
         HStack(spacing: 8) {
             TeamLogoView(
-                url: logo,
+                url: avatar.url,
                 teamName: name,
                 color: color,
                 size: isLive ? 28 : 24,
-                sportKey: event.sport
+                sportKey: event.sport,
+                isPhotograph: avatar.isPhotograph
             )
             Text(name)
                 .font(.subheadline)

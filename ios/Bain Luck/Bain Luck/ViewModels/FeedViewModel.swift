@@ -514,8 +514,14 @@ extension APIClient: SportsFeedProviding {
     /// `_score_sports_mode_futures` (a single top-sports-futures query) instead of
     /// the full editorial Discover pipeline the Discover-default guard would
     /// otherwise force on an unparameterized request.
+    ///
+    /// Traced (native/006): the response's `X-Feed-Cache` arm is emitted as
+    /// `sports_feed_network` alongside the existing `sports_feed_stage`. Without
+    /// it a Sports first-card number is uninterpretable — latency measured the
+    /// server floor at 38ms warm vs 861ms on a miss, so the same client code
+    /// reads four times apart depending on an arm the app was not recording.
     nonisolated func fetchSportsFeed() async throws -> FeedResponse {
-        try await fetchFeed(mode: "sports")
+        try await fetchFeed(mode: "sports", trace: { AnalyticsService.trackSportsFeedNetwork($0) })
     }
 
     /// Events-only backfill, served raw as today (`include_futures=false` opts it

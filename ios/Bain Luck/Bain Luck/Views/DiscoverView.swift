@@ -2145,7 +2145,7 @@ struct NativeGuessCard: View {
         let awayColor = Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
 
         return HStack(spacing: 10) {
-            teamBadge(name: event.awayTeam, logo: event.awayTeamData?.logoSmall, color: awayColor)
+            teamBadge(name: event.awayTeam, avatar: event.avatar(home: false), color: awayColor)
 
             VStack(spacing: 4) {
                 Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (event.status == "completed" || event.status == "closed" ? "FINAL" : "VS"))
@@ -2159,15 +2159,24 @@ struct NativeGuessCard: View {
             }
             .frame(width: 42)
 
-            teamBadge(name: event.homeTeam, logo: event.homeTeamData?.logoSmall, color: homeColor)
+            teamBadge(name: event.homeTeam, avatar: event.avatar(home: true), color: homeColor)
         }
     }
 
-    private func teamBadge(name: String, logo: String?, color: Color) -> some View {
+    private func teamBadge(name: String, avatar: ParticipantAvatar, color: Color) -> some View {
         VStack(spacing: 6) {
-            if let logo, let url = URL(string: logo) {
-                AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { EmptyView() }
+            if let logo = avatar.url, let url = URL(string: logo) {
+                AsyncImage(url: url) { img in
+                    // Crest fits; headshot fills and is cropped square — see
+                    // `ParticipantAvatar.isPhotograph`.
+                    if avatar.isPhotograph {
+                        img.resizable().scaledToFill()
+                    } else {
+                        img.resizable().scaledToFit()
+                    }
+                } placeholder: { EmptyView() }
                     .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: avatar.isPhotograph ? 9 : 0, style: .continuous))
             } else {
                 RoundedRectangle(cornerRadius: 9)
                     .fill(color)
