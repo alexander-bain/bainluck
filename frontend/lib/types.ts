@@ -205,6 +205,27 @@ export interface TennisLinescore {
   games: { home: number; away: number };
   /** Home first, always: `"6-2, 6-7(4), 6-5"`. */
   line: string;
+  /**
+   * WHICH TWO ENTITIES THE `home`/`away` COLUMNS BELONG TO (CERT-913).
+   *
+   * Every other field here is POSITIONAL, and position is only meaningful
+   * against the `sides` list the backend built the line beside. Consumers
+   * re-order those sides routinely — the hub sorts the favourite first, the
+   * bracket join adopts the draw's top/bottom — and a positional score carried
+   * across a re-order is a score with its columns swapped, which is an
+   * inverted result that nothing downstream doubts.
+   *
+   * `orientLinescore` in `lib/linescore.ts` is the ONLY thing that should read
+   * these: it re-orients by id and REFUSES the line when it cannot, because a
+   * blank is visibly missing and a reversed one is confidently wrong.
+   *
+   * Optional because the tennis match-page linescore (live/058) is built by a
+   * different producer that has no entity keys to state. A consumer that needs
+   * to re-order must treat absence as "cannot orient", never as "already
+   * correct".
+   */
+  home_entity_key?: string | null;
+  away_entity_key?: string | null;
   /** When WE read it. Neither venue publishes a per-match write timestamp. */
   observed_at: string;
   /**

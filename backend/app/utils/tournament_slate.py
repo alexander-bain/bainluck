@@ -75,6 +75,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
 from typing import Any, Optional
 
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
@@ -298,11 +299,13 @@ def _side_view(
     }
 
 
-def _slate_linescore(
-    matchup: dict[str, Any],
+def _linescore_field(
+    ours: Sequence[Any],
     listed: Optional[dict[str, Any]],
     *,
     now: datetime,
+    home_entity_key: Any,
+    away_entity_key: Any,
 ) -> dict[str, Any]:
     """``{"linescore": ...}`` when ESPN states one for this fixture, else ``{}``.
 
@@ -319,17 +322,35 @@ def _slate_linescore(
     scoreboard fetch that produced ``state`` and ``status_detail``, so the set
     line and the caption beside it describe one instant of one match.
 
-    ORIENTATION IS THIS FUNCTION'S REASON TO EXIST.  ``authority_linescore``
-    needs our home/away order, which the scoreboard parser cannot know; the
-    register's pairing supplies it here.  When the two cannot be reconciled the
-    line is refused outright rather than guessed, because a linescore with the
-    columns swapped is an inverted result that nothing downstream doubts.
+    ``ours`` is the two people IN THE ORDER THIS ROW'S ``sides`` ARE BUILT,
+    which is the whole of what ``authority_linescore`` needs from us: the
+    scoreboard parser cannot know our home/away and refuses to guess it.  Both
+    row builders in this module have such an order and neither can borrow the
+    other's — the register path has its pinned pairing, the authority path has
+    ESPN's own top-to-bottom — so the order is a parameter rather than
+    something re-derived here.
+
+    ═══ THE ANCHOR: WHY home/away IS NOT ENOUGH ON ITS OWN (CERT-913) ═══
+
+    ``home``/``away`` is a POSITIONAL claim, and it is only true relative to the
+    ``sides`` list it was built beside.  Every renderer downstream is free to
+    re-order those sides — the hub sorts the favourite first, the bracket join
+    adopts the draw's top/bottom — and a positional score carried across a
+    re-order is an inverted result that nothing downstream doubts.  It is the
+    exact failure ``orient_sides`` refuses to risk upstream, re-introduced two
+    layers later.
+
+    So the line states WHICH TWO ENTITIES its columns belong to.  A consumer
+    that re-orders sides can then re-orient the score by id — a comparison, not
+    a guess — and a consumer that cannot match the ids has been handed a
+    positive signal that it must not draw the line at all.
     """
     if listed is None:
         return {}
 
-    players = matchup.get("players")
-    if not isinstance(players, list) or len(players) != 2:
+    if len(ours) != 2 or not all(ours):
+        return {}
+    if not home_entity_key or not away_entity_key:
         return {}
 
     # LAZY, for the same reason the `espn_tennis` imports in this module are —
@@ -337,11 +358,64 @@ def _slate_linescore(
     # `tennis_linescore` reaches SQLAlchemy through its own import chain.
     from app.utils.tennis_linescore import authority_linescore
 
-    built = authority_linescore(
-        [str(p) for p in players], listed, observed_at=now
-    )
+    # ONE MALFORMED BOARD ENTRY MUST NOT COST THE CARD (gotcha #42).
+    #
+    # The line is an enrichment on a row that was complete without it, and the
+    # only caller that can supply a broken `listed` is the live scoreboard —
+    # which, since this repair, is the ONLY source of every round after the
+    # first. An unguarded raise here would blank the whole hub during the
+    # semi-finals to avoid printing one set score, which is the trade backwards.
+    try:
+        built = authority_linescore(
+            [str(p) for p in ours], listed, observed_at=now
+        )
+    except Exception:  # noqa: BLE001 — a bad line costs the line, never the row
+        logger.warning(
+            "slate linescore failed for competition %s",
+            listed.get("espn_competition_id"),
+            exc_info=True,
+        )
+        return {}
     line = built.get("linescore")
-    return {"linescore": line} if line else {}
+    if not line:
+        return {}
+    return {
+        "linescore": {
+            **line,
+            "home_entity_key": str(home_entity_key),
+            "away_entity_key": str(away_entity_key),
+        }
+    }
+
+
+def _slate_linescore(
+    matchup: dict[str, Any],
+    listed: Optional[dict[str, Any]],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """The register path's line, oriented to the register's pinned pairing.
+
+    ``matchup["players"]`` is a list of ENTITY KEYS, and ``build_match_row``
+    builds its ``sides`` by iterating that same list, so ``players[i]`` is
+    ``sides[i]["entity_key"]`` — which is both the order to orient against and
+    the anchor to stamp on the result.
+
+    The keys are slugified display names (``"clara-burel"``), and
+    ``names_agree`` tokenises on non-alphanumerics, so they compare cleanly
+    against ESPN's ``"Clara Burel"`` without a second lookup.  That is why this
+    can hand entity keys to a function whose parameter is called ``ours``.
+    """
+    players = matchup.get("players")
+    if not isinstance(players, list) or len(players) != 2:
+        return {}
+    return _linescore_field(
+        players,
+        listed,
+        now=now,
+        home_entity_key=players[0],
+        away_entity_key=players[1],
+    )
 
 
 def build_match_row(
@@ -1067,6 +1141,32 @@ def authority_match_row(
         "scheduled_date": started.isoformat(),
         "live_state": str(listed.get("state") or "") or None,
         "status_detail": listed.get("status_detail"),
+        # ═══ THE SET-BY-SET SCORE, ON THIS PATH TOO (CERT-913) ═══
+        #
+        # `build_match_row` has carried the line since live/061 and this
+        # function did not, which made the ship's own headline case the one
+        # case it missed: the register is a CEREMONY artefact that pins only
+        # the first round (see the ux/1033 section above), so every later
+        # round — every quarter-final, every semi-final, the final — is
+        # synthesized here. During the US Open men's semi-finals the rows a
+        # reader actually opens the hub for were the rows with no line on them,
+        # and the row said "4th Set" and nothing else, which is the exact
+        # sentence live/061 exists to stop printing.
+        #
+        # ORIENTED TO `ordered`, WHICH IS WHAT `sides` IS BUILT FROM. There is
+        # no register pairing on this path — that is the point of this path —
+        # so the order to orient against is ESPN's own scoreboard order, and
+        # the names to orient with are the names ESPN just gave us. Both come
+        # off the same `listed` entry as `state` and `status_detail`, so the
+        # line and the caption beside it still describe one instant of one
+        # match; this path adds no read of its own.
+        **_linescore_field(
+            [c.get("name") for c in ordered],
+            listed,
+            now=now,
+            home_entity_key=sides[0]["entity_key"],
+            away_entity_key=sides[1]["entity_key"],
+        ),
         "start_is_tbd": listed.get("start_is_tbd") is True,
         "sides": sides,
         # UNPRICED, `coherent: False` with `priced: False` is the released-draw

@@ -50,6 +50,7 @@ import {
   type PrematchPair,
   type RoundName,
 } from "./bracket";
+import { orientLinescore } from "./linescore";
 import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
 import type { TennisLinescore } from "./types";
 import {
@@ -551,7 +552,18 @@ export function matchListFromSlate(
       startIsTbd: match.start_is_tbd === true,
       liveState: match.live_state ?? null,
       statusDetail: match.status_detail ?? null,
-      linescore: match.linescore ?? null,
+      // ORIENTED TO THE SIDES AS DISPLAYED, NOT AS SERVED (CERT-913).
+      //
+      // `sides` was just sorted favourite-first, so on every row where the
+      // underdog was served first the backend's `home` column is now this
+      // row's SECOND side. Passing the line through unchanged printed the set
+      // score against the wrong player — a swapped 6-4 4-6 that reads as a
+      // completely different match and that nothing on the card contradicts.
+      linescore: orientLinescore(
+        match.linescore,
+        sides[0].entityKey,
+        sides[1].entityKey,
+      ),
       drawLabel: match.draw_label ?? null,
       sides,
       decided,
@@ -696,7 +708,19 @@ export function matchListFromBracket(
         // from nowhere else — a draw slot carries no score. `null` when the
         // fixture is not on today's slate, which is the ordinary case for a
         // bracket match days out.
-        linescore: joined?.linescore ?? null,
+        //
+        // AND IT IS RE-ORIENTED, BECAUSE THE JOIN IS ORDER-BLIND (CERT-913).
+        // `pairKey` sorts its two keys so a slate row matches its bracket
+        // fixture whichever way round each names the pair — which is what
+        // makes the join work, and exactly what makes the score's columns
+        // unsafe to carry across it. These sides are the DRAW's top/bottom;
+        // the line's columns are the slate row's, and about half the time
+        // those are opposite.
+        linescore: orientLinescore(
+          joined?.linescore,
+          sides[0].entityKey,
+          sides[1].entityKey,
+        ),
         drawLabel: joined?.draw_label ?? null,
         sides,
         decided,
