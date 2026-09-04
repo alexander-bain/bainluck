@@ -158,6 +158,20 @@ def exact_coverage(n_exact: int | None, n_payload: int | None) -> float | None:
     return round(n_exact / n_payload, 4)
 
 
+class LedgerIncoherent(ValueError):
+    """The ledger parsed but failed :func:`validate`.
+
+    Its own class rather than a bare ``ValueError`` because the two failures
+    this module can hit are different stories and only one of them is about the
+    ledger's CONTENT. ``json.JSONDecodeError`` is a ``ValueError`` subclass, so
+    catching ``ValueError`` would file a truncated or half-written file as
+    ``ledger_incoherent`` — "an entry cannot reproduce its own sigma", which is
+    a claim about the measurement — when the true story is "these bytes are not
+    JSON", which is a claim about the file. The reasons are published on the
+    wire, so the distinction is one a reader acts on.
+    """
+
+
 def validate(ledger: dict) -> list[str]:
     """Return a list of problems. Empty list means the ledger is coherent.
 
@@ -217,7 +231,7 @@ def load(path: Path | str = LEDGER_PATH, *, missing_ok: bool = False) -> dict:
     ledger = json.loads(p.read_text())
     problems = validate(ledger)
     if problems:
-        raise ValueError(f"sigma ledger {p} is incoherent: {problems}")
+        raise LedgerIncoherent(f"sigma ledger {p} is incoherent: {problems}")
     return ledger
 
 
@@ -238,6 +252,10 @@ _lock = threading.Lock()
 #: guard can assert on them rather than on prose that gets reworded.
 REASON_ABSENT = "ledger_absent"
 REASON_INCOHERENT = "ledger_incoherent"
+#: Bytes that are not JSON. Separate from :data:`REASON_INCOHERENT` because
+#: "this file is not the ledger" and "this ledger's arithmetic does not check
+#: out" send a reader to different places — see :class:`LedgerIncoherent`.
+REASON_MALFORMED = "ledger_malformed"
 REASON_UNREADABLE = "ledger_unreadable"
 
 
@@ -262,8 +280,13 @@ def load_default(*, refresh: bool = False) -> tuple[dict | None, str | None]:
                 _cached = (load(LEDGER_PATH), None)
             except FileNotFoundError:
                 _cached = (None, f"{REASON_ABSENT}: {LEDGER_PATH.name}")
-            except ValueError as exc:
+            except LedgerIncoherent as exc:
                 _cached = (None, f"{REASON_INCOHERENT}: {exc}")
+            except json.JSONDecodeError as exc:
+                # Ordered AFTER LedgerIncoherent and named separately on purpose:
+                # both are `ValueError`s and one catch would file bad bytes as a
+                # bad measurement. See `LedgerIncoherent`.
+                _cached = (None, f"{REASON_MALFORMED}: {exc.msg} at line {exc.lineno}")
             except Exception as exc:  # noqa: BLE001 — a ledger never takes the page down
                 _cached = (None, f"{REASON_UNREADABLE}: {type(exc).__name__}")
     return _cached

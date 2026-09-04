@@ -269,6 +269,21 @@ class TestAnUnreadableLedgerDegradesLoudly:
         assert led is None
         assert reason.startswith(sigma.REASON_INCOHERENT)
 
+    def test_bad_bytes_and_a_bad_measurement_are_different_reasons(
+        self, tmp_path, monkeypatch
+    ):
+        """``json.JSONDecodeError`` IS a ``ValueError``, so one catch would file
+        a truncated file as "an entry cannot reproduce its own sigma" — a claim
+        about the measurement, when the truth is a claim about the file. The
+        reasons are published, so a reader acts on the difference."""
+        p = tmp_path / "truncated.json"
+        p.write_text('{"schema": 1, "entries": {"kalshi/gol')
+        monkeypatch.setattr(sigma, "LEDGER_PATH", p)
+        led, reason = sigma.load_default(refresh=True)
+        assert led is None
+        assert reason.startswith(sigma.REASON_MALFORMED)
+        assert not reason.startswith(sigma.REASON_INCOHERENT)
+
     def test_the_route_never_loses_the_curve_over_a_ledger(self, monkeypatch):
         """Ruling CAL-P017 is standing: a score never costs the reader the
         curve. The ledger is read inside the scorecard, so a raise there would
