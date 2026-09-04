@@ -111,14 +111,65 @@ describe("slateEmptyState — what an empty list is allowed to claim", () => {
     }
   });
 
+  /* ══════════════════════ ux/1054 item 2 — THE DRAW FILTER ══════════════════ */
+
+  it("a draw with no rows on a day the tournament HAS rows is not our failure", () => {
+    // The call site filters `slate.matches` to ONE draw and hands this function
+    // only tournament-wide numbers. So on a day the men's card is done and the
+    // women are mid-session, the men's tab was about to print the `unrendered`
+    // accusation — "none of it reached this list … We're checking" — over a
+    // list we rendered perfectly. Same D27 class as #2707, opposite direction:
+    // #2707 blamed the world for our failure; this blamed us for the world.
+    const state = slateEmptyState({
+      drawReleased: true,
+      orderOfPlayListed: 625,
+      tournamentRowCount: 17,
+    });
+    expect(state.cause).toBe("other-draw");
+    expect(state.headline).not.toContain(THE_LIE);
+    // It must not apologise, and must not tell the reader to distrust the page.
+    expect(`${state.headline} ${state.detail}`).not.toMatch(/checking|missing/i);
+    // It must point at the thing that WILL answer the reader's question.
+    expect(state.detail).toMatch(/another draw/i);
+  });
+
+  it("REGRESSION ARM: the payload carrying nothing is still OUR failure", () => {
+    // The new branch must not swallow #2707's own case. Zero rows tournament-
+    // wide with the authority still listing the tournament is `unrendered`, and
+    // a `tournamentRowCount` of 0 must not read as "some other draw has them".
+    for (const rows of [0, undefined, null]) {
+      const state = slateEmptyState({
+        drawReleased: true,
+        orderOfPlayListed: 625,
+        tournamentRowCount: rows as number | null | undefined,
+      });
+      expect(state.cause).toBe("unrendered");
+      expect(state.detail).toMatch(/checking/i);
+    }
+  });
+
+  it("the pre-draw control outranks it — no rows exist to be in another draw", () => {
+    const state = slateEmptyState({
+      drawReleased: false,
+      mainDrawLabel: "Sunday 30 August",
+      tournamentRowCount: 17,
+    });
+    expect(state.cause).toBe("pre-draw");
+  });
+
   it("NO input to this function produces the sentence that shipped", () => {
     for (const drawReleased of [true, false]) {
       for (const orderOfPlayListed of [undefined, null, NaN, -1, 0, 1, 625, 99999]) {
         for (const mainDrawLabel of [null, undefined, "Sunday 30 August", ""]) {
+        // ux/1054: the sweep gained a dimension when the function did. A new
+        // branch that is not in the exhaustive arm is a new branch the "no
+        // input produces the shipped sentence" claim does not actually cover.
+        for (const tournamentRowCount of [undefined, null, 0, 1, 17, 34]) {
           const state = slateEmptyState({
             drawReleased,
             mainDrawLabel,
             orderOfPlayListed: orderOfPlayListed as number | null | undefined,
+            tournamentRowCount: tournamentRowCount as number | null | undefined,
           });
           // "No matches scheduled yet" is the pre-draw case and is permitted;
           // the bare claim is not. Asserted on the exact string plus its
@@ -128,6 +179,7 @@ describe("slateEmptyState — what an empty list is allowed to claim", () => {
             expect(state.cause).toBe("pre-draw");
             expect(drawReleased).toBe(false);
           }
+        }
         }
       }
     }

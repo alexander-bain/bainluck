@@ -450,6 +450,12 @@ export default function TournamentPage() {
                     drawReleased: data.draw_released,
                     mainDrawLabel: data.main_draw_label,
                     orderOfPlayListed: data.slate?.order_of_play_listed,
+                    /* ux/1054 item 2: `entries` above is filtered to ONE draw
+                       and every other input here is tournament-wide, so an
+                       empty men's list on a day the women are playing was
+                       reading as "none of it reached this list". The count of
+                       what the PAYLOAD carries is what tells those apart. */
+                    tournamentRowCount: data.slate?.matches?.length,
                   })}
                 />
               </div>

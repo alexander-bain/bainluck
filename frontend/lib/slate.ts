@@ -463,8 +463,10 @@ export interface SlateEmptyState {
    *   we published none of it. OUR failure, and the card says so.
    * - `unlisted` — the authority listed nothing. Either the tournament is over
    *   or the feed is dark, and an empty slate cannot tell those apart.
+   * - `other-draw` — WE RENDERED THE DAY FINE, just not in the draw the reader
+   *   is looking at. See the `other-draw` block in `slateEmptyState`.
    */
-  cause: "pre-draw" | "unrendered" | "unlisted";
+  cause: "pre-draw" | "unrendered" | "unlisted" | "other-draw";
 }
 
 /**
@@ -510,6 +512,17 @@ export function slateEmptyState(args: {
    * field existed, and read the same as `0` — hedged, never confident.
    */
   orderOfPlayListed?: number | null;
+  /**
+   * How many slate rows the payload carries FOR THE WHOLE TOURNAMENT (ux/1054).
+   *
+   * The list this state is drawn under is filtered to ONE draw — the call site
+   * is `slate.matches.filter((m) => m.draw === draw)` — and every input above is
+   * tournament-wide. So without this the function is answering a question about
+   * the tournament and having its answer printed over a question about the
+   * men's draw. Optional, and absent falls through to the old three-way answer
+   * rather than inventing a fourth.
+   */
+  tournamentRowCount?: number | null;
 }): SlateEmptyState {
   if (!args.drawReleased) {
     return {
@@ -518,6 +531,43 @@ export function slateEmptyState(args: {
       detail: args.mainDrawLabel
         ? `This is where the day's matches sit, and the draw fills them in ${args.mainDrawLabel}.`
         : "This is where the day's matches sit, once the draw is made.",
+    };
+  }
+
+  /**
+   * ═══ THE DRAW THE READER IS ON IS NOT THE TOURNAMENT (ux/1054 item 2) ═══
+   *
+   * Checked BEFORE the `order_of_play_listed` arm, because that arm is the
+   * confident accusation and this is the case where the accusation is false.
+   *
+   * The list is filtered to one draw and every other input here is
+   * tournament-wide, so a hub whose men's draw is finished for the day and whose
+   * women's draw is mid-session would print "none of it reached this list — so a
+   * match that is on right now would be missing. We're checking." on the men's
+   * tab. That sentence is #2707's own repair pointed at the wrong target: we
+   * rendered the day correctly, and the page would be apologising for it and
+   * telling a reader to distrust a list that is right.
+   *
+   * Found by reading the call site during ux/1054 item 2, NOT by reproducing it
+   * — Alex's 22:40Z sighting was a stale client printing the pre-#2707 copy, and
+   * that copy cannot come from this build. This is a different, live defect of
+   * the same class (D27) sitting one branch away from the one he read.
+   *
+   * The discriminator is entirely local: the payload carries rows and this draw
+   * has none of them. No new field, no backend change — `order_of_play_listed`
+   * has no per-draw breakdown and inventing one from a tournament-wide number is
+   * how the first version of this function went wrong.
+   */
+  const tournamentRows = args.tournamentRowCount;
+  if (typeof tournamentRows === "number" && tournamentRows > 0) {
+    return {
+      cause: "other-draw",
+      headline: "No matches in this draw today",
+      // States what IS, not what will be (ruling 142), and does not say "the
+      // other draw" — a tournament can carry five, and naming the wrong one is
+      // worse than naming none.
+      detail:
+        "Today's matches at this tournament are in another draw. Switch draws above to see them.",
     };
   }
 
