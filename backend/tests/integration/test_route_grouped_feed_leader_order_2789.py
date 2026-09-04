@@ -339,10 +339,25 @@ async def test_CONTROL_the_card_still_arrives_as_an_ungrouped_market(
 ):
     """Green on master too, and it is what stops every test above being vacuous.
 
-    The route runs three grouping passes before the ungrouped serialization. A
+    The route runs its grouping passes before the ungrouped serialization. A
     fixture that accidentally looked like a stat prop or a threshold ladder
     would never reach the code under test, and every assertion here would pass
     against an empty dict lookup rather than a card.
+
+    ── UX-1052: THE VOCABULARY IS NOT THE CONTROL ──
+
+    This used to pin `group_counts` to the exact three kinds that existed when
+    #2789 was written. UX-1052 added two more passes (`exact_score`,
+    `placement_grid`) and this control went red on the dict's SHAPE while every
+    claim it makes about the fixture stayed true — a control that fails for a
+    reason it was not written to detect teaches the next reader to edit it
+    without reading it.
+
+    So the claim is stated directly: nothing grouped this card. A new pass that
+    DID swallow the fixture still goes red, twice over — on `total_ungrouped`
+    and on its own non-zero count — which is the property the control exists
+    for. The three original kinds stay named, so a pass that quietly stops
+    reporting itself cannot pass by omission.
     """
     _install(monkeypatch)
     _seed(
@@ -354,8 +369,14 @@ async def test_CONTROL_the_card_still_arrives_as_an_ungrouped_market(
 
     assert [item["type"] for item in body["feed"]] == ["market"]
     assert body["total_ungrouped"] == 1
-    assert body["group_counts"] == {
-        "stat_prop": 0,
-        "playoff_progression": 0,
-        "threshold": 0,
+    assert set(body["group_counts"]) >= {
+        "stat_prop",
+        "playoff_progression",
+        "threshold",
     }
+    assert all(n == 0 for n in body["group_counts"].values()), body["group_counts"]
+    # And specifically: ONE placement market is not a grid. This fixture is
+    # market 59863411 verbatim — one of the five Omega European Masters rows
+    # UX-1052 item 3 fuses — so the zero above is the ≥3 floor holding, not a
+    # parser that failed to recognise it.
+    assert body["group_counts"]["placement_grid"] == 0
