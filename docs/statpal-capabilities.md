@@ -10,6 +10,19 @@ untracked in the shared master tree, where a file is one `git clean` from gone. 
 marked **CORRECTED**; nothing else of Fable's text is altered. Evidence:
 `.claude/handoff/ARTIFACT-AUTHORITY-20260903-TENNIS.md` §1.*
 
+*Corrected again in §2 (the MLB row) and §5 by the authority lane, Fri 2026-09-04 ~7:10am PT, from
+`mlb/season-schedule` and `mlb/livescores` read at 13:38Z and 13:52Z. Step 5's blocker is closed:
+the cross-endpoint anchor is `livescores.oddsid` → `season-schedule.id`. Pinned in
+`backend/tests/test_statpal_mlb_id_spaces.py`; evidence
+`.claude/handoff/ARTIFACT-AUTHORITY-20260904-MLB-ID-SPACES.md`.*
+
+*NOTE ON THIS FILE'S OWN HISTORY. The 9/3 commit above never reached master — it sat on the unmerged
+branch `authority/002-the-tennis-schedule-cannot-serve-today` for a day while
+`services/statpal_api.py`, `tasks/stamp_v1_statpal_fixtures.py` and
+`tests/test_statpal_authority_nba_nhl.py` all cited it by path from master. Tracked on a branch nobody
+merges is the same failure mode as untracked, one step further from view. Rescued 9/4 by the authority
+lane; the original commit is cherry-picked, so Alex's authorship and message are intact.*
+
 ## 1. The contract in five lines
 - Auth is an `access_key` query param; every endpoint is GET; base `statpal.io/api/v1/{sport}/…`, soccer on `/v2`.
 - A malformed call is **HTTP 200 with body `invalid-request`** — never "no data". Parse for it; test for it.
@@ -23,7 +36,7 @@ marked **CORRECTED**; nothing else of Fable's text is altered. Evidence:
 |---|---|---|---|---|
 | Tennis | YES, **but only from tomorrow onward** — `daily/d1` (70 fixtures for 9/4, pre-play). **CORRECTED:** the reach is not `d1…d7`. Measured 9/3 19:40–20:10Z: `d-2` 34, `d-1` 49, **`d0` HTTP 500**, `d1` 70, `d2` 1, `d3`–`d7` a well-formed empty. A day token also straddles two UTC dates (`d-1` straddles three), so filter on the parsed `start_time`, never on the token. | YES 3/3 | Not Started, Set 1/2/3, Finished, Cancelled; `Interrupted` seen 9/2 | **Fit.** Missing 1 of 20 ESPN fixtures once; one game behind ESPN in 2/8 live checks. |
 | NFL | YES — `season-schedule` lists Week 1's 16 games 6–11 days early, `contestid` | untested until 9/10 kickoff | Final (offseason tail) | **Fit, pending the live-id check on 9/10.** |
-| MLB | YES — `season-schedule` `id` + `stats_id` | **NO** — livescores `id` is a third, day-scoped space | Not Started, Top/Bottom Nth, Finished | **Not yet.** Join must be (teams, date), not id. Solve before shadowing. |
+| MLB | YES, **but the endpoint is a ~17-day ROLLING WINDOW, not a season** — **CORRECTED 9/4:** 227 games, 2026-08-29→09-15 (NBA serves 1206 and NHL 1404, whole seasons). `id` 227/227 unique; `stats_id` unusable on 22.5% (29 blank, 22 sharing 11 values with another contest). | **CORRECTED 9/4: the anchor EXISTS and is not called `id`.** livescores `id` is indeed a third space (0/16 reach either schedule space) — but livescores **`oddsid` IS `season-schedule.id`**, 13/16 rows, all 13 dereferencing. Blank on 3/16. | Not Started, Top/Bottom Nth, Finished | **CORRECTED 9/4: "join on (teams, date)" is wrong twice over.** `date` is UTC, so it invents 22 doubleheaders that are consecutive-day series games (17.4–23.1h apart, none under 6h) and misses the one real doubleheader, whose halves straddle midnight UTC. Re-key on the local day (every park is UTC-4..-7). Even then a name key drops `St. Louis Cardinals` vs `St.Louis Cardinals`; `oddsid` does not. **Anchor on `oddsid`→`id`.** |
 | NBA / NHL | YES — 26/27 schedules already served (NBA from 10/3, NHL from 9/19), `id` + `stats_id` | unknown (no live games) | empty until season | **Fit for schedules now; state unverifiable until preseason.** |
 | Soccer (v2) | YES — `matches/daily?offset` ; `static_id` is date-prefixed, plus `alternate_id`, `alternate_id_2` | uncompared; live odds use `main_id` + 3 fallback ids | FT, HT, Pen., minute numerals; no suspended/postponed seen | **Fit for long tail (83 leagues, ESPN has boards for few).** Ids are messy by StatPal's own design — match by ids-with-fallbacks. |
 | Esports | `daily` unprobed; 61 live now | — | Not Started, Started, Pause, Walkover, Finished | **Already the doctrine's authority** (ESPN has 0 boards). `Pause` is the only explicit interrupted state in the whole catalog. |
@@ -87,7 +100,15 @@ Unused and on the plan:
 7. **Soccer enrichment** only if soccer becomes a front (Discover CTR). Park.
 
 ## 5. What is NOT possible, so nobody plans on it
-- No cross-endpoint stable id for MLB (three id spaces), and NBA/NHL are untested; join by (teams, date) until proven.
+- ~~No cross-endpoint stable id for MLB (three id spaces), and NBA/NHL are untested; join by (teams, date) until proven.~~
+  **CORRECTED 9/4 — THERE IS ONE, AND THE (teams, date) FALLBACK IS UNSAFE.** The three id spaces are real and
+  `livescores.id` reaches neither schedule space (0/16) — but `livescores.oddsid` is `season-schedule.id` on 13/16
+  live rows, all 13 dereferencing. Blank on 3/16, one of them the second half of the slate's only doubleheader.
+  Do NOT fall back to (teams, calendar date): `season-schedule.date` is UTC, which flags 22 consecutive-day series
+  pairs as doubleheaders and hides the single real one across midnight. Re-key on the local day, and prefer the
+  anchor — the name key also drops `St. Louis Cardinals` against the schedule's `St.Louis Cardinals`.
+  NBA/NHL are no longer untested: `id` anchors both, `stats_id` is 1404/1404 on NHL (with 3 colliding pairs) and
+  0/1206 on NBA. **`time` is UTC on season-schedule and ET on livescores** — same field name, two bases.
 - No backfill: ~24 h livescore memory. No injuries/lineups/weather outside soccer. No documented team/fixture-detail
   endpoints (the ones we call are legacy). No in-play odds yet outside soccer live (the site says "coming 2026").
 - No NBA/NHL live state until preseason; no NFL live-id verification until 9/10.
