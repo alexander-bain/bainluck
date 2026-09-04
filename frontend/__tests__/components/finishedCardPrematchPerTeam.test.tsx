@@ -27,6 +27,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import FeedCard from "@/components/FeedCard";
 import { EventCard as DiscoverEventCard } from "@/components/discover/EventCard";
 import type { FeedEventData, FeedItem } from "@/lib/types";
+import {
+  PREMATCH_SOURCE_MARKER,
+  PREMATCH_SOURCE_TOOLTIP,
+} from "@/lib/prematchReading";
+import { visibleTextFromHtml } from "@/lib/copyBans";
 
 jest.mock("next/link", () => {
   const ReactLib = require("react");
@@ -153,21 +158,36 @@ describe("the /sports FINAL card", () => {
     expect(html).toContain("Won as 40% underdog");
   });
 
-  it("labels a sportsbook reading and leaves a prediction-market one bare", () => {
-    // Alex: "labelled when not a prediction market."
-    const books = renderFeedCard(
+  it("marks a sportsbook reading, in a footnote mark and never the word", () => {
+    // Alex: "labelled when not a prediction market." D57 kept the distinction
+    // and took the word away — this used to assert the literal string
+    // "Pre-match · books", which is the thing Alex read on the hub and asked
+    // us to stop printing.
+    const booksRung = renderFeedCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
 
-    expect(printedPercent(books, "feed-card-prematch-home")).toBe(60);
-    expect(books).toContain("Pre-match · books");
-    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
+    expect(printedPercent(booksRung, "feed-card-prematch-home")).toBe(60);
+    expect(booksRung).toContain(PREMATCH_SOURCE_MARKER);
+    expect(booksRung).toContain(PREMATCH_SOURCE_TOOLTIP);
+    // THE D57 ASSERTION ITSELF, on the rendered text rather than on the
+    // constant — `visibleTextFromHtml` strips attributes, so the payload's own
+    // `data-prematch-source="books"` is exempt exactly as the copy gate has it.
+    // The data contract keeps the id; the reader never sees it.
+    expect(visibleTextFromHtml(booksRung)).not.toMatch(/\bbooks\b/i);
+
+    // The control arm: a prediction-market rung wears no mark and no tooltip,
+    // so the mark still means something when it does appear.
+    const marketRung = renderFeedCard(KALSHI_FINAL);
+    expect(marketRung).not.toContain(PREMATCH_SOURCE_MARKER);
+    expect(marketRung).not.toContain(PREMATCH_SOURCE_TOOLTIP);
   });
 
   it("says which rung the spoken sentence is quoting, not just the visible label", () => {
-    // The label "Pre-match · books" is the caveat a SIGHTED reader gets. The
+    // The mark beside "Pre-match" is the caveat a SIGHTED reader gets (D57;
+    // it was the word "books" until Alex read it on the hub). The
     // sentence beside the number is what everyone else gets, and it used to say
     // "the market gave" on every card — including the books rung, which is a
     // sportsbook median and not a market at all. Measured on the served /sports
@@ -240,14 +260,23 @@ describe("the Discover FINAL card", () => {
     expect(html).toContain("Padres won");
   });
 
-  it("labels a sportsbook reading here too", () => {
+  it("marks a sportsbook reading here too, and still never the word", () => {
     const html = renderDiscoverCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
 
-    expect(html).toContain("Pre-match · books");
+    expect(html).toContain(PREMATCH_SOURCE_MARKER);
+    expect(html).toContain(PREMATCH_SOURCE_TOOLTIP);
+    expect(visibleTextFromHtml(html)).not.toMatch(/\bbooks\b/i);
+
+    // This card renders the "Pre-match" caption on BOTH rungs, so the control
+    // arm is the tooltip and the mark, not the caption's absence.
+    const marketRung = renderDiscoverCard(KALSHI_FINAL);
+    expect(marketRung).toContain("Pre-match");
+    expect(marketRung).not.toContain(PREMATCH_SOURCE_MARKER);
+    expect(marketRung).not.toContain(PREMATCH_SOURCE_TOOLTIP);
   });
 
   it("and says so in the spoken sentence too, not only the label", () => {

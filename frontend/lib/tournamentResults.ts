@@ -38,7 +38,7 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import { isPredictionMarketSource } from "./prematchReading";
+import { isPredictionMarketSource, PREMATCH_SOURCE_MARKER } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -722,7 +722,7 @@ export function prematchSourceNote(matches: TournamentResult[]): string {
   if (books === 0) return "";
   return (
     `${books} of them ${books === 1 ? "is" : "are"} a sportsbook opening rather ` +
-    `than a prediction market's, marked ${BOOKS_MARKER} beside the number.`
+    `than a prediction market's, marked ${PREMATCH_SOURCE_MARKER} beside the number.`
   );
 }
 
@@ -735,17 +735,18 @@ function isBooksPrior(player: ResultPlayer): boolean {
   );
 }
 
-/**
- * The visible marker a books number wears on this list.
+/* `BOOKS_MARKER` WAS HERE, AND WAS THE WORD `books` (D57, Alex 2026-09-03).
  *
- * A WORD and not a glyph, because the two surfaces that already do this right
- * print the word (`Pre-match · books` in `FeedCard` and Discover's `EventCard`),
- * and this codebase has no superscript-legend convention to borrow — inventing
- * one here would be a seventh private answer to a question `prematchReading`
- * already owns. Lower case and 9px so it reads as a unit beside the figure
- * rather than as a second number.
+ * Its comment argued for a word over a glyph on the grounds that the two card
+ * surfaces already printed the word, so a glyph here would be "a seventh
+ * private answer to a question `prematchReading` already owns". The reasoning
+ * was right and the premise is what Alex overruled: the word is out on ALL
+ * THREE surfaces, so the shared answer is now a marker, and it is
+ * `PREMATCH_SOURCE_MARKER` — imported, exactly as `isPredictionMarketSource`
+ * is, and for the same reason. The constant is DELETED rather than re-pointed
+ * at the glyph: a second exported name for one decision is how this module
+ * drifted from `prematchReading` the first time.
  */
-export const BOOKS_MARKER = "books";
 
 /**
  * PER-VALUE ATTRIBUTION: what this one number is, in the two registers a row has
@@ -790,7 +791,7 @@ export function prematchAttribution(player: ResultPlayer): PrematchAttribution {
   return {
     source,
     said: "Before the match, sportsbooks opened",
-    marker: BOOKS_MARKER,
+    marker: PREMATCH_SOURCE_MARKER,
   };
 }
 

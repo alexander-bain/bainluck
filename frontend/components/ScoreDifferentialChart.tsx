@@ -270,7 +270,7 @@ export default function ScoreDifferentialChart({
     if (scoreboardCountsTheUnit) return null;
     const vocab = sportVocab(sportKey);
     if (!vocab.scoreboardUnit) return null;
-    return `Played ${vocab.unit} are not captured yet — the scoreboard reports ${vocab.scoreboardUnit}. The line below is the books' projected ${vocab.unitSingular} margin.`;
+    return `Played ${vocab.unit} are not captured yet — the scoreboard reports ${vocab.scoreboardUnit}. The line below is the sportsbooks' projected ${vocab.unitSingular} margin.`;
   })();
 
   // Build chart data by merging projected and actual score data on timeline.

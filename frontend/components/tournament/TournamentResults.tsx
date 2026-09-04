@@ -26,6 +26,8 @@ import {
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
+/* D57: the marker's tooltip, from the module that owns the marker itself. */
+import { PREMATCH_SOURCE_TOOLTIP } from "@/lib/prematchReading";
 
 /**
  * FINISHED MATCHES — Alex's item 9, with the data behind it.
@@ -273,21 +275,29 @@ function ResultRow({
                     {attribution.said} {player.display_name}{" "}
                   </span>
                   {prior}
-                  {/* THE VISIBLE HALF. A books number says so beside itself;
-                      a prediction-market one renders exactly as it always did,
-                      so this change is strictly additive on the 111 rows that
-                      were already honest. `aria-hidden` because the sr-only
-                      clause above already said it in words — a screen reader
-                      hearing "68% books" after "sportsbooks opened Shelton"
-                      would hear the rung twice. */}
+                  {/* THE VISIBLE HALF. A sportsbook number says so beside
+                      itself; a prediction-market one renders exactly as it
+                      always did, so this change is strictly additive on the 111
+                      rows that were already honest. `aria-hidden` because the
+                      sr-only clause above already said it in words — a screen
+                      reader hearing the marker after "sportsbooks opened
+                      Shelton" would hear the rung twice.
+
+                      D57: this used to be the WORD, and the word was `books` on
+                      every finished row of the list. It is a footnote mark now,
+                      with the footnote's own sentence in the tooltip and the
+                      section legend below carrying the same mark. Superscript
+                      and 9px so a dense two-player row does not gain a line:
+                      the mark rides the baseline of the figure it qualifies. */}
                   {attribution.marker && (
-                    <span
+                    <sup
                       aria-hidden="true"
                       data-testid="result-prematch-marker"
-                      className="ml-1 text-[9px] font-medium uppercase tracking-[0.04em] text-text-muted"
+                      title={PREMATCH_SOURCE_TOOLTIP}
+                      className="ml-0.5 text-[9px] font-medium text-text-muted"
                     >
                       {attribution.marker}
-                    </span>
+                    </sup>
                   )}
                 </>
               )}

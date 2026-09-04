@@ -33,7 +33,11 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
+import {
+  isPredictionMarketSource,
+  prematchReading,
+  PREMATCH_SOURCE_TOOLTIP,
+} from "@/lib/prematchReading";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -775,7 +779,7 @@ function EventFeedCard({
             the team rows added a row to every FINAL card at phone width, which
             is the width Alex was reading; this keeps the card the height it
             already was. */}
-        {(item.reason || openedContext || prematch?.label) && (
+        {(item.reason || openedContext || prematch?.marker) && (
           <div className="flex items-center justify-between gap-2 mt-1.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               {item.reason && (
@@ -790,16 +794,28 @@ function EventFeedCard({
                   {openedContext}
                 </span>
               )}
-              {/* Alex: "labelled when not a prediction market." One label for
+              {/* Alex: "labelled when not a prediction market." One marker for
                   the pair — both grey numbers always come off the same rung,
-                  and saying it twice on one card is noise. */}
-              {prematch?.label && (
+                  and saying it twice on one card is noise.
+
+                  D57: this read `Pre-match · books`. The rung still gets said,
+                  and the caption still only appears on the rung that needs it,
+                  but the word is a footnote mark now and the sentence lives in
+                  the tooltip. `aria-hidden` on the mark alone: the caption's
+                  own `aria-label` speaks the whole thing, so a screen reader
+                  gets one sentence rather than a word and a dagger. */}
+              {prematch?.marker && (
                 <span
                   className="text-[11px] text-text-muted flex-shrink-0"
                   data-testid="feed-card-prematch-label"
                   data-prematch-source={prematch.source}
+                  title={PREMATCH_SOURCE_TOOLTIP}
+                  aria-label={`Pre-match — ${PREMATCH_SOURCE_TOOLTIP}`}
                 >
-                  Pre-match · {prematch.label}
+                  Pre-match
+                  <sup aria-hidden="true" className="ml-0.5">
+                    {prematch.marker}
+                  </sup>
                 </span>
               )}
             </div>
@@ -811,7 +827,7 @@ function EventFeedCard({
           </div>
         )}
         {/* Thumbs-only row when no reason or context */}
-        {!item.reason && !openedContext && !prematch?.label && (
+        {!item.reason && !openedContext && !prematch?.marker && (
           <div className="flex items-center justify-end mt-1">
             <ThumbButtons
               category={category}

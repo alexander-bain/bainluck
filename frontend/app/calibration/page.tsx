@@ -1957,7 +1957,7 @@ export default function CalibrationPage() {
               do not). The two bases do not measure the same, and we publish both figures rather than
               one blended number: {data.mce_closing_line?.toFixed(1)}pp on closing-line rows against{" "}
               {data.mce_opening_price?.toFixed(1)}pp on opening-price rows. A closing line is the
-              stronger test, so the gap is the cost of the fallback, not a finding about the books.
+              stronger test, so the gap is the cost of the fallback, not a finding about the sportsbooks.
             </li>
           )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>

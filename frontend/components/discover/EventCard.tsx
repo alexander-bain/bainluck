@@ -20,7 +20,11 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
+import {
+  isPredictionMarketSource,
+  prematchReading,
+  PREMATCH_SOURCE_TOOLTIP,
+} from "@/lib/prematchReading";
 
 interface EventCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -285,11 +289,32 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               </span>
               {prematch.awayPercent}%
             </span>
-            <span className="text-text-muted text-[10px]">
-              {/* Alex: label it when it is not a prediction market. A books
+            <span
+              className="text-text-muted text-[10px]"
+              {...(prematch.marker
+                ? {
+                    title: PREMATCH_SOURCE_TOOLTIP,
+                    "aria-label": `Pre-match — ${PREMATCH_SOURCE_TOOLTIP}`,
+                  }
+                : {})}
+            >
+              {/* Alex: mark it when it is not a prediction market. A sportsbook
                   median is a different claim from a prediction-market opening
-                  and must not be printed as one — ux/1034 A3's lesson. */}
-              Pre-match{prematch.label ? ` · ${prematch.label}` : ""}
+                  and must not be printed as one — ux/1034 A3's lesson.
+
+                  D57: the mark used to be the word — `Pre-match · books` — and
+                  a caption that says "books" to a reader who did not ask is a
+                  gambling noun on a probability card. The distinction survives
+                  as the footnote mark; the words are in the tooltip. The tooltip
+                  is spread on CONDITIONALLY, because a prediction-market card
+                  renders this same caption and must not claim a rung it is not
+                  on. */}
+              Pre-match
+              {prematch.marker && (
+                <sup aria-hidden="true" className="ml-0.5">
+                  {prematch.marker}
+                </sup>
+              )}
             </span>
             <span
               className="font-mono tabular-nums text-text-muted"

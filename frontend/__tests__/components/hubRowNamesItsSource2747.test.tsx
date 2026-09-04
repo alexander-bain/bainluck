@@ -51,14 +51,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import TournamentResults from "@/components/tournament/TournamentResults";
 import {
-  BOOKS_MARKER,
   prematchAttribution,
   prematchSourceNote,
   type ResultPlayer,
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
-import { isPredictionMarketSource } from "@/lib/prematchReading";
+/* D57: `PREMATCH_SOURCE_MARKER` is gone from `tournamentResults` — the hub imports the
+   shared marker now, so this file asserts against the same one constant every
+   surface renders rather than against a hub-private copy of it. */
+import {
+  isPredictionMarketSource,
+  PREMATCH_SOURCE_MARKER,
+} from "@/lib/prematchReading";
 
 import hub from "../fixtures/tournamentHubBooksRung.20260903T0310Z.json";
 
@@ -274,7 +279,7 @@ function allRendered() {
 describe("SHIP — a books prior says so, in both registers", () => {
   test("the VISIBLE marker lands on exactly the books slots", () => {
     const rows = allRendered();
-    expect(rows.filter((r) => r.marker === BOOKS_MARKER)).toHaveLength(
+    expect(rows.filter((r) => r.marker === PREMATCH_SOURCE_MARKER)).toHaveLength(
       EXPECTED_BOOKS_SLOTS,
     );
     expect(rows.filter((r) => r.marker !== null)).toHaveLength(EXPECTED_BOOKS_SLOTS);
@@ -307,7 +312,7 @@ describe("SHIP — a books prior says so, in both registers", () => {
     // here to catch a HALF-fix — counter-cases (A) and (B) below ship exactly
     // one of the two registers, and this is the test that refuses both.
     for (const row of allRendered()) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.clause === BOOKS_SAID);
+      expect(row.marker === PREMATCH_SOURCE_MARKER).toBe(row.clause === BOOKS_SAID);
     }
   });
 
@@ -365,7 +370,7 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThan(170);
     for (const row of rows) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.clause === BOOKS_SAID);
+      expect(row.marker === PREMATCH_SOURCE_MARKER).toBe(row.clause === BOOKS_SAID);
     }
   });
 });
@@ -386,7 +391,7 @@ describe("one decision, one owner", () => {
     // The safe direction: anything that is not a named prediction market gets
     // the caveat. A new sportsbook rung must not arrive unlabelled.
     const attribution = prematchAttribution(player("draftkings"));
-    expect(attribution.marker).toBe(BOOKS_MARKER);
+    expect(attribution.marker).toBe(PREMATCH_SOURCE_MARKER);
     expect(attribution.said).toBe(BOOKS_SAID);
   });
 
@@ -406,7 +411,7 @@ describe("one decision, one owner", () => {
 describe("the footnote stops being the only attribution", () => {
   test("it names the marker so the count points at findable rows", () => {
     const note = prematchSourceNote(MATCHES);
-    expect(note).toContain(BOOKS_MARKER);
+    expect(note).toContain(PREMATCH_SOURCE_MARKER);
     expect(note).toMatch(/^61 of them are a sportsbook opening/);
   });
 

@@ -46,6 +46,7 @@ import {
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
+import { PREMATCH_SOURCE_MARKER } from "@/lib/prematchReading";
 
 import hub from "../fixtures/tournamentHubUsOpen.20260903.json";
 
@@ -205,9 +206,13 @@ describe("ux/1036 — a sportsbook prior says so", () => {
     // still correct and still asserted; it now also names the per-row marker it
     // is a legend for. The test's own title always said "and NAMES the books
     // rows", which round one did not do.
+    // D57: the legend names the MARK, and the mark is not the word. Pinned
+    // through the shared constant rather than a second copy of the glyph — the
+    // whole point of the legend is that it prints the same character the rows
+    // do, and a literal here could go green while they disagreed.
     expect(prematchSourceNote([row("books"), row("kalshi")])).toBe(
       "1 of them is a sportsbook opening rather than a prediction market's, " +
-        "marked books beside the number.",
+        `marked ${PREMATCH_SOURCE_MARKER} beside the number.`,
     );
   });
 

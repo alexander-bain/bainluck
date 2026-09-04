@@ -32,6 +32,7 @@
  * |---|---|---|
  * | `JARGON_BANS` | UX-P145, Alex 2026-08-27 | our pipeline's nouns are not the reader's |
  * | `TRADING_VOCAB_BANS` | ruling 138, Alex 2026-08-27 | the word is PROBABILITY, never *price* |
+ * | `SOURCE_LABEL_BANS` | D57, Alex 2026-09-03 | the word *books* never appears on a surface |
  * | `VENUE_BANS` | ruling 141 AS AMENDED, Alex 2026-08-28 | a page may not talk ABOUT its suppliers; it may still say which line is whose |
  * | `FUTURE_PROMISE_BANS` | ruling 142, Alex 2026-08-28 | a section states what it IS, not what it WILL be |
  * | `PRICE_FORMAT_BANS` | the standing no-price-format ruling, #2442 | the reader gets a probability, never a betting line |
@@ -65,6 +66,49 @@ export const JARGON_BANS: CopyBan[] = [
   { id: "census", pattern: /\bcensus(ed)?\b/i, why: '"census" is our data-collection step' },
   { id: "blend", pattern: /\bblend(ed|s)?\b/i, why: '"blend" is our aggregation step' },
   { id: "stale", pattern: /\bstale\b/i, why: '"stale" is our price_state enum' },
+];
+
+/**
+ * D57 (Alex, 2026-09-03). THE WORD `books` NEVER APPEARS ON A SURFACE.
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * Alex, on the US Open hub: *"90% BOOKS / 10% BOOKS on every finished match
+ * row. Is that a gambling reference? We wouldn't want that, but it's confusing
+ * either way."* It was on all three surfaces that print a pre-match reading —
+ * `Pre-match · books` on `FeedCard` and Discover's `EventCard`, a bare `books`
+ * beside every figure on the hub's finished list, and the word again in the
+ * section footnote that explained it.
+ *
+ * ═══ WHY IT IS HERE AND NOT JUST FIXED ═══
+ *
+ * Because it grew back once already, in the other direction. The hub's own
+ * `BOOKS_MARKER` comment argued FOR the word on the grounds that the two card
+ * surfaces printed it — a private answer justified by the drift it was copying.
+ * A deletion in three components is a fact about a working tree; this is the
+ * file whose entire thesis is that only a gate is a fact about a reader.
+ *
+ * ═══ WHY THE PLURAL ONLY, AND WHY `sportsbooks` SURVIVES ═══
+ *
+ * `\bbooks\b` cannot match inside `sportsbooks` — there is no word boundary
+ * between `sport` and `books` — and that is deliberate rather than lucky.
+ * `sportsbooks` is the plain-English word Alex chose for the replacement
+ * tooltip ("pre-match number, from sportsbooks"), and the accessible sentence
+ * on every one of these rows says "sportsbooks opened". The banned thing is the
+ * trade shorthand used as a LABEL, not the honest noun used in a sentence.
+ *
+ * The singular `book` is deliberately NOT banned: `/about` and the calibration
+ * cohort note both use it inside real sentences ("not one book's opinion"),
+ * where it reads as English rather than as a tag stapled to a number. Widening
+ * the rule to catch those is how a guard earns its deletion — this file says so
+ * twice already, about `\bwill\b` and about the bare word `odds`.
+ */
+export const SOURCE_LABEL_BANS: CopyBan[] = [
+  {
+    id: "books-label",
+    pattern: /\bbooks\b/i,
+    why: '"books" is trade shorthand for our counterparties — it reads as a gambling reference and means nothing to a reader; the marker is a footnote mark and the words are "from sportsbooks" (D57)',
+  },
 ];
 
 /**
@@ -339,6 +383,7 @@ export const PRICE_FORMAT_BANS: CopyBan[] = [
 export const ALL_COPY_BANS: CopyBan[] = [
   ...JARGON_BANS,
   ...TRADING_VOCAB_BANS,
+  ...SOURCE_LABEL_BANS,
   ...VENUE_BANS,
   ...FUTURE_PROMISE_BANS,
   ...PRICE_FORMAT_BANS,

@@ -45,6 +45,28 @@
  * The label is the generic word and never a venue name — there is no single book
  * to name (it is a median), and ruling 141 keeps venue names out of narrative
  * copy regardless.
+ *
+ * ═══ AND THE GENERIC WORD WAS THE WRONG ONE (D57, Alex 2026-09-03) ═══
+ *
+ * Alex, on the US Open hub: *"90% BOOKS / 10% BOOKS on every finished row. Is
+ * that a gambling reference? We wouldn't want that, but it's confusing either
+ * way."* Both halves land. `books` is trade slang for the counterparties we buy
+ * a line from; a reader who decodes it reads a gambling noun on a probability
+ * product, and a reader who does not reads a word with no meaning stapled to
+ * every number on the list.
+ *
+ * D57's default, taken: **the word never appears on a surface.** What survives
+ * is the DISTINCTION, which ux/1034 A3 and CERT-812 both paid for — a
+ * sportsbook median is a different claim from a prediction-market opening and
+ * may not be printed as one. So the caveat keeps its per-number position and
+ * loses its voice: a small neutral marker beside the figure, the tooltip
+ * saying what it means in Alex's own words, and the section footnote that
+ * already explains the class doing the explaining. The row should not shout it.
+ *
+ * The spoken sentence is UNCHANGED and still says "sportsbooks opened" in full.
+ * A marker is a visual shorthand for a reader who can see the legend; a screen
+ * reader gets the sentence, which is why the marker is `aria-hidden` at every
+ * render site rather than given an accessible name that would say it twice.
  */
 
 import type { FeedEventData } from "@/lib/types";
@@ -53,6 +75,27 @@ import { servedDuelPercents } from "@/lib/servedDuelPercents";
 /** The rung a reading came from. Payload source ids, not display text. */
 export const BOOKS_SOURCE = "books";
 const PREDICTION_MARKET_SOURCES = new Set(["kalshi", "polymarket"]);
+
+/**
+ * THE MARKER, AND THE ONE PLACE IT IS DECIDED (D57).
+ *
+ * A dagger and not an invented badge: it is the typographic footnote mark, so
+ * it already means "there is a note about this below" to a reader who has never
+ * seen this page, and the note is genuinely below — `prematchSourceNote` is the
+ * legend and cites this same constant, so the mark on the row and the mark in
+ * the sentence explaining it cannot drift apart.
+ *
+ * Not a coloured dot, not a `ⓘ`: both read as an affordance and neither of them
+ * is one. This is a footnote on a number.
+ */
+export const PREMATCH_SOURCE_MARKER = "†";
+
+/**
+ * What the marker says on hover. Alex's wording, verbatim and lower case —
+ * "pre-match number, from sportsbooks". It states what the figure IS before it
+ * states where it came from, because the reader's question is the first one.
+ */
+export const PREMATCH_SOURCE_TOOLTIP = "pre-match number, from sportsbooks";
 
 export interface PrematchReading {
   /** Whole percents, away first — rounded ONCE as a pair (UX-P114). */
@@ -64,10 +107,16 @@ export interface PrematchReading {
   /** Which rung. */
   source: string;
   /**
-   * The word the card prints beside the pair, or `null` when the reading needs
-   * no caveat. Only ever set for a non-prediction-market rung.
+   * The MARKER the card prints beside the pair, or `null` when the reading
+   * needs no caveat. Only ever set for a non-prediction-market rung.
+   *
+   * Was `label`, and was the word `books` (D57). Renamed rather than quietly
+   * refilled: three components read this field and a glyph arriving under the
+   * name `label` would have compiled at all three and been rendered as a word
+   * at whichever one next grew a `Pre-match · ${label}` template. The rename is
+   * what makes every call site show up in the diff.
    */
-  label: string | null;
+  marker: string | null;
 }
 
 export function isPredictionMarketSource(source: string | null | undefined): boolean {
@@ -103,7 +152,7 @@ export function prematchReading(
       awayProbability: away,
       homeProbability: served.home_probability,
       source: served.source,
-      label: sourceLabel(served.source),
+      marker: sourceMarker(served.source),
     };
   }
 
@@ -127,7 +176,7 @@ export function prematchReading(
     awayProbability: away,
     homeProbability: opening.home_probability,
     source: BOOKS_SOURCE,
-    label: sourceLabel(BOOKS_SOURCE),
+    marker: sourceMarker(BOOKS_SOURCE),
   };
 }
 
@@ -140,6 +189,6 @@ function isUsable(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1;
 }
 
-function sourceLabel(source: string): string | null {
-  return isPredictionMarketSource(source) ? null : BOOKS_SOURCE;
+function sourceMarker(source: string): string | null {
+  return isPredictionMarketSource(source) ? null : PREMATCH_SOURCE_MARKER;
 }
