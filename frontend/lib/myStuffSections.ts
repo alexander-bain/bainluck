@@ -23,6 +23,31 @@
 import type { FeedFuturesData, FeedItem } from "./types";
 
 /**
+ * The exact params My Stuff asks `/api/feed` for.
+ *
+ * Exported, and the page imports it, because the ONE thing that made ux/1070
+ * item 5 ship as no visible change was invisible from both ends: the server
+ * admitted the followed-sport markets, the page knew how to render them, and
+ * the request in between said `include_futures: false`, so `_score_futures`
+ * never ran (CERT-942). Producer and consumer were each tested and each passed.
+ *
+ * A test can only catch that by exercising the REQUEST the page actually makes,
+ * and it can only do that honestly if the params have one owner instead of being
+ * retyped in the test. `__tests__/lib/myStuffFeedRequest.test.ts` builds a URL
+ * from this object through the real `fetchFeed` and asserts futures are not
+ * switched off.
+ *
+ * `include_futures` is ABSENT rather than `true` on purpose: the backend
+ * defaults it to true, and `fetchFeed` only ever serializes the `false` case, so
+ * naming it here would add a param to the URL for no behaviour. What matters is
+ * that it is never set to false — which is what the test asserts.
+ */
+export const MY_STUFF_FEED_PARAMS = {
+  limit: 100,
+  my_teams_only: true,
+} as const;
+
+/**
  * The categories whose futures reach My Stuff through a TEAM.
  *
  * Mirrors `MY_STUFF_ALLOWED_CATEGORIES` in `backend/app/routes/feed.py`. Keep

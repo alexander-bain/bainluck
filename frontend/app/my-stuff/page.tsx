@@ -34,7 +34,8 @@ import {
   extractMarketType,
 } from "@/lib/myStuffProgression";
 import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
-import { followedSportFutures } from "@/lib/myStuffSections";
+import { MY_STUFF_FEED_PARAMS, followedSportFutures } from "@/lib/myStuffSections";
+import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
@@ -160,7 +161,23 @@ function MyTeamsFeed({ principal }: { principal: string }) {
     myStuffKey(principal, "feed"),
     async () => {
       const t0 = typeof performance !== "undefined" ? performance.now() : 0;
-      const data = await fetchFeed({ limit: 100, my_teams_only: true, include_futures: false });
+      // FUTURES ARE ON, and the flag's history is the reason this line needs a
+      // comment. `include_futures: false` was added in Feb 2026 with the layout
+      // redesign that moved team odds to `/api/feed/my-team-futures`: once that
+      // endpoint owned them, the feed's futures half was pure duplication and
+      // pure cost, so it was switched off.
+      //
+      // ux/1070 item 5 makes it not duplication. A followed sport with no teams
+      // — golf, tennis — is admitted by `_score_futures` and by nothing else;
+      // `my-team-futures` cannot serve it, because there is no team to hang it
+      // off. With the flag off, that whole admission path is unreachable and
+      // the ship is invisible, which is exactly how it was first shipped and
+      // caught (CERT-942). The page-side dedupe below is what keeps the team
+      // half from printing twice now that it arrives again.
+      //
+      // The params are imported, not written here, so the request test asserts
+      // against the object this page actually sends.
+      const data = await fetchFeed(MY_STUFF_FEED_PARAMS);
       networkMsRef.current =
         (typeof performance !== "undefined" ? performance.now() : 0) - t0;
       return bindToPrincipal(principal, data);
@@ -239,15 +256,47 @@ function MyTeamsFeed({ principal }: { principal: string }) {
       .filter((e): e is Event => e !== undefined);
   }, [feedData, fetchedPinnedEvents, pinnedIds]);
 
-  // Pinned futures
-  const feedFuturesIds = useMemo(() => {
-    if (!feedData) return new Set<number>();
-    return new Set(
-      feedData.items
-        .filter(i => i.type === "futures")
-        .map(i => (i.data as FeedFuturesData).id)
-    );
-  }, [feedData]);
+  // ux/1070 item 5: the markets that arrived because of a SPORT follow rather
+  // than a team follow — golf and tennis, which have no team block to live in.
+  // Computed HERE, above the pinned-futures dedupe, because that dedupe has to
+  // ask "will the page render this from the feed?" and the answer is this list.
+  //
+  // `feedItemHasRenderableContent` is the SAME fail-closed guard `FeedCard`
+  // applies at its own leaf (L2-215 / #1486), applied here so the two agree. A
+  // futures item with no `top_outcomes` and no settled reading makes `FeedCard`
+  // return `null`, so counting it here would print "Your Sports This Week 5"
+  // above a grid holding three cards — a heading and a count that describe
+  // markets nobody can see. It is not hypothetical for this section: six of the
+  // eighteen in-window golf markets on production carry zero outcomes.
+  //
+  // The partition itself stays in `lib/myStuffSections` and stays pure — it is
+  // about sport SHAPE. Whether a card can draw is a rendering question and is
+  // composed here, where the renderer is.
+  const followedSportItems = useMemo(
+    () =>
+      feedData
+        ? followedSportFutures(feedData.items).filter(feedItemHasRenderableContent)
+        : [],
+    [feedData],
+  );
+
+  // Pinned futures.
+  //
+  // THE SET IS WHAT THE PAGE ACTUALLY RENDERS FROM THE FEED, not every futures
+  // item in it — and the distinction only started to matter when futures were
+  // switched back on above. A pinned market in this set is deliberately NOT
+  // re-fetched, because it will already be drawn once in "Your Sports This
+  // Week"; drawing it in Pinned as well is the double-print this guards.
+  //
+  // Reading it as "every futures item" instead would silently DELETE pinned
+  // team-sport markets: the feed now carries them again, so they would be
+  // skipped here as though something else were drawing them, while the section
+  // loop below drops every futures item and `followedSportFutures` keeps only
+  // the non-team sports. Nothing would draw them at all.
+  const feedFuturesIds = useMemo(
+    () => new Set(followedSportItems.map(i => (i.data as FeedFuturesData).id)),
+    [followedSportItems],
+  );
 
   const missingPinnedFuturesIds = useMemo(() => {
     return pinnedFuturesIds.filter(id => !feedFuturesIds.has(id));
@@ -350,13 +399,6 @@ function MyTeamsFeed({ principal }: { principal: string }) {
 
     return sections;
   }, [feedData]);
-
-  // ux/1070 item 5: the markets that arrived because of a SPORT follow rather
-  // than a team follow — golf and tennis, which have no team block to live in.
-  const followedSportItems = useMemo(
-    () => (feedData ? followedSportFutures(feedData.items) : []),
-    [feedData],
-  );
 
   const hasEvents = feedSections.length > 0;
   const hasFutures = Boolean(teamFuturesData && teamFuturesData.items.length > 0);
