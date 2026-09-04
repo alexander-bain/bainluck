@@ -38,7 +38,7 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import { isPredictionMarketSource } from "./prematchReading";
+import { PREMATCH_SAID, isPredictionMarketSource } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -768,6 +768,12 @@ export const BOOKS_MARKER = "books";
  *
  * `said` is a full clause and never a fragment: a screen reader gets the same
  * sentence shape whichever rung answered, so the two are comparable by ear.
+ *
+ * D65 (Alex, 2026-09-04) went further: it is now the same STRING whichever rung
+ * answered — `PREMATCH_SAID`, "Pre-match probability:" — because a phrase that
+ * names no venue cannot name the wrong one. The field stays per-value rather
+ * than being hoisted out: `marker` still forks here, the component reads the two
+ * together, and a future ruling that re-splits the clause has a place to put it.
  */
 export interface PrematchAttribution {
   /** The rung id for `data-prematch-source`, or `null` when unstated. */
@@ -785,11 +791,11 @@ export function prematchAttribution(player: ResultPlayer): PrematchAttribution {
   // field. Absent must not read as "unknown rung" and pick up a books marker —
   // that would put the caveat on 111 rows that do not need it.
   if (isPredictionMarketSource(source) || source === null) {
-    return { source, said: "Before the match, the market gave", marker: null };
+    return { source, said: PREMATCH_SAID, marker: null };
   }
   return {
     source,
-    said: "Before the match, sportsbooks opened",
+    said: PREMATCH_SAID,
     marker: BOOKS_MARKER,
   };
 }

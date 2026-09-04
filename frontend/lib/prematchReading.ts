@@ -54,6 +54,39 @@ import { servedDuelPercents } from "@/lib/servedDuelPercents";
 export const BOOKS_SOURCE = "books";
 const PREDICTION_MARKET_SOURCES = new Set(["kalshi", "polymarket"]);
 
+/**
+ * THE SPOKEN CLAUSE FOR A PRE-MATCH NUMBER, ON EVERY SURFACE (D65).
+ *
+ * Alex, 2026-09-04: *"Can't we just say 'pre-match odds' or 'pre-match
+ * probability'? Shouldn't reference sportsbooks."* So a screen reader hears
+ * "Pre-match probability: Ben Shelton 68%" whichever rung answered.
+ *
+ * ═══ WHY THIS IS NOT A LOSS OF HONESTY ═══
+ *
+ * The clause used to fork on the rung — "the market gave" for Kalshi and
+ * Polymarket, "sportsbooks opened" for a books median — and that fork was itself
+ * a repair (CERT-812: the literal string "the market gave" was being read out on
+ * 61 of 172 rows that were a sportsbook median, which is the exact false claim
+ * the ship existed to stop making). Naming the venue was one way to stop
+ * claiming the wrong one. Saying nothing about the venue is another, and it is
+ * the one Alex picked: "pre-match probability" is true of every rung, so there
+ * is no claim left to get wrong. The rung is still carried in
+ * `data-prematch-source` for anyone measuring, and the visible marker is
+ * untouched.
+ *
+ * ═══ WHY IT LIVES HERE ═══
+ *
+ * Three surfaces speak it — `FeedCard`, Discover's `EventCard` and the hub's
+ * `prematchAttribution` — and until now all three built the same two strings
+ * privately, three files apart. That is the drift this module's own opening
+ * paragraph exists to prevent, and it had already happened once for the
+ * `isPredictionMarketSource` set. One phrase, one owner.
+ *
+ * Ends in a colon and is always followed by a name and then the number, so the
+ * three surfaces produce one sentence shape and are comparable by ear.
+ */
+export const PREMATCH_SAID = "Pre-match probability:";
+
 export interface PrematchReading {
   /** Whole percents, away first — rounded ONCE as a pair (UX-P114). */
   awayPercent: number | null;

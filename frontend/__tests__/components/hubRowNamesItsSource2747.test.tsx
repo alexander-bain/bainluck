@@ -58,15 +58,28 @@ import {
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
-import { isPredictionMarketSource } from "@/lib/prematchReading";
+import { PREMATCH_SAID, isPredictionMarketSource } from "@/lib/prematchReading";
 
 import hub from "../fixtures/tournamentHubBooksRung.20260903T0310Z.json";
 
 const RESULTS = (hub as unknown as { results: ResultsModel }).results;
 const MATCHES = RESULTS.matches as unknown as TournamentResult[];
 
-const MARKET_SAID = "Before the match, the market gave";
-const BOOKS_SAID = "Before the match, sportsbooks opened";
+/**
+ * D65 (Alex, 2026-09-04): *"Shouldn't reference sportsbooks."*
+ *
+ * This file was written when the SPOKEN clause forked by rung — "sportsbooks
+ * opened" on a books median, "the market gave" on Kalshi — and most of it
+ * asserted that fork. The fork is gone: one venue-free phrase on every rung, so
+ * a phrase that names no venue cannot name the wrong one.
+ *
+ * The file keeps its job, on the register that still forks. CERT-812's defect
+ * was "a books number renders as if it were a market number", and the VISIBLE
+ * marker is now the only thing that answers it — so every assertion that used to
+ * read the clause reads the marker, and the clause gets one new assertion of its
+ * own: that it is the SAME on all 344 slots. Both directions still fail loudly.
+ */
+const SAID = PREMATCH_SAID;
 
 /**
  * `initialExpanded` is TRUE on purpose, and it is not a convenience.
@@ -148,9 +161,11 @@ function priors(html: string): Array<{
     );
     const saidMatch = cell.match(/class="sr-only">([^<]*)</);
     const said = saidMatch ? saidMatch[1].trim() : null;
-    let clause: string | null = null;
-    if (said?.startsWith(BOOKS_SAID)) clause = BOOKS_SAID;
-    else if (said?.startsWith(MARKET_SAID)) clause = MARKET_SAID;
+    // One recognised clause now, so `clause` is "did this cell speak the
+    // sanctioned phrase at all" rather than "which of two". A cell that speaks
+    // something else reads as `null` here and fails the coverage assertions,
+    // exactly as an unrecognised fork used to.
+    const clause: string | null = said?.startsWith(SAID) ? SAID : null;
     return {
       source: sourceMatch ? sourceMatch[1] : null,
       marker: markerMatch ? markerMatch[1].trim() : null,
@@ -249,14 +264,21 @@ describe("the corpus", () => {
 const EXPECTED_BOOKS_SLOTS = 122;
 const EXPECTED_MARKET_SLOTS = 222;
 
-/** name -> the clauses the fixture says that player may legitimately hear. */
-function allowedClauses(): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
+/**
+ * name -> the markers the fixture says that player may legitimately WEAR.
+ *
+ * Was `allowedClauses`, keyed on the spoken fork; D65 removed that fork, so the
+ * same binding is now expressed over the marker, which is the register that
+ * still distinguishes a books median from a market opening. `null` is a real
+ * member — "this player's prior is a market one and must wear nothing".
+ */
+function allowedMarkers(): Map<string, Set<string | null>> {
+  const out = new Map<string, Set<string | null>>();
   for (const match of MATCHES) {
     for (const p of match.players) {
       if (p.prematch_probability === null) continue;
-      const want = p.prematch_source === "books" ? BOOKS_SAID : MARKET_SAID;
-      const set = out.get(p.display_name) ?? new Set<string>();
+      const want = p.prematch_source === "books" ? BOOKS_MARKER : null;
+      const set = out.get(p.display_name) ?? new Set<string | null>();
       set.add(want);
       out.set(p.display_name, set);
     }
@@ -280,34 +302,51 @@ describe("SHIP — a books prior says so, in both registers", () => {
     expect(rows.filter((r) => r.marker !== null)).toHaveLength(EXPECTED_BOOKS_SLOTS);
   });
 
-  test("the SPOKEN clause names sportsbooks on exactly the books slots", () => {
+  test("the SPOKEN clause is the SAME on every slot, books or market (D65)", () => {
+    // The inverse of what this test asserted before, and the assertion Alex's
+    // ruling actually needs: 344 slots, one phrase. A regression that
+    // reintroduces the fork in EITHER direction leaves some slots not starting
+    // with the sanctioned phrase, so they extract as `clause === null` and the
+    // count falls short.
     const rows = allRendered();
-    expect(rows.filter((r) => r.clause === BOOKS_SAID)).toHaveLength(
-      EXPECTED_BOOKS_SLOTS,
-    );
-    expect(rows.filter((r) => r.clause === MARKET_SAID)).toHaveLength(
-      EXPECTED_MARKET_SLOTS,
-    );
+    expect(rows).toHaveLength(EXPECTED_BOOKS_SLOTS + EXPECTED_MARKET_SLOTS);
+    expect(rows.filter((r) => r.clause === SAID)).toHaveLength(rows.length);
+    expect(new Set(rows.map((r) => r.clause))).toEqual(new Set([SAID]));
   });
 
-  test("each clause is bound to a player the fixture permits it for", () => {
+  test("no rendered clause references a venue, in any casing", () => {
+    // Belt to the braces above: the phrase could be changed to another
+    // venue-naming string and still be uniform. This reads the raw spoken text
+    // rather than the classified clause, so it is not satisfied by the
+    // extractor agreeing with itself.
+    for (const row of allRendered()) {
+      expect(row.said?.toLowerCase()).not.toContain("sportsbook");
+      expect(row.said?.toLowerCase()).not.toContain("book");
+      expect(row.said?.toLowerCase()).not.toContain("kalshi");
+      expect(row.said?.toLowerCase()).not.toContain("polymarket");
+    }
+  });
+
+  test("each MARKER is bound to a player the fixture permits it for", () => {
     // The near-miss this catches: right rows marked, wrong names attached — a
     // positional re-index that keeps the counts and permutes the subjects.
-    const allowed = allowedClauses();
+    // Reads the marker now that the clause no longer varies; the subject still
+    // comes out of the spoken text, so the pair is still read together.
+    const allowed = allowedMarkers();
     const wrong = allRendered().filter((r) => {
       const permitted = allowed.get(subjectOf(r));
-      return !permitted || !r.clause || !permitted.has(r.clause);
+      return !permitted || !permitted.has(r.marker);
     });
     expect(wrong).toHaveLength(0);
   });
 
-  test("CONTROL (green on the parent too) — marker and clause never disagree", () => {
-    // Arm-independent by design: on the parent nothing is marked and every
-    // clause is the market one, so the biconditional holds there as well. It is
-    // here to catch a HALF-fix — counter-cases (A) and (B) below ship exactly
-    // one of the two registers, and this is the test that refuses both.
+  test("CONTROL (green on the parent too) — the marker tracks the rung exactly", () => {
+    // Arm-independent by design: on the parent nothing is marked and no row is
+    // a books rung by the cell's own attribute, so the biconditional holds
+    // there too. It is here to catch a HALF-fix, and it now reads the DOM's own
+    // `data-prematch-source` rather than the clause, which no longer forks.
     for (const row of allRendered()) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.clause === BOOKS_SAID);
+      expect(row.marker === BOOKS_MARKER).toBe(row.source === "books");
     }
   });
 
@@ -319,20 +358,23 @@ describe("SHIP — a books prior says so, in both registers", () => {
 // ────────────────────── THE CONTROL ARM: prediction market ──────────────────
 
 describe("CONTROL — a prediction-market prior renders exactly as it always did", () => {
-  test("a market-only player never hears sportsbooks and never gets a marker", () => {
-    const allowed = allowedClauses();
+  test("a market-only player never gets a marker", () => {
+    const allowed = allowedMarkers();
     const marketOnly = allRendered().filter((r) => {
       const permitted = allowed.get(subjectOf(r));
-      return permitted?.size === 1 && permitted.has(MARKET_SAID);
+      return permitted?.size === 1 && permitted.has(null);
     });
     // 154, not 222: a player who won a books-priced round AND a market-priced
-    // one is legitimately allowed both clauses, so they are not "market-only"
+    // one is legitimately allowed both markers, so they are not "market-only"
     // and are excluded here. I expected >200 and was wrong — the measured
     // number is the useful one, and the gap is what proves the binding test
     // above is doing work a count could not (ux/1016's lesson #5).
     expect(marketOnly).toHaveLength(154);
     expect(marketOnly.every((r) => r.marker === null)).toBe(true);
-    expect(marketOnly.every((r) => r.clause === MARKET_SAID)).toBe(true);
+    // The clause is the same one everybody hears — asserted here too, because
+    // "market-only" is the population most likely to be special-cased back into
+    // a distinct sentence by a well-meaning revert.
+    expect(marketOnly.every((r) => r.clause === SAID)).toBe(true);
   });
 
   test("the number of priors on the page is unchanged by this diff", () => {
@@ -347,7 +389,7 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
       const rows = priorsChecked(render("mens-singles", withSource(source)));
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((r) => r.marker === null)).toBe(true);
-      expect(rows.every((r) => r.clause === MARKET_SAID)).toBe(true);
+      expect(rows.every((r) => r.clause === SAID)).toBe(true);
     },
   );
 
@@ -365,7 +407,8 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThan(170);
     for (const row of rows) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.clause === BOOKS_SAID);
+      expect(row.marker === BOOKS_MARKER).toBe(row.source === "books");
+      expect(row.clause).toBe(SAID);
     }
   });
 });
@@ -378,16 +421,29 @@ describe("one decision, one owner", () => {
       const attribution = prematchAttribution(player(source));
       const isMarket = source === null || isPredictionMarketSource(source);
       expect(attribution.marker === null).toBe(isMarket);
-      expect(attribution.said).toBe(isMarket ? MARKET_SAID : BOOKS_SAID);
+      // The clause no longer varies with the rung — that IS the ruling, so it
+      // is asserted inside the loop that walks every rung rather than once.
+      expect(attribution.said).toBe(SAID);
     }
   });
 
-  test("an unrecognised rung is labelled, not silently passed as a market", () => {
-    // The safe direction: anything that is not a named prediction market gets
-    // the caveat. A new sportsbook rung must not arrive unlabelled.
+  test("the hub speaks the same phrase the two card surfaces do", () => {
+    // Three components used to build this clause privately, three files apart,
+    // which is how the `isPredictionMarketSource` set had already drifted once.
+    // `PREMATCH_SAID` is the single owner; this asserts the hub reads it rather
+    // than holding a fourth copy that merely matches today.
+    expect(prematchAttribution(player("kalshi")).said).toBe(PREMATCH_SAID);
+    expect(prematchAttribution(player("books")).said).toBe(PREMATCH_SAID);
+  });
+
+  test("an unrecognised rung is MARKED, not silently passed as a market", () => {
+    // The safe direction, unchanged by D65: anything that is not a named
+    // prediction market gets the caveat. A new sportsbook rung must not arrive
+    // unmarked. Only the register moved — the caveat is now carried by the
+    // marker alone, so this is the test that has to hold it.
     const attribution = prematchAttribution(player("draftkings"));
     expect(attribution.marker).toBe(BOOKS_MARKER);
-    expect(attribution.said).toBe(BOOKS_SAID);
+    expect(attribution.said).toBe(SAID);
   });
 
   test("a player with no prior gets no marker whatever its source says", () => {
