@@ -86,14 +86,26 @@ def db():
         yield session, _AsyncSessionOverSync(session)
 
 
-def _insert(session, event_id: int, sport_id: int, *, espn_id: str = "401") -> None:
+def _insert(session, event_id: int, sport_id: int, *, espn_id: str | None = None) -> None:
+    """One anchored row. **Every row gets its own authority id by default.**
+
+    This helper used to default to a shared literal ``"401"``, which the three
+    multi-row tests below then inserted two and three times. That is now an
+    ``IntegrityError``: ``Event`` declares ``uq_events_espn_id`` (#2693), so the
+    test database enforces the same one-game-one-id invariant production is about
+    to get. A fixture that could only exist before the index is not a fixture
+    worth keeping — none of these tests is about collisions, they are about which
+    sports the loader returns.
+
+    Pass ``espn_id=`` explicitly if a test genuinely needs a particular id.
+    """
     from app.models.models import Event
 
     session.add(
         Event(
             id=event_id,
             sport_id=sport_id,
-            espn_id=espn_id,
+            espn_id=espn_id if espn_id is not None else f"401{event_id}",
             home_team_name="Home",
             away_team_name="Away",
             commence_time=NOW + timedelta(days=1),

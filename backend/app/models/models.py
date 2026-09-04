@@ -110,6 +110,26 @@ class Event(Base):
 
     __tablename__ = "events"
 
+    # ONE GAME, ONE AUTHORITY ID (#2693). `espn_id` is declared WITHOUT
+    # `index=True` because its index is not the ordinary one: the
+    # `uq_event_espn_id` migration replaces the loose `ix_events_espn_id` with a
+    # PARTIAL UNIQUE index, and the model has to say so or the first
+    # `--autogenerate` after that lands emits a revision that drops the unique
+    # index and re-adds the loose one — quietly undoing the invariant.
+    #
+    # Partial (`WHERE espn_id IS NOT NULL`) because a row need not have an
+    # authority id; it may not SHARE one. 228,451 of 236,786 production rows
+    # carry none, and Postgres keeps NULLs distinct in a unique index anyway.
+    __table_args__ = (
+        Index(
+            "uq_events_espn_id",
+            "espn_id",
+            unique=True,
+            postgresql_where=text("espn_id IS NOT NULL"),
+            sqlite_where=text("espn_id IS NOT NULL"),
+        ),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
     sport_id: Mapped[int] = mapped_column(ForeignKey("sports.id"), index=True)
     external_id: Mapped[Optional[str]] = mapped_column(String(100), unique=True)
@@ -176,7 +196,7 @@ class Event(Base):
     away_team_alt_names: Mapped[Optional[list]] = mapped_column(JSONB)
 
     # ESPN enrichment
-    espn_id: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    espn_id: Mapped[Optional[str]] = mapped_column(String(50))
     venue_id: Mapped[Optional[int]] = mapped_column(ForeignKey("venues.id"))
     broadcast_info: Mapped[Optional[str]] = mapped_column(String(255))  # "ESPN, ESPN+"
     game_clock: Mapped[Optional[str]] = mapped_column(String(20))  # "4:32"
