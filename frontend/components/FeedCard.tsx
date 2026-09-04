@@ -33,7 +33,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
+import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import TeamNameLink from "./TeamNameLink";
 
@@ -532,15 +532,12 @@ function EventFeedCard({
   // `lib/prematchReading.ts` owns the fallback for a cached payload predating
   // `prematch_odds`, and the reason only the books rung carries a label.
   const prematch = isFinished ? prematchReading(data) : null;
-  // THE SPOKEN SENTENCE CARRIES THE LABEL TOO. The visible card says which rung
-  // the number came from ("Pre-match · books"); the screen-reader sentence used
-  // to say "the market gave" on every card regardless, so the one reader who
-  // cannot see the label got the exact claim this ship exists to stop making —
-  // and on the served /sports payload 2026-09-03 all 13 finished cards were the
-  // books rung. Same rule as the label, one decision: `isPredictionMarketSource`.
-  const prematchSaid = isPredictionMarketSource(prematch?.source)
-    ? "Before the game, the market gave"
-    : "Before the game, sportsbooks opened";
+  // THE SPOKEN SENTENCE NAMES NO VENUE (D65). It used to fork on the rung, so a
+  // books median was read out as "sportsbooks opened" — a repair for the older
+  // bug where "the market gave" was said over a sportsbook median. Alex ruled
+  // the fork away: "pre-match probability" is true of every rung, so there is no
+  // venue claim left to get wrong. One phrase, owned by `prematchReading`.
+  const prematchSaid = PREMATCH_SAID;
 
   // For the probability bar: finished events show opening odds, others show current
   const barHomeProb = isFinished
