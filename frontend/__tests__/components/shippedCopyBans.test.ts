@@ -58,6 +58,7 @@ import {
   ALL_COPY_BANS,
   ATTRIBUTION_LITERALS,
   FUTURE_PROMISE_BANS,
+  HISTORY_CLAIM_BANS,
   VENUE_BANS,
   clauseAround,
   expandJsonPayload,
@@ -65,6 +66,10 @@ import {
   findBannedCopy,
   isProse,
   isSourceAttribution,
+  MARKET_OBJECT_NOUNS,
+  NO_READING_COPY_BANS,
+  OUR_SUBJECT_NOUNS,
+  READING_NOUNS,
   scanBundleSource,
   surfaceOf,
   type BundleCopyHit,
@@ -261,6 +266,421 @@ describe("the rules reject the copy Alex read on production", () => {
       expect(findBannedCopy(q, FUTURE_PROMISE_BANS)).toEqual([]);
     }
   });
+
+  /**
+   * ═══ CERT-537 — OUR VOICE MAY NOT SETTLE A QUESTION ABOUT ALL OF HISTORY ═══
+   *
+   * `HISTORY_CLAIM_BANS` is the newest group and the only one whose authority
+   * is a graded cert rather than an Alex ruling, so it is pinned harder than
+   * the others: the blocked sentences on one side, the shipped replacements on
+   * the other, and — because this rule lives one word away from vocabulary the
+   * product genuinely needs — a third list of TRUE past-tense copy that must
+   * survive it.
+   *
+   * The reasoning for the line it draws is in `lib/copyBans.ts`. The short
+   * version: an absolute quantifier over our receipt of a number is
+   * unsupportable in every wire shape, so a text scan can judge it; "…yet" is
+   * conditionally true, so a component judges it by reading `observed_at`.
+   */
+  describe("an absolute claim about all of history is rejected", () => {
+    const HISTORY_CLAIMS: [string, RegExp][] = [
+      // Verbatim, UX-P211 as shipped to CERT-537. Both halves of the sentence
+      // are independently banned, which is why the ban ids are asserted rather
+      // than a bare "something fired".
+      [
+        "No number ever reached us for Iga Swiatek, so this comparison was never complete.",
+        /ever-reached-us|no-reading-ever|was-never-complete/,
+      ],
+      ["No number ever reached us for Carlos Alcaraz.", /ever-reached-us/],
+      ["We never received a probability for this question.", /we-never-had/],
+      ["We have never seen a number on this market.", /we-never-had/],
+      ["Nobody ever quoted this match.", /nobody-ever/],
+      ["At no point did a probability arrive for this leg.", /at-no-point/],
+      ["This comparison was never complete.", /was-never-complete/],
+
+      // ═══ CERT-539 — the five rewordings that passed BOTH layers ═══
+      //
+      // Every one of these makes the identical all-of-history claim about our
+      // receipt of a number, and every one walked around all six of the
+      // original patterns AND the shipped-bundle scanner. They are listed
+      // verbatim as the cert executed them, so a future narrowing that
+      // re-opens any single family fails here by name.
+      [
+        "There has never been a probability for this market.",
+        /there-was-never-a-reading/,
+      ],
+      ["This question never had a probability.", /never-had-a-reading/],
+      [
+        "We have not once received a number for this market.",
+        /not-once-received/,
+      ],
+      ["We did not receive a number at any time.", /no-reading-at-any-time/],
+      [
+        "A probability has never been available for this question.",
+        /reading-never-been/,
+      ],
+
+      // ═══ CERT-547 — the claims that ESCAPED, and why they did ═══
+      //
+      // Every verb rule spelled its determiner `(?:a |an |any )?` and simply
+      // had no arm for `the`. So the plainest form of each claim — the one a
+      // writer reaches for first — walked straight through all eleven rules
+      // while the paraphrases CERT-539 added were caught. The determiner list
+      // is now `DET`, in one place, and these pin it.
+      //
+      // ⚠️ These are also the reason the vocabulary could not simply be
+      // narrowed: admitting `the` widens every rule at once, so the scope had
+      // to move to `PAGE_SUBJECT` in the same change.
+      [
+        "We never received the probability for this question.",
+        /we-never-had|never-had-a-reading/,
+      ],
+      ["This question never had the number.", /never-had-a-reading/],
+      [
+        "We have not once received the number for this market.",
+        /not-once-received/,
+      ],
+      [
+        "There has never been the probability for this market.",
+        /there-was-never-a-reading/,
+      ],
+      // The same claim in the determiners a writer actually varies between.
+      [
+        "We never had a single reading for this market.",
+        /we-never-had|never-had-a-reading/,
+      ],
+      ["This market never had one probability.", /never-had-a-reading/],
+      // `nobody-ever`'s surviving verbs, each on a page subject.
+      ["Nobody ever priced this question.", /nobody-ever/],
+      ["Nobody ever listed this leg.", /nobody-ever/],
+      // `no-reading-ever` and `at-no-point` were anchored in this repair too
+      // (see the prose corpus). This keeps the first reachable in its anchored
+      // form; `at-no-point`'s existing specimen above already is one, because
+      // "…arrive for this leg" leaves the subject OUTSIDE the matched core.
+      //
+      ["No probability ever arrived for this market.", /no-reading-ever/],
+
+      // ═══ CERT-549 — a core that SPANS the page subject ate its own anchor ═══
+      //
+      // 🔴 THIS EXACT SENTENCE WAS DOCUMENTED IN-TREE AS A KNOWN LIMIT AND THE
+      // BRANCH WAS STAGED ANYWAY. The comment that used to sit here explained
+      // why "At no point did this leg carry a probability." could not fire —
+      // `at-no-point`'s own `[^.!?]{0,60}` gap swallows "this leg", so
+      // `anchored` looked for a SECOND page subject and found none — and then
+      // told the next reader not to be surprised. **A documented hole is still
+      // a hole**, and the cert found it in one probe.
+      //
+      // `anchored`'s second arm is now a clause-scoped LOOKAHEAD instead of a
+      // suffix, so the subject may sit anywhere ahead in the clause, including
+      // inside the core. It strictly subsumes the arm it replaced.
+      ["At no point did this leg carry a probability.", /at-no-point/],
+      // The same shape on the other rule whose core can span its subject.
+      ["At no point did this market carry a price.", /at-no-point/],
+      // ⚠️ MAKES THE REST OF `PAGE_SUBJECT` LOAD-BEARING. Mutant I (narrowing it
+      // to `this` alone) SURVIVED the first battery because every claim above
+      // says "this". A writer who says "that market" is making the same
+      // unsupportable claim and must not be served by the demonstrative they
+      // happened to pick.
+      [
+        "We never had a probability for that market.",
+        /we-never-had|never-had-a-reading/,
+      ],
+    ];
+
+    it.each(HISTORY_CLAIMS)("rejects %j", (sentence, whyPattern) => {
+      const hits = findBannedCopy(sentence, HISTORY_CLAIM_BANS);
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.map((h) => h.ban.id).join(" | ")).toMatch(whyPattern);
+    });
+
+    /**
+     * The replacements `incompleteComparisonNote` now emits, pinned as PASSING
+     * beside the sentences they retired. A copy fix that trips a neighbouring
+     * rule is a copy fix that gets reverted, and this group is close enough to
+     * the retired wording that the risk is real rather than theoretical.
+     */
+    const REPLACEMENTS = [
+      "We have no number for Iga Swiatek, so this comparison is not complete and the question has closed.",
+      "We have no number for Carlos Alcaraz yet, so this comparison is not complete.",
+      "We have no number for 3 of the names in it, so this comparison is not complete and the question has closed.",
+    ];
+
+    it.each(REPLACEMENTS)("the shipped replacement passes: %j", (sentence) => {
+      expect(findBannedCopy(sentence)).toEqual([]);
+    });
+
+    /**
+     * ⚠️ THE HALF THIS GROUP DELIBERATELY DOES NOT BAN.
+     *
+     * "…has not reached us yet" is FALSE only when `observed_at` is populated,
+     * which a string cannot know. UX-P212 fixed that where it belongs, in the
+     * component. Pinning it as passing here is not an endorsement of the
+     * sentence — it records that the copy layer is knowingly silent about it,
+     * so a later reader does not "complete" this group by adding the pattern
+     * and discovering, one cert later, that it fires on correct copy.
+     */
+    it("the conditional tense is left to the component, on purpose", () => {
+      expect(
+        findBannedCopy("No number has reached us for Carlos Alcaraz yet.", HISTORY_CLAIM_BANS)
+      ).toEqual([]);
+    });
+
+    /**
+     * The reason this group is six narrow patterns and not `\bnever\b`. Every
+     * string below is real copy in this tree, every one is TRUE and supported
+     * by the data behind it, and a broad rule eats all of them.
+     */
+    const TRUE_PAST_TENSE = [
+      // components/PropDivergence*.tsx — a status a market really has.
+      "settled but never graded",
+      // lib/calibrationCohort.ts — a cohort DEFINED by the fact it states.
+      "Excluded: 412 untraded outcomes, whose price never moved off its opening line.",
+      "that never moved does not prove that it didn't.",
+      // lib/story-content.ts — a product promise, not a claim about our data.
+      "No odds formats, ever. Nothing to deposit, nothing to buy.",
+      // A market question may contain the word; markets write these, not us.
+      "Will Djokovic ever win another major?",
+      // The freshness copy the page really ships: bounded, and about what we
+      // HAVE rather than about all of history.
+      "Updates paused. These are the last probabilities we saw, not live ones.",
+      "No market has put a probability on today's matches.",
+      "Nobody is quoting this match yet. It is in the draw with no probability against it.",
+
+      // ═══ CERT-539 — the three sentences the group used to reject wrongly ═══
+      //
+      // None of these says anything about our receipt of a number: they are
+      // ordinary supported sports and chart prose, and each one would have
+      // failed a product-wide build gate on copy that is simply true. The
+      // patterns that matched them (`at-no-point`, `was-never-complete`,
+      // `nobody-ever`) are now bound to a reading noun, a page subject and a
+      // quoting verb respectively.
+      "At no point did either player face a break point.",
+      "The comeback was never complete.",
+      "Nobody ever scored more than 30 points in this game.",
+
+      // The near-misses of those three narrowings, so a re-widening is caught
+      // at the edge rather than only in the middle.
+      "You can dismiss this at any time.",
+      "The chart shows the comeback was never complete.",
+      "Nobody ever led by more than two breaks.",
+      "At no point was the match in doubt.",
+
+      // ═══ CERT-546 — the two the CERT-539 repair still got wrong ═══
+      //
+      // `we-never-had` was left untouched by that repair because the cert had
+      // not named it, and `not-once-received` was written new WITHOUT an object
+      // — the UX-P215b report named it as the most likely thing wrong and then
+      // shipped it anyway. Both are now bound to `READING` like their siblings.
+      "We never had a chance after halftime.",
+      "The quarterback has not once received a snap under center.",
+
+      // ═══ Found by sweeping EVERY pattern after CERT-546, not just its two ═══
+      //
+      // `nobody-ever` was bound to a verb list, which is only half a scope: the
+      // verbs collide with ordinary prose the moment the object is not ours.
+      // No cert named these; the sweep did.
+      "Nobody ever reported the score.",
+      "Nobody ever offered him a contract.",
+      "Nobody ever posted a better time.",
+      "Nobody ever traded places with him.",
+      "We never got a look at the second serve.",
+      "We have never seen a comeback like it.",
+    ];
+
+    it.each(TRUE_PAST_TENSE)("supported past-tense copy survives: %j", (sentence) => {
+      expect(findBannedCopy(sentence, HISTORY_CLAIM_BANS)).toEqual([]);
+    });
+
+    /**
+     * ═══ THE CLASS GUARD CERT-546 ASKED FOR WITHOUT SAYING SO ═══
+     *
+     * 🔴 A CERT'S FINDING LIST IS A SAMPLE, NOT A CENSUS. CERT-539 named three
+     * over-broad patterns; the repair narrowed those three and left a fourth
+     * (`we-never-had`) untouched because nobody had pointed at it, and wrote a
+     * fifth (`not-once-received`) with no object at all. CERT-546 then found
+     * both. Fixing named instances one cert at a time is how a group takes four
+     * rounds to converge.
+     *
+     * This is the census. Every sentence below uses one of this group's own
+     * grammatical shapes — "never had a ___", "not once received a ___",
+     * "nobody ever <verb> ___", "there has never been a ___", "at no point ___"
+     * — with an object that is NOT a reading, NOT a market and NOT a thing on
+     * our page. Every one is ordinary supported prose. None may fire.
+     *
+     * ⚠️ A NEW PATTERN IN THIS GROUP MUST BE RUN AGAINST THIS LIST, and the
+     * cheapest way to make sure it is, is that this test already runs against
+     * ALL of `HISTORY_CLAIM_BANS` rather than naming any of them. An unbound
+     * rule cannot be added without turning this red.
+     *
+     * ═══ CERT-547, AND WHY THE CENSUS ABOVE WAS STILL NOT ONE ═══
+     *
+     * It was a census of SENTENCES somebody had thought of, which is a sample
+     * wearing a census's name. Re-run mechanically against all eleven rules
+     * after CERT-547, the group had **eight** false positives, not the two the
+     * cert listed — `nobody-ever` alone fired on five, one for every pairing of
+     * a general verb (`reported`, `posted`, `offered`, `published`) with a
+     * `MARKET_OBJECT`. The cert had shown one corner of a product.
+     *
+     * 🔴 AND THE TWO ERROR DIRECTIONS WERE COUPLED, which is the real reason
+     * this took four rounds. "This team never had the answer for their zone"
+     * passed only because the determiner list omitted `the` — the very omission
+     * that let CERT-547's false negatives ("We never received THE probability
+     * for this question") escape. Fixing either direction alone re-opens the
+     * other. They had to move together, and the scope had to stop living in the
+     * noun list: see `PAGE_SUBJECT` in `lib/copyBans.ts`.
+     *
+     * The sentences below are therefore organised BY VOCABULARY MEMBER, and the
+     * test after them requires every member of all three lists to appear here.
+     */
+    const ORDINARY_SPORTS_PROSE = [
+      // ── the graded specimens, verbatim, oldest first ──
+      "We never had a chance after halftime.",
+      "The quarterback has not once received a snap under center.",
+      "Nobody ever reported the score.",
+      "Nobody ever offered him a contract.",
+      "Nobody ever posted a better time.",
+      "Nobody ever traded places with him.",
+      "Nobody ever scored more than 30 points in this game.",
+      "At no point did either player face a break point.",
+      "At no point was the match in doubt.",
+      "The comeback was never complete.",
+      "The chart shows the comeback was never complete.",
+      "There has never been a crowd like this one.",
+      "There was never any doubt.",
+      "This team never had a winning season.",
+      "A champion has never been crowned here.",
+      "He did not miss a first serve at any time.",
+      "We never got a look at the second serve.",
+      "We have never seen a comeback like it.",
+      "You can dismiss this at any time.",
+      // ── CERT-547's two, verbatim ──
+      "Nobody ever reported the game was delayed.",
+      "We never had an answer for their press.",
+      // ── the five `nobody-ever` pairings the cert did not list ──
+      "Nobody ever reported the match was postponed.",
+      "Nobody ever posted the line for that contest.",
+      "Nobody ever offered the outcome anyone wanted.",
+      "Nobody ever published the event schedule.",
+      "Nobody ever listed him among the favourites.",
+      // ── the coupling cases: our nouns under `the`/`their`, which only the
+      //    determiner bug was hiding. These are the ones that would have come
+      //    back as CERT-548 had the two directions been fixed separately. ──
+      "This team never had the answer for their zone.",
+      "We never had the data to justify the trade.",
+      "We never had the market cornered.",
+      "There has never been a value like that on this roster.",
+      "We never had a figure like him in the clubhouse.",
+      "The chart shows the record was never complete.",
+      "This game never had the answer anyone wanted.",
+      "That contest never had a figure worth watching.",
+      "No answer ever came from the bench.",
+      // ── one per remaining vocabulary member, so the coverage test below can
+      //    be satisfied honestly rather than by a keyword stuffed into a
+      //    sentence nobody would write ──
+      "He never had the number nine shirt.",
+      "Nobody ever paid the price for that mistake.",
+      "The probability of rain was high all afternoon.",
+      "We never had a reading on the wind that day.",
+      "We never had a quote from the coach.",
+      "The estimate of the crowd was never released.",
+      "This prop bet him to lead the league in tackles.",
+      "The series went the distance for the first time.",
+      "He never had a card shown against him.",
+      "That leg of the relay was his fastest.",
+      "The history between these two runs deep.",
+      "A comparison with his rookie year flatters him.",
+      "The only question was whether he would start.",
+      // ── the two rules this repair left unanchored in its FIRST draft, and the
+      //    sentences that proved that wrong. Found by sweeping, not by a cert:
+      //    "no ___ ever" and "at no point ___" read as distinctive frames and
+      //    are not. ──
+      "At no point was the market in doubt.",
+      "At no point did the line move.",
+      "At no point was the outcome in question.",
+      "No market ever felt out of reach for them.",
+      "No data ever suggested he was slowing down.",
+      "No number ever suited him better than 23.",
+      // ⚠️ THE ONE THAT MAKES `nobody-ever`'s VERB LIST LOAD-BEARING. Mutant D
+      // (restoring `reported|posted|offered|published`) SURVIVED the first
+      // battery: every other control here says "the game", so the inline
+      // demonstrative was doing all the work and the verb narrowing was
+      // untested. This sentence pairs a general verb WITH a demonstrative, so
+      // only the verb list can save it.
+      "Nobody ever reported that outcome to the league.",
+      // ── CERT-549's two false positives, verbatim ──
+      //
+      // 🔴 BOTH WERE SELF-DISCLOSED BY THE PREVIOUS ROUND AND SHIPPED ANYWAY.
+      // The report called the dangling-preposition arm "the most attackable
+      // line in the change" and left it; the cert attacked exactly it.
+      // **A SELF-DISCLOSURE IS NOT A MITIGATION.**
+      "The ball never reached us in the upper deck.",
+      // A complete sentence that merely ENDS on a preposition. The interpolated
+      // -subject arm accepted it because it spelled the trailing space `\s*`
+      // instead of `\s+`; the space is the hole the `${…}` left, so it is the
+      // one part of that shape that is not optional.
+      "We never had a number to play for",
+      // ── the three `ever-reached-us` false positives the SWEEP found and the
+      //    cert did not name. Each satisfies the page anchor honestly — they
+      //    really are about something on this page — so anchoring alone did not
+      //    save them. The rule needed a READING as its SUBJECT: the anchor says
+      //    where a claim lives, never what arrived. Fourth consecutive round in
+      //    which sweeping beat the cert's list. ──
+      "The ball never reached us before this game ended.",
+      "The crowd never came to us during this contest.",
+      "He never got to us in that game.",
+    ];
+
+    it.each(ORDINARY_SPORTS_PROSE)(
+      "no history rule fires on prose with nothing of ours in it: %j",
+      (sentence) => {
+        const hits = findBannedCopy(sentence, HISTORY_CLAIM_BANS);
+        expect(hits.map((h) => `${h.ban.id} on ${JSON.stringify(sentence)}`)).toEqual([]);
+      }
+    );
+
+    /**
+     * 🔴 THE MECHANISM THAT ENDS THE CYCLE.
+     *
+     * CERT-539, 546 and 547 each found a vocabulary member that had never been
+     * tried against ordinary prose — `we-never-had`'s missing object, then
+     * `not-once-received`'s, then `nobody-ever`'s verb list, then `answer` and
+     * `figure` as nouns. Four rounds, each discovering one more member of a
+     * list anybody could have enumerated on day one.
+     *
+     * So enumerate it. Every noun the scope is built from must appear in at
+     * least one negative control above. A word cannot enter the vocabulary
+     * without the sentence that proves it survivable arriving beside it, and
+     * that sentence is written by the author rather than by the next cert.
+     *
+     * This is deliberately a coverage assertion and not a generated corpus: a
+     * machine-built sentence proves the regex does not match a string, whereas
+     * the point is whether a HUMAN would write it. The list is the promise; the
+     * sentences are the evidence.
+     */
+    it("every scope noun has a negative control — no member enters untested", () => {
+      const corpus = ORDINARY_SPORTS_PROSE.join(" ").toLowerCase();
+      const uncovered = [
+        ...new Set([
+          ...READING_NOUNS,
+          ...OUR_SUBJECT_NOUNS,
+          ...MARKET_OBJECT_NOUNS,
+        ]),
+      ].filter((noun) => !new RegExp(`\\b${noun}s?\\b`).test(corpus));
+      expect(uncovered).toEqual([]);
+    });
+
+    it("every history rule is reachable — none is dead weight", () => {
+      // The `ALL_COPY_BANS` sweep above proves the ids are well-formed. This
+      // proves each PATTERN can actually fire, which is the property that
+      // decays silently when a regex is edited.
+      for (const ban of HISTORY_CLAIM_BANS) {
+        const fired = HISTORY_CLAIMS.some(([sentence]) =>
+          findBannedCopy(sentence, [ban]).length > 0
+        );
+        expect([ban.id, fired]).toEqual([ban.id, true]);
+      }
+    });
+  });
 });
 
 /* ─────────────────── the extractor, before it is trusted ─────────────────── */
@@ -347,6 +767,118 @@ describe("reading copy back out of minified JavaScript", () => {
       'function O(e){return e.n?"Live number.":"Once the main draw starts, Kalshi lists more of them."}';
     const hits = scanBundleSource("planted.js", planted);
     expect(hits.map((h) => h.ban.id).sort()).toEqual(["once-the", "venue-kalshi"]);
+  });
+
+  /**
+   * CERT-537's sentence, in the shape the bundle would actually carry it.
+   *
+   * The layer-1 pins prove `findBannedCopy` rejects the string. They do NOT
+   * prove the SHIPPED-COPY layer would have caught it, and those are different
+   * claims — the JSON hole above is this file's own worked example of layer 1
+   * passing while layer 2 read nothing. UX-P211's sentence is assembled from a
+   * template literal, so it reaches a chunk SPLIT at its interpolation, which
+   * is exactly the shape a naive plant would miss.
+   *
+   * So the plant is the emitted shape, not the source sentence: the ban has to
+   * fire on a fragment that no longer contains the subject's name. It does,
+   * because "No number ever reached us for " is banned by the quantifier and
+   * not by anything after it — which is the property that makes this group
+   * work on a minified bundle at all.
+   *
+   * ⚠️ **WIDENED BY UX-P231, NOT DELETED — AND THE TITLE NOW SAYS THE TRUE
+   * THING.** This test asserted that the DEFAULT bundle scan catches a history
+   * claim, and Alex's D25-scope ruling condemns exactly that: the group applies
+   * only to copy emitted by the no-reading components, and a minified chunk
+   * cannot say which component a string came from. What was always real here is
+   * the EXTRACTION claim — that a template literal split at its interpolation
+   * still reaches the scanner as prose, and that the conditional half stays
+   * clean. That half is preserved verbatim by handing the scan the fenced list
+   * explicitly. The condemned half is replaced by its opposite, which is the
+   * fence proven at the very layer that used to over-enforce it.
+   */
+  it("extracts UX-P211's history claim from the shape a chunk really carries it", () => {
+    const planted =
+      'function T(e,t){return t?`No number ever reached us for ${e}, so this comparison was never complete.`:`We have no number for ${e} yet.`}';
+    const hits = scanBundleSource(
+      "app/tournaments/[slug]/page-0a584f.js",
+      planted,
+      NO_READING_COPY_BANS,
+    );
+    expect(hits.length).toBeGreaterThan(0);
+    // THREE rules fire on one sentence, and that is the intended shape rather
+    // than redundancy: "no number … ever" and "ever reached us" are different
+    // readings of the same quantifier, and "was never complete" is a second,
+    // independent claim in the trailing clause. A sentence that can only be
+    // caught by one pattern is one regex edit away from being served.
+    expect(hits.map((h) => h.ban.id).sort()).toEqual([
+      "ever-reached-us",
+      "no-reading-ever",
+      "was-never-complete",
+    ]);
+    // `app/tournaments` is the one surface with NO entry in OWED, so a hit
+    // there fails the gate outright rather than joining a debt list.
+    expect(hits.every((h) => h.surface === "app/tournaments")).toBe(true);
+    // The replacement half of the same ternary must NOT be a hit, or the guard
+    // would be firing on the chunk rather than on the sentence.
+    expect(hits.every((h) => !h.literal.includes("We have no number for"))).toBe(true);
+
+    // 🔴 THE FENCE, AT THE LAYER THAT USED TO ENFORCE IT. The identical plant,
+    // scanned with the DEFAULT list, is clean — because a minified chunk cannot
+    // answer "which component emitted this", and a scanner that guessed is the
+    // false-positive engine six certs kept walking into.
+    expect(scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted)).toEqual([]);
+  });
+
+  /**
+   * ═══ CERT-539 — AN ALTERNATE SHAPE, THROUGH LAYER 2 ═══
+   *
+   * The cert's finding was not only that five rewordings passed the predicate;
+   * it was that `scanBundleSource` reported clean on them too. Pinning the new
+   * families at layer 1 alone would answer half the finding and leave the other
+   * half exactly as it was — this file's own JSON-hole test is the worked
+   * example of layer 1 passing while layer 2 read nothing.
+   *
+   * So the alternate wording is planted in the emitted shape as well, and a
+   * DIFFERENT wording from the one above: no "ever", no "reached us", no
+   * "complete". If a future edit narrows the group back to UX-P213's six
+   * literals, the layer-1 pins and this one fail together, which is the
+   * signal that the claim — not the sentence — is what the rule is holding.
+   *
+   * ⚠️ **WIDENED BY UX-P231 FOR THE SAME REASON AS ITS SIBLING ABOVE.** The
+   * alternate-wording claim and the clean-conditional claim are untouched; the
+   * list is now named explicitly, and the fence gets its own assertion.
+   */
+  it("extracts a REWORDED history claim from the shape a chunk really carries it", () => {
+    const planted =
+      'function R(e,t){return t?`There has never been a probability for ${e}.`:`We have no probability for ${e} yet.`}';
+    const hits = scanBundleSource(
+      "app/tournaments/[slug]/page-0a584f.js",
+      planted,
+      NO_READING_COPY_BANS,
+    );
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.map((h) => h.ban.id).sort()).toEqual(["there-was-never-a-reading"]);
+    expect(hits.every((h) => h.surface === "app/tournaments")).toBe(true);
+    // The conditional half is the sentence the product is allowed to say, and
+    // it must stay clean or the plant is proving nothing about the quantifier.
+    expect(hits.every((h) => !h.literal.includes("We have no probability for"))).toBe(true);
+    // The fence: the same plant is invisible to the default list.
+    expect(scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted)).toEqual([]);
+  });
+
+  /**
+   * The other side of CERT-539, at the layer that would actually break a build.
+   *
+   * A false positive here is not a nuisance — `scanBundleSource` feeds the
+   * product-wide gate, so an over-broad rule fails a deploy on true copy. The
+   * three narrowed patterns are therefore proven clean in the EMITTED shape
+   * too, not only against a bare string.
+   */
+  it("supported sports prose survives the bundle scan", () => {
+    const planted =
+      'function S(){return["At no point did either player face a break point.","The comeback was never complete.","Nobody ever scored more than 30 points in this game."]}';
+    const hits = scanBundleSource("app/tournaments/[slug]/page-0a584f.js", planted);
+    expect(hits.map((h) => `${h.ban.id}: ${h.literal}`)).toEqual([]);
   });
 });
 
@@ -833,11 +1365,22 @@ describe("the built bundle — the bytes Vercel uploads", () => {
     // OWED only. `EXEMPT` is a statement about what the ruling ALLOWS on a
     // surface, not a measurement of what it currently says, so an exemption
     // that stops firing is not stale — it is a page that happened to reword.
-    const live = new Set(scanDir(dir).map((h) => `${h.surface} ${h.ban.id}`));
+    //
+    // ⚠️ THE SEPARATOR IS WRITTEN AS AN ESCAPE, NOT TYPED (UX-P210-3, UX-P213).
+    // It was two RAW NUL bytes until 2026-08-31, and a raw NUL makes the whole
+    // file binary to the tools that read this repo: `grep -c 'ban'` on it
+    // exited 1 — "no match" — against 27 real matches, and `git grep` returned
+    // nothing at all. That is worse than a wrong answer, because a grep that
+    // finds nothing reads exactly like a grep that ran. CERT-507 blocked
+    // `ux-150` partly on a reproduction that came back false HERE for this
+    // reason. NUL is still the right joiner — no surface or rule id can
+    // contain it — so only its spelling changed, and `nulByteFreeSource`
+    // keeps the next one out of the tree.
+    const live = new Set(scanDir(dir).map((h) => `${h.surface}\u0000${h.ban.id}`));
     const dead: string[] = [];
     for (const [surface, ids] of Object.entries(OWED)) {
       for (const id of ids) {
-        if (!live.has(`${surface} ${id}`)) dead.push(`${surface} → ${id}`);
+        if (!live.has(`${surface}\u0000${id}`)) dead.push(`${surface} → ${id}`);
       }
     }
     if (dead.length > 0) {
