@@ -357,10 +357,23 @@ class TestStillDark:
 
     @pytest.mark.asyncio
     async def test_mlb_is_deliberately_not_routed_here_yet(self, service, monkeypatch):
-        """MLB serves the identical shape and is still excluded: its ids do not
-        survive between endpoints (three id spaces) and program step 5 says
-        resolve that before reading it as an authority. If someone adds it to
-        V1_SEASON_SCHEDULE_SPORTS, this is the tap on the shoulder."""
+        """MLB serves the identical shape and is still excluded — but no longer
+        for the reason this test was written with.
+
+        The original reason was that MLB's ids "do not survive between
+        endpoints". They do: `livescores.oddsid` IS `season-schedule.id`, on 13
+        of 16 live rows, and `season-schedule.id` is unique on 227/227. That is
+        measured in test_statpal_mlb_id_spaces.py and it closes step 5's stated
+        blocker.
+
+        What keeps the gate shut now is smaller and nameable: the anchor is
+        blank on 3 of 16 live rows, and the fallback everyone would reach for —
+        (clubs, calendar day) — is keyed on the wrong day and mis-flags 22
+        rollover pairs as doubleheaders while missing the one real one. Both
+        need an owner before MLB reads as an authority, and step 5 is it.
+
+        If someone adds it to V1_SEASON_SCHEDULE_SPORTS, this is still the tap
+        on the shoulder."""
         assert "mlb" not in StatPalAPIService.V1_SEASON_SCHEDULE_SPORTS
 
         seen = []
