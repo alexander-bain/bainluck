@@ -39,6 +39,7 @@ jest.mock("next/link", () => {
 import LeagueBinaryBoard from "@/components/LeagueBinaryBoard";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
 import { partitionLeagueMarkets, sortBinariesByAnswer } from "@/lib/leagueCards";
+import { findBannedCopy } from "@/lib/copyBans";
 import type { LeagueMarket } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,8 +243,19 @@ describe("UX-1052 item 8 — the board that stays", () => {
     expect(html).toContain("Polymarket");
   });
 
-  it("draws no bar at all for an unpriced question, and says so", () => {
-    expect(html).toContain("No price yet");
+  it("draws no bar at all for an unpriced question, and says so in the product's words", () => {
+    // CERT-859. The first draft of this row said "No price yet" — banned by
+    // ruling 138, because the word is PROBABILITY. `shippedCopyBans` caught it
+    // in the BUILT bundle rather than here, and the reason is the failure
+    // UX-P220 named: a green capture asserting the banned sentence VERBATIM
+    // says "keep it exactly as it is" while a ruling says we owe a fix.
+    //
+    // So the replacement is not merely spelled out again. It is run back
+    // through the same rules the bundle scan runs, which is the only version
+    // of this assertion that cannot pin a banned string a second time.
+    const label = "No probability yet";
+    expect(findBannedCopy(label)).toEqual([]);
+    expect(html).toContain(label);
     expect(html).toContain("—");
   });
 

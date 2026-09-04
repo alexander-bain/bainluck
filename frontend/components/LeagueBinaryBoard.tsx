@@ -106,7 +106,7 @@ function BinaryRow({ market, answer }: LeagueBinary) {
             />
           </span>
         ) : (
-          <span className="flex-1 text-[11px] text-text-muted">No price yet</span>
+          <span className="flex-1 text-[11px] text-text-muted">No probability yet</span>
         )}
         <VenueBadge source={market.source} />
       </div>
