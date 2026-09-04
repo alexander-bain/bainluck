@@ -393,49 +393,95 @@ async def run_backfill(
 #: The script's own docstring already names the remedy for a human — *"`--offset`
 #: exists so an operator can advance past a stuck prefix rather than re-running
 #: into it"*. An unattended beat has no operator, so it must do that itself.
+#:
+#: 🔴 **CERT-863 BLOCK (2026-09-04) — the offset alone could not wrap, so the
+#: jam it skipped was never re-reached.** The cursor held TWO facts in one
+#: number and they diverge. `offset` answers *"how far past the stuck prefix am
+#: I"*; the wrap needs *"how much of the population has this cycle seen"*, and
+#: on a stable, fully-writable suffix the first stops moving while the second
+#: must keep going. The cert's exact-head reproduction — a 1,500-row population
+#: whose first 500 are stranded, then three clean batches — printed
+#: ``0 -> 500 -> 500 -> 500 -> 500``. Every clean batch strands nothing, so
+#: `offset + stranded` re-returns 500 forever, the wrap test never fires, and
+#: the only thing that ever sends the sweep back to the head is the 30-day TTL
+#: below. A market that is unresolvable in September and finalized in October
+#: therefore keeps rendering its dead last-trade price for up to a month — which
+#: is the exact failure this whole ship claims to end, so the claim did not hold.
+#:
+#: The two facts are now stored as two, and the pair travels together in ONE
+#: Redis value (``"<offset>:<scanned>"``) rather than two keys: a half-written
+#: pair is a cursor that says a cycle is further along than the offset it
+#: carries, which skips rows silently — the failure mode this repair exists to
+#: remove. A legacy bare ``"500"`` left in Redis by the pre-repair beat parses as
+#: ``(500, 0)``, so the first run after deploy starts where the old cursor
+#: pointed and begins counting its cycle from there.
 SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset"
 
 #: 30 days. Long enough that a fortnight of failed beats does not silently reset
 #: the sweep to the jammed head; short enough that a stale cursor left behind by
 #: a retired population expires instead of skipping rows forever.
+#:
+#: It is a BACKSTOP and must never be the mechanism. Before CERT-863's repair it
+#: was the mechanism — expiry was the only path back to offset 0 — and a backstop
+#: doing load-bearing work is how a 30-day dead-price window looked like a
+#: working nightly sweep. The cycle wrap in :func:`next_cursor` now returns to
+#: the head in ``ceil(eligible_total / limit)`` runs; at the measured 6,302
+#: eligible rows and a 500-row batch that is ~13 nights, comfortably inside this.
 SWEEP_CURSOR_TTL_S = 60 * 60 * 24 * 30
 
 
-async def _read_cursor() -> int:
-    """The offset to start at. An unreadable cursor is 0, never an exception.
+async def _read_cursor() -> tuple[int, int]:
+    """``(offset, scanned)`` to start at. An unreadable cursor is the head.
 
-    0 is the pre-cursor behaviour, so a Redis outage degrades this sweep to
-    exactly what it did before the cursor existed rather than taking it down.
+    ``(0, 0)`` is the pre-cursor behaviour, so a Redis outage degrades this sweep
+    to exactly what it did before the cursor existed rather than taking it down.
+
+    A bare integer is the pre-CERT-863 encoding and is read as ``(offset, 0)``:
+    the offset is still true, and starting that cycle's traversal count at zero
+    only makes the first wrap after deploy late by at most one cycle. Guessing a
+    `scanned` to match would be inventing a measurement.
     """
     try:
         from app.tasks.redis_state import get_async_redis_client
 
         raw = await get_async_redis_client().get(SWEEP_CURSOR_KEY)
-        return max(0, int(raw))
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        offset_s, _, scanned_s = str(raw).partition(":")
+        return max(0, int(offset_s)), max(0, int(scanned_s or 0))
     except Exception:  # noqa: BLE001 — a missing cursor is a start, not a failure
-        return 0
+        return 0, 0
 
 
-async def _write_cursor(value: int) -> bool:
-    """Persist the next offset. Returns whether it landed — the caller reports it.
+async def _write_cursor(offset: int, scanned: int) -> bool:
+    """Persist the pair. Returns whether it landed — the caller reports it.
 
     Swallowing this would be the worst option available: the run would look
     clean, the cursor would stay where it was, and the next beat would re-enter
     the same jam. So the boolean travels onto the summary and into the terminal.
+
+    One key, one round trip, both numbers — see :data:`SWEEP_CURSOR_KEY` for why
+    the pair must not be split across two keys.
     """
     try:
         from app.tasks.redis_state import get_async_redis_client
 
         await get_async_redis_client().set(
-            SWEEP_CURSOR_KEY, str(int(value)), ex=SWEEP_CURSOR_TTL_S
+            SWEEP_CURSOR_KEY,
+            f"{int(offset)}:{int(scanned)}",
+            ex=SWEEP_CURSOR_TTL_S,
         )
         return True
     except Exception:  # noqa: BLE001
         return False
 
 
-def next_offset(*, offset: int, candidates: int, applied: int, eligible_total: int) -> int:
-    """Where the next batch starts, given what this one could not move.
+def next_cursor(
+    *, offset: int, scanned: int, candidates: int, applied: int, eligible_total: int
+) -> tuple[int, int]:
+    """The next ``(offset, scanned)``, given what this batch could not move.
+
+    ## The offset half — where the next batch starts
 
     ``candidates - applied`` is exactly the number of rows that KEPT their slot:
     a written row rotates to the back of `updated_at ASC` on its own (the write
@@ -455,18 +501,43 @@ def next_offset(*, offset: int, candidates: int, applied: int, eligible_total: i
     the row that was at position 1,000 is now at position 500, so the same
     offset points at fresh content.
 
-    It WRAPS. A cursor that only ever grows walks off the end of the population
-    and the sweep goes permanently quiet — the same silent nothing it is here to
-    end, wearing a different mechanism. Wrapping is also what re-reaches the
-    skipped jam periodically, which matters: the venue publishes `close_time` on
-    finalize, so a row that is unresolvable in September can be the exact row
-    that needs writing in October.
+    ## The scanned half — CERT-863, and why the offset cannot also do this job
+
+    Holding the offset is right, and it is exactly what made the wrap
+    unreachable: a run of clean batches strands nothing, so an offset-only
+    cursor is CORRECTLY motionless while the cycle is in fact advancing through
+    a rotating suffix. The two facts had to be separated. ``scanned`` accumulates
+    ``candidates`` — the rows this cycle has actually looked at — and it is a
+    fair count of traversal precisely BECAUSE the suffix rotates: a clean batch
+    at a held offset reads 500 rows it has not read before this cycle.
+
+    IT WRAPS ON TRAVERSAL, NOT ON ARITHMETIC LUCK. Once ``scanned + candidates``
+    reaches the eligible population the cycle is done: offset and scanned both
+    return to 0 and the next run re-reads the head — the stranded prefix
+    included. That is the promise the module made and could not keep. The venue
+    publishes `close_time` on finalize, so September's unresolvable row is
+    October's necessary write, and it is now re-offered every
+    ``ceil(eligible_total / limit)`` runs instead of once a month by expiry.
+
+    The old walk-off-the-end guard is kept beside it rather than replaced.
+    ``offset <= scanned`` holds for any cursor this function produces (stranded
+    is never more than candidates), so on a consistent cursor the traversal test
+    always fires first — but a legacy bare offset, or a population that shrank
+    under the cursor, can present a high offset with a low scanned, and then the
+    offset test is the one that saves the run from selecting nothing forever.
     """
-    stranded = max(0, candidates - applied)
     if candidates == 0:
-        return 0
-    advanced = offset + stranded
-    return 0 if advanced >= max(1, eligible_total) else advanced
+        # Nothing at this offset: either the cursor is past the end of a
+        # population that shrank, or the population is empty. Both are the end
+        # of a cycle, not a failure — start the next one at the head.
+        return 0, 0
+
+    traversed = scanned + candidates
+    advanced = offset + max(0, candidates - applied)
+
+    if eligible_total <= 0 or traversed >= eligible_total or advanced >= eligible_total:
+        return 0, 0
+    return advanced, traversed
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +582,13 @@ async def run_sweep(
     """
     from app.services.database import async_session_maker
 
-    start = await _read_cursor() if offset is None else max(0, int(offset))
+    if offset is None:
+        start, scanned = await _read_cursor()
+    else:
+        # An explicitly pinned run is a probe of one batch, not a step in the
+        # cycle, so it starts that cycle's traversal count at zero rather than
+        # crediting the pin against a cycle it did not walk.
+        start, scanned = max(0, int(offset)), 0
 
     report = await run_backfill(
         session_maker=session_maker or async_session_maker,
@@ -528,13 +605,29 @@ async def run_sweep(
     errors = int(stats.get("errors") or 0)
     eligible = int(stats.get("eligible_total") or 0)
 
-    nxt = next_offset(
-        offset=start, candidates=candidates, applied=applied, eligible_total=eligible
+    nxt, nxt_scanned = next_cursor(
+        offset=start,
+        scanned=scanned,
+        candidates=candidates,
+        applied=applied,
+        eligible_total=eligible,
     )
-    persisted = True if nxt == start else await _write_cursor(nxt)
+    # BOTH halves must be unchanged to skip the write. The offset alone standing
+    # still is the normal healthy case (a clean batch holds it) and it is exactly
+    # when `scanned` is moving — skipping the write on the offset alone is how
+    # cycle progress would be dropped every productive night, which is the
+    # CERT-863 defect rebuilt inside the optimisation that was meant to be free.
+    unchanged = nxt == start and nxt_scanned == scanned
+    persisted = True if unchanged else await _write_cursor(nxt, nxt_scanned)
 
     report["offset"] = start
     report["next_offset"] = nxt
+    report["scanned_before"] = scanned
+    report["next_scanned"] = nxt_scanned
+    # The cycle closed on this run: the next beat re-reads the head, stranded
+    # prefix included. Named on the summary because "the sweep went back to 0"
+    # must be legible as a completed traversal rather than as a lost cursor.
+    report["cycle_wrapped"] = nxt == 0 and nxt_scanned == 0 and start != 0
     report["stranded"] = max(0, candidates - applied)
     report["cursor_persisted"] = persisted
 
