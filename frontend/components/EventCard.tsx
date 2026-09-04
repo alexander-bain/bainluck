@@ -22,6 +22,11 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
+import {
+  isPredictionMarketSource,
+  prematchReading,
+  PREMATCH_SOURCE_TOOLTIP,
+} from "@/lib/prematchReading";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
 
@@ -82,6 +87,63 @@ function AnimatedProbability({
   }
 
   return <motion.span className={className}>{display}</motion.span>;
+}
+
+// ---------------------------------------------------------------------------
+// PrematchPercent — the closing number beside the name it is about (ux/1053)
+// ---------------------------------------------------------------------------
+//
+// Grey on BOTH rows, winner included, and that is a rule rather than a shade:
+// bold on a settled card means "this is what happened", and a prior is the
+// opposite of that. Same treatment ux/1036 shipped on `FeedCard`.
+//
+// `null` renders NOTHING. A settled game we hold no pre-match reading for shows
+// an empty slot, never a fabricated figure — the same refusal the rail already
+// makes for an unpriced fixture (#1776 / register E2).
+//
+// THE MARK RIDES THE NUMBER, and it does not add a line. D57 made the caveat a
+// footnote mark precisely so it could sit on the figure it qualifies; the
+// tournament hub already draws it this way, and `LeagueGameRail` prints the
+// legend the mark points at below the grid. `aria-hidden` on the mark alone —
+// the sr-only clause above it has already said "sportsbooks opened" in words,
+// so a screen reader hears the rung once.
+function PrematchPercent({
+  reading,
+  side,
+  team,
+  said,
+}: {
+  reading: ReturnType<typeof prematchReading>;
+  side: "home" | "away";
+  team: string;
+  said: string;
+}) {
+  const percent = side === "home" ? reading?.homePercent : reading?.awayPercent;
+  if (!reading || percent === null || percent === undefined) return null;
+  const probability =
+    side === "home" ? reading.homeProbability : reading.awayProbability;
+  return (
+    <span
+      className="flex-shrink-0 font-mono tabular-nums text-[11px] text-text-muted"
+      data-testid={`event-card-prematch-${side}`}
+      data-prematch={probability}
+      data-prematch-source={reading.source}
+    >
+      <span className="sr-only">
+        {said} {team}{" "}
+      </span>
+      {percent}%
+      {reading.marker && (
+        <sup
+          aria-hidden="true"
+          title={PREMATCH_SOURCE_TOOLTIP}
+          className="ml-0.5 text-[9px] font-medium text-text-muted"
+        >
+          {reading.marker}
+        </sup>
+      )}
+    </span>
+  );
 }
 
 export default function EventCard({
@@ -167,6 +229,29 @@ export default function EventCard({
   const isSuspended = isSuspendedStatus(event.status);
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
+  // ux/1053 — ON A SETTLED CARD THE EMPHASIS FOLLOWS THE RESULT, NOT THE PRIOR.
+  //
+  // The name column used to take its weight from `homeFavorite`, which on a
+  // FINAL card reads the pre-match probabilities. The score block two rows above
+  // bolds the WINNER. So a card whose underdog won printed a bold loser directly
+  // under a bold winning score — the card contradicting itself in one glance,
+  // and the contradiction is invisible because neither half is labelled. Found
+  // in the ux/1053 shop: Rangers 6, Rays 0, and "Tampa Bay Rays" was the
+  // emphasised name because the Rays opened at 53%.
+  //
+  // A draw emphasises NEITHER side. "Both are bold" is a claim that they tied
+  // only if you already know they tied; muting both says it.
+  const homeWon =
+    isFinished && event.home_score != null && event.away_score != null
+      ? event.home_score > event.away_score
+      : false;
+  const awayWon =
+    isFinished && event.home_score != null && event.away_score != null
+      ? event.away_score > event.home_score
+      : false;
+  const emphasiseHome = isFinished ? homeWon : homeFavorite;
+  const emphasiseAway = isFinished ? awayWon : !homeFavorite;
+
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
   // UX-P074: an unparseable/absent commence_time renders NO time chip. The
@@ -202,6 +287,33 @@ export default function EventCard({
     now.getTime(),
     "compact",
   );
+
+  // ═══ THE CLOSING NUMBER (ux/1053) ═══
+  //
+  // A settled card on this component printed no probability at all. That was
+  // right when the only candidate was `current_odds` — a live blend on a game
+  // that has finished is a stale reading dressed as a current one, and "settled
+  // means settled" refuses it. It is NOT right for the pre-match number, which
+  // is a fact about the game that does not go stale: the last reading the market
+  // took before the first ball. That is what a result is read against.
+  //
+  // So the chip slot a FINAL card vacated carries the closing number, and it
+  // comes from `lib/prematchReading.ts` — the same ladder, the same fallback and
+  // the same footnote mark as `FeedCard`, Discover and the tournament hub, so
+  // the four surfaces cannot answer "what did the market say beforehand" four
+  // ways. `current_odds` is not consulted on a settled card here or anywhere.
+  const prematch = isFinished
+    ? prematchReading({
+        prematch_odds: event.prematch_odds,
+        opening_odds: event.opening_odds,
+      })
+    : null;
+  // The spoken sentence names its own rung (CERT-812): a reader who cannot see
+  // the footnote mark must not be told "the market gave" about a sportsbook
+  // median, which is the exact claim the mark exists to stop making.
+  const prematchSaid = isPredictionMarketSource(prematch?.source)
+    ? "Before the game, the market gave"
+    : "Before the game, sportsbooks opened";
 
   // International sport detection — show flags instead of team logos
   const showFlags = isInternationalSport(event.sport);
@@ -380,8 +492,15 @@ export default function EventCard({
                   name={event.home_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
-                    homeFavorite ? "text-text-primary" : "text-text-secondary",
+                    "text-sm truncate hover:underline",
+                    isFinished
+                      ? emphasiseHome
+                        ? "font-semibold text-text-primary"
+                        : "text-text-muted"
+                      : cn(
+                          "font-medium",
+                          emphasiseHome ? "text-text-primary" : "text-text-secondary",
+                        ),
                   )}
                 />
                 {/* Inline live score */}
@@ -409,6 +528,14 @@ export default function EventCard({
                 <AnimatedProbability
                   percent={chipHomePct}
                   className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
+              {isFinished && (
+                <PrematchPercent
+                  reading={prematch}
+                  side="home"
+                  team={event.home_team}
+                  said={prematchSaid}
                 />
               )}
             </div>
@@ -459,8 +586,15 @@ export default function EventCard({
                   name={event.away_team}
                   sportKey={event.sport}
                   className={cn(
-                    "text-sm font-medium truncate hover:underline",
-                    !homeFavorite ? "text-text-primary" : "text-text-secondary",
+                    "text-sm truncate hover:underline",
+                    isFinished
+                      ? emphasiseAway
+                        ? "font-semibold text-text-primary"
+                        : "text-text-muted"
+                      : cn(
+                          "font-medium",
+                          emphasiseAway ? "text-text-primary" : "text-text-secondary",
+                        ),
                   )}
                 />
                 {/* Inline live score */}
@@ -482,6 +616,14 @@ export default function EventCard({
                 <AnimatedProbability
                   percent={chipAwayPct}
                   className="font-mono tabular-nums text-xs text-text-muted"
+                />
+              )}
+              {isFinished && (
+                <PrematchPercent
+                  reading={prematch}
+                  side="away"
+                  team={event.away_team}
+                  said={prematchSaid}
                 />
               )}
             </div>

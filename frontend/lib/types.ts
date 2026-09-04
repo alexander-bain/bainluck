@@ -176,6 +176,29 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  /**
+   * ux/1053 — THE CLOSING NUMBER, and which rung it came from.
+   *
+   * The same key `FeedEventData` carries (ux/1036): Alex's ladder resolved
+   * server-side — Kalshi → Polymarket → books, ordered and never merged — being
+   * the last reading taken before the match started. It is declared here because
+   * the SHARED event card prints it on a settled game now, and that card is fed
+   * by three producers: the feed (`lib/feedEventToEvent.ts`), the league envelope
+   * (`lib/leagueCards.ts`) and `/api/events`. Only the first carries the key
+   * today; the other two fall through `lib/prematchReading.ts` to `opening_odds`,
+   * which is a sportsbook median and says so with a footnote mark.
+   *
+   * OPTIONAL, and it must stay optional: a feed response is cached, so "the
+   * backend deployed it" is not "this payload carries it".
+   */
+  prematch_odds?: {
+    home_probability: number;
+    away_probability: number;
+    /** The pair rounded ONCE, server-side — see UX-P114. */
+    home_rendered_percent?: number | null;
+    away_rendered_percent?: number | null;
+    source: string;
+  };
   event_tags?: string[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */

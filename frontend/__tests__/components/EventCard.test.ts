@@ -119,15 +119,28 @@ describe("EventCard", () => {
       })
     );
 
-    // L2-112 settled treatment: a FINAL card drops the live-style probability
-    // chips and the probability bar in favor of the centered score block. It
-    // shows "Final" + the final score (102-99), and no "NN%" probability chips
-    // (the opening-odds 55%/45% display was removed with the settled redesign).
+    // L2-112 settled treatment: a FINAL card drops the LIVE-style probability
+    // chips and the probability bar in favour of the centered score block. It
+    // shows "Final" + the final score (102-99).
+    //
+    // ux/1053 AMENDED THE OTHER HALF OF THIS ASSERTION, and the amendment is
+    // the ship. It used to read `not.toContain("55%")` with the note "the
+    // opening-odds display was removed with the settled redesign" — which is
+    // how a settled card came to carry no pre-match number at all, on this
+    // component and therefore on the league page's Recent Results. The live
+    // blend is STILL refused (0.2/0.8 below must not print); the closing number
+    // is what a result is read against and now renders beside each name.
     expect(html).toContain("Final");
     expect(html).toContain("102");
     expect(html).toContain("99");
-    expect(html).not.toContain("55%");
-    expect(html).not.toContain("45%");
+    expect(html).not.toContain("20%");
+    expect(html).not.toContain("80%");
+    // No live-style bar on a settled card either — the bar is the loudest claim
+    // on the card and there is no live price behind it.
+    expect(html).not.toContain("ProbabilityBar");
+    expect(html).toContain("55%");
+    expect(html).toContain("45%");
+    expect(html).toContain('data-prematch-source="books"');
   });
 });
 

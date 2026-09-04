@@ -35,6 +35,9 @@ jest.mock("../../hooks", () => ({
 
 import LeagueMarketSection from "../../components/LeagueMarketSection";
 import LeagueGameRail from "../../components/LeagueGameRail";
+// ux/1053 — the rail takes the shared card's own input now; each producer
+// adapts at its own call site, exactly as the league page does.
+import { leagueGameToEvent } from "../../lib/leagueCards";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const payload = require("../fixtures/leagueMlbProduction.json") as LeagueFuturesResponse;
@@ -123,10 +126,17 @@ describe("the live specimen, rendered — ruling 047's acceptance", () => {
 describe("the live specimen's games — the shared event card", () => {
   test("all 16 games render, both rails, through the shared card", () => {
     const upcoming = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={payload.upcoming_games!} />,
+      <LeagueGameRail
+        title="Upcoming Games"
+        events={payload.upcoming_games!.map(leagueGameToEvent)}
+      />,
     );
     const results = renderToStaticMarkup(
-      <LeagueGameRail title="Recent Results" games={payload.recent_results!} settled />,
+      <LeagueGameRail
+        title="Recent Results"
+        events={payload.recent_results!.map(leagueGameToEvent)}
+        settled
+      />,
     );
 
     expect((upcoming.match(/href="\/events\/\d+"/g) || [])).toHaveLength(8);

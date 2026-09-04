@@ -34,6 +34,14 @@ jest.mock("../../hooks", () => ({
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import LeagueGameRail from "../../components/LeagueGameRail";
+import { leagueGameToEvent } from "../../lib/leagueCards";
+
+// ux/1053 — the rail takes `Event[]` now, so the fixture goes through the
+// league page's OWN adapter rather than being hand-written in the shape the
+// card wants. That keeps these assertions about the league path end to end: a
+// regression in `leagueGameToEvent` reddens them, which a hand-built Event
+// would have hidden.
+const event = (over: Partial<LeagueGameBrief> = {}) => leagueGameToEvent(game(over));
 
 const game = (over: Partial<LeagueGameBrief> = {}): LeagueGameBrief =>
   ({
@@ -52,7 +60,7 @@ const game = (over: Partial<LeagueGameBrief> = {}): LeagueGameBrief =>
 describe("LeagueGameRail — the cap declaration follows the rail", () => {
   test("the UPCOMING rail does not describe future fixtures as 'most recent'", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game()]} hasMore />,
+      <LeagueGameRail title="Upcoming Games" events={[event()]} hasMore />,
     );
     expect(html).toContain("more exist");
     expect(html).not.toContain("most recent");
@@ -60,14 +68,14 @@ describe("LeagueGameRail — the cap declaration follows the rail", () => {
 
   test("the SETTLED rail still says 'most recent'", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Recent Results" games={[game()]} hasMore settled />,
+      <LeagueGameRail title="Recent Results" events={[event()]} hasMore settled />,
     );
     expect(html).toContain("most recent");
   });
 
   test("no cap, no declaration", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game()]} />,
+      <LeagueGameRail title="Upcoming Games" events={[event()]} />,
     );
     expect(html).not.toContain("more exist");
   });
@@ -76,14 +84,14 @@ describe("LeagueGameRail — the cap declaration follows the rail", () => {
 describe("LeagueGameRail — the probability", () => {
   test("a priced game renders its number", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game()]} />,
+      <LeagueGameRail title="Upcoming Games" events={[event()]} />,
     );
     expect(html).toContain("64%");
   });
 
   test("BOTH sides of the blend render — the league-local row only ever showed home", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game()]} />,
+      <LeagueGameRail title="Upcoming Games" events={[event()]} />,
     );
     expect(html).toContain("64%");
     expect(html).toContain("36%");
@@ -96,7 +104,7 @@ describe("LeagueGameRail — the probability", () => {
     const html = renderToStaticMarkup(
       <LeagueGameRail
         title="Upcoming Games"
-        games={[game({ home_win_probability: null })]}
+        events={[event({ home_win_probability: null })]}
       />,
     );
     expect(html).not.toContain("0%");
@@ -107,7 +115,7 @@ describe("LeagueGameRail — the probability", () => {
 
   test("an empty rail renders nothing at all", () => {
     expect(
-      renderToStaticMarkup(<LeagueGameRail title="Upcoming Games" games={[]} />),
+      renderToStaticMarkup(<LeagueGameRail title="Upcoming Games" events={[]} />),
     ).toBe("");
   });
 });
@@ -118,8 +126,8 @@ describe("LeagueGameRail — ruling 047: the card is the shared one", () => {
       <LeagueGameRail
         title="Recent Results"
         settled
-        games={[
-          game({
+        events={[
+          event({
             status: "completed",
             home_score: 3,
             away_score: 7,
@@ -141,7 +149,7 @@ describe("LeagueGameRail — ruling 047: the card is the shared one", () => {
     // card's guard was `!== null`, which an ABSENT key passes, so the first
     // render of this rail printed "Proj NaN-NaN".
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game()]} />,
+      <LeagueGameRail title="Upcoming Games" events={[event()]} />,
     );
     expect(html).not.toContain("NaN");
     expect(html).not.toContain("Proj");
@@ -149,7 +157,7 @@ describe("LeagueGameRail — ruling 047: the card is the shared one", () => {
 
   test("a game with no commence_time renders no date rather than 'Invalid Date'", () => {
     const html = renderToStaticMarkup(
-      <LeagueGameRail title="Upcoming Games" games={[game({ commence_time: null })]} />,
+      <LeagueGameRail title="Upcoming Games" events={[event({ commence_time: null })]} />,
     );
     expect(html).not.toContain("Invalid Date");
     expect(html).toContain("Miami Marlins");

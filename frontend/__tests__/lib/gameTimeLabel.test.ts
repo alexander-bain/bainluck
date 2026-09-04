@@ -6,6 +6,7 @@ import {
   formatTournamentTimingLabel,
   formatTournamentWhenLabel,
   formatLiveClockLabel,
+  finishedDayOffset,
   isImpossibleFutureFinal,
   isPregameStatusDetail,
   TOURNAMENT_START_TRUST_DAYS,
@@ -753,6 +754,47 @@ describe("formatResolvesLabel — semantic dates survive the timezone (C270 P1)"
       expect(opts).not.toHaveProperty("timeZone");
     } finally {
       spy.mockRestore();
+    }
+  });
+});
+
+/**
+ * ux/1053 — the day bucket the /sports Finished section sorts on.
+ *
+ * Pinned in the same file as the LABEL on purpose: the two answer one question
+ * and are coupled by contract — every input the label renders "" for must bucket
+ * as `null`, or a card with no printable date gets filed under a day heading.
+ */
+describe("finishedDayOffset — which day a final belongs to", () => {
+  // Local components, so "yesterday" means yesterday wherever this runs.
+  const NOW_LOCAL = new Date(2026, 8, 3, 13, 20, 0).getTime();
+  const at = (y: number, m: number, d: number, h: number) =>
+    new Date(y, m, d, h, 0, 0).toISOString();
+
+  it("today is 0 and yesterday is 1, however few hours apart they are", () => {
+    // 11:30pm yesterday and 12:30am today are one hour apart and two DAYS apart,
+    // which is the whole reason this is a calendar rule rather than an hours one.
+    expect(finishedDayOffset(at(2026, 8, 3, 12), NOW_LOCAL)).toBe(0);
+    expect(finishedDayOffset(at(2026, 8, 3, 0), NOW_LOCAL)).toBe(0);
+    expect(finishedDayOffset(at(2026, 8, 2, 23), NOW_LOCAL)).toBe(1);
+    expect(finishedDayOffset(at(2026, 8, 1, 20), NOW_LOCAL)).toBe(2);
+  });
+
+  it("counts MIDNIGHTS, not elapsed hours — an early game late at night", () => {
+    // The discriminating case, and it fails in every timezone under the obvious
+    // implementation. A game at 2am yesterday read at 11pm today is 45 elapsed
+    // hours ago; `Math.round(45 / 24)` is 2, and the answer is 1. It is one
+    // midnight ago. (On a US DST-end boundary it is 46 hours and still 1, which
+    // is the second reason to subtract local midnights rather than instants.)
+    const lateTonight = new Date(2026, 10, 2, 23, 0, 0).getTime();
+    expect(finishedDayOffset(at(2026, 10, 1, 2), lateTonight)).toBe(1);
+  });
+
+  it("returns null for exactly what the label renders nothing for", () => {
+    const cases = [null, undefined, "", "not a date", at(2026, 8, 4, 10)];
+    for (const value of cases) {
+      expect(finishedDayOffset(value, NOW_LOCAL)).toBeNull();
+      expect(formatFinishedGameLabel(value, NOW_LOCAL)).toBe("");
     }
   });
 });

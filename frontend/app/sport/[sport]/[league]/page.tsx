@@ -27,7 +27,7 @@ import type {
 } from "@/lib/types";
 import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
 import { gridCellsToProgression } from "@/lib/gridCellState";
-import { partitionLeagueMarkets } from "@/lib/leagueCards";
+import { leagueGameToEvent, partitionLeagueMarkets } from "@/lib/leagueCards";
 import TournamentCard from "@/components/TournamentCard";
 import TournamentProgressionTable from "@/components/TournamentProgressionTable";
 import LeagueMarketSection from "@/components/LeagueMarketSection";
@@ -484,13 +484,13 @@ export default function LeagueShowcasePage() {
               ? "Live & Upcoming"
               : "Upcoming Games"
           }
-          games={upcomingGames}
+          events={upcomingGames.map(leagueGameToEvent)}
           hasMore={leagueMarkets?.upcoming_games_has_more}
         />
 
         <LeagueGameRail
           title="Recent Results"
-          games={recentResults}
+          events={recentResults.map(leagueGameToEvent)}
           hasMore={leagueMarkets?.recent_results_has_more}
           settled
         />

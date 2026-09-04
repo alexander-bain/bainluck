@@ -38,7 +38,11 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import { isPredictionMarketSource, PREMATCH_SOURCE_MARKER } from "./prematchReading";
+import {
+  isPredictionMarketSource,
+  prematchSourceLegend,
+  PREMATCH_SOURCE_MARKER,
+} from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -713,17 +717,22 @@ export function prematchAbsenceNote(coverage: PrematchCoverage): string {
  * pass the bijection**. So the list goes to 172 priors of which **61 (35%) are
  * sportsbook openings** — not zero, and not an edge case. Every one of them was
  * rendering a bare percentage under "the market gave".
+ *
+ * ═══ ux/1053: THE SENTENCE MOVED, THE COUNTING STAYED ═══
+ *
+ * A second surface draws the mark now (`LeagueGameRail`, on /sports Finished and
+ * the league page's Recent Results), so the WORDING went to live beside the mark
+ * in `lib/prematchReading.ts` — the module whose opening line is "this module is
+ * the one place that decides". What stays here is the only part that is about
+ * tournaments: a MATCH counts once however many of its two players carry a books
+ * prior. That is a population question, not a copy one.
  */
 export function prematchSourceNote(matches: TournamentResult[]): string {
   let books = 0;
   for (const match of matches) {
     if (match.players.some(isBooksPrior)) books += 1;
   }
-  if (books === 0) return "";
-  return (
-    `${books} of them ${books === 1 ? "is" : "are"} a sportsbook opening rather ` +
-    `than a prediction market's, marked ${PREMATCH_SOURCE_MARKER} beside the number.`
-  );
+  return prematchSourceLegend(books);
 }
 
 /** Does this player's prior come from a rung that needs saying out loud? */

@@ -97,6 +97,29 @@ export const PREMATCH_SOURCE_MARKER = "†";
  */
 export const PREMATCH_SOURCE_TOOLTIP = "pre-match number, from sportsbooks";
 
+/**
+ * THE LEGEND THE MARK POINTS AT — one sentence, one owner (ux/1053).
+ *
+ * D57's whole shape is "a footnote mark on the number, and a note below that
+ * says what the mark means". The mark has lived here since D57; the note lived
+ * in `lib/tournamentResults.ts`, because the hub was the only surface that had
+ * one. `LeagueGameRail` is the second, so the sentence moves next to the mark it
+ * explains and `prematchSourceNote` delegates rather than restating — a second
+ * wording of one legend is exactly the drift that put a private `BOOKS_MARKER`
+ * three files from `PREMATCH_SOURCE_MARKER`.
+ *
+ * `""` for a count of zero is a render instruction: a legend for a mark that
+ * appears nowhere is chrome explaining nothing.
+ */
+export function prematchSourceLegend(booksCount: number): string {
+  if (booksCount <= 0) return "";
+  return (
+    `${booksCount} of them ${booksCount === 1 ? "is" : "are"} a sportsbook ` +
+    `opening rather than a prediction market's, marked ` +
+    `${PREMATCH_SOURCE_MARKER} beside the number.`
+  );
+}
+
 export interface PrematchReading {
   /** Whole percents, away first — rounded ONCE as a pair (UX-P114). */
   awayPercent: number | null;

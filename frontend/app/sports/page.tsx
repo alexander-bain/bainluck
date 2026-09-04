@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import useSWR from "swr";
 import { motion } from "@/components/motion";
-import { fetchFeed, fetchGroupedFeed } from "@/lib/api";
+import { fetchFeed, fetchGroupedFeed, fetchSportHierarchy } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedTournamentData, FeedConceptData, GroupedFeedResponse } from "@/lib/types";
 import GroupedFeedRenderer from "@/components/GroupedFeedRenderer";
@@ -26,6 +26,13 @@ import { decideForegroundTerminal, FOREGROUND_FEED_BUDGET_MS } from "@/lib/disco
 import { sportsFeedKey, groupedFeedKey, sportsFeedIdentity } from "@/lib/sports/feedKey";
 import SportsFeedBootScript from "@/components/sports/SportsFeedBootScript";
 import { applyFinishedCardGuard } from "@/lib/sports/finishedCardGuard";
+import LeagueGameRail from "@/components/LeagueGameRail";
+import { feedEventToEvent } from "@/lib/feedEventToEvent";
+import {
+  buildFinishedSection,
+  leagueResultsLinks,
+  partitionFinishedGames,
+} from "@/lib/sports/finishedSection";
 import { trackEvent } from "@/lib/analytics";
 import CombinedFeedCard from "@/components/CombinedFeedCard";
 import { useCategoryInterests, stepUp, stepDown } from "@/hooks/useCategoryInterests";
@@ -334,17 +341,85 @@ export default function SportsPage() {
   //   L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): the
   //   Sports dispatcher (FeedCard) has no per-card empty guard, so drop any card
   //   with neither a renderable probability nor an authoritative result.
-  //   UX-1034f — then the finished-card guard: the SAME `isStale` gate Discover
+  //   ux/1053 — then the settled GAME cards come out, into their own section
+  //   below Upcoming (see lib/sports/finishedSection.ts). This happens BEFORE
+  //   the guard on purpose: the guard's 8-hour age-out and a section headed
+  //   "today's finals, then yesterday's" cannot both own the same cards, and
+  //   the guard's own docblock says it was only ever standing in for the
+  //   ranking fix this section is. Everything else still meets the guard.
+  //
+  //   UX-1034f — the finished-card guard: the SAME `isStale` gate Discover
   //   has always run. /sports never called it, which is the whole reason page
   //   one carried 20 completed games while Discover carried 0 on the same
   //   2026-09-03T03:15Z pull. See lib/sports/finishedCardGuard.ts.
-  const guardedFeed = useMemo(() => {
+  const { finishedGames, guardedFeed } = useMemo(() => {
     if (mergedItems.length === 0) {
-      return { items: [] as FeedItem[], agedOut: [] as FeedItem[], keptToAvoidEmptyGames: false };
+      return {
+        finishedGames: [] as FeedItem[],
+        guardedFeed: {
+          items: [] as FeedItem[],
+          agedOut: [] as FeedItem[],
+          keptToAvoidEmptyGames: false,
+        },
+      };
     }
     const renderable = mergedItems.filter((item) => feedItemHasRenderableContent(item));
-    return applyFinishedCardGuard(renderable);
+    const { finished, rest } = partitionFinishedGames(renderable);
+    return { finishedGames: finished, guardedFeed: applyFinishedCardGuard(rest) };
   }, [mergedItems]);
+
+  // =========================================================================
+  // ux/1053 — the Finished section
+  // =========================================================================
+  //
+  // Today's finals first, then yesterday's, capped at one screen. The clock is
+  // read ONCE per payload and handed in, so the ordering cannot shift under a
+  // re-render that happens to cross midnight mid-list.
+  const finishedSection = useMemo(
+    () => buildFinishedSection(finishedGames, Date.now()),
+    [finishedGames],
+  );
+
+  const finishedCards = useMemo(
+    () => finishedSection.shown.map((item) => feedEventToEvent(item.data as FeedEventData)),
+    [finishedSection],
+  );
+
+  // The one label each settled card wears. The feed carries TWO — `item.reason`
+  // ("Won as 47% underdog") and `highlight.label` ("Recent upset") — and the
+  // shared card has one slot, so the choice is made here rather than in the
+  // card: the reason is the specific claim about THIS result and the highlight
+  // is the generic tag, so the reason wins and the tag is the fallback.
+  const finishedLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    for (const item of finishedSection.shown) {
+      const data = item.data as FeedEventData;
+      const label = item.reason || data.highlight?.label;
+      if (label) out[data.id] = label;
+    }
+    return out;
+  }, [finishedSection]);
+
+  // The results the cap held back, and therefore where "more" has to point. Only
+  // fetched when there ARE some: the register is a second request and the cold
+  // Discover/sports path does not pay for a link that would render on nobody's
+  // screen. A null key is SWR's "do not fetch".
+  const cappedAway = useMemo(
+    () =>
+      finishedSection.dropped
+        .filter((d) => d.reason === "finished_section_cap")
+        .map((d) => d.item),
+    [finishedSection],
+  );
+  const { data: hierarchyData } = useSWR(
+    cappedAway.length > 0 ? "sports-hierarchy" : null,
+    fetchSportHierarchy,
+    { revalidateOnFocus: false },
+  );
+  const finishedMoreLinks = useMemo(
+    () => leagueResultsLinks(cappedAway, hierarchyData?.sports),
+    [cappedAway, hierarchyData],
+  );
 
   // =========================================================================
   // Summary stats
@@ -355,14 +430,19 @@ export default function SportsPage() {
     // badges below it count and what the grid actually renders. That is also why
     // it counts the GUARDED list: a header advertising events the freshness gate
     // has already removed is the same drift #2597 fixed, from the other end.
+    //
+    // ux/1053 — and it counts the SHOWN finals, not every final the payload
+    // carried. The settled cards no longer live in `guardedFeed`, and a footer
+    // that counted all 14 while the section renders 4 would be the #2646 class
+    // arriving through the count instead of through the card.
     const cards = flattenFeedBundles(guardedFeed.items);
-    const events = cards.filter(i => i.type === "event").length;
+    const events = cards.filter(i => i.type === "event").length + finishedSection.shown.length;
     const futures = cards.filter(i => i.type === "futures").length;
     const live = cards.filter(i =>
       i.type === "event" && (i.data as FeedEventData).status === "live"
     ).length;
     return { events, futures, live };
-  }, [guardedFeed]);
+  }, [guardedFeed, finishedSection]);
 
   // =========================================================================
   // Group feed items into visual sections
@@ -417,6 +497,33 @@ export default function SportsPage() {
       });
     }
   }, [guardedFeed]);
+
+  // ux/1053 — the same needle for the finals the SECTION held back, and it is
+  // strictly more readable than the one it inherits from: `stale_finished` said
+  // only "a settled card went", where these say which of the three decisions
+  // took it — outside the day window, undated, or over the cap. The cap reason
+  // is the one to watch: it is the size of the results backlog a reader has to
+  // leave the page to see.
+  const finishedDropSigRef = useRef("");
+  useEffect(() => {
+    const { dropped } = finishedSection;
+    if (dropped.length === 0) return;
+    const counts = new Map<string, number>();
+    for (const { reason } of dropped) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    const sig = [...counts.entries()].sort().map(([k, v]) => `${k}=${v}`).join(",");
+    if (sig === finishedDropSigRef.current) return;
+    finishedDropSigRef.current = sig;
+    for (const [suppression_reason, count] of counts) {
+      trackEvent("feed_card_suppressed", {
+        card_type: "event",
+        suppression_reason,
+        count,
+        surface: "sports",
+      });
+    }
+  }, [finishedSection]);
 
   // #1102 information architecture: games LEAD the page. Split the game sections
   // (Live Now / Just Happened / Upcoming) from the Top Markets futures section so
@@ -634,9 +741,56 @@ export default function SportsPage() {
               />
             )}
 
-            {/* #1102: Games LEAD — Live Now / Just Happened / Upcoming first */}
+            {/* #1102: Games LEAD — Live Now / Upcoming first. "Just Happened"
+                is no longer among them: ux/1053 moved the finals into their own
+                section BELOW, so the browse surface leads with what you can
+                still watch. (`groupFeedIntoSections` is unchanged and still
+                produces a finished bucket for Discover, /categories/* and My
+                Stuff — this page simply hands it no settled games.) */}
             {gameSections.map((section, sectionIndex) =>
               renderFeedSection(section, sectionIndex)
+            )}
+
+            {/* ux/1053 — Finished. D54 = A.
+
+                The SHARED event card, via the SAME rail the league page's
+                Recent Results uses, so a reader meets one anatomy for one fact
+                on both surfaces (ux/1052 item 6 / ruling 047). Its header is
+                this page's — emoji, title, count chip — because a section
+                filed beside Live Now and Upcoming should read as their peer;
+                the card underneath is what has to be shared, not the chrome
+                around it. */}
+            {finishedCards.length > 0 && (
+              <LeagueGameRail
+                title="Finished"
+                events={finishedCards}
+                settled
+                layout="feed"
+                hasMore={finishedSection.cappedMore}
+                moreLinks={finishedMoreLinks}
+                labels={finishedLabels}
+                header={
+                  <>
+                    {gameSections.length > 0 && (
+                      <div className="border-t border-surface-border/30 -mt-1 mb-5" />
+                    )}
+                    <motion.div
+                      className="flex items-center gap-2 mb-3"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    >
+                      <span className="text-sm">{"🏁"}</span>
+                      <h2 className="text-sm font-semibold text-text-secondary">
+                        Finished
+                      </h2>
+                      <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                        {finishedCards.length}
+                      </span>
+                    </motion.div>
+                  </>
+                }
+              />
             )}
 
             {/* Player Props & Progressions strip — BELOW the games feed (#1102).
@@ -644,7 +798,7 @@ export default function SportsPage() {
                 never a naked pooled strip without its context. */}
             {admittedPropRows.length > 0 && (
               <section>
-                {gameSections.length > 0 && (
+                {(gameSections.length > 0 || finishedCards.length > 0) && (
                   <div className="border-t border-surface-border/30 -mt-1 mb-5" />
                 )}
                 <motion.div
@@ -667,7 +821,10 @@ export default function SportsPage() {
 
             {/* Top Markets (futures) close out the page */}
             {marketsSection &&
-              renderFeedSection(marketsSection, gameSections.length)}
+              renderFeedSection(
+                marketsSection,
+                gameSections.length + (finishedCards.length > 0 ? 1 : 0),
+              )}
           </div>
 
           <p className="text-center text-micro text-text-muted pt-4">
@@ -696,8 +853,13 @@ export default function SportsPage() {
             </>
           ) : (
             <div className="flex justify-center pt-4">
-              {/* The count the reader actually saw — guarded, not loaded. */}
-              <EndOfFeedCard count={guardedFeed.items.length} onRefresh={() => refreshFeed()} />
+              {/* The count the reader actually saw — guarded, not loaded, and
+                  since ux/1053 that includes the finals the Finished section
+                  shows and excludes the ones it capped away. */}
+              <EndOfFeedCard
+                count={guardedFeed.items.length + finishedSection.shown.length}
+                onRefresh={() => refreshFeed()}
+              />
             </div>
           )}
         </>

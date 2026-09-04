@@ -27,6 +27,26 @@
 // ranking call, it belongs to the feed scorer, and no frontend filter should
 // quietly make that decision on the scorer's behalf.
 //
+// ═══ ux/1053: THE RANKING FIX ARRIVED, AND TOOK THE GAME CARDS ═══
+//
+// `lib/sports/finishedSection.ts` is that fix — the finals get their own capped
+// section below Upcoming, ordered today-then-yesterday. /sports now partitions
+// the settled GAME cards out BEFORE calling this function, so what arrives here
+// is futures, concepts, tournaments and unfinished games. Nothing below changed;
+// the caller changed.
+//
+// The two clauses this leaves standing but unexercised on that surface, kept
+// rather than deleted because they are still the right answer if a caller ever
+// hands game cards back:
+//
+//   - the `completed`/`closed` age-out (the section's calendar window and cap
+//     supersede the 8-hour clock, which could not express "yesterday" at all);
+//   - the #1091 `keptToAvoidEmptyGames` reprieve, which is now unreachable from
+//     /sports because an unfinished game is never `isStale`.
+//
+// Both remain covered by `__tests__/lib/sportsFinishedCardGuard.test.ts`, which
+// tests THIS function rather than the page, and is unchanged.
+//
 // #1091 / gotcha #43 — NEVER FILTER A SPORTS FEED INTO HAVING NO GAMES. A
 // diversity/freshness cap that empties the surface it is protecting has traded
 // one defect for a worse one, so the guard declines its own age-out when the
