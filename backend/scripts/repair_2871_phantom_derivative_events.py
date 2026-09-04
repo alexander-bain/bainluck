@@ -652,7 +652,14 @@ async def apply_group(session, g):
     #    NOTE: `events` has NO `updated_at` column (only `created_at`) — an
     #    `updated_at = NOW()` here fails every rename. `futures_markets` does
     #    have one, which is why step 1 sets it and this does not.
-    if g.real_event_id is None:
+    #    THE TEST IS `branch == "B"`, NOT `real_event_id is None` (CERT-886).
+    #    A Branch A' group has `real_event_id` None — only `alias_event_id` is
+    #    set — so the `is None` form let A' through with `survivor` pointing at
+    #    a REAL event, and cleared that real fixture's legitimate blend. The
+    #    backup covers only phantom ids, so the D51 restore could not recover
+    #    it. `branch` is the single place that decides A / A' / B / DEFER, so it
+    #    is the only thing this may key on.
+    if g.branch == "B":
         res = await session.execute(
             text(SQL["rename"]), {"clean": g.clean_away, "survivor": survivor}
         )

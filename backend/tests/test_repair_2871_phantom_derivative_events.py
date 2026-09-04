@@ -688,3 +688,76 @@ def test_the_undo_restores_a_blend_even_when_the_name_is_already_back():
     )
     assert json.loads(got) == seed
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# CERT-886: A' must never be written as if it were B
+# ---------------------------------------------------------------------------
+
+def _events_written_by(sql):
+    """Event ids an `apply_group` statement list would mutate in `events`."""
+    return [s for s in sql if re.match(r"UPDATE events\b|DELETE FROM events\b", s)]
+
+
+def test_cert886_branch_a_prime_never_touches_the_real_survivor():
+    """CERT-886 required test.
+
+    A Branch A' group has `real_event_id` None — only `alias_event_id` is set.
+    Gating the rename and the blend clear on `real_event_id is None` therefore
+    let A' through with `survivor` pointing at the REAL event, and cleared that
+    fixture's legitimate `win_probability_sources`. For the Thun case that is
+    event 15297290, which is NOT in the backup set (the backup covers phantom
+    ids only), so the D51 restore could not have recovered it.
+
+    Drives the real `apply_group` and proves the real event's name and blend are
+    never written.
+    """
+    g = _plan(THUN, alias=[_alias("FC Thun", "Lausanne-Sport", "2026-08-30",
+                                  n3=1, n7=1, alias_id=15297290)])[0][0]
+    assert g.branch == "A'" and g.survivor_id == 15297290
+
+    sql, counts = _apply_sql_for(g)
+    assert counts["renamed"] == 0, "A' renamed the real fixture"
+    assert counts["blend_cleared"] == 0, (
+        "A' cleared the REAL survivor's blend — unrecoverable, it is not in the backup"
+    )
+    assert not [s for s in sql if "win_probability_sources" in s]
+    assert not [s for s in sql if "away_team_name = :clean" in s]
+
+
+@pytest.mark.parametrize("alias_row,expect_branch", [
+    (None, "B"),
+    ({"n3": 1, "n7": 1, "alias_id": 15297290}, "A'"),
+    ({"n3": 2, "n7": 2, "alias_id": 15297290}, "DEFER"),
+    ({"n3": 0, "n7": 1, "alias_id": None}, "DEFER"),
+])
+def test_cert886_apply_group_never_writes_an_event_outside_the_backup(
+        alias_row, expect_branch):
+    """The general invariant behind CERT-886, across every branch.
+
+    `--backup` copies exactly the population — the group's own members. Any
+    `events` row `apply_group` writes that is NOT a member is, by construction,
+    a row with no backup and therefore no undo. That is the whole D51 contract,
+    and A' broke it by writing the survivor.
+    """
+    alias = () if alias_row is None else [
+        _alias("FC Thun", "Lausanne-Sport", "2026-08-30", **alias_row)]
+    actionable, _, deferred, _ = _plan(THUN, alias=alias)
+    g = (actionable or deferred)[0]
+    assert g.branch == expect_branch
+
+    sql, _ = _apply_sql_for(g)
+    written = _events_written_by(sql)
+    if expect_branch == "DEFER":
+        assert written == []
+        return
+
+    # Every id the statements can reach must be a member of this group.
+    reachable = set(g.doomed_ids)
+    if g.branch == "B":
+        reachable.add(g.survivor_id)
+    assert reachable <= set(g.member_ids), (
+        f"{g.branch} would write event(s) {reachable - set(g.member_ids)}, which "
+        f"the backup does not cover — no undo exists for them"
+    )
+    assert written, "no events statement issued at all — the scan is broken, not clean"
