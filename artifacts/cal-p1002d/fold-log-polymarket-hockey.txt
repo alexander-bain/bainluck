@@ -1,0 +1,87 @@
+    [1/61] ids 112847-1112847 (0s elapsed)
+    [2/61] ids 1112847-2112847 (3s elapsed)
+    [3/61] ids 2112847-3112847 (3s elapsed)
+    [4/61] ids 3112847-4112847 (3s elapsed)
+    [5/61] ids 4112847-5112847 (4s elapsed)
+    [6/61] ids 5112847-6112847 (4s elapsed)
+    [7/61] ids 6112847-7112847 (5s elapsed)
+    [8/61] ids 7112847-8112847 (5s elapsed)
+    [9/61] ids 8112847-9112847 (6s elapsed)
+    [10/61] ids 9112847-10112847 (6s elapsed)
+    [11/61] ids 10112847-11112847 (6s elapsed)
+    [12/61] ids 11112847-12112847 (7s elapsed)
+    [13/61] ids 12112847-13112847 (7s elapsed)
+    [14/61] ids 13112847-14112847 (8s elapsed)
+    [15/61] ids 14112847-15112847 (9s elapsed)
+    [16/61] ids 15112847-16112847 (9s elapsed)
+    [17/61] ids 16112847-17112847 (9s elapsed)
+    [18/61] ids 17112847-18112847 (10s elapsed)
+    [19/61] ids 18112847-19112847 (10s elapsed)
+    [20/61] ids 19112847-20112847 (11s elapsed)
+    [21/61] ids 20112847-21112847 (11s elapsed)
+    [22/61] ids 21112847-22112847 (11s elapsed)
+    [23/61] ids 22112847-23112847 (12s elapsed)
+    [24/61] ids 23112847-24112847 (12s elapsed)
+    [25/61] ids 24112847-25112847 (13s elapsed)
+    [26/61] ids 25112847-26112847 (13s elapsed)
+    [27/61] ids 26112847-27112847 (13s elapsed)
+    [28/61] ids 27112847-28112847 (14s elapsed)
+    [29/61] ids 28112847-29112847 (14s elapsed)
+    [30/61] ids 29112847-30112847 (14s elapsed)
+    [31/61] ids 30112847-31112847 (15s elapsed)
+    [32/61] ids 31112847-32112847 (15s elapsed)
+    [33/61] ids 32112847-33112847 (16s elapsed)
+    [34/61] ids 33112847-34112847 (16s elapsed)
+    [35/61] ids 34112847-35112847 (16s elapsed)
+    [36/61] ids 35112847-36112847 (174s elapsed)
+    [37/61] ids 36112847-37112847 (175s elapsed)
+    [38/61] ids 37112847-38112847 (175s elapsed)
+    [39/61] ids 38112847-39112847 (176s elapsed)
+    [40/61] ids 39112847-40112847 (176s elapsed)
+    [41/61] ids 40112847-41112847 (177s elapsed)
+    [42/61] ids 41112847-42112847 (177s elapsed)
+    [43/61] ids 42112847-43112847 (177s elapsed)
+    [44/61] ids 43112847-44112847 (178s elapsed)
+    [45/61] ids 44112847-45112847 (178s elapsed)
+    [46/61] ids 45112847-46112847 (178s elapsed)
+    [47/61] ids 46112847-47112847 (179s elapsed)
+    [48/61] ids 47112847-48112847 (179s elapsed)
+    [49/61] ids 48112847-49112847 (241s elapsed)
+    [50/61] ids 49112847-50112847 (242s elapsed)
+    [51/61] ids 50112847-51112847 (242s elapsed)
+    [52/61] ids 51112847-52112847 (242s elapsed)
+    [53/61] ids 52112847-53112847 (243s elapsed)
+    [54/61] ids 53112847-54112847 (243s elapsed)
+    [55/61] ids 54112847-55112847 (244s elapsed)
+    [56/61] ids 55112847-56112847 (244s elapsed)
+    [57/61] ids 56112847-57112847 (245s elapsed)
+    [58/61] ids 57112847-58112847 (246s elapsed)
+    [59/61] ids 58112847-59112847 (250s elapsed)
+    [60/61] ids 59112847-60112847 (253s elapsed)
+    [61/61] ids 60112847-60198751 (254s elapsed)
+      transport URLError — retrying same range (1/3)
+polymarket/hockey   (cluster sigma, 255s sweep, 2000 resamples, seed 20260829)
+  curve generated 2026-09-03T18:16:07.342457+00:00  population q269
+
+  SELF-CHECK — the producer's own chain against the payload it produced
+    exact replica    n=   1664  ECE=  6.92  gap=  +0.14
+    payload          n=   1730  ECE=  7.54  gap=  +1.65
+    delta            n=    -66 (-3.82%)  ECE=-0.62  gap=-1.51
+
+  CLUSTERS — one published row's independent unit is its MARKET
+    published rows            1664
+    distinct markets           608
+    rows per market           2.74
+
+  SIGMA — class B_exchange_contest, bar 3.0 pp, ECE 6.92 pp, excess +3.92 pp
+    basis                                 SE pp    sigma
+    row grain (the board today)           1.226     3.20
+    market grain (perfect-corr bound)     2.028     1.93
+    cluster bootstrap (MEASURED)          1.042     3.76
+
+    bootstrap ECE 95% interval  [5.48, 9.51] pp
+    design effect (SE_boot/SE_row)^2  0.72
+
+  VERDICT  ESTABLISHED — measured sigma 3.76 against SIGMA_GATE 2.0
+
+  wrote /tmp/cal1002d-art/sigma-polymarket-hockey.json
