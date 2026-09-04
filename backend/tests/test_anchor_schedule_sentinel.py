@@ -138,16 +138,40 @@ class _FakeRedis:
     def __init__(self):
         self.data: dict[str, bytes] = {}
         self.deletes = 0
+        # Which keys were written, in order. The two keys cannot be written
+        # atomically, so the ORDER is part of the contract (CERT-896).
+        self.write_order: list[str] = []
 
     def get(self, key):
         return self.data.get(key)
 
     def setex(self, key, ttl, value):
+        self.write_order.append(key)
         self.data[key] = value.encode() if isinstance(value, str) else value
 
     def delete(self, key):
         self.deletes += 1
+        self.write_order.append(key)
         self.data.pop(key, None)
+
+
+class _MarkerWriteFailsRedis(_FakeRedis):
+    """Everything works except writing the pass marker (CERT-896).
+
+    Two keys cannot be written atomically and both writes swallow their
+    exceptions, so one landing without the other is a state the mechanism has
+    to survive. This is the half that matters: the cursor advances and the
+    claim does not.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.fail_pass_writes = False
+
+    def setex(self, key, ttl, value):
+        if self.fail_pass_writes and key == sentinel.PASS_STATE_KEY:
+            raise RuntimeError("marker write failed")
+        super().setex(key, ttl, value)
 
 
 class _BrokenRedis:
@@ -657,6 +681,99 @@ class TestTheWindowPassIsWhatCloses:
         assert state["continuation"] == "c2"
         assert redis.data[sentinel.CURSOR_STATE_KEY] == b"c2", "position advanced"
         assert sentinel.PASS_STATE_KEY not in redis.data, "claim voided"
+
+    @pytest.mark.asyncio
+    async def test_a_lost_marker_write_cannot_pair_a_stale_clean_claim_with_an_advanced_cursor(
+        self, monkeypatch
+    ):
+        """CERT-896, the named three-night reproduction.
+
+        The marker and the continuation are two keys and cannot be written
+        atomically, and both writes swallow their exceptions. So the pairing
+        can come apart in the one direction that is dangerous: the night that
+        finds drift advances the cursor, its ``drift_seen: true`` write fails,
+        and the store is left holding an ADVANCED position beside a STALE CLEAN
+        claim. The next clean tail then reaches the end of the window with
+        ``pass_drift_seen`` false — and, before the binding, closed an issue
+        whose rows are still wrong.
+
+        Ordering the writes marker-first makes this rarer; only binding the
+        marker to the cursor it was written beside makes it detectable.
+        """
+        redis = _MarkerWriteFailsRedis()
+
+        def window(cursor):
+            if cursor is None:
+                return _page(has_more=True, next_cursor="c1", eligible=999)
+            if cursor == "c1":  # the slice that finds the drift
+                return _page(
+                    moves=[_move(4242)], has_more=True, next_cursor="c2", eligible=999
+                )
+            return _page(has_more=False, eligible=999)  # a clean tail
+
+        night_one = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_one["continuation"] == "c1"
+
+        redis.fail_pass_writes = True
+        night_two = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_two["filing"]["red"] is True, "the drift was found and filed"
+        assert night_two["continuation"] == "c2"
+
+        # The state the fault leaves behind, asserted directly — without this
+        # the test could pass against a store where nothing came apart at all.
+        assert redis.data[sentinel.CURSOR_STATE_KEY] == b"c2", "position advanced"
+        assert b'"drift_seen": false' in redis.data[sentinel.PASS_STATE_KEY]
+        assert b'"cursor": "c1"' in redis.data[sentinel.PASS_STATE_KEY], "claim stale"
+
+        redis.fail_pass_writes = False
+        night_three = await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=window,
+        )
+        assert night_three["moves"] == [], "night three's own slice is clean"
+        assert night_three["resumed_from"] == "c2"
+        assert night_three["pass_open"] is False, "the claim names c1, the cursor is c2"
+        assert night_three["complete"] is False
+        assert night_three["filing"] is None, (
+            "a lost marker write must never produce a GREEN close — 4242 is "
+            "still drifting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_claim_is_always_written_before_the_position(self, monkeypatch):
+        """Defence in depth for the arm above, and the reason it is rarely
+        needed. The binding DETECTS the two keys coming apart; the ordering
+        decides which way they come apart when they do. Marker-first leaves a
+        claim naming a position the store does not hold — refused on sight.
+        Position-first leaves the dangerous pairing the reproduction above is
+        about. Asserted rather than described, because a comment about write
+        order survives an edit that reverses it."""
+        redis = _FakeRedis()
+        await _run_with_stub_session(
+            monkeypatch,
+            max_pages=1,
+            deadline_seconds=60.0,
+            redis=redis,
+            page_for=self._two_page_window(),
+        )
+        assert redis.write_order.index(
+            sentinel.PASS_STATE_KEY
+        ) < redis.write_order.index(sentinel.CURSOR_STATE_KEY)
 
     @pytest.mark.asyncio
     async def test_an_unreadable_marker_is_a_broken_chain_not_a_crash(

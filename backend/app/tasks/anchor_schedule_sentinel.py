@@ -200,6 +200,19 @@ CURSOR_STATE_TTL_SECONDS = 7 * 24 * 3600
 #: change the format of a key that is live in production right now — a legacy
 #: bare cursor with no marker beside it reads as a broken chain, which is
 #: exactly the safe way for this to arrive.
+#:
+#: **The marker names the cursor it was written beside, and a mismatch is a
+#: broken chain** (CERT-896). Two keys cannot be written atomically, and both
+#: writes swallow their exceptions, so the pairing can come apart: the night
+#: that finds drift advances the cursor, its ``drift_seen: true`` write fails,
+#: and the store is left holding an ADVANCED position beside a STALE CLEAN
+#: claim. The next clean tail would then reach the end of the window with
+#: ``pass_drift_seen`` false and close an issue whose rows are still wrong —
+#: the exact failure the drift-seen rule exists to prevent, walked in through
+#: the persistence layer. Binding detects the divergence instead of trying to
+#: prevent it, which is the only option available across two keys; the writes
+#: are additionally ordered marker-first so the likely crack falls the
+#: conservative way.
 PASS_STATE_KEY = "anchor_schedule_sentinel:window_pass"
 
 #: How long a pass may stay open before it stops being evidence about tonight.
@@ -261,8 +274,12 @@ def _save_continuation(cursor: Optional[str]) -> None:
         )
 
 
-def _load_pass() -> Optional[tuple[datetime, bool]]:
-    """The open window pass as ``(started_at, drift_seen)``, or ``None``.
+def _load_pass() -> Optional[tuple[datetime, bool, Optional[str]]]:
+    """The open window pass as ``(started_at, drift_seen, cursor)``, or ``None``.
+
+    ``cursor`` is the continuation this marker was written beside; the caller
+    refuses the marker unless it matches the position actually being resumed
+    from (CERT-896).
 
     ``None`` means "there is no chain here I can continue", and EVERY failure
     resolves to it: no key, a Redis fault, unparseable JSON, a shape this
@@ -296,11 +313,17 @@ def _load_pass() -> Optional[tuple[datetime, bool]]:
         return None
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
-    return started_at, bool(data.get("drift_seen"))
+    cursor = data.get("cursor")
+    return started_at, bool(data.get("drift_seen")), cursor if cursor else None
 
 
-def _save_pass(started_at: datetime, drift_seen: bool) -> None:
-    """Carry the open pass to the next night.
+def _save_pass(started_at: datetime, drift_seen: bool, cursor: Optional[str]) -> None:
+    """Carry the open pass to the next night, bound to the position beside it.
+
+    ``cursor`` is not decoration: it is what lets the next run detect that these
+    two keys came apart (CERT-896). It must be the SAME continuation this run is
+    handing on, which is why this is called with ``state["continuation"]`` and
+    before the continuation is written.
 
     Shares :data:`CURSOR_STATE_TTL_SECONDS` with the continuation so the two
     cannot outlive each other in the dangerous order (a marker older than the
@@ -313,7 +336,11 @@ def _save_pass(started_at: datetime, drift_seen: bool) -> None:
             PASS_STATE_KEY,
             CURSOR_STATE_TTL_SECONDS,
             json.dumps(
-                {"started_at": started_at.isoformat(), "drift_seen": bool(drift_seen)}
+                {
+                    "started_at": started_at.isoformat(),
+                    "drift_seen": bool(drift_seen),
+                    "cursor": cursor,
+                }
             ),
         )
     except Exception:  # pragma: no cover - defensive
@@ -616,10 +643,24 @@ async def _run_anchor_schedule_sentinel(
     # position is good — but cannot claim to have seen the window.
     if resume_from is None:
         pass_open, pass_started_at, pass_drift_seen = True, now, False
-    elif open_pass is not None:
+    elif open_pass is not None and open_pass[2] == resume_from:
         pass_open = True
-        pass_started_at, pass_drift_seen = open_pass
+        pass_started_at, pass_drift_seen, _ = open_pass
     else:
+        # No marker, or one that names a DIFFERENT position than the one being
+        # resumed from. The second case is the one that matters (CERT-896): the
+        # two keys came apart, so the claim does not describe this chain and
+        # cannot be carried by it. Both read as a broken chain — the sweep runs
+        # normally on a position that is still good, and only the close is
+        # withheld.
+        if open_pass is not None:
+            logger.warning(
+                "anchor-schedule sentinel: the window-pass marker names cursor "
+                "%r but this run resumes from %r — the two keys came apart, so "
+                "the chain cannot claim the window",
+                open_pass[2],
+                resume_from,
+            )
         pass_open, pass_started_at, pass_drift_seen = False, None, False
 
     async with get_task_session() as session:
@@ -673,10 +714,15 @@ async def _run_anchor_schedule_sentinel(
     )
     state["pass_expired"] = bool(pass_expired)
 
-    # Hand the position on (or clear it on a finished sweep) BEFORE filing, so a
-    # GitHub fault cannot cost us the place we got to.
-    _save_continuation(state["continuation"])
-
+    # THE MARKER IS WRITTEN FIRST, ALWAYS (CERT-896). Neither write can be made
+    # atomic with the other and both swallow their exceptions, so one landing
+    # without the other is a state this has to survive rather than exclude.
+    # Marker-first makes the likely crack the conservative one — a claim that
+    # names a position the store no longer holds is refused on sight, where the
+    # reverse (an advanced position beside a stale claim) is the one that could
+    # close a live issue. The binding below is what actually catches it; the
+    # ordering just makes the catch rarer.
+    #
     # The pass ends when the chain reaches the end of the window, and also when
     # it has nothing left to claim — expired, or broken from the start. Note
     # what is NOT cleared on expiry: the continuation. Restarting the sweep at
@@ -687,7 +733,13 @@ async def _run_anchor_schedule_sentinel(
     if state["reached_window_end"] or not pass_open or pass_expired:
         _clear_pass()
     else:
-        _save_pass(pass_started_at, pass_drift_seen)
+        # Bound to the very position being handed on, so tomorrow can tell
+        # whether both writes landed.
+        _save_pass(pass_started_at, pass_drift_seen, state["continuation"])
+
+    # Hand the position on (or clear it on a finished sweep) BEFORE filing, so a
+    # GitHub fault cannot cost us the place we got to.
+    _save_continuation(state["continuation"])
 
     # One canonical issue for this rail. The fingerprint deliberately does NOT
     # hash the drifting ids: if it did, every night with a different set of bad
