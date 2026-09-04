@@ -195,6 +195,22 @@ export const GRID_NAME_WIDTH_DESKTOP_PX = 236;
 export const GRID_COLUMN_WIDTH_DESKTOP_PX = 84;
 
 /**
+ * THE TWO THINGS THE ROW IS ALSO MADE OF (#3072).
+ *
+ * A grid row is not only its tracks. `PlayoffGrid`'s header and every `<li>`
+ * carry `gap-1.5` between tracks and `px-3.5` down each side, and both were
+ * missing from `gridWidthPx` below — which is how a five-column men's draw came
+ * to be declared a fit inside a box it overflows by 74px.
+ *
+ * These are the Tailwind classes' own values (`gap-1.5` = 0.375rem = 6px,
+ * `px-3.5` = 0.875rem = 14px), so they are a transcription rather than a
+ * judgement, and `playoffGrid.test.tsx` pins them against the component's class
+ * string in the same way `GRID_SIZING` is pinned.
+ */
+export const GRID_GAP_PX = 6;
+export const GRID_ROW_PADDING_PX = 14;
+
+/**
  * ALEX'S RULING 5: "Wide rounds may scroll horizontally — sparingly, better
  * than excluding data."
  *
@@ -204,10 +220,9 @@ export const GRID_COLUMN_WIDTH_DESKTOP_PX = 84;
  * overturns the trade: a column is never dropped, and a grid wider than the
  * viewport scrolls.
  *
- * `sparingly` is honoured by the arithmetic rather than by restraint: at five
- * columns (R16, QF, SF, Final, Title) the grid is 118 + 5×46 = 348px inside a
- * 358px content box, so today's grid does NOT scroll. Scrolling begins at six,
- * which is a draw whose sources price more rounds than this one's do.
+ * `sparingly` is honoured by the arithmetic rather than by restraint — and the
+ * arithmetic has to be RIGHT, which until #3072 it was not. See the correction
+ * below `gridScrolls`.
  *
  * ═══ UX-P145: THIS IS A RULE ABOUT PHONES, AND IT SAYS SO NOW ═══
  *
@@ -224,12 +239,67 @@ export const GRID_COLUMN_WIDTH_DESKTOP_PX = 84;
  * nothing to scroll. Scroll survives where it was written for and expires where
  * it was not, with no second source of truth about widths.
  */
-export function gridScrolls(columnCount: number, contentWidthPx = 358): boolean {
+/**
+ * The measured inner width of the grid card at a 390px phone viewport.
+ *
+ * Not derived from 390 by subtracting guesses — read off production with a
+ * pinned viewport (see `gridScrolls`), because every previous attempt to derive
+ * it lost a padding somewhere.
+ */
+export const GRID_CARD_CONTENT_PX = 332;
+
+/**
+ * ═══ #3072: BOTH SIDES OF THIS INEQUALITY WERE OPTIMISTIC, AND THE READER PAID
+ * ═══ FOR IT WITH THE ONE COLUMN THE PAGE EXISTS TO SHOW.
+ *
+ * Measured on production, `/tournaments/us-open` → Bracket, pinned 390px
+ * viewport (`isMobile: false` — with `isMobile: true` Chromium widens the layout
+ * viewport to the content and the page reads clean, so that mode cannot see
+ * this class of bug at all):
+ *
+ *     innerWidth                   390
+ *     documentElement.scrollWidth  421     ← the PAGE scrolled sideways by 31px
+ *     grid card   clientWidth      332     scrollWidth 392   overflow-x: hidden
+ *     "Title" header, right edge   421     — outside its own card, and CLIPPED
+ *
+ * `overflow-x: hidden` clips without scrolling, so 60px of the men's grid was
+ * not merely off-screen, it was UNREACHABLE: no swipe, no scrollbar. The column
+ * lost was **Title** — the chance of winning the tournament.
+ *
+ * The verdict came out wrong because the model of a row was wrong on both sides:
+ *
+ * - `gridWidthPx` counted TRACKS ONLY. A row is `px-3.5` + track + `gap-1.5` +
+ *   track + … so five columns need `118 + 5×46 + 5×6 + 2×14 = 406px`, not 348.
+ * - the `358` content box was the phone's page width minus its own padding, but
+ *   the grid sits inside a CARD inside that page: the measured client box is
+ *   **332**.
+ *
+ * 406 > 332, so the men's five-column draw scrolls — and so does a four-column
+ * one (`354 > 332`), which is the honest answer too: the old formula said a
+ * four-column grid had 10px to spare when it was 22px over.
+ *
+ * ⚠️ RULING 5 IS NOT WEAKENED BY THIS, IT IS APPLIED. Alex ruled *"wide rounds
+ * may scroll horizontally — sparingly, better than excluding data."* Clipping a
+ * column is excluding data; it is the outcome the ruling forbids, arrived at by
+ * arithmetic instead of by choice. "Sparingly" still binds: a three-column grid
+ * (`302 ≤ 332`) — the tournament's first week — does not scroll.
+ *
+ * ⚠️ AND DESKTOP STILL NEVER ASKS. Above `lg` the value tracks are `1fr`, the
+ * component sets `lg:overflow-x-visible` and retires the inline floor with
+ * `lg:!min-w-0`, so nothing here reaches a wide window.
+ */
+export function gridScrolls(columnCount: number, contentWidthPx = GRID_CARD_CONTENT_PX): boolean {
   return gridWidthPx(columnCount) > contentWidthPx;
 }
 
+/** Everything a row occupies: side padding, the name track, the value tracks, and the gaps between them. */
 export function gridWidthPx(columnCount: number): number {
-  return GRID_NAME_WIDTH_PX + columnCount * GRID_COLUMN_WIDTH_PX;
+  return (
+    2 * GRID_ROW_PADDING_PX +
+    GRID_NAME_WIDTH_PX +
+    columnCount * GRID_COLUMN_WIDTH_PX +
+    columnCount * GRID_GAP_PX
+  );
 }
 
 /**

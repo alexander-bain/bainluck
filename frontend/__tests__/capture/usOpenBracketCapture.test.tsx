@@ -212,9 +212,17 @@ describe("the bracket capture rig still renders every state", () => {
     expect(women).not.toContain("Alcaraz");
   });
 
-  it("does not scroll at five columns, and would at six (ruling 5)", () => {
+  it("the five-column men's grid SCROLLS, so no column is clipped away (ruling 5, #3072)", () => {
+    // This assertion used to read `data-scrolls="false"`, on the arithmetic
+    // `118 + 5×46 = 348` inside a "358px" box. Both numbers were wrong: a row
+    // also carries `px-3.5` and `gap-1.5` (so 406px), and the card's measured
+    // client box on a 390px phone is 332px. Production showed the consequence —
+    // the Title column drawn outside an `overflow-x: hidden` card, unreachable.
+    // Ruling 5 says a column is never dropped; clipping one IS dropping it.
     const html = renderToStaticMarkup(<PlayoffGrid grid={MENS_GRID} />);
-    expect(html).toContain('data-scrolls="false"');
+    expect(html).toContain('data-scrolls="true"');
+    expect(html).toContain("overflow-x-auto");
+    expect(html).toContain('data-kind="title"');
   });
 
   it("writes the capture when UX_CAPTURE_DIR is set", () => {
@@ -338,8 +346,11 @@ at three reach columns and SF was the fourth. There is no cap now; a column is n
 <li><b>The sum check is under every grid</b> (ruling 4), per column, with its ratio. QF and SF pass;
 <b>the Final column sums to 2.78 against 2 places</b> and says so. Nothing is rescaled to make it
 add up &mdash; a normalised column is a column of fabricated numbers.</li>
-<li><b>Wide rounds scroll</b> (ruling 5), and at five columns this one does not need to: 118px for
-the name plus 5&times;46px is 348px inside a 358px content box. Scrolling begins at six.</li>
+<li><b>Wide rounds scroll</b> (ruling 5), and at five columns this one does: a row is 28px of side
+padding plus 118px for the name plus 5&times;46px of columns plus 5&times;6px of gaps &mdash; 406px
+inside the card's measured 332px box. It used to be declared a fit at &ldquo;348 inside 358&rdquo;,
+which counted neither the gaps nor the padding, and the Title column was clipped away instead
+(#3072).</li>
 <li><b>The draw panel says WHEN</b> (item 1): <b>Thursday 27 August, 12:00 ET</b>, first round
 Sunday 30 August. And the grid no longer waits for it &mdash; its markets are live today.</li>
 <li><b>Coverage:</b> men's <b>${mensPriced} of ${mensTotal}</b> cells priced, women's

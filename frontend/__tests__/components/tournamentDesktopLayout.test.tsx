@@ -302,13 +302,18 @@ describe("UX-P145: the desktop layout exists", () => {
       expect(sixWide).toBeLessThan(1024 - 48);
     });
 
-    it("P138's ruling 5 is UNCHANGED — scroll still applies where it was measured", () => {
+    it("P138's ruling 5 still applies where it was measured — and its arithmetic is now right (#3072)", () => {
       // Alex: "P138's horizontal-scroll ruling applies to mobile, not a 1400px
-      // window." The fix was not to weaken the rule; the phone's arithmetic is
-      // exactly as UX-P139 measured it, and desktop simply never asks.
-      expect(gridWidthPx(5)).toBe(348);
-      expect(gridScrolls(5)).toBe(false);
+      // window." Unchanged: desktop never asks. What DID change is the phone's
+      // sum, which omitted the row's `gap-1.5` and `px-3.5` and compared it
+      // against a 358px box that is really 332 — so a five-column men's draw
+      // was declared a fit and the Title column was clipped away instead of
+      // scrolling to. See `lib/playoffGrid.ts` for the production measurement.
+      expect(gridWidthPx(5)).toBe(406);
+      expect(gridScrolls(5)).toBe(true);
       expect(gridScrolls(6)).toBe(true);
+      // "Sparingly" still binds where it can be honoured.
+      expect(gridScrolls(3)).toBe(false);
     });
 
     it("…and desktop retires the phone's scroll floor rather than inheriting it", () => {
