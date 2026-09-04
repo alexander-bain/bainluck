@@ -199,6 +199,8 @@ from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
     compute_futures_multiplier,
+    followed_sport_categories,
+    my_stuff_admits_followed_sport,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
 from app.utils import futures_market_snapshot as _futures_snapshot
@@ -7597,6 +7599,26 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
+    # ux/1070 item 5 — THE SPORTS YOU FOLLOW THAT HAVE NO TEAMS.
+    #
+    # The futures half below admits a market only when it touches one of the
+    # viewer's TEAMS, so a sport played by individuals can never reach it: golf
+    # and tennis are not even in `MY_STUFF_ALLOWED_CATEGORIES`. Alex follows PGA
+    # golf at 1.0 and this week the site holds a whole tournament grid — Winner,
+    # Top 5, Top 10, Top 20, Make the Cut — and his My Stuff could not show one
+    # of them, because there is no team in golf to match on (2026-09-04).
+    #
+    # Subtracting `MY_STUFF_ALLOWED_CATEGORIES` is what keeps this from being a
+    # loosening: baseball and football stay on the team-match rule exactly as
+    # before, and only a sport with no team dimension is admitted on the follow
+    # alone. The rest of the bound lives in `my_stuff_admits_followed_sport`.
+    _my_stuff_follow_categories: set[str] = set()
+    if my_teams_only:
+        _my_stuff_follow_categories = (
+            followed_sport_categories(ctx.sport_affinities)
+            - MY_STUFF_ALLOWED_CATEGORIES
+        )
+
     # === CANDIDATE-ID BASE (Queue 285) ===
     # The Discover futures candidate pools depend ONLY on (now, sport_filter,
     # static_tag_filter) — never on the user, session, limit, offset, or
@@ -8343,15 +8365,35 @@ async def _score_futures(
 
             # my_teams_only: skip futures that don't involve the user's teams
             if my_teams_only:
-                # Skip Tier 3 sports — same filter as events to avoid false
-                # positives from name collisions. BR42/BR43.
                 market_sport_key = market.sport.key if market.sport else None
-                if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
-                    continue
-                # Also filter by llm_sport_category for markets without a sport FK
-                if not market_sport_key and market.llm_sport_category:
-                    if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                _market_category = market.llm_sport_category or (
+                    _personalization_category_from_sport_key(market_sport_key)
+                )
+                # ux/1070 item 5: a FOLLOWED sport with no team dimension is
+                # admitted on its own account, inside the tournament window and
+                # never as an award. See `_my_stuff_follow_categories` above.
+                # `_utc` because a market rehydrated from the shared snapshot can
+                # arrive naive, and a naive/aware compare raises inside the loop
+                # rather than answering the question.
+                _followed_sport_market = my_stuff_admits_followed_sport(
+                    category=_market_category,
+                    market_tier=market.market_tier,
+                    resolution_date=_utc(market.resolution_date),
+                    followed_categories=_my_stuff_follow_categories,
+                    now=now,
+                )
+                if not _followed_sport_market:
+                    # Skip Tier 3 sports — same filter as events to avoid false
+                    # positives from name collisions. BR42/BR43.
+                    if (
+                        market_sport_key
+                        and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS
+                    ):
                         continue
+                    # Also filter by llm_sport_category for markets without a sport FK
+                    if not market_sport_key and market.llm_sport_category:
+                        if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                            continue
 
                 matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
 
@@ -8381,7 +8423,11 @@ async def _score_futures(
                         if matched_by_name:
                             break
 
-                if not matched_by_id and not matched_by_name:
+                if (
+                    not matched_by_id
+                    and not matched_by_name
+                    and not _followed_sport_market
+                ):
                     continue
 
             # Collect matched outcome details for "why is this here?" context
