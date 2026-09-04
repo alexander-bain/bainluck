@@ -112,7 +112,16 @@ import {
   teamShortNames,
   isNonDistinctiveTrailingWord,
 } from "@/lib/teamShortName";
+import { readFileSync } from "fs";
+import { join } from "path";
 import corpus from "./fixtures/teamNames.ux1065.json";
+
+function sourceWithoutComments(relPath: string): string {
+  const raw = readFileSync(join(process.cwd(), relPath), "utf8");
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/^\s*\/\/.*$/gm, " ");
+}
 
 const NAMES: string[] = (corpus as { names: string[] }).names;
 
@@ -361,5 +370,53 @@ describe("UX-1065: the rendered sentence", () => {
       }),
     );
     expect(textOf(markup)).toContain("Bulldogs won");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// WIRING — reverting the hero and the shared card produced ZERO red without
+// this section, so the two highest-traffic surfaces in the ship were unguarded
+// by everything above. Source-level because `app/events/[id]/page.tsx` is a
+// client page this harness cannot render (it early-returns on a loading state
+// before the hero exists).
+//
+// These scans STRIP COMMENTS FIRST. The fix's own explanatory comment quotes
+// `split(" ").pop()` verbatim to say what was wrong, so a naive
+// `not.toContain('split(" ").pop()')` is RED ON THE FIX, and the better the
+// comment the likelier it trips (ux/1038's lesson #3). Verified: page.tsx line
+// 605 is exactly that comment.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("UX-1065 wiring: the display sites read the helper", () => {
+  it("the reported hero no longer shortens either side itself", () => {
+    const src = sourceWithoutComments("app/events/[id]/page.tsx");
+    expect(src).toContain("heroShortNames");
+    expect(src).not.toMatch(/event\.home_team\.split\(" "\)\.pop\(\)/);
+    expect(src).not.toMatch(/event\.away_team\.split\(" "\)\.pop\(\)/);
+  });
+
+  it("the comment-stripper is real: the raw file DOES still contain the phrase", () => {
+    // If this goes red the stripper has become vacuous and the test above would
+    // be passing for the wrong reason.
+    const raw = readFileSync(join(process.cwd(), "app/events/[id]/page.tsx"), "utf8");
+    expect(raw).toContain('split(" ").pop()');
+    expect(sourceWithoutComments("app/events/[id]/page.tsx")).not.toContain('split(" ").pop()');
+  });
+
+  it("the shared EventCard reads the helper", () => {
+    const src = sourceWithoutComments("components/EventCard.tsx");
+    expect(src).toContain("teamShortNames(");
+    expect(src).not.toMatch(/event\.home_team\.split\(" "\)\.pop\(\)/);
+  });
+
+  it("CONTROL the four MATCHING call sites are deliberately untouched", () => {
+    // These decide what MATCHES, not what renders. If a later session retires
+    // them as the issue suggests, this goes red and says so on purpose.
+    expect(sourceWithoutComments("components/PlayerPropsGrid.tsx")).toContain(
+      'home_team.split(" ").pop()',
+    );
+    expect(sourceWithoutComments("lib/sportCategories.ts")).toContain(
+      'golfer.split(" ").pop()',
+    );
   });
 });
