@@ -118,15 +118,27 @@ class _MockScalars:
 
 
 class _MockResult:
-    def __init__(self, items):
+    """Serves both query shapes — see the twin in ``test_route_weather.py``.
+
+    `scalars()` is the market entity query; `all()` is the column query for
+    `futures_odds_snapshots` that ux/1069 (#2960) added behind the sparkline.
+    Empty here, which is what these fixtures mean: no captures, no line, and
+    `leader` — the thing this file is about — is unaffected either way.
+    """
+
+    def __init__(self, items, rows=None):
         self._scalars = _MockScalars(items)
+        self._rows = list(rows or [])
 
     def scalars(self):
         return self._scalars
 
+    def all(self):
+        return self._rows
 
-def _serve(mock_db, markets):
-    mock_db.execute.return_value = _MockResult(markets)
+
+def _serve(mock_db, markets, snapshot_rows=None):
+    mock_db.execute.return_value = _MockResult(markets, snapshot_rows)
 
 
 # The Aug 29 rain market exactly as production held it, trimmed to the rows that
@@ -598,7 +610,13 @@ class TestNothingElseChanged:
         ).replace(" 0", " ")
 
     async def test_the_featured_payload_gained_exactly_one_key(self, client, mock_db):
-        """The whole diff, stated as a set difference."""
+        """The whole diff, stated as a set difference.
+
+        `history` joined the set in ux/1069 (#2960) — the real capture series
+        that replaced the frontend's seeded sparkline generator. It is listed
+        here rather than tolerated by a subset check so the next key to appear
+        has to be argued for in this test too.
+        """
         _serve(mock_db, [
             _market(
                 market_id=59704867,
@@ -611,4 +629,5 @@ class TestNothingElseChanged:
 
         assert set(item) == {
             "q", "prob", "src", "tag", "closes", "market_id", "leader",
+            "history",
         }
