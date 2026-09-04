@@ -344,6 +344,33 @@ jobs:
             exit 1
           fi
 
+      - name: "#3026 restore round-trip (real Postgres)"
+        # CERT-932. `repair_3026_question_events.py` deletes events, and D51
+        # authorises that UNATTENDED only because a one-command restore ships
+        # beside it. The restore could not execute: the banked rows come back
+        # off `to_jsonb()` as decoded Python dicts and were handed to an
+        # untyped `text()` bind, which compiles as `NullType` with no bind
+        # processor — so SQLAlchemy's asyncpg jsonb codec called `.encode()` on
+        # a dict and raised on the first insert of the first row.
+        #
+        # Real Postgres because every cheaper reader is green over it by
+        # construction: the statement COMPILES, the module IMPORTS, the DRY RUN
+        # is by definition the path that executes no insert, sqlite has no jsonb
+        # codec to be wrong about, and a mock session asserts on the very dict
+        # that never worked. Only asyncpg talking to a server can tell.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_restore_3026_jsonb_roundtrip_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/restore_3026.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/restore_3026.txt; then
+            echo "::error::#3026 restore round-trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

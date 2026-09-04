@@ -64,6 +64,33 @@ RESTORABLE_CASCADE_TABLES = (
 )
 
 
+def _populate_insert(table, on_conflict_nothing):
+    """`INSERT ... jsonb_populate_record(...)` with the `:row` bind TYPED JSONB.
+
+    The type is the whole point. `text()` gives an unannotated bind `NullType`,
+    which has no bind processor, so the value reaches asyncpg untouched — and
+    the banked rows come back off `to_jsonb()` already DECODED into Python
+    dicts. SQLAlchemy's asyncpg jsonb codec expects its own serializer to have
+    produced a string and calls `.encode()`, so every insert here raised
+    `AttributeError: 'dict' object has no attribute 'encode'` and this undo
+    could not run at all. Typing the bind puts `JSON._make_bind_processor` back
+    in the path: dict in, `json.dumps` string out, codec satisfied.
+
+    Nothing about the failure is visible without a server. The statement
+    compiles, the script imports, the dry run — which never executes an insert —
+    reports a full and correct plan. Only `--apply` touches this line, and
+    `--apply` is the one run nobody gets to rehearse.
+    """
+    from sqlalchemy import bindparam, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    tail = " ON CONFLICT DO NOTHING" if on_conflict_nothing else ""
+    return text(
+        f"INSERT INTO {table} "
+        f"SELECT (jsonb_populate_record(NULL::{table}, :row)).*{tail}"
+    ).bindparams(bindparam("row", type_=JSONB))
+
+
 def _session_factory():
     """The app's real async session factory — see the repair script's copy.
 
@@ -123,17 +150,11 @@ async def restore_events(session, apply):
         # jsonb_populate_record rebuilds the row from the banked snapshot, so
         # this survives columns being added to the table after the backup.
         await session.execute(
-            text("INSERT INTO events SELECT (jsonb_populate_record(NULL::events, :row)).*"),
-            {"row": event_row},
+            _populate_insert("events", on_conflict_nothing=False), {"row": event_row}
         )
         for table, child in children:
             await session.execute(
-                text(
-                    f"INSERT INTO {table} "
-                    f"SELECT (jsonb_populate_record(NULL::{table}, :row)).* "
-                    f"ON CONFLICT DO NOTHING"
-                ),
-                {"row": child},
+                _populate_insert(table, on_conflict_nothing=True), {"row": child}
             )
 
     return report
