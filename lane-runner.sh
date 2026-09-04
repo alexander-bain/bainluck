@@ -36,7 +36,9 @@ set -u
 trap 'trap - INT TERM HUP; echo; echo "[runner] stopping - signalling session subtree"; kill 0 2>/dev/null; exit 130' INT TERM HUP
 
 DRYRUN=0
+RESTOCK_ONCE=0
 if [ "${1:-}" = "--dry-run" ]; then DRYRUN=1; shift; fi
+if [ "${1:-}" = "--restock-once" ]; then RESTOCK_ONCE=1; shift; fi
 
 WORKDIR="${1:?usage: lane-runner.sh [--dry-run] <workdir> <lane> [lane2 ...]}"
 shift
@@ -241,6 +243,17 @@ if [ "$DRYRUN" -eq 1 ]; then
   echo "[runner] handoff root: $HANDOFF"
   for L in "${LANES[@]}"; do maybe_restock "$L"; done
   exit 0
+fi
+
+# --restock-once: do ONE real restock pass and exit without running any session.
+# Two uses: Fable can nudge an idle lane without starting a runner, and the guard
+# test can exercise the WRITE path — --dry-run alone only ever proves the branch
+# that writes nothing, which is not the branch that runs in production.
+if [ "$RESTOCK_ONCE" -eq 1 ]; then
+  echo "[runner] --restock-once: one real restock pass, no session will be started"
+  RC=1
+  for L in "${LANES[@]}"; do maybe_restock "$L" && RC=0; done
+  exit "$RC"
 fi
 
 # stream-json → readable live lines. `claude -p` prints nothing until the end

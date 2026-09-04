@@ -448,6 +448,37 @@ def test_restock_interval_floor_blocks_a_spin(tmp_path):
     assert "WOULD WRITE" in out
 
 
+def test_restock_actually_writes_the_directive(tmp_path):
+    """The WRITE path, not the rehearsal.
+
+    --dry-run only ever proves the branch that writes nothing. This runs the real
+    one: the file must land in the inbox under a name the take-loop's glob will
+    pick up (`RESTOCK-<stamp>.md`), and the interval stamp must be recorded — if
+    it were not, the floor could never bite and a failing directive could spin
+    the lane at session speed.
+    """
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    rc, out = run(RUNNER, "--restock-once", str(REPO), "demo",
+                  env={"LANE_HANDOFF": str(handoff)})
+    assert rc == 0, out
+
+    written = sorted(p.name for p in inbox.glob("RESTOCK-*.md"))
+    assert len(written) == 1, f"expected one RESTOCK, got {written}"
+    body = (inbox / written[0]).read_text()
+    assert "Your inbox is empty." in body
+    assert "PROGRAM-DEMO.md" in body
+    assert "Do not end with a question." in body
+    assert (inbox / ".last-restock").exists(), "no interval stamp — the floor can never bite"
+
+    # And it does not write a second one on the next pass. Both the "one pending"
+    # guard and the interval floor should hold here; either is enough.
+    rc, out = run(RUNNER, "--restock-once", str(REPO), "demo",
+                  env={"LANE_HANDOFF": str(handoff)})
+    assert rc == 1, f"a second restock was written:\n{out}"
+    assert len(list(inbox.glob("RESTOCK-*.md"))) == 1
+
+
 def test_restock_dry_run_does_not_requeue_running_directives(tmp_path):
     """A rehearsal must not touch a live lane's in-flight work.
 
