@@ -127,10 +127,19 @@ Four properties keep the second tier from being able to serve a wrong answer:
 
 Kill switches: `FEED_SHARED_BUILD_TTL_S=0` turns ALL sharing off process-wide
 without a code change; every call then builds, exactly as before this module
-existed. `FEED_SHARED_BUILD_CROSS_WORKER=0` turns off the Redis tier ALONE,
+existed. It outranks the per-namespace levers below, so pulling it is still one
+command. `FEED_SHARED_BUILD_CROSS_WORKER=0` turns off the Redis tier ALONE,
 leaving the process-local tier exactly as it shipped in LAT-P084 — so a
 rollback of this change needs no deploy and does not give back #2143's original
 win.
+
+Tuning lever (LAT-P221b): `FEED_SHARED_BUILD_TTL_S_<NAMESPACE>` — e.g.
+`FEED_SHARED_BUILD_TTL_S_MARKET_LOAD` — sets ONE namespace's TTL at runtime,
+also with no deploy. It exists because the 60s default was tied by coincidence
+to the 60s anonymous response-cache TTL: the moment a request was a `miss`, the
+artifact it wanted had expired too, so a reader arriving alone could never
+benefit from sharing. See `TTL_BY_NAMESPACE` for the measurement and the
+sizing rule.
 """
 
 from __future__ import annotations
@@ -185,12 +194,73 @@ MAX_ENTRIES_PER_NAMESPACE = 64
 #: set changes. Undershooting costs a rebuild, which is exactly today's
 #: behaviour; overshooting costs resident memory on the flagship route, which is
 #: not recoverable by failing open.
+#:
+#: LAT-P221b: "within one TTL" is now a PER-NAMESPACE window (`TTL_BY_NAMESPACE`),
+#: so raising a namespace's TTL widens the window this cap is sized against. That
+#: is deliberately NOT compensated for by raising the cap: overflowing L1 falls
+#: through to the Redis tier (~1ms), not to the rebuild this module exists to
+#: avoid, whereas a raised cap is unrecoverable resident memory. The cap bounds
+#: MEMORY; the TTL bounds STALENESS; they are allowed to disagree.
 MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6}
 
 #: Default staleness bound. The concept build embeds `now`-derived text and pin
 #: state, so the TTL is what bounds how wrong that can be. 60s is far below the
 #: coarsest boundary those values move on (marquee pin windows are hours).
 DEFAULT_TTL_S = 60.0
+
+#: Per-namespace staleness bound, overriding `DEFAULT_TTL_S` for one namespace.
+#:
+#: **LAT-P221b — the two clocks were the same length.** The anonymous feed
+#: response entry is 60s fresh and this default TTL is 60s, so at the instant a
+#: request became a `miss` the artifact it wanted had expired too. A reader with
+#: no OTHER miss in the preceding TTL therefore could not benefit from sharing,
+#: however well the sharing worked. Measured 2026-09-04 on production, same
+#: code, same hour: readers 20s apart shared `market_load` on 80.0% of misses
+#: (miss p50 1,502ms, 1,079ms by the third), readers 65s apart on 41.2% (miss
+#: p50 1,767ms).
+#:
+#: What made it a LOTTERY rather than a flat failure is that a reader is rarely
+#: alone: at 90s spacing the same unchanged code measured 90.9% shared in one
+#: 17-minute window and 42.9% in the next, purely on how much other miss traffic
+#: happened to be building the artifact. Widening the TTL is what turns that
+#: coin-flip into a floor — and the win it buys is measured, not assumed:
+#: 2026-09-04 03:27-04:09, misses whose `market_load` was shared ran p50
+#: ~1,310ms against ~1,900ms for misses that rebuilt it.
+#:
+#: The two TTLs are unrelated quantities and only looked like one number.
+#: A response entry's TTL asks *how stale may a rendered page be*; an artifact's
+#: TTL asks *how stale may the rows underneath it be*. This table is where they
+#: stop being tied together.
+#:
+#: **Sizing rule: a namespace's TTL should not exceed the fastest cadence at
+#: which the rows it caches are rewritten** — past that the cache, not the
+#: writer, becomes the binding staleness term. For `market_load` (FuturesMarket
+#: /FuturesOutcome columns) the fastest writer is `refresh_registered_tournament
+#: _prices` at every 10 minutes; `refresh_stale_futures_prices` is hourly,
+#: `poll_futures_odds` 4-hourly, and #2199's declared tolerance for a futures
+#: price is 6 HOURS. 60s is 60x finer than the grid the data itself moves on.
+#:
+#: **Why `market_load` is 120 and not 600.** 120 is the value that changes
+#: NOTHING about the WORST CASE a reader can get, and that is the point. Until
+#: the promotion fix in `get_or_build` (same change), an L2 read was promoted
+#: into L1 stamped `now` instead of backdated to the build, so a 60s artifact
+#: COULD be served for up to ~120s: 60 in the builder, up to 60 more in a worker
+#: that promoted it late. How often that actually fired is not claimed — the
+#: 2026-09-04 production read shows reuse arriving almost entirely as
+#: `cross_worker`, i.e. L1 was usually empty and the overrun rarely had the
+#: chance. The bound is the point, not the frequency: **120 declares the worst
+#: case production has been exposed to since LAT-P103** rather than raising it.
+#: `concepts` — whose TTL is a real bound on `now`-derived copy and pin state —
+#: keeps 60 and, with the promotion fixed, gets TIGHTER: from an undeclared
+#: ~120s to an honest 60s. Loosening where staleness is cheap and tightening
+#: where it is not is the whole reason this table is per-namespace.
+#:
+#: 600 (one tournament-price write cycle) is the value LAT-P221b actually wants
+#: and it is an ATTENDED decision (Alex, DECIDE E1), so it lands as the runtime
+#: override above — one `heroku config:set FEED_SHARED_BUILD_TTL_S_MARKET_LOAD
+#: =600`, no deploy, revert by unsetting — and is promoted into this table only
+#: after a post-state measurement has read it in production.
+TTL_BY_NAMESPACE: dict[str, float] = {"market_load": 2 * DEFAULT_TTL_S}
 
 #: The clock-bucket width for a shared key that carries one (LAT-P104).
 #:
@@ -381,15 +451,78 @@ def assert_shared_key(key: Any) -> None:
     _walk(key, 0)
 
 
-def shared_build_ttl_s() -> float:
-    """The process-wide TTL, from `FEED_SHARED_BUILD_TTL_S`. 0 disables sharing."""
-    raw = os.environ.get("FEED_SHARED_BUILD_TTL_S")
+def _parse_ttl(raw: Optional[str]) -> Optional[float]:
+    """A TTL env value as a non-negative float, or None if absent/unreadable.
+
+    Unreadable and absent collapse to the same answer on purpose: a typo in a
+    config var must fall back to the configured default, never to 0 (which is
+    the kill switch) and never to a crash on the flagship route.
+    """
     if raw is None:
-        return DEFAULT_TTL_S
+        return None
     try:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
-        return DEFAULT_TTL_S
+        return None
+
+
+def namespace_ttl_env_var(namespace: str) -> str:
+    """The per-namespace runtime override var, e.g. `market_load` ->
+    `FEED_SHARED_BUILD_TTL_S_MARKET_LOAD`."""
+    return f"FEED_SHARED_BUILD_TTL_S_{namespace.upper()}"
+
+
+def shared_build_ttl_s() -> float:
+    """The process-wide TTL, from `FEED_SHARED_BUILD_TTL_S`. 0 disables sharing."""
+    parsed = _parse_ttl(os.environ.get("FEED_SHARED_BUILD_TTL_S"))
+    return DEFAULT_TTL_S if parsed is None else parsed
+
+
+def shared_build_ttl_for(namespace: str) -> float:
+    """The TTL one namespace is served at. 0 disables sharing for it.
+
+    LAT-P221b. Precedence, most specific first, with ONE exception that is not
+    a precedence rule at all:
+
+    1. `FEED_SHARED_BUILD_TTL_S=0` — the kill switch, and it is ABSOLUTE. It
+       predates this function as the documented "turn all sharing off without a
+       deploy" lever, and a per-namespace var must not be able to keep one
+       namespace alive after someone has pulled it.
+    2. `FEED_SHARED_BUILD_TTL_S_<NAMESPACE>` — the per-namespace runtime lever.
+    3. `FEED_SHARED_BUILD_TTL_S` — an explicit process-wide override still
+       moves every namespace that has not named its own.
+    4. `TTL_BY_NAMESPACE[namespace]`, else `DEFAULT_TTL_S`.
+
+    Why per-namespace at all rather than one bigger global: the namespaces bound
+    different things. `concepts` embeds `now`-derived text and pin state, so its
+    TTL is a real staleness bound on rendered copy; `market_load` is market rows
+    whose own writers run on a 10-minute-to-6-hour grid. Moving the global to
+    serve the second would silently make the first staler, and "probably fine"
+    is not a measurement.
+    """
+    global_ttl = _parse_ttl(os.environ.get("FEED_SHARED_BUILD_TTL_S"))
+    if global_ttl is not None and global_ttl <= 0:
+        return 0.0
+    namespace_ttl = _parse_ttl(os.environ.get(namespace_ttl_env_var(namespace)))
+    if namespace_ttl is not None:
+        return namespace_ttl
+    if global_ttl is not None:
+        return global_ttl
+    return TTL_BY_NAMESPACE.get(namespace, DEFAULT_TTL_S)
+
+
+def max_shared_build_ttl_s() -> float:
+    """The longest TTL any known namespace can currently be served at.
+
+    This is what the clock-bucket clamp has to measure itself against once TTLs
+    are per-namespace: a bucket sized on the global default would be finer than
+    a raised namespace's TTL and would throw its still-fresh entries away.
+    """
+    return max(
+        [shared_build_ttl_s()]
+        + [shared_build_ttl_for(ns) for ns in SHARED_ARTIFACT_NAMES]
+        + [shared_build_ttl_for(ns) for ns in TTL_BY_NAMESPACE]
+    )
 
 
 def clock_bucket_s() -> float:
@@ -397,14 +530,17 @@ def clock_bucket_s() -> float:
 
     `CLOCK_BUCKET_S` is the chosen width; this clamp is what makes "the key
     never discards a fresh entry" hold BY CONSTRUCTION rather than by an
-    assertion a reviewer has to notice. `FEED_SHARED_BUILD_TTL_S` can be raised
-    at runtime with no deploy, and the one thing that must not happen when it is
-    is the defect LAT-P104 removed coming back one env var later.
+    assertion a reviewer has to notice. The TTL can be raised at runtime with no
+    deploy — process-wide via `FEED_SHARED_BUILD_TTL_S` or for one namespace via
+    `FEED_SHARED_BUILD_TTL_S_<NAMESPACE>` — and the one thing that must not
+    happen when it is is the defect LAT-P104 removed coming back one env var
+    later. So the clamp reads the LARGEST live TTL, not the global one:
+    per-namespace TTLs (LAT-P221b) mean the global no longer bounds them.
 
     Widening the bucket past the TTL is free: staleness is `min(TTL, bucket)`,
     so the TTL keeps binding and only the wasted rotation goes away.
     """
-    return max(float(CLOCK_BUCKET_S), shared_build_ttl_s())
+    return max(float(CLOCK_BUCKET_S), max_shared_build_ttl_s())
 
 
 def cross_worker_enabled() -> bool:
@@ -743,15 +879,21 @@ async def _shared_redis_client() -> Any:
 
 async def _read_cross_worker(
     namespace: str, key: tuple, ttl_s: float
-) -> tuple[bool, Any]:
-    """Return `(hit, value)` from the Redis tier. Never raises.
+) -> tuple[bool, Any, float]:
+    """Return `(hit, value, age_s)` from the Redis tier. Never raises.
 
     Bounded, and every failure mode — disabled, no client, stall, malformed
-    envelope, wrong namespace/key, too old — returns `(False, None)`, i.e. the
-    caller builds exactly as it does today.
+    envelope, wrong namespace/key, too old — returns `(False, None, 0.0)`, i.e.
+    the caller builds exactly as it does today.
+
+    `age_s` is how long ago the artifact was BUILT, measured against the
+    envelope's `stored_wall`. It is returned rather than discarded because the
+    caller promotes this value into its process-local tier, and an entry
+    promoted with a fresh timestamp would restart a clock that is already part
+    way through. See the promotion site in `get_or_build`.
     """
     if not cross_worker_enabled():
-        return False, None
+        return False, None, 0.0
     from app.utils import request_cache as _rc
 
     try:
@@ -761,7 +903,7 @@ async def _read_cross_worker(
     except Exception:
         logger.debug("shared build: no redis client", exc_info=True)
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     redis_key = redis_key_for(namespace, key)
     result = await _rc.bounded_redis_call(
@@ -769,42 +911,42 @@ async def _read_cross_worker(
     )
     if result.is_failure:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     if not result.is_ok:
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     raw = wire_decode(result.value)
     if raw is None:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     try:
         envelope = json.loads(raw)
     except (ValueError, TypeError):
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     if not isinstance(envelope, dict) or envelope.get("v") != 1:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     # A digest is a hash. Identity is the stored key repr, checked here, so a
     # collision between two distinct cache keys can only cost a rebuild.
     if envelope.get("ns") != namespace or envelope.get("k") != repr(key):
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     stored_wall = envelope.get("stored_wall")
     if not isinstance(stored_wall, (int, float)) or isinstance(stored_wall, bool):
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     # Wall clock, because L1's monotonic clock means nothing in the process that
     # wrote this. A negative age is a writer whose clock runs ahead: the entry is
     # YOUNGER than it looks, so clamping to 0 is the conservative reading.
     age_s = max(0.0, time.time() - float(stored_wall))
     if age_s > ttl_s:
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     try:
         value = decode_shared_payload(envelope["payload"])
@@ -813,10 +955,10 @@ async def _read_cross_worker(
             "shared build: undecodable payload for namespace=%s — building", namespace
         )
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     _stats["cross_worker_hits"] += 1
-    return True, value
+    return True, value, age_s
 
 
 async def _publish_cross_worker(
@@ -926,7 +1068,9 @@ async def get_or_build(
     worker pays nothing for it and a cold one trades ~1ms against the rebuild.
     """
     _clock = clock or time.monotonic
-    _ttl = shared_build_ttl_s() if ttl_s is None else ttl_s
+    # LAT-P221b: per-namespace, because the artifact TTL and the response-cache
+    # TTL are unrelated quantities that happened to be the same number.
+    _ttl = shared_build_ttl_for(namespace) if ttl_s is None else ttl_s
 
     if _ttl <= 0:
         _stats["builds"] += 1
@@ -980,11 +1124,23 @@ async def get_or_build(
         # against a hit. A cold worker (fresh dyno, restarted worker, or simply
         # one of the other `WEB_CONCURRENCY` processes) reaches the artifact
         # here instead of rebuilding it.
-        ok, value = await _read_cross_worker(namespace, key, _ttl)
+        ok, value, age_s = await _read_cross_worker(namespace, key, _ttl)
         if ok:
             # Promote into L1 so this worker's NEXT request skips the hop too.
+            #
+            # BACKDATED to when the artifact was BUILT, not to now (LAT-P221b).
+            # Stamping the promotion with `_clock()` restarts a clock that is
+            # already part way through, and the entry then outlives its own TTL:
+            # worker A builds at t=0 and publishes; worker B promotes at t=59
+            # (a legal L2 read, age 59 <= 60) and serves that copy from L1 until
+            # t=119 — 119 seconds of staleness under a 60-second bound. The
+            # module's property 6 says age is bounded by the reader's wall
+            # clock; that held on the L2 READ and was thrown away one line
+            # later. Backdating makes the bound hold end to end, and it is what
+            # lets a namespace's TTL be sized against its writers' cadence
+            # (`TTL_BY_NAMESPACE`) rather than against twice that.
             entries = _store.setdefault(namespace, {})
-            entries[key] = (_clock(), copy.deepcopy(value))
+            entries[key] = (_clock() - age_s, copy.deepcopy(value))
             _evict_if_needed(entries, namespace)
             _note_reuse(namespace, reuse_sink, SHARED_TIER_CROSS_WORKER)
             return value

@@ -7667,13 +7667,27 @@ async def _score_futures(
         # reads are rebuilt per request as inert snapshots holding no session,
         # no identity map and no lazy loaders (#2107, gotcha #6).
         #
-        # Staleness is bounded by the shared TTL (60s default). That is strictly
-        # tighter than what these same rows already reach a reader through: the
-        # anonymous response entry serves 60s fresh plus a 60s stale mirror, and
-        # the prices themselves are repolled on a 2-minute cadence. The key
-        # carries NO clock component for the same reason `canonical_counts`
-        # carries none — LAT-P104 measured a clock-bucketed key throwing away
-        # still-fresh entries, and the TTL is the bound here regardless.
+        # Staleness is bounded by this namespace's shared TTL
+        # (`shared_build_ttl_for("market_load")`, 60s until the LAT-P221b lever
+        # is set). The key carries NO clock component for the same reason
+        # `canonical_counts` carries none — LAT-P104 measured a clock-bucketed
+        # key throwing away still-fresh entries, and the TTL is the bound here
+        # regardless. The digest is order-INDEPENDENT (`digest_of` sorts), so a
+        # reshuffled candidate base still shares; only a MEMBERSHIP change
+        # rotates it.
+        #
+        # LAT-P221b — the sentence that used to stand here said this TTL was
+        # "strictly tighter than the anonymous response entry (60s fresh + a
+        # stale mirror)". Both numbers being 60 was the DEFECT, not the
+        # justification: at the instant a request is a `miss` the response entry
+        # has just expired, and so has the artifact, so a reader arriving alone
+        # can never benefit however well the sharing works. Measured: readers
+        # 20s apart shared this artifact on 80.0% of misses, readers 65s apart
+        # on 41.2%. The two TTLs are now independent
+        # (`principal_independent_cache.TTL_BY_NAMESPACE`), and the bound that
+        # actually matters for these rows is their WRITERS' cadence — 10 minutes
+        # for registered tournament prices, hourly for the stale-price sweep,
+        # 6 hours for #2199's declared tolerance.
         _snapshot_key = (
             "market_load",
             _futures_snapshot.SNAPSHOT_SCHEMA_VERSION,
