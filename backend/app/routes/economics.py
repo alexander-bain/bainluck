@@ -119,15 +119,41 @@ def _outcomes_sorted(market: FuturesMarket) -> list:
 
 
 def _market_row(market: FuturesMarket) -> dict | None:
-    """Convert a binary market to a Market row. Returns None for multi-outcome markets."""
-    outcomes = list(market.outcomes)
+    """Convert a binary market to a Market row.
+
+    Returns None for a multi-outcome market, and for a market this page holds
+    no probability for at all.
+
+    #2950 — the old body opened `prob = 0.0` and gave that one name two jobs:
+    the running maximum, and the value returned when the loop never ran. Its
+    only refusal was `len(outcomes) > 5` — too MANY outcomes; it never refused
+    zero. So a market with no outcomes fell through and the page printed a
+    confident `0%` under a real question, including `"WTI Crude Oil (WTI) Up or
+    Down on September 4?"` on September 3rd. 175 of 2,269 open economics
+    markets carry no outcomes at all.
+
+    Both sibling dashboards already refuse on their third line
+    (`politics.py`, `entertainment.py`), and so does this file's own
+    `_cross_source_row_fn` below. This was the one row-builder of the four that
+    did neither — measured the same minute: `/api/politics` 68 rows / 0 zeros,
+    `/api/entertainment` 105 / 0, `/api/economics` 58 / **5**.
+
+    The sentinel is removed rather than guarded: `prob` is a `max()` over a
+    list already proven non-empty, so no initialiser survives that could be
+    mistaken for a measurement.
+    """
+    outcomes = _clean_outcomes(list(market.outcomes))
     if len(outcomes) > 5:
         return None
-    prob = 0.0
-    for o in outcomes:
-        p = float(o.current_probability or 0)
-        if p > prob:
-            prob = p
+    # `is not None`, not `or 0`. `current_probability` is Numeric(7, 6), so it
+    # arrives as a Decimal — and `Decimal("0.000000")` is FALSY, so the old
+    # `or 0` read a genuine priced zero as no reading at all. A priced zero is
+    # data (the market says no); a NULL is the absence of data. Only the second
+    # is grounds for refusing the row.
+    priced = [o for o in outcomes if o.current_probability is not None]
+    if not priced:
+        return None
+    prob = max(float(o.current_probability) for o in priced)
     return {
         "q": market.name,
         "prob": round(prob * 100, 1),
