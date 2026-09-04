@@ -193,6 +193,78 @@ describe("UX-1052 item 8 — the duplicate yes/no section is gone", () => {
     expect(html).toContain("Yes / no");
   });
 
+  /**
+   * ── CERT-859 FOLLOW-UP, `UX-1052-HOISTED-SECTION-COUNTS` ──
+   *
+   * The cert: *"when `hoistBinaries` is true, a mixed section's count chip
+   * still uses the original `markets.length` rather than the cards/ladders it
+   * renders."* On the MLB page that is `(69)` over fourteen cards.
+   *
+   * Both arms, because the fix is only correct if it is invisible to the
+   * callers this queue never looked at.
+   */
+  describe("a section counts what it DRAWS, not what it was handed", () => {
+    /** Seven markets: two list cards and five binaries the page hoists away. */
+    const MIXED: LeagueMarket[] = [
+      listMarket(20, "NL MVP", "props"),
+      listMarket(21, "AL MVP", "props"),
+      ...Array.from({ length: 5 }, (_, i) =>
+        binaryMarket(22 + i, `Question ${i}`, 0.5 - i * 0.05, "props"),
+      ),
+    ];
+
+    it("the hoisted chip counts the cards, not the hoisted binaries with them", () => {
+      const html = renderToStaticMarkup(
+        <LeagueMarketSection
+          sectionKey="props"
+          label="Props"
+          markets={MIXED}
+          sectionCount={3}
+          tier="standard"
+          hoistBinaries
+        />,
+      );
+      expect(html).toContain("(2)");
+      expect(html).not.toContain("(7)");
+    });
+
+    it("CONTROL: with the flag off the chip is unchanged — the partition is total", () => {
+      // `partitionLeagueMarkets` puts every market in exactly one bucket, so
+      // the drawn count IS `markets.length` here. If that ever stops being
+      // true this arm goes red before a caller silently loses a number.
+      const html = renderToStaticMarkup(
+        <LeagueMarketSection
+          sectionKey="props"
+          label="Props"
+          markets={MIXED}
+          sectionCount={3}
+          tier="standard"
+        />,
+      );
+      expect(html).toContain("(7)");
+    });
+
+    it("the header itself follows the drawn count — register E1 through the back door", () => {
+      // `earnsSectionHeader` needs 2+ items. A section handed six and drawing
+      // ONE is a header over a single card, which is the defect UX-P062 named;
+      // the hoist is a new way to arrive at it, so the same rule has to see
+      // the same number the reader does.
+      const html = renderToStaticMarkup(
+        <LeagueMarketSection
+          sectionKey="props"
+          label="Props"
+          markets={MIXED.slice(1)}
+          sectionCount={3}
+          tier="standard"
+          hoistBinaries
+        />,
+      );
+      expect(html).not.toContain("Props");
+      // The card it draws survives losing its header.
+      expect(html).toContain("Shohei Ohtani");
+    });
+  });
+
   it("the page-level partition collects binaries from every section, once", () => {
     const sections: [string, LeagueMarket[]][] = [
       ["awards", [binaryMarket(3, "Ohtani: Cy Young and MVP", 0.01, "awards"), listMarket(9, "NL MVP", "awards")]],

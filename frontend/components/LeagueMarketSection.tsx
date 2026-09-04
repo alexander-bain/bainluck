@@ -138,10 +138,30 @@ export default function LeagueMarketSection({
     ? "grid-cols-1 sm:grid-cols-2"
     : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
 
+  /**
+   * ── CERT-859 FOLLOW-UP, `UX-1052-HOISTED-SECTION-COUNTS` ──
+   *
+   * The header counts what this section DRAWS, not what it was handed. With
+   * `hoistBinaries` on, `props` is handed 69 markets and draws 14 of them —
+   * a chip reading `(69)` over fourteen cards claims a card the renderer
+   * declined to draw, which is the #2646 class and the same rule item 2's
+   * prop strip follows.
+   *
+   * It also decides the HEADER, not only the chip: `awards` is handed 24 and
+   * draws 23, but a section handed 24 that draws ONE would have kept a header
+   * over a single card — UX-P062 register E1 verbatim, arriving through the
+   * back door the hoist opened.
+   *
+   * `partitionLeagueMarkets` is total — every market lands in exactly one of
+   * the three buckets — so with `hoistBinaries` off this is `markets.length`
+   * by construction, and the hub and every other caller stay byte-identical.
+   */
+  const rendered = cards.length + ladders.length + binaries.length;
+
   // When the caller does not declare a page context, behave exactly as before —
   // a silent behaviour change on every other caller is not this queue's to make.
   const chromeAware = sectionCount != null;
-  const showHeader = !chromeAware || earnsSectionHeader(markets.length, sectionCount);
+  const showHeader = !chromeAware || earnsSectionHeader(rendered, sectionCount);
   const showChip = !chromeAware || earnsCountChip(tier);
 
   return (
@@ -151,7 +171,7 @@ export default function LeagueMarketSection({
           <span>{SECTION_EMOJI[sectionKey] || "📋"}</span>
           {label}
           {showChip && (
-            <span className="text-text-muted font-normal">({markets.length})</span>
+            <span className="text-text-muted font-normal">({rendered})</span>
           )}
         </h2>
       )}
