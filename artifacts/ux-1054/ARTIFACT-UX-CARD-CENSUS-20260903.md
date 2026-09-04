@@ -364,8 +364,8 @@ data gap.**
 
 `Alexandria Ocasio-Cortez`: 51 points, first `2026-08-05T03:50Z`, **last `2026-08-28T18:49Z`** —
 and the same for all ten full-length sparks on the page. **Zero points in the last 24 hours**, on a
-page whose whole claim is movement. The lines still render at full contrast; nothing on the page
-says the last vertex is a week old.
+page whose whole claim is movement. The lines still render at full contrast, beside a `MoveChip`
+that reports change; nothing on the page says the last vertex is a week old. **#2961**, with §6.3d.
 
 ### 6.3c `/weather`'s sparklines are generated, not observed — TRUTH pillar
 
@@ -382,14 +382,17 @@ ENDS at the real current probability and invents the thirteen points before it. 
 on `/weather` right now at 1440 (one hero, three wild cards), drawn in the same shared `Sparkline`
 component that draws the real ones on `/politics` and the event leaderboard — so a reader has no
 way to tell them apart, and neither does a grep. **This is the single most serious thing in this
-census.** It is not repaired here.
+census.** It is not repaired here — **filed as #2960**, which leaves the delete-vs-serve-real-history
+decision to #2911.
 
 ### 6.3d A chart with no recent point looks exactly like a chart with one
 
 `/api/futures/16630403` ("Hantavirus pandemic in 2026?") returns **419 history points, 0 of them in
 the last 24 hours**. `FuturesChart` draws all 419 on a time axis whose right edge is now, so the
 line simply runs flat to the present. Nothing declares the last real reading. Compare C3's healthy
-case, 6 points per outcome per day.
+case, 6 points per outcome per day. **Filed with §6.3b as #2961** — one defect, two instances: a
+chart is honest about every point it draws and silent about the gap between its last point and the
+right edge of its own axis.
 
 ### 6.3e Discover and /sports draw no charts at all
 
