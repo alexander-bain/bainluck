@@ -375,10 +375,19 @@ MEMBER_SEPARATOR = "\x1e"
 #: because the two halves are different rules sharing one disclosure; the
 #: characterization test reads BOTH tuples out of the frozen file as text and
 #: derives what this must equal, so adding a cell to either one reds the pin.
+#: CAL-P1002F adds ``nxb_sum_cell_0`` — D66's `kalshi/entertainment`, generated
+#: in the frozen module from a THIRD constant (``SUM_ARM_ONLY_EXCLUDED_CELLS``).
+#: Its own prefix rather than the next ``nxb_cell_`` index, so the two allowlists
+#: can be reordered independently without silently renumbering each other's
+#: columns — and it sits BETWEEN the ``nxb_cell_*`` and ``pp_cell_*`` halves
+#: because this tuple is an ORDER pin, not a set: it is zipped against the
+#: statement's emission order, and the characterization test derives that order
+#: from the frozen file's text rather than accepting whatever this literal says.
 NONEXCLUSIVE_BUNDLE_CELL_COLUMNS: tuple[str, ...] = (
     "nxb_cell_esports",
     "nxb_cell_0",
     "nxb_cell_1",
+    "nxb_sum_cell_0",
     "pp_cell_0",
 )
 

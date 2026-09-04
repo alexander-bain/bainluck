@@ -251,11 +251,26 @@ class TestAQueryShapedRowSurvivesBothBoundaries:
         # below proves it is summed across units like every other census column
         # — a chunk-local count that got broadcast instead would understate the
         # temporary exclusion on the page by however many units it ignored.
+        # CAL-P1002F: `nxb_sum_cell_0` is D66's `kalshi/entertainment` count, and
+        # it gets DISTINCT values here for the same reason `pp_cell_0` does. Left
+        # on the fixture default it would still have summed to a plausible number
+        # — the default is equal across units — so a chunk-local count broadcast
+        # instead of summed would have read correct. Distinct primes make the
+        # arithmetic only satisfiable one way.
         unit_a = _query_shaped_row(
-            nxb_cell_esports=5, nxb_cell_0=11, nxb_cell_1=13, pp_cell_0=19
+            nxb_cell_esports=5,
+            nxb_cell_0=11,
+            nxb_cell_1=13,
+            nxb_sum_cell_0=29,
+            pp_cell_0=19,
         )
         unit_b = _query_shaped_row(
-            bucket_idx=4, nxb_cell_esports=2, nxb_cell_0=3, nxb_cell_1=17, pp_cell_0=23
+            bucket_idx=4,
+            nxb_cell_esports=2,
+            nxb_cell_0=3,
+            nxb_cell_1=17,
+            nxb_sum_cell_0=31,
+            pp_cell_0=23,
         )
         rows = merge_futures_rows(
             [[unit_a], [unit_b]], census_columns=_runtime_census_columns()
@@ -268,6 +283,7 @@ class TestAQueryShapedRowSurvivesBothBoundaries:
             "esports": 7,
             "kalshi/crypto": 14,
             "kalshi/economics": 30,
+            "kalshi/entertainment": 60,
             "polymarket/baseball": 42,
         }
         # Broadcast, not per-row: the consumer's rows[0] read is only honest if
