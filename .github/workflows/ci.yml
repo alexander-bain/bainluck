@@ -417,6 +417,35 @@ jobs:
             exit 1
           fi
 
+      - name: Pre-match prior equivalence (real Postgres)
+        # LAT-P222/#3030. Third instance of the class the two gates above cover:
+        # a correlated bound the planner cannot evaluate until it holds the row.
+        # The ux/1036 read joined `win_prob_snapshots` back to `events` for
+        # `commence_time`, so it probed `events_pkey` 24,528 times to return 53
+        # rows — 86% of the whole `events` stage of a cold Discover build. The
+        # caller was already holding every one of those cutoffs.
+        #
+        # Real Postgres because `unnest` of two arrays, CROSS JOIN LATERAL and
+        # DISTINCT ON have no other dialect, and because the risk is not the
+        # latency: the kickoff bound is the only thing stopping a settled market's
+        # ~100% winner price from being printed on a finished card as what the
+        # market thought BEFORE the game. This gate seeds readings on both sides
+        # of kickoff and proves the rewrite returns exactly what the join did —
+        # then proves the seed can tell a dropped bound apart, so a green here is
+        # a statement about the bound and not about the fixture.
+        #
+        # Same skip-detection as every gate in this job, for the same reason:
+        # pytest exits 0 when every test skips, so a gate that silently did not
+        # run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_prematch_prior_lateral_equivalence_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/prematch_prior.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/prematch_prior.txt; then
+            echo "::error::pre-match prior equivalence SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Kalshi cliff-drain bind contract (real Postgres)
         # #1884. The drain shipped with 39 green unit tests and threw
         # asyncpg.DataError on the FIRST statement of every run: it bound its
