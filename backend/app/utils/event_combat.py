@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -616,6 +617,10 @@ async def list_card_concepts(
         event_bouts = folded_bouts
 
     concepts: list[dict] = []
+    # The main event's start, carried forward from the scan that already read
+    # it. `_attach_headline_bouts` needs it and must not re-read
+    # `futures_markets` to get it — see the note in that function.
+    main_event_commence: dict[int, Any] = {}
     for token in set(cards) | set(event_bouts):
         kalshi = cards.get(token)
         bouts = event_bouts.get(token) or []
@@ -642,6 +647,7 @@ async def list_card_concepts(
             main = kalshi["fights"][-1]
             label, is_major = card_label(cfg, main["name"], tuple(kalshi["titles"]))
             main_id = main["id"]
+            main_event_commence[main_id] = main["commence"]
             fight_count = len(kalshi["fights"])
             name = label or main["name"]
         else:
@@ -675,11 +681,15 @@ async def list_card_concepts(
         )
     )
     concepts = concepts[:limit]
-    await _attach_headline_bouts(db, concepts)
+    await _attach_headline_bouts(db, concepts, main_event_commence)
     return concepts
 
 
-async def _attach_headline_bouts(db: AsyncSession, concepts: list[dict]) -> None:
+async def _attach_headline_bouts(
+    db: AsyncSession,
+    concepts: list[dict],
+    commence_by_market: dict[int, Any] | None = None,
+) -> None:
     """Give each card its MAIN EVENT: two fighters, two numbers.
 
     ux/1070 item 2. A fight card was shipping the shape of an outright race —
@@ -700,54 +710,67 @@ async def _attach_headline_bouts(db: AsyncSession, concepts: list[dict]) -> None
     One batched read for every card in the page, best-effort: a card whose main
     event has no priced market simply has no `headline_bout` and falls back to
     exactly what it rendered before.
+
+    That read is of `futures_outcomes`, NOT `futures_markets`, and the
+    distinction is load-bearing rather than stylistic. LAT-P094 collapsed the
+    concept tier's three 50,749-row scans of `futures_markets` into one and
+    guards the count at exactly one (`test_feed_concept_single_scan.py`); the
+    obvious spelling of this function — re-select the main-event markets with
+    `selectinload(outcomes)` — makes it two and turns that guard red. The two
+    fields it wants are the outcome name and price, which live in the child
+    table under an indexed `market_id`, and the third (`commence_time`) is
+    already in the caller's hand from the same scan. So the market row is never
+    needed twice: `commence_by_market` carries it forward instead.
     """
     main_ids = [c["main_event_id"] for c in concepts if c.get("main_event_id")]
     if not main_ids:
         return
 
-    from app.models import FuturesMarket
+    from app.models import FuturesOutcome
 
     try:
-        markets = list(
+        outcome_rows = list(
             (
                 await db.execute(
-                    select(FuturesMarket)
-                    .options(selectinload(FuturesMarket.outcomes))
-                    .where(FuturesMarket.id.in_(main_ids))
+                    select(
+                        FuturesOutcome.market_id,
+                        FuturesOutcome.name,
+                        FuturesOutcome.current_probability,
+                    ).where(FuturesOutcome.market_id.in_(main_ids))
                 )
-            )
-            .scalars()
-            .unique()
-            .all()
+            ).all()
         )
     except Exception:  # a hero is never worth failing the tier for
         return
 
-    by_id = {m.id: m for m in markets}
+    by_market: dict[int, list] = {}
+    for market_id, name, probability in outcome_rows:
+        by_market.setdefault(market_id, []).append((name, probability))
+
+    commence_by_market = commence_by_market or {}
     for concept in concepts:
-        market = by_id.get(concept.get("main_event_id"))
-        outcomes = list(getattr(market, "outcomes", None) or [])
+        main_id = concept.get("main_event_id")
+        outcomes = list(by_market.get(main_id) or [])
         if len(outcomes) != 2:
             continue  # not a two-sided bout — leave the card as it was
-        outcomes.sort(key=lambda o: float(o.current_probability or 0), reverse=True)
+        outcomes.sort(key=lambda o: float(o[1] or 0), reverse=True)
         competitors = [
             {
-                "name": o.name,
+                "name": name,
+                # Numeric(7,6) arrives as Decimal, and a Decimal is not JSON —
+                # the float() is the serialisation, not a rounding preference.
                 "probability": (
-                    round(float(o.current_probability), 4)
-                    if o.current_probability is not None
-                    else None
+                    round(float(probability), 4) if probability is not None else None
                 ),
             }
-            for o in outcomes
+            for name, probability in outcomes
         ]
         if not all(c["name"] and c["probability"] is not None for c in competitors):
             continue  # half a bout is not a bout
+        commence = commence_by_market.get(main_id)
         concept["headline_bout"] = {
             "competitors": competitors,
-            "commence_time": (
-                market.commence_time.isoformat() if market.commence_time else None
-            ),
+            "commence_time": commence.isoformat() if commence else None,
         }
 
 
