@@ -91,6 +91,8 @@ READ_FAILED = "READ-FAILED"
 #: "there is a dark id join for it and an agreement row to read".
 SHADOW_STAMPERS: dict[str, str] = {
     "americanfootball_nfl": "stamp_nfl_statpal_fixtures",
+    "basketball_nba": "stamp_nba_statpal_fixtures",
+    "icehockey_nhl": "stamp_nhl_statpal_fixtures",
 }
 
 
@@ -233,6 +235,62 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
     return round(100.0 * numerator / denominator, 2)
 
 
+def _statpal_only_by_horizon(
+    statpal_only: Sequence[Side], rows: Sequence[Side]
+) -> dict[str, int]:
+    """Split "StatPal has it, we don't" by where it falls against OUR inventory.
+
+    Added by program step 3 because NBA and NHL make the distinction load-bearing
+    and the NFL never could. StatPal publishes a whole season on day one — 1206
+    NBA games, 1404 NHL — while our table only ever holds the games that have
+    odds posted: 41 and 32, measured 2026-09-04. Under one undivided
+    ``statpal_only`` count those two sports read as a 3% identity disagreement,
+    when what is actually being measured is how far ahead our ingestion reaches.
+
+    So the count is split, and none of the three parts govern anything:
+
+      * ``before_our_first`` / ``beyond_our_last`` — outside the span our table
+        covers at all. Not a disagreement about a game; a statement about our
+        horizon.
+      * ``inside_our_span`` — StatPal has a game on a date we DO cover and we
+        hold no row for it. **This is the one that is a finding**, and it is the
+        one an ingestion gap would show up in.
+
+    `identity.pct` is untouched by any of this: the split is reported beside it,
+    never subtracted from it, because an exclusion that quietly moves the number
+    is the failure mode spec rule 5 exists to prevent.
+    """
+    starts = [r.start for r in rows if r.start is not None]
+    if not starts:
+        # No timed row on our side, so there is no span to be inside or outside
+        # of. Reporting zeros here would claim the whole StatPal list falls in
+        # our window, which is the opposite of what an empty table means.
+        return {
+            "before_our_first": 0,
+            "inside_our_span": 0,
+            "beyond_our_last": 0,
+            "unplaceable": len(statpal_only),
+        }
+
+    first, last = min(starts), max(starts)
+    split = {
+        "before_our_first": 0,
+        "inside_our_span": 0,
+        "beyond_our_last": 0,
+        "unplaceable": 0,
+    }
+    for f in statpal_only:
+        if f.start is None:
+            split["unplaceable"] += 1
+        elif f.start < first:
+            split["before_our_first"] += 1
+        elif f.start > last:
+            split["beyond_our_last"] += 1
+        else:
+            split["inside_our_span"] += 1
+    return split
+
+
 def build_agreement_row(
     *,
     sport_key: str,
@@ -303,6 +361,7 @@ def build_agreement_row(
 
     both = len(paired)
     denominator = both + len(statpal_only) + len(ours_only)
+    horizon = _statpal_only_by_horizon(statpal_only, real_rows)
 
     schedule: dict[str, int] = {
         "within": 0,
@@ -354,6 +413,19 @@ def build_agreement_row(
                 "ours_only": len(ours_only),
                 "pct": _pct(both, denominator),
                 "governs": True,
+                # Where the StatPal-only games fall against our own inventory.
+                # Reported, never subtracted — see `_statpal_only_by_horizon`.
+                "statpal_only_by_horizon": horizon,
+                # "Of the games WE hold, how many does StatPal also have?"
+                #
+                # A DIFFERENT question from `pct`, and it does not govern. For a
+                # sport where both sides carry the same population it is nearly
+                # the same number (NFL: 99.69 against 99.38). For NBA and NHL,
+                # where StatPal publishes a season and we ingest a rolling
+                # odds-driven slice, it is 100.00 against 3.40 — and the gap
+                # between the two IS the finding, which is why both are printed
+                # and neither is blended into the other (spec rule 2).
+                "ours_covered_pct": _pct(both, both + len(ours_only)),
             },
             "schedule": {
                 **schedule,
@@ -410,6 +482,13 @@ def ledger_line(row: dict[str, Any], *, day: str, streak: str = "?/7") -> str:
         f"{day} | {row['sport_key']} | denom={row['denominator']} excl={excl_text} "
         f"| identity={ident['pct']}% ({ident['both']}/{ident['statpal_only']}/"
         f"{ident['ours_only']}) "
+        # Added by program step 3, and not decoration. NBA's line reads
+        # `identity=3.4%` and NHL's `2.28%` — not because either side disagrees
+        # about a game, but because StatPal publishes a whole season on day one
+        # and we ingest a rolling odds-driven slice. Without `covers=` beside it
+        # a bus operator appends a catastrophic-looking row every morning for a
+        # sport where the two sides agree about every game we hold.
+        f"| covers={ident['ours_covered_pct']}% "
         f"| schedule={sched['within']}/{sched['off_by_hours']}/{sched['wrong_day']}"
         f"/{sched['time_missing']} "
         f"| anchors={row['anchors']['anchored']} "

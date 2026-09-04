@@ -618,6 +618,10 @@ celery_app.conf.task_routes = {
     # nothing reads the NFL stamp at all yet — it is dark by construction. Two
     # HTTP reads and one bounded query, hourly, is not realtime-queue work.
     "app.tasks.stamp_nfl_statpal_fixtures": {"queue": "background"},
+    # #2867 / D50 step 3. Same reasoning as the NFL line above, and the same
+    # queue: dark by construction, nothing reads either stamp.
+    "app.tasks.stamp_nba_statpal_fixtures": {"queue": "background"},
+    "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
     # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
@@ -3021,6 +3025,68 @@ def stamp_nfl_statpal_fixtures(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.stamp_nba_statpal_fixtures")
+def stamp_nba_statpal_fixtures(self, apply=True):
+    """Stamp each NBA row with the StatPal contest it is (#2867, D50 step 3).
+
+    The identity half of StatPal-as-canonical, DARK: it writes BOTH
+    `events.statpal_fixture_id` and the
+    `('statpal', 'basketball_nba:<id>', 'game')` anchor, and nothing reads
+    either yet. It NEVER creates a row.
+
+    Both team names exactly (StatPal's 30 and ours are the same 30 strings) plus
+    tip-off within ±1h. That window is the MEASURED ceiling, not the NFL's habit:
+    the same pair meets twice in the same orientation 23 hours apart on a
+    back-to-back, so nothing wider than 11.5h is safe, and all 41 of our
+    in-window rows agree with StatPal to the minute anyway.
+
+    Unlike the NFL, `statpal_sync` already fills this column for NBA (324 rows)
+    and has never written an anchor (0), so a row whose column is already
+    correct gets its missing anchor written rather than skipped. A column
+    holding a DIFFERENT id is a contradiction: receipted, never overruled.
+
+    `apply=False` plans and writes nothing. The 240s soft limit is well clear of
+    the global 300s (#966); the work is two HTTP reads plus one bounded
+    candidate query, so it does not grow with the size of the events table."""
+    from app.tasks.stamp_v1_statpal_fixtures import (
+        _run_stamp_nba_statpal_fixtures,
+    )
+    return _tracked_run(
+        "stamp_nba_statpal_fixtures",
+        _run_stamp_nba_statpal_fixtures(apply=apply),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.stamp_nhl_statpal_fixtures")
+def stamp_nhl_statpal_fixtures(self, apply=True):
+    """Stamp each NHL row with the StatPal contest it is (#2867, D50 step 3).
+
+    Identical in shape to the NBA stamper above — same module, same ±1h measured
+    window, same anchor discipline — with two differences that are NHL's alone.
+
+    NHL serves a SECOND id, `stats_id`, on 1404/1404 games, and it is a different
+    number from `id` (`649052` ↔ `68933`). This task anchors on `id` and carries
+    `stats_id` in the anchor's claim context, where it is visible; which of the
+    two should anchor a game is program step 5's question.
+
+    And five of our 32 in-window rows carry `04:00:00Z` — midnight US Eastern —
+    where StatPal has a real puck-drop 18.5 to 22 hours later. That is our
+    placeholder for an unset start time, it is above the 11.5h safety ceiling,
+    and no safe window can stamp it. Those rows are receipted as unmatched, not
+    chased with a wider window.
+
+    `apply=False` plans and writes nothing."""
+    from app.tasks.stamp_v1_statpal_fixtures import (
+        _run_stamp_nhl_statpal_fixtures,
+    )
+    return _tracked_run(
+        "stamp_nhl_statpal_fixtures",
+        _run_stamp_nhl_statpal_fixtures(apply=apply),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
@@ -4913,6 +4979,38 @@ celery_app.conf.beat_schedule = {
         # so it never walks the events table.
         "task": "app.tasks.stamp_nfl_statpal_fixtures",
         "schedule": crontab(minute=23),
+        "options": {"queue": "background"},
+    },
+    "stamp-nba-statpal-fixtures-hourly": {
+        # #2867 / D50 step 3. Same cadence and the same reasoning as the NFL
+        # stamper above: one call returns the whole season, so there is nothing
+        # to gain from a tighter loop, and hourly is what gives the seven-day
+        # agreement count a fresh row every day whatever hour the bus reads it.
+        #
+        # :17 was chosen by RUNNING the minute census over the assembled schedule
+        # (CERT-418's lesson), not by reading the file. It carries ZERO other
+        # crontab fires, it is outside the settlement sweep's :31–:47 window, it
+        # is 17 minutes after `sync-statpal-schedules-nba` at :00, and it shares
+        # a minute with neither the NHL stamper at :19 nor the NFL one at :23 —
+        # so no two StatPal readers ever run together.
+        #
+        # Two HTTP reads and one bounded candidate query per pass. The candidate
+        # window is one hour either side of the outermost tip-off StatPal served,
+        # so it never walks the events table.
+        "task": "app.tasks.stamp_nba_statpal_fixtures",
+        "schedule": crontab(minute=17),
+        "options": {"queue": "background"},
+    },
+    "stamp-nhl-statpal-fixtures-hourly": {
+        # #2867 / D50 step 3. :19 by the same census — zero other fires, clear of
+        # :31–:47, 18 minutes after `sync-statpal-schedules-nhl` at :01, and two
+        # minutes clear of the NBA stamper.
+        #
+        # NHL is the sport that matters first: its preseason opens 2026-09-19,
+        # which is the earliest of the four US leagues and the first chance to
+        # measure a StatPal live-state vocabulary that is not tennis.
+        "task": "app.tasks.stamp_nhl_statpal_fixtures",
+        "schedule": crontab(minute=19),
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

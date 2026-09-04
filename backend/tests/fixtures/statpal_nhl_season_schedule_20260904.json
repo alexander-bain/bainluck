@@ -1,0 +1,301 @@
+{
+ "scores": {
+  "sport": "hockey",
+  "tournament": {
+   "country": "usa",
+   "id": "2506",
+   "league": "NHL",
+   "season": "2026/2027",
+   "match": [
+    {
+     "date": "19.09.2026",
+     "id": "649052",
+     "stats_id": "68933",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Bell Centre",
+     "home": {
+      "id": "2614",
+      "name": "Montreal Canadiens",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2635",
+      "name": "Toronto Maple Leafs",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "19.09.2026",
+     "id": "649053",
+     "stats_id": "68933",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Scotiabank Arena",
+     "home": {
+      "id": "2635",
+      "name": "Toronto Maple Leafs",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2614",
+      "name": "Montreal Canadiens",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "29.09.2026",
+     "id": "652869",
+     "stats_id": "68943",
+     "status": "Not Started",
+     "time": "21:00",
+     "venue": "Lenovo Center",
+     "home": {
+      "id": "2625",
+      "name": "Carolina Hurricanes",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2655",
+      "name": "Florida Panthers",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "30.09.2026",
+     "id": "652871",
+     "stats_id": "68945",
+     "status": "Not Started",
+     "time": "00:00",
+     "venue": "TD Garden",
+     "home": {
+      "id": "2659",
+      "name": "Boston Bruins",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2671",
+      "name": "New York Rangers",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "30.09.2026",
+     "id": "652872",
+     "stats_id": "68946",
+     "status": "Not Started",
+     "time": "02:00",
+     "venue": "Rogers Place",
+     "home": {
+      "id": "2638",
+      "name": "Edmonton Oilers",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2680",
+      "name": "Vancouver Canucks",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "30.09.2026",
+     "id": "652873",
+     "stats_id": "68947",
+     "status": "Not Started",
+     "time": "02:30",
+     "venue": "T-Mobile Arena",
+     "home": {
+      "id": "7763",
+      "name": "Vegas Golden Knights",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2527",
+      "name": "Chicago Blackhawks",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "30.09.2026",
+     "id": "652874",
+     "stats_id": "68948",
+     "status": "Not Started",
+     "time": "23:30",
+     "venue": "Xfinity Mobile Arena",
+     "home": {
+      "id": "2526",
+      "name": "Philadelphia Flyers",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2630",
+      "name": "Pittsburgh Penguins",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "01.10.2026",
+     "id": "652877",
+     "stats_id": "68951",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Nationwide Arena",
+     "home": {
+      "id": "2640",
+      "name": "Columbus Blue Jackets",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2661",
+      "name": "Buffalo Sabres",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "01.10.2026",
+     "id": "652879",
+     "stats_id": "68953",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Prudential Center",
+     "home": {
+      "id": "2644",
+      "name": "New Jersey Devils",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2526",
+      "name": "Philadelphia Flyers",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "02.10.2026",
+     "id": "652878",
+     "stats_id": "68976",
+     "status": "Not Started",
+     "time": "00:00",
+     "venue": "Bridgestone Arena",
+     "home": {
+      "id": "2684",
+      "name": "Nashville Predators",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2624",
+      "name": "Minnesota Wild",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "02.10.2026",
+     "id": "652882",
+     "stats_id": "68978",
+     "status": "Not Started",
+     "time": "01:30",
+     "venue": "Delta Center",
+     "home": {
+      "id": "10903",
+      "name": "Utah Mammoth",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2527",
+      "name": "Chicago Blackhawks",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "02.10.2026",
+     "id": "652881",
+     "stats_id": "68979",
+     "status": "Not Started",
+     "time": "02:00",
+     "venue": "SAP Center",
+     "home": {
+      "id": "2623",
+      "name": "San Jose Sharks",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2655",
+      "name": "Florida Panthers",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "02.10.2026",
+     "id": "652885",
+     "stats_id": "68959",
+     "status": "Not Started",
+     "time": "22:30",
+     "venue": "Little Caesars Arena",
+     "home": {
+      "id": "2642",
+      "name": "Detroit Red Wings",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2671",
+      "name": "New York Rangers",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "03.10.2026",
+     "id": "652884",
+     "stats_id": "68983",
+     "status": "Not Started",
+     "time": "01:00",
+     "venue": "American Airlines Center",
+     "home": {
+      "id": "2645",
+      "name": "Dallas Stars",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2787",
+      "name": "St. Louis Blues",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "20.12.2026",
+     "id": "653442",
+     "stats_id": "69529",
+     "status": "Not Started",
+     "time": "00:00",
+     "venue": "Canada Life Centre",
+     "home": {
+      "id": "4285",
+      "name": "Winnipeg Jets",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2645",
+      "name": "Dallas Stars",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "20.12.2026",
+     "id": "653448",
+     "stats_id": "69529",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Canada Life Centre",
+     "home": {
+      "id": "4285",
+      "name": "Winnipeg Jets",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2645",
+      "name": "Dallas Stars",
+      "totalscore": ""
+     }
+    }
+   ]
+  }
+ }
+}
