@@ -145,20 +145,36 @@ export function teamShortNames(
   const homeFull = (home.name ?? "").trim();
   const awayFull = (away.name ?? "").trim();
 
-  const homeAbbrev = (home.abbreviation ?? "").trim();
-  const awayAbbrev = (away.abbreviation ?? "").trim();
-  if (homeAbbrev && awayAbbrev) {
-    return { home: homeAbbrev, away: awayAbbrev };
-  }
-
   const homeShort = teamShortName(homeFull);
   const awayShort = teamShortName(awayFull);
 
-  if (
-    homeShort &&
-    awayShort &&
-    homeShort.toLowerCase() === awayShort.toLowerCase()
-  ) {
+  // Did the last-word rule have to give up on this side? (A single-word name
+  // has nothing to shorten and has not "given up" — it is already compact.)
+  const gaveUp = (full: string, short: string) =>
+    short === full && full.split(/\s+/).length >= 2;
+  const homeGaveUp = gaveUp(homeFull, homeShort);
+  const awayGaveUp = gaveUp(awayFull, awayShort);
+  const collide =
+    !!homeShort &&
+    !!awayShort &&
+    homeShort.toLowerCase() === awayShort.toLowerCase();
+
+  // The abbreviation is a RESCUE, not a preference. Replaying the preference
+  // form over 120 live events found it firing on exactly one card and making
+  // it WORSE: Fremantle Dockers v Hawthorn Hawks went from "Dockers / Hawks"
+  // to "FRE / HAW". Two good nicknames are better than two airport codes, so
+  // abbreviations are reached for only when the last-word rule has already
+  // failed — and then only if BOTH sides carry one, so the pair stays
+  // symmetric and can never read "IPS vs Liverpool".
+  if (homeGaveUp || awayGaveUp || collide) {
+    const homeAbbrev = (home.abbreviation ?? "").trim();
+    const awayAbbrev = (away.abbreviation ?? "").trim();
+    if (homeAbbrev && awayAbbrev) {
+      return { home: homeAbbrev, away: awayAbbrev };
+    }
+  }
+
+  if (collide) {
     return { home: homeFull || homeShort, away: awayFull || awayShort };
   }
 
