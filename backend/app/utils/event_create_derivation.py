@@ -36,7 +36,7 @@ up by any other route.
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, NamedTuple, Sequence
 
 from app.utils.repair_apply_plan import PlannedCreate
 
@@ -47,6 +47,17 @@ from app.utils.repair_apply_plan import PlannedCreate
 #: binding 328 regular-season games to preseason club rows, with nothing downstream
 #: complaining. This is also why ``sport_id`` is inside the create digest (queue 368).
 MLB_SPORT_ID = 53232
+
+#: The regular-season NFL sport row, added lane1/115 for population 4. The split is
+#: the same shape as MLB's and so is the trap: ``190411`` is
+#: ``americanfootball_nfl_preseason`` and carries its OWN row for every franchise
+#: (#2866 counts 32/32 with two ``teams`` rows, exactly one slugged). Measured on
+#: production 2026-09-04 for the two clubs population 4 needs — within
+#: ``sport_id = 1`` "Dallas Cowboys" is exactly one row (552) and "Seattle Seahawks"
+#: exactly one (12); their doubles are the preseason rows 17750 and 17742, under the
+#: other sport_id. So the anchor is 1:1 *because* the resolution is sport-scoped, and
+#: it would not be if the club name alone were the key.
+NFL_SPORT_ID = 1
 
 #: Population 1 — the single Aug 5 MIN@KC game (#1902), the missing link target
 #: behind market ``58609021``'s three-way identity error. A SUBSET of population 2.
@@ -73,14 +84,51 @@ TRUTH_SET_RELATIVE_PATH = "app/data/event_create_truth_set.json"
 #: reviewed object, a new address, and a new approval.
 AUG19_TRUTH_SET_RELATIVE_PATH = "app/data/event_create_truth_set_aug19.json"
 
-#: population token -> (committed reviewed file, id subset or None for "all of it").
+#: Population 4 (lane1/115, #3070) — ONE NFL game: Dallas Cowboys @ Seattle Seahawks,
+#: Week 13 Monday night, ESPN ``401873108``. Its own file for the same reason the
+#: Aug-19 four got theirs: the sets above declare MLB scopes, and this is not MLB.
+#: A new population is a new reviewed object, a new address, and a new approval.
+NFL_MNF_TRUTH_SET_RELATIVE_PATH = "app/data/event_create_truth_set_nfl_week13_mnf.json"
+
+
+class TruthSet(NamedTuple):
+    """What a population token binds an apply to.
+
+    A ``NamedTuple`` rather than a dataclass so the historical ``entry[0]`` /
+    ``entry[1]`` indexing keeps working — this registry is read positionally in
+    tests that predate the sport fields, and silently breaking them to gain
+    attribute access would be paying for style with coverage.
+    """
+
+    #: committed reviewed file, relative to ``backend/``
+    path: str
+    #: id subset, or ``None`` for "every id in the file"
+    subset: tuple[str, ...] | None
+    #: the sport row every created event is bound to, and every club anchored in
+    sport_id: int
+    #: the human-readable key for that row, carried into plan context only
+    sport_key: str
+
+
+#: population token -> the reviewed object it binds to.
 #: The token selects WHICH APPROVAL an apply is bound to. It is deliberately not a
 #: filter expression: a population an operator can describe is a population an
 #: operator can widen, and the reviewed object must be a fixed list.
-TRUTH_SET_REGISTRY: dict[str, tuple[str, tuple[str, ...] | None]] = {
-    "1": (TRUTH_SET_RELATIVE_PATH, POPULATION_1),
-    "2": (TRUTH_SET_RELATIVE_PATH, None),
-    "3": (AUG19_TRUTH_SET_RELATIVE_PATH, None),
+#:
+#: ``sport_id`` lives HERE, on the population, rather than as a module constant both
+#: shells reach for. It used to be ``MLB_SPORT_ID`` hardcoded at four call sites
+#: across ``create_events_from_truth`` and ``derive_event_create_plan`` — which was
+#: correct while every population was MLB and became a silent mis-binding the moment
+#: one was not. This module exists so the two shells cannot derive different rows
+#: from one approval (see the header); a sport the shells each choose for themselves
+#: is exactly that divergence, one field lower down.
+TRUTH_SET_REGISTRY: dict[str, TruthSet] = {
+    "1": TruthSet(TRUTH_SET_RELATIVE_PATH, POPULATION_1, MLB_SPORT_ID, "baseball_mlb"),
+    "2": TruthSet(TRUTH_SET_RELATIVE_PATH, None, MLB_SPORT_ID, "baseball_mlb"),
+    "3": TruthSet(AUG19_TRUTH_SET_RELATIVE_PATH, None, MLB_SPORT_ID, "baseball_mlb"),
+    "4": TruthSet(
+        NFL_MNF_TRUTH_SET_RELATIVE_PATH, None, NFL_SPORT_ID, "americanfootball_nfl"
+    ),
 }
 
 _LABEL_RE = re.compile(r"^(?P<away>.+?) @ (?P<home>.+?) (?P<date>\d{4}-\d{2}-\d{2})")
@@ -152,27 +200,42 @@ def load_games(truth: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     return games
 
 
-def truth_set_path_for(population: str) -> str:
-    """The committed file a population is bound to. Refuses an unknown token."""
+def registry_entry_for(population: str) -> TruthSet:
+    """The reviewed object a population token binds to. Refuses an unknown token.
+
+    The ONE lookup. Every other accessor here goes through it, and so does each
+    shell, so "which sport is population 4" has exactly one answer and it is not
+    a default parameter anybody can forget to pass.
+    """
     entry = TRUTH_SET_REGISTRY.get(str(population))
     if entry is None:
         raise DerivationRefused(
             "UNKNOWN_POPULATION",
             f"population must be one of {sorted(TRUTH_SET_REGISTRY)}, got {population!r}",
         )
-    return entry[0]
+    return entry
+
+
+def truth_set_path_for(population: str) -> str:
+    """The committed file a population is bound to. Refuses an unknown token."""
+    return registry_entry_for(population).path
+
+
+def sport_for(population: str) -> tuple[int, str]:
+    """``(sport_id, sport_key)`` for a population. Refuses an unknown token.
+
+    Returned as a pair because the two always travel together — the id binds the
+    created rows and scopes the club anchors, the key is provenance in the plan
+    context — and letting a caller take one without the other is how they drift.
+    """
+    entry = registry_entry_for(population)
+    return entry.sport_id, entry.sport_key
 
 
 def select_population(truth: Mapping[str, Any], population: str) -> list[str]:
     """The reviewed id list for a population token, in reviewed order."""
     games = load_games(truth)
-    entry = TRUTH_SET_REGISTRY.get(str(population))
-    if entry is None:
-        raise DerivationRefused(
-            "UNKNOWN_POPULATION",
-            f"population must be one of {sorted(TRUTH_SET_REGISTRY)}, got {population!r}",
-        )
-    subset = entry[1]
+    subset = registry_entry_for(population).subset
     wanted = list(subset) if subset is not None else [str(i) for i in truth["truth_ids"]]
     unreviewed = [tid for tid in wanted if tid not in games]
     if unreviewed:

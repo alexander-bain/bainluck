@@ -64,13 +64,13 @@ from app.utils.repair_apply_plan import (  # noqa: E402
 # address from the same approval, and the operator is left holding a hash nothing
 # accepts. Hence one builder, two readers.
 from app.utils.event_create_derivation import (  # noqa: E402
-    MLB_SPORT_ID,
     ROW_ONE,
     anchors_from_rows,
     build_rows,
     load_games,
     required_club_names,
     select_population,
+    sport_for,
     truth_set_path_for,
 )
 
@@ -100,17 +100,22 @@ def _db_query(sql: str, limit: int = 1000) -> list[list]:
     return payload["rows"]
 
 
-def resolve_clubs(names: list[str]) -> dict[str, int]:
-    """name -> team_id, refusing anything that is not 1:1 (via the shared checker)."""
+def resolve_clubs(names: list[str], sport_id: int) -> dict[str, int]:
+    """name -> team_id, refusing anything that is not 1:1 (via the shared checker).
+
+    ``sport_id`` is passed in from the population rather than read off a module
+    constant: the scoping is the whole reason the anchor is 1:1 at all, since every
+    franchise also has a preseason row under a different sport.
+    """
     inlist = ",".join("'%s'" % n.replace("'", "''") for n in sorted(names))
     rows = _db_query(
         f"SELECT t.name, t.id FROM teams t "
-        f"WHERE t.sport_id = {MLB_SPORT_ID} AND t.name IN ({inlist}) ORDER BY t.name, t.id"
+        f"WHERE t.sport_id = {sport_id} AND t.name IN ({inlist}) ORDER BY t.name, t.id"
     )
     missing = sorted(set(names) - {str(r[0]) for r in rows})
     if missing:
         raise SystemExit(
-            f"REFUSED — {len(missing)} club(s) have no row in sport {MLB_SPORT_ID}: {missing}"
+            f"REFUSED — {len(missing)} club(s) have no row in sport {sport_id}: {missing}"
         )
     return anchors_from_rows(rows)
 
@@ -134,7 +139,7 @@ def still_missing(truth_ids: list[str]) -> set[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--population", choices=["1", "2", "3"], required=True)
+    ap.add_argument("--population", choices=["1", "2", "3", "4"], required=True)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -145,21 +150,34 @@ def main() -> int:
     # `load_games` asserts row #1 by name and `select_population` refuses any id the
     # reviewed set does not contain — both in the shared module, so the rail applies
     # the identical assertions to the identical file.
+    sport_id, sport_key = sport_for(args.population)
     games = load_games(truth)
     wanted = select_population(truth, args.population)
-    anchors = resolve_clubs(required_club_names(wanted, games))
+    anchors = resolve_clubs(required_club_names(wanted, games), sport_id)
     live_missing = still_missing(wanted)
-    rows = build_rows(wanted, games, anchors, sport_id=MLB_SPORT_ID)
+    rows = build_rows(wanted, games, anchors, sport_id=sport_id)
 
     plan = build_create_plan(
         rows,
         context={
             "population": args.population,
             "queue": 363,
-            "ruling": "Alex 2026-08-17 — attended CREATE from venue truth, approved",
+            # NO `ruling` KEY, DELIBERATELY — the rail dropped this same inherited
+            # string under queue 371 ruling (b)(3) and this shell kept it, so the
+            # two producers disagreed about what they were claiming. It asserts a
+            # HUMAN APPROVAL OF A POPULATION that the deriver cannot know: it was
+            # written for the q362 MLB set and would have been stamped verbatim on
+            # population 4's NFL game, an approval dated three weeks before that
+            # game was ever reviewed. An inherited template ruling is a FORGED
+            # CREDENTIAL — worse than none, because a missing one prompts the
+            # question and a forged one answers it. Approval provenance is recorded
+            # ON THE ARTIFACT by whoever takes the MC.
+            #
+            # `context` is outside `plan_hash` (the address is the sorted row
+            # digests), so removing this key does not re-address any reviewed plan.
             "truth_set_hash": truth["truth_id_hash"],
-            "sport_id": MLB_SPORT_ID,
-            "sport_key": "baseball_mlb",
+            "sport_id": sport_id,
+            "sport_key": sport_key,
             "row_one": truth.get("row_one", ROW_ONE),
         },
     )
