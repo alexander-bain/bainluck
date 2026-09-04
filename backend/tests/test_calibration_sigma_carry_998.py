@@ -188,26 +188,35 @@ class TestCarriedIsItsOwnStatus:
         assert "↩q268" in md
 
     def test_a_carried_cell_is_counted_apart_from_a_measured_one(self):
+        """AMENDED CAL-P1002 — the claim survives the flip and is the reason
+        ``CARRIED`` was not folded into ``FRESH`` when it started deciding.
+        Both decide; only one was measured on the population being scored, and
+        a count that cannot be split back into those halves is a count nobody
+        can audit. The buckets are now over MATERIAL cells, because a cell the
+        overlay takes OFF the queue is no longer a queued cell — counting the
+        overlay's coverage over the queue would make it shrink as it succeeds.
+        """
         ms = cs.score(_payload(N_Q269, ECE_Q269), _ledger())["measured_sigma"]
-        assert ms["queued_cells_carried"] == 1
+        assert ms["material_cells_carried"] == 1
         assert ms["carried_cells"] == ["kalshi/golf"]
         assert ms["carried_from_populations"] == ["q268"]
         # ...and specifically NOT here:
-        assert ms["queued_cells_measured"] == 0
+        assert ms["material_cells_measured"] == 0
         assert ms["refuted_cells"] == []
 
     def test_a_carried_cell_is_not_counted_as_unmeasured_either(self):
-        """The three buckets partition the queued cells. A cell that fell into
+        """The four buckets partition the material cells. A cell that fell into
         two of them, or into none, would make the summary line add up to a
         different board than the table under it."""
         r = cs.score(_payload(N_Q269, ECE_Q269), _ledger())
         ms = r["measured_sigma"]
         assert (
-            ms["queued_cells_measured"]
-            + ms["queued_cells_carried"]
-            + ms["queued_cells_low_coverage"]
-            + ms["queued_cells_unmeasured"]
-            == r["counts"]["cells_queued"]
+            ms["material_cells_measured"]
+            + ms["material_cells_carried"]
+            + ms["material_cells_low_coverage"]
+            + ms["material_cells_unmeasured"]
+            == ms["material_cells"]
+            == r["counts"]["cells_material"]
         )
 
 
@@ -292,35 +301,58 @@ class TestTheRefusalsSurvive:
 # --------------------------------------------------------------------------
 
 
-class TestTheNeedleDoesNotMove:
-    """CAL-P128 claim 4, re-asserted against the new status. A status landing
-    must not decide anything Alex has not flipped."""
+class TestACarriedEntryDecides:
+    """CAL-P128 claim 4 as Alex left it on 2026-09-04 (D62 = A).
+
+    The class was ``TestTheNeedleDoesNotMove`` and it said: a status landing
+    must not decide anything Alex has not flipped. He flipped it. The half that
+    survives — and it is the load-bearing half — is that the needle moves for
+    exactly one reason and names the rows it moved for. This class is the
+    CARRIED half of that, and it is the half that matters on the live board:
+    all four measured queued cells on 2026-09-04 are carried from ``q268`` and
+    not one is fresh, so an overlay that decided only on ``FRESH`` would have
+    been a no-op on the board D62 was ruled for.
+    """
 
     def _both(self):
         payload = _payload(N_Q269, ECE_Q269)
         return cs.score(payload, None), cs.score(payload, _ledger())
 
-    def test_cells_at_bar_is_identical_with_and_without_the_carried_entry(self):
+    def test_cells_at_bar_moves_by_one_and_the_row_basis_records_where_from(self):
         without, with_carry = self._both()
-        assert with_carry["counts"] == without["counts"]
-
-    def test_the_cell_verdict_is_identical(self):
-        without, with_carry = self._both()
-        assert (
-            with_carry["cells"][0]["verdict"] == without["cells"][0]["verdict"]
-            == cs.VERDICT_QUEUED
+        assert with_carry["counts"]["cells_at_bar"] == (
+            without["counts"]["cells_at_bar"] + 1
         )
-        assert with_carry["done"] == without["done"]
+        assert with_carry["counts"]["cells_at_bar_row_basis"] == (
+            without["counts"]["cells_at_bar"]
+        )
 
-    def test_the_carried_cell_is_refuted_at_the_gate_and_still_queued(self):
+    def test_the_cell_verdict_moves_on_the_carried_measurement(self):
+        without, with_carry = self._both()
+        assert without["cells"][0]["verdict"] == cs.VERDICT_QUEUED
+        cell = with_carry["cells"][0]
+        assert cell["verdict"] == cs.VERDICT_UNDER_SIGMA
+        assert cell["sigma_basis"] == cs.SIGMA_BASIS_MEASURED
+        assert cell["measured_carried"] is True
+
+    def test_the_move_names_the_population_it_was_measured_on(self):
+        """The residual a size test cannot cover is a question about AGE, so
+        the answer rides on the moved row rather than in a docstring."""
+        _, with_carry = self._both()
+        moved = with_carry["sigma_overlay"]["cells_moved"]
+        assert [m["cell"] for m in moved] == ["kalshi/golf"]
+        assert moved[0]["ledger_status"] == ledger_mod.STATUS_CARRIED
+        assert moved[0]["measured_at_population"] == "q268"
+
+    def test_the_carried_cell_is_refuted_at_the_gate_and_leaves_the_queue(self):
         """The substance: rank 3 reads 3.2 sigma on rows and 1.86 measured —
         under the ratified gate — and is STILL queued, because the overlay
         reports and does not decide."""
         cell = cs.score(_payload(N_Q269, ECE_Q269), _ledger())["cells"][0]
-        assert cell["sigma"] > cs.SIGMA_GATE
+        assert cell["sigma_row"] > cs.SIGMA_GATE
         assert cell["sigma_measured"] < cs.SIGMA_GATE
-        assert cell["measured_verdict"] == cs.VERDICT_UNDER_SIGMA
-        assert cell["verdict"] == cs.VERDICT_QUEUED
+        assert cell["verdict_row_basis"] == cs.VERDICT_QUEUED
+        assert cell["verdict"] == cs.VERDICT_UNDER_SIGMA
 
 
 # --------------------------------------------------------------------------
@@ -328,37 +360,47 @@ class TestTheNeedleDoesNotMove:
 # --------------------------------------------------------------------------
 
 
-class TestTheProjectionKeepsItsHalvesApart:
-    def test_a_carried_refutation_moves_only_the_with_carried_projection(self):
-        ms = cs.score(_payload(N_Q269, ECE_Q269), _ledger())["measured_sigma"]
-        counts = cs.score(_payload(N_Q269, ECE_Q269), _ledger())["counts"]
-        assert ms["queued_cells_refuted_carried"] == 1
-        assert ms["refuted_cells_carried"] == ["kalshi/golf"]
-        assert ms["cells_at_bar_if_applied"] == counts["cells_at_bar"]
-        assert ms["cells_at_bar_if_applied_with_carried"] == counts["cells_at_bar"] + 1
+class TestTheTwoHalvesStayApartEvenThoughBothDecide:
+    """AMENDED CAL-P1002. The class was ``TestTheProjectionKeepsItsHalvesApart``
+    and it guarded two projections, ``_if_applied`` and
+    ``_if_applied_with_carried``, which existed because the flip was Alex's
+    call and the two halves of the evidence are not equally strong. He took the
+    weaker one too, so there is one reading and one counterfactual (the row
+    basis) — but the SPLIT is still owed, because it is the re-measure backlog
+    and because a reader must be able to see how much of the needle rests on
+    measurements taken against a population that is no longer served.
+    """
 
-    def test_a_fresh_refutation_moves_both(self):
-        """The control for the test above: on a FRESH entry the two projections
-        agree, so the split is doing work only where the evidence differs."""
+    def test_a_carried_refutation_moves_the_needle_and_stays_labelled_carried(self):
+        r = cs.score(_payload(N_Q269, ECE_Q269), _ledger())
+        ms, counts = r["measured_sigma"], r["counts"]
+        assert ms["refuted_cells_carried"] == ["kalshi/golf"]
+        assert ms["refuted_cells"] == [], "not pooled into the fresh bucket"
+        assert ms["cells_refuted"] == 1, "but counted in the total"
+        assert counts["cells_at_bar"] == counts["cells_at_bar_row_basis"] + 1
+
+    def test_a_fresh_refutation_lands_in_the_other_bucket_and_moves_it_the_same(self):
+        """The control: a FRESH entry moves the needle identically, so the
+        split is about PROVENANCE and never about how much a cell counts."""
         led = _ledger(pop="q269", n_measured=N_Q269)
         r = cs.score(_payload(N_Q269, ECE_Q269), led)
         ms = r["measured_sigma"]
-        assert ms["queued_cells_measured"] == 1 and ms["queued_cells_carried"] == 0
-        assert (
-            ms["cells_at_bar_if_applied"]
-            == ms["cells_at_bar_if_applied_with_carried"]
-            == r["counts"]["cells_at_bar"] + 1
+        assert ms["material_cells_measured"] == 1 and ms["material_cells_carried"] == 0
+        assert ms["refuted_cells"] == ["kalshi/golf"]
+        assert ms["refuted_cells_carried"] == []
+        assert r["counts"]["cells_at_bar"] == (
+            r["counts"]["cells_at_bar_row_basis"] + 1
         )
 
-    def test_an_established_carried_cell_refutes_nothing(self):
-        """A carried SE that CONFIRMS the queue must not shorten the
-        projection. The correction runs in both directions (CAL-P128 claim 2)
-        and cricket is the live cell where it raises the sigma."""
+    def test_an_established_carried_cell_moves_nothing(self):
+        """A carried SE that CONFIRMS the queue must not shorten the board. The
+        correction runs in both directions (CAL-P128 claim 2) and cricket is
+        the live cell where it raises the sigma."""
         led = _ledger(n_measured=3252, coverage_n_exact=3252)
         led["entries"]["kalshi/golf"]["se_bootstrap_pp"] = 0.6113365041126125
-        ms = cs.score(_payload(2944, 7.92), led)["measured_sigma"]
-        assert ms["queued_cells_carried"] == 1
-        assert ms["queued_cells_refuted_carried"] == 0
-        assert (
-            ms["cells_at_bar_if_applied_with_carried"] == ms["cells_at_bar_if_applied"]
-        )
+        r = cs.score(_payload(2944, 7.92), led)
+        ms = r["measured_sigma"]
+        assert ms["material_cells_carried"] == 1
+        assert ms["cells_refuted"] == 0 and ms["cells_added"] == 0
+        assert r["counts"]["cells_at_bar"] == r["counts"]["cells_at_bar_row_basis"]
+        assert r["sigma_overlay"]["cells_moved"] == []

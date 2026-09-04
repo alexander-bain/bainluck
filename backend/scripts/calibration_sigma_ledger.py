@@ -218,11 +218,37 @@ measurement is a fact on the board, not a constant buried in this file. A
 carried entry is a standing request to re-measure, and the scorecard counts it
 so the measurement lane can see the backlog.
 
+AMENDED 2026-09-04 (CAL-P1002) -- THE CONSUMING HALF MOVED INTO THE APP
+------------------------------------------------------------------------
+Alex ruled D62 = A: the measured sigma DECIDES the repair queue rather than
+reporting beside it. ``cells_at_bar`` is a served field
+(``/api/calibration.scorecard``, CAL-P998 / D46), so the moment this ledger
+decides it, it has to be read where that field is computed -- otherwise the
+served needle and this board's needle are two different numbers on day one,
+which is the condition D46 was created to end.
+
+So everything that READS a ledger -- the statuses, the two bands, ``lookup``,
+``validate``, ``load`` -- now lives in :mod:`app.utils.calibration_sigma` and is
+imported below. This file keeps what BUILDS one: the artifact fold, ``--build``,
+``--show``. The names are re-exported unchanged, so ``calibration_scorecard.py``
+and ``calibration_cluster_sigma.py`` import the same symbols they always did and
+there is still exactly one definition of each.
+
+**The ledger FILE moved with them, and that was not tidying.** It was committed
+at ``artifacts/calibration-scorecard/measured-sigma.json``; Heroku builds this
+app through ``subdir-heroku-buildpack`` with ``PROJECT_PATH=backend``, so the
+repo-root ``artifacts/`` tree is not in the slug and that path does not exist on
+the dyno. Reading it from the app would have produced a perfect ledger in every
+test and an absent one on every production request -- CAL-P129's bug in the one
+environment that serves readers. It now lives in ``backend/app/data/``. The
+scorecard's ``history.jsonl`` stays here: it is written by a script and read by
+nothing served.
+
 Usage::
 
     # rebuild from every sigma artifact on disk
     python3 backend/scripts/calibration_sigma_ledger.py --build \\
-        artifacts/cal-p12*/sigma-*.json --out artifacts/calibration-scorecard/measured-sigma.json
+        artifacts/cal-p12*/sigma-*.json
 
     # read it back
     python3 backend/scripts/calibration_sigma_ledger.py --show
@@ -232,125 +258,45 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
+import sys
 from pathlib import Path
 
-#: Where the committed ledger lives. Deliberately next to
-#: ``history.jsonl`` -- that directory is already the scorecard's durable state,
-#: so the board's memory is in one place rather than scattered per-queue under
-#: ``artifacts/cal-pNNN/``. A per-queue artifact is evidence of one session; a
-#: ledger is what the next session reads without knowing which session made it.
-#:
-#: Anchored to the REPOSITORY, not to the caller's working directory. It was
-#: relative until CAL-P129, which meant ``cd backend && python3
-#: scripts/calibration_scorecard.py`` -- the invocation CLAUDE.md documents for
-#: every backend script -- resolved it to a path that does not exist, and the
-#: board printed a complete, plausible, well-formed table with the entire
-#: measured-sigma overlay silently absent. A path to a COMMITTED artifact is a
-#: property of the repository.
-LEDGER_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "artifacts"
-    / "calibration-scorecard"
-    / "measured-sigma.json"
+# `backend/`, so `app.utils.calibration_sigma` imports whether this script is
+# run from the repo root or from `backend/`. Same two-entry insert as
+# `calibration_scorecard.py`, same reason.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# The READING half, imported and never re-implemented (CAL-P1002). Re-exported
+# below so every existing caller of this module keeps resolving these names.
+from app.utils.calibration_sigma import (  # noqa: E402,F401
+    CELL_DRIFT_BAND,
+    COVERAGE_BAND,
+    DECIDING_STATUSES,
+    LEDGER_PATH,
+    SCHEMA,
+    SIGMA_RECHECK_TOL,
+    STATUS_ABSENT,
+    STATUS_CARRIED,
+    STATUS_FRESH,
+    STATUS_POPULATION_DIVERGENCE,
+    STATUS_STALE,
+    cell_drift,
+    cell_key,
+    effective_n,
+    exact_coverage,
+    load,
+    lookup,
+    validate,
+    variance_ratio_vs_board,
 )
 
-SCHEMA = 1
-
-#: Tolerance for :func:`validate`'s reproduction of a stored sigma from its
-#: stored SE. This is a transcription check, not a statistical one -- the two
-#: numbers come out of the same run and should agree to floating-point noise.
-#: 0.01 is one unit in the last place the board prints.
-SIGMA_RECHECK_TOL = 0.01
-
-STATUS_FRESH = "FRESH"
-STATUS_STALE = "STALE"
-STATUS_ABSENT = "ABSENT"
-STATUS_POPULATION_DIVERGENCE = "POPULATION_DIVERGENCE"
-
-#: Measured on another population, but the CELL has not materially moved --
-#: see the docstring's 2026-09-03 amendment. Deliberately its own value and not
-#: an alias of :data:`STATUS_FRESH`: the whole warrant for carrying an entry is
-#: that the consumer can still tell it apart from one measured on the payload
-#: it is being applied to.
-STATUS_CARRIED = "CARRIED"
-
-#: The band of ``n_exact / n_payload`` inside which the rail and the payload are
-#: taken to be describing the same cell. Outside it, the measured SE and the
-#: published excess are about different populations and their ratio is not a
-#: sigma -- see the module docstring.
-#:
-#: Two-sided on purpose. A first draft used a one-sided floor on the theory that
-#: only an under-counting rail could hurt, which quietly assumed the payload is
-#: always right; ``polymarket/basketball`` is 43.44% phantom and it is not.
-#:
-#: ±10% is where the 2026-08-29 sweep separates cleanly: ten cells inside ±3%,
-#: then 0.780 and 0.641, with nothing in between to argue about.
-COVERAGE_BAND = (0.90, 1.10)
-
-#: The band of ``n_now / n_at_measurement`` inside which an entry measured on a
-#: DIFFERENT population is still describing this cell -- the time axis of the
-#: same comparison :data:`COVERAGE_BAND` makes on the rail axis, and the same
-#: width, because it is the same question about the same quantity.
-#:
-#: It separates the 2026-09-03 q268 -> q269 board the way COVERAGE_BAND
-#: separated the 2026-08-29 sweep: three cells at +2.9% / +3.6% / +6.8%, then a
-#: gap, then four at -24.2% to -42.2%. ``polymarket/cricket`` at -9.5% is the
-#: one row near the edge and it is carried; it is half a point inside, which is
-#: recorded here rather than discovered later, and it is exactly why a carried
-#: entry never counts as fresh.
-#:
-#: Two-sided for the reason COVERAGE_BAND is: a cell that GREW by half is no
-#: more the measured cell than one that halved.
-CELL_DRIFT_BAND = (0.90, 1.10)
-
-
-def cell_key(source: str, category: str) -> str:
-    return f"{source}/{category}"
-
-
-def cell_drift(entry: dict, n_payload: int | None) -> float | None:
-    """``n_payload / n_at_measurement`` -- how much the cell moved since.
-
-    Returns ``None`` when either side is unknown, which is NOT a pass: a drift
-    that cannot be computed cannot clear :data:`CELL_DRIFT_BAND`, so the entry
-    stays stale. An untestable claim is refused, not assumed (gotcha #53).
-    """
-    measured_n = ((entry or {}).get("as_measured") or {}).get("n")
-    if not measured_n or not n_payload:
-        return None
-    return round(n_payload / measured_n, 4)
-
-
-def variance_ratio_vs_board(se_bootstrap: float, se_row: float) -> float | None:
-    """Measured variance over the BOARD'S ``50/sqrt(n)`` variance.
-
-    Squared because this is a ratio of VARIANCES, not of standard errors: golf's
-    SE ratio is 1.71 and its variance ratio is 2.91, and reading the former as
-    the latter understates every correction by its own square root.
-
-    Values BELOW 1 are legitimate and common -- see the module docstring. The
-    denominator is a maximum-variance bound, not an SRS variance, so a cell
-    whose bins sit far from ``p=0.5`` can measure under 1 without anything
-    being wrong. This is why the function is not called ``design_effect``.
-    """
-    if not se_row or se_bootstrap is None:
-        return None
-    return round((se_bootstrap / se_row) ** 2, 3)
-
-
-def effective_n(n: int, ratio: float | None) -> int | None:
-    """The row count at which the board's own formula gives the measured SE."""
-    if not ratio or not n:
-        return None
-    return int(round(n / ratio))
-
-
-def exact_coverage(n_exact: int | None, n_payload: int | None) -> float | None:
-    """How much of the published cell the bootstrap actually resampled."""
-    if not n_exact or not n_payload:
-        return None
-    return round(n_exact / n_payload, 4)
+__all__ = [
+    "CELL_DRIFT_BAND", "COVERAGE_BAND", "DECIDING_STATUSES", "LEDGER_PATH",
+    "SCHEMA", "SIGMA_RECHECK_TOL", "STATUS_ABSENT", "STATUS_CARRIED",
+    "STATUS_FRESH", "STATUS_POPULATION_DIVERGENCE", "STATUS_STALE",
+    "build", "cell_drift", "cell_key", "effective_n", "entry_from_sigma_json",
+    "exact_coverage", "load", "lookup", "validate", "variance_ratio_vs_board",
+]
 
 
 def entry_from_sigma_json(obj: dict, artifact: str) -> dict:
@@ -420,111 +366,6 @@ def entry_from_sigma_json(obj: dict, artifact: str) -> dict:
         "seed": obj.get("seed"),
         "artifact": artifact,
     }
-
-
-def validate(ledger: dict) -> list[str]:
-    """Return a list of problems. Empty list means the ledger is coherent.
-
-    Each entry must reproduce its own measured sigma from its own stored SE.
-    That is the only claim this file makes about itself, and it is the one that
-    matters: if it holds, a consumer recomputing sigma against a CURRENT excess
-    is doing the same arithmetic the bootstrap did, just with a fresher
-    numerator.
-    """
-    problems: list[str] = []
-    if ledger.get("schema") != SCHEMA:
-        problems.append(f"schema {ledger.get('schema')!r} != {SCHEMA}")
-    for key, e in (ledger.get("entries") or {}).items():
-        if cell_key(e.get("source", "?"), e.get("category", "?")) != key:
-            problems.append(f"{key}: key does not match source/category")
-        se = e.get("se_bootstrap_pp")
-        m = e.get("as_measured") or {}
-        excess, stored = m.get("excess"), m.get("sigma_bootstrap")
-        if not se:
-            problems.append(f"{key}: no se_bootstrap_pp")
-            continue
-        if excess is None or stored is None:
-            problems.append(f"{key}: cannot re-check sigma (missing excess/sigma)")
-            continue
-        recomputed = excess / se
-        if not math.isclose(recomputed, stored, abs_tol=SIGMA_RECHECK_TOL):
-            problems.append(
-                f"{key}: stored sigma {stored:.4f} != excess/se {recomputed:.4f}"
-            )
-        if not e.get("population_version"):
-            problems.append(f"{key}: no population_version — cannot be applied safely")
-    return problems
-
-
-def load(path: Path | str = LEDGER_PATH, *, missing_ok: bool = False) -> dict:
-    """Load and validate. A ledger that fails :func:`validate` raises.
-
-    Refusing beats degrading. A silently-wrong SE would move cells across the
-    ratified gate in the direction that makes the board look shorter, which is
-    exactly the failure this program keeps having.
-
-    ``missing_ok`` is the same sentence applied to ABSENCE, which is the half
-    CAL-P128 left open: the malformed case raised, and the missing case returned
-    an empty ledger and let the board report it as "no cell has been measured".
-    That is gotcha #53 -- an absent file and an empty ledger are different facts
-    and they produced identical output. Only ``--build``, which legitimately
-    runs before any ledger exists, is entitled to the empty reading, and it asks
-    for it by name.
-    """
-    p = Path(path)
-    if not p.exists():
-        if missing_ok:
-            return {"schema": SCHEMA, "entries": {}}
-        raise FileNotFoundError(
-            f"sigma ledger not found: {p}\n"
-            "This is refused rather than read as 'nothing has been measured' — "
-            "an empty overlay is a claim about the board, not about a file. "
-            "Pass --no-sigma-ledger to score without it deliberately."
-        )
-    ledger = json.loads(p.read_text())
-    problems = validate(ledger)
-    if problems:
-        raise ValueError(f"sigma ledger {p} is incoherent: {problems}")
-    return ledger
-
-
-def lookup(
-    ledger: dict,
-    source: str,
-    category: str,
-    population_version: str | None,
-    n_payload: int | None = None,
-):
-    """Return ``(entry, status)``. Never returns a number without its status.
-
-    ``n_payload`` is the cell's row count on the payload being scored. It is
-    what turns a population mismatch into a QUESTION rather than a verdict: an
-    entry from another population whose cell is still the same size within
-    :data:`CELL_DRIFT_BAND` is ``CARRIED``, one whose cell has moved is
-    ``STALE``. See the docstring's 2026-09-03 amendment for why the version
-    string was the wrong test and what it cost.
-
-    The argument is OPTIONAL and its absence fails closed to the pre-amendment
-    behaviour: a caller that cannot say how big the cell is now gets ``STALE``,
-    which is what every caller got before. A default that silently carried
-    would make the new status reachable by callers that never asked for it.
-    """
-    e = (ledger.get("entries") or {}).get(cell_key(source, category))
-    if e is None:
-        return None, STATUS_ABSENT
-    carried = False
-    if population_version and e.get("population_version") != population_version:
-        drift = cell_drift(e, n_payload)
-        if drift is None or not (CELL_DRIFT_BAND[0] <= drift <= CELL_DRIFT_BAND[1]):
-            return e, STATUS_STALE
-        carried = True
-    cov = e.get("exact_coverage")
-    if cov is not None and not (COVERAGE_BAND[0] <= cov <= COVERAGE_BAND[1]):
-        # Checked AFTER the carry test and it outranks it: a cell whose rail and
-        # payload describe different populations has no sigma to offer, and that
-        # is true whether the entry is fresh or carried.
-        return e, STATUS_POPULATION_DIVERGENCE
-    return e, (STATUS_CARRIED if carried else STATUS_FRESH)
 
 
 def build(paths: list[Path]) -> dict:

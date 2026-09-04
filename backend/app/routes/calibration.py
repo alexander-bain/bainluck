@@ -55,6 +55,18 @@ def _score_payload(payload: dict) -> dict:
     imports the same constants rather than restating them, so the served field
     and the script can no longer disagree about what "at bar" means.
 
+    CAL-P1002 / D62 = A. The scorecard now also reads the committed
+    measured-sigma ledger (``app/data/calibration_measured_sigma.json``) and
+    lets it DECIDE which cells are queued. The route passes nothing extra: the
+    load is inside :func:`~app.utils.calibration_scoring.scorecard`, memoised
+    per process against a file that only changes on deploy, so tier 1 — which
+    answers from process memory with no database work at all — pays one read
+    per dyno and never a per-request one. A ledger that cannot be read degrades
+    the score to the row estimate and publishes the reason on
+    ``scorecard.sigma_overlay``; it never raises here, because the try/except
+    below is about the CURVE and a silent basis change would be a worse failure
+    than a loud one.
+
     The try/except is not defensive decoration. This runs on the ONE exit every
     ``/api/calibration`` answer passes through, including the dated fallback
     tiers whose whole purpose is that the page does not go dark (ruling CAL-P017).
