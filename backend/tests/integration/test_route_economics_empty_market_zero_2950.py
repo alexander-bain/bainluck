@@ -53,10 +53,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
-import pytest
-
 from app.routes.economics import _market_row
-
 
 # ---------------------------------------------------------------------------
 # Mock builders — same shape as tests/integration/test_route_economics.py
@@ -95,7 +92,9 @@ def _outcome(name, probability, *, outcome_id=1, rank=1):
     )
 
 
-def _market(*, market_id=1, name="Will the event happen?", outcomes, external_id="kxmock"):
+def _market(
+    *, market_id=1, name="Will the event happen?", outcomes, external_id="kxmock"
+):
     now = datetime.now(timezone.utc)
     return SimpleNamespace(
         id=market_id,
@@ -186,7 +185,9 @@ class TestAnUnpricedMarketIsNotARow:
 
 
 class TestTheRouteDoesNotServeTheZero:
-    async def test_the_outcomeless_market_is_absent_from_the_payload(self, client, mock_db):
+    async def test_the_outcomeless_market_is_absent_from_the_payload(
+        self, client, mock_db
+    ):
         """Asserted on the served body, not the helper.
 
         A helper-only guard stays green if someone deletes the call; this drives
@@ -317,7 +318,9 @@ def _all_rows(body: dict) -> list[dict]:
 
 
 def _all_market_ids(body: dict) -> set:
-    return {r.get("market_id") for r in _all_rows(body) if r.get("market_id") is not None}
+    return {
+        r.get("market_id") for r in _all_rows(body) if r.get("market_id") is not None
+    }
 
 
 def test_the_extractor_can_see_a_row_at_all():
