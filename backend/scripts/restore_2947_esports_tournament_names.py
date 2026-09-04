@@ -37,12 +37,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BAK_TABLE = "bak_2947_event_names"
 
 
+def _session_factory():
+    """The app's real async session factory — see the repair script's copy.
+
+    This file shipped with the same nonexistent `app.database` import the repair
+    did (CERT-903 found it there; it was here too, ungraded). That mattered more
+    here than there: D51 permits an UNATTENDED production repair *because* a
+    one-command undo exists, and the one command could not have run.
+    """
+    from app.services.database import async_session_maker
+
+    return async_session_maker
+
+
 async def run(args):
     from sqlalchemy import text
 
-    from app.database import AsyncSessionLocal
+    session_factory = _session_factory()
 
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         exists = (
             await session.execute(
                 text("SELECT to_regclass(:t)"), {"t": f"public.{BAK_TABLE}"}

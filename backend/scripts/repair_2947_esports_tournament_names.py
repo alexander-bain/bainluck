@@ -70,6 +70,14 @@ that: rows keyed on a mutable status migrated INTO scope between the backup and
 the apply, and the apply correctly refused). The backup is an idempotent
 `NOT EXISTS` top-up, so a refusal is fixed by re-running that same one command.
 
+Both of those commands are covered by a run-level test that invokes `run()`, not
+by a test that reads this file. They shipped importing `app.database`, which does
+not exist, so BOTH crashed on import — the repair before planning a row and the
+undo before restoring one — while the unit tests stayed green against a fake
+session (CERT-903). `--limit` is a dry-run tool and is refused with `--apply`:
+it plans a subset, so it can never satisfy the disposition below, and the
+exemption that used to acknowledge that was a way past the guard.
+
 The `bak_2947_*` table is NOT Alembic-managed. `alembic revision --autogenerate`
 will propose DROPping it; that proposal must be deleted from the generated
 migration, not accepted. Drop it deliberately with the restore script's
@@ -117,6 +125,21 @@ EXPECTED = {
 }
 
 CHUNK = 200
+
+
+def _session_factory():
+    """The app's real async session factory.
+
+    Behind a named function for one reason: a test can substitute it AND prove
+    the real one resolves. Nothing else in this file exercises the production
+    entrypoint, and this script shipped importing `app.database` — a module that
+    has never existed — so `run()` crashed before planning a single row while
+    every unit test passed against a fake session (CERT-903). An entrypoint that
+    dies on import is not a repair, it is a file.
+    """
+    from app.services.database import async_session_maker
+
+    return async_session_maker
 
 
 def disposition_drift(measured: dict, expect_plan=None) -> dict:
@@ -316,9 +339,9 @@ async def apply_plan(session, plan):
 
 
 async def run(args):
-    from app.database import AsyncSessionLocal
+    session_factory = _session_factory()
 
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         plan, skipped = await build_plan(session, limit=args.limit)
         population = len(plan) + len(skipped)
         print(f"population (events with a (BOn) marker): {population}")
@@ -371,29 +394,46 @@ async def run(args):
             print("nothing to do")
             return 0
 
+        # EVERY refusal that can stop an apply is decided here, before the first
+        # write of the run — the backup table included. The drift guard used to
+        # sit below `ensure_backup`, and below an `args.limit` exemption, so a
+        # `--limit N --backup --apply` run wrote a backup and renamed rows while
+        # disagreeing with its own claim, then exited 0 (CERT-903).
+        if args.apply:
+            if args.limit:
+                # A limited run plans a SUBSET, so it can never match a
+                # disposition registered over the whole population — which is
+                # why it was exempted, and why the exemption was a hole. --limit
+                # is a planning tool; there is no such thing as a partial repair.
+                print(
+                    "REFUSING: --limit plans a subset, so it cannot satisfy the "
+                    "pre-registered disposition. It is a dry-run tool — drop "
+                    "--apply, or drop --limit and repair the whole population."
+                )
+                return 7
+            if not args.backup:
+                print("REFUSING: --apply without --backup. Run both in one invocation.")
+                return 4
+            if drift:
+                print(
+                    "REFUSING: the plan does not match the pre-registered disposition — "
+                    + ", ".join(f"{k} {exp}->{got}" for k, (exp, got) in drift.items())
+                    + ".\nThis is the guard working, not a bug: the population moved, or "
+                    "a claim in the docstring is wrong. Read the rows above, decide which, "
+                    "then re-run with --expect-plan N to restate the claim deliberately."
+                )
+                return 6
+
         if args.backup:
             covered = await ensure_backup(session, plan)
             print(f"backup: {covered}/{len(plan)} of the plan is in {BAK_TABLE}")
             if covered < len(plan):
                 print("REFUSING: backup does not cover the plan.")
                 return 3
-        elif args.apply:
-            print("REFUSING: --apply without --backup. Run both in one invocation.")
-            return 4
 
         if not args.apply:
             print("DRY RUN — nothing written. Re-run with --backup --apply.")
             return 0
-
-        if drift and not args.limit:
-            print(
-                "REFUSING: the plan does not match the pre-registered disposition — "
-                + ", ".join(f"{k} {exp}->{got}" for k, (exp, got) in drift.items())
-                + ".\nThis is the guard working, not a bug: the population moved, or "
-                "a claim in the docstring is wrong. Read the rows above, decide which, "
-                "then re-run with --expect-plan N to restate the claim deliberately."
-            )
-            return 6
 
         written = await apply_plan(session, plan)
         print(f"APPLIED: {written} events renamed (planned {len(plan)})")
@@ -408,7 +448,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--backup", action="store_true", help="top up the D51 backup table")
     p.add_argument("--apply", action="store_true", help="write the renames (needs --backup)")
-    p.add_argument("--limit", type=int, default=0, help="plan at most N events (testing)")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="plan at most N events — a dry-run tool, REFUSED together with --apply "
+        "because a subset can never match the pre-registered disposition",
+    )
     p.add_argument("--allow-small", action="store_true", help="bypass the population floor")
     p.add_argument(
         "--expect-plan",
