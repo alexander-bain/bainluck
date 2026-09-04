@@ -2,6 +2,7 @@ import type {
   FeedItem,
   FeedEventData,
   FeedFuturesData,
+  FeedConceptBout,
   FeedConceptData,
   FeedConceptLeader,
   FeedTournamentData,
@@ -241,6 +242,28 @@ function _conceptLeaderIsUsable(
 }
 
 /**
+ * ux/1070 item 2 — a usable bout is EXACTLY two named sides, both priced.
+ *
+ * Held to the same bar as the leader above, side by side: a name that is a real
+ * string and a finite probability in [0, 1]. One side is not a bout — printing
+ * "Pantoja 52%" alone is the outright shape this replaces — and three sides is
+ * not one either, so the length test is part of the predicate rather than an
+ * assumption about the payload.
+ */
+function _conceptBoutIsUsable(
+  bout: FeedConceptBout | null | undefined,
+): boolean {
+  if (!bout || typeof bout !== "object") return false;
+  const sides = bout.competitors;
+  if (!Array.isArray(sides) || sides.length !== 2) return false;
+  return sides.every((side) => {
+    if (!side || typeof side.name !== "string" || !side.name.trim()) return false;
+    const p = side.probability;
+    return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
+  });
+}
+
+/**
  * Returns a short, identity-free machine reason when a feed card should be
  * SUPPRESSED as an empty predictive envelope, or `null` when it carries renderable
  * content. Rules (fail closed — an unknown/empty card is dropped, never shown bare):
@@ -356,6 +379,13 @@ export function feedItemSuppressionReason(
       // the settled arm is FIRST so that "settled means settled" holds — a card
       // with a result leads with the result and never falls back to a
       // probability that is now history.
+      // ux/1070 item 2: a card whose MAIN EVENT is a priced two-sided bout can
+      // answer its own question with two names and two numbers, which is
+      // strictly more than the one the leader arm admits on. Admitted here for
+      // the same reason and under the same discipline: type, both renderers and
+      // this predicate move together, so the card is never admitted to a
+      // surface that would print it bare.
+      if (_conceptBoutIsUsable(d.headline_bout)) return null;
       if (_conceptLeaderIsUsable(d.leader)) return null;
       return "empty_concept";
     }

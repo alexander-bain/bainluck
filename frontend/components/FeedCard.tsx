@@ -16,7 +16,7 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
-import { conceptDomainEmoji } from "@/lib/eventConceptDisplay";
+import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -1152,8 +1152,13 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
   const winner = data.winner?.trim() || null;
   const resultSummary = data.result_summary?.trim() || null;
   // #1939 — guarded exactly as the admitting classifier guards it, never laxer.
+  // ux/1070 item 2: a fight card's main event is a BOUT — two fighters, two
+  // numbers, the date — and it takes precedence over the outright hero, which
+  // on a fight card is the most lopsided fight of the night rather than the one
+  // the card is named after. One shared resolver for both concept renderers.
+  const bout = conceptHeadlineBout(data);
   const leader =
-    !whatHit && data.leader && (data.leader.name ?? "").trim() &&
+    !whatHit && !bout && data.leader && (data.leader.name ?? "").trim() &&
     typeof data.leader.probability === "number"
       ? data.leader
       : null;
@@ -1237,6 +1242,33 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
               {resultSummary || "Final result — see the recap"}
             </p>
           )
+        ) : bout ? (
+          // ux/1070 item 2: THE GAME ARCHETYPE. Both fighters, both numbers,
+          // the date — and the container line under it ("14 fights on the
+          // card"), because the card is a fight night and the bout is its
+          // headline, not its whole content. Tapping opens the card page, where
+          // every bout on it is listed.
+          <>
+            <div className="flex items-center justify-between gap-2 mt-1.5">
+              <span className="text-sm font-semibold text-text-primary truncate">
+                {bout.sides[0].name}
+              </span>
+              <span className="text-sm font-bold text-text-primary font-mono tabular-nums flex-shrink-0">
+                {bout.sides[0].percent}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-0.5">
+              <span className="text-sm font-semibold text-text-secondary truncate">
+                {bout.sides[1].name}
+              </span>
+              <span className="text-sm font-bold text-text-secondary font-mono tabular-nums flex-shrink-0">
+                {bout.sides[1].percent}%
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted mt-1">
+              {[bout.dateLabel, item.reason].filter(Boolean).join(" · ")}
+            </p>
+          </>
         ) : leader ? (
           // #1939: the favourite. The Discover concept card gained this in the
           // same commit — this surface is admitted by the SAME predicate

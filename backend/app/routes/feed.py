@@ -9974,7 +9974,14 @@ async def _score_event_concepts(
         # None for an absent or ambiguous crown by design, and a settled concept
         # that cannot say what happened is the same empty envelope as an unsettled
         # one that cannot say what is likely.
-        _concept_can_render = bool(_leader) or bool(
+        # ux/1070 item 2: a fight card's main event — two fighters, two numbers,
+        # from the one two-sided market. It answers the card's question better
+        # than the outright leader does (which on a fight card is the most
+        # lopsided bout of the night, often not even the one the card is named
+        # for), so it is BOTH a thing to render and a thing that can render:
+        # a card carrying a real bout is never the bare tile Q407 Item 3 drops.
+        _headline_bout = c.get("headline_bout") if not _is_whathit else None
+        _concept_can_render = bool(_leader) or bool(_headline_bout) or bool(
             _is_whathit
             and _champion
             and (_champion.get("winner") or _champion.get("result_summary"))
@@ -10021,6 +10028,11 @@ async def _score_event_concepts(
                     # field, so the renderer's "has a leader" test is a presence
                     # test and an older client ignores it.
                     **({"leader": _leader} if _leader else {}),
+                    # ux/1070 item 2: the main event as a BOUT. Absent (not
+                    # null) when the card has no priced two-sided main event, so
+                    # a renderer that has not learned it — and every shipped iOS
+                    # build — keeps rendering exactly what it rendered before.
+                    **({"headline_bout": _headline_bout} if _headline_bout else {}),
                 },
                 # #235 Item 4: pin while live OR in the T+36h WHAT-HIT window.
                 "_marquee_pin": pin_state in ("live", "whathit"),

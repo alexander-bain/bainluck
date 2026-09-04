@@ -2,10 +2,12 @@
 // Extracted so the rendering logic is unit-tested without mounting the page.
 // D1 binds: probabilities only, never odds.
 
+import { renderedOutcomeRowPercents } from "./renderedPercent";
 import type {
   EventConceptCompetitor,
   EventConceptChild,
   EventConceptResponse,
+  FeedConceptData,
   FuturesOutcomeHistory,
 } from "./types";
 
@@ -732,4 +734,97 @@ export function eventDateRange(
   if (start) return fmt(start);
   if (end) return fmt(end);
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// ux/1070 item 2 — a fight card's MAIN EVENT, as a bout.
+// ---------------------------------------------------------------------------
+
+/** One side of a bout, ready to print. */
+export interface ConceptBoutSide {
+  name: string;
+  percent: number;
+}
+
+/** A card's main event: two named sides, two whole percents that sum to 100. */
+export interface ConceptHeadlineBout {
+  sides: [ConceptBoutSide, ConceptBoutSide];
+  /** "Fri, Sep 19" — the third thing a game card owes the reader. */
+  dateLabel: string | null;
+}
+
+/**
+ * The main event of a fight card, or null when the payload has no usable one.
+ *
+ * WHY THIS IS ONE FUNCTION FOR TWO RENDERERS. A fight card was printing the
+ * OUTRIGHT shape — one name and one percentage, from `leader`, which is the top
+ * entry of the card's whole competitor list. On a 30-rider grand tour that is
+ * the favourite. On a card of ten two-sided fights it is the most lopsided
+ * fight of the night, and measured on production 2026-09-04 it was not even in
+ * the bout the card was named after: `event:ufc:26sep10`, titled "Alexandre
+ * Pantoja vs Joshua Van", led with "Tai Tuivasa 84%".
+ *
+ * A bout is the game archetype: two participants, two numbers, the date. Both
+ * renderers ask this one function so they cannot answer differently, and the
+ * guard is the same shape `feedItemSuppressionReason` admits the card on — a
+ * renderer laxer than its gate paints "undefined%".
+ *
+ * THE PAIR IS NORMALIZED, not rounded twice. Two Kalshi sides of one fight
+ * carry the vig and land on 63/38; printing both raw is #2582 ("every two-way
+ * market sums to 101-102%"). `renderedOutcomeRowPercents` is the shared,
+ * contract-backed treatment for exactly this — a market's own two rows — so the
+ * bout inherits it rather than growing a third rounding rule.
+ */
+export function conceptHeadlineBout(
+  data: FeedConceptData,
+  locale?: string,
+): ConceptHeadlineBout | null {
+  // Settled means settled: a card in its WHAT-HIT window leads with the result,
+  // never with a price that is now history.
+  if (data.marquee_whathit === true) return null;
+  const sides = data.headline_bout?.competitors;
+  if (!Array.isArray(sides) || sides.length !== 2) return null;
+  const usable = sides.every(
+    (s) =>
+      s &&
+      typeof s.name === "string" &&
+      s.name.trim() &&
+      typeof s.probability === "number" &&
+      Number.isFinite(s.probability) &&
+      s.probability >= 0 &&
+      s.probability <= 1,
+  );
+  if (!usable) return null;
+
+  const [first, second] = renderedOutcomeRowPercents([
+    sides[0].probability,
+    sides[1].probability,
+  ]);
+  if (first == null || second == null) return null;
+
+  return {
+    sides: [
+      { name: sides[0].name.trim(), percent: first },
+      { name: sides[1].name.trim(), percent: second },
+    ],
+    dateLabel: boutDateLabel(
+      data.headline_bout?.commence_time ?? data.start_date,
+      locale,
+    ),
+  };
+}
+
+/** "Fri, Sep 19", or null when there is no parseable start. */
+export function boutDateLabel(
+  when?: string | null,
+  locale?: string,
+): string | null {
+  if (!when) return null;
+  const d = new Date(when);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(locale, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
