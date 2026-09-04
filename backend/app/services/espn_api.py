@@ -247,6 +247,49 @@ class ESPNEvent:
     season_type: Optional[int] = None  # 1=preseason, 2=regular, 3=postseason
 
 
+def espn_terminal_state(status_type: dict) -> Optional[str]:
+    """``"post"`` when ESPN says this competition is OVER, else ``None``.
+
+    🔴 **WHY THE NAME IS NOT ENOUGH (#2908).** `_parse_event` derived its
+    three-valued status from `status.type.name`, and the only terminal name it
+    knew was ``STATUS_FINAL``. **Soccer does not use it.** Measured across every
+    ESPN-mapped league on 2026-09-02/03:
+
+        baseball/mlb              STATUS_FINAL       state=post  completed=True
+        football/college-football STATUS_FINAL       state=post  completed=True
+        tennis/atp                STATUS_FINAL       state=post  completed=True
+        soccer/fra.1              STATUS_FULL_TIME   state=post  completed=True
+        soccer/esp.1              STATUS_FULL_TIME   state=post  completed=True
+
+    So a finished match fell through to the raw name, `update_event_fields_from_espn`'s
+    settle branch never fired, and the row stayed ``live`` while the same sync
+    wrote ``period = "FT"`` onto it from `status_detail` — one row saying two
+    things, and the Live Now rail believing the wrong one.
+
+    THE FIX IS TO READ THE FIELD ESPN PUBLISHES FOR THIS. `status.type.state` is
+    already ESPN's own `pre`/`in`/`post`, and `_parse_header_scores` has read it
+    (with `completed`) since #980/#981. This is that same rule, applied to the
+    scoreboard parser.
+
+    **BOTH conditions, and `completed` is the load-bearing one.** ``STATUS_CANCELED``
+    and ``STATUS_POSTPONED`` are also ``state="post"`` — with ``completed=False``,
+    because nothing was played. Settling on `state` alone would stamp a Final and
+    a 0-0 on every abandoned fixture, which is the CERT-752 class exactly: a false
+    LIVE traded for a false FINAL, and only one of the two grades.
+
+    **`state == "in"` is deliberately NOT translated here.** It would newly flip
+    soccer rows live from the authority, and ``STATUS_DELAYED`` is ``state="in"``
+    before a ball is bowled — a live-flip this bug does not need and this change
+    has not measured. One behaviour changes: a match ESPN says is finished ends.
+    """
+    if not isinstance(status_type, dict):
+        return None
+    state = str(status_type.get("state") or "").strip().lower()
+    if state == "post" and status_type.get("completed") is True:
+        return "post"
+    return None
+
+
 class ESPNAPIService:
     """Client for ESPN's public API endpoints."""
 
@@ -584,7 +627,7 @@ class ESPNAPIService:
             elif status_name == "status_final":
                 status = "post"
             else:
-                status = status_name
+                status = espn_terminal_state(status_type) or status_name
 
             # Parse teams
             home_team = None
