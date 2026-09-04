@@ -2913,7 +2913,9 @@ def anchor_schedule_sentinel(self, file_issues=True):
     game their own ESPN anchor names — the December-anchor-on-a-September-row
     class that no scoreboard pass ever visits (#2804). Pages the window under a
     300s budget and a 12-page cap, resuming by cursor, and files ONE deduped
-    issue; closes it only on a COMPLETE clean sweep, never on a truncated one.
+    issue; closes it only when a COMPLETE WINDOW PASS found nothing — the union
+    of the consecutive nights that crossed the window, not any single run
+    (#2983), and never on a truncated, chain-broken or expired one.
 
     READ-ONLY: `apply=False` at the one call site and this wrapper exposes no
     apply flag — the correction stays attended (the moves are large and a

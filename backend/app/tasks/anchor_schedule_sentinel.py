@@ -73,14 +73,53 @@ because the report looks finished. So the continuation is persisted between runs
 Two consequences that are easy to get wrong and are guarded:
 
   * a **resumed** run that reaches the end of the window has seen only the tail,
-    so it is not ``complete`` and may not close the issue; and
+    so that RUN is not complete and may not close the issue on its own; and
   * a saved cursor points into a **moving** window, so it can age out entirely —
     an exhausted resume restarts from the oldest row inside the same run rather
     than stalling silently on zero rows every night.
+
+THE UNION IS THE THING THAT CLOSES — NOT ANY ONE RUN (#2983)
+════════════════════════════════════════════════════════════
+
+Those two consequences, taken together, produced a sentinel that could file and
+could never close. The close was gated on one run having reached the end of the
+window *without resuming*, and no such night exists at this population: a fresh
+run cannot cover 685 rows in a 300s deadline (night one measured 600 of 685,
+``stopped_by: deadline``), and the night that does reach the end gets there by
+resuming. An alert that can never go green is one people stop reading.
+
+Coverage was never the problem — nights one and two together see the whole
+window, which is what the continuation is for. What was missing was anything
+that recorded the UNION. So a **window pass** is tracked beside the position:
+
+  * a run that starts at the oldest row **begins** a pass;
+  * a run that resumes **continues** the pass its predecessor began;
+  * a chain that reaches the end of the window with its pass intact has seen
+    the window, and *that* is what may close.
+
+Three things can void a pass, and each fails toward "cannot close" rather than
+toward a wrong green:
+
+  * **A broken chain.** Resuming with no marker to continue (the marker was lost,
+    or it predates this mechanism) still sweeps — the position is good — but
+    cannot claim the union. One extra cycle, then a clean pass.
+  * **An expired pass** (:data:`MAX_PASS_AGE_SECONDS`). A close asserts the
+    window is clean *now*; the oldest observation in a chain is as old as the
+    pass. Note the deliberate asymmetry: expiry voids the CLAIM and never the
+    POSITION, because clearing the continuation here would restart the sweep at
+    the oldest row every cycle and hand CERT-843's blind spot straight back. A
+    window that has outgrown its budget therefore stops closing — *visibly*,
+    via ``PASS-EXPIRED`` on the operator line, which is the loud version of the
+    failure #2983 reported as a silent one.
+  * **Drift seen anywhere in the chain.** The trap this mechanism creates if
+    built naively: night one files 5 drifting rows, night two sweeps a clean
+    tail and reaches the end — and closes an issue whose 5 rows are still
+    wrong. GREEN is the pass's verdict, not the last run's.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
@@ -150,6 +189,30 @@ CURSOR_STATE_KEY = "anchor_schedule_sentinel:continuation"
 #: it. The exhausted-resume restart handles the case anyway; this is the belt.
 CURSOR_STATE_TTL_SECONDS = 7 * 24 * 3600
 
+#: Where the WINDOW-PASS marker lives (#2983) — beside the continuation, not
+#: inside it.
+#:
+#: A second key on purpose. The continuation is a POSITION; the pass is a CLAIM
+#: about a chain of runs, and the two fail in opposite directions. Losing the
+#: position costs coverage, so it is worth protecting; losing the claim costs
+#: one cycle's close, which is the harmless direction. Folding both into one
+#: blob would let a marker write failure take the position with it, and would
+#: change the format of a key that is live in production right now — a legacy
+#: bare cursor with no marker beside it reads as a broken chain, which is
+#: exactly the safe way for this to arrive.
+PASS_STATE_KEY = "anchor_schedule_sentinel:window_pass"
+
+#: How long a pass may stay open before it stops being evidence about tonight.
+#:
+#: Closing asserts "no anchored row in the window disagrees with its authority"
+#: — now, not last week. The oldest observation in a chain is as old as the pass
+#: itself, so past this bound the window floor has moved days beyond where the
+#: pass began and rows have been re-anchored since. Three nights covers the
+#: two-night steady state plus a missed run, and sits well inside
+#: :data:`CURSOR_STATE_TTL_SECONDS` so the position always outlives the claim
+#: rather than the other way round.
+MAX_PASS_AGE_SECONDS = 3 * 24 * 3600
+
 
 def _load_continuation() -> Optional[str]:
     """Last night's position, or ``None`` to start at the oldest row.
@@ -198,6 +261,82 @@ def _save_continuation(cursor: Optional[str]) -> None:
         )
 
 
+def _load_pass() -> Optional[tuple[datetime, bool]]:
+    """The open window pass as ``(started_at, drift_seen)``, or ``None``.
+
+    ``None`` means "there is no chain here I can continue", and EVERY failure
+    resolves to it: no key, a Redis fault, unparseable JSON, a shape this
+    version does not recognise, a timestamp that will not parse. That is the
+    safe direction for all of them without having to reason about each — a lost
+    marker costs one extra cycle before the rail can go green, where a marker
+    trusted wrongly closes a live drift issue.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(PASS_STATE_KEY)
+    except Exception:  # pragma: no cover - defensive, exercised by the fault test
+        logger.warning(
+            "anchor-schedule sentinel: could not read the window-pass marker; "
+            "this run cannot close the issue",
+            exc_info=True,
+        )
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        started_at = datetime.fromisoformat(data["started_at"])
+    except Exception:
+        logger.warning(
+            "anchor-schedule sentinel: window-pass marker is unreadable (%r); "
+            "treating the chain as broken",
+            raw,
+        )
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return started_at, bool(data.get("drift_seen"))
+
+
+def _save_pass(started_at: datetime, drift_seen: bool) -> None:
+    """Carry the open pass to the next night.
+
+    Shares :data:`CURSOR_STATE_TTL_SECONDS` with the continuation so the two
+    cannot outlive each other in the dangerous order (a marker older than the
+    position it describes would claim a chain that no longer exists).
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().setex(
+            PASS_STATE_KEY,
+            CURSOR_STATE_TTL_SECONDS,
+            json.dumps(
+                {"started_at": started_at.isoformat(), "drift_seen": bool(drift_seen)}
+            ),
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "anchor-schedule sentinel: could not persist the window-pass marker; "
+            "tomorrow's run will treat the chain as broken",
+            exc_info=True,
+        )
+
+
+def _clear_pass() -> None:
+    """End the pass — it finished, it expired, or there was never one."""
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().delete(PASS_STATE_KEY)
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "anchor-schedule sentinel: could not clear the window-pass marker",
+            exc_info=True,
+        )
+
+
 def _blind_spots_note() -> str:
     """The paragraph that keeps a green night from being read as a clean graph."""
     return (
@@ -221,6 +360,14 @@ def _summarize(state: dict[str, Any]) -> str:
     where = " RESUMED" if state.get("resumed_from") else ""
     if state.get("continuation"):
         where += " CONTINUES-TOMORROW"
+    # The three pass states an operator has to be able to tell apart when the
+    # rail is not closing. Silent versions of these are what #2983 was.
+    if state.get("pass_expired"):
+        where += " PASS-EXPIRED"
+    elif state.get("pass_open") is False:
+        where += " CHAIN-BROKEN"
+    if state.get("pass_drift_seen") and not state.get("moves"):
+        where += " PASS-SAW-DRIFT-EARLIER"
     return (
         f"{state['terminal']}:{where} examined={state['examined']}/{state['eligible']} "
         f"pages={state['pages']} drift={len(state['moves'])} · {counts}"
@@ -240,11 +387,13 @@ async def _sweep(
 ) -> dict[str, Any]:
     """Page the rail read-only until the window ends or a bound is hit.
 
-    ``terminal`` is this SWEEP's word, not any one page's. The rail is explicit
-    that whether a sweep finished is the driver's finding to report (see
-    ``reconcile``'s paging docstring), so the per-page ``partial`` is expected
-    and is not propagated — what matters is whether we reached the end of the
-    window before a bound stopped us.
+    ``reached_window_end`` is this SWEEP's word, not any one page's. The rail is
+    explicit that whether a sweep finished is the driver's finding to report
+    (see ``reconcile``'s paging docstring), so the per-page ``partial`` is
+    expected and is not propagated — what matters is whether we reached the end
+    of the window before a bound stopped us. Turning that into ``complete`` and
+    a ``terminal`` is the caller's job, because it needs the window-pass marker
+    this function does not hold (#2983).
 
     ═══ RESUMING, AND THE STALL IT MUST NOT CAUSE (CERT-843) ═══
 
@@ -363,25 +512,15 @@ async def _sweep(
     if stopped_by is None:
         continuation = None
 
-    # `complete` gates the GREEN close, so it has to mean "this run saw the
-    # whole window" — not merely "this run was not interrupted". A resumed run
-    # that reaches the end has seen only the TAIL; everything before its cursor
-    # went unexamined tonight, and closing the issue on that would resolve a
-    # defect nobody looked for.
-    complete = stopped_by is None and not resumed
-    if stopped_by == "authority_dark":
-        terminal = "authority_dark"
-    elif not complete:
-        terminal = "partial"
-    elif moves:
-        terminal = "plan_only"
-    else:
-        terminal = "no_work"
-
+    # This sweep reports what IT did; whether the WINDOW has been seen is a
+    # question about the chain this run belongs to, and only the caller holds
+    # the pass marker that answers it (#2983). Reaching the end while resumed
+    # means this run saw the TAIL — that is a fact about the run, and it is a
+    # necessary but not sufficient condition for the close.
     return {
         "measured": True,
-        "terminal": terminal,
-        "complete": complete,
+        "reached_window_end": stopped_by is None,
+        "resumed": resumed,
         "stopped_by": stopped_by,
         "resumed_from": resume_from,
         "restarted_from_exhausted_cursor": restarted_from_exhausted_cursor,
@@ -444,21 +583,44 @@ async def _run_anchor_schedule_sentinel(
     """Sweep the anchored near-future window read-only and report what drifted.
 
     RED (file) when the sweep found drift. GREEN (close) **only from a COMPLETE
-    sweep that found none** — a truncated, resumed or authority-dark run has not
-    earned the word, and closing on one would resolve a real issue because the
-    budget ran out. That is the same discipline ``reconcile`` applies per page,
-    held one level up (gotcha #53: a partial answer read as an all-clear).
+    window pass that found none, on any night of it** — a truncated,
+    chain-broken, expired or authority-dark state has not earned the word, and
+    closing on one would resolve a real issue because the budget ran out. That
+    is the same discipline ``reconcile`` applies per page, held one level up
+    (gotcha #53: a partial answer read as an all-clear).
 
     Consecutive nights CONTINUE each other (CERT-843): a run stopped by its
     budget saves where it got to, and the next one starts after it, so a window
     bigger than one night's budget is still covered end to end instead of the
     front slice being rescanned forever. ``resume=False`` forces a run to start
     at the oldest row — for an operator who wants a front-of-window read now.
+
+    And the close is the CHAIN's, not any one run's (#2983). The run that
+    reaches the end of the window is, by construction, a resumed one; gating
+    GREEN on a single unresumed run reaching the end made the close unreachable
+    at this population. So ``complete`` is now "an intact window pass reached
+    the end", and GREEN additionally requires that no night in that pass saw
+    drift. The three ways a pass fails to earn it — broken chain, expiry,
+    drift-seen-earlier — are each on the operator line.
     """
     from app.tasks.base import get_task_session
 
     now = now or datetime.now(timezone.utc)
     resume_from = _load_continuation() if resume else None
+    open_pass = _load_pass() if resume_from else None
+
+    # Which window pass this run belongs to, decided before the sweep because it
+    # is decided by WHERE the run starts (#2983). Starting at the oldest row
+    # begins a pass; resuming continues the one the predecessor began; resuming
+    # with nothing to continue is a broken chain, which still sweeps — the
+    # position is good — but cannot claim to have seen the window.
+    if resume_from is None:
+        pass_open, pass_started_at, pass_drift_seen = True, now, False
+    elif open_pass is not None:
+        pass_open = True
+        pass_started_at, pass_drift_seen = open_pass
+    else:
+        pass_open, pass_started_at, pass_drift_seen = False, None, False
 
     async with get_task_session() as session:
         state = await _sweep(
@@ -472,9 +634,60 @@ async def _run_anchor_schedule_sentinel(
             resume_from=resume_from,
         )
 
+    # An exhausted resume restarted this run at the oldest row (see `_sweep`),
+    # so a NEW pass began mid-run: the rows the dead cursor named are out of the
+    # window and the chain that examined them is not continuable. Anything the
+    # run found before the restart is still counted below — the restart can only
+    # fire on a page that examined nothing, so there is nothing to lose.
+    if state["restarted_from_exhausted_cursor"]:
+        pass_open, pass_started_at, pass_drift_seen = True, now, False
+
+    pass_drift_seen = pass_drift_seen or bool(state["moves"])
+    pass_age_seconds = (
+        (now - pass_started_at).total_seconds() if pass_started_at else None
+    )
+    pass_expired = pass_open and pass_age_seconds > MAX_PASS_AGE_SECONDS
+
+    # `complete` still gates the GREEN close and still means "the whole window
+    # has been seen" — the change is that it is now the CHAIN's property rather
+    # than one run's, which is the only reading under which it is ever true at
+    # this population (#2983).
+    complete = bool(state["reached_window_end"] and pass_open and not pass_expired)
+
+    if state["stopped_by"] == "authority_dark":
+        terminal = "authority_dark"
+    elif not complete:
+        terminal = "partial"
+    elif pass_drift_seen:
+        terminal = "plan_only"
+    else:
+        terminal = "no_work"
+
+    state["complete"] = complete
+    state["terminal"] = terminal
+    state["pass_open"] = pass_open
+    state["pass_drift_seen"] = pass_drift_seen
+    state["pass_started_at"] = pass_started_at.isoformat() if pass_started_at else None
+    state["pass_age_seconds"] = (
+        round(pass_age_seconds, 1) if pass_age_seconds is not None else None
+    )
+    state["pass_expired"] = bool(pass_expired)
+
     # Hand the position on (or clear it on a finished sweep) BEFORE filing, so a
     # GitHub fault cannot cost us the place we got to.
     _save_continuation(state["continuation"])
+
+    # The pass ends when the chain reaches the end of the window, and also when
+    # it has nothing left to claim — expired, or broken from the start. Note
+    # what is NOT cleared on expiry: the continuation. Restarting the sweep at
+    # the oldest row every time a pass ages out would mean a window that has
+    # outgrown three nights of budget never has its tail examined at all, which
+    # is CERT-843's blind spot with extra steps. Expiry costs the close, never
+    # the coverage.
+    if state["reached_window_end"] or not pass_open or pass_expired:
+        _clear_pass()
+    else:
+        _save_pass(pass_started_at, pass_drift_seen)
 
     # One canonical issue for this rail. The fingerprint deliberately does NOT
     # hash the drifting ids: if it did, every night with a different set of bad
@@ -491,10 +704,16 @@ async def _run_anchor_schedule_sentinel(
         logger.info("anchor-schedule sentinel: %s", line)
 
     state["filing"] = None
+    # GREEN is the PASS's verdict, not tonight's. A chain whose first night
+    # filed five drifting rows must not be closed by a later night that swept a
+    # clean tail and reached the end — those five rows are still wrong. Without
+    # this clause the #2983 repair would resolve live drift, which is a worse
+    # failure than the one it fixes.
+    green = complete and not pass_drift_seen
     # A sweep that did not finish may neither file a clean bill nor close one.
     # It MAY still file drift it actually saw — a real finding does not become
     # unreal because the budget stopped the sweep after it.
-    if file_issues and (red or state["complete"]):
+    if file_issues and (red or green):
         from app.tasks.sentinel_filing import reconcile_issue
 
         state["filing"] = reconcile_issue(
@@ -512,11 +731,20 @@ async def _run_anchor_schedule_sentinel(
             ),
             labels=["type:bug", "priority:p1", "area:backend", "matching-symptom"],
         )
+    elif file_issues and complete and pass_drift_seen:
+        logger.warning(
+            "anchor-schedule sentinel: the window pass is complete but an earlier "
+            "night in it found drift — not closing; the pass ends RED — %s",
+            line,
+        )
     elif file_issues:
         logger.warning(
-            "anchor-schedule sentinel: sweep incomplete (%s) and no drift found — "
-            "neither filing nor closing; an unfinished window is not an all-clear",
+            "anchor-schedule sentinel: window pass incomplete (stopped_by=%s "
+            "pass_open=%s expired=%s) and no drift found — neither filing nor "
+            "closing; an unfinished window is not an all-clear",
             state["stopped_by"],
+            pass_open,
+            pass_expired,
         )
 
     return state
