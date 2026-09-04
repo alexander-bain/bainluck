@@ -245,7 +245,7 @@ describe("UX-1065: the measured population", () => {
   });
 
   it("no output is a non-distinctive word — that is the whole ship", () => {
-    const leaked = NAMES.map(teamShortName).filter(
+    const leaked = NAMES.map((n) => teamShortName(n)).filter(
       (out) => out.split(" ").length === 1 && isNonDistinctiveTrailingWord(out),
     );
     expect(leaked).toEqual([]);
@@ -274,7 +274,18 @@ describe("UX-1065: the measured population", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("UX-1065: the abbreviation clause is symmetric or absent", () => {
-  it("both sides carrying one uses both (1 of 120 live events)", () => {
+  it("CONTROL two NICKNAME teams keep their nicknames even though both carry an abbreviation", () => {
+    // Replaying the "prefer the abbreviation" form over 120 live events fired on
+    // exactly this card and made it worse: "Dockers / Hawks" -> "FRE / HAW".
+    // The abbreviation is a rescue for a failed short name, not a preference.
+    const pair = teamShortNames(
+      { name: "Fremantle Dockers", abbreviation: "FRE" },
+      { name: "Hawthorn Hawks", abbreviation: "HAW" },
+    );
+    expect(pair).toEqual({ home: "Dockers", away: "Hawks" });
+  });
+
+  it("both sides carrying one RESCUE a failed short name", () => {
     const pair = teamShortNames(
       { name: "Ipswich Town", abbreviation: "IPS" },
       { name: "Liverpool FC", abbreviation: "LIV" },
