@@ -1,0 +1,175 @@
+{
+  "scores": {
+    "sport": "hockey",
+    "tournament": {
+      "country": "usa",
+      "id": "2506",
+      "league": "NHL",
+      "season": "2026/2027",
+      "match": [
+        {
+          "date": "19.09.2026",
+          "id": "649052",
+          "stats_id": "68933",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Bell Centre",
+          "home": {
+            "id": "2614",
+            "name": "Montreal Canadiens",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2635",
+            "name": "Toronto Maple Leafs",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "19.09.2026",
+          "id": "650449",
+          "stats_id": "68935",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Enterprise Center",
+          "home": {
+            "id": "2787",
+            "name": "St. Louis Blues",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2645",
+            "name": "Dallas Stars",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "19.09.2026",
+          "id": "649053",
+          "stats_id": "68933",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Scotiabank Arena",
+          "home": {
+            "id": "2635",
+            "name": "Toronto Maple Leafs",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2614",
+            "name": "Montreal Canadiens",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "11.11.2026",
+          "id": "653157",
+          "stats_id": "69244",
+          "status": "Not Started",
+          "time": "00:00",
+          "venue": "Scotiabank Arena",
+          "home": {
+            "id": "2635",
+            "name": "Toronto Maple Leafs",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2636",
+            "name": "Colorado Avalanche",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "31.12.2026",
+          "id": "653507",
+          "stats_id": "69593",
+          "status": "Not Started",
+          "time": "00:30",
+          "venue": "TD Garden",
+          "home": {
+            "id": "2659",
+            "name": "Boston Bruins",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2638",
+            "name": "Edmonton Oilers",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "23.02.2027",
+          "id": "653858",
+          "stats_id": "69944",
+          "status": "Not Started",
+          "time": "02:40",
+          "venue": "Climate Pledge Arena",
+          "home": {
+            "id": "8913",
+            "name": "Seattle Kraken",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2659",
+            "name": "Boston Bruins",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "10.04.2027",
+          "id": "654206",
+          "stats_id": "70292",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Madison Square Garden",
+          "home": {
+            "id": "2671",
+            "name": "New York Rangers",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2635",
+            "name": "Toronto Maple Leafs",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "10.04.2027",
+          "id": "654207",
+          "stats_id": "70293",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Canadian Tire Centre",
+          "home": {
+            "id": "2687",
+            "name": "Ottawa Senators",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "2614",
+            "name": "Montreal Canadiens",
+            "totalscore": ""
+          }
+        },
+        {
+          "date": "10.04.2027",
+          "id": "654208",
+          "stats_id": "70294",
+          "status": "Not Started",
+          "time": "23:00",
+          "venue": "Enterprise Center",
+          "home": {
+            "id": "2787",
+            "name": "St. Louis Blues",
+            "totalscore": ""
+          },
+          "away": {
+            "id": "10903",
+            "name": "Utah Mammoth",
+            "totalscore": ""
+          }
+        }
+      ]
+    }
+  }
+}

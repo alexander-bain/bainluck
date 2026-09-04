@@ -278,7 +278,12 @@ class TestStillDark:
     @pytest.mark.asyncio
     async def test_other_sports_are_unchanged_by_the_new_entry_point(self, service, monkeypatch):
         """get_schedule_fixtures falls through to get_fixtures for everyone else,
-        so the authority path cannot fork a sport's behaviour by accident."""
+        so the authority path cannot fork a sport's behaviour by accident.
+
+        Step 3 (authority/005) claimed nba and nhl, so the fall-through is
+        shown on a sport the program has not reached: golf still goes straight
+        through to get_fixtures, still hits `schedule`, and still swallows a
+        failed read into `[]` the way the ingestion path does."""
         seen = []
 
         async def fake_get(sport, endpoint, params=None):
@@ -286,5 +291,5 @@ class TestStillDark:
             return None
 
         monkeypatch.setattr(service, "_get", fake_get)
-        await service.get_schedule_fixtures("nba")
-        assert seen == [("nba", "season-schedule")]
+        assert await service.get_schedule_fixtures("pga") == []
+        assert seen == [("pga", "schedule")]
