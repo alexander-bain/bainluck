@@ -46,10 +46,13 @@ as "the event graph is fine" is worse than no sentinel.
 THE BUDGET, AND WHY IT IS WALL-CLOCK AND NOT A ROW COUNT
 ════════════════════════════════════════════════════════
 
-One ``summary?event=`` call per row, ~0.2s measured. The window held 685
-anchored rows the day the rail was written (239 NFL alone), so a full sweep is
-~140s of upstream time on a good night — and good nights are not the ones to
-size for. The sibling endpoint one door over (``authority-id-collisions``,
+One ``summary?event=`` call per row, **~0.59s re-measured against production on
+2026-09-04** (#2953 — the ~0.2s this paragraph used to claim was wrong by 3x,
+and the endpoint's row bound was built on it). The window held 685 anchored rows
+the day the rail was written (239 NFL alone), so a full sweep is ~400s of
+upstream time on a good night — more than one night's deadline, which is exactly
+why the continuation below is load-bearing rather than a nicety. And good nights
+are not the ones to size for. The sibling endpoint one door over (``authority-id-collisions``,
 #2864) went to a 30s H12 on exactly this shape, and lane1/082 measured its
 *3-group* call at 19.3s and 2.0s minutes apart: the per-row cost has a heavy
 tail that lives upstream, outside our control.
@@ -85,7 +88,6 @@ from typing import Any, Optional
 
 from app.tasks.reconcile_anchor_schedule import (
     DEFAULT_HORIZON,
-    DEFAULT_LIMIT,
     DEFAULT_LOOKBACK,
     EXCLUDED_SPORT_KEYS,
     reconcile,
@@ -104,6 +106,30 @@ DEFAULT_DEADLINE_SECONDS = 300.0
 #: is FAST, because then the deadline buys thousands of upstream calls nobody
 #: asked for. Two bounds, two different runaway shapes.
 DEFAULT_MAX_PAGES = 12
+
+#: This sweep's OWN page size, and the reason it is not ``reconcile``'s.
+#:
+#: `reconcile.DEFAULT_LIMIT` is a **router** bound — it exists because the admin
+#: endpoint has 30 seconds before Heroku kills it. This task has no router: it
+#: runs in a Celery worker under :data:`DEFAULT_DEADLINE_SECONDS`. When #2953
+#: cut the shared default from 100 to 25 for the endpoint's sake, this sweep
+#: would have inherited it and gone from ~500 rows a night (300s ÷ ~59s a page)
+#: to 300 (:data:`DEFAULT_MAX_PAGES` × 25), because the page cap binds first at
+#: the smaller size — a 40% cut in nightly reach, bought for a constraint this
+#: caller does not have.
+#:
+#: 100 rows at the measured ~0.59s/row is ~59s, so ~5 pages fit the deadline and
+#: the page cap stays slack. Stated here, in the caller that owns the budget.
+SWEEP_PAGE_LIMIT = 100
+
+#: The per-page wall clock, matched to :data:`SWEEP_PAGE_LIMIT` above.
+#:
+#: `reconcile` cuts a page at its own ``budget_seconds``, whose default is the
+#: endpoint's 18s. Left alone that would truncate every page of this sweep at
+#: ~30 rows and hand back a cursor, quietly turning the page cap into the real
+#: bound again. 70s clears a full 100-row page (~59s) with headroom for a slow
+#: night, and still lands ~4 pages inside the 300s deadline.
+SWEEP_PAGE_BUDGET_SECONDS = 70.0
 
 #: The dedupe marker. One canonical issue for this sentinel, re-pointed at the
 #: current observation on each RED night and closed on a clean COMPLETE sweep.
@@ -271,6 +297,10 @@ async def _sweep(
             horizon=horizon,
             cursor=cursor,
             exclude_sports=EXCLUDED_SPORT_KEYS,
+            # Stated for the same reason `apply` is: this caller is not behind
+            # the router `reconcile`'s default is sized for, and inheriting it
+            # would truncate every page here at ~30 rows (#2953).
+            budget_seconds=SWEEP_PAGE_BUDGET_SECONDS,
         )
         pages += 1
 
@@ -402,7 +432,7 @@ def _issue_body(state: dict[str, Any], *, now: datetime) -> str:
 async def _run_anchor_schedule_sentinel(
     file_issues: bool = True,
     *,
-    limit: int = DEFAULT_LIMIT,
+    limit: int = SWEEP_PAGE_LIMIT,
     sport: Optional[str] = None,
     lookback: timedelta = DEFAULT_LOOKBACK,
     horizon: timedelta = DEFAULT_HORIZON,

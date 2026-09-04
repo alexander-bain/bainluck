@@ -1,6 +1,6 @@
 """The cursor that lets one command sweep a window bigger than one page. #2693.
 
-`DEFAULT_LIMIT` is a router-timeout bound (100) and the window held 685 rows the
+`DEFAULT_LIMIT` is a router-timeout bound (25 since #2953) and the window held 685 rows the
 day it was measured, so every unpaged call sees a minority of the population and
 the rail was only ever runnable by hand, one `--sport` slice at a time. Paging is
 what retires that.
