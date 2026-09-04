@@ -28,16 +28,26 @@ few offenders rather than letting Postgres raise a `duplicate key` the operator
 then has to go and diagnose. A precondition worth having is worth stating in
 the error.
 
-**The precondition is not met today, and the reason is named.** The repair
-resolves 188 of the 196; the other 8 groups (17 rows) it deliberately refuses,
-because ESPN cannot settle which of our rows is really that game — 2 where the
-authority itself gave no answer (one 502, one 404), 6 where ESPN answered and
-recognised neither row. They are filed as **#2769** under D42 = A. Four of them
-are team-identity variants that #1204 clears as a by-product; two are genuine
-mis-anchors. **Merging this file before those 8 clear installs nothing and tells
-nobody**, because ``backend/Procfile`` wraps ``alembic upgrade heads`` in
-``|| echo`` and swallows the raise (#2741). Order: repair drains 188 → the 8
-clear → this ships into a tree where it can succeed.
+**THE PRECONDITION IS MET — 2026-09-04T13:52Z the pre-check returns 0** (it was
+196 on 09-02 and 09-03). The history is worth keeping because it is the order
+this had to happen in: the repair resolved 188 of the 196 through the
+``authority-id-collisions`` rail; 3 more cleared on their own between 09-03 and
+09-04; the last **5 groups (11 rows)** ESPN still refused when re-asked from
+production egress this morning — 2 ``AUTHORITY_UNAVAILABLE`` (``401504210``
+still 502, ``401873756`` no usable record) and 3 ``NO_ROW_AGREES``. Those 11
+were unstamped under **D42's Friday clause** and **D51 = B(b)** (backup written
+first, one-command restore shipped): all 11 are finished fixtures — the newest
+kicked off 2026-05-29 — so no live score, clock or status lost a channel. The
+backup, the exact statement and the restore are
+``artifacts/LANE1-114-UNSTAMP-BACKUP-2769.md``; the population is **#2769**.
+
+**Re-run the pre-check immediately before the release anyway.** Zero on Friday
+morning is not zero at release time: nothing in the database enforces the
+invariant until this file installs it. ``upgrade()`` re-asks the same question
+under ``ACCESS EXCLUSIVE`` so a regrowth cannot slip between the check and the
+build — but ``backend/Procfile`` wraps ``alembic upgrade heads`` in ``|| echo``
+and swallows the raise (#2741), so a failure here is **silent** and the
+operator's own pre-check is the only loud signal.
 
 ═══ PARTIAL, BECAUSE NULL IS THE ORDINARY STATE ═══
 
@@ -140,9 +150,11 @@ with ``source ~/.claude/.env``::
       -d '{"sql":"SELECT count(*) AS contested_ids FROM (SELECT espn_id FROM events WHERE espn_id IS NOT NULL GROUP BY espn_id HAVING count(*) > 1) t","limit":5}' \
       "$BAINLUCK_API/api/admin/db-query"
 
-Measured 2026-09-03T06:5xZ it prints **196**, so the index cannot land today.
-The 188 that the repair resolves come out via the repair rail; the remaining 8
-are #2769. The richer form of the same question — which groups, and why each is
+**Measured 2026-09-04T13:52Z it prints 0** (196 on 09-03 — the drain and then
+the D42-B unstamp of the 5 refused groups got it there; see the PRECONDITION
+section above). Run it again anyway at release time: it is cheap, and #2741
+means a regrowth would fail this migration silently. The richer form of the same
+question — which groups, and why each is
 refused — is ``backend/scripts/audit_authority_id_collisions.py``, which reaches
 its verdicts through the same ``app.utils.authority_id_collisions`` module the
 repair job runs, so a dry run and the job cannot drift.
