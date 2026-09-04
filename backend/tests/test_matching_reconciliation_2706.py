@@ -89,10 +89,39 @@ def _pair(market_id, correct, at_capture, title="A vs B", cls="attached-correct"
     }
 
 
-def _run_golden(pairs, current_rows):
-    with patch.object(mrec, "FIXTURE_PATH") as fp:
+#: Real production id shapes, so a test cannot pass on a vocabulary that does
+#: not exist. Sampled 2026-09-03 (see ``anchor_provenance``'s measurement note).
+_ODDS_API_ID = "6fda1c04dbc63f6c24f795f05e32d11b"   # 29,333 events; 96.7% have odds
+_KALSHI_DERIVED_ID = "pm_kalshi_KXATPMATCH-26FEB21DESHI"  # 11,584; 0 have odds
+_POLYMARKET_DERIVED_ID = "pm_polymarket_113849"           # 10,394; 0 have odds
+
+
+def _row(market_id, event_id, external_id=None, event_missing=False):
+    """One production row: the market, where it points, the ``external_id`` of
+    the event it points at, and whether that events row could be read at all.
+
+    ``external_id=None`` with ``event_missing=False`` is a real id-less event —
+    the matcher's own creation. ``event_missing=True`` is a dangling
+    ``event_id``, which is a DIFFERENT claim and must not be reported as one.
+    """
+    return (market_id, event_id, external_id, event_missing)
+
+
+def _run_golden(pairs, current_rows, accepted=None):
+    """Run the check over synthetic pairs.
+
+    ``accepted`` defaults to EMPTY, never to the shipped map: a synthetic market
+    id must never collide with a real adjudicated one, and the default in a test
+    should be the default in production — nothing is accepted until somebody
+    adjudicates it.
+    """
+    # Tolerate the 2-tuples the pre-provenance tests were written with: those
+    # cases turn on the pair, not on what it attached to.
+    rows = [tuple(r) + (None, False)[len(r) - 2:] for r in current_rows]
+    with patch.object(mrec, "FIXTURE_PATH") as fp, \
+            patch.object(mrec, "ACCEPTED_ATTACHMENTS", dict(accepted or {})):
         fp.read_text.return_value = _fake_fixture(pairs)
-        return asyncio.run(mrec.check_golden_pairs(_Session([current_rows])))
+        return asyncio.run(mrec.check_golden_pairs(_Session([rows])))
 
 
 def test_a_pair_that_was_right_and_is_now_wrong_is_the_finding():
@@ -126,11 +155,326 @@ def test_a_pair_that_recovers_is_counted_but_does_not_file():
     assert out["recovered"] == 1
 
 
-def test_a_negative_pair_that_acquires_a_link_is_a_regression():
-    """550 of the 709 say "belongs on no event". Attaching one is a false attach."""
-    out = _run_golden([_pair(1, None, None, cls="a-no-event")], [(1, 999)])
+def test_a_negative_pair_that_attaches_to_an_idless_event_is_red():
+    """A negative pair that attaches to an event the MATCHER created is RED.
+
+    This test used to be ``..._that_acquires_a_link_is_a_regression``, and its
+    docstring read "550 of the 709 say 'belongs on no event'. Attaching one is a
+    false attach." THAT CLAIM WAS THE DEFECT, asserted. The old assertion is
+    deliberately not preserved: it encoded the conflation this change removes.
+    What survives is the half of it that is true — no outside source says this
+    event exists, so nothing corroborates the attachment.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, external_id=None)],
+    )
     assert out["red"] is True
     assert out["rows"][0]["actual_event_id"] == 999
+    assert out["rows"][0]["verdict"] == "self_answered"
+    assert out["self_answered"] == 1
+    assert out["baseline_stale"] == 0
+
+
+def test_a_negative_pair_on_its_adjudicated_provider_anchored_fixture_is_not_red():
+    """THE CONTROL. The system getting BETTER must not be filed as it breaking.
+
+    ``a-no-event`` means no event existed AT CAPTURE — the adjudicator's note is
+    "global 2+-token check; titles batch-read". When the fixture later shows up
+    from a provider, a human adjudicates the market onto it, and the market is
+    there, the baseline row is stale and the matcher is right. Measured on
+    production 2026-09-03: five of the 39 RED rows were exactly this, including
+    "Hamburg vs Mainz" landing on the real Bundesliga ``Hamburger SV v FSV Mainz
+    05`` (market 59700394 -> event 15291033, in ``ACCEPTED_ATTACHMENTS``).
+
+    It takes BOTH halves. This is the arm that proves the repair below did not
+    simply turn the promotion off.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, external_id=_ODDS_API_ID)],
+        accepted={1: 999},
+    )
+    assert out["red"] is False
+    assert out["count"] == 0
+    assert out["baseline_stale"] == 1
+    assert out["self_answered"] == 0
+    assert out["unadjudicated"] == 0
+    # And it must not ride along in the rows the issue body accuses.
+    assert out["rows"] == []
+
+
+def test_a_negative_pair_on_an_unrelated_provider_anchored_event_is_red():
+    """THE REPAIR. A provider-anchored destination is not a correspondence.
+
+    ``anchor_provenance`` is a property of the DESTINATION ALONE — it takes an
+    id string and nothing else, so it cannot see the market's teams, sport,
+    kickoff or id. Promoting on it by itself accepted every one of the 29,333
+    Odds-API-anchored events in the database as a valid destination for every
+    market: attach "Hawaii vs Stanford" to a Bundesliga fixture three weeks away
+    and the check called it ``baseline_stale`` and went green.
+
+    Same input as the control above, one thing changed: nobody adjudicated this
+    market onto this event.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event", title="Hawaii vs Stanford")],
+        [_row(1, 999, external_id=_ODDS_API_ID)],
+        accepted={},
+    )
+    assert out["red"] is True
+    assert out["count"] == 1
+    assert out["baseline_stale"] == 0
+    assert out["unadjudicated"] == 1
+    assert out["rows"][0]["verdict"] == "unadjudicated"
+    # The destination IS real — that is the point. It is the wrong one.
+    assert out["rows"][0]["anchor_provenance"] == "schedule_provider"
+
+
+def test_an_accepted_market_that_moves_to_another_anchored_event_is_red():
+    """Acceptance is per ATTACHMENT, not per market.
+
+    A market with an adjudicated destination that now sits somewhere else is the
+    case a per-market allowlist would wave through forever, and it is the one
+    worth waking up for: a human said event 999 and the matcher says 998.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 998, external_id=_ODDS_API_ID)],
+        accepted={1: 999},
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "unadjudicated"
+    # The row says where the adjudication put it, so the body reads as a move.
+    assert out["rows"][0]["accepted_event_id"] == 999
+    assert out["rows"][0]["actual_event_id"] == 998
+
+
+def test_an_accepted_attachment_that_loses_its_provider_anchor_is_red():
+    """Acceptance does not outlive the corroboration it was granted on.
+
+    The five rows were adjudicated onto fixtures an outside schedule provider
+    carried. If one of those events stops being anchored — the ``external_id``
+    goes NULL, or the events row cannot be read — the pair is back to the
+    matcher's word alone, and a stale human decision must not keep it green.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, external_id=None)],
+        accepted={1: 999},
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "self_answered"
+    assert out["rows"][0]["anchor_provenance"] == "idless"
+    assert out["baseline_stale"] == 0
+
+
+def test_a_prediction_market_derived_event_is_not_outside_corroboration():
+    """THE HOLE THE ``IS NOT NULL`` PROXY LEFT OPEN.
+
+    21,978 events carry a ``pm_kalshi_*`` / ``pm_polymarket_*`` ``external_id``:
+    the registry CREATED them from a prediction market. ZERO of 587 sampled on
+    2026-09-03 carry a single bookmaker odds snapshot, against 96.7% of Odds API
+    events. So a prediction market attaching to an event a prediction market
+    created is the matcher answering itself one step removed — the id-less case
+    laundered through the ingest path — and reading it as "a provider anchors
+    this now" would promote a real self-attachment out of RED.
+
+    24,232 markets still hang off those events, so the row shape is live in the
+    database even though the creation path is frozen.
+    """
+    for external_id in (_KALSHI_DERIVED_ID, _POLYMARKET_DERIVED_ID):
+        out = _run_golden(
+            [_pair(1, None, None, cls="a-no-event")],
+            [_row(1, 999, external_id=external_id)],
+        )
+        assert out["red"] is True, external_id
+        assert out["baseline_stale"] == 0, external_id
+        assert out["self_answered"] == 1, external_id
+        assert out["rows"][0]["anchor_provenance"] == "market_derived", external_id
+
+
+def test_an_external_id_we_synthesized_ourselves_is_not_outside_corroboration():
+    """``events.external_id`` is not provider-only BY CONSTRUCTION.
+
+    ``POST /api/admin/events/create`` builds
+    ``manual_{sport}_{home}_{away}_{unix_ts}`` out of our own field values and
+    writes it straight to the column, bypassing ``find_or_create_event()``. It
+    is the one shape where "an id is present" and "somebody outside carries this
+    fixture" come apart on purpose, so it must never promote a row out of RED.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, external_id="manual_soccer_epl_Ipswich_Liverpool_1757030400")],
+    )
+    assert out["red"] is True
+    assert out["baseline_stale"] == 0
+    assert out["rows"][0]["anchor_provenance"] == "synthesized"
+
+
+def test_an_unrecognised_id_vocabulary_stays_red_rather_than_promoting_itself():
+    """The discriminator is an ALLOWLIST, so a new upstream id shape is RED.
+
+    A denylist would silently promote whatever vocabulary arrives next. Gotcha
+    #53: absence of evidence that an id is self-derived is not evidence that an
+    outside provider wrote it.
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, external_id="statpal-nfl-2026-week1-0007")],
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["anchor_provenance"] == "unknown"
+    assert out["baseline_stale"] == 0
+
+
+def test_the_detail_line_names_which_uncorroborated_provenance():
+    """"34 uncorroborated" hides whether the matcher INVENTED the event or
+    attached to an id nobody has adjudicated. Those need different fixes, and
+    the body is the only place the count is refreshed."""
+    out = _run_golden(
+        [
+            _pair(1, None, None, cls="a-no-event"),
+            _pair(2, None, None, cls="a-no-event"),
+        ],
+        [
+            _row(1, 998, external_id=None),
+            _row(2, 997, external_id=_KALSHI_DERIVED_ID),
+        ],
+    )
+    assert out["by_provenance"] == {"idless": 1, "market_derived": 1}
+    assert "1 idless" in out["detail"]
+    assert "1 market_derived" in out["detail"]
+
+
+def test_an_event_row_we_cannot_read_is_not_read_as_corroboration():
+    """Unknown provenance defaults to RED, not to "a provider vouched for it".
+
+    A dangling ``event_id`` returns NULL for the joined ``external_id IS NULL``
+    expression, which is indistinguishable from "anchored" if you test it
+    truthily. Absence of evidence is not corroboration (gotcha #53).
+    """
+    out = _run_golden(
+        [_pair(1, None, None, cls="a-no-event")],
+        [_row(1, 999, event_missing=True)],
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "self_answered"
+    # RED for the same reason, but NOT reported as the finding "the matcher
+    # created this event" — that claim needs an events row we actually read.
+    assert out["rows"][0]["anchor_provenance"] == "unreadable"
+
+
+def test_the_corroborating_set_is_an_allowlist_of_one_and_says_so():
+    """A regression arm for the discriminator itself.
+
+    If ``CORROBORATING_PROVENANCE`` ever grows to include ``market_derived`` or
+    ``unknown``, every self-attachment in those classes silently leaves RED and
+    the board goes quiet while the matcher is still answering itself.
+    """
+    assert mrec.CORROBORATING_PROVENANCE == frozenset({"schedule_provider"})
+    assert mrec.anchor_provenance(_ODDS_API_ID) == "schedule_provider"
+    assert mrec.anchor_provenance(None) == "idless"
+    assert mrec.anchor_provenance(_KALSHI_DERIVED_ID) == "market_derived"
+    assert mrec.anchor_provenance(_POLYMARKET_DERIVED_ID) == "market_derived"
+    assert mrec.anchor_provenance("manual_nfl_A_B_1757030400") == "synthesized"
+    assert mrec.anchor_provenance("something-new") == "unknown"
+    # An events row we could not read outranks whatever the join returned.
+    assert mrec.anchor_provenance(None, event_row_missing=True) == "unreadable"
+    # Case and length are load-bearing: the Odds API id is 32 lowercase hex.
+    assert mrec.anchor_provenance(_ODDS_API_ID.upper()) == "unknown"
+    assert mrec.anchor_provenance(_ODDS_API_ID[:31]) == "unknown"
+
+
+def test_a_positive_pair_that_leaves_its_adjudicated_event_is_a_regression():
+    """Provenance does not soften a POSITIVE pair. The audit knew the answer.
+
+    Even if the event it moved onto is provider-anchored, the pair had a
+    known-correct event and no longer points at it.
+    """
+    out = _run_golden(
+        [_pair(1, 500, 500)],
+        [_row(1, 999, external_id=_ODDS_API_ID)],
+    )
+    assert out["red"] is True
+    assert out["rows"][0]["verdict"] == "regressed"
+    assert out["regressed"] == 1
+    assert out["baseline_stale"] == 0
+
+
+def test_the_detail_line_reports_the_four_outcomes_separately():
+    """One RED number covering "we broke it" and "we fixed it" is unreadable.
+
+    The body is the only place the count is refreshed (see ``build_title``), so
+    the split has to survive into ``detail`` — and the unadjudicated class needs
+    its own number, because its fix is "a human looks at this attachment" and
+    the self-answered fix is "the matcher stops inventing events".
+    """
+    out = _run_golden(
+        [
+            _pair(1, 500, 500),                        # regressed
+            _pair(2, None, None, cls="a-no-event"),    # self-answered
+            _pair(3, None, None, cls="a-no-event"),    # baseline stale
+            _pair(4, None, None, cls="a-no-event"),    # unadjudicated
+        ],
+        [
+            _row(1, 999, external_id=_ODDS_API_ID),
+            _row(2, 998, external_id=None),
+            _row(3, 997, external_id=_ODDS_API_ID),
+            _row(4, 996, external_id=_ODDS_API_ID),
+        ],
+        accepted={3: 997},
+    )
+    assert out["count"] == 3, "the accepted row must not be accused"
+    assert (out["regressed"], out["self_answered"], out["unadjudicated"]) == (1, 1, 1)
+    assert "1 adjudicated pairs regressed" in out["detail"]
+    assert "1 negative pairs attached to an event no outside provider" in out["detail"]
+    assert "1 idless" in out["detail"]
+    assert "1 attached to a provider-anchored event nobody has adjudicated" in out["detail"]
+    assert "1 sit on one of the 1 adjudicated-accepted fixtures" in out["detail"]
+
+
+def test_every_accepted_attachment_is_a_pair_the_audit_said_belongs_nowhere():
+    """The map may only make a NEGATIVE pair stale — never silence a regression.
+
+    Read against the SHIPPED fixture, not a synthetic one: this is the guard
+    that stops ``ACCEPTED_ATTACHMENTS`` from becoming a mute button. A positive
+    pair has a known-correct event id, so "accepting" some other destination for
+    it would delete the one finding the golden set exists to make.
+    """
+    pairs, _ = mrec.load_golden_baseline()
+    by_market = {int(p["market_id"]): p for p in pairs}
+    assert mrec.ACCEPTED_ATTACHMENTS, "the map is the whole promotion path"
+    for market_id, event_id in mrec.ACCEPTED_ATTACHMENTS.items():
+        pair = by_market.get(market_id)
+        assert pair is not None, f"market {market_id} is not in the golden set"
+        assert pair["correct_event_id"] is None, (
+            f"market {market_id} is a POSITIVE pair adjudicated onto "
+            f"{pair['correct_event_id']}; accepting {event_id} for it would hide "
+            "a regression"
+        )
+        assert pair["market"].get("event_id_at_capture") is None, (
+            f"market {market_id} was already attached at capture, so it is not "
+            "a fixture-appeared-later row"
+        )
+        assert isinstance(event_id, int)
+
+
+def test_the_accepted_attachments_are_the_five_adjudicated_on_2026_09_03():
+    """A tripwire on the map's exact contents.
+
+    Each entry is a human's judgement recorded in the module comment above it
+    (unique team pair, and for the Kalshi rows a ticker-derived date equal to
+    the event's). Growing the map is fine; growing it WITHOUT saying so in a
+    diff is how a promotion path quietly widens back into ``IS NOT NULL``.
+    """
+    assert mrec.ACCEPTED_ATTACHMENTS == {
+        59173320: 15294048,   # Campbell vs East Tennessee St. -> ETSU v Campbell
+        59692113: 15297976,   # Vitória SC vs. Casa Pia AC     -> Vitória v Casa Pia
+        59692121: 15299112,   # FC Alverca vs. SC Braga        -> Alverca v Braga
+        59700394: 15291033,   # Hamburg vs Mainz               -> HSV v Mainz 05
+        59700643: 15291104,   # Ipswich Town vs Liverpool      -> Ipswich v Liverpool
+    }
 
 
 def test_a_market_that_no_longer_exists_is_counted_not_accused():
@@ -322,6 +666,33 @@ def test_every_check_key_has_a_stable_subject():
     assert keys == set(mrec.SUBJECTS), (
         f"checks without a subject: {sorted(keys - set(mrec.SUBJECTS))}; "
         f"subjects with no check: {sorted(set(mrec.SUBJECTS) - keys)}"
+    )
+
+
+def test_the_golden_subject_names_every_red_class_not_just_regressions():
+    """A subject may not describe a strictly narrower condition than it files.
+
+    The golden check files THREE kinds of RED: a pair that lost a known-correct
+    answer (*regressed*), a negative pair that attached to an event nobody
+    adjudicated it onto (*unadjudicated*), and one that attached to an event no
+    schedule provider anchors (*self-answered*). Measured against production
+    2026-09-03, all 34 RED rows were the third kind and 0 were regressions — so
+    a subject saying only "have regressed" sends the one reader a board has
+    looking for the class that is not there.
+
+    A tripwire, not a proof: it cannot check that the words match the code, only
+    that no class was dropped from the sentence. That is the regression it
+    exists for — the subject being quietly narrowed while the check keeps filing
+    all three.
+    """
+    subject = mrec.SUBJECTS["golden"]
+    assert "regress" in subject, f"golden subject dropped the regression class: {subject!r}"
+    assert "vouches for" in subject, (
+        f"golden subject dropped the self-answered class: {subject!r}"
+    )
+    assert "unadjudicated" in subject, (
+        f"golden subject dropped the unadjudicated class — a provider-anchored "
+        f"attachment nobody has judged is RED and must be named: {subject!r}"
     )
 
 
