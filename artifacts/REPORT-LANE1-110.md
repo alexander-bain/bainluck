@@ -131,7 +131,32 @@ against it **could not fail** — the identical defect CERT-853 itself named in 
 Staged as **CERT-911** with `repairs: CERT-853` (grades first, notice 8b). Block verified to have
 landed well-formed at the file end, no id collision. Repair note posted to PR 2900.
 
-**Not merged.** Token not yet granted; gates 13 + 18 unrun because there is nothing to merge yet.
+### Graded GREEN at 11:56Z — and deliberately NOT self-merged
+
+`CODEX-CERT-LOG.md:673` — **GREEN, TOKEN GRANTED** for `d12caafa`, superseding CERT-853,
+"presentation two after one prior BLOCK/strike, no strike stop." Independent exact-head gates
+120/120; PR 2900 OPEN/CLEAN/MERGEABLE; merge projection clean and disjoint. One non-blocking
+FOLLOW-UP: `LANE1-086-MIXED-SPORT-COLLISION-RECEIPT`.
+
+Both merge gates run and **both PASS** — gate 13 finds the token, gate 18 (anchored regex) finds no
+superseding row.
+
+**The token carries a pre-merge condition: "EXACT CURRENT-MASTER FULL CI REQUIRED BEFORE MERGE."**
+It is not satisfied, and I did not pretend otherwise:
+
+* CI is green on `d12caafa` against master `e84e3f4e`. Master then moved to `6c6a9277`.
+* A base move does not re-trigger PR CI, and `refs/pull/2900/merge` was still parented on the old
+  master.
+* Satisfying the condition means rebasing, which **moves the sha away from the granted one** — a
+  granted token freezes the branch.
+* The 3 new master commits are **iOS-only Swift files, fully disjoint** from the 3 backend files
+  here. That makes the merge low-risk; it does not make the named condition met, and arguing a
+  condition away is not satisfying it.
+
+**The integrator already owns it** — its watcher wrote directive
+`162-merge-d12caafa22ad66d094db96b09c40bdfbb18343e2.md`. Rebase + exact-sha full CI + push +
+deploy-verify is precisely its loop, and handing a graded sha to it is cheaper than a build lane
+spending a grade to save one CI cycle.
 
 ## 4. Week 1 — still 18, line held for the 20th session
 
