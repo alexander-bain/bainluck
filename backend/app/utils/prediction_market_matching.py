@@ -344,6 +344,90 @@ def is_derivative_market_name(name: str) -> bool:
     return bool(name) and _DERIVATIVE_SUFFIX_RE.search(name) is not None
 
 
+# ── #2993: a bracket is not a game ───────────────────────────────────────────
+
+# A tournament STAGE, matched against a whole team slot. A stage is the place a
+# game happens, never a side that plays in it. Deliberately anchored end to end:
+# "Grand Finals" is a stage, "Brooklyn Nets" is not, and a club whose name merely
+# CONTAINS a stage word ("Final Boss Esports") is left alone.
+_TOURNAMENT_STAGE_RE = re.compile(
+    r'^(?:the\s+)?(?:'
+    r'grand\s*finals?|finals?|semi[-\s]?finals?|quarter[-\s]?finals?'
+    r'|upper\s+bracket(?:\s+final)?|lower\s+bracket(?:\s+final)?'
+    r'|winners?\s+bracket|losers?\s+bracket'
+    r'|group\s+stage|swiss\s+stage|play[-\s]?ins?|playoffs?'
+    r'|round\s+of\s+\d+|qualifiers?|main\s+event'
+    r')$',
+    re.IGNORECASE,
+)
+
+
+def is_tournament_stage_name(name: str) -> bool:
+    """True when a whole name is a bracket stage rather than a competitor (#2993).
+
+    Examples:
+        "Grand Finals" → True
+        "Round of 16" → True
+        "Paper Rex" → False
+        "Final Boss Esports" → False (contains a stage word, is not one)
+    """
+    return bool(name) and _TOURNAMENT_STAGE_RE.match(name.strip()) is not None
+
+
+def parens_are_unbalanced(name: str) -> bool:
+    """True when a name's parentheses do not close — the fingerprint of a CUT.
+
+    No production market name is unbalanced (0 of 940,044, measured 2026-09-04),
+    so an unbalanced *parsed* name is never something a source sent us: it is
+    always evidence that one of our own regexes split the title mid-token. The
+    cut that #2993 is about is `_DASH_PROP_RE`/`_GAME_PROP_RE` stopping at the
+    first ": " after the separator, which lands INSIDE a parenthetical when the
+    title carries one:
+
+        "VALORANT Masters - Masters Santiago (Playoffs: Playoffs): PRX vs. NRG Map 1"
+                                              cut here ──┘
+
+    leaving team_b = "Masters Santiago (Playoffs" — 15 events' worth in
+    production. The unbalanced paren is not cosmetic; it is the proof that the
+    parse discarded the part of the title where the real teams were.
+    """
+    depth = 0
+    for char in name or "":
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                return True
+    return depth != 0
+
+
+def bracket_refusal_reason(team_a: str, team_b: str) -> Optional[str]:
+    """Why this parsed matchup cannot be minted as a game, or None if it can.
+
+    #2993. Two refusals, both about names that a two-team game cannot have:
+
+    1. A CUT name (unbalanced parens) — the parse lost the title's real content,
+       so whatever it kept is not a team. See `parens_are_unbalanced`.
+    2. A STAGE name ("Grand Finals", "Playoffs") — a Fortnite bracket's
+       50-competitor field market titled "FNCS Major 2: Europe - Grand Finals:
+       Winner" parsed to "FNCS Major 2: Europe" vs "Grand Finals" and minted a
+       game. There is no pair of teams there to recover.
+
+    Checked at the MINT and deliberately not inside `extract_matchup`: the parse
+    also feeds linking, blend gating and dedup, and refusing there would change
+    what links as well as what is created — the same reason `_clean_esports_matchup`
+    post-processes the parsed result instead of cleaning the input string. What
+    parses today still parses; it just stops stamping an event row.
+    """
+    for slot, name in (("home", team_a), ("away", team_b)):
+        if parens_are_unbalanced(name):
+            return f"{slot} name {name!r} was cut mid-token by the parse"
+        if is_tournament_stage_name(name):
+            return f"{slot} name {name!r} is a tournament stage, not a competitor"
+    return None
+
+
 def _strip_trailing_paren(name: str) -> str:
     """Strip trailing parenthetical context from market names.
 
