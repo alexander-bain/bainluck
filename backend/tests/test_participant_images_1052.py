@@ -91,11 +91,21 @@ class TestTheLiveCardsResolve:
 
     def test_a_face_is_a_face_and_a_flag_is_a_flag(self):
         """The two fields must not be crossed: a flag rendered into the face
-        slot is a 500x500 country roundel where a headshot goes."""
+        slot is a 500x500 country roundel where a headshot goes.
+
+        Hosts compared on the parsed ``netloc``, not by substring — a substring
+        test says yes to ``https://evil.example/?u=upload.wikimedia.org``, which
+        is `py/incomplete-url-substring-sanitization` and is a real distinction
+        even in a test that is only reading our own committed register.
+        """
+        from urllib.parse import urlparse
+
         image = pi.participant_image(BUCSA, sport_key=WTA)
 
-        assert "upload.wikimedia.org" in image["image_url"]
-        assert "/countries/" in image["flag_url"]
+        assert urlparse(image["image_url"]).netloc == "upload.wikimedia.org"
+        flag = urlparse(image["flag_url"])
+        assert flag.netloc == "a.espncdn.com"
+        assert flag.path.startswith("/i/teamlogos/countries/")
 
     def test_a_player_with_no_face_still_gets_a_flag(self):
         """Ignacio Buse, measured 2026-09-03: no face on the register, Peru's
