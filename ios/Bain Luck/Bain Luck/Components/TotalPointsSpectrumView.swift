@@ -9,9 +9,21 @@ struct TotalPointsSpectrumView: View {
     let awayTeam: String
     let homeColor: Color
     let awayColor: Color
+    var sportKey: String?
     var overUnder: Double?
     var homeScore: Int?
     var awayScore: Int?
+
+    /// The sport's own noun for what the total counts. Every string in this
+    /// view said "points"; on a US Open match the same widget printed
+    /// "Projected total points" over a 26.5 GAME line (ux/1034 B5's class).
+    private var vocab: SportVocab { SportVocab.forSport(sportKey) }
+    /// "points"/"games"; "scoring" where the sport is undeclared and this file
+    /// must not invent a unit.
+    private var unit: String { vocab.unit.isEmpty ? "scoring" : vocab.unit }
+    /// The scoreboard's totals, only where they count ``unit`` — for tennis the
+    /// scoreboard reports sets, so no actual/pace total is stated at all.
+    private var countsTheUnit: Bool { vocab.scoreboardCountsTheUnit }
 
     private var isLive: Bool { eventStatus == "live" }
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
@@ -69,7 +81,7 @@ struct TotalPointsSpectrumView: View {
     }
 
     private var actualTotal: Int? {
-        guard isDone, let h = homeScore, let a = awayScore else { return nil }
+        guard isDone, countsTheUnit, let h = homeScore, let a = awayScore else { return nil }
         return h + a
     }
 
@@ -100,7 +112,7 @@ struct TotalPointsSpectrumView: View {
                         .foregroundStyle(.secondary)
                     Text(formatThreshold(ouLine))
                         .font(.system(size: 28, weight: .bold, design: .monospaced))
-                    Text("combined points")
+                    Text("combined \(unit)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -178,7 +190,7 @@ struct TotalPointsSpectrumView: View {
 
         if isPre {
             preGameStrip(ouLine: ouLine)
-        } else if isLive, let pace = gameMarkets.pace,
+        } else if isLive, countsTheUnit, let pace = gameMarkets.pace,
                   let paceTotal = pace.projectedTotal,
                   let scored = pace.totalScored {
             liveStrip(ouLine: ouLine, paceTotal: paceTotal, scored: scored)
@@ -192,7 +204,7 @@ struct TotalPointsSpectrumView: View {
         let scaleMax = Double(expected) * 1.12
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Expected total points")
+            Text("Expected total \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
             projectionBar(label: "Pre-game", value: Double(expected), scaleMax: scaleMax,
@@ -209,7 +221,7 @@ struct TotalPointsSpectrumView: View {
         let paceColor = Color(hex: "#8B5CF6")
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Projected total points")
+            Text("Projected total \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
             projectionBar(label: "Pre-game", value: ouLine, scaleMax: scaleMax,
@@ -258,7 +270,7 @@ struct TotalPointsSpectrumView: View {
         let actualColor = Color(hex: "#8B5CF6")
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Final total points")
+            Text("Final total \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
             projectionBar(label: "Pre-game", value: ouLine, scaleMax: scaleMax,
@@ -286,7 +298,7 @@ struct TotalPointsSpectrumView: View {
 
     private var ladderView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Projected combined scoring")
+            Text("Projected combined \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .padding(.bottom, 4)
