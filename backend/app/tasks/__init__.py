@@ -661,6 +661,12 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     "app.tasks.kalshi_cliff_drain",
     "app.tasks.reconcile_unanchored_events",
     "app.tasks.backfill_kalshi_settled",
+    # CAL-P998 / D47 (#2771). Same family and the same reason: a bounded venue
+    # sweep whose per-run wall time is measured in minutes. It goes here rather
+    # than on `heavy` because `heavy` has 2 slots reserved for the calibration
+    # lane, and a date sweep must never be able to starve the hourly
+    # /calibration warmer.
+    "app.tasks.sweep_kalshi_resolution_window",
     "app.tasks.backfill_kalshi_trades",
     "app.tasks.backfill_kalshi_volume",
     "app.tasks.backfill_polymarket_history",
@@ -1260,6 +1266,40 @@ def backfill_kalshi_settled(self, limit: int = 5000, only_series=None):
     ``["KXPGA"]`` for the Open) to settle an already-concluded event NOW."""
     from app.tasks.kalshi import _backfill_from_settled_events
     return _tracked_run("kalshi_settled", _backfill_from_settled_events(limit, only_series=only_series))
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=900,
+    time_limit=960,
+    name="app.tasks.sweep_kalshi_resolution_window",
+)
+def sweep_kalshi_resolution_window(self, limit: int = 500, concurrency: int = 6):
+    """CAL-P998 / D47 (#2771): converge `resolution_date` off Kalshi's backstop.
+
+    The repair has existed since CAL-P989 and the predicate was corrected in
+    CAL-P992. What it has never had is a beat — and #2771's last open acceptance
+    line says why that is not a nicety:
+
+        > **The sweep is scheduled, not attended.** The population refills
+        > daily; a one-off cannot hold it.
+
+    Measured 2026-09-03: 5,143 sealed rows at 05:00Z, **5,137** at 22:0xZ. The
+    population is not draining, and each sealed row renders a dead last-trade
+    price as a live probability the moment Kalshi finalizes it (gotcha #33 —
+    the open-market poll can never re-enumerate a finalized market, which is
+    exactly why nothing else in the system corrects these).
+
+    Bounded by construction: one batch of `limit`, ordered `updated_at ASC`, so
+    every write refreshes the stamp and the sweep ROTATES instead of re-reading
+    its own head. It writes two date columns and nothing else — never `status`,
+    never `is_winner`, never a price (CAL-P061's constraint, inherited).
+    """
+    from app.tasks.kalshi_resolution_sweep import run_sweep
+    return _tracked_run(
+        "kalshi_resolution_window",
+        run_sweep(limit=limit, concurrency=concurrency),
+    )
 
 
 @celery_app.task(bind=True, soft_time_limit=420, time_limit=480, name="app.tasks.backfill_settled_gap_creation")
@@ -4914,6 +4954,18 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_kalshi_settled",
         "schedule": crontab(minute=0, hour="5,11,17,23"),  # Every 6h, offset from candlestick backfill
         "kwargs": {"limit": 5000},
+        "options": {"queue": "background"},
+    },
+    # CAL-P998 / D47 (#2771): the sweep stops being attended. Daily at 04:20 UTC
+    # — inside the quiet window and 25 min clear of the 03:45 `open_sparse`
+    # backfill, so two Kalshi venue sweeps never overlap. One batch of 500 a day
+    # reaches the 6,302 rows eligible on 2026-09-03 in ~13 runs, and because the
+    # ordering is `updated_at ASC` and every write refreshes that stamp, the
+    # sweep rotates rather than re-reading its own head.
+    "sweep-kalshi-resolution-window": {
+        "task": "app.tasks.sweep_kalshi_resolution_window",
+        "schedule": crontab(minute=20, hour=4),
+        "kwargs": {"limit": 500},
         "options": {"queue": "background"},
     },
     "backfill-kalshi-trade-history": {

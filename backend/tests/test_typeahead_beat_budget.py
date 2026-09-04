@@ -843,6 +843,22 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     the merge. Both numbers were re-derived by RUNNING the census below over the
     assembled schedule on the merged tree, never by adding. Fall-through stays
     at **45**.
+
+    🔴 **RE-DERIVED at CAL-P998 / D47 (2026-09-04, #2771): 112 → 113, explicit
+    67 → 68.** This lane added `sweep-kalshi-resolution-window`
+    (`crontab(minute=20, hour=4)`, the nightly Kalshi resolution-date sweep) with
+    an explicit `options={"queue": "background"}`. RE-DERIVED by running the
+    census below over the assembled schedule and printing all three numbers —
+    `explicit 68 implicit 45 total 113` — never by adding one to the old number
+    (#1910). The fall-through half is UNMOVED at **45**, the benign direction
+    this docstring reserves. The cost declaration (one fire a night, ~120 s =
+    ~0.14 % of a slot-day, and why `background` rather than `heavy`) is on
+    `BACKGROUND_BEAT_COUNT`.
+
+    **And this guard did its job on the way in.** The beat shipped without the
+    re-derivation, and this assertion is what caught it — as a red CI backend
+    shard 1 reading `68 != 67`, found by CERT-863 rather than by the lane that
+    added the beat. That is the reserved red behaviour working, not a break.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -859,9 +875,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 67, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 68, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 112
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 113
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

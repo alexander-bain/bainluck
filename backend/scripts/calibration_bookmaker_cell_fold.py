@@ -71,16 +71,52 @@ USAGE
     python3 backend/scripts/calibration_bookmaker_cell_fold.py \
         --sport-key basketball_nba --grain game \
         --out artifacts/cal-p120/fold-nba-game.json
+
+    # CAL-P998 — the measured SE, in the sigma ledger's own input shape
+    python3 backend/scripts/calibration_bookmaker_cell_fold.py \
+        --sport-key basketball_nba --sigma \
+        --out artifacts/cal-p998/sigma-bookmaker-basketball_nba.json
+
+THE SIGMA MODE, AND WHY IT IS HERE AND NOT IN ``calibration_cluster_sigma.py``
+==============================================================================
+
+CAL-P128's ledger banks a measured cluster-bootstrap SE per cell so the board
+stops feeding a row-grain estimate into a standard-error gate. It is fed by
+``calibration_cluster_sigma.py``, which drives ``calibration_cell_exact`` --
+and therefore cannot see this source at all, for the reason at the top of this
+file. So the six ``odds_api_bookmaker`` cells were the only cells on the board
+that could not be banked even in principle: **6 of the 14 queued cells on the
+2026-09-03 board, 82,345 excess-outcomes.** CAL-P120 derived their game-grain
+SE by hand and wrote it in a report; the board has carried them at the row
+basis ever since, which is precisely the hand-derivation the ledger exists to
+end.
+
+``--sigma`` closes that loop. It adds the one thing that is genuinely this
+source's own -- the cluster, which is the GAME -- and imports everything that
+decides: ``bootstrap_ece`` and the fold it resamples through, the bars, the
+gate, and the entry shape ``calibration_sigma_ledger.entry_from_sigma_json``
+already consumes. Nothing about the board's arithmetic is re-implemented for
+one source.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
 from datetime import date, timedelta
+from pathlib import Path
+
+# So `--sigma` can import the board's own bootstrap and bars whether this file
+# is run from the repo root, from `backend/`, or loaded by importlib from a
+# test. Inserted at import rather than inside the function: a path fixed up
+# lazily is a path that is right in the shell and wrong under pytest, which is
+# CAL-P129's bug wearing a different hat.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # The row path's budget is a hard 10s and `timeout_ms` is refused on it
 # (measured: "`timeout_ms` is only supported with `explain: true`"). So a chunk
@@ -202,7 +238,23 @@ FROM outcomes WHERE prob > 0.01 AND prob < 0.99
 GROUP BY event_id
 """
 
-TAILS = {"bucket": _TAIL_BUCKET, "game": _TAIL_GAME}
+# One row per (GAME, decile) — the grain a cluster bootstrap needs, added by
+# CAL-P998. `--grain game` collapses a game to one average price, and ~30% of
+# games straddle two deciles (403 of NBA's 573 sit entirely inside one), so
+# resampling from it would resample a cell this rail does not publish. Keyed by
+# the pair, the resample is EXACT: every book-row keeps the bin it was folded
+# into, and the games are the units.
+_TAIL_GAME_BUCKET = """
+SELECT event_id,
+       bucket_idx,
+       COUNT(*) AS n,
+       SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+       SUM(prob::float) AS sum_prob
+FROM outcomes WHERE prob > 0.01 AND prob < 0.99
+GROUP BY event_id, bucket_idx
+"""
+
+TAILS = {"bucket": _TAIL_BUCKET, "game": _TAIL_GAME, "game_bucket": _TAIL_GAME_BUCKET}
 
 
 def collect(sport_key: str, lo: date, hi: date, grain: str, depth: int = 0) -> list[dict]:
@@ -269,6 +321,17 @@ def ece_of(buckets: dict[int, dict]) -> tuple[int, float, float]:
 
 
 def published_cell(sport_key: str) -> dict[int, dict]:
+    return published_cell_with_meta(sport_key)[0]
+
+
+def published_cell_with_meta(sport_key: str) -> tuple[dict[int, dict], dict]:
+    """The published cell AND the curve it came off.
+
+    The meta half is not decoration: a ledger entry that does not carry the
+    ``population_version`` and ``generated_at`` it was measured against cannot
+    be aged, and ``calibration_sigma_ledger.lookup`` has nothing to decide
+    FRESH / CARRIED / STALE from. CAL-P998.
+    """
     api = os.environ["BAINLUCK_API"]
     p = subprocess.run(["curl", "-s", f"{api}/api/calibration"],
                        capture_output=True, text=True, timeout=120)
@@ -279,7 +342,135 @@ def published_cell(sport_key: str) -> dict[int, dict]:
             out[int(r["bucket_idx"])] = {
                 "n": int(r["n"]), "winners": int(r["winners"]),
                 "sum_prob": float(r["sum_prob"])}
-    return out
+    meta = {
+        "generated_at": payload.get("generated_at"),
+        "population_version": payload.get("population_version"),
+    }
+    return out, meta
+
+
+# --------------------------------------------------------------------------
+# CAL-P998 — the sigma this source could never have
+#
+# `calibration_cluster_sigma.py` (CAL-P121) is the board's measured-SE
+# instrument and it CANNOT run here: it drives `calibration_cell_exact`, which
+# folds the `futures_markets`-rooted producer chain, and this source has zero
+# rows in that table (the reason this file exists at all). So the six
+# `odds_api_bookmaker` cells — 6 of the 14 queued cells on the 2026-09-03
+# board, 82,345 excess-outcomes — were the only cells on the board that could
+# not be banked in the sigma ledger even in principle. CAL-P120 derived their
+# game-grain SE by hand, wrote it in a report, and the board has carried them
+# at the row basis ever since; that hand-derivation is exactly what CAL-P128's
+# ledger exists to end.
+#
+# This closes the loop WITHOUT a second implementation of anything that
+# decides: the bootstrap, the fold it resamples through, the bars, the gate and
+# the ledger's entry shape are all imported. What is added here is the one
+# thing that is genuinely this source's own — its cluster, which is the GAME.
+# --------------------------------------------------------------------------
+
+
+def game_clusters(rows: list[dict]) -> list[dict[int, dict]]:
+    """``--grain game_bucket`` rows -> one ``{decile: {n, w, sp}}`` per game.
+
+    A shape change, not an aggregation: chunks partition events, so no game
+    appears twice and no two games are ever combined. The key names are
+    ``calibration_cell_exact.fold``'s, because that is the fold the bootstrap
+    runs through and restating it here would be a second fold.
+    """
+    out: dict[str, dict[int, dict]] = {}
+    for r in rows:
+        g = out.setdefault(str(r["event_id"]), {})
+        b = g.setdefault(int(r["bucket_idx"]), {"n": 0, "w": 0, "sp": 0.0})
+        b["n"] += int(r["n"])
+        b["w"] += int(r["winners"])
+        b["sp"] += float(r["sum_prob"])
+    return list(out.values())
+
+
+def sigma_object(sport_key: str, clusters: list[dict[int, dict]],
+                 published: dict[int, dict], meta: dict,
+                 boot: int, seed: int) -> dict:
+    """The ledger's own input shape, so no new schema enters the board.
+
+    Emitted key-for-key as ``calibration_cluster_sigma.py`` emits it, which is
+    what lets ``calibration_sigma_ledger.entry_from_sigma_json`` fold it with
+    no change and ``validate`` re-check it. A parallel entry shape for one
+    source would be a second ledger wearing the first one's filename.
+    """
+    import calibration_cluster_sigma as ccs  # local: only the sigma path needs it
+
+    pooled: dict[int, dict] = {}
+    for g in clusters:
+        for b, v in g.items():
+            p = pooled.setdefault(b, {"n": 0, "w": 0, "sp": 0.0})
+            p["n"] += v["n"]
+            p["w"] += v["w"]
+            p["sp"] += v["sp"]
+    n, ece, gap = ccs.cce.fold(pooled)
+    pn, pece, pgap = ece_of(published)
+
+    klass = ccs.cs.classify("odds_api_bookmaker", sport_key)
+    bar = ccs.cs.CLASS_BARS_PP[klass]
+    excess = (ece or 0.0) - bar
+    k = len(clusters)
+
+    se_row = ccs.cs.cell_se_pp(n)
+    # The GAME-grain SE, which on this source is not merely a bound: `won` is a
+    # function of `event_id` alone, so every book-row of a game carries a
+    # byte-identical outcome and the within-cluster correlation of the response
+    # is exactly 1 BY CONSTRUCTION. The bootstrap should therefore land on this
+    # number rather than between it and the row basis, and a large gap between
+    # the two is a finding about the fold, not about the sample.
+    se_market = ccs.cs.cell_se_pp(k)
+    samples, se_boot = ccs.bootstrap_ece(clusters, boot, seed)
+
+    def _sig(se):
+        # `se != se` was the NaN test here. It is correct and it is also
+        # indistinguishable from a typo — CodeQL reads it as a comparison of
+        # identical values, which is exactly how a real one would look. Same
+        # three rejections (None, 0, NaN), said out loud.
+        if not se or math.isnan(se):
+            return None
+        return excess / se
+
+    return {
+        "source": "odds_api_bookmaker",
+        "category": sport_key,
+        "boot": boot,
+        "seed": seed,
+        "clusters": k,
+        "rows_per_cluster": round(n / k, 3) if k else None,
+        "bar": bar,
+        "excess": round(excess, 2),
+        "klass": klass,
+        "sigma_gate": ccs.cs.SIGMA_GATE,
+        "established": bool(_sig(se_boot) is not None and _sig(se_boot) >= ccs.cs.SIGMA_GATE),
+        "bootstrap_ci": [
+            round(ccs.percentile(samples, 0.025), 2),
+            round(ccs.percentile(samples, 0.975), 2),
+        ],
+        "payload": {
+            "n": pn,
+            "ece": round(pece, 2),
+            "gap": round(pgap, 2),
+            "generated_at": meta.get("generated_at"),
+            "population_version": meta.get("population_version"),
+        },
+        # This rail reproduces the published cell EXACTLY (CAL-P120: every
+        # bucket row count exact, drift +0.00%), so `exact_coverage` lands on
+        # 1.0 rather than near it. That is a property of the chunking being on
+        # `commence_time`, and it is asserted rather than hoped for: a coverage
+        # outside COVERAGE_BAND turns the entry into POPULATION_DIVERGENCE and
+        # the board will say so.
+        "exact": {"n": n, "ece": ece, "gap": gap},
+        "se": {"row": se_row, "market": se_market, "bootstrap": se_boot},
+        "sigma": {
+            "row": _sig(se_row),
+            "market": _sig(se_market),
+            "bootstrap": _sig(se_boot),
+        },
+    }
 
 
 def main() -> int:
@@ -290,8 +481,20 @@ def main() -> int:
     ap.add_argument("--weeks", type=int, default=3, help="initial chunk width in weeks")
     ap.add_argument("--check-payload", action="store_true",
                     help="diff a bucket-grain fold against the LIVE published cell")
+    ap.add_argument("--sigma", action="store_true",
+                    help="cluster-bootstrap the cell's SE over GAMES and emit a "
+                         "sigma-ledger entry (implies --grain game_bucket)")
+    ap.add_argument("--boot", type=int, default=2000)
+    ap.add_argument("--seed", type=int, default=20260903)
     ap.add_argument("--out")
     a = ap.parse_args()
+
+    if a.sigma:
+        # Forced rather than validated: `--sigma --grain game` is a request for
+        # a bootstrap over a grain that cannot answer it, and silently
+        # producing a number from the wrong units is the failure mode this
+        # whole file is about.
+        a.grain = "game_bucket"
 
     rows = sweep(a.sport_key, a.grain, a.weeks)
     print(f"\nodds_api_bookmaker/{a.sport_key}  (--grain {a.grain}, {len(rows)} rows)")
@@ -317,11 +520,44 @@ def main() -> int:
                           f"vs published {pub.get(b, {}).get('n', 0):,}")
             else:
                 print("  ✅ every bucket reproduces the published row count exactly")
-    else:
+    elif a.grain == "game":
         games = len(rows)
         books = sum(int(r["books"]) for r in rows)
         print(f"  games={games:,}  book-rows={books:,}  "
               f"replication={books / games:.2f}x" if games else "  no games")
+
+    if a.sigma:
+        clusters = game_clusters(rows)
+        if not clusters:
+            print("  🔴 no games in span — refusing to emit a ledger entry for an "
+                  "empty cell (an SE over nothing is not a small SE)")
+            return 1
+        published, meta = published_cell_with_meta(a.sport_key)
+        obj = sigma_object(a.sport_key, clusters, published, meta, a.boot, a.seed)
+        se, sig = obj["se"], obj["sigma"]
+        print(f"  population {meta['population_version']}  "
+              f"curve {meta['generated_at']}")
+        print(f"  games={obj['clusters']:,}  book-rows={obj['exact']['n']:,}  "
+              f"replication={obj['rows_per_cluster']}x")
+        print(f"  ECE {obj['exact']['ece']} pp (published {obj['payload']['ece']}) "
+              f"vs bar {obj['bar']} — excess {obj['excess']:+.2f} pp")
+        print(f"    {'basis':<34} {'SE pp':>8} {'sigma':>8}")
+        for label, key in (("row grain (the board today)", "row"),
+                           ("game grain (rho = 1 exactly)", "market"),
+                           ("cluster bootstrap (MEASURED)", "bootstrap")):
+            print(f"    {label:<34} {se[key]:>8.3f} {sig[key]:>8.2f}")
+        print(f"  VERDICT  {'ESTABLISHED' if obj['established'] else 'NOT ESTABLISHED'}"
+              f" at SIGMA_GATE {obj['sigma_gate']}")
+        if a.out:
+            os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+            # `with`, not a bare `open()` inside the call: the artifact this
+            # writes is folded into the sigma ledger by a second command, and an
+            # unclosed handle can leave it truncated on the interpreter's whim.
+            with open(a.out, "w") as fh:
+                json.dump(obj, fh, default=str)
+            print(f"  wrote {a.out} — fold into the ledger with "
+                  f"`calibration_sigma_ledger.py --build`")
+        return rc
 
     if a.out:
         os.makedirs(os.path.dirname(a.out), exist_ok=True)

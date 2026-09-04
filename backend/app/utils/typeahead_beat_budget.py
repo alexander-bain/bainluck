@@ -1185,7 +1185,33 @@ def free_background_slots(
 #: printed value — `explicit 67 implicit 45 total 112` — is what stands here. It
 #: was not obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above
 #: remain accurate as written.
-BACKGROUND_BEAT_COUNT = 112
+#:
+#: 🔴 RE-DERIVED at CAL-P998 / D47 (2026-09-04, #2771): 112 → **113**, explicit
+#: 67 → **68**. This lane added `sweep-kalshi-resolution-window`
+#: (`crontab(minute=20, hour=4)`, the nightly Kalshi resolution-date sweep) with
+#: an EXPLICIT `options={"queue": "background"}`. RE-DERIVED by running the
+#: census in `test_the_background_queue_carries_105_beats_and_45_are_fall_through`
+#: over the assembled `beat_schedule` and printing all three numbers — it printed
+#: `explicit 68 implicit 45 total 113` — never by adding one to 112 (#1910). The
+#: fall-through half is UNMOVED at **45**: the new beat names its queue rather
+#: than defaulting into it, the benign direction the guard reserves.
+#:
+#: 🔴 THIS COUNT WAS FOUND BY CERT-863, not by this lane, and that is worth
+#: recording: the beat was added without re-deriving here, and the census guard
+#: is what caught it — on CI backend shard 1, as `68 != 67`, which is exactly the
+#: job this constant exists to do.
+#:
+#: COST, declared: ONE fire a night. The batch is bounded at
+#: `SWEEP_BATCH_LIMIT = 500` venue reads at concurrency 6; the two attended
+#: production runs of the same code path on 2026-09-03 covered 500 rows in well
+#: under two minutes each, so ~120 s once per 24 h = **~0.14 % of one slot-day**,
+#: the smallest occupant added to this queue in the numbered history above.
+#: `background` rather than `heavy` because the work is network-bound against
+#: Kalshi and issues at most 500 single-row UPDATEs — it does not compete for the
+#: two `heavy` slots the calibration lane holds, and starving the hourly
+#: `/calibration` warmer to save 0.14 % of a background slot-day is the wrong
+#: trade. Not `realtime` for the obvious reason: nothing on a page waits for it.
+BACKGROUND_BEAT_COUNT = 113
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

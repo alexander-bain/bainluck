@@ -161,6 +161,63 @@ population. A consumer that wants to use a stale entry has to say so out loud.
 This is gotcha #53 in ledger form: "it returned a number" is not "the number
 applies to what you are looking at".
 
+AMENDED 2026-09-03 (CAL-P998) -- THE STATE IS THE CELL'S, NOT THE VERSION'S
+-----------------------------------------------------------------------------
+The rule above was right about the principle and wrong about the test, and the
+cost of the difference was measured on the live board before this paragraph was
+written: **the overlay covered 0 of 14 queued cells while 14 measured entries
+sat in this file.** Every entry was banked against ``q268``; production serves
+``q269``; so every entry read ``STALE`` and the board ran entirely on the
+``50/sqrt(n)`` estimate this file exists to correct. A correction that expires
+on every republish -- and the producer republishes several times a day -- is a
+correction the board never actually has. CAL-P120's six cells and CAL-P127's
+seventh were re-derived by hand *because* of this, not in spite of it.
+
+``population_version`` is a proxy for the question that matters, and it is a
+poor one. The question is whether THIS CELL still contains the rows the SE was
+measured over. This file already owns the instrument for asking that directly
+-- :data:`COVERAGE_BAND` compares ``n_exact`` with ``n_payload`` on the RAIL
+axis -- and the same comparison on the TIME axis separates the live board
+cleanly:
+
+===============================  =========  =========  =======
+cell                             n at q268  n at q269  drift
+===============================  =========  =========  =======
+``kalshi/golf``                     20,500     21,085   +2.9%
+``kalshi/tech``                      1,203      1,246   +3.6%
+``kalshi/entertainment``             8,355      8,922   +6.8%
+``polymarket/cricket``               3,252      2,944    -9.5%
+``polymarket/hockey``                2,281      1,730   -24.2%
+``polymarket/economics``            12,882      9,656   -25.0%
+``polymarket/golf``                  6,463      4,339   -32.9%
+``polymarket/basketball``           13,135      7,591   -42.2%
+===============================  =========  =========  =======
+
+Those are two different facts wearing one status. The kalshi cells are the same
+cells with a few days more settlement on them; the polymarket cells are not --
+``polymarket/basketball``'s 42% is CAL-P126's phantom duplication being
+*removed*, i.e. the population genuinely changed underneath the measurement. A
+version-identity test cannot tell them apart and throws both away. A material
+test keeps the first and still refuses the second, which is what the original
+paragraph was actually trying to protect.
+
+So :func:`lookup` gains a fourth status, ``CARRIED``: measured on another
+population, but the cell has not materially moved. It is a SEPARATE status and
+never collapses into ``FRESH`` -- the consumer counts it in its own bucket and
+the render names the population it came from, so "say so out loud" is enforced
+by the shape of the return rather than by a convention. The load-bearing reason
+this is legitimate at all is the one this file already states above: the ledger
+stores the SE precisely BECAUSE the SE is the term that does not move when the
+ECE, the bar or the population version do.
+
+**The residual, named rather than hidden.** A stable ``n`` is necessary, not
+sufficient -- a cell could in principle exchange its rows wholesale and keep its
+count. There is no cheap payload-side test for that, so ``CARRIED`` carries
+``population_version`` and ``generated_at`` onto the row: the age of the
+measurement is a fact on the board, not a constant buried in this file. A
+carried entry is a standing request to re-measure, and the scorecard counts it
+so the measurement lane can see the backlog.
+
 Usage::
 
     # rebuild from every sigma artifact on disk
@@ -211,6 +268,13 @@ STATUS_STALE = "STALE"
 STATUS_ABSENT = "ABSENT"
 STATUS_POPULATION_DIVERGENCE = "POPULATION_DIVERGENCE"
 
+#: Measured on another population, but the CELL has not materially moved --
+#: see the docstring's 2026-09-03 amendment. Deliberately its own value and not
+#: an alias of :data:`STATUS_FRESH`: the whole warrant for carrying an entry is
+#: that the consumer can still tell it apart from one measured on the payload
+#: it is being applied to.
+STATUS_CARRIED = "CARRIED"
+
 #: The band of ``n_exact / n_payload`` inside which the rail and the payload are
 #: taken to be describing the same cell. Outside it, the measured SE and the
 #: published excess are about different populations and their ratio is not a
@@ -224,9 +288,38 @@ STATUS_POPULATION_DIVERGENCE = "POPULATION_DIVERGENCE"
 #: then 0.780 and 0.641, with nothing in between to argue about.
 COVERAGE_BAND = (0.90, 1.10)
 
+#: The band of ``n_now / n_at_measurement`` inside which an entry measured on a
+#: DIFFERENT population is still describing this cell -- the time axis of the
+#: same comparison :data:`COVERAGE_BAND` makes on the rail axis, and the same
+#: width, because it is the same question about the same quantity.
+#:
+#: It separates the 2026-09-03 q268 -> q269 board the way COVERAGE_BAND
+#: separated the 2026-08-29 sweep: three cells at +2.9% / +3.6% / +6.8%, then a
+#: gap, then four at -24.2% to -42.2%. ``polymarket/cricket`` at -9.5% is the
+#: one row near the edge and it is carried; it is half a point inside, which is
+#: recorded here rather than discovered later, and it is exactly why a carried
+#: entry never counts as fresh.
+#:
+#: Two-sided for the reason COVERAGE_BAND is: a cell that GREW by half is no
+#: more the measured cell than one that halved.
+CELL_DRIFT_BAND = (0.90, 1.10)
+
 
 def cell_key(source: str, category: str) -> str:
     return f"{source}/{category}"
+
+
+def cell_drift(entry: dict, n_payload: int | None) -> float | None:
+    """``n_payload / n_at_measurement`` -- how much the cell moved since.
+
+    Returns ``None`` when either side is unknown, which is NOT a pass: a drift
+    that cannot be computed cannot clear :data:`CELL_DRIFT_BAND`, so the entry
+    stays stale. An untestable claim is refused, not assumed (gotcha #53).
+    """
+    measured_n = ((entry or {}).get("as_measured") or {}).get("n")
+    if not measured_n or not n_payload:
+        return None
+    return round(n_payload / measured_n, 4)
 
 
 def variance_ratio_vs_board(se_bootstrap: float, se_row: float) -> float | None:
@@ -395,17 +488,43 @@ def load(path: Path | str = LEDGER_PATH, *, missing_ok: bool = False) -> dict:
     return ledger
 
 
-def lookup(ledger: dict, source: str, category: str, population_version: str | None):
-    """Return ``(entry, status)``. Never returns a number without its status."""
+def lookup(
+    ledger: dict,
+    source: str,
+    category: str,
+    population_version: str | None,
+    n_payload: int | None = None,
+):
+    """Return ``(entry, status)``. Never returns a number without its status.
+
+    ``n_payload`` is the cell's row count on the payload being scored. It is
+    what turns a population mismatch into a QUESTION rather than a verdict: an
+    entry from another population whose cell is still the same size within
+    :data:`CELL_DRIFT_BAND` is ``CARRIED``, one whose cell has moved is
+    ``STALE``. See the docstring's 2026-09-03 amendment for why the version
+    string was the wrong test and what it cost.
+
+    The argument is OPTIONAL and its absence fails closed to the pre-amendment
+    behaviour: a caller that cannot say how big the cell is now gets ``STALE``,
+    which is what every caller got before. A default that silently carried
+    would make the new status reachable by callers that never asked for it.
+    """
     e = (ledger.get("entries") or {}).get(cell_key(source, category))
     if e is None:
         return None, STATUS_ABSENT
+    carried = False
     if population_version and e.get("population_version") != population_version:
-        return e, STATUS_STALE
+        drift = cell_drift(e, n_payload)
+        if drift is None or not (CELL_DRIFT_BAND[0] <= drift <= CELL_DRIFT_BAND[1]):
+            return e, STATUS_STALE
+        carried = True
     cov = e.get("exact_coverage")
     if cov is not None and not (COVERAGE_BAND[0] <= cov <= COVERAGE_BAND[1]):
+        # Checked AFTER the carry test and it outranks it: a cell whose rail and
+        # payload describe different populations has no sigma to offer, and that
+        # is true whether the entry is fresh or carried.
         return e, STATUS_POPULATION_DIVERGENCE
-    return e, STATUS_FRESH
+    return e, (STATUS_CARRIED if carried else STATUS_FRESH)
 
 
 def build(paths: list[Path]) -> dict:

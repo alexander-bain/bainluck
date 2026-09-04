@@ -23,8 +23,14 @@ rather than described:
    HIGHER than the board's. It is squared, so golf's SE ratio of 1.71 gives
    2.91 — the number criterion 3 asked for, reproduced exactly.
 3. **A stale entry contributes NOTHING.** A bootstrap SE describes one specific
-   set of rows. When the producer restages, the entry describes a population
-   nobody is looking at, and reporting it anyway is gotcha #53 in ledger form.
+   set of rows. When those rows change, the entry describes a population nobody
+   is looking at, and reporting it anyway is gotcha #53 in ledger form.
+   *(NARROWED by CAL-P998: the test for "those rows changed" was
+   ``population_version`` identity, which on 2026-09-03 dropped all 14 committed
+   entries at once and left the overlay covering 0 of 14 queued cells. It is now
+   ``CELL_DRIFT_BAND`` on the cell's own ``n``. The claim is unchanged and its
+   guard below now uses a fixture where the cell really did move;
+   ``test_calibration_sigma_carry_998.py`` holds the other side.)*
 4. **The overlay REPORTS and does not DECIDE.** Adding the measured column must
    not move ``cells_at_bar``, ``cells_queued``, ``done``, or any cell's
    ``verdict``. The needle is the number the program is steered by, and a
@@ -393,9 +399,22 @@ class TestStalenessIsAState:
         )
 
     def test_a_stale_entry_contributes_no_sigma_to_the_board(self):
-        """gotcha #53: the ledger returning a number is not the number applying."""
+        """gotcha #53: the ledger returning a number is not the number applying.
+
+        AMENDED CAL-P998, and the amendment is to the FIXTURE, not to the
+        claim. This test used to hold the population version wrong and the
+        cell's size RIGHT, which after the carry rule is the case the ledger
+        now calls ``CARRIED``. The claim it exists to defend is about an entry
+        that describes rows nobody is looking at, so the fixture now says that:
+        11,000 rows against a measurement over 20,500 is a cell that moved by
+        46%, well outside ``CELL_DRIFT_BAND``, and it contributes nothing.
+
+        The carried case is pinned in ``test_calibration_sigma_carry_998.py``.
+        Both must hold — this one is what stops the carry rule from becoming
+        "apply everything", which is the failure it would be mistaken for.
+        """
         led = _ledger_with(0.5, pop="q_OLD")
-        cell = cs.score(_payload(20_500, 3.88, pop="q268"), led)["cells"][0]
+        cell = cs.score(_payload(11_000, 3.88, pop="q268"), led)["cells"][0]
         assert cell["sigma_ledger_status"] == ledger_mod.STATUS_STALE
         assert "sigma_measured" not in cell
         assert cell["sigma_basis"] == cs.SIGMA_BASIS_ROW

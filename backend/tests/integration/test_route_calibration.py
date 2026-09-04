@@ -382,6 +382,19 @@ class TestCalibrationPublicEndpoint:
             # two come apart by six hours while every field read green —
             # publishing is not freshness.
             "staged",
+            # CAL-P998 / D46 (Alex 2026-09-03): the fourth, and the first that
+            # is a NUMBER rather than a declaration. `cells at bar` — the figure
+            # this program is steered by — used to exist only while
+            # `backend/scripts/calibration_scorecard.py` was running, so the
+            # measurement bus read its own cut off `by_category` (14/36) while
+            # the lane quoted the script's cell cut (34/48) and the two looked
+            # like a contradiction. Both cuts, and the bars that produced them,
+            # are now derived at the serving exit from the payload in the SAME
+            # response — which is why it belongs here with the serve-time keys
+            # and not with the builder's: a score baked by the producer rides
+            # into the dated fallback tiers describing a curve that is no
+            # longer there.
+            "scorecard",
         }
 
     async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):
@@ -461,7 +474,23 @@ class TestCalibrationPublicEndpoint:
         second_resp = await client.get("/api/calibration", publish=False)
 
         assert second_resp.status_code == 200
-        assert second_resp.json() == first_body
+        # CAL-P998 / D46: `scorecard.computed_at` is when the SCORE was taken,
+        # and two reads of one cached curve are legitimately scored at two
+        # different instants — so it is the one field that must differ here.
+        # Everything else, including every figure in the scorecard, is a pure
+        # function of the cached payload and must be identical: that is the
+        # claim this test is making, alongside `execute.assert_not_called()`.
+        second_body = second_resp.json()
+        # The two `.pop()`s are what make the `==` below meaningful, so they run
+        # OUTSIDE the assert. Inside it they are a side-effect in an assert:
+        # `python -O` strips the statement, the pops never happen, and the
+        # equality then compares two bodies that still carry the one field
+        # designed to differ. CodeQL flags this class as an error and it is
+        # right to — the test's correctness depended on an assert executing.
+        second_computed_at = second_body["scorecard"].pop("computed_at")
+        first_computed_at = first_body["scorecard"].pop("computed_at")
+        assert second_computed_at != first_computed_at
+        assert second_body == first_body
         mock_db.execute.assert_not_called()
 
     async def test_no_request_can_refresh_the_cache_only_a_publish_can(
