@@ -95,30 +95,53 @@ interface Segment {
 /**
  * Pull both segments as (side, colour) PAIRS.
  *
- * The extractor reports its own yield: a bar has exactly two segments, so
- * anything else means the markup moved and the assertions below would otherwise
+ * ⚠️ Anchored on `rounded-l-full` / `rounded-r-full`, NOT on the
+ * `data-bar-segment` attribute this ship adds.
+ *
+ * The first version of this extractor selected on `data-bar-segment`, and that
+ * made every test in the file arm-dependent: on master the attribute does not
+ * exist, so the extractor yielded nothing, the width CONTROL threw, and the
+ * three "draws no bar" CONTROLs passed for entirely the wrong reason — they
+ * would have been green even if master had rendered a bar. A guard whose
+ * POPULATION is selected by a marker its own diff adds is not a guard on the
+ * parent.
+ *
+ * These two classes appear exactly once each in the component on BOTH arms and
+ * only on the bar, and they encode the side the segment is on (left = away,
+ * right = home), which is the fact the assertions need.
+ *
+ * The extractor also reports its own yield: a bar has exactly two segments, so
+ * anything else means the markup moved and the assertions would otherwise
  * quietly measure nothing.
  */
 function segments(html: string): Segment[] {
   const found: Segment[] = [];
-  const re = /<div([^>]*?)data-bar-segment="(away|home)"([^>]*?)>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const attrs = `${m[1]} ${m[3]}`;
-    const style = /style="([^"]*)"/.exec(attrs)?.[1] ?? "";
-    const decl = (name: string) =>
-      new RegExp(`${name}\\s*:\\s*([^;"]+)`).exec(style)?.[1]?.trim() ?? "";
-    found.push({
-      side: m[2],
-      backgroundColor: decl("background-color"),
-      opacity: decl("opacity"),
-      width: decl("width"),
-    });
+  for (const [cls, side] of [
+    ["rounded-l-full", "away"],
+    ["rounded-r-full", "home"],
+  ] as const) {
+    const re = new RegExp(`<div([^>]*?${cls}[^>]*?)>`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      const attrs = m[1];
+      const style = /style="([^"]*)"/.exec(attrs)?.[1] ?? "";
+      const decl = (name: string) =>
+        new RegExp(`${name}\\s*:\\s*([^;"]+)`).exec(style)?.[1]?.trim() ?? "";
+      found.push({
+        side,
+        backgroundColor: decl("background-color"),
+        opacity: decl("opacity"),
+        width: decl("width"),
+      });
+    }
   }
-  const declared = (html.match(/data-bar-segment=/g) ?? []).length;
-  if (found.length !== declared) {
+  const declaredLeft = (html.match(/rounded-l-full/g) ?? []).length;
+  const declaredRight = (html.match(/rounded-r-full/g) ?? []).length;
+  if (found.length !== declaredLeft + declaredRight) {
     throw new Error(
-      `extractor parsed ${found.length} segments but the markup declares ${declared}`
+      `extractor parsed ${found.length} segments but the markup declares ${
+        declaredLeft + declaredRight
+      }`
     );
   }
   if (found.length && found.length !== 2) {
@@ -153,6 +176,16 @@ describe("the bar is drawn at all", () => {
   it("the two halves are not the same colour — the native sibling's symptom (#2902)", () => {
     const seg = bySide(renderToStaticMarkup(<FeedCard item={gameCard(null, null)} />));
     expect(seg.away.backgroundColor).not.toBe(seg.home.backgroundColor);
+  });
+
+  it("the data-bar-segment markers agree with the side each segment is rounded on", () => {
+    // Part of the ship, not a control: the attribute is new. It exists so a
+    // production DOM read can bind a colour to a side without re-deriving it
+    // from a Tailwind class, and this pins it to the positional truth so the
+    // two cannot drift apart.
+    const html = renderToStaticMarkup(<FeedCard item={gameCard(null, null)} />);
+    expect(/rounded-l-full[^>]*data-bar-segment="away"/.test(html)).toBe(true);
+    expect(/rounded-r-full[^>]*data-bar-segment="home"/.test(html)).toBe(true);
   });
 
   it("both halves render at ONE opacity, so neither is dimmed out of sight", () => {
