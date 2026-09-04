@@ -1,0 +1,265 @@
+{
+ "scores": {
+  "sport": "basketball",
+  "tournament": {
+   "country": "usa",
+   "id": "2545",
+   "league": "NBA",
+   "season": "2026/2027",
+   "match": [
+    {
+     "date": "03.10.2026",
+     "id": "1043639",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Scotiabank Arena",
+     "home": {
+      "id": "2711",
+      "name": "Toronto Raptors",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2696",
+      "name": "Miami Heat",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "20.10.2026",
+     "id": "1050110",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "19:00",
+     "venue": "Little Caesars Arena",
+     "home": {
+      "id": "2702",
+      "name": "Detroit Pistons",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2566",
+      "name": "Boston Celtics",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "20.10.2026",
+     "id": "1050112",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Madison Square Garden",
+     "home": {
+      "id": "2712",
+      "name": "New York Knicks",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2707",
+      "name": "Philadelphia 76ers",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "21.10.2026",
+     "id": "1050114",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "01:30",
+     "venue": "Frost Bank Center",
+     "home": {
+      "id": "2689",
+      "name": "San Antonio Spurs",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2704",
+      "name": "Oklahoma City Thunder",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "21.10.2026",
+     "id": "1051781",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Kia Center",
+     "home": {
+      "id": "2626",
+      "name": "Orlando Magic",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2681",
+      "name": "Atlanta Hawks",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "21.10.2026",
+     "id": "1051783",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "23:00",
+     "venue": "Capital One Arena",
+     "home": {
+      "id": "2717",
+      "name": "Washington Wizards",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2683",
+      "name": "Milwaukee Bucks",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "21.10.2026",
+     "id": "1050116",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "23:30",
+     "venue": "Kaseya Center",
+     "home": {
+      "id": "2696",
+      "name": "Miami Heat",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2701",
+      "name": "Minnesota Timberwolves",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "11.11.2026",
+     "id": "1051930",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "04:00",
+     "venue": "Moda Center",
+     "home": {
+      "id": "3049",
+      "name": "Portland Trail Blazers",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2704",
+      "name": "Oklahoma City Thunder",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    },
+    {
+     "date": "12.11.2026",
+     "id": "1051940",
+     "stats_id": "",
+     "status": "Not Started",
+     "time": "03:00",
+     "venue": "Moda Center",
+     "home": {
+      "id": "3049",
+      "name": "Portland Trail Blazers",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     },
+     "away": {
+      "id": "2704",
+      "name": "Oklahoma City Thunder",
+      "ot": "",
+      "q1": "",
+      "q2": "",
+      "q3": "",
+      "q4": "",
+      "totalscore": ""
+     }
+    }
+   ]
+  }
+ }
+}

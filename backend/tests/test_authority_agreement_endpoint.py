@@ -153,8 +153,10 @@ async def test_the_banked_row_is_published_verbatim(call):
         session=session,
     )
 
-    (nfl,) = out["sports"]
-    assert nfl["sport_key"] == "americanfootball_nfl"
+    # One entry per shadowed sport since step 3 added NBA and NHL; the fake
+    # metrics are the same for all three, so this pins the NFL entry by name
+    # rather than by position.
+    (nfl,) = [s for s in out["sports"] if s["sport_key"] == "americanfootball_nfl"]
     assert nfl["agreement"] == banked
     assert nfl["last_pass_at"] == "2026-09-04T10:23:02.864712+00:00"
     assert nfl["pass_age_seconds"] >= 0
@@ -186,8 +188,12 @@ async def test_the_census_is_scoped_to_this_sports_id_space(call):
 
     prefixes = [p.get("prefix") for p in session.params if "prefix" in p]
     likes = [p.get("like_prefix") for p in session.params if "like_prefix" in p]
-    assert prefixes == ["americanfootball_nfl:"]
-    assert likes == ["americanfootball_nfl:%"]
+    # One census per shadowed sport, each scoped to its OWN id space and never a
+    # bare `statpal:` — the whole point is that NBA's 1043639 and NHL's 649052
+    # are neighbours in one provider's numbering and must not be counted
+    # together (D55).
+    assert prefixes == [f"{k}:" for k in sorted(SHADOW_STAMPERS)]
+    assert likes == [f"{k}:%" for k in sorted(SHADOW_STAMPERS)]
 
 
 # ---------------------------------------------------------------------------
