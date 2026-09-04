@@ -1,4 +1,4 @@
-# LANE1-114 — the D42-B unstamp: backup, apply, and the one-command restore
+# LANE1-113 — the D42-B unstamp: backup, apply, and the one-command restore
 
 **PILLAR: TRUTH. SHIP: one game can never again wear another game's ESPN id.**
 
@@ -92,8 +92,8 @@ async def m():
             r = await s.execute(SQL, {"i": i, "v": v})
             await s.commit()
             total += r.rowcount
-            print("LANE1-114-UNSTAMP " + str(i) + " " + v + " rowcount=" + str(r.rowcount))
-    print("LANE1-114-UNSTAMP total=" + str(total))
+            print("LANE1-113-UNSTAMP " + str(i) + " " + v + " rowcount=" + str(r.rowcount))
+    print("LANE1-113-UNSTAMP total=" + str(total))
 asyncio.run(m())
 ```
 
@@ -119,8 +119,8 @@ async def m():
             r = await s.execute(SQL, {"i": i, "v": v})
             await s.commit()
             total += r.rowcount
-            print("LANE1-114-RESTORE " + str(i) + " " + v + " rowcount=" + str(r.rowcount))
-    print("LANE1-114-RESTORE total=" + str(total))
+            print("LANE1-113-RESTORE " + str(i) + " " + v + " rowcount=" + str(r.rowcount))
+    print("LANE1-113-RESTORE total=" + str(total))
 asyncio.run(m())
 PY
 heroku run:detached -a bainluck "python3 -c $(printf '%q' "$(cat /tmp/lane1-114-restore.py)")"
@@ -143,4 +143,4 @@ SELECT count(*) AS contested_ids FROM (
   GROUP BY espn_id HAVING count(*) > 1) t
 ```
 
-Before: **5**. After: recorded in `REPORT-LANE1-114.md`.
+Before: **5**. After: recorded in `REPORT-LANE1-113.md`.
