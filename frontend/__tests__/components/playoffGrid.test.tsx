@@ -21,7 +21,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import PlayoffGrid from "@/components/tournament/PlayoffGrid";
+import PlayoffGrid, { GRID_STICKY_NAME } from "@/components/tournament/PlayoffGrid";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import {
   columnSumSentence,
@@ -479,6 +479,92 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={wide} />);
     expect((html.match(/data-testid="grid-column"/g) ?? []).length).toBe(9);
     expect(html).not.toContain("do not fit this width");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3087 — the name stays when the reader swipes for the number
+// ---------------------------------------------------------------------------
+
+describe("#3087 — a scrolled grid keeps the name beside the number", () => {
+  it("THE DEFECT: at full scroll the rows read 's Alcaraz' unless the name sticks", () => {
+    // Measured on production 2026-09-04 11:02 PT, 390px viewport, the men's
+    // five-column grid: the card's scroller is 332 wide over 406 of content, so
+    // `scrollLeft` reaches 74 — and 74px is most of the 118px name track. The
+    // header at that offset reads `R16 QF SF FINAL TITLE` and the rows read
+    // `s Alcaraz` / `nder Z…` / `Medve…`. Sticky is what puts the two halves of
+    // the sentence on screen at once.
+    expect(gridWidthPx(5) - GRID_CARD_CONTENT_PX).toBe(74);
+
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    // EVERY rendered row, not just the first, and read off each name cell's OWN
+    // class attribute. An earlier draft asserted `html.toContain("sticky …")`
+    // and stayed green with the rows unstuck, because the sticky HEADER satisfied
+    // it — a sticky header over rows that still scroll away is the same defect
+    // wearing a fix.
+    const nameClasses = [...html.matchAll(/class="([^"]*)"\s+data-testid="grid-name"/g)].map(
+      (m) => m[1]
+    );
+    const rows = (html.match(/data-testid="grid-row"/g) ?? []).length;
+    expect(rows).toBeGreaterThan(0);
+    expect(nameClasses.length).toBe(rows);
+    for (const cls of nameClasses) {
+      expect(cls).toContain("sticky left-0 z-10 bg-surface-card");
+    }
+    // The HEADER's name cell sticks too, or "Player" slides off its own column.
+    const header = html.slice(
+      html.indexOf('data-testid="grid-header"'),
+      html.indexOf('data-testid="grid-row"')
+    );
+    expect(header).toContain("sticky left-0");
+    expect(header).toContain("Player");
+  });
+
+  it("sticks WITHOUT moving anything: every negative margin is cancelled by its padding", () => {
+    // The whole risk of this change is that it re-lays-out the row and truncates
+    // a name one character earlier. `-ml-3.5/pl-3.5` and `-mr-1.5/pr-1.5` pair
+    // exactly, so the box paints over the row's `px-3.5` and the `gap-1.5`
+    // beside it while its CONTENT box does not move and the track's max-content
+    // contribution is unchanged.
+    expect(GRID_STICKY_NAME).toContain("-ml-3.5");
+    expect(GRID_STICKY_NAME).toContain("pl-3.5");
+    expect(GRID_STICKY_NAME).toContain("-mr-1.5");
+    expect(GRID_STICKY_NAME).toContain("pr-1.5");
+    // Opaque, or the percentages slide visibly under the name.
+    expect(GRID_STICKY_NAME).toContain("bg-surface-card");
+    // 14px of left margin is the row's own padding; 6px of right is its gap.
+    expect(GRID_ROW_PADDING_PX).toBe(14);
+    expect(GRID_GAP_PX).toBe(6);
+  });
+
+  it("expires exactly where ruling 5 expires — not on a grid that fits, not at lg", () => {
+    // A first-week three-column grid does not scroll, so there is nothing to
+    // stick to and no sticky cell is emitted at all.
+    const three = grid({ columns: COLUMNS.slice(0, 3) });
+    const threeHtml = renderToStaticMarkup(<PlayoffGrid grid={three} />);
+    expect(gridScrolls(3)).toBe(false);
+    expect(threeHtml).toContain('data-scrolls="false"');
+    expect(threeHtml).not.toContain("sticky left-0");
+    // …and the name cell is still there, just not stuck.
+    expect(threeHtml).toContain('data-testid="grid-name"');
+
+    // Above lg the tracks are 1fr and the grid fills its card: sticky retires.
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const fiveHtml = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    expect(fiveHtml).toContain("lg:static");
+    expect(fiveHtml).toContain("lg:ml-0");
+    expect(fiveHtml).toContain("lg:pl-0");
+  });
+
+  it("leaves the name's own content alone — face, name, seed, truncation", () => {
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    // Ruling 8's avatar and the seed badge are inside the sticky box, so they
+    // travel with the name rather than being left behind with the numbers.
+    expect(html).toContain("flex min-w-0 items-baseline");
+    expect(html).toContain("truncate");
+    expect(html).toContain("Carlos Alcaraz");
   });
 });
 

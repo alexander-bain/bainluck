@@ -47,9 +47,13 @@ import {
  * rescales a column to make it add up.
  *
  * **Ruling 5 — wide rounds scroll.** `overflow-x-auto` with the header and the
- * rows inside the same scroller so they cannot drift apart. Today's grid is
- * 348px wide against a 358px content box, so it does not scroll; a draw with a
- * sixth column would, which is the point of the rule.
+ * rows inside the same scroller so they cannot drift apart. Since #3072 the
+ * arithmetic behind that verdict counts a row's padding and gaps as well as its
+ * tracks, so the men's five-column draw scrolls (406px against a measured 332px
+ * card) where it used to be clipped; a three-column first-week grid still does
+ * not. Since #3087 the name track sticks while it scrolls — see
+ * `GRID_STICKY_NAME`, because a number without the name beside it is half a
+ * sentence.
  *
  * ═══ WHAT THE READER SEES WHEN A ROW HAS NO MARKETS ═══
  *
@@ -89,6 +93,37 @@ const ALARM_STATES = new Set(["unlinked", "unregistered"]);
  */
 export const GRID_SIZING =
   "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
+
+/**
+ * ═══ THE NAME TRACK STAYS WHEN THE GRID SCROLLS (#3087) ═══
+ *
+ * #3072 made the Title column REACHABLE — 74px of scroll where there had been
+ * none. Reaching it cost the reader the other half of the sentence. Measured on
+ * production the morning after that shipped, phone viewport 390px, the men's
+ * grid pushed to `scrollLeft = 74`: the header reads `R16 QF SF FINAL TITLE`
+ * and the rows read **`s Alcaraz`**, **`nder Z…`**, **`Medve…`**. The number
+ * arrives exactly as the name it belongs to leaves, and a table where those two
+ * facts are never on screen together does not answer the question it was built
+ * for ("who wins the title, and how likely is it").
+ *
+ * So the name track is `position: sticky` at the scrollport's left edge. Three
+ * things this has to get right, none of them optional:
+ *
+ * - **It must not move anything at rest.** `-ml-3.5 pl-3.5 -mr-1.5 pr-1.5`
+ *   extends the sticky box's PAINT over the row's own `px-3.5` padding and into
+ *   the `gap-1.5` beside it while leaving its content box exactly where it was.
+ *   The margins cancel the paddings, so the track's `max-content` contribution
+ *   is unchanged and no name truncates one character earlier than yesterday.
+ * - **It must be opaque.** `bg-surface-card` is the card's own background — a
+ *   transparent sticky cell lets the percentages slide UNDER the name, which
+ *   reads as a rendering fault rather than as a frozen column.
+ * - **It expires where ruling 5 expires.** Applied only when `scrolls`, and
+ *   retired at `lg` (`lg:static`), where the tracks are `1fr`, the grid fills
+ *   its card, and there is nothing to scroll or to stick to.
+ */
+export const GRID_STICKY_NAME =
+  "sticky left-0 z-10 bg-surface-card -ml-3.5 pl-3.5 -mr-1.5 pr-1.5 " +
+  "lg:static lg:z-auto lg:ml-0 lg:mr-0 lg:pl-0 lg:pr-0";
 
 /**
  * ═══ THE SPARK BARS — RULED IN (UX-P147) ═══
@@ -449,7 +484,7 @@ export default function PlayoffGrid({
             style={{ gridTemplateColumns: template }}
             data-testid="grid-header"
           >
-            <span>Player</span>
+            <span className={scrolls ? GRID_STICKY_NAME : undefined}>Player</span>
             {grid.columns.map((column) => (
               <span
                 key={column.key}
@@ -481,7 +516,10 @@ export default function PlayoffGrid({
                 data-rank={row.rank ?? undefined}
                 data-on-board={row.onBoard ? "true" : "false"}
               >
-                <span className="flex min-w-0 items-baseline">
+                <span
+                  className={`flex min-w-0 items-baseline${scrolls ? ` ${GRID_STICKY_NAME}` : ""}`}
+                  data-testid="grid-name"
+                >
                   {/* RULING 8, at 18px and NOT at the 26/28 the other two
                       surfaces use. The name box is GRID_NAME_WIDTH_PX = 118 by
                       measurement, and widening it by an avatar would push the
