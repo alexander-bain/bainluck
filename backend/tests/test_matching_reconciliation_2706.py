@@ -683,7 +683,9 @@ def test_the_golden_subject_names_every_red_class_not_just_regressions():
     A tripwire, not a proof: it cannot check that the words match the code, only
     that no class was dropped from the sentence. That is the regression it
     exists for — the subject being quietly narrowed while the check keeps filing
-    all three.
+    all three. It is also blind to a FOURTH red class being added; the binding
+    guard below is the one that catches that, by reading the classes out of the
+    code instead of naming them here.
     """
     subject = mrec.SUBJECTS["golden"]
     assert "regress" in subject, f"golden subject dropped the regression class: {subject!r}"
@@ -694,6 +696,187 @@ def test_the_golden_subject_names_every_red_class_not_just_regressions():
         f"golden subject dropped the unadjudicated class — a provider-anchored "
         f"attachment nobody has judged is RED and must be named: {subject!r}"
     )
+
+
+#: For each RED verdict ``check_golden_pairs`` can file, the phrase in
+#: ``SUBJECTS["golden"]`` that names it to a human.
+#:
+#: Deliberately NOT derivable from the verdict name. ``self_answered`` is
+#: written for a reader as "no schedule provider vouches for" — a guard that
+#: just looked for the verdict's own identifier in the sentence would pass on
+#: ``regressed`` and ``unadjudicated`` and never notice that the third class was
+#: missing, which is exactly the vacuous-green shape this map exists to avoid.
+#:
+#: A NEW red verdict with no entry here fails the binding guard rather than
+#: shipping a subject that hides it. Adding the entry is not enough either: the
+#: phrase then has to actually appear in the subject.
+GOLDEN_RED_VERDICT_PHRASES = {
+    "regressed": "regress",
+    "self_answered": "vouches for",
+    "unadjudicated": "unadjudicated",
+}
+
+
+def _verdict_assigned(stmt):
+    """``row["verdict"] = "X"`` -> ``"X"``, else ``None``."""
+    import ast
+
+    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+        return None
+    target = stmt.targets[0]
+    if not (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "row"
+        and isinstance(target.slice, ast.Constant)
+        and target.slice.value == "verdict"
+    ):
+        return None
+    if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+        return stmt.value.value
+    return None
+
+
+def _append_target(stmt):
+    """``bucket.append(row)`` -> ``"bucket"``, else ``None``."""
+    import ast
+
+    if not isinstance(stmt, ast.Expr):
+        return None
+    call = stmt.value
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "append"
+        and isinstance(call.func.value, ast.Name)
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "row"
+    ):
+        return None
+    return call.func.value.id
+
+
+def _golden_check_ast():
+    import ast
+    import inspect
+    import textwrap
+
+    return ast.parse(textwrap.dedent(inspect.getsource(mrec.check_golden_pairs)))
+
+
+def _golden_verdict_buckets() -> dict[str, str]:
+    """Read the check's own source: which list does each verdict land in?
+
+    Pairs every ``row["verdict"] = "X"`` with the next ``bucket.append(row)`` in
+    the same statement list, which is how the check is written at every one of
+    its branches.
+    """
+    import ast
+
+    mapping: dict[str, str] = {}
+    for node in ast.walk(_golden_check_ast()):
+        for field in ("body", "orelse", "finalbody"):
+            stmts = getattr(node, field, None)
+            if not isinstance(stmts, list):
+                continue
+            for i, stmt in enumerate(stmts):
+                verdict = _verdict_assigned(stmt)
+                if verdict is None:
+                    continue
+                for later in stmts[i + 1 :]:
+                    bucket = _append_target(later)
+                    if bucket:
+                        mapping[verdict] = bucket
+                        break
+    return mapping
+
+
+def _golden_red_buckets() -> set[str]:
+    """The list names summed into ``red_rows`` — the check's own RED definition."""
+    import ast
+
+    for node in ast.walk(_golden_check_ast()):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "red_rows"
+        ):
+            return {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+    return set()
+
+
+def test_the_golden_subject_is_bound_to_the_red_verdicts_the_code_actually_files():
+    """The hardening the string tripwire above cannot do (follow-up on CERT-864).
+
+    That test names the three RED classes as literals, so it can only catch a
+    class being REMOVED from the sentence. It is blind to the opposite and more
+    likely drift: a fourth RED class being added to ``check_golden_pairs`` while
+    the subject keeps describing three. The board would then be triaged by a
+    title that does not mention the thing it is filing.
+
+    So this one derives the RED set from the code instead of restating it —
+    ``row["verdict"] = "X"`` paired with the bucket the row is appended to, and
+    the buckets summed into ``red_rows`` — and requires every RED verdict to be
+    named in the subject via ``GOLDEN_RED_VERDICT_PHRASES``. A new red verdict
+    has no phrase entry, so it reddens here.
+
+    Every derivation asserts its own yield before it is used. A source-scanning
+    guard whose scan quietly matches nothing is worse than no guard: it is a
+    green light with nothing behind it.
+    """
+    verdict_buckets = _golden_verdict_buckets()
+    assert len(verdict_buckets) >= 4, (
+        f"source scan found only {len(verdict_buckets)} verdict->bucket pair(s) "
+        f"{sorted(verdict_buckets)} in check_golden_pairs — the scan is broken, "
+        f"not the code. Fix the scan before trusting this guard."
+    )
+
+    red_buckets = _golden_red_buckets()
+    assert red_buckets, (
+        "source scan found no `red_rows = ...` assignment in check_golden_pairs "
+        "— the scan is broken, not the code."
+    )
+
+    red_verdicts = {v for v, b in verdict_buckets.items() if b in red_buckets}
+    assert red_verdicts, (
+        f"no verdict lands in a red bucket: verdicts {sorted(verdict_buckets)} "
+        f"vs red buckets {sorted(red_buckets)} — the scan is broken."
+    )
+
+    # Known-hit anchors. These prove the derivation DISCRIMINATES rather than
+    # sweeping every verdict into RED: baseline_stale is the one verdict the
+    # check deliberately does not count, and a scan that returned "everything"
+    # would still satisfy the assertions above.
+    assert "self_answered" in red_verdicts, (
+        f"derivation lost a known RED class; got {sorted(red_verdicts)}"
+    )
+    assert "baseline_stale" in verdict_buckets, (
+        "derivation lost baseline_stale entirely; got "
+        f"{sorted(verdict_buckets)} — the scan is broken."
+    )
+    assert "baseline_stale" not in red_verdicts, (
+        "baseline_stale is NOT red — it is the matcher being confirmed and the "
+        f"baseline row being stale. Derivation says: {sorted(red_verdicts)}"
+    )
+
+    unnamed = sorted(v for v in red_verdicts if v not in GOLDEN_RED_VERDICT_PHRASES)
+    assert not unnamed, (
+        f"check_golden_pairs files RED verdict(s) {unnamed} that "
+        f"GOLDEN_RED_VERDICT_PHRASES does not name. Add the phrase a human "
+        f"would read for each, then make SUBJECTS['golden'] actually say it — "
+        f"a subject that omits a class it files sends the board's one reader "
+        f"looking for the wrong thing."
+    )
+
+    subject = mrec.SUBJECTS["golden"]
+    for verdict in sorted(red_verdicts):
+        phrase = GOLDEN_RED_VERDICT_PHRASES[verdict]
+        assert phrase in subject, (
+            f"SUBJECTS['golden'] does not name the {verdict!r} class: expected "
+            f"the phrase {phrase!r} in {subject!r}"
+        )
 
 
 def test_an_unknown_check_key_raises_rather_than_inventing_a_title():
