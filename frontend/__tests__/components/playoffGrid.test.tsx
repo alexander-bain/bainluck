@@ -29,6 +29,9 @@ import {
   gridCellExplanation,
   gridCellGlyph,
   gridEvalVerdict,
+  GRID_CARD_CONTENT_PX,
+  GRID_GAP_PX,
+  GRID_ROW_PADDING_PX,
   gridScrolls,
   gridWidthPx,
   readPlayoffGrid,
@@ -421,12 +424,43 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
 // ---------------------------------------------------------------------------
 
 describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
-  it("does not scroll at five columns, and does at six", () => {
-    // The trade UX-P138 got wrong: it capped at three reach columns and the
-    // semifinal fell off. "Sparingly" is the arithmetic, not restraint.
-    expect(gridWidthPx(5)).toBe(348);
-    expect(gridScrolls(5)).toBe(false);
+  it("counts a row's PADDING and GAPS, not only its tracks (#3072)", () => {
+    // The old formula was `name + n × col` — tracks only. A row is
+    // `px-3.5` + name + `gap-1.5` + col + `gap-1.5` + col …, so five columns
+    // need 28 + 118 + 230 + 30 = 406px, not 348.
+    expect(GRID_ROW_PADDING_PX).toBe(14);
+    expect(GRID_GAP_PX).toBe(6);
+    expect(gridWidthPx(5)).toBe(406);
+    expect(gridWidthPx(6)).toBe(458);
+    expect(gridWidthPx(3)).toBe(302);
+  });
+
+  it("THE #3072 DEFECT: the men's five-column draw scrolls, because it does not fit", () => {
+    // Measured on production, pinned 390px viewport: the grid card's client box
+    // is 332px and the grid inside it is 392px, clipped by `overflow-x: hidden`
+    // — so the Title column, the chance of WINNING the tournament, was drawn
+    // outside the card and could not be reached by any gesture.
+    expect(GRID_CARD_CONTENT_PX).toBe(332);
+    expect(gridScrolls(5)).toBe(true);
+    expect(gridScrolls(4)).toBe(true);
     expect(gridScrolls(6)).toBe(true);
+  });
+
+  it("…and 'sparingly' still binds — the first week's grid does not scroll", () => {
+    // Ruling 5 is applied here, not weakened: clipping a column IS excluding
+    // data. A three-column grid fits (302 <= 332) and stays still.
+    expect(gridScrolls(3)).toBe(false);
+    expect(gridScrolls(2)).toBe(false);
+  });
+
+  it("the rendered five-column grid is a scroller, and its floor is the whole row", () => {
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    expect(html).toContain('data-scrolls="true"');
+    expect(html).toContain("overflow-x-auto");
+    expect(html).toContain(`min-width:${gridWidthPx(5)}px`);
+    // The column that was being clipped is present and named.
+    expect(html).toContain('data-kind="title"');
   });
 
   it("puts the header INSIDE the scroller so it cannot drift off its column", () => {
