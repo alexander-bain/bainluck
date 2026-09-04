@@ -85,6 +85,54 @@ final class TournamentHubPresentationTests: XCTestCase {
                        "50/50 has no favourite; bolding both is a claim the numbers don't make")
     }
 
+    // MARK: - Two sides of one question are decided together (UX-P114 / #2279)
+
+    /// The US Open served `0.845 / 0.155` on 2026-09-04 and this screen printed
+    /// "85%" beside "16%". Each side is independently correct — both land on `.5`
+    /// and round half-up — and together they are a card claiming 101%. #2279 fixed
+    /// six surfaces; this one was written afterwards and never adopted the rule,
+    /// which is why the guard is per-surface rather than one shared assertion.
+    func testComplementPairPrintsPercentsThatSumToOneHundred() throws {
+        let p = TournamentHubPresentation(
+            response: decode(Self.twoSidedJSON(homeProbability: 0.845, awayProbability: 0.155)))
+        let match = try XCTUnwrap(p.liveMatches.first)
+        XCTAssertEqual(
+            match.sides.map(\.percentText), ["85%", "15%"],
+            "0.845/0.155 renders 85 and 16 when each side is rounded on its own; the "
+            + "pair is one decision, and the derived point lands on the underdog")
+    }
+
+    /// The same rule over the real payload rather than a chosen pair — a served
+    /// half-cent grid puts BOTH sides on `.5` at once, so this is the shape that
+    /// reaches a reader, not an invented edge case.
+    func testNoPricedDuelInTheLivePayloadPrintsASumOtherThanOneHundred() throws {
+        let p = try liveFixture()
+        for match in p.liveMatches + p.upcomingMatches where match.noPriceNote == nil {
+            guard match.sides.count == 2 else { continue }
+            // "<1%" / ">99%" are claims about the value, not integers to add up.
+            let percents = match.sides.compactMap { Int($0.percentText.dropLast()) }
+            guard percents.count == 2 else { continue }
+            XCTAssertEqual(
+                percents.reduce(0, +), 100,
+                "\(match.sides.map(\.name).joined(separator: " v ")) prints "
+                + "\(match.sides.map(\.percentText).joined(separator: " + "))")
+        }
+    }
+
+    /// The contract pins the other direction as hard: a field that is not a duel
+    /// must render exactly as it did before. A title board is a multi-way field
+    /// whose contenders do not complement, and normalising it would invent prices.
+    func testTitleBoardRowsAreNotPutThroughTheDuelRule() throws {
+        let p = try liveFixture()
+        let board = try XCTUnwrap(p.boards.first)
+        let percents = board.rows.compactMap { Int($0.percentText.dropLast()) }
+        XCTAssertGreaterThan(percents.count, 1, "the fixture's board carries priced rows")
+        XCTAssertNotEqual(
+            percents.reduce(0, +), 100,
+            "a trimmed multi-way board summing to exactly 100 would mean the duel "
+            + "rule reached rows that are not two sides of one question")
+    }
+
     // MARK: - Results
 
     func testResultsAreNewestFirstAndBounded() throws {

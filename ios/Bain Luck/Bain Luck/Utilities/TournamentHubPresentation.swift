@@ -185,12 +185,28 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let priced = match.sides.contains { $0.probability != nil }
         let best = match.sides.compactMap(\.probability).max()
 
-        let sides = match.sides.map { side in
+        // UX-P114 / #2279: a row printing two sides of ONE question decides both
+        // percents together. Formatting each side on its own is the 101% those
+        // fixed — the US Open served `0.845 / 0.155` on 2026-09-04, a complement
+        // pair landing on `.5` for both sides at once, and this screen printed
+        // 85% beside 16%. A draw with anything other than two sides is not a duel
+        // and keeps rendering exactly as before.
+        let duelPercents: [Int?] = match.sides.count == 2
+            ? renderedDuelPercents(
+                away: match.sides[0].probability,
+                home: match.sides[1].probability
+            )
+            : []
+
+        let sides = match.sides.enumerated().map { index, side in
             SideRow(
                 id: side.id,
                 name: side.displayName,
                 flagUrl: side.image?.flagUrl,
-                percentText: formatProbabilityOrDash(side.probability),
+                percentText: formatProbabilityOrDash(
+                    side.probability,
+                    renderedPercent: index < duelPercents.count ? duelPercents[index] : nil
+                ),
                 hasPrice: side.probability != nil,
                 // A two-way match with both sides at the same price has no
                 // favourite; marking both would be a claim the numbers do not
