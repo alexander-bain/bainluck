@@ -185,7 +185,10 @@ question on.
 093's detached watcher (`lane1-090-anchor-sentinel-watch.detached.sh`, PID 43854, PPID 1) was
 verified alive at 04:23Z, sleeping to 06:43Z. It survived its session correctly.
 
-**FINDINGS: see §5.1 below.**
+**FINDINGS: this window ended before 06:40Z and §5.1 was never written.** The continuation window
+read the firing and discharged Item One in full — see **`REPORT-LANE1-094B.md` §1**: fired 06:40:40Z,
+`terminal: partial`, `stopped_by: deadline`, 6/12 pages, 600/685 examined, one deduped issue filed
+(**#2978**), nothing closed on a partial sweep, and **both Week-1 phantoms re-derived independently**.
 
 ---
 
