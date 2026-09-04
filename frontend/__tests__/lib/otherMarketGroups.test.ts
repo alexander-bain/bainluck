@@ -12,8 +12,11 @@ import {
   PLAYER_PROPS_CATEGORY,
   buildMarketSection,
   categorizeMarketName,
+  completedSetsForTennis,
   mergeOutcomes,
   parsePropLabel,
+  setNumberFromLabel,
+  stripCardPrefix,
   type OtherMarketRow,
 } from "../../lib/otherMarketGroups";
 
@@ -240,5 +243,192 @@ describe("buildMarketSection — the section is corrected, not gutted", () => {
     }
     const section = buildMarketSection(rows);
     expect(section.categories[0].cards[0].outcomes).toHaveLength(MAX_OUTCOMES_PER_CARD + 12);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// live/065 (#2746) — THE US OPEN MATCH PAGE.
+//
+// Specimens below are the VERBATIM `other[]` wire of the live women's match
+// Pegula vs Fernandez, `GET /api/events/15301138/game-markets`, captured
+// 2026-09-04 09:58 PT while the second set was being played (`home_score` 0,
+// `away_score` 1). Before this change the page printed, on a phone:
+//
+//   "US Open WTA: Jessica Pegula vs Leylah Fernandez Set 2 Winner"   87%
+//   "US Open WTA: Jessica Pegula vs Leylah Fernandez Set 1 Winner"    0%   ← set over
+//   card "Jessica Pegula vs Leylah Fernandez Total Sets:" / row "US Open WTA O/U 2.5"
+//
+// — each row repeating, over four wrapped lines, the card heading directly
+// above it, and a TOUR NAME printed in the player slot of "Player Props".
+// ─────────────────────────────────────────────────────────────────────────────
+
+const USO_MARKET = "US Open WTA: Jessica Pegula vs Leylah Fernandez";
+const USO_WIRE: OtherMarketRow[] = [
+  { market_name: USO_MARKET, outcome_name: "Jessica Pegula", probability: 0.675, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Set 1 Winner`, probability: 0.0005, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Set Handicap +/-1.5`, probability: 0.0005, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Set 2 Winner`, probability: 0.865, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Total Sets: O/U 2.5`, probability: 0.58, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Game Spread +/-4.5`, probability: 0.25, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Match O/U 21.5`, probability: 0.5, source: PM },
+  { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Match O/U 22.5`, probability: 0.5, source: PM },
+];
+
+function labelsOf(section: ReturnType<typeof buildMarketSection>): string[] {
+  return section.categories.flatMap((c) => c.cards.flatMap((k) => k.outcomes.map((o) => o.label)));
+}
+
+describe("stripCardPrefix — a row does not repeat its own card's name", () => {
+  test("the five real US Open child titles read as what distinguishes them", () => {
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Set 2 Winner`)).toBe("Set 2 Winner");
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Set 1 Winner`)).toBe("Set 1 Winner");
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Game Spread +/-4.5`)).toBe("Game Spread +/-4.5");
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Set Handicap +/-1.5`)).toBe("Set Handicap +/-1.5");
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Match O/U 21.5`)).toBe("Match O/U 21.5");
+  });
+
+  test("the colon a child title leaves behind before O/U is closed up", () => {
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET} Total Sets: O/U 2.5`)).toBe("Total Sets O/U 2.5");
+  });
+
+  test("a row that is NOT prefixed comes through byte-identical", () => {
+    // The MLB/NFL population — no label there begins with its market's name.
+    expect(stripCardPrefix(YANKEES_MARKET, "Ronald Acuña Jr.: Home Runs O/U 0.5")).toBe(
+      "Ronald Acuña Jr.: Home Runs O/U 0.5",
+    );
+    expect(stripCardPrefix(USO_MARKET, "Jessica Pegula")).toBe("Jessica Pegula");
+    for (const label of ["Yes", "No", "NRFI", "Bases Loaded"]) {
+      expect(stripCardPrefix(YANKEES_MARKET, label)).toBe(label);
+    }
+  });
+
+  test("a row never loses its name", () => {
+    // The child title IS the parent title: keep it rather than render a blank.
+    expect(stripCardPrefix(USO_MARKET, USO_MARKET)).toBe(USO_MARKET);
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET}   `)).toBe(USO_MARKET);
+    expect(stripCardPrefix(USO_MARKET, `${USO_MARKET}: `)).toBe(`${USO_MARKET}:`);
+  });
+
+  test("only a real prefix is consumed, and casing/spacing survive", () => {
+    expect(stripCardPrefix(USO_MARKET, "Leylah Fernandez to win Set 2")).toBe("Leylah Fernandez to win Set 2");
+    expect(stripCardPrefix("US Open WTA:  Jessica Pegula vs Leylah Fernandez", `${USO_MARKET} Set 2 Winner`)).toBe("Set 2 Winner");
+    expect(stripCardPrefix(USO_MARKET.toUpperCase(), `${USO_MARKET} Set 2 Winner`)).toBe("Set 2 Winner");
+  });
+
+  test("empty and absent halves are safe", () => {
+    expect(stripCardPrefix(null, "Set 2 Winner")).toBe("Set 2 Winner");
+    expect(stripCardPrefix(USO_MARKET, null)).toBe("");
+    expect(stripCardPrefix(undefined, undefined)).toBe("");
+  });
+
+  test("a market name with regex metacharacters is matched literally", () => {
+    // `+`, `(` and `.` all occur in wire market names; an unescaped splice
+    // would either throw or match the wrong thing.
+    const odd = "Set Handicap +/-1.5 (Men's)";
+    expect(stripCardPrefix(odd, `${odd} Winner`)).toBe("Winner");
+    expect(stripCardPrefix("A.B", "AxB Winner")).toBe("AxB Winner");
+  });
+});
+
+describe("setNumberFromLabel", () => {
+  test("names the set a row is about", () => {
+    expect(setNumberFromLabel("Set 1 Winner")).toBe(1);
+    expect(setNumberFromLabel("set 3 winner")).toBe(3);
+  });
+
+  test("is null for rows that are not about ONE named set", () => {
+    for (const label of ["Set Handicap +/-1.5", "Total Sets O/U 2.5", "Match O/U 21.5", "Jessica Pegula", "Settlement", ""]) {
+      expect(setNumberFromLabel(label)).toBeNull();
+    }
+    expect(setNumberFromLabel(null)).toBeNull();
+  });
+});
+
+describe("completedSetsForTennis", () => {
+  test("the live specimen: one set banked while the second is played", () => {
+    expect(completedSetsForTennis("tennis_wta_us_open", { home_score: 0, away_score: 1 })).toBe(1);
+    expect(completedSetsForTennis("tennis_atp", { home_score: 2, away_score: 1 })).toBe(3);
+  });
+
+  test("every other sport returns zero, so no row of theirs can be marked", () => {
+    expect(completedSetsForTennis("baseball_mlb", { home_score: 4, away_score: 2 })).toBe(0);
+    expect(completedSetsForTennis("americanfootball_nfl", { home_score: 21, away_score: 17 })).toBe(0);
+    expect(completedSetsForTennis(null, { home_score: 1, away_score: 1 })).toBe(0);
+  });
+
+  test("it refuses a score that cannot be a set count", () => {
+    // Six is not a set count in any tennis match ever played: these are games
+    // or points, and guessing would freeze a set that is still being played.
+    expect(completedSetsForTennis("tennis_atp", { home_score: 6, away_score: 4 })).toBe(0);
+    expect(completedSetsForTennis("tennis_atp", { home_score: null, away_score: 1 })).toBe(0);
+    expect(completedSetsForTennis("tennis_atp", null)).toBe(0);
+    expect(completedSetsForTennis("tennis_atp", { home_score: -1, away_score: 1 })).toBe(0);
+  });
+});
+
+describe("buildMarketSection — the live US Open wire", () => {
+  test("no rendered label repeats the match's own name", () => {
+    const labels = labelsOf(buildMarketSection(USO_WIRE, { completedSets: 1 }));
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) expect(label).not.toContain("Jessica Pegula vs Leylah Fernandez");
+  });
+
+  test("the rows say what they are", () => {
+    const labels = labelsOf(buildMarketSection(USO_WIRE, { completedSets: 1 }));
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "Set 2 Winner",
+        "Set 1 Winner",
+        "Total Sets O/U 2.5",
+        "Game Spread +/-4.5",
+        "Match O/U 21.5",
+      ]),
+    );
+  });
+
+  test("a tour name is no longer parsed as a player", () => {
+    // `US Open WTA: … Total Sets: O/U 2.5` used to parse to player "US Open
+    // WTA", putting the tour in the player slot of a "Player Props" card named
+    // after the matchup.
+    const section = buildMarketSection(USO_WIRE, { completedSets: 1 });
+    expect(section.categories.map((c) => c.title)).not.toContain(PLAYER_PROPS_CATEGORY);
+    expect(labelsOf(section)).not.toContain("US Open WTA O/U 2.5");
+  });
+
+  test("a set already played is marked decided; the set being played is not", () => {
+    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 1 }).categories
+      .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
+    const byLabel = new Map(outcomes.map((o) => [o.label, o]));
+    expect(byLabel.get("Set 1 Winner")?.decided).toBe(true);
+    expect(byLabel.get("Set 2 Winner")?.decided).toBeUndefined();
+    // Neither is dropped: the reader still sees both rows.
+    expect(byLabel.get("Set 1 Winner")?.prob).toBe(0.0005);
+  });
+
+  test("before a set is finished nothing is decided", () => {
+    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 0 }).categories
+      .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
+    expect(outcomes.every((o) => o.decided === undefined)).toBe(true);
+    // …and the default is the same as zero, so no caller can decide by accident.
+    const defaulted = buildMarketSection(USO_WIRE).categories
+      .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
+    expect(defaulted.every((o) => o.decided === undefined)).toBe(true);
+  });
+
+  test("a set-adjacent row is never frozen by a set finishing", () => {
+    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 3 }).categories
+      .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
+    const byLabel = new Map(outcomes.map((o) => [o.label, o]));
+    expect(byLabel.get("Set Handicap +/-1.5")?.decided).toBeUndefined();
+    expect(byLabel.get("Total Sets O/U 2.5")?.decided).toBeUndefined();
+    expect(byLabel.get("Match O/U 21.5")?.decided).toBeUndefined();
+  });
+
+  test("the MLB population is untouched by both rules", () => {
+    // The same specimen the module was built on, re-run with a set count that
+    // would freeze rows if the tennis rule leaked: nothing changes.
+    const before = buildMarketSection(ACUNA);
+    const after = buildMarketSection(ACUNA, { completedSets: 3 });
+    expect(after).toEqual(before);
   });
 });

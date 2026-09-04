@@ -61,6 +61,7 @@ import { describeLoadFailure } from "@/lib/loadFailure";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
+import { completedSetsForTennis } from "@/lib/otherMarketGroups";
 import { sportVocab } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
@@ -1515,7 +1516,11 @@ export default function EventPage({ params }: EventPageProps) {
           {/* Special Event Markets (auto-categorized other markets) */}
           {(gameMarkets.other?.length ?? 0) >= 3 && (
             <SectionErrorBoundary label="Special markets" resetKey={gameMarkets}>
-              <SpecialEventMarkets data={gameMarkets} eventStatus={event.status} />
+              <SpecialEventMarkets
+                data={gameMarkets}
+                eventStatus={event.status}
+                completedSets={completedSetsForTennis(event.sport, gameMarkets)}
+              />
             </SectionErrorBoundary>
           )}
         </div>
