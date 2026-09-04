@@ -256,6 +256,38 @@ _MORE_MARKETS_RE = re.compile(
     r'\s*-\s*(?:More Markets|Player Props)\s*$', re.IGNORECASE
 )
 
+# Derivative-market suffix after a DASH (#2871). The colon form
+# ("Team A vs Team B: Points") is already handled by _GAME_PROP_RE, which drops
+# the stat. Polymarket uses a dash instead — "Team A vs. Team B - Exact Score" —
+# and extract_matchup splits on " vs. ", so the market type stays glued to
+# team_b and _create_event_from_prediction_market stamps it as the away team's
+# name. One real fixture then mints one bogus event per prop type: production
+# held "FC Thun / Lausanne-Sport - Total Corners" beside "- Exact Score" and
+# "- First Team to Score" as three separate games.
+#
+# Built as segment x market-type rather than a flat phrase list so the half /
+# inning / map variants are covered without enumerating every combination.
+_DERIVATIVE_SEGMENT = (
+    r'(?:(?:1st|2nd|3rd|4th|First|Second|Third|Fourth)\s+'
+    r'(?:Half|Period|Quarter|Inning|Set)'
+    r'|First\s+\d+\s+Innings'
+    r'|\d+(?:st|nd|rd|th)\s+(?:Half|Period|Quarter|Inning|Set)'
+    r'|Map\s+\d+)'
+)
+_DERIVATIVE_MARKET_TYPE = (
+    r'(?:Exact\s+Score|Correct\s+Score|Halftime\s+Result|Half\s+Time\s+Result'
+    r'|First\s+Team\s+to\s+Score|Both\s+Teams\s+to\s+Score|Total\s+Corners'
+    r'|Total\s+Goals|Total\s+Points|Winner|Result)'
+)
+# NOTE: "- Game N" is deliberately NOT here. It designates a distinct real game
+# in a series, so stripping it would merge Games 1-5 into one event — a
+# data-destroying merge, the opposite of this fix. Guarded by
+# test_series_game_number_is_NOT_stripped.
+_DERIVATIVE_SUFFIX_RE = re.compile(
+    rf'\s*[-–—]\s*(?:{_DERIVATIVE_SEGMENT}\s+)?{_DERIVATIVE_MARKET_TYPE}\s*$',
+    re.IGNORECASE,
+)
+
 # "Game N:" prefix on playoff series markets (e.g., "Game 2: Minnesota at Dallas: Total Points")
 _GAME_NUMBER_PREFIX_RE = re.compile(r'^Game\s+\d+\s*:\s*', re.IGNORECASE)
 
@@ -286,6 +318,30 @@ def _strip_more_markets(name: str) -> str:
         "Athletics vs. Chicago White Sox - Player Props" → "Athletics vs. Chicago White Sox"
     """
     return _MORE_MARKETS_RE.sub("", name).strip()
+
+
+def is_derivative_market_name(name: str) -> bool:
+    """True when a market name ends in a dash-introduced market type (#2871).
+
+    Such a market is a DERIVATIVE of a game — a prop or a period — not evidence
+    that the game exists. It may link to a fixture we already hold, but it must
+    never mint one: extract_matchup splits on " vs. ", so the market type stays
+    glued to team_b and auto-create would stamp it as the away team's name.
+
+    The suffix is deliberately NOT stripped from the parsed name. It is load
+    bearing: `_MATCHUP_NON_GAME_KEYWORDS` reads "winner" out of
+    "… - First 5 Innings Winner" to keep a period market from feeding a
+    full-game blend (the G3 kill in test_kalshi_market_backfill_reserve).
+    Cleaning the name would silently defeat that rule.
+
+    Examples:
+        "Vancouver FC vs. FC Supra Du Quebec - Exact Score" → True
+        "Qarabag FK vs. Araz Nakhchivan PFK - 1st Half First Team to Score" → True
+        "Mets vs. Dodgers - Game 4" → False (a distinct real game in a series)
+        "CF Estrela da Amadora vs. FC Porto - More Markets" → False (the game's own container)
+        "FC Thun vs. Lausanne-Sport" → False (hyphen inside a club name)
+    """
+    return bool(name) and _DERIVATIVE_SUFFIX_RE.search(name) is not None
 
 
 def _strip_trailing_paren(name: str) -> str:
