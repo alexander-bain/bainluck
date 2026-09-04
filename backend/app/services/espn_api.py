@@ -271,11 +271,25 @@ def espn_terminal_state(status_type: dict) -> Optional[str]:
     (with `completed`) since #980/#981. This is that same rule, applied to the
     scoreboard parser.
 
-    **BOTH conditions, and `completed` is the load-bearing one.** ``STATUS_CANCELED``
-    and ``STATUS_POSTPONED`` are also ``state="post"`` — with ``completed=False``,
-    because nothing was played. Settling on `state` alone would stamp a Final and
-    a 0-0 on every abandoned fixture, which is the CERT-752 class exactly: a false
-    LIVE traded for a false FINAL, and only one of the two grades.
+    **BOTH conditions, and `completed` is the load-bearing one.** A census of
+    5,672 soccer fixtures across 34 ESPN leagues, 2026-02-01 → 2026-09-04
+    (`LIVE-060-EVIDENCE-PROVENANCE`), returns exactly five terminal names — and
+    ``STATUS_CANCELED``, which the first version of this docstring named, is not
+    one of them:
+
+        STATUS_FULL_TIME   5,572  post  completed=True    settles
+        STATUS_FINAL_PEN      57  post  completed=True    settles
+        STATUS_FINAL_AET       7  post  completed=True    settles
+        STATUS_POSTPONED       7  post  completed=False   must NOT settle
+        STATUS_ABANDONED       1  post  completed=False   must NOT settle
+
+    So the name-only parser was blind to three names, not one, and ``state``
+    alone would settle two that nobody finished. ``STATUS_ABANDONED`` is the
+    case that shows why the second half of the rule is load-bearing: it stops
+    mid-match, so it arrives with a real clock and a real period, and only
+    ``completed=False`` separates it from a result. Settling on `state` alone
+    would stamp a Final and a 0-0 on it, which is the CERT-752 class exactly: a
+    false LIVE traded for a false FINAL, and only one of the two grades.
 
     **`state == "in"` is deliberately NOT translated here.** It would newly flip
     soccer rows live from the authority, and ``STATUS_DELAYED`` is ``state="in"``
