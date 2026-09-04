@@ -21,7 +21,7 @@ on one word from Alex.
 | **Contested `espn_id`s** | **196 → 0.** Measured 13:41Z (5 groups / 11 rows), 13:52Z (0), re-verified 14:00Z |
 | **Write** | 11 rows unstamped on production, `rowcount=1` × 11, dyno `run.8124` |
 | **Backup** | `artifacts/LANE1-113-UNSTAMP-BACKUP-2769.md`, **pushed before the write** |
-| **PR 2776** | rebased onto `b53a8224`, docstring corrected, retitled, measurement commented, CI re-running |
+| **PR 2776** | rebased onto `b53a8224`, docstring corrected, retitled, measurement commented, **full CI green at `fdd5e354`** |
 | **#2769** | closed with proof |
 | **Alex** | `alex-inbox/lane1-113-…` — one decision, "go 2776" |
 | **Week 1** | still **18**. 23rd consecutive hold |
@@ -85,9 +85,24 @@ hypothetical.**
 
 ## 5. PR 2776 — what changed and what did not
 
-Rebased onto current master; `alembic heads` → single head `uq_event_espn_id`; the
-migration's 27 guard tests and `test_startup` pass locally; mutation-residue scan clean;
-CI re-running at `ec120004`.
+Rebased onto current master; `alembic heads` → single head `uq_event_espn_id`; mutation-residue
+scan clean. **Full CI green at `fdd5e354`** — 4/4 backend shards, `frontend-build`,
+`search-recall`, `shard-completeness`, browser-audit fixtures, CodeQL, gitleaks, Vercel;
+`deploy` SKIPPED, correct on a PR rollup.
+
+**The first CI run failed, and it was this branch working.** Shard 3 raised
+`IntegrityError: UNIQUE constraint failed: events.espn_id` in three tests of
+`tests/test_anchor_schedule_sentinel.py` — a file that landed *after* this PR was parked. Its
+fixture helper defaulted **every** row to `espn_id="401"` and three tests insert two and three
+rows each. With `Event` declaring `uq_events_espn_id`, the SQLite test database now enforces
+the same invariant production is about to get.
+
+Fixed by giving each row its own id (`f"401{event_id}"`); the kwarg stays for any test that
+needs a particular value, and no call site passed one. 32/32 pass. **None of those three tests
+is about collisions** — they are about which sports the loader returns, so the shared id was
+incidental. That is the branch's argument in miniature: while the schema merely *allowed* a
+shared authority id, both fixtures and production drifted into one. No other test in the suite
+shares an `espn_id`; all four shards are green.
 
 **The only diff change is the docstring**, in two places that had gone false:
 
@@ -130,6 +145,10 @@ CI re-running at `ec120004`.
 * **`printf '%q'` is the way to get a python program through `heroku run:detached`.** zsh
   emits `$'\n'` ANSI-C quoting, bash on the dyno accepts it, and it is plain text — unlike
   base64, which trips the obfuscation guardrail on a DB write.
+* **A newer test file can be the thing your parked branch breaks.** A branch parked for two days
+  is not just stale against master's *code* — it is stale against fixtures written in the
+  meantime that assume the invariant it installs does not exist. Rebase then run CI; local
+  focused tests would never have found this.
 * **Prove the rail read-only first.** A throwaway `SELECT` one-off (`run.8599`) proved the
   quoting, the import path and the log-session read *before* a single row was written.
 * **I numbered this session 114 for its first half.** The session that consumes directive
