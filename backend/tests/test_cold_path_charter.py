@@ -27,6 +27,31 @@ IOS = REPO / "ios" / "Bain Luck" / "Bain Luck"
 FRONTEND = REPO / "frontend"
 
 
+def _sports_fetch_arguments(source: str) -> str:
+    """Return the argument text of `FeedViewModel`'s `fetchFeed(mode: "sports")`.
+
+    Scanning to the balanced close paren instead of pinning the whole literal
+    keeps the guard honest when an argument that does NOT change the request
+    shape is added — native/006 added a `trace:` closure and reddened master
+    on a call that still asks mode=sports at the default limit. Callers assert
+    on the returned text; an unfindable call returns "" so the guard fails
+    closed rather than passing vacuously.
+    """
+    start = source.find('fetchFeed(mode: "sports"')
+    if start < 0:
+        return ""
+    open_paren = source.index("(", start)
+    depth = 0
+    for i in range(open_paren, len(source)):
+        if source[i] in "([{":
+            depth += 1
+        elif source[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren + 1 : i]
+    return ""
+
+
 def _load_instrument():
     path = REPO / "backend" / "scripts" / "cold_path_snapshot.py"
     spec = importlib.util.spec_from_file_location("cold_path_snapshot", path)
@@ -113,9 +138,14 @@ def test_sports_native_shape_tracks_the_ios_client(cps):
     client = IOS / "Services" / "APIClient.swift"
     if not (vm.exists() and client.exists()):
         pytest.skip("ios sources not available")
+    arguments = _sports_fetch_arguments(vm.read_text())
     assert (
-        'fetchFeed(mode: "sports")' in vm.read_text()
+        arguments
     ), "FeedViewModel no longer requests mode=sports — re-derive the Sports row"
+    assert "limit:" not in arguments, (
+        "the Sports call now passes an explicit limit — this row is derived "
+        "from APIClient's DEFAULT limit, so re-derive it from what it asks now"
+    )
     match = re.search(
         r"func fetchFeed\((?:[^)]*?)limit:\s*Int\s*=\s*(\d+)",
         client.read_text(),

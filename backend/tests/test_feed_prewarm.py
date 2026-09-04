@@ -373,6 +373,31 @@ def test_the_warmed_anon_key_is_the_key_the_inert_share_reads(label):
     assert private_key != shared_key
 
 
+def _sports_fetch_arguments(source: str) -> str:
+    """Return the argument text of `FeedViewModel`'s `fetchFeed(mode: "sports")`.
+
+    Scanning to the balanced close paren instead of pinning the whole literal
+    keeps the guard honest when an argument that does NOT change the request
+    shape is added — native/006 added a `trace:` closure and reddened master
+    on a call that still asks mode=sports at the default limit. Callers assert
+    on the returned text; an unfindable call returns "" so the guard fails
+    closed rather than passing vacuously.
+    """
+    start = source.find('fetchFeed(mode: "sports"')
+    if start < 0:
+        return ""
+    open_paren = source.index("(", start)
+    depth = 0
+    for i in range(open_paren, len(source)):
+        if source[i] in "([{":
+            depth += 1
+        elif source[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return source[open_paren + 1 : i]
+    return ""
+
+
 def test_native_sports_warm_shape_tracks_the_ios_client():
     """Pin against the Swift constants, not a copy of the numbers.
 
@@ -402,9 +427,14 @@ def test_native_sports_warm_shape_tracks_the_ios_client():
     if not (view_model.exists() and client.exists()):
         pytest.skip("ios sources not available")
 
-    assert 'fetchFeed(mode: "sports")' in view_model.read_text(), (
+    arguments = _sports_fetch_arguments(view_model.read_text())
+    assert arguments, (
         "FeedViewModel no longer requests mode=sports at the default limit — "
         "re-derive the sports_native warm shape from whatever it asks now"
+    )
+    assert "limit:" not in arguments, (
+        "the Sports call now passes an explicit limit — the warm shape below "
+        "keys off APIClient's DEFAULT limit and would warm nothing"
     )
     limit_match = re.search(
         r"func fetchFeed\((?:[^)]*?)limit:\s*Int\s*=\s*(\d+)",
