@@ -24,6 +24,7 @@ from app.routes.events import (
     _normalize_futures_dedup_key,
 )
 from app.services import get_db
+from app.services.anchor_channel import not_a_proven_duplicate
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_completion import RECENT_RAIL_STATUSES
 from app.utils.game_state import normalize_live_game_state
@@ -241,6 +242,10 @@ def upcoming_games_query(sport_key: str, now: datetime):
             Sport.key == sport_key,
             Event.status.in_(["live", "scheduled"]),
             Event.commence_time >= now - timedelta(hours=2),
+            # Q476: a row PROVEN to duplicate another is not a second game.
+            # See `recent_results_query` for the measurement and the safety
+            # invariant; the same twins reach this rail before kick-off.
+            not_a_proven_duplicate(),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -302,6 +307,26 @@ def recent_results_query(sport_key: str, now: datetime):
     `literal_column("0")` rather than `.offset(0)`: a bind renders `OFFSET $1`,
     which fences just as well but makes the emitted statement differ from the
     one every number above was measured on.
+
+    🔴 **Q476: THE DUPLICATE FILTER IS ON THE OUTER SELECT, DELIBERATELY.** Two
+    reasons, and both are load-bearing:
+
+    * **The fence.** Every block count above was measured on the inner subquery
+      exactly as it is written. Adding a predicate inside it changes the
+      statement those numbers describe, and a plan claim you have invalidated is
+      worse than no plan claim.
+    * **The cap still fills.** `LIMIT RESULTS_LIMIT + 1` is applied AFTER the
+      filter here, so dropping four duplicates promotes four real games into the
+      rail instead of leaving it four cards short. Filtering the formatted rows
+      in Python would have shortened the rail instead — the honest-but-worse
+      outcome, and the one a reader would read as "we lost half the results".
+
+    What it removes, measured on production 2026-08-31 — `/api/leagues/soccer_epl`
+    returned EIGHT results for FOUR games, four of them scoreless `00:00:00`
+    twins of the four real scorelines above them. The proof that they ARE twins
+    is Kalshi's own fixture token, written by `_drain_kalshi_token_twins`; the
+    invariant that makes reading it safe is that a schedule-derived row can never
+    carry the tag, so this filter cannot hide a game that really happened.
     """
     inner = (
         select(Event)
@@ -327,6 +352,7 @@ def recent_results_query(sport_key: str, now: datetime):
     fenced_event = aliased(Event, inner)
     return (
         select(fenced_event)
+        .where(not_a_proven_duplicate(fenced_event))
         .order_by(fenced_event.commence_time.desc())
         .limit(RESULTS_LIMIT + 1)
     )

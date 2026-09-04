@@ -143,6 +143,47 @@ def duplicate_tag(canonical_event_id: int) -> str:
     return f"{DUPLICATE_TAG_PREFIX}{canonical_event_id}"
 
 
+def not_a_proven_duplicate(entity=None):
+    """SQL predicate: this `events` row has NOT been proven to duplicate another.
+
+    Q476. `duplicate_tag` above has been writeable since #2213 and, measured on
+    production 2026-08-31, had never been written: **0 rows carried the tag**, so
+    the proof channel had no producer and — the reason this predicate did not
+    exist — no reader either. Both ship together, because a consumer with an
+    empty payload is architecture and a producer with no consumer is a tag that
+    outruns its reader for a second time.
+
+    Lives HERE, beside the writer, and not in the route that first needed it, so
+    the string is spelled once. A rail that re-typed `"provenance:duplicate-of:"`
+    would keep passing its own tests forever on the day the prefix changed.
+
+    Pass `entity` when the select is against an ALIAS of `events` rather than the
+    table — which the fenced RECENT RESULTS query is. Built from SQLAlchemy
+    constructs rather than `text()` for exactly that reason: a hand-written
+    fragment naming `events.event_tags` compiles fine and then silently reads the
+    WRONG table once a caller aliases, and "the outer query happened to have an
+    `events` in scope" is not a thing a guard can see.
+
+    The shape is `NOT EXISTS (...)` over `jsonb_array_elements_text` rather than
+    a `@>` containment test, because containment needs the WHOLE tag including
+    the canonical id, and the reader does not know — and must not have to guess —
+    which row won.
+    """
+    from sqlalchemy import func, literal_column, select as _select
+
+    from app.models.models import Event
+
+    ent = Event if entity is None else entity
+    tags = func.jsonb_array_elements_text(
+        func.coalesce(ent.event_tags, literal_column("'[]'::jsonb"))
+    ).column_valued("_dup_tag")
+    return ~(
+        _select(literal_column("1"))
+        .where(tags.like(DUPLICATE_TAG_PREFIX + "%"))
+        .exists()
+    )
+
+
 @dataclass(frozen=True)
 class AnchorWriteResult:
     """What happened, and against which event.
