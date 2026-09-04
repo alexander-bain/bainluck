@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.routes.admin_utils import _check_admin_secret
 from app.services import get_db, get_db_rw
+from app.utils import calibration_scoring as _scoring
 from app.utils.calibration_provability import (
     CELL_POPULATION,
     MIN_GRADED_SHARE,
@@ -43,6 +44,30 @@ CACHE_TTL = 3600
 #: own ``staged_at`` so a stale read cannot make the disclosure look current.
 _staged_cache: dict = {"data": None, "timestamp": 0.0}
 STAGED_DISCLOSURE_TTL_S = 120.0
+
+
+def _score_payload(payload: dict) -> dict:
+    """Score the payload being served, or say plainly that it could not be.
+
+    CAL-P998 / D46. The scoring itself lives in
+    :mod:`app.utils.calibration_scoring`, which imports nothing from the app and
+    is the ONE definition of the bars — ``backend/scripts/calibration_scorecard.py``
+    imports the same constants rather than restating them, so the served field
+    and the script can no longer disagree about what "at bar" means.
+
+    The try/except is not defensive decoration. This runs on the ONE exit every
+    ``/api/calibration`` answer passes through, including the dated fallback
+    tiers whose whole purpose is that the page does not go dark (ruling CAL-P017).
+    A malformed ``buckets`` array in some six-day-old last-good copy must cost
+    the reader a scorecard, never the curve — so a failure degrades to an
+    explicit ``unavailable`` block with its reason, which is louder than an
+    absent key and can never be read as zero (gotcha #53).
+    """
+    try:
+        return _scoring.scorecard(payload)
+    except Exception as exc:  # noqa: BLE001 — a score must never take the page down
+        logger.warning("calibration: scorecard could not be computed: %r", exc)
+        return _scoring.unavailable(f"score_failed: {type(exc).__name__}")
 
 
 @router.get("/calibration/outcome-timeline")
@@ -1001,6 +1026,22 @@ async def public_calibration(
         floor = _staged_floor(staged_block)
         if floor is not None:
             availability = _never_stronger(availability, floor)
+        # 4. **The curve scores itself** (CAL-P998, D46 = A). ``cells at bar`` is
+        #    the number this program is steered by, and until now it existed only
+        #    while `backend/scripts/calibration_scorecard.py` was running — so the
+        #    measurement bus read a different cut off `by_category` and the two
+        #    figures looked like a contradiction. Both cuts are now computed here,
+        #    from THIS payload, with the bars that produced them.
+        #
+        #    Computed at the exit rather than baked in by the producer for the
+        #    same reason `producer` is: a score carried inside the artifact
+        #    survives into the dated fallback tiers still describing whichever
+        #    curve was current when it was baked. Derived from `out` means a
+        #    stale copy is scored as the stale copy it is. Cost is ~2 ms against
+        #    a ~470 KB serialisation (measured on the q269 payload, 2,134
+        #    buckets); it declares no availability, because a score is a
+        #    statement about the numbers, not about whether they arrived.
+        out[_scoring.SCORECARD_FIELD] = _score_payload(out)
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(

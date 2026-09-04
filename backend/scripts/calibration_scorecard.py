@@ -84,15 +84,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 import urllib.request
-from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# `backend/`, so `app.utils.calibration_scoring` imports whether this script is
+# run from the repo root or from `backend/`. CAL-P998.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # The MEASURED sigma ledger (CAL-P128). Imported, never re-implemented, and
 # deliberately one-way: the ledger imports nothing from this file, so
@@ -100,66 +100,54 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import calibration_sigma_ledger as sigma_ledger  # noqa: E402
 
 # --------------------------------------------------------------------------
-# THE FINISH LINE. Three numbers, each derived rather than chosen.
-# --------------------------------------------------------------------------
-
-#: The READER-ACTIONABILITY bar, in percentage points — the default every class
-#: gets, and the bar classes B and C actually carry.
-#:
-#: 3.0 pp is the bar the calibration program has already been ranking against
-#: for four weeks (``SUBCOHORT_DIAGNOSIS.md`` ranks on ``n x (ece - 3)``), so
-#: adopting it keeps every banked mechanism comparable to its own history
-#: instead of restating the queue in a new unit on the day we start scoring it.
-#:
-#: It is also defensible on its own: a 3 pp error means a market we publish at
-#: 60% comes in between 57% and 63%, which is inside the width a reader can
-#: reasonably act on. Below that the number is not what is wrong with the page.
-#:
-#: **This is no longer the whole finish line.** Until 2026-08-28 it was the flat
-#: bar for every cell; Alex's ratification of :data:`CLASS_BARS_PP` holds class A
-#: tighter. It is kept under its own name for three reasons: it is still the bar
-#: two of the three classes carry, it is the ceiling no class may exceed (see
-#: ``test_no_class_is_looser_than_the_reader_bar``), and it is the INCUMBENT the
-#: threshold table renders the ratification against, so the one-cell cost of the
-#: decision stays reproducible instead of becoming a claim about a deleted
-#: constant.
-BAR_PP = 3.0
-
-# --------------------------------------------------------------------------
-# THE PER-COHORT BAR — ratified by Alex, MC, 2026-08-28 ~1:15pm PT.
+# THE FINISH LINE AND THE FOLD NOW LIVE IN THE APP — CAL-P998, D46 = A.
 #
-# Class assignment is STRUCTURAL — it is about how the PRICE IS FORMED — and is
-# decided by ``(source, category)`` alone, so a cell can never drift between
-# classes as its numbers move. The derivation is deliberately EXTERNAL to
-# today's measurement: the obvious alternative, "the bar is the class's 25th
-# percentile", is circular, because the bar then moves every time a cell
-# improves and the program can never arrive.
+# Every threshold, the fold, and the per-cell verdict moved to
+# `app/utils/calibration_scoring.py` so `/api/calibration` can publish
+# `cells_at_bar` itself instead of the number existing only while this script
+# runs. They are IMPORTED here, never restated: the app cannot import
+# `scripts/` (it is not on the dyno's path), so if this file kept the
+# definitions the served field would be a second implementation of the bar —
+# and a bar that exists twice is a bar that moves once.
 #
-# Full argument and side-by-side: ``artifacts/cal-p112/THRESHOLD-TABLE-PROPOSAL.md``
-# and section 1b of ``CALIBRATION-SCORECARD.md``. Re-render the classes with
-# ``python3 backend/scripts/calibration_threshold_table.py --live --markdown``.
+# What stays in this file is what the app has no business carrying: the
+# measured cluster-bootstrap sigma overlay (reports, decides nothing), the
+# markdown renderer, and the history ledger. Each constant's full derivation
+# now lives with it in the app module.
 # --------------------------------------------------------------------------
+from app.utils.calibration_scoring import (  # noqa: E402
+    BAR_PP,
+    CELL_KEYS,
+    CLASS_A,
+    CLASS_B,
+    CLASS_BARS_PP,
+    CLASS_C,
+    GAME_CATEGORIES,
+    HEADLINE_TARGET_PP,
+    MIN_CELL_N,
+    SIGMA_GATE,
+    VERDICT_EXEMPT,
+    VERDICT_PASS,
+    VERDICT_QUEUED,
+    VERDICT_UNDER_SIGMA,
+    bar_for,
+    category_scorecard,
+    cell_counts,
+    cell_se_pp,
+    classify,
+    fold,
+    per_class,
+    score_cells,
+)
 
-#: Categories that are a scheduled contest with a fixed, near-term settlement.
-#: Used only to split EXCHANGE cells into B and C; ``odds_api*`` is class A
-#: whatever its category, because the class is about the price, not the sport.
-GAME_CATEGORIES: frozenset[str] = frozenset({
-    "baseball", "basketball", "soccer", "hockey", "football", "tennis", "golf",
-    "cricket", "esports", "mma", "motorsports", "table_tennis", "boxing",
-    "cycling", "horse_racing", "lacrosse", "rugby", "chess",
-})
-
-CLASS_A = "A_multibook_consensus"
-CLASS_B = "B_exchange_contest"
-CLASS_C = "C_exchange_standalone"
-
-#: RATIFIED per-cohort bars, pp (Alex, MC, 2026-08-28). Only class A departs
-#: from the reader bar, and only for a structural reason — see CLASS_RATIONALE.
-CLASS_BARS_PP: dict[str, float] = {
-    CLASS_A: 2.5,
-    CLASS_B: BAR_PP,
-    CLASS_C: BAR_PP,
-}
+__all__ = [
+    "BAR_PP", "CELL_KEYS", "CLASS_A", "CLASS_B", "CLASS_BARS_PP", "CLASS_C",
+    "CLASS_RATIONALE",
+    "GAME_CATEGORIES", "HEADLINE_TARGET_PP", "MIN_CELL_N", "SIGMA_GATE",
+    "VERDICT_EXEMPT", "VERDICT_PASS", "VERDICT_QUEUED", "VERDICT_UNDER_SIGMA",
+    "bar_for", "cell_se_pp", "classify", "fold", "needle", "record", "score",
+    "self_check", "load_history", "render_markdown",
+]
 
 CLASS_RATIONALE: dict[str, str] = {
     CLASS_A: (
@@ -185,129 +173,7 @@ CLASS_RATIONALE: dict[str, str] = {
 }
 
 
-def classify(source: str, category: str) -> str:
-    """The cohort class of a published cell. Structural, never numeric."""
-    if (source or "").startswith("odds_api"):
-        return CLASS_A
-    return CLASS_B if category in GAME_CATEGORIES else CLASS_C
-
-
-def bar_for(source: str, category: str) -> float:
-    """The ratified bar this cell is scored against, in pp."""
-    return CLASS_BARS_PP[classify(source, category)]
-
-#: Cells smaller than this are MATERIAL-EXEMPT: measured, listed, never queued.
-#:
-#: 1,000 is the payload's OWN disclosure floor — ``min_category_outcomes: 1000``
-#: is what ``/api/calibration`` already uses to decide a category is big enough
-#: to publish as a cell. Reusing it means the scorecard's scope and the page's
-#: scope are the same set, so no cell can be "fixed" on the scorecard while
-#: still visibly wrong on the page, or vice versa.
-#:
-#: Measured cost of the floor (2026-08-27): 49 of 287 cells clear it, and they
-#: carry 854,947 of 894,511 published outcomes — **95.6% coverage from 17% of
-#: the cells.** The 238 excluded cells average 166 outcomes each.
-MIN_CELL_N = 1000
-
-#: A cell is only QUEUED if its excess over the bar is established at this many
-#: standard errors.
-#:
-#: This exists because the program's own board found the defect it prevents:
-#: *"15 of the 21 are under 3 sigma, and three are under 1 sigma"* — a 21-item
-#: queue that was really a 6-item one. Chasing a point estimate that the sample
-#: cannot distinguish from the bar burns a cycle per cell and moves nothing.
-#:
-#: 2.0 sigma is the conventional two-sided 95% threshold, and on the 2026-08-28
-#: `20:37Z` payload it cuts the material over-bar list from 32 cells to 20 at the
-#: ratified bars (30 to 19 at the pre-ratification flat bar) — so it is doing
-#: real work, not decorating the table.
-SIGMA_GATE = 2.0
-
-#: Standard error of a cell's ECE in pp, as a function of n.
-#:
-#: ``50/sqrt(n)`` is the convention ``SUBCOHORT_DIAGNOSIS.md`` uses throughout,
-#: kept so sigmas on this scorecard and sigmas on the board mean the same thing.
-#: It is the maximum-variance (p=0.5) binomial SE expressed in pp, which makes
-#: it CONSERVATIVE — a real cell's bins are rarely all at 0.5, so a cell this
-#: gate clears is clear by at least the margin shown.
-def cell_se_pp(n: int) -> float:
-    return 50.0 / math.sqrt(n) if n > 0 else float("inf")
-
-
-#: Overall published headline target, in pp, on ``mce_closing_line``.
-#:
-#: 2.0 pp is deliberately set where the curve ALREADY sits (1.90 pp on
-#: 2026-08-27, CI [0.87, 1.97]) — because the honest finding is that the
-#: headline is not the problem and never was. The pooled number is an average
-#: over 287 cells whose errors point in opposite directions and cancel:
-#: ``kalshi/football`` is -5.16 gap while ``polymarket/esports`` is +6.50, and
-#: the pooled figure reads 1.90 as though both were fine.
-#:
-#: So this target is a REGRESSION GUARD, not a goal. "Fixed" is the per-cell
-#: table below it. Publishing a single headline as the definition of done is
-#: the exact move that let this program report progress for months without a
-#: user-visible cell moving.
-HEADLINE_TARGET_PP = 2.0
-
 DEFAULT_HISTORY = Path("artifacts/calibration-scorecard/history.jsonl")
-
-# --------------------------------------------------------------------------
-# Fold
-# --------------------------------------------------------------------------
-
-#: The published cell key. ``price_moved`` is a REPORTING stratum, not a cell:
-#: the payload splits buckets by it but publishes ``by_category`` / ``by_source``
-#: pooled across it, so pooling here is what reproduces the published number.
-CELL_KEYS = ("source", "category")
-
-
-def _pool(buckets: Iterable[dict], keys: tuple[str, ...]) -> dict[tuple, dict[int, dict]]:
-    """``key -> {bucket_idx: {n, winners, sum_prob}}``, pooled to 10 bins.
-
-    Pooling to ``bucket_idx`` is the load-bearing line of this file; see the
-    module docstring for the measurement of what happens without it.
-    """
-    out: dict[tuple, dict[int, dict]] = defaultdict(
-        lambda: defaultdict(lambda: {"n": 0, "winners": 0, "sum_prob": 0.0})
-    )
-    for row in buckets:
-        key = tuple(row.get(k) for k in keys)
-        b = out[key][int(row["bucket_idx"])]
-        b["n"] += int(row.get("n") or 0)
-        b["winners"] += int(row.get("winners") or 0)
-        b["sum_prob"] += float(row.get("sum_prob") or 0.0)
-    return out
-
-
-def _stats(bins: dict[int, dict]) -> dict:
-    """n-weighted 10-bin ECE and signed gap, in pp.
-
-    Signed gap is carried beside ECE because ECE is an absolute value and
-    therefore cannot say WHICH WAY a cell is wrong. Two cells at 5 pp — one
-    over-predicting, one under — are different defects with different
-    mechanisms, and a table that only prints ECE hides that they are not the
-    same problem.
-    """
-    n = sum(b["n"] for b in bins.values())
-    if not n:
-        return {"ece": None, "n": 0, "gap": None}
-    err = sum(
-        abs(b["winners"] / b["n"] - b["sum_prob"] / b["n"]) * b["n"]
-        for b in bins.values()
-        if b["n"]
-    )
-    gap = sum(b["sum_prob"] - b["winners"] for b in bins.values())
-    return {"ece": round(err / n * 100, 2), "n": n, "gap": round(gap / n * 100, 2)}
-
-
-def fold(payload: dict, keys: tuple[str, ...] = CELL_KEYS) -> list[dict]:
-    cells = []
-    for key, bins in _pool(payload.get("buckets") or [], keys).items():
-        row = dict(zip(keys, key))
-        row.update(_stats(bins))
-        cells.append(row)
-    return cells
-
 
 # --------------------------------------------------------------------------
 # Self-check — the instrument's warrant
@@ -370,17 +236,6 @@ def self_check(payload: dict) -> dict:
 # --------------------------------------------------------------------------
 # Score
 # --------------------------------------------------------------------------
-
-#: Cell verdicts. Four states, and the two "not queued" ones are DISTINCT on
-#: purpose: a cell can fail the bar because it is genuinely bad but too small to
-#: matter (``EXEMPT_SMALL``), or because the sample cannot tell it from the bar
-#: (``UNDER_SIGMA``). Collapsing those into one "not now" bucket is how a real
-#: small-cell defect and a noise reading end up in the same pile.
-VERDICT_PASS = "PASS"
-VERDICT_QUEUED = "OVER_BAR_ESTABLISHED"
-VERDICT_UNDER_SIGMA = "OVER_BAR_UNESTABLISHED"
-VERDICT_EXEMPT = "EXEMPT_BELOW_MIN_N"
-
 
 #: Basis labels for a cell's sigma. A sigma on this board is now one of two
 #: different quantities and they must never share a column unlabelled
@@ -476,55 +331,21 @@ def score(payload: dict, ledger: dict | None = None) -> dict:
     separation is deliberate rather than timid.
     """
     pop = payload.get("population_version")
-    cells = []
-    for c in fold(payload):
-        n, ece = c["n"], c["ece"]
-        if ece is None:
-            continue
-        klass = classify(c["source"], c["category"])
-        bar = CLASS_BARS_PP[klass]
-        excess = round(ece - bar, 2)
-        se = cell_se_pp(n)
-        sigma = round(excess / se, 2) if se else None
-        if n < MIN_CELL_N:
-            verdict = VERDICT_EXEMPT
-        elif excess <= 0:
-            verdict = VERDICT_PASS
-        elif sigma is not None and sigma >= SIGMA_GATE:
-            verdict = VERDICT_QUEUED
-        else:
-            verdict = VERDICT_UNDER_SIGMA
-        cells.append(
-            {
-                "cell": f"{c['source']}/{c['category']}",
-                "source": c["source"],
-                "category": c["category"],
-                "ece": ece,
-                "n": n,
-                "gap": c["gap"],
-                # The bar travels WITH the cell. A queued row that prints only
-                # its excess cannot be checked without knowing which of three
-                # bars produced it, and the whole class of failure this
-                # ratification is guarding against is a threshold that has
-                # quietly moved out from under a published number.
-                "class": klass,
-                "bar_pp": bar,
-                "excess_pp": excess,
-                "sigma": sigma,
-                # Excess-outcomes: how much wrongness this cell puts in front of
-                # readers. Ranks the queue, because a 22 pp cell over 118 rows
-                # and a 0.5 pp cell over 100,000 are not the same repair job.
-                "excess_outcomes": round(max(0.0, excess) * n),
-                "verdict": verdict,
-            }
-        )
+    # CAL-P998: the fold, the bars and the verdict are the APP's
+    # (`app/utils/calibration_scoring.py`) — this file no longer holds a second
+    # copy of them. The overlay below is still this file's, because it reports
+    # and decides nothing.
+    cells = score_cells(payload)
     for c in cells:
         _attach_measured_sigma(c, ledger, pop)
+    # `score_cells` already ranks; the overlay adds columns, never a key the
+    # ranking reads, so the order is unchanged. Re-sorted anyway so this
+    # function's contract does not depend on that staying true.
     cells.sort(key=lambda c: (-c["excess_outcomes"], -c["n"]))
 
+    counts = cell_counts(cells)
     material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
     queued = [c for c in cells if c["verdict"] == VERDICT_QUEUED]
-    unestablished = [c for c in cells if c["verdict"] == VERDICT_UNDER_SIGMA]
     headline = payload.get("mce_closing_line")
 
     # The measured-sigma overlay, counted rather than described. These are
@@ -565,20 +386,14 @@ def score(payload: dict, ledger: dict | None = None) -> dict:
             "sigma_gate": SIGMA_GATE,
             "headline_target_pp": HEADLINE_TARGET_PP,
         },
-        "counts": {
-            "cells_total": len(cells),
-            "cells_material": len(material),
-            "cells_material_outcomes": sum(c["n"] for c in material),
-            "cells_pass": sum(1 for c in material if c["verdict"] == VERDICT_PASS),
-            "cells_queued": len(queued),
-            "cells_unestablished": len(unestablished),
-            "cells_exempt": len(cells) - len(material),
-            "queued_excess_outcomes": sum(c["excess_outcomes"] for c in queued),
-            # The NEEDLE numerator. A material cell is "at bar" iff it is not
-            # queued — which is the same test `done` applies, so the lane's one
-            # glanceable number and this page's verdict can never disagree.
-            "cells_at_bar": len(material) - len(queued),
-        },
+        # The NEEDLE and its arithmetic — computed by the same function
+        # `/api/calibration` publishes from, so the script's figure and the
+        # served field are the same number by construction rather than by
+        # agreement. NOTE the served block renames two of these: on the wire
+        # `cells_total` is this `cells_material` (the needle's denominator) and
+        # this `cells_total` is published as `cells_scored`. The mapping is
+        # pinned by `test_calibration_scoring_998.py`.
+        "counts": counts,
         # REPORTING ONLY — see `_attach_measured_sigma`. None of these feed
         # `cells_at_bar`, `done`, or any verdict. They exist so the size of the
         # pending question is on the board rather than in a handoff note.
@@ -595,24 +410,13 @@ def score(payload: dict, ledger: dict | None = None) -> dict:
             # is a projection, not a reading.
             "cells_at_bar_if_applied": len(material) - len(queued) + len(refuted),
         },
-        "per_class": {
-            klass: {
-                "bar_pp": CLASS_BARS_PP[klass],
-                "cells": sum(1 for c in material if c["class"] == klass),
-                "at_bar": sum(
-                    1
-                    for c in material
-                    if c["class"] == klass and c["verdict"] != VERDICT_QUEUED
-                ),
-                "queued": sum(
-                    1
-                    for c in material
-                    if c["class"] == klass and c["verdict"] == VERDICT_QUEUED
-                ),
-                "outcomes": sum(c["n"] for c in material if c["class"] == klass),
-            }
-            for klass in CLASS_BARS_PP
-        },
+        "per_class": per_class(cells),
+        # The CATEGORY cut the measurement bus has been doing by hand off
+        # `by_category` (`14/36 cats ece<=3.0`). Rendered here beside the cell
+        # cut for the same reason it is served beside it: two true numbers with
+        # no single place that says they are different cuts read as a
+        # contradiction. CAL-P998.
+        "by_category_cut": category_scorecard(payload),
         # The MEASURED half of FIXED. The other half is Alex's eyeball on the
         # page at 49/49 (ratification, 2026-08-28) and no script can assert it.
         "done": len(queued) == 0

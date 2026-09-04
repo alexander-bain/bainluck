@@ -367,11 +367,21 @@ async def test_route_serves_the_shared_compute_payload_unaltered(healthy_staged_
     """
     import time as _time
 
-    # CAL-P076 adds the THIRD and, on the same argument, the last of this
-    # kind: ``staged`` dates the artifact's own INPUTS (#2007). The builder
-    # cannot write it either — the bank's as-of is a fact about the durable
-    # cursor at serve time, not about the numbers in the payload.
-    envelope_keys = {"availability", "producer", "staged"}
+    # CAL-P076 adds the THIRD of this kind: ``staged`` dates the artifact's own
+    # INPUTS (#2007). The builder cannot write it either — the bank's as-of is a
+    # fact about the durable cursor at serve time, not about the numbers in the
+    # payload.
+    #
+    # CAL-P998 / D46 adds the FOURTH, and it is the one that most needs saying
+    # out loud because it is the first envelope key that is a NUMBER. The
+    # scorecard is a *derivation of the payload being served*, not a new fact
+    # about it: every figure in it is recomputed from `buckets` and
+    # `by_category` in the same response, which is precisely why the builder
+    # must not write it. A producer-baked score rides into the dated fallback
+    # tiers still describing whichever curve was current when it was baked —
+    # the same "claim about the past" failure `availability` was pulled out for.
+    # Enumerated, still: a fifth may not join by accident.
+    envelope_keys = {"availability", "producer", "staged", "scorecard"}
 
     shared = await compute_calibration_payload(_FakeDB())
     calibration._cache = {"data": shared, "timestamp": _time.time()}

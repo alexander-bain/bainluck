@@ -269,6 +269,13 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     # why this stub cannot be called fresh.
     staged = out.pop("staged")
     assert staged["measured"] is False
+    # CAL-P998 / D46: the fourth serve-time key. This stub's `buckets` are two
+    # bare ints, so the fold cannot read them — the score degrades to an
+    # explicit `unavailable` and the copy is still SERVED. A malformed bucket
+    # array costs the reader a scorecard, never the curve (ruling CAL-P017).
+    scorecard = out.pop("scorecard")
+    assert scorecard["status"] == "unavailable"
+    assert scorecard["cells_at_bar"] is None
     assert out == payload
 
 
