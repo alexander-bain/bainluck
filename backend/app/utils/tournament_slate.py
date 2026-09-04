@@ -151,6 +151,16 @@ CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS = 24.0 * 21
 #: trend direction, so "moved" means one thing across the whole page.
 MOVE_DEAD_BAND = 0.003
 
+#: What a row keyed by the AUTHORITY's competition id, rather than by the
+#: register's matchup, is called (Q505).
+#:
+#: A named constant because ux/1048 made it a two-way contract: one function
+#: writes the key and two others take it apart to recover the competition id.
+#: Spelled three times, the day someone writes `"espn_"` is the day the day's
+#: matches silently stop opening — and a link that is merely absent is exactly
+#: the failure this page's whole monitor vocabulary was built to make loud.
+ESPN_MATCHUP_PREFIX = "espn:"
+
 
 def _parse_moment(value: Any) -> Optional[datetime]:
     """An ISO-8601 string -> an aware datetime, or ``None``.
@@ -983,7 +993,14 @@ def authority_match_row(
         # consumer that keys on it. The competition id is the thing both
         # halves actually agree on, and it is the authority's own name for
         # this fixture.
-        "matchup_key": f"espn:{comp_id}",
+        "matchup_key": f"{ESPN_MATCHUP_PREFIX}{comp_id}",
+        # `None` HERE AND FILLED LATER FOR SCOREBOARD ROWS ONLY (ux/1048).
+        # Q503's reason for the dead end — below — is about a register fixture
+        # named wrong, and it still holds for `pairing_source="authority"`.
+        # A scoreboard row has no register pairing to be wrong about, and
+        # `apply_espn_event_links` gives it the `events` row ESPN sync built
+        # from this same competition id. This function stays pure; the fill
+        # needs a database and happens in the route.
         "event_id": None,
         # Facts about the FIXTURE, which is correctly anchored — see the
         # docstring. Only the pairing was ever in dispute.
@@ -1332,11 +1349,110 @@ def build_slate(
             for r in rows
             if r.get("pairing_source") == "scoreboard" and r.get("priced")
         ),
+        # HOW MANY OF TODAY'S ROWS OPEN (ux/1048). Stamped by
+        # `apply_espn_event_links` after this function returns, because the
+        # answer needs a database and this one is pure. Declared HERE, at zero,
+        # so the key is never absent: an absent count and a genuine zero are
+        # the same bytes to a reader, and this whole module exists because that
+        # confusion shipped once already (gotcha #53).
+        "scoreboard_linked": 0,
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
         "age_hours": round(slate_age, 2) if slate_age is not None else None,
         "dark_after_hours": DARK_PRICE_HOURS,
     }
+
+
+def slate_competition_ids(slate: dict[str, Any]) -> list[str]:
+    """The ESPN competition ids the slate's scoreboard rows were built from.
+
+    The route needs these to resolve event rows, and it must not re-derive them
+    by walking `order_of_play` again: the slate is the population that got
+    PUBLISHED, and `authority_match_row` refuses a competition that does not
+    name two identified people. Asking the map instead would send 126 doubles
+    competitions and every TBD slot to the resolver, whose `NO_EVENT_FOR_ESPN_ID`
+    count is a real signal — and burying it under refusals we already made on
+    purpose is how a monitor stops meaning anything.
+
+    Only `scoreboard` rows. An `authority` row's dead end is a decision, not a
+    gap — see `authority_match_row` — and this function must not quietly
+    enlarge the population that decision covers.
+    """
+    ids: list[str] = []
+    for row in slate.get("matches") or []:
+        if row.get("pairing_source") != "scoreboard":
+            continue
+        key = str(row.get("matchup_key") or "")
+        if key.startswith(ESPN_MATCHUP_PREFIX):
+            ids.append(key[len(ESPN_MATCHUP_PREFIX) :])
+    return ids
+
+
+def apply_espn_event_links(
+    slate: dict[str, Any], by_espn: Optional[dict[str, int]] = None
+) -> int:
+    """Give today's rows their `events` row, so the card opens (ux/1048).
+
+    ═══ WHAT WAS MISSING ═══
+
+    ux/1033 made the day's matches APPEAR — `build_slate` walks the order of
+    play and builds a row for every competition the register does not claim, so
+    a second-round match reaches the card that the draw-ceremony register could
+    never have held. Replayed over the live scoreboard at 2026-09-03T20:16Z it
+    published **40 rows, 8 of them in play**, against a production payload
+    serving `count: 0`.
+
+    Every one of those 40 rows carried `event_id: None`. `matchEventHref` falls
+    back to the published `by_matchup` map, which is keyed by REGISTER matchup
+    keys, and a scoreboard row's key is `espn:<competition id>` — so the
+    fallback could not fire either. Measured: **40 rows, 0 linked**. The card
+    would have shown a reader the live match they were watching and then refused
+    to open it.
+
+    ═══ WHY THIS CHANNEL AND NOT A NEW ONE ═══
+
+    `resolve_espn_competition_events` already turns exactly this id into exactly
+    this row, and the finished list has linked through it since #2693 step 2. It
+    is bounded by the spec's own `sport_keys`, and an id claimed by two events
+    resolves to NEITHER — a link that guesses is wrong half the time and looks
+    right every time. Reusing it means today's rows and the finished list open
+    through ONE rule, which is the whole value: two answers to "which event is
+    this fixture" is how a match comes to be two matches.
+
+    ═══ WHY LINKING IS SAFE HERE, WHERE Q503 REFUSED IT ═══
+
+    `authority_match_row` sets `event_id: None` and says so in its docstring:
+    "a dead-ended honest card is better than a live link to the lie." That rule
+    is about a fixture the REGISTER holds and names WRONG — the link would land
+    on a detail page rendering the register's refuted pairing.
+
+    A scoreboard row has no register pairing to be wrong. Its id, its two
+    players and its state all come from the scoreboard, and `by_espn` resolves
+    that same competition id to the `events` row ESPN sync created FROM IT. The
+    destination is `/events/{id}`, the ordinary event page — the one the
+    finished list already reaches. So the caution does not transfer, and this
+    function is scoped to `scoreboard` rows so it cannot be read as overturning
+    it: an authority row's dead end stays exactly where Q503 put it.
+
+    Mutates `slate` and returns how many rows were linked. Rows that already
+    carry an `event_id` are never touched — the register's own channel is the
+    upper rung and a second answer must not displace the first.
+    """
+    linked = 0
+    links = by_espn or {}
+    for row in slate.get("matches") or []:
+        if row.get("pairing_source") != "scoreboard" or row.get("event_id"):
+            continue
+        key = str(row.get("matchup_key") or "")
+        if not key.startswith(ESPN_MATCHUP_PREFIX):
+            continue
+        event_id = links.get(key[len(ESPN_MATCHUP_PREFIX) :])
+        if event_id is None:
+            continue
+        row["event_id"] = int(event_id)
+        linked += 1
+    slate["scoreboard_linked"] = linked
+    return linked
 
 
 def _prematch_by_pair(
