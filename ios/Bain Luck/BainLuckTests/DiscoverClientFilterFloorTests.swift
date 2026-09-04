@@ -99,6 +99,20 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(
             rendered.count, DiscoverView.feedFloor,
             "a healthy 50-card page must never render below the feed floor")
+
+        // SHOWABLE-1 gate G1, stated as a number and not as a constant: a floor
+        // of 8 still let this page lose 84% of itself, which is not "Discover
+        // shows the feed the API sends". Written literally so raising the floor
+        // is a decision someone makes, not something a refactor does silently.
+        XCTAssertGreaterThanOrEqual(
+            rendered.count, 28,
+            "G1: a 50-card page with a heavily cooled profile still shows ≥28 cards")
+
+        // And the cooldown is still doing its job: every uncooled card leads.
+        XCTAssertEqual(
+            rendered.prefix(3).filter { !profile.suppresses(category: categoryOf($0), now: now) }.count,
+            3,
+            "the 3 uncooled cards lead; the floor sinks the cooled ones, it does not re-rank them up")
     }
 
     /// The floor is a floor, not a cap: an uncooled page renders in full.
@@ -129,10 +143,13 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
     /// The profile still decides WHICH cards come back: least-cooled first, so a
     /// cooldown remains a downrank even when the floor overrides it.
     func testBackfillPrefersTheLeastCooledCategory() throws {
+        // The page has to be bigger than the floor for the ORDER to be
+        // observable at all: 1 uncooled + 20 hard-cooled + 20 barely-cooled = 41,
+        // so the floor backfills 27 of the 40 removed cards and has to choose.
         var page: [FeedItem] = []
-        page.append(try card(1, category: "tennis"))              // not cooled
-        for id in 2...5 { page.append(try card(id, category: "politics")) }   // hard cooled
-        for id in 6...9 { page.append(try card(id, category: "soccer")) }     // barely cooled
+        page.append(try card(1, category: "tennis"))                            // not cooled
+        for id in 2...21 { page.append(try card(id, category: "politics")) }    // hard cooled
+        for id in 22...41 { page.append(try card(id, category: "soccer")) }     // barely cooled
         let profile = DiscoverInteractionProfile.forTesting(
             scores: ["politics": -9, "soccer": -3.1], recordedAt: now)
 
@@ -142,12 +159,22 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
             backfillPriority: { profile.score(for: self.categoryOf($0), now: self.now) }
         )
         XCTAssertEqual(rendered.count, DiscoverView.feedFloor)
+        XCTAssertEqual(categoryOf(rendered[0]), "tennis", "the kept card still leads")
         let backfilled = rendered.dropFirst().map { categoryOf($0) }
         XCTAssertTrue(
             backfilled.allSatisfy { $0 == "soccer" || $0 == "politics" }, "\(backfilled)")
         XCTAssertEqual(
-            backfilled.prefix(4).filter { $0 == "soccer" }.count, 4,
-            "all four barely-cooled soccer cards return before any hard-cooled politics card")
+            backfilled.prefix(20).filter { $0 == "soccer" }.count, 20,
+            "every barely-cooled soccer card returns before any hard-cooled politics card")
+    }
+
+    /// The group-collapse floor is NOT the subtractive-filter floor, and must not
+    /// be quietly unified with it: it is met by expanding ladder groups back into
+    /// singles, so chasing G1's card count there would re-flood page one with the
+    /// near-duplicates grouping exists to remove.
+    func testGroupExpansionFloorStaysBelowTheFilterFloor() {
+        XCTAssertEqual(DiscoverView.groupExpansionFloor, 8)
+        XCTAssertGreaterThan(DiscoverView.feedFloor, DiscoverView.groupExpansionFloor)
     }
 
     // MARK: - The cooldown expires
