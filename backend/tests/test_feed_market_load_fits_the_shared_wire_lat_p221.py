@@ -341,11 +341,14 @@ async def test_the_published_artifact_round_trips_byte_for_byte(payload, monkeyp
     key = ("market_load", 2, "roundtrip")
 
     await pic._publish_cross_worker("market_load", key, payload, 60)
-    ok, value = await pic._read_cross_worker("market_load", key, 60)
+    ok, value, age_s = await pic._read_cross_worker("market_load", key, 60)
 
     assert ok, "the artifact we just published did not read back"
     assert value == payload
     assert fs.is_snapshot_payload(value), "it read back in an unusable shape"
+    # LAT-P221b: the read reports how old the artifact is, because the caller
+    # backdates its L1 promotion by exactly this. Just published, so ~0.
+    assert 0.0 <= age_s < 5.0, age_s
 
 
 def test_the_shared_redis_client_hands_back_bytes_not_str():
