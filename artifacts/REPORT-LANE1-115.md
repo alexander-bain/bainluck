@@ -219,3 +219,18 @@ clean.
 `#3070` OPEN (row B still filed). `#2867` / D50's flip clock still pinned at zero until the apply.
 PR #3090, CERT-947 staged via `tools/stage-cert.sh`. Merge gates 13 + 18 apply before any merge —
 CERT-947 must bank a `TOKEN GRANTED` row and no later row may name it after `supersedes`.
+
+---
+
+## 12. CI, after the fact
+
+**Full CI green at `89eb6642`**, merge state CLEAN, 1:3xpm PT: 4/4 backend shards,
+`frontend-build`, `search-recall`, `shard-completeness`, browser-audit fixtures, CodeQL (both
+analyses), gitleaks, Vercel. `deploy` SKIPPED — correct on a PR.
+
+That matters most for the one change with real blast radius, the `NamedTuple` swap: a missed
+2-tuple unpack anywhere in `backend/` would have failed a shard. The local sweep found only
+`test_create_events_from_truth_consumer.py:685` and it still works; 4/4 green is the evidence the
+sweep was complete, which a grep alone is not.
+
+Recorded on the PR at `#3090#issuecomment-5544860691`. CERT-947 ungraded at session end.
