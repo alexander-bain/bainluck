@@ -2,6 +2,7 @@
 Kalshi prediction market polling task.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -508,6 +509,41 @@ async def _poll_kalshi_markets():
             except Exception:
                 pass
 
+        # #2927: the DISCOVERED half of the supplementary rescue list, cached
+        # across beats. Same ownership split as the cursor above — the service
+        # measures, the caller persists — so the fetch stays network-pure and the
+        # TTL is a scheduling decision, made here.
+        #
+        # 3h, chosen against what the measurement actually is: a list of which
+        # tennis series carry open events. That population turns over with the
+        # tournament calendar, not with the match clock — the census run
+        # 2026-09-04 would have been valid all day. Paying its ~20s every 2h beat
+        # would buy nothing, and the failure it replaces was a hand list that had
+        # been stale for months, so 3h of staleness is not the risk here.
+        _DISCOVERY_KEY = "bainluck:kalshi:rescue_series:v1"
+        _DISCOVERY_TTL_S = 10800
+        _discovery_cache = None
+        if _phase_rc is not None:
+            try:
+                _raw = _phase_rc.get(_DISCOVERY_KEY)
+                if _raw:
+                    _discovery_cache = json.loads(
+                        _raw.decode() if isinstance(_raw, bytes) else _raw
+                    )
+            except Exception:
+                # A stale or unreadable entry means re-measure, never fail.
+                _discovery_cache = None
+
+        def _save_discovery(payload):
+            if _phase_rc is None:
+                return
+            try:
+                _phase_rc.setex(
+                    _DISCOVERY_KEY, _DISCOVERY_TTL_S, json.dumps(payload)
+                )
+            except Exception:
+                pass
+
         # #1586/#1845: main-scan telemetry. Filled by the fetch, completed after
         # the upsert loop, persisted at the end. Read-only — it changes nothing
         # about how the scan behaves.
@@ -523,6 +559,8 @@ async def _poll_kalshi_markets():
                     start_cursor=_start_cursor,
                     save_cursor=_save_main_cursor,
                     telemetry=_scan_tel,
+                    discovery_cache=_discovery_cache,
+                    save_discovery=_save_discovery,
                 ),
                 timeout=_FETCH_WALL_S,
             )

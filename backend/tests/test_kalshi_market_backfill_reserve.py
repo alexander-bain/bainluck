@@ -441,14 +441,34 @@ def test_the_reserve_does_not_starve_the_rescue_it_was_carved_beside():
     the same bug back one stage — so the backfill's floor is carved out of the
     MAIN SCAN, whose cursor is resumable and therefore loses nothing it does not
     simply defer.
+
+    lane1b/024 added a THIRD consumer of this same carve — discovered series —
+    and moved the arithmetic out of the method body into
+    `kalshi_series_selection.fetch_stage_deadlines`, precisely because two
+    incidents in a row turned on getting it wrong inline. This test used to pin
+    the arithmetic as a source substring; it now asserts the arithmetic itself,
+    which is what the substring was standing in for and is strictly stronger.
     """
     import inspect
 
     from app.services import kalshi_api
+    from app.utils.kalshi_series_selection import fetch_stage_deadlines
 
     src = inspect.getsource(kalshi_api.KalshiAPIService._fetch_all_events_unfiltered)
     assert "_RESCUE_RESERVE_S = 60.0" in src
     assert "_BACKFILL_RESERVE_S" in src
-    # The main scan pays for both reserves; the rescue pays only for the backfill.
-    assert "deadline - _RESCUE_RESERVE_S - _BACKFILL_RESERVE_S" in src
-    assert "deadline - _BACKFILL_RESERVE_S if deadline is not None else None" in src
+
+    rescue, backfill = 60.0, 45.0
+    # With nothing discovered, the split is the two-reserve one #999 and #2214
+    # settled between them, unchanged.
+    d = fetch_stage_deadlines(
+        1000.0, has_discovered=False,
+        rescue_reserve_s=rescue, discovery_reserve_s=25.0,
+        backfill_reserve_s=backfill,
+    )
+    # The main scan pays for both reserves...
+    assert 1000.0 - d.main_scan == pytest.approx(rescue + backfill)
+    # ...and the rescue pays only for the backfill.
+    assert 1000.0 - d.guaranteed == pytest.approx(backfill)
+    # The rescue's own floor is intact: it is not carved out of #999's reserve.
+    assert d.guaranteed - d.main_scan == pytest.approx(rescue)
