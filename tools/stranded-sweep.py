@@ -122,7 +122,7 @@ def superseded_by(my_rows, all_rows):
 # ─────────────────────────────────────────────────────────── git questions ───
 
 
-def resolve_ref(branch, sha):
+def resolve_ref(branch, sha, pr=None):
     """A ref this machine can actually read, or None.
 
     Most PR heads here have no LOCAL branch — dependabot's never do, and neither
@@ -131,11 +131,26 @@ def resolve_ref(branch, sha):
     and every one of those PRs came out as "RESCUE, 0 files not on master" — a
     verdict that contradicts its own evidence. An unreadable ref is now its own
     verdict, never a rescue and never a close.
+
+    Last resort, `refs/pull/N/head`: when a PR's branch has been DELETED from the
+    remote, no amount of `git fetch origin` brings it back and the PR sat
+    permanently UNRESOLVED — "run git fetch and re-run" was advice that could
+    never work (measured on #998, branch `fix/887-mrbdgf0e`, deleted, 58d stale).
+    GitHub keeps the head reachable under refs/pull regardless, so the sweep can
+    read and judge these instead of skipping them forever.
     """
     for ref in (sha, f"origin/{branch}", branch):
         rc, _, _ = git("cat-file", "-e", f"{ref}^{{commit}}", check=False)
         if rc == 0:
             return ref
+    if pr is not None:
+        local = f"refs/stranded-sweep/pr{pr}"
+        rc, _, _ = git("fetch", "--quiet", "origin",
+                       f"+refs/pull/{pr}/head:{local}", check=False)
+        if rc == 0:
+            rc, _, _ = git("cat-file", "-e", f"{local}^{{commit}}", check=False)
+            if rc == 0:
+                return local
     return None
 
 
@@ -213,6 +228,10 @@ def classify(pr, rows, days):
         "pr": pr["number"],
         "branch": branch,
         "sha": sha[:8],
+        # The FULL oid, for --force-with-lease: an abbreviated sha is not a
+        # lease git will honour, and a lease that silently degrades to a plain
+        # force is worse than no lease at all.
+        "sha_full": sha,
         "age_days": age,
         "certs": len(mine),
         "last_cert": f"{mine[-1][0]} ({mine[-1][1]})" if mine else "-",
@@ -234,11 +253,11 @@ def classify(pr, rows, days):
         rec.update(verdict="BOT", why=f"dependabot PR, stale {age}d — merge or close it by hand")
         return rec
 
-    ref = resolve_ref(branch, sha)
+    ref = resolve_ref(branch, sha, pr=pr["number"])
     if ref is None:
         rec.update(verdict="UNRESOLVED",
-                   why=f"no readable ref for {branch}@{sha[:8]} — run `git fetch origin` "
-                       "and re-run; NOT swept either way")
+                   why=f"no readable ref for {branch}@{sha[:8]} — not on origin and "
+                       f"refs/pull/{pr['number']}/head did not resolve; NOT swept either way")
         return rec
 
     on_master, evidence = content_is_on_master(ref)
@@ -329,10 +348,32 @@ def do_rescue(rec, dry):
         # harness (pytest 2/3/4/5, 127, 137/143 = the gate never ran), and must
         # not be read as "the rescued branch is broken".
         if t.returncode == 0:
-            print(f"    rescued {branch} -> {new_sha[:8]}, focused tests green ({len(tests)} file(s))")
+            # PUBLISH BEFORE ANNOUNCING. The first version moved only the LOCAL
+            # branch and then printed a `stage-cert.sh` line naming `new_sha`.
+            # That sha existed nowhere but this laptop's object store: the PR
+            # head never moved, CI never saw it, and a grader on any other
+            # machine got "no readable ref" — the exact UNRESOLVED failure this
+            # same script reports for PRs whose branch was deleted. A rescue that
+            # cannot be fetched has not rescued anything (gotcha #154: a rebase
+            # is not complete until the commits are on a pushed ref).
+            #
+            # --force-with-lease, not --force: the rebase started from `ref`, so
+            # if someone moved the branch while we were running, the lease fails
+            # and we leave their work alone rather than overwriting it.
+            pushed = subprocess.run(
+                ["git", "-C", str(wt), "push",
+                 f"--force-with-lease=refs/heads/{branch}:{rec['sha_full']}",
+                 "origin", f"HEAD:refs/heads/{branch}"],
+                capture_output=True, text=True, timeout=300)
+            if pushed.returncode != 0:
+                print(f"    {branch}: rebased and green at {new_sha[:8]} but PUSH FAILED — "
+                      "the branch is NOT rescued, and the sha is local-only:")
+                print("      " + (pushed.stderr.strip().splitlines() or ["(no stderr)"])[-1])
+                return False
+            git("branch", "-f", branch, new_sha)
+            print(f"    rescued {branch} -> {new_sha[:8]}, focused tests green ({len(tests)} file(s)), pushed")
             print(f"      re-stage: tools/stage-cert.sh <SUBJ> {lane_key(branch)} {branch} {new_sha} "
                   f"https://github.com/alexander-bain/bainluck/pull/{rec['pr']} <issue>")
-            git("branch", "-f", branch, new_sha)
             return True
         kind = "FAILED" if t.returncode == 1 else f"DID NOT RUN (exit {t.returncode})"
         print(f"    {branch}: rebase clean but focused tests {kind} — branch left untouched")

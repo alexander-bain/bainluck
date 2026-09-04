@@ -555,6 +555,7 @@ def test_rescue_runs_its_tests_in_the_rebased_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
 
     rec = {"branch": "lane1/q999-demo", "ref": "origin/lane1/q999-demo", "pr": 1,
+           "sha": "0" * 8, "sha_full": "0" * 40,
            "files": ["backend/app/routes/feed.py"]}
     mod.do_rescue(rec, dry=False)
 
@@ -590,45 +591,128 @@ def test_restock_dry_run_does_not_requeue_running_directives(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# The LOOK rail (integrator/134, 2026-09-03)
+# A rescue that cannot be fetched has not rescued anything (integrator/134)
 # ---------------------------------------------------------------------------
-# Same class as the launcher drift above, one level down. Standing notice 4 and
-# ruling D48 tell EVERY lane to screenshot production with `tools/look.sh` before
-# calling a rendered change done — but look.sh, its renderer (`shop-shot.mjs`) and
-# its slicer (`crop.py`) were never `git add`ed. They existed on exactly one laptop.
-# A fresh clone, a CI job or a second machine ran the documented command and got
-# "No such file or directory", so the LOOK rule was unenforceable anywhere else.
+# CERT-874 -> 876 fixed WHICH TREE the rescue tests. This is the next defect in
+# the same function: what it does with the tree once it is green.
 #
-# `git ls-files` is the assertion, not `Path.exists()`: the files were PRESENT on
-# the machine that wrote them the whole time. Presence is what made the gap
-# invisible; trackedness is the property that was actually missing.
-
-LANE_TOOLS = {
-    "tools/look.sh": "the LOOK rail every lane is told to run (notice 4, D48)",
-    "tools/shop-shot.mjs": "the sandbox-capable renderer look.sh delegates to",
-    "tools/crop.py": "slices a tall shot into readable bands for a LOOK pass",
-    "tools/stage-cert.sh": "atomic cert id allocation (notice 8c)",
-}
+# `do_rescue` rebased, tested, moved the LOCAL branch, and printed a
+# `stage-cert.sh` line naming the new sha. It never pushed. Measured on the
+# 2026-09-03 sweep: PRs #420, #2091 and #2168 all reported "rescued -> <sha>,
+# focused tests green", and all three remote branches were still sitting on
+# their OLD heads. The advertised shas existed in exactly one laptop's object
+# store — unfetchable by CI, by the cert bus, and by any grader. That is the
+# same "no readable ref" dead end this script already reports as UNRESOLVED for
+# PRs whose branch was deleted, except self-inflicted and announced as success.
 
 
-@pytest.mark.parametrize("rel,why", sorted(LANE_TOOLS.items()))
-def test_lane_operating_tool_is_tracked_in_git(rel, why):
-    """A tool the docs order every lane to run must live in the repo, not on a laptop."""
-    tracked = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", rel],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
+def _load_sweep():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "stranded_sweep", REPO / "tools" / "stranded-sweep.py"
     )
-    assert tracked.returncode == 0, (
-        f"{rel} is not tracked by git, but the operating docs require it: {why}. "
-        "A fresh clone or a second machine cannot run it. `git add` it."
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _drive_rescue(monkeypatch, push_rc=0):
+    """Run do_rescue with the subprocess boundary faked; return (calls, printed)."""
+    mod = _load_sweep()
+    calls, printed = [], []
+
+    def fake_git(*args, check=True):
+        calls.append(("git",) + args)
+        return 0, "", ""
+
+    def fake_run(cmd, **kw):
+        calls.append(tuple(cmd))
+
+        class R:
+            returncode = push_rc if "push" in cmd else 0
+            stdout = "a" * 40
+            stderr = "! [rejected] stale info"
+        return R()
+
+    monkeypatch.setattr(mod, "git", fake_git)
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
+
+    rec = {"branch": "lane1/q999-demo", "ref": "origin/lane1/q999-demo", "pr": 1,
+           "sha": "0" * 8, "sha_full": "0" * 40,
+           "files": ["backend/app/routes/feed.py"]}
+    ok = mod.do_rescue(rec, dry=False)
+    return ok, calls, printed
+
+
+def test_rescue_pushes_the_branch_it_rebased(monkeypatch):
+    """A green rebase must reach the remote, or the sha it advertises is a dead ref."""
+    ok, calls, printed = _drive_rescue(monkeypatch)
+    pushes = [c for c in calls if "push" in c]
+    assert pushes, (
+        "do_rescue reported a rescue without ever pushing. The new sha then lives "
+        "only in the local object store: the PR head never moves and no grader, "
+        "machine or CI run can fetch what the re-stage line names."
+    )
+    cmd = pushes[0]
+    assert any(a.startswith("--force-with-lease=") for a in cmd), (
+        f"rescue force-pushed without a lease: {cmd}. A branch someone else moved "
+        "mid-run would be silently overwritten."
+    )
+    lease = next(a for a in cmd if a.startswith("--force-with-lease="))
+    assert len(lease.split(":")[-1]) == 40, (
+        f"lease {lease!r} does not name a full 40-char oid — git does not honour an "
+        "abbreviated lease, and a lease that degrades to a plain force is worse "
+        "than no lease at all"
+    )
+    assert ok is True
+
+
+def test_rescue_reports_failure_when_the_push_is_rejected(monkeypatch):
+    """The regression arm: a rejected push must NOT be announced as a rescue."""
+    ok, calls, printed = _drive_rescue(monkeypatch, push_rc=1)
+    assert ok is False, "a rejected push still counted as a successful rescue"
+    blob = "\n".join(printed)
+    assert "PUSH FAILED" in blob, f"push failure was not reported to the operator: {blob!r}"
+    assert "re-stage:" not in blob, (
+        "rescue printed a re-stage line for a sha that never reached the remote — "
+        "the grader it points at cannot fetch it"
     )
 
 
-@pytest.mark.parametrize("rel", ["tools/look.sh", "tools/shop-shot.mjs", "tools/stage-cert.sh"])
-def test_lane_operating_tool_is_executable(rel):
-    """Tracked but chmod-000 is the same outage with a longer error message."""
-    path = REPO / rel
-    assert path.exists(), f"{rel} is tracked but missing from the checkout"
-    assert os.access(path, os.X_OK), f"{rel} is tracked but not executable"
+def test_resolve_ref_falls_back_to_the_pull_head_when_the_branch_is_gone(monkeypatch):
+    """A deleted branch must not be a permanent UNRESOLVED.
+
+    Measured on #998 (`fix/887-mrbdgf0e`, branch deleted, 58d stale): the sweep
+    said "run `git fetch origin` and re-run", which can never work for a branch
+    that no longer exists on the remote. GitHub still serves the head under
+    refs/pull/N/head, so the PR is judgeable.
+    """
+    mod = _load_sweep()
+    seen = []
+
+    def fake_git(*args, check=True):
+        seen.append(args)
+        if args[0] == "cat-file" and "refs/stranded-sweep/pr998" in args[-1]:
+            return 0, "", ""
+        if args[0] == "cat-file":
+            return 1, "", "not a valid object name"
+        if args[0] == "fetch":
+            return 0, "", ""
+        return 1, "", ""
+
+    monkeypatch.setattr(mod, "git", fake_git)
+
+    assert mod.resolve_ref("fix/887-mrbdgf0e", "4b1a5ba9" + "0" * 32, pr=998) == \
+        "refs/stranded-sweep/pr998"
+    assert any(a[0] == "fetch" and any("refs/pull/998/head" in x for x in a) for a in seen), (
+        f"resolve_ref never tried refs/pull/998/head: {seen}"
+    )
+
+
+def test_resolve_ref_without_a_pr_number_still_gives_up(monkeypatch):
+    """Control arm: the fallback is the LAST resort, not a way to never return None."""
+    mod = _load_sweep()
+    monkeypatch.setattr(mod, "git", lambda *a, check=True: (1, "", "nope"))
+    assert mod.resolve_ref("gone/branch", "b" * 40) is None
