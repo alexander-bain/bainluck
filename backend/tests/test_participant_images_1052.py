@@ -24,6 +24,7 @@ has been reduced to returning None.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -536,3 +537,147 @@ class TestTheFeedActuallyServesIt:
         assert len(listings) == 1, (
             f"the register directory was listed {len(listings)} times for 50 cards"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. #2919 follow-up: the spelling the AUTHORITY sends is not the spelling the
+#    register keys, and the gap was silent.
+# ---------------------------------------------------------------------------
+
+
+class TestAnAccentedNameStillFindsItsFace:
+    """Alex saw Anna Bondár draw initials beside players with faces.
+
+    She is not one of the two players who genuinely have no image — the
+    register holds a verified face AND `hun.png` for her. `slugify` DELETES
+    characters `str.lower()` cannot fold, so `Anna Bondár -> anna-bondr` and the
+    lookup missed a register that keys her `anna-bondar`. A miss and "no photo
+    of this person" are the same `None`, which is why it looked like coverage.
+
+    Against the REAL committed register: a resolver that only passes on a
+    fixture with invented spellings is a resolver that ships initials.
+    """
+
+    @pytest.mark.parametrize(
+        "accented, ascii_spelling, sport_key",
+        [
+            ("Anna Bondár", "Anna Bondar", WTA),
+            ("Iva Jović", "Iva Jovic", WTA),
+            ("Federico Cinà", "Federico Cina", ATP),
+        ],
+    )
+    def test_the_accented_spelling_resolves(
+        self, accented, ascii_spelling, sport_key
+    ):
+        accented_image = pi.participant_image(accented, sport_key=sport_key)
+        assert accented_image is not None, (
+            f"{accented!r} resolved to nothing — the card falls back to "
+            f"initials even though the register holds an image for "
+            f"{ascii_spelling!r}"
+        )
+        assert accented_image["image_url"] or accented_image["flag_url"], (
+            f"{accented!r} resolved to an entry with neither URL"
+        )
+
+    @pytest.mark.parametrize(
+        "accented, ascii_spelling, sport_key",
+        [
+            ("Anna Bondár", "Anna Bondar", WTA),
+            ("Iva Jović", "Iva Jovic", WTA),
+            ("Federico Cinà", "Federico Cina", ATP),
+        ],
+    )
+    def test_it_resolves_to_the_SAME_player_as_the_ascii_spelling(
+        self, accented, ascii_spelling, sport_key
+    ):
+        """Folding must find the same person, not merely *a* person.
+
+        The regression this forbids is a fold that lands on a different
+        register entry — one player's face on another player's card.
+        """
+        assert pi.participant_image(
+            accented, sport_key=sport_key
+        ) == pi.participant_image(ascii_spelling, sport_key=sport_key)
+
+    def test_CONTROL_an_unaccented_name_was_already_working_and_still_is(self):
+        """The other arm. Every name that resolved before must still resolve —
+        the fold is only additive if plain ASCII is untouched by it."""
+        assert pi.participant_image(BUCSA, sport_key=WTA) is not None
+        assert pi.participant_image(SAKATSUME, sport_key=WTA) is not None
+        assert pi.participant_image(BUSE, sport_key=ATP) is not None
+
+    def test_CONTROL_folding_does_not_invent_a_player(self):
+        """A fold that matched too eagerly would give a stranger a face."""
+        assert pi.participant_image("Nôt Á Réal Pérson", sport_key=WTA) is None
+
+    def test_the_fold_is_identity_on_ascii(self):
+        """The claim the `_canon` docstring makes, as a test rather than prose."""
+        from app.utils.slugify import slugify
+
+        for name in (BUCSA, SAKATSUME, BUSE, BONZI, PUTINTSEVA, ZHENG, "J.J. Wolf"):
+            assert pi._canon(name) == slugify(name), name
+
+
+class TestTheRegisterAndTheAuthorityDisagreeAboutPunctuation:
+    """`entity_key` makes punctuation a SEPARATOR; `slugify` DELETES it.
+
+    The register writes `J.J. Wolf -> j-j-wolf`; the authority sends `JJ Wolf`,
+    which slugifies to `jj-wolf`. Indexing `display_name` alongside
+    `entity_key` means neither side has to know the other's convention.
+    """
+
+    def test_the_authoritys_spelling_of_jj_wolf_resolves(self):
+        assert pi.participant_image("JJ Wolf", sport_key=ATP) is not None
+
+    def test_CONTROL_the_registers_own_key_still_resolves(self):
+        """Both arms: adding an alias must not cost the original key."""
+        assert pi.participant_image("J.J. Wolf", sport_key=ATP) is not None
+
+    def test_both_spellings_are_the_same_player(self):
+        assert pi.participant_image(
+            "JJ Wolf", sport_key=ATP
+        ) == pi.participant_image("J.J. Wolf", sport_key=ATP)
+
+
+class TestAKeyClaimedByTwoDIFFERENTPlayersIsLoud:
+    """D55 — a collision raises or tags, never silently no-ops.
+
+    Not fatal: the first player keeps the key and the second keeps their
+    initials, which is the pre-existing behaviour. But the failure it would
+    otherwise hide is one person's face on another person's card, so it must be
+    visible in the logs.
+    """
+
+    def test_two_different_players_on_one_key_warn(self, tmp_path, caplog):
+        first = _player("ana-lopez", url="https://upload.wikimedia.org/first.jpg")
+        first["display_name"] = "Ana Lopez"
+        # A DIFFERENT person whose display_name canonicalises onto the same key.
+        second = _player("ana-lópez", url="https://upload.wikimedia.org/second.jpg")
+        second["display_name"] = "Ana López"
+        _register(tmp_path, [first, second])
+
+        with caplog.at_level(logging.WARNING, logger=pi.logger.name):
+            image = pi.participant_image(
+                "Ana Lopez", sport_key=WTA, directory=tmp_path
+            )
+
+        assert image["image_url"].endswith("first.jpg"), "first player must win"
+        assert any(
+            "claimed by both" in r.getMessage() for r in caplog.records
+        ), f"no collision warning was logged; got {[r.getMessage() for r in caplog.records]}"
+
+    def test_CONTROL_two_spellings_of_ONE_player_are_silent(self, tmp_path, caplog):
+        """The other arm. `entity_key` and `display_name` for the same person
+        routinely differ — warning on that would make the signal worthless."""
+        only = _player("j-j-wolf", url="https://upload.wikimedia.org/wolf.jpg")
+        only["display_name"] = "J.J. Wolf"
+        _register(tmp_path, [only])
+
+        with caplog.at_level(logging.WARNING, logger=pi.logger.name):
+            assert pi.participant_image(
+                "JJ Wolf", sport_key=ATP, directory=tmp_path
+            ) is not None
+
+        assert not [
+            r for r in caplog.records if "claimed by both" in r.getMessage()
+        ], "a single player's two spellings were reported as a collision"
