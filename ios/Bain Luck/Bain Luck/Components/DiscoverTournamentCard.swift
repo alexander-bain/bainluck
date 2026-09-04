@@ -143,7 +143,7 @@ struct NativeTournamentDiscoverCard: View {
                             }
                         } else {
                             HStack(spacing: 8) {
-                                Text("\(Int(leader.probability.rounded()))%")
+                                Text("\(FeedProbabilityScale.wholePercent(fromFraction: leader.probability))%")
                                     .font(.title.bold())
                                     .foregroundStyle(.white)
 
@@ -152,7 +152,7 @@ struct NativeTournamentDiscoverCard: View {
                                         .font(.subheadline.bold())
                                         .foregroundStyle(.white)
                                     if presentation.showsMovementLine,
-                                       let move = leader.movement24h, abs(move) >= 0.5 {
+                                       let move = FeedProbabilityScale.movementPoints(fromFraction: leader.movement24h) {
                                         // Live movement only — a settled tournament
                                         // never reaches this branch.
                                         Text(move > 0 ? "+\(String(format: "%.1f", move))pp today" : "\(String(format: "%.1f", move))pp today")
@@ -173,7 +173,7 @@ struct NativeTournamentDiscoverCard: View {
                         HStack(spacing: 12) {
                             ForEach(golfers.dropFirst().prefix(3)) { golfer in
                                 HStack(spacing: 3) {
-                                    Text("\(Int(golfer.probability.rounded()))%")
+                                    Text("\(FeedProbabilityScale.wholePercent(fromFraction: golfer.probability))%")
                                         .font(.caption.bold())
                                         .foregroundStyle(.white.opacity(0.9))
                                     Text(golfer.name.components(separatedBy: " ").last ?? golfer.name)
@@ -234,9 +234,9 @@ enum TournamentLifecyclePreviewFixture {
           "schedule_status": "\(scheduleStatus)",
           "resolution_date": "2026-07-19T00:00:00Z",
           "golfers": [
-            {"name": "Scottie Scheffler", "probability": 62.0, "rank": 1, "movement_24h": 2.3},
-            {"name": "Rory McIlroy", "probability": 14.5, "rank": 2, "movement_24h": -1.1},
-            {"name": "Jon Rahm", "probability": 8.2, "rank": 3, "movement_24h": 0.4}
+            {"name": "Scottie Scheffler", "probability": 0.62, "rank": 1, "movement_24h": 0.023},
+            {"name": "Rory McIlroy", "probability": 0.145, "rank": 2, "movement_24h": -0.011},
+            {"name": "Jon Rahm", "probability": 0.082, "rank": 3, "movement_24h": 0.004}
           ],
           "source_count": 2, "is_marquee": true,
           "marquee_whathit": \(marqueeWhathit)

@@ -4,6 +4,14 @@ import XCTest
 /// L2-225 — the tournament card's live-vs-terminal framing, asserted on the pure
 /// `TournamentCardPresentation` value the view body actually reads.
 ///
+/// #2888: the fixtures below were rebuilt on the payload the server actually
+/// sends — probabilities and movements are **0–1 fractions**, not whole percents.
+/// They previously read `"probability": 62`, a shape no server has ever emitted,
+/// which is why this suite stayed green while every golf tournament card on
+/// Discover printed `0%`. These assertions are all about lifecycle framing and
+/// none of them depended on the numbers, so nothing here changes meaning — but a
+/// fixture that misstates the wire shape is a trap for the next reader.
+///
 /// L2-224 taught the card the WHAT-HIT state but only half-dressed it: the FINAL
 /// and WON chips appeared while the live 62% hero, the runner-up probability strip,
 /// and the backend's present-tense `reason` line ("… leads at 62.0% (up 2.3% today)")
@@ -19,8 +27,8 @@ final class TournamentCardPresentationTests: XCTestCase {
     private func tournament(marqueeWhathit: Bool, golfers: Int = 4) -> FeedTournamentData {
         let rows = (0..<golfers).map { i in
             """
-            {"name": "Golfer \(i)", "probability": \(62 - i * 10), "rank": \(i + 1),
-             "movement_24h": 2.3}
+            {"name": "Golfer \(i)", "probability": \(0.62 - Double(i) * 0.1), "rank": \(i + 1),
+             "movement_24h": 0.023}
             """
         }.joined(separator: ",")
         let json = """
@@ -120,7 +128,7 @@ final class TournamentCardPresentationTests: XCTestCase {
         dec.keyDecodingStrategy = .convertFromSnakeCase
         let legacy = try dec.decode(FeedTournamentData.self, from: Data("""
         { "key": "k", "name": "Legacy Open",
-          "golfers": [{"name": "A", "probability": 30, "rank": 1, "movement_24h": 1.0}] }
+          "golfers": [{"name": "A", "probability": 0.30, "rank": 1, "movement_24h": 0.01}] }
         """.utf8))
         XCTAssertNil(legacy.marqueeWhathit)
         let p = TournamentCardPresentation(
@@ -139,7 +147,7 @@ final class TournamentCardPresentationTests: XCTestCase {
     func testGolferMovement24hDecodesFromTheBackendKey() throws {
         let data = tournament(marqueeWhathit: false)
         let leader = try XCTUnwrap(data.golfers?.first)
-        XCTAssertEqual(leader.movement24h, 2.3,
+        XCTAssertEqual(try XCTUnwrap(leader.movement24h), 0.023, accuracy: 1e-9,
                        "movement_24h must survive .convertFromSnakeCase")
     }
 
@@ -147,7 +155,7 @@ final class TournamentCardPresentationTests: XCTestCase {
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         let golfer = try dec.decode(FeedTournamentGolfer.self, from: Data("""
-        {"name": "A", "probability": 12.0, "rank": 3}
+        {"name": "A", "probability": 0.12, "rank": 3}
         """.utf8))
         XCTAssertNil(golfer.movement24h)
         XCTAssertEqual(golfer.name, "A")
@@ -167,8 +175,8 @@ final class TournamentCardPresentationTests: XCTestCase {
           "data": { "key": "the_open_championship", "name": "The Open",
                     "schedule_status": "completed",
                     "end_date": "2026-07-19T00:00:00Z",
-                    "golfers": [{"name": "Scottie Scheffler", "probability": 62,
-                                 "rank": 1, "movement_24h": 2.3}],
+                    "golfers": [{"name": "Scottie Scheffler", "probability": 0.62,
+                                 "rank": 1, "movement_24h": 0.023}],
                     "is_marquee": true, "marquee_whathit": true } }
         """.utf8))
         let now = ISO8601DateFormatter().date(from: "2026-07-20T06:00:00Z")!
