@@ -129,7 +129,8 @@ from app.services.anchor_channel import (
     record_anchor,
 )
 from app.services.statpal_api import StatPalFixture, get_statpal_service
-from app.utils.nfl_team_matching import is_known_nfl_team, pair_matches
+from app.utils.authority_agreement import Side, build_agreement_row
+from app.utils.nfl_team_matching import is_known_nfl_team, normalize_team, pair_matches
 from app.utils.provider_anchor_keys import statpal_anchor_key, statpal_id_space
 
 logger = logging.getLogger(__name__)
@@ -455,7 +456,22 @@ async def _run_stamp_nfl_statpal_fixtures(
             run.sources_read,
             run.read_failures,
         )
-        return run.summary()
+        # Zero yield is a ROW, not a skip (spec rule 6). A day the read failed
+        # pauses the seven-day count; a day StatPal genuinely served no NFL
+        # resets nothing either, but the two are different facts and the bus
+        # must be able to tell them apart without reading the logs (gotcha #53).
+        return {
+            **run.summary(),
+            "agreement": build_agreement_row(
+                sport_key=NFL_SPORT_KEY,
+                fixtures=[],
+                rows=[],
+                normalize=normalize_team,
+                read_failures=run.read_failures,
+                sources_read=run.sources_read,
+                is_anchor_id=is_statpal_contest_id,
+            ),
+        }
 
     kickoffs = [f.start_time for f in fixtures if f.start_time]
     window_start = (min(kickoffs) if kickoffs else now) - CANDIDATE_SLACK
@@ -464,6 +480,12 @@ async def _run_stamp_nfl_statpal_fixtures(
     async with get_task_session() as session:
         pool = await _candidates(session, window_start, window_end)
         run.rows_in_window = len(pool)
+        #: The pool as it was read, kept because `pool` is pruned as rows are
+        #: stamped. The agreement row is measured over EVERY row in the window,
+        #: including the ones this pass claimed — a denominator that shrinks as
+        #: the task succeeds is a denominator that cannot be compared to
+        #: yesterday's, and the seven-day count is exactly that comparison.
+        all_rows = list(pool)
         #: Which of our rows some StatPal contest claimed, so the leftovers can be
         #: reported as candidate phantoms. Claimed covers every verdict that names
         #: a row, not only the ones we wrote: an already-linked or polluted row is
@@ -560,6 +582,11 @@ async def _run_stamp_nfl_statpal_fixtures(
 
             await session.commit()
             run.stamped += 1
+            # The agreement row is built after this loop and asks each row what
+            # its column holds. A row this pass just stamped holds the id now,
+            # and reading the pre-pass value would report the task's own success
+            # as an unanchored game.
+            candidate["statpal_fixture_id"] = fixture.fixture_id
             # The pool is per-pass, so a row stamped by this pass must not be
             # offered to the next contest — otherwise two StatPal games can both
             # "match" it and the second silently loses the race instead of being
@@ -580,10 +607,45 @@ async def _run_stamp_nfl_statpal_fixtures(
             _note_unknown_names(run, row.get("home"), row.get("away"))
             run.unmatched_rows.append(_row_receipt(row))
 
+    agreement = build_agreement_row(
+        sport_key=NFL_SPORT_KEY,
+        fixtures=[
+            Side(
+                ref=f.fixture_id,
+                home=f.home_team,
+                away=f.away_team,
+                start=f.start_time,
+                label=f.round_info,
+            )
+            for f in fixtures
+        ],
+        rows=[
+            Side(
+                ref=str(r["id"]),
+                home=r["home"],
+                away=r["away"],
+                start=r["commence_time"],
+                label=r.get("status"),
+                held_id=r.get("statpal_fixture_id"),
+            )
+            for r in all_rows
+        ],
+        normalize=normalize_team,
+        read_failures=run.read_failures,
+        sources_read=run.sources_read,
+        window=(window_start, window_end),
+        is_anchor_id=is_statpal_contest_id,
+    )
+
     summary = run.summary()
     logger.info("StatPal NFL stamper: %s", summary)
     return {
         **summary,
+        # The ledger row bus bucket M-R-AUTHORITY reads (D50's flip gate). Built
+        # here rather than by a script because this pass already holds both
+        # sides of the comparison at the same moment, and a script asking again
+        # an hour later is comparing two different afternoons.
+        "agreement": agreement,
         "polluted_column_receipts": run.polluted_column,
         "ambiguous_receipts": run.ambiguous,
         "unmatched_fixture_receipts": run.unmatched_fixtures,

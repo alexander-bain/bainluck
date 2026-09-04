@@ -1867,6 +1867,156 @@ async def statpal_usage(
     }
 
 
+#: The two facts the ledger needs from the table itself, per sport. Kept beside
+#: the endpoint because it is one query with one purpose: the banked row says
+#: what the pass believed, and this says what the table holds now. When they
+#: disagree, something outside the stamper wrote a StatPal anchor — which is a
+#: finding, and it is invisible if only one of the two numbers is published.
+_ANCHOR_CENSUS = """
+SELECT COUNT(*) AS anchors,
+       COUNT(*) FILTER (
+           WHERE a.source_id = :prefix || e.statpal_fixture_id
+       ) AS column_agrees
+  FROM event_provider_anchors a
+  JOIN events e ON e.id = a.event_id
+ WHERE a.source = 'statpal'
+   AND a.id_kind = 'game'
+   AND a.source_id LIKE :like_prefix
+"""
+
+#: Two of our rows holding one StatPal id. The unique anchor index already makes
+#: this impossible for two ANCHORED rows, so a hit here is a row whose column
+#: was written by something that did not write an anchor.
+_DUPLICATE_IDS = """
+SELECT COUNT(*) AS duplicate_ids
+  FROM (
+        SELECT e.statpal_fixture_id
+          FROM events e
+          JOIN sports s ON s.id = e.sport_id
+         WHERE s.key = :sport_key
+           AND e.statpal_fixture_id IS NOT NULL
+         GROUP BY e.statpal_fixture_id
+        HAVING COUNT(*) > 1
+       ) d
+"""
+
+
+@router.get("/statpal/authority-agreement")
+async def statpal_authority_agreement(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """The agreement row bus bucket `M-R-AUTHORITY` reads. #2867 / D50, step 2.
+
+    **SHIP: the seven-day count that gates whether StatPal may ever become a
+    source of record can start, because the number it counts is published here
+    instead of re-derived by hand every morning.**
+
+    D50: *nothing user-visible flips without a measured 7-day ≥99.5% agreement
+    row from the bus AND a YOUR-TURN entry Alex has seen.* The row's shape is
+    fixed by `.claude/handoff/ARTIFACT-AUTHORITY-LEDGER-SPEC.md`; the numbers
+    are computed by `app/utils/authority_agreement` inside the shadow stamper,
+    which is the one moment both sides of the comparison are in hand at once.
+
+    Precedent D46: the calibration lane moved its scoring into the app and
+    published it, and the bus stopped running the script. Same move. A script
+    that re-asks StatPal an hour after the stamper did is comparing two
+    different afternoons and spending quota to do it.
+
+    THREE THINGS THIS ENDPOINT DOES NOT DO
+    ══════════════════════════════════════
+    It does not call StatPal — it publishes the banked pass, so reading it is
+    free and repeatable. It does not decide anything: `identity` governs the
+    flip, `schedule` and `anchors` are reported and gate nothing, and no bucket
+    is ever blended into another (spec rule 2). And it does not hide its own
+    staleness: `pass_age_seconds` and `last_pass_at` are on every sport, because
+    a row from yesterday's pass answers a question about yesterday.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.redis_state import get_task_metrics
+    from app.utils.authority_agreement import SHADOW_STAMPERS
+    from app.utils.provider_anchor_keys import statpal_id_space
+
+    now = datetime.now(timezone.utc)
+    sports = []
+
+    for sport_key, task_name in sorted(SHADOW_STAMPERS.items()):
+        entry: dict = {"sport_key": sport_key, "stamper": task_name}
+
+        metrics = get_task_metrics(task_name) or {}
+        summary = metrics.get("last_result_summary") or {}
+        agreement = summary.get("agreement") if isinstance(summary, dict) else None
+        last_at = metrics.get("last_success_at")
+
+        entry["last_pass_at"] = last_at
+        entry["pass_age_seconds"] = None
+        if last_at:
+            try:
+                entry["pass_age_seconds"] = int(
+                    (now - datetime.fromisoformat(last_at)).total_seconds()
+                )
+            except (TypeError, ValueError):
+                # An unparseable stamp is not "fresh" and is not "old" — it is a
+                # broken stamp, and guessing either way would publish a
+                # confident wrong age. Left None, with the raw value above.
+                pass
+
+        if agreement:
+            entry["agreement"] = agreement
+        else:
+            # NOT an empty row and NOT zero agreement. The stamper has not
+            # banked one since the deploy that started banking them, and saying
+            # so is the whole of gotcha #53: "it returned" is not "it worked".
+            entry["agreement"] = None
+            entry["note"] = (
+                f"no agreement row banked by {task_name} yet — this is 'not "
+                f"measured', not 'measured and disagreed'. It appears after the "
+                f"next pass."
+            )
+
+        prefix = statpal_id_space(sport_key)
+        entry["live"] = {"anchor_prefix": prefix}
+        if prefix:
+            census = (
+                await db.execute(
+                    text(_ANCHOR_CENSUS),
+                    {"prefix": f"{prefix}:", "like_prefix": f"{prefix}:%"},
+                )
+            ).first()
+            dupes = (
+                await db.execute(text(_DUPLICATE_IDS), {"sport_key": sport_key})
+            ).first()
+            anchors = int(census[0] or 0) if census else 0
+            agrees = int(census[1] or 0) if census else 0
+            entry["live"].update(
+                {
+                    "anchors": anchors,
+                    "column_agrees": agrees,
+                    # An anchor whose column no longer matches reads as STALE on
+                    # every lookup (`anchor_channel.anchor_is_current`), so it
+                    # resolves nothing while looking like a link.
+                    "half_links": anchors - agrees,
+                    "duplicate_ids": int(dupes[0] or 0) if dupes else 0,
+                }
+            )
+
+        sports.append(entry)
+
+    return {
+        "generated_at": now.isoformat(),
+        "spec": ".claude/handoff/ARTIFACT-AUTHORITY-LEDGER-SPEC.md",
+        "gate": (
+            "D50: a flip needs 7 consecutive daily rows with identity >= 99.5% "
+            "on the governing bucket, plus a YOUR-TURN entry Alex has seen. "
+            "Identity governs; schedule and anchors are reported and gate "
+            "nothing."
+        ),
+        "sports": sports,
+    }
+
+
 @router.post("/statpal/sync-schedules")
 async def trigger_statpal_schedule_sync(
     request: Request,
