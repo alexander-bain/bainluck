@@ -50,8 +50,15 @@ transactional session and RETURNS its own before/after census in the response bo
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
-``population`` / ``probe`` also accept those as query params; the dispatcher
-passes through only what a given repair's signature actually names.
+``population`` / ``probe`` / ``undo_identity`` also accept those as query params;
+the dispatcher passes through only what a given repair's signature actually names.
+
+``undo_identity`` (lane1/084, D51) names ONE earlier apply's dated undo record
+and puts its rows back. It exists because Alex's D51 lets a lane apply a data
+repair unattended *provided* it backs up first and ships a one-command restore:
+the restore has to be a real, runnable thing, so it is a parameter on the same
+rail with the same auth rather than a paragraph in a handoff note. Dry-run
+unless ``apply=true``. Only ``authority-id-collisions`` declares it today.
 
 ``probe`` (queue 375) records ONE identity observation of a reviewed population
 and returns, for rails that must PROVE stillness before they may census — ruling
@@ -556,6 +563,15 @@ async def run_repair(
                     "stored per population, so this selects WHICH approval an "
                     "apply is bound to — it is not a filter.",
     ),
+    undo_identity: str = Query(
+        None,
+        description="Put ONE earlier apply's rows back, for repairs that write a "
+                    "dated undo record before they write anything else (D51: a "
+                    "repair may be applied unattended because it is reversible). "
+                    "The identity is returned as `undo_identity` by that apply. "
+                    "Dry-run unless apply=true; it reads the stored record and "
+                    "re-derives nothing.",
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Run a committed data repair and return its before/after census.
@@ -591,6 +607,7 @@ async def run_repair(
             ("expected_blank", expected_blank),
             ("population", population),
             ("probe", probe),
+            ("undo_identity", undo_identity),
         )
         if v is not None and k in accepted
     }

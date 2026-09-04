@@ -105,6 +105,33 @@ class TestApplyIsBoundToTheReviewedPlan:
 
 
 class TestTheWrite:
+    @pytest.fixture(autouse=True)
+    def _undo_record_persists(self, monkeypatch):
+        """Let the apply past its backup precondition (D51, lane1/084).
+
+        Since the undo record shipped, an apply writes NOTHING until this
+        apply's own dated record is durably stored — so without this stub every
+        assertion below would pass for the wrong reason (a sandbox with no
+        Postgres refuses the apply, and "no write happened" is exactly what
+        several of these tests check). Stubbing it keeps each test measuring
+        what it was written to measure. The refusal itself, its ordering and
+        the `superseded`-is-not-success rule are covered on their own in
+        `test_authority_id_collisions_undo_d51.py`.
+        """
+        async def _saved(identity, payload):
+            return True, "ok"
+
+        async def _saved_co_commit(session, identity, payload):
+            # Each row's receipt is co-committed with its unstamp since
+            # CERT-851, so this is the seam the loop actually reaches. It must
+            # still COMMIT: `test_it_commits_per_row_because_events_is_hot`
+            # counts commits, and a stub that skipped it would measure the stub.
+            await session.commit()
+            return True, "ok"
+
+        monkeypatch.setattr(rail, "_save_undo", _saved)
+        monkeypatch.setattr(rail, "_save_undo_co_commit", _saved_co_commit)
+
     def _plan(self, monkeypatch, rows, digest="hash1"):
         async def _plan_reader():
             return {"plan_hash": digest, "rows": rows}, "ok"

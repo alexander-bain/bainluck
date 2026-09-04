@@ -65,11 +65,15 @@ class _Session:
 
     def __init__(self, rowcount=1):
         self.statements = []
+        self.commits = 0
         self._rowcount = rowcount
 
     async def execute(self, statement):
         self.statements.append(statement)
         return _Result(self._rowcount)
+
+    async def commit(self):
+        self.commits += 1
 
 
 @pytest.fixture
@@ -89,6 +93,24 @@ def wired(monkeypatch):
         async def _fetch_record(service, sport_keys, authority_id):
             return records.get(authority_id)
 
+        async def _save_undo(identity, payload):
+            # The D51 record's own guards live in
+            # `test_anchor_schedule_undo_d51.py`; here it is stubbed to succeed
+            # so these tests keep testing what they are about. Note the default
+            # is SUCCESS: a stub that failed would make every apply below refuse
+            # and each of these tests would pass for the wrong reason.
+            return True, "ok"
+
+        async def _save_undo_co_commit(session, identity, payload):
+            # The receipt is co-committed with the moves since CERT-851, so this
+            # is the seam the apply actually reaches. Stubbed to succeed for the
+            # same reason as above — and it must still COMMIT, or every test
+            # below that counts commits would measure the stub, not the rail.
+            await session.commit()
+            return True, "ok"
+
+        monkeypatch.setattr(rail, "_save_undo", _save_undo)
+        monkeypatch.setattr(rail, "_save_undo_co_commit", _save_undo_co_commit)
         monkeypatch.setattr(rail, "_load_rows", _load_rows)
         monkeypatch.setattr(rail, "_count_eligible", _count_eligible)
         monkeypatch.setattr(
