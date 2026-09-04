@@ -103,6 +103,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -425,7 +426,13 @@ def sigma_object(sport_key: str, clusters: list[dict[int, dict]],
     samples, se_boot = ccs.bootstrap_ece(clusters, boot, seed)
 
     def _sig(se):
-        return excess / se if se and se == se else None
+        # `se != se` was the NaN test here. It is correct and it is also
+        # indistinguishable from a typo — CodeQL reads it as a comparison of
+        # identical values, which is exactly how a real one would look. Same
+        # three rejections (None, 0, NaN), said out loud.
+        if not se or math.isnan(se):
+            return None
+        return excess / se
 
     return {
         "source": "odds_api_bookmaker",
@@ -543,7 +550,11 @@ def main() -> int:
               f" at SIGMA_GATE {obj['sigma_gate']}")
         if a.out:
             os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-            json.dump(obj, open(a.out, "w"), default=str)
+            # `with`, not a bare `open()` inside the call: the artifact this
+            # writes is folded into the sigma ledger by a second command, and an
+            # unclosed handle can leave it truncated on the interpreter's whim.
+            with open(a.out, "w") as fh:
+                json.dump(obj, fh, default=str)
             print(f"  wrote {a.out} — fold into the ledger with "
                   f"`calibration_sigma_ledger.py --build`")
         return rc

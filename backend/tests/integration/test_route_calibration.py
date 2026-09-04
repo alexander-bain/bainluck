@@ -481,9 +481,15 @@ class TestCalibrationPublicEndpoint:
         # function of the cached payload and must be identical: that is the
         # claim this test is making, alongside `execute.assert_not_called()`.
         second_body = second_resp.json()
-        assert second_body["scorecard"].pop("computed_at") != first_body[
-            "scorecard"
-        ].pop("computed_at")
+        # The two `.pop()`s are what make the `==` below meaningful, so they run
+        # OUTSIDE the assert. Inside it they are a side-effect in an assert:
+        # `python -O` strips the statement, the pops never happen, and the
+        # equality then compares two bodies that still carry the one field
+        # designed to differ. CodeQL flags this class as an error and it is
+        # right to — the test's correctness depended on an assert executing.
+        second_computed_at = second_body["scorecard"].pop("computed_at")
+        first_computed_at = first_body["scorecard"].pop("computed_at")
+        assert second_computed_at != first_computed_at
         assert second_body == first_body
         mock_db.execute.assert_not_called()
 
