@@ -1211,7 +1211,41 @@ def free_background_slots(
 #: two `heavy` slots the calibration lane holds, and starving the hourly
 #: `/calibration` warmer to save 0.14 % of a background slot-day is the wrong
 #: trade. Not `realtime` for the obvious reason: nothing on a page waits for it.
-BACKGROUND_BEAT_COUNT = 113
+#:
+#: 🔴 RE-DERIVATION AT THE REBASE (authority/009 → master, 2026-09-04): **INT-158's
+#: collision for the FOURTH time, and the first where both halves are on record
+#: above.** CAL-P998 and authority/009 EACH moved this constant 112 → 113 for a
+#: DIFFERENT beat — `sweep-kalshi-resolution-window` and
+#: `stamp-nfl-statpal-fixtures-hourly` — each correct against its own base, and
+#: **113 is the one number that is wrong on the composed tree**, because both
+#: beats exist there. The two are not in tension: both name `background`
+#: explicitly, neither touches the fall-through half, and their costs are
+#: additive and tiny. They simply both counted from 112.
+#:
+#: The trap's usual second half repeated for the fourth time too, and it is worth
+#: naming because it is what makes this class survive review: the CONSTANT
+#: conflicted loudly while `test_typeahead_beat_budget.py`'s assertion — edited to
+#: the same `67 → 68` / `112 → 113` on both sides — is the half git would happily
+#: auto-merge if the two edits ever land byte-identical. The guard and the thing
+#: it guards fail in opposite directions.
+#:
+#: The census below was RUN over the assembled `beat_schedule` on the REBASED
+#: tree and printed `explicit 69 implicit 45 total 114`. That is what stands
+#: here. It was not obtained by adding 1 + 1 (#1910), and the run is quoted in
+#: the rebase's commit message. Both lanes' cost declarations above remain
+#: accurate as written.
+#:
+#: authority/009's beat, for the record: `stamp-nfl-statpal-fixtures-hourly`,
+#: `crontab(minute=23)`, explicitly routed here. Cost, declared rather than
+#: assumed: TWO HTTP reads (StatPal `season-schedule` — the whole season in one
+#: call, 374 games measured — and `livescores`) plus ONE indexed candidate query
+#: bounded to a window of one hour either side of the outermost kickoff StatPal
+#: served. It does not walk the events table and its cost does not grow with the
+#: season. `background` rather than `heavy` because there is no multi-minute
+#: compute here, and rather than `realtime` because NOTHING READS THE STAMP YET —
+#: it is identity written dark under D50, and a beat with no reader has no claim
+#: on the live queue.
+BACKGROUND_BEAT_COUNT = 114
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
