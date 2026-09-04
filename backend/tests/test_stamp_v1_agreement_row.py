@@ -330,16 +330,54 @@ async def test_an_anchor_refusal_takes_the_column_write_with_it(drive):
 
 
 async def test_a_column_holding_another_contest_is_receipted_and_left_alone(drive):
+    """CONTRADICTION requires evidence that the column names a DIFFERENT GAME.
+
+    So the pass has to have read that other game. `1050112` is in this read, our
+    row holds it, and a different contest matched the row — which is the two
+    matching rules disagreeing, and neither is overruled here.
+    """
+    fixtures = [
+        _fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _fixture("1050112", "Miami Heat", "Toronto Raptors", TIPOFF),
+    ]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF, held="1050112")]
+    summary, session, anchors = await drive(fixtures, rows)
+
+    assert summary["contradictions"] == 1
+    assert summary["foreign_id_space"] == 0
+    assert session.updates == []
+    assert anchors == []
+    (receipt,) = summary["contradiction_receipts"]
+    assert receipt["column_holds"] == "1050112"
+    assert receipt["statpal_id"] == "1050110"
+
+
+async def test_a_column_the_endpoint_cannot_resolve_is_not_called_a_contradiction(drive):
+    """The MLB case, in miniature and in the NBA's own vocabulary.
+
+    `999999` is a well-formed digit id and this endpoint has never published it.
+    Calling that a contradiction claims the ingestion path picked a different
+    GAME; measured on production MLB, what it actually did was pick the right
+    game and write its id from the other ENDPOINT — 92 of 222 distinct column
+    values resolve to nothing `season-schedule` serves.
+
+    The two are different bugs with different owners, so they get different
+    buckets. Neither is written, and neither is overwritten.
+    """
     fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
     rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF, held="999999")]
     summary, session, anchors = await drive(fixtures, rows)
 
-    assert summary["contradictions"] == 1
+    assert summary["foreign_id_space"] == 1
+    assert summary["contradictions"] == 0
     assert session.updates == []
     assert anchors == []
-    (receipt,) = summary["contradiction_receipts"]
+    (receipt,) = summary["foreign_id_space_receipts"]
     assert receipt["column_holds"] == "999999"
     assert receipt["statpal_id"] == "1050110"
+    # The repair is knowable — that is what makes it a namespace bug rather than
+    # a mystery — and it is still not applied here.
+    assert receipt["anchor_should_be"] == "1050110"
 
 
 async def test_the_nhl_second_id_rides_in_the_claim_context_and_never_in_the_key(drive):
@@ -367,6 +405,7 @@ async def test_the_nhl_second_id_rides_in_the_claim_context_and_never_in_the_key
         "present": 1,
         "absent": 0,
         "expected": "on every fixture",
+        "measured_when_set": "1404/1404 season-schedule games, 2026-09-04",
         "as_expected": True,
     }
 

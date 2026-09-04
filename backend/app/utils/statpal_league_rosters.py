@@ -1,8 +1,9 @@
-"""Do StatPal's NBA/NHL team names and ours name the same franchise? #2867 / D50.
+"""Do StatPal's NBA/NHL/MLB names and ours name the same franchise? #2867 / D50.
 
 Program step 3's answer to the question `app/utils/nfl_team_matching` answered for
-the NFL. Same conclusion — **equality after normalization, nothing looser** — and
-it is measured for these two leagues rather than inherited from that one.
+the NFL, extended by step 5 to MLB. Same conclusion — **equality after
+normalization, nothing looser** — and it is measured for each league rather than
+inherited from the last one.
 
 ## What was measured, 2026-09-04 ~5:10am PT
 
@@ -136,10 +137,63 @@ NHL_TEAM_NAMES: frozenset[str] = frozenset(
     )
 )
 
+#: The 30 franchises, measured 2026-09-04 against the full MLB census — live
+#: `GET /v1/mlb/season-schedule` (227 games) and `GET /v1/mlb/livescores` (16) —
+#: and against production `events` over the same window (252 rows).
+#:
+#: **Both sides serve 31 distinct STRINGS for these 30 clubs, and it is the same
+#: extra string on both: `St.Louis Cardinals` beside `St. Louis Cardinals`.** Our
+#: table holds the split too (12 rows against 7 on 2026-09-04), so this is not a
+#: provider quirk to absorb at the boundary — it is one club spelled two ways in
+#: two vocabularies, and :func:`normalize_team` is what makes the comparison
+#: exact rather than lucky. It strips the period and collapses the space, so both
+#: reduce to `st louis cardinals`. Nothing here special-cases the club, and
+#: nothing should: the day a second club gains a period, the same rule covers it.
+#:
+#: `Athletics` is city-less because that is what both sides serve today, the same
+#: reasoning as NHL's `Utah Mammoth` above — this is a measurement of the current
+#: answer, not a history of the league.
+MLB_TEAM_NAMES: frozenset[str] = frozenset(
+    normalize_team(n)
+    for n in (
+        "Arizona Diamondbacks",
+        "Athletics",
+        "Atlanta Braves",
+        "Baltimore Orioles",
+        "Boston Red Sox",
+        "Chicago Cubs",
+        "Chicago White Sox",
+        "Cincinnati Reds",
+        "Cleveland Guardians",
+        "Colorado Rockies",
+        "Detroit Tigers",
+        "Houston Astros",
+        "Kansas City Royals",
+        "Los Angeles Angels",
+        "Los Angeles Dodgers",
+        "Miami Marlins",
+        "Milwaukee Brewers",
+        "Minnesota Twins",
+        "New York Mets",
+        "New York Yankees",
+        "Philadelphia Phillies",
+        "Pittsburgh Pirates",
+        "San Diego Padres",
+        "San Francisco Giants",
+        "Seattle Mariners",
+        "St. Louis Cardinals",
+        "Tampa Bay Rays",
+        "Texas Rangers",
+        "Toronto Blue Jays",
+        "Washington Nationals",
+    )
+)
+
 #: Our `sports.key` -> the roster both sides were measured to share.
 LEAGUE_TEAM_NAMES: dict[str, frozenset[str]] = {
     "basketball_nba": NBA_TEAM_NAMES,
     "icehockey_nhl": NHL_TEAM_NAMES,
+    "baseball_mlb": MLB_TEAM_NAMES,
 }
 
 #: The dead city-only vocabulary, verbatim, so an appearance is recognisable

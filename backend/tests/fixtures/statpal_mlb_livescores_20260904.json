@@ -1,0 +1,132 @@
+{
+ "livescores": {
+  "sport": "baseball",
+  "tournament": {
+   "country": "usa",
+   "id": "2499",
+   "league": "USA: MLB",
+   "match": [
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "04.09.2026 18:10",
+     "id": "1329202652",
+     "oddsid": "354453",
+     "status": "Not Started",
+     "time": "14:10",
+     "timezone": "ET",
+     "venue_name": "Progressive Field, Cleveland, Ohio",
+     "home": {
+      "id": "2511",
+      "name": "Cleveland Guardians",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2512",
+      "name": "Detroit Tigers",
+      "totalscore": "0"
+     }
+    },
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "04.09.2026 23:10",
+     "id": "1329192584",
+     "oddsid": "",
+     "status": "Not Started",
+     "time": "19:10",
+     "timezone": "ET",
+     "venue_name": "Progressive Field, Cleveland, Ohio",
+     "home": {
+      "id": "2511",
+      "name": "Cleveland Guardians",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2512",
+      "name": "Detroit Tigers",
+      "totalscore": "0"
+     }
+    },
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "05.09.2026 00:40",
+     "id": "1329192591",
+     "oddsid": "362158",
+     "status": "Not Started",
+     "time": "20:40",
+     "timezone": "ET",
+     "venue_name": "Coors Field, Denver, Colorado",
+     "home": {
+      "id": "2526",
+      "name": "Colorado Rockies",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2520",
+      "name": "St. Louis Cardinals",
+      "totalscore": "0"
+     }
+    },
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "04.09.2026 22:10",
+     "id": "1329192585",
+     "oddsid": "362147",
+     "status": "Not Started",
+     "time": "18:10",
+     "timezone": "ET",
+     "venue_name": "Great American Ball Park, Cincinnati, Ohio",
+     "home": {
+      "id": "2516",
+      "name": "Cincinnati Reds",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2518",
+      "name": "Milwaukee Brewers",
+      "totalscore": "0"
+     }
+    },
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "04.09.2026 22:40",
+     "id": "1329192581",
+     "oddsid": "362148",
+     "status": "Not Started",
+     "time": "18:40",
+     "timezone": "ET",
+     "venue_name": "Citizens Bank Park, Philadelphia, Pennsylvania",
+     "home": {
+      "id": "2508",
+      "name": "Philadelphia Phillies",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2505",
+      "name": "Atlanta Braves",
+      "totalscore": "0"
+     }
+    },
+    {
+     "date": "4.09.2026",
+     "datetime_utc": "04.09.2026 23:05",
+     "id": "1329192582",
+     "oddsid": "362150",
+     "status": "Not Started",
+     "time": "19:05",
+     "timezone": "ET",
+     "venue_name": "Oriole Park at Camden Yards, Baltimore, Maryland",
+     "home": {
+      "id": "2500",
+      "name": "Baltimore Orioles",
+      "totalscore": "0"
+     },
+     "away": {
+      "id": "2501",
+      "name": "Boston Red Sox",
+      "totalscore": "0"
+     }
+    }
+   ]
+  }
+ }
+}

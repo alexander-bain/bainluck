@@ -93,6 +93,7 @@ SHADOW_STAMPERS: dict[str, str] = {
     "americanfootball_nfl": "stamp_nfl_statpal_fixtures",
     "basketball_nba": "stamp_nba_statpal_fixtures",
     "icehockey_nhl": "stamp_nhl_statpal_fixtures",
+    "baseball_mlb": "stamp_mlb_statpal_fixtures",
 }
 
 

@@ -77,6 +77,18 @@ class StatPalFixture:
     # question (the MLB three-id problem), and it cannot be answered by a
     # reader that throws one of them away.
     stats_id: Optional[str] = None
+    # StatPal's THIRD id, served only by `livescores`, and — despite a name that
+    # reads like an odds-provider key — it is the `season-schedule` `id` for the
+    # same contest. Measured 2026-09-04 over the full MLB census: 13 of 16 live
+    # rows carry it and 13/13 dereference to a schedule row.
+    #
+    # It exists as its own field because on MLB `livescores`, `id` is a FOURTH
+    # number in a space `season-schedule` never publishes: 0 of our 222 stored
+    # MLB column values dereference to `stats_id`, and 85 dereference to nothing
+    # at all. The two look alike — both ten digits, both `1329…`, overlapping
+    # ranges — and share not one value, which is precisely why the anchor is
+    # named rather than inferred (D55).
+    odds_id: Optional[str] = None
 
 
 @dataclass
@@ -377,14 +389,23 @@ class StatPalAPIService(BaseAPIClient):
         [d for d in range(-7, 0)] + [d for d in range(1, 8)]
     )
 
-    # Sports whose whole season arrives in one flat `scores.tournament.match`
-    # array — the shape NFL is the exception to. Measured 2026-09-03:
+    # Sports served as one flat `scores.tournament.match` array — the shape NFL
+    # is the exception to. Measured 2026-09-03, and MLB 2026-09-04:
     #   nba  1206 games, 03.10.2026 → 04.04.2027, season "2026/2027"
     #   nhl  1404 games, 19.09.2026 → 10.04.2027, season "2026/2027"
-    # MLB is deliberately absent. It serves the same shape, but its ids do not
-    # survive between endpoints (three id spaces, docs/statpal-capabilities.md
-    # §2) and program step 5 says resolve that before reading it as authority.
-    V1_SEASON_SCHEDULE_SPORTS: frozenset[str] = frozenset({"nba", "nhl"})
+    #   mlb   227 games in a ~17-day ROLLING window, 2026-08-29 → 2026-09-15
+    #
+    # MLB joined on 2026-09-04 (step 5) once its ids were resolved rather than
+    # assumed. The old exclusion said they "do not survive between endpoints";
+    # measured, they do — `livescores.oddsid` IS `season-schedule.id` on 13/16
+    # live rows, 13/13 dereferencing. See `StatPalFixture.odds_id`.
+    #
+    # Note what MLB does NOT share with the other two: its schedule is a rolling
+    # window, not a season. NBA and NHL publish 1206 and 1404 games on day one
+    # and the set does not move; MLB's 227 are the fortnight either side of
+    # today. Any denominator taken from this endpoint is a window, and it is a
+    # different window tomorrow.
+    V1_SEASON_SCHEDULE_SPORTS: frozenset[str] = frozenset({"nba", "nhl", "mlb"})
 
     async def get_schedule_fixtures(
         self,
@@ -1018,6 +1039,13 @@ class StatPalAPIService(BaseAPIClient):
             item.get("id") or item.get("contestid") or item.get("fixture_id") or ""
         )
 
+        # `oddsid`, read here and NEVER preferred over `fixture_id`. Purely
+        # additive: the live writers keep the id they have always had, so
+        # carrying this one cannot move a score or a clock. The authority reader
+        # is the only caller that looks at it, and it is the only caller that
+        # needs to, because it is the only one joining two endpoints together.
+        odds_id = str(item.get("oddsid") or "").strip() or None
+
         # Venue — can be a string or a dict
         venue = item.get("venue")
         if isinstance(venue, dict):
@@ -1025,6 +1053,7 @@ class StatPalAPIService(BaseAPIClient):
 
         return StatPalFixture(
             fixture_id=fixture_id,
+            odds_id=odds_id,
             home_team=home_team,
             away_team=away_team,
             home_team_id=home_team_id,

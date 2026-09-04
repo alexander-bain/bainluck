@@ -356,12 +356,31 @@ class TestStillDark:
         ]
 
     @pytest.mark.asyncio
-    async def test_mlb_is_deliberately_not_routed_here_yet(self, service, monkeypatch):
-        """MLB serves the identical shape and is still excluded: its ids do not
-        survive between endpoints (three id spaces) and program step 5 says
-        resolve that before reading it as an authority. If someone adds it to
-        V1_SEASON_SCHEDULE_SPORTS, this is the tap on the shoulder."""
-        assert "mlb" not in StatPalAPIService.V1_SEASON_SCHEDULE_SPORTS
+    async def test_mlb_is_now_routed_here_and_reads_through_the_authority_door(
+        self, service, monkeypatch
+    ):
+        """Step 5 opened this gate, and this test is the record of why.
+
+        It asserted `"mlb" not in V1_SEASON_SCHEDULE_SPORTS` for two named
+        reasons, and both were answered rather than waived:
+
+          * *"the anchor is blank on 3 of 16 live rows"* — recovered by (both
+            clubs, first pitch within ±1h, unique or refuse), which scores 13/13
+            against the rows the anchor already resolves. It recovers 2 of the 3
+            and refuses the third, taking coverage to 15/16 with the 16th
+            declared. `recover_live_anchor` carries the sweep.
+          * *"the (clubs, calendar day) fallback is keyed on the wrong day"* —
+            that fallback was never adopted. It is not merely mis-keyed: on the
+            one genuinely hard row it fuses the doubleheader's two games onto a
+            single schedule row. The time-window rule replaced it outright.
+
+        What the gate now guards is the DOOR, not the sport: MLB must arrive
+        through `_parse_v1_season_schedule`, which raises on a vanished season
+        and carries `league`, `season`, `tournament_id` and `stats_id`. Falling
+        back to `get_fixtures` would return the games and silently drop all four,
+        and turn a failed read into an empty schedule (gotcha #53).
+        """
+        assert "mlb" in StatPalAPIService.V1_SEASON_SCHEDULE_SPORTS
 
         seen = []
 
@@ -370,6 +389,8 @@ class TestStillDark:
             return None
 
         monkeypatch.setattr(service, "_get", fake_get)
-        # Falls through to get_fixtures, which swallows the None into [].
-        assert await service.get_schedule_fixtures("mlb") == []
+        # The authority door RAISES where `get_fixtures` shrugs into []. That is
+        # the whole point of routing MLB here.
+        with pytest.raises(StatPalUpstreamError):
+            await service.get_schedule_fixtures("mlb")
         assert seen == [("mlb", "season-schedule")]

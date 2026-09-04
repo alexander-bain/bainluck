@@ -224,6 +224,10 @@ class TestBeatScheduleCompleteness:
         # hourly, :17 and :19 by minute census).
         "stamp-nba-statpal-fixtures-hourly",
         "stamp-nhl-statpal-fixtures-hourly",
+        # #2867 / D50 step 5 — MLB shadow stamp, dark (background, hourly, :21
+        # by the same census). The only one of the four whose season is in
+        # progress, so the only one whose `livescores` read does work today.
+        "stamp-mlb-statpal-fixtures-hourly",
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
