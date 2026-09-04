@@ -150,7 +150,10 @@ describe("ux/1058 · the bucket comes from eventState, not from this module", ()
   });
 
   test("an unrecognised status is UPCOMING, never Finished", () => {
-    for (const status of ["postponed", "", "wat"] as EventStatus[]) {
+    // `as unknown as` because these are deliberately OUTSIDE `EventStatus` —
+    // that is the point of the arm: an unrecognised status must land in
+    // upcoming rather than being read as a result.
+    for (const status of ["postponed", "", "wat"] as unknown as EventStatus[]) {
       expect(sectionKeys([ev(1, status, "2026-09-09T01:00:00Z")])).toEqual(["upcoming"]);
     }
   });

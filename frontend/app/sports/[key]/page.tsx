@@ -43,7 +43,10 @@ export default function SportPage({ params }: SportPageProps) {
     { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
-  const events = eventsData?.events ?? [];
+  // Memoised on the SWR payload, not re-derived: `?? []` mints a new array
+  // identity on every render, which would make the `sections` memo below
+  // recompute every time (react-hooks/exhaustive-deps).
+  const events = useMemo(() => eventsData?.events ?? [], [eventsData]);
 
   // #2948 — `/api/events` is `commence_time` ASCENDING, so without this every
   // finished game precedes every live and upcoming one, by construction rather
