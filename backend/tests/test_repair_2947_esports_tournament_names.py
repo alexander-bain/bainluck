@@ -257,6 +257,41 @@ def test_every_statement_parses_as_postgres():
         assert parsed and parsed[0] is not None
 
 
+def test_no_bind_does_date_arithmetic_without_an_explicit_cast():
+    """Postgres types `:c - interval '2 days'` BEFORE it looks at the column.
+
+    An untyped parameter next to an interval has exactly one candidate operator,
+    `interval - interval`, so `:c` is resolved as an interval and the predicate
+    dies with `operator does not exist: timestamp with time zone >= interval`.
+    That is not a syntax error, so `test_every_statement_parses_as_postgres`
+    passes and sqlglot is perfectly happy — only real type resolution rejects it.
+    It killed the first production dry run of this repair (2026-09-04), in
+    `drop_collisions`, which is the collision safety net the whole repair rests on.
+
+    Checked over the whole class rather than the one statement: any interval
+    added to or subtracted from a bare placeholder, anywhere in the SQL this
+    script executes.
+    """
+    sqlglot = pytest.importorskip("sqlglot")
+    from sqlglot import exp
+
+    offenders = []
+    for sql, _ in _all_statements():
+        for interval in sqlglot.parse_one(sql, dialect="postgres").find_all(exp.Interval):
+            parent = interval.parent
+            if not isinstance(parent, (exp.Add, exp.Sub)):
+                continue
+            other = parent.left if parent.right is interval else parent.right
+            if isinstance(other, exp.Placeholder):
+                offenders.append(f"{parent.sql(dialect='postgres')}   in: {sql}")
+
+    assert not offenders, (
+        "a bind parameter is doing interval arithmetic with no CAST — Postgres "
+        "will resolve it as an interval and the predicate will not run:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def test_the_marker_regex_reaches_postgres_as_a_bind_value_never_as_sql_text():
     """gotcha #45 — a pattern inlined into `text()` is scanned for binds."""
     for sql, params in _all_statements():
