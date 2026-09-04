@@ -593,6 +593,91 @@ class MatchupInfo:
         self.format_type = format_type  # "bare_matchup", "will_beat", "will_win"
 
 
+# Esports context that rides into BOTH team names (#2947). Polymarket spells a
+# fixture "Counter-Strike: Fluxo W7M vs Back to Back (BO3) - PGL Masters
+# Bucharest: South American Open Qualifier #1 Playoffs": the GAME TITLE is a
+# prefix on team_a, and the best-of MARKER plus the TOURNAMENT are a suffix on
+# team_b. _GAME_PROP_RE splits on the last colon, so both fragments survive into
+# the matchup and _create_event_from_prediction_market stamps them as team
+# names. Production held 366 such events.
+#
+# The tournament is an OPEN set — it cannot be enumerated, and cutting at the
+# last dash would eat hyphenated club names and merge "- Game 4"/"- Game 5" of a
+# series. So the rule anchors on the one CLOSED token in the string, the "(BOn)"
+# marker, and treats everything after it as context. Measured 2026-09-04:
+# 366/366 of the polluted events carry the marker, and 19,990/19,990 markets
+# carrying it also carry a "<game title>: " prefix — a total signal both ways.
+_ESPORTS_BEST_OF_RE = re.compile(r'\s*\(BO\s*\d+\)')
+# The game title, taken structurally rather than as a list of games (Polymarket
+# adds titles; a vocabulary would rot). Bounded so it can never swallow half a
+# matchup: short, and no " vs " inside it.
+_ESPORTS_TITLE_PREFIX_RE = re.compile(r'^(?!.*\bvs?\.?\s)[^:]{1,30}:\s+', re.IGNORECASE)
+# A context segment that is really a derivative market type ("Map 2 Winner"),
+# anchored whole so a tournament called "Winners Bracket" is not mistaken for
+# one. Matched per dash/colon-delimited segment of the context, not as a
+# substring: the cost of a false positive is a name left polluted (visible,
+# harmless), and the cost of a false negative is a map prop minted as a
+# clean-looking game — the fake that CERT-880 ruled against.
+_ESPORTS_CONTEXT_DERIVATIVE_RE = re.compile(
+    rf'^(?:{_DERIVATIVE_SEGMENT}\s+)?{_DERIVATIVE_MARKET_TYPE}$', re.IGNORECASE
+)
+
+
+def _esports_context_is_derivative(context: str) -> bool:
+    """True when any segment of the post-marker context names a market type."""
+    return any(
+        _ESPORTS_CONTEXT_DERIVATIVE_RE.match(piece.strip())
+        for piece in re.split(r'[-–—:]', context)
+        if piece.strip()
+    )
+
+
+def _clean_esports_matchup(result: MatchupInfo, market_name: str) -> MatchupInfo:
+    """Cut the game title and the tournament off an esports matchup (#2947).
+
+    Applied to the PARSED matchup, deliberately not to the input string. Cleaning
+    the string first would make thousands of titles that parse to None today
+    ("… vs … (BO3) - IEM Beijing", with no trailing stage segment) start parsing,
+    and every one of them would mint an event — 19,327 unlinked markets' worth of
+    flood, which is a different decision than this one and not one taken here.
+    Post-processing changes the NAMES and nothing else: what parsed before parses
+    now, and what returned None still returns None.
+
+    Examples:
+        "Counter-Strike: TYLOO" / "Rare Atom (BO3) - IEM Beijing" → "TYLOO" / "Rare Atom"
+        "FC Thun" / "Lausanne-Sport" → unchanged (no marker, so the rule sleeps)
+    """
+    if not result.team_b or not _ESPORTS_BEST_OF_RE.search(result.team_b):
+        return result
+
+    # THE LOAD-BEARING GUARD. "… (BO3) - Map 2 Winner" is a derivative under
+    # #2871 and must stay refusable: cleaning it would hand auto-create a
+    # game-shaped name and re-open the hole that issue closed. No production row
+    # does this today (0 of 19,990) — the guard is what keeps that true.
+    if is_derivative_market_name(market_name):
+        return result
+
+    head, _, context = result.team_b.partition(
+        _ESPORTS_BEST_OF_RE.search(result.team_b).group(0)
+    )
+    if _esports_context_is_derivative(context) or _esports_context_is_derivative(
+        market_name.rpartition(":")[2]
+    ):
+        return result
+
+    team_b = head.strip()
+    team_a = _ESPORTS_TITLE_PREFIX_RE.sub("", result.team_a).strip()
+    if not team_a or not team_b:
+        return result  # never trade a polluted name for an empty one
+
+    yes_team = result.yes_team
+    if yes_team == result.team_a:
+        yes_team = team_a
+    elif yes_team == result.team_b:
+        yes_team = team_b
+    return MatchupInfo(team_a, team_b, yes_team, result.format_type)
+
+
 def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Optional[MatchupInfo]:
     """
     Extract team names and determine "Yes" team from a game-level market name.
@@ -617,7 +702,7 @@ def extract_matchup(market_name: str, external_id: Optional[str] = None) -> Opti
     for name in _normalize_variants(market_name):
         result = _extract_matchup_impl(name)
         if result:
-            return result
+            return _clean_esports_matchup(result, market_name)
     return None
 
 
