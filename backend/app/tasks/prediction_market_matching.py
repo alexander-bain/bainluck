@@ -4385,6 +4385,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     from app.models.models import Event, Sport, Team
     from app.utils.prediction_market_matching import (
         match_teams_to_event, _strip_sport_name_prefix, _strip_championship_suffix,
+        bracket_refusal_reason,
     )
 
     if not matchup or not matchup.team_a:
@@ -4453,6 +4454,18 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
 
     if not team_a or not team_b:
         return None
+
+    # #2993: a bracket is not a game. Checked HERE, after every name mutation
+    # above (prefix/suffix stripping, combat opponent recovery), because these
+    # are the exact strings the stamp below writes onto the row.
+    bracket_reason = bracket_refusal_reason(team_a, team_b)
+    if bracket_reason:
+        logger.debug(
+            "Refusing auto-create from '%s' (#2993) — %s",
+            market.name, bracket_reason,
+        )
+        return None
+
     if not sport_key and market.llm_sport_category:
         cat_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
         if cat_prefix:
