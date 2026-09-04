@@ -542,6 +542,8 @@ async def _poll_kalshi_markets():
                     _DISCOVERY_KEY, _DISCOVERY_TTL_S, json.dumps(payload)
                 )
             except Exception:
+                # Best-effort, like the main-scan cursor above: a Redis blip
+                # means the next beat re-measures, never that the poll dies.
                 pass
 
         # #1586/#1845: main-scan telemetry. Filled by the fetch, completed after

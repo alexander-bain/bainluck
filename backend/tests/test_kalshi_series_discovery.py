@@ -197,6 +197,10 @@ class _FakeService(ka.KalshiAPIService):
     """A KalshiAPIService with the network replaced, nothing else."""
 
     def __init__(self, series=None, census=None, raise_on=None):
+        # Real base init: it only builds an (unused) httpx client and opens no
+        # socket, and skipping it would leave a half-constructed service — the
+        # every-method-is-overridden assumption is exactly the kind that rots.
+        super().__init__()
         self._series = series if series is not None else [
             {"ticker": t} for t in VENUE_TENNIS
         ]
@@ -359,6 +363,7 @@ class _FetchService(ka.KalshiAPIService):
     """
 
     def __init__(self, main_scan=(), census=None, per_series=None):
+        super().__init__()
         self._main = list(main_scan)
         self._census = census if census is not None else VENUE_OPEN_COUNTS
         self._per_series = per_series or {}

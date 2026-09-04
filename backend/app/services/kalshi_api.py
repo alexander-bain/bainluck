@@ -1026,6 +1026,8 @@ class KalshiAPIService(BaseAPIClient):
                 try:
                     progress_cb(sub)
                 except Exception:
+                    # A dropped phase marker is acceptable; a census that fails
+                    # because its own telemetry failed is not (#995 attempt-9).
                     pass
 
         try:
@@ -1111,6 +1113,7 @@ class KalshiAPIService(BaseAPIClient):
                         try:
                             progress_cb(f"fetch:discover:{tag}:p{page}")
                         except Exception:
+                            # Telemetry must never fail the fetch it observes.
                             pass
                     series_list, cursor = await asyncio.wait_for(
                         self.get_series(
@@ -1207,6 +1210,9 @@ class KalshiAPIService(BaseAPIClient):
             try:
                 save({"selected": [list(s) for s in selected], "receipt": receipt})
             except Exception:
+                # A cache write is an optimisation. Failing to persist the
+                # measurement costs the next beat ~20s to re-measure; raising
+                # here would cost it the whole fetch.
                 pass
         elif not census_receipt.get("exhausted"):
             receipt["not_cached"] = "census_partial"
