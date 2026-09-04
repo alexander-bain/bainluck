@@ -416,7 +416,9 @@ class TestPass3ActuallyStartsOnAFullCycle:
     #: Measured on production 2026-09-03 (CERT-817): 8,279 rows in a ~660s
     #: Pass-1 window.
     RATE_PER_SECOND = 12.5
-    BUDGET = 780
+    #: Read off the task, never copied: a harness that charges its own budget
+    #: stops describing production the moment the task's budget moves.
+    BUDGET = pmm._TIME_BUDGET_SECONDS
     #: Pass 1's population after #2798's status predicate.
     PASS1_ROWS = 7447
 
@@ -548,13 +550,40 @@ class TestPass3ActuallyStartsOnAFullCycle:
         assert "backlog_dropped" in stats["funnel"]
 
 
+def test_the_cycle_budget_is_a_module_constant_the_task_itself_reads():
+    """CERT-837's follow-up: the harnesses read the budget, they do not copy it.
+
+    Both clock harnesses in this file hard-coded ``780``. They now read
+    ``pmm._TIME_BUDGET_SECONDS`` — which is worth something only while the task
+    reads the same module constant. A local of that name back inside
+    ``_match_prediction_markets`` would leave every test in this file green
+    while production ran the cycle on a different number, which is the drift
+    the follow-up was about.
+    """
+    assert isinstance(pmm._TIME_BUDGET_SECONDS, int)
+
+    src = inspect.getsource(pmm._match_prediction_markets)
+    assert "_TIME_BUDGET_SECONDS" in src, (
+        "the budget name does not appear in _match_prediction_markets at all — "
+        "either this guard is reading the wrong function or the budget was "
+        "renamed, and the harnesses are now bound to a constant nothing uses"
+    )
+    shadowed = re.search(r"^\s+_TIME_BUDGET_SECONDS\s*(:[^=]+)?=", src, re.M)
+    assert not shadowed, (
+        f"_match_prediction_markets assigns its own budget "
+        f"({shadowed.group(0).strip()}) — the harnesses read the module "
+        "constant, so the tested budget and the run budget can now differ "
+        "silently"
+    )
+
+
 # =============================================================================
 # L1B-009-END-TO-END-BUDGET-GUARD — CERT-822's follow-up.
 # =============================================================================
 
 
 class TestTheWholeCycleIsChargedNotJustTheAttemptLoops:
-    """The cycle spends its 780 seconds on more than the three attempt loops.
+    """The cycle spends its whole budget on more than the three attempt loops.
 
     ``TestPass3ActuallyStartsOnAFullCycle`` above burns a clock, which is why it
     caught what reading the constants could not. But it starts that clock at
@@ -582,7 +611,8 @@ class TestTheWholeCycleIsChargedNotJustTheAttemptLoops:
 
     #: Measured on production 2026-09-03 (CERT-817): ~12.5 markets/s.
     RATE_PER_SECOND = 12.5
-    BUDGET = 780
+    #: Read off the task (see the sibling class above), never copied.
+    BUDGET = pmm._TIME_BUDGET_SECONDS
     #: Pass 1's population after #2798's status predicate.
     PASS1_ROWS = 7447
     #: What the sweep actually stamped on its first production run, 16:50Z.

@@ -105,6 +105,13 @@ _PROBE_MIN_SECONDS_REMAINING = 90
 # that ran and it fills up, the receipt now records `saturated`.
 _PROBE_LIMIT = 5
 
+# The whole cycle's wall-clock budget. Every floor and yield point below is
+# carved out of it, so it is a module constant rather than a local: a harness
+# that charges a fake clock has to charge the SAME budget production runs on,
+# and a test that copies the number is a test that can quietly stop describing
+# the task (CERT-837 follow-up).
+_TIME_BUDGET_SECONDS = 780
+
 # Phase 1 Pass 3 — the backlog sweep that makes "never attempted" impossible.
 # Pass 2 orders by updated_at DESC and takes the top `limit` rows, so an older
 # ingest wave behind 21k unlinked markets is never reached: measured 2026-09-02,
@@ -3088,7 +3095,6 @@ async def _match_prediction_markets(limit: int = 500):
 
     import time as _time
     _task_start = _time.monotonic()
-    _TIME_BUDGET_SECONDS = 780
 
     def _time_remaining() -> float:
         return _TIME_BUDGET_SECONDS - (_time.monotonic() - _task_start)

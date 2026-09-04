@@ -24,9 +24,27 @@ WHAT IT MODELS, and why each part is load-bearing:
   land on, which is what lets a test assert that the torn state CERT-773
   reproduced — retry hash emptied, give-up counter not yet incremented — is not
   among them.
+* **WATCH aborts EXEC when a watched key moved** (live/055, #2766 — CERT-798's
+  named follow-up `CHART-LEASE-ATOMIC-COMPARE-RENEW`). Every mutation bumps a
+  per-key version; `watch()` snapshots the versions it saw, and `execute()`
+  raises :class:`redis.exceptions.WatchError` — the real class, not a stand-in —
+  if any of them changed. Without this the fake would run the optimistic fence
+  and never once refuse, which is the same failure mode this module's header
+  warns about twice already: a guard that looks present while it does nothing.
+
+  🔴 `EXPIRE` BUMPS THE VERSION, because real Redis signals a watch on it. That
+  is not a detail — it is why the lease RENEWAL has to be queued inside the
+  MULTI rather than issued next to the token read. A renewal sent while watching
+  would invalidate the pass's own WATCH and abort every single write.
 """
 
 from typing import NamedTuple, Optional
+
+try:  # The production fence catches this exact class; the fake must raise it.
+    from redis.exceptions import WatchError
+except Exception:  # pragma: no cover — redis is a hard dependency of the app
+    class WatchError(Exception):  # type: ignore[no-redef]
+        pass
 
 
 class Observed(NamedTuple):
@@ -41,7 +59,7 @@ class Observed(NamedTuple):
 class FakeTierRedis:
     """Enough Redis to hold the drain's per-tier keys, with MULTI semantics."""
 
-    def __init__(self, initial=None, hashes=None, on_publish=None):
+    def __init__(self, initial=None, hashes=None, on_publish=None, on_read=None):
         self.store = dict(initial or {})
         self.hashes = {k: dict(v) for k, v in (hashes or {}).items()}
         #: 🔴 A SECOND WORKER PROCESS. Called with this fake every time a state
@@ -53,6 +71,21 @@ class FakeTierRedis:
         #: what the sibling itself writes does not recursively invoke it.
         self.on_publish = on_publish
         self._publishing = False
+        #: 🔴 A SIBLING ACTING BETWEEN OUR TOKEN READ AND OUR WRITE (live/055,
+        #: #2766). Called with `(self, key)` after every `GET` answers.
+        #:
+        #: WHY THE READ AND NOT `watch()`. This is the interposition point that
+        #: exists in BOTH trees, which is what makes a guard built on it able to
+        #: tell the two apart. Every version of this fence reads the lock token
+        #: and then writes; only the fixed one holds a watch across the gap. A
+        #: hook on `watch()` would simply never fire against unfenced code, so a
+        #: test using it would go red for "nobody called watch" rather than for
+        #: "the stolen lease's write landed anyway" — the second is the defect,
+        #: the first is a proxy for it.
+        #:
+        #: Reentrancy is suppressed, so a sibling that reads does not recurse.
+        self.on_read = on_read
+        self._reading = False
         #: Every visible state, in order. Index 0 is the state before anything
         #: this test did, so a reader arriving at any moment saw one of these.
         self.observations: list = []
@@ -63,6 +96,15 @@ class FakeTierRedis:
         #: guard that only checked `commands` could not tell four round trips
         #: from one MULTI, which is the entire distinction CERT-773 turns on.
         self.transactions: list = []
+        #: Per-key modification counter, the whole of WATCH's machinery. A key
+        #: that has never been touched is absent, which reads as version 0, so
+        #: watching a key that does not exist YET and having it appear is
+        #: correctly seen as a change.
+        self.versions: dict = {}
+        #: One entry per `execute()` that WATCH refused, `(keys, )` — so a test
+        #: can assert the abort happened rather than infer it from a side effect
+        #: that did not occur.
+        self.watch_aborts: list = []
         self._publish()
 
     # -- the wire ----------------------------------------------------------
@@ -70,6 +112,18 @@ class FakeTierRedis:
     @staticmethod
     def _field(value):
         return value.decode() if isinstance(value, bytes) else str(value)
+
+    def _touch(self, key) -> None:
+        self.versions[key] = self.versions.get(key, 0) + 1
+
+    def _fire_read(self, key) -> None:
+        if self.on_read is None or self._reading:
+            return
+        self._reading = True
+        try:
+            self.on_read(self, key)
+        finally:
+            self._reading = False
 
     def _publish(self) -> None:
         """Record a state a concurrent reader could land on.
@@ -94,20 +148,27 @@ class FakeTierRedis:
     # -- primitives: they MUTATE, they do not publish ----------------------
 
     def _get(self, key):
-        return self.store.get(key)
+        value = self.store.get(key)
+        self._fire_read(key)
+        return value
 
     def _set(self, key, value, nx=False, ex=None):
         if nx and key in self.store:
             return None  # exactly what redis-py answers for a refused NX
         self.store[key] = value
+        self._touch(key)
         return True
 
     def _delete(self, key):
-        return 1 if self.store.pop(key, None) is not None else 0
+        existed = self.store.pop(key, None) is not None
+        if existed:
+            self._touch(key)
+        return 1 if existed else 0
 
     def _incrby(self, key, n):
         new = int(self.store.get(key, 0)) + n
         self.store[key] = new
+        self._touch(key)
         return new
 
     def _hgetall(self, key):
@@ -120,6 +181,8 @@ class FakeTierRedis:
         target = self.hashes.setdefault(key, {})
         for field, value in (mapping or {}).items():
             target[self._field(field)] = self._field(value)
+        if mapping:
+            self._touch(key)
         return len(mapping or {})
 
     def _hdel(self, key, *ids):
@@ -127,22 +190,41 @@ class FakeTierRedis:
         for i in ids:
             if self.hashes.get(key, {}).pop(self._field(i), None) is not None:
                 removed += 1
+        if removed:
+            self._touch(key)
         return removed
 
     def _hlen(self, key):
         """🔴 CERT-794/795. The clean done-marker refuses while this is non-zero,
         so a fake that always answered 0 would make the refusal look present
         while it did nothing — the same failure the `SET NX` note above warns
-        about."""
-        return len(self.hashes.get(key, {}))
+        about.
+
+        Fires :attr:`on_read` for the same reason `_get` does (live/055, #2766):
+        the settlement BRANCHES on this answer, so the instant right after it is
+        where a sibling can invalidate the decision, and a test needs to be able
+        to stand there."""
+        length = len(self.hashes.get(key, {}))
+        self._fire_read(key)
+        return length
 
     def _expire(self, key, seconds):
         """Lease renewal. The fake holds no clock, so TTLs are not simulated: a
         test makes a lease expire by DELETING or overwriting the lock key, which
         is what expiry looks like to every reader anyway. What is modelled is
         that `expire` on a MISSING key is a no-op answering 0 — a renewal cannot
-        resurrect a lease a sibling has already taken and released."""
-        return 1 if key in self.store else 0
+        resurrect a lease a sibling has already taken and released.
+
+        🔴 A SUCCESSFUL EXPIRE BUMPS THE VERSION (live/055, #2766). Real Redis
+        calls `signalModifiedKey` from the EXPIRE path, so a renewal issued while
+        watching the lock invalidates the watcher's own WATCH. Modelling it is
+        what forces the renewal to be queued INSIDE the MULTI; a fake that
+        treated EXPIRE as invisible would let the production code renew in the
+        watch phase and pass here while aborting every write in production."""
+        if key not in self.store:
+            return 0
+        self._touch(key)
+        return 1
 
     def _apply(self, name, args, kwargs):
         self.commands.append((name, args, dict(kwargs)))
@@ -225,14 +307,52 @@ class FakePipeline:
         self._queued: list = []
         #: For assertions about what the block actually contained.
         self.executed: list = []
+        #: `{key: version}` as of `watch()`, or `None` when not watching.
+        #: redis-py's real pipeline goes into IMMEDIATE mode on `watch()` and
+        #: back into buffered mode on `multi()`; both are modelled, because the
+        #: read-branch-write the fence performs is only correct in that order.
+        self._watched: Optional[dict] = None
+        self._immediate = False
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
+        self.reset()
         return False
 
+    # -- WATCH / MULTI (live/055, #2766) -----------------------------------
+
+    def watch(self, *keys):
+        self._watched = {k: self._redis.versions.get(k, 0) for k in keys}
+        self._immediate = True
+        return True
+
+    def unwatch(self):
+        self._watched = None
+        self._immediate = False
+        return True
+
+    def multi(self):
+        """Leave immediate mode; everything after this is queued until EXEC.
+
+        redis-py raises if you call this without watching or twice; the fake
+        does not need to police that, and pretending to would only add a way for
+        a test to fail for a reason production cannot have.
+        """
+        self._immediate = False
+        return None
+
+    def reset(self):
+        self._queued = []
+        self.unwatch()
+
     def _queue(self, name, *args, **kwargs):
+        if self._immediate:
+            # Watching, pre-MULTI: redis-py runs the command straight away and
+            # hands back the real answer. This is the only mode in which the
+            # fence can READ and then BRANCH.
+            return self._redis._run(name, *args, **kwargs)
         self._queued.append((name, args, kwargs))
         return self
 
@@ -257,7 +377,29 @@ class FakePipeline:
     def hdel(self, key, *ids):
         return self._queue("hdel", key, *ids)
 
+    def hlen(self, key):
+        return self._queue("hlen", key)
+
+    def expire(self, key, seconds):
+        return self._queue("expire", key, seconds)
+
     def execute(self):
+        # 🔴 THE ABORT. Checked BEFORE anything is applied, which is the whole
+        # point: a transaction whose watched key moved must leave the store
+        # exactly as it found it, so the caller's refusal is a refusal and not a
+        # half-write it then has to reason about.
+        if self._watched is not None:
+            moved = [
+                k for k, v in self._watched.items()
+                if self._redis.versions.get(k, 0) != v
+            ]
+            if moved:
+                self._redis.watch_aborts.append(tuple(moved))
+                self.reset()
+                raise WatchError(
+                    "Watched variable changed: " + ", ".join(sorted(moved))
+                )
+
         queued, self._queued = self._queued, []
         self.executed = list(queued)
         self._redis.transactions.append(
@@ -272,4 +414,5 @@ class FakePipeline:
                 self._redis._publish()
         if self._transaction:
             self._redis._publish()
+        self.unwatch()
         return results

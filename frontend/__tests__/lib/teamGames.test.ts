@@ -2,7 +2,9 @@
 import {
   isGameLive,
   isGameSettled,
+  isGameSuspended,
   assignGameNumbers,
+  teamLastScore,
   teamResult,
 } from "../../lib/teamGames";
 import type { TeamGameBrief } from "../../lib/api";
@@ -94,21 +96,90 @@ describe("assignGameNumbers — doubleheaders", () => {
 });
 
 describe("teamResult — team-relative W/L", () => {
+  // live/056: `teamResult` now requires a SETTLED status, so these fixtures say
+  // so. They previously read `scheduled` and still graded — which was the same
+  // defect this change closes, told smaller: two numbers were treated as a
+  // verdict without anything having said the match ended.
+  const settled = (o: Partial<TeamGameBrief>) =>
+    brief({ status: "completed", ...o });
+
   test("home win", () => {
     expect(
-      teamResult(brief({ is_home: true, home_score: 6, away_score: 1 })),
+      settledResult({ is_home: true, home_score: 6, away_score: 1 }),
     ).toEqual({ char: "W", teamScore: 6, oppScore: 1 });
   });
   test("away win (is_home false flips perspective)", () => {
     expect(
-      teamResult(brief({ is_home: false, home_score: 1, away_score: 6 })),
+      settledResult({ is_home: false, home_score: 1, away_score: 6 }),
     ).toEqual({ char: "W", teamScore: 6, oppScore: 1 });
   });
   test("loss and tie", () => {
-    expect(teamResult(brief({ is_home: true, home_score: 1, away_score: 3 }))?.char).toBe("L");
-    expect(teamResult(brief({ is_home: true, home_score: 2, away_score: 2 }))?.char).toBe("T");
+    expect(settledResult({ is_home: true, home_score: 1, away_score: 3 })?.char).toBe("L");
+    expect(settledResult({ is_home: true, home_score: 2, away_score: 2 })?.char).toBe("T");
   });
   test("null scores yield null", () => {
-    expect(teamResult(brief({ home_score: null, away_score: null }))).toBeNull();
+    expect(settledResult({ home_score: null, away_score: null })).toBeNull();
+  });
+  test("'closed' grades exactly like 'completed' (#1204)", () => {
+    expect(
+      teamResult(settled({ status: "closed", is_home: true, home_score: 6, away_score: 1 }))
+        ?.char,
+    ).toBe("W");
+  });
+
+  function settledResult(o: Partial<TeamGameBrief>) {
+    return teamResult(settled(o));
+  }
+});
+
+describe("teamResult refuses to grade a match nothing settled (live/056)", () => {
+  // 🔴 THE SHIP GUARD. The team page's recent rail now carries `suspended`, and
+  // a suspended row arrives with the PARTIAL score play reached. Grading 1-2 as
+  // an "L" is the false Final live/048 removed, printed by a different
+  // component — so the function that mints the verdict refuses.
+  test("a suspended match with a partial score is NOT a loss", () => {
+    expect(
+      teamResult(
+        brief({ status: "suspended", is_home: true, home_score: 1, away_score: 2 }),
+      ),
+    ).toBeNull();
+  });
+
+  test.each(["suspended", "live", "scheduled"] as const)(
+    "%s never yields a W/L, however complete the score looks",
+    (status) => {
+      expect(
+        teamResult(brief({ status, is_home: true, home_score: 6, away_score: 1 })),
+      ).toBeNull();
+    },
+  );
+
+  test("isGameSuspended reads the shared vocabulary, not a local literal", () => {
+    expect(isGameSuspended(brief({ status: "suspended" }))).toBe(true);
+    for (const status of ["completed", "closed", "live", "scheduled"] as const) {
+      expect(isGameSuspended(brief({ status }))).toBe(false);
+    }
+  });
+
+  test("isGameSettled still excludes suspended — settled means settled", () => {
+    expect(isGameSettled(brief({ status: "suspended" }))).toBe(false);
+    expect(isGameSettled(brief({ status: "completed" }))).toBe(true);
+    expect(isGameSettled(brief({ status: "closed" }))).toBe(true);
+  });
+});
+
+describe("teamLastScore — what IS known about a suspended match", () => {
+  test("team-relative, both directions", () => {
+    expect(
+      teamLastScore(brief({ is_home: true, home_score: 1, away_score: 2 })),
+    ).toEqual({ teamScore: 1, oppScore: 2 });
+    expect(
+      teamLastScore(brief({ is_home: false, home_score: 1, away_score: 2 })),
+    ).toEqual({ teamScore: 2, oppScore: 1 });
+  });
+
+  test("a HALF score is no score — the CERT-752 partial-line trap", () => {
+    expect(teamLastScore(brief({ home_score: 1, away_score: null }))).toBeNull();
+    expect(teamLastScore(brief({ home_score: null, away_score: 2 }))).toBeNull();
   });
 });

@@ -1,0 +1,580 @@
+{
+ "_recorded": "GET /api/v1/nfl/season-schedule 2026-09-03 \u2014 trimmed to 2 weeks of 374 games",
+ "scores": {
+  "sport": "nfl",
+  "tournament": {
+   "name": "USA: NFL",
+   "stage": [
+    {
+     "id": "1500",
+     "name": "Pre Season",
+     "week": [
+      {
+       "name": "Hall of Fame Weekend",
+       "matches": {
+        "date": "Thursday, August 6, 2026",
+        "formatted_date": "6.08.2026",
+        "timezone": "EST",
+        "match": {
+         "attendance": "18116",
+         "contestid": "280493",
+         "datetime_utc": "07.08.2026 00:00",
+         "formatted_date": "6.08.2026",
+         "hipassing": "Carson Beck 188",
+         "hireceiving": "Jalen Brooks 99",
+         "hirushing": "Bam Knight 58",
+         "status": "Final",
+         "time": "7:00 PM",
+         "venue": "Tom Benson Hall of Fame Stadium, Canton",
+         "venue_id": "2562",
+         "home": {
+          "id": "3195",
+          "name": "Arizona Cardinals",
+          "ot": "",
+          "posession": "False",
+          "q1": "0",
+          "q2": "17",
+          "q3": "3",
+          "q4": "10",
+          "totalscore": "30"
+         },
+         "away": {
+          "id": "3183",
+          "name": "Carolina Panthers",
+          "ot": "",
+          "posession": "False",
+          "q1": "0",
+          "q2": "17",
+          "q3": "0",
+          "q4": "16",
+          "totalscore": "33"
+         },
+         "events": {
+          "firstquarter": null,
+          "secondquarter": null,
+          "thirdquarter": null,
+          "fourthquarter": null,
+          "overtime": null
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "id": "1501",
+     "name": "Regular Season",
+     "week": [
+      {
+       "name": "Week 1",
+       "matches": [
+        {
+         "date": "Wednesday, September 9, 2026",
+         "formatted_date": "9.09.2026",
+         "timezone": "EDT",
+         "match": {
+          "attendance": "",
+          "contestid": "280445",
+          "datetime_utc": "10.09.2026 00:20",
+          "formatted_date": "9.09.2026",
+          "status": "Not Started",
+          "time": "7:20 PM",
+          "venue": "Lumen Field, Seattle, USA",
+          "venue_id": "4171",
+          "home": {
+           "id": "3203",
+           "name": "Seattle Seahawks",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          },
+          "away": {
+           "id": "3180",
+           "name": "New England Patriots",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          }
+         }
+        },
+        {
+         "date": "Thursday, September 10, 2026",
+         "formatted_date": "10.09.2026",
+         "timezone": "EDT",
+         "match": {
+          "attendance": "",
+          "contestid": "280446",
+          "datetime_utc": "11.09.2026 00:35",
+          "formatted_date": "10.09.2026",
+          "status": "Not Started",
+          "time": "7:35 PM",
+          "venue": "Melbourne Cricket Ground, Melbourne, Australia",
+          "venue_id": "4229",
+          "home": {
+           "id": "6616",
+           "name": "Los Angeles Rams",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          },
+          "away": {
+           "id": "3206",
+           "name": "San Francisco 49ers",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          }
+         }
+        },
+        {
+         "date": "Sunday, September 13, 2026",
+         "formatted_date": "13.09.2026",
+         "timezone": "EDT",
+         "match": [
+          {
+           "attendance": "",
+           "contestid": "280448",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Paycor Stadium, Cincinnati, USA",
+           "venue_id": "4167",
+           "home": {
+            "id": "3178",
+            "name": "Cincinnati Bengals",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3192",
+            "name": "Tampa Bay Buccaneers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280449",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Ford Field, Detroit, USA",
+           "venue_id": "4173",
+           "home": {
+            "id": "3194",
+            "name": "Detroit Lions",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3181",
+            "name": "New Orleans Saints",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280454",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Nissan Stadium, Nashville, USA",
+           "venue_id": "4165",
+           "home": {
+            "id": "3204",
+            "name": "Tennessee Titans",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3208",
+            "name": "New York Jets",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280451",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Lucas Oil Stadium, Indianapolis, USA",
+           "venue_id": "4157",
+           "home": {
+            "id": "3205",
+            "name": "Indianapolis Colts",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3182",
+            "name": "Baltimore Ravens",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280453",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Acrisure Stadium, Pittsburgh, USA",
+           "venue_id": "4161",
+           "home": {
+            "id": "3193",
+            "name": "Pittsburgh Steelers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3189",
+            "name": "Atlanta Falcons",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280447",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Bank of America Stadium, Charlotte, USA",
+           "venue_id": "4150",
+           "home": {
+            "id": "3183",
+            "name": "Carolina Panthers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3202",
+            "name": "Chicago Bears",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280452",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "EverBank Stadium, Jacksonville, USA",
+           "venue_id": "4154",
+           "home": {
+            "id": "3186",
+            "name": "Jacksonville Jaguars",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3198",
+            "name": "Cleveland Browns",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280450",
+           "datetime_utc": "13.09.2026 17:00",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "12:00 PM",
+           "venue": "Reliant Stadium, Houston, USA",
+           "venue_id": "4238",
+           "home": {
+            "id": "3196",
+            "name": "Houston Texans",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3188",
+            "name": "Buffalo Bills",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280455",
+           "datetime_utc": "13.09.2026 20:25",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "3:25 PM",
+           "venue": "Allegiant Stadium, Las Vegas, USA",
+           "venue_id": "4176",
+           "home": {
+            "id": "7065",
+            "name": "Las Vegas Raiders",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3191",
+            "name": "Miami Dolphins",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280457",
+           "datetime_utc": "13.09.2026 20:25",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "3:25 PM",
+           "venue": "U.S. Bank Stadium, Minneapolis, USA",
+           "venue_id": "4152",
+           "home": {
+            "id": "3200",
+            "name": "Minnesota Vikings",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3197",
+            "name": "Green Bay Packers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280458",
+           "datetime_utc": "13.09.2026 20:25",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "3:25 PM",
+           "venue": "Lincoln Financial Field, Philadelphia, USA",
+           "venue_id": "4148",
+           "home": {
+            "id": "3185",
+            "name": "Philadelphia Eagles",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "7252",
+            "name": "Washington Commanders",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280456",
+           "datetime_utc": "13.09.2026 20:25",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "3:25 PM",
+           "venue": "SoFi Stadium, Inglewood, USA",
+           "venue_id": "4153",
+           "home": {
+            "id": "3201",
+            "name": "Los Angeles Chargers",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3195",
+            "name": "Arizona Cardinals",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          },
+          {
+           "attendance": "",
+           "contestid": "280459",
+           "datetime_utc": "14.09.2026 00:20",
+           "formatted_date": "13.09.2026",
+           "status": "Not Started",
+           "time": "7:20 PM",
+           "venue": "MetLife Stadium, East Rutherford, USA",
+           "venue_id": "4160",
+           "home": {
+            "id": "3209",
+            "name": "New York Giants",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           },
+           "away": {
+            "id": "3179",
+            "name": "Dallas Cowboys",
+            "ot": "",
+            "q1": "",
+            "q2": "",
+            "q3": "",
+            "q4": "",
+            "totalscore": ""
+           }
+          }
+         ]
+        },
+        {
+         "date": "Monday, September 14, 2026",
+         "formatted_date": "14.09.2026",
+         "timezone": "EDT",
+         "match": {
+          "attendance": "",
+          "contestid": "280460",
+          "datetime_utc": "15.09.2026 00:15",
+          "formatted_date": "14.09.2026",
+          "status": "Not Started",
+          "time": "7:15 PM",
+          "venue": "Arrowhead Stadium, Kansas City, USA",
+          "venue_id": "4237",
+          "home": {
+           "id": "3190",
+           "name": "Kansas City Chiefs",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          },
+          "away": {
+           "id": "3207",
+           "name": "Denver Broncos",
+           "ot": "",
+           "q1": "",
+           "q2": "",
+           "q3": "",
+           "q4": "",
+           "totalscore": ""
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

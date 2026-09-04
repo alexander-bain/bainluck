@@ -86,6 +86,47 @@ class TestPayloadShape:
         assert body["render_findings"] == []
 
 
+class TestTodaysRowsOpen:
+    """ux/1048: the day's matches carry their `events` row, and say how many do.
+
+    The mock database has no ESPN cache and no prices, so the slate here is
+    EMPTY — which is exactly the case worth pinning at the route level. The
+    counts must be present at zero. An absent key and a genuine zero are the
+    same bytes to a reader, and the behavioural rules live in
+    `tests/test_tournament_slate_event_links_1048.py`.
+    """
+
+    async def test_the_slate_publishes_its_link_count(self, client):
+        slate = (await client.get("/api/tournaments/us-open")).json()["slate"]
+        assert "scoreboard_linked" in slate
+        assert slate["scoreboard_linked"] == 0
+        # Its denominator has to be on the same object, or the number cannot be
+        # read: 39 is healthy against 40 and an emergency against 400.
+        assert "scoreboard_pairings" in slate
+
+    async def test_the_link_block_reports_the_slate_separately(self, client):
+        links = (await client.get("/api/tournaments/us-open")).json()["event_links"]
+        # Kept apart from `espn_linked`, which counts the MAP. The map is
+        # resolved for the finished list and the slate together, so it can be
+        # healthy while every row on the card dead-ends — which is precisely
+        # the state measured on production at 2026-09-03T20:37Z.
+        assert links["slate_linked"] == 0
+        assert "espn_linked" in links
+
+    def test_the_openings_load_stays_bounded_by_the_finished_list(self):
+        """`by_espn` answers for the slate now; the openings query must not.
+
+        `apply_books_prematch` reads that map only for `results.matches`, so
+        taking `.values()` wholesale would load an event row per slate row that
+        nothing reads — ~40 today, and growing with the card. Pinned by
+        following the bound to the set it is filtered against, rather than by
+        banning a spelling.
+        """
+        source = inspect.getsource(tournaments._hub_payload)
+        opening = source.split("_opening_ids")[1].split("_openings")[0]
+        assert "_result_comps" in opening, opening
+
+
 class TestFreshnessSource:
     """`futures_outcomes.last_updated` is not a freshness signal — census-proven."""
 

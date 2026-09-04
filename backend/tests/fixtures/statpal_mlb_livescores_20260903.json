@@ -1,0 +1,88 @@
+{
+  "livescores": {
+    "sport": "baseball",
+    "tournament": {
+      "country": "usa",
+      "id": "2499",
+      "league": "USA: MLB",
+      "match": [
+        {
+          "id": "1329192572",
+          "date": "3.09.2026",
+          "time": "12:35",
+          "datetime_utc": "03.09.2026 16:35",
+          "timezone": "ET",
+          "status": "Final",
+          "venue_name": "PNC Park, Pittsburgh, Pennsylvania",
+          "home": {
+            "id": "2519",
+            "name": "Pittsburgh Pirates",
+            "totalscore": "5"
+          },
+          "away": {
+            "id": "2529",
+            "name": "San Francisco Giants",
+            "totalscore": "2"
+          }
+        },
+        {
+          "id": "1329192573",
+          "date": "3.09.2026",
+          "time": "13:10",
+          "datetime_utc": "03.09.2026 17:10",
+          "timezone": "ET",
+          "status": "Final",
+          "venue_name": "Progressive Field, Cleveland, Ohio",
+          "home": {
+            "id": "2511",
+            "name": "Cleveland Guardians",
+            "totalscore": "3"
+          },
+          "away": {
+            "id": "2504",
+            "name": "Toronto Blue Jays",
+            "totalscore": "6"
+          }
+        },
+        {
+          "id": "1329192574",
+          "date": "3.09.2026",
+          "time": "14:10",
+          "datetime_utc": "03.09.2026 18:10",
+          "timezone": "ET",
+          "status": "Final",
+          "venue_name": "Daikin Park, Houston, Texas",
+          "home": {
+            "id": "2517",
+            "name": "Houston Astros",
+            "totalscore": "6"
+          },
+          "away": {
+            "id": "2510",
+            "name": "Chicago White Sox",
+            "totalscore": "2"
+          }
+        },
+        {
+          "id": "1329192571",
+          "date": "3.09.2026",
+          "time": "19:15",
+          "datetime_utc": "03.09.2026 23:15",
+          "timezone": "ET",
+          "status": "Not Started",
+          "venue_name": "Oriole Park at Camden Yards, Baltimore, Maryland",
+          "home": {
+            "id": "2500",
+            "name": "Baltimore Orioles",
+            "totalscore": "0"
+          },
+          "away": {
+            "id": "2501",
+            "name": "Boston Red Sox",
+            "totalscore": "0"
+          }
+        }
+      ]
+    }
+  }
+}

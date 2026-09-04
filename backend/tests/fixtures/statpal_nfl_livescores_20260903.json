@@ -1,0 +1,88 @@
+{
+  "livescores": {
+    "sport": "american_football",
+    "tournament": {
+      "country": "usa",
+      "id": "1500",
+      "league": "USA: NFL",
+      "match": [
+        {
+          "contestid": "280526",
+          "date": "27.08.2026",
+          "time": "6:00 PM",
+          "datetime_utc": "27.08.2026 23:00",
+          "timezone": "EST",
+          "status": "Final",
+          "venue_name": "Highmark Stadium, Orchard Park, NY",
+          "home": {
+            "id": "3188",
+            "name": "Buffalo Bills",
+            "totalscore": "28"
+          },
+          "away": {
+            "id": "3193",
+            "name": "Pittsburgh Steelers",
+            "totalscore": "27"
+          }
+        },
+        {
+          "contestid": "280527",
+          "date": "27.08.2026",
+          "time": "7:00 PM",
+          "datetime_utc": "28.08.2026 00:00",
+          "timezone": "EST",
+          "status": "Final",
+          "venue_name": "Huntington Bank Field, Cleveland, OH",
+          "home": {
+            "id": "3198",
+            "name": "Cleveland Browns",
+            "totalscore": "37"
+          },
+          "away": {
+            "id": "3180",
+            "name": "New England Patriots",
+            "totalscore": "13"
+          }
+        },
+        {
+          "contestid": "280528",
+          "date": "27.08.2026",
+          "time": "7:00 PM",
+          "datetime_utc": "28.08.2026 00:00",
+          "timezone": "EST",
+          "status": "Final",
+          "venue_name": "Allegiant Stadium, Las Vegas, NV",
+          "home": {
+            "id": "7065",
+            "name": "Las Vegas Raiders",
+            "totalscore": "12"
+          },
+          "away": {
+            "id": "3206",
+            "name": "San Francisco 49ers",
+            "totalscore": "18"
+          }
+        },
+        {
+          "contestid": "280529",
+          "date": "27.08.2026",
+          "time": "9:00 PM",
+          "datetime_utc": "28.08.2026 02:00",
+          "timezone": "EST",
+          "status": "Final",
+          "venue_name": "SoFi Stadium, Inglewood, CA",
+          "home": {
+            "id": "3201",
+            "name": "Los Angeles Chargers",
+            "totalscore": "18"
+          },
+          "away": {
+            "id": "6616",
+            "name": "Los Angeles Rams",
+            "totalscore": "20"
+          }
+        }
+      ]
+    }
+  }
+}

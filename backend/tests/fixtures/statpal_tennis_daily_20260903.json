@@ -1,0 +1,242 @@
+{
+ "_recorded": "GET /api/v1/tennis/daily/{d1,d-1,d-2} 2026-09-03 - trimmed; each match kept under its real tournament",
+ "scores": {
+  "sport": "tennis",
+  "tournament": [
+   {
+    "id": "13440",
+    "name": "Atp - Singles: Us Open (Usa), Hard",
+    "match": [
+     {
+      "date": "03.09.2026",
+      "id": "2631263",
+      "status": "1",
+      "time": "23:00",
+      "player": [
+       {
+        "id": "2512",
+        "name": "G. Monfils",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       },
+       {
+        "id": "147428",
+        "name": "L. Tien",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       }
+      ]
+     },
+     {
+      "date": "04.09.2026",
+      "id": "2631278",
+      "status": "1",
+      "time": "00:30",
+      "player": [
+       {
+        "id": "9495",
+        "name": "A. Zverev",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       },
+       {
+        "id": "10769",
+        "name": "Q. Halys",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       }
+      ]
+     },
+     {
+      "date": "01.09.2026",
+      "id": "2629666",
+      "status": "Retired",
+      "time": "18:50",
+      "player": [
+       {
+        "game_score": "0",
+        "id": "39135",
+        "name": "D. Sweeny",
+        "s1": "7",
+        "s2": "6",
+        "s3": "3",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       },
+       {
+        "game_score": "0",
+        "id": "29531",
+        "name": "C. Moutet",
+        "s1": "6",
+        "s2": "4",
+        "s3": "0",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       }
+      ]
+     },
+     {
+      "date": "01.09.2026",
+      "id": "2629658",
+      "status": "Cancelled",
+      "time": "15:00",
+      "player": [
+       {
+        "id": "43103",
+        "name": "J. M. Cerundolo",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       },
+       {
+        "id": "32615",
+        "name": "C. Ruud",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "13442",
+    "name": "Wta - Singles: Us Open (Usa), Hard",
+    "match": [
+     {
+      "date": "03.09.2026",
+      "id": "2631454",
+      "status": "1",
+      "time": "23:00",
+      "player": [
+       {
+        "id": "4898",
+        "name": "P. Badosa",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       },
+       {
+        "id": "41078",
+        "name": "C. Gauff",
+        "s1": "",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "totalscore": "",
+        "winner": ""
+       }
+      ]
+     },
+     {
+      "date": "01.09.2026",
+      "id": "2629739",
+      "status": "Finished",
+      "time": "23:15",
+      "player": [
+       {
+        "game_score": "",
+        "id": "64301",
+        "name": "Z. Sonmez",
+        "s1": "3",
+        "s2": "4",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "game_score": "",
+        "id": "41078",
+        "name": "C. Gauff",
+        "s1": "6",
+        "s2": "6",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       }
+      ]
+     },
+     {
+      "date": "02.09.2026",
+      "id": "2629979",
+      "status": "Finished",
+      "time": "02:00",
+      "player": [
+       {
+        "game_score": "",
+        "id": "170189",
+        "name": "M. Stoiana",
+        "s1": "1",
+        "s2": "2",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "game_score": "",
+        "id": "58494",
+        "name": "A. Eala",
+        "s1": "6",
+        "s2": "6",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

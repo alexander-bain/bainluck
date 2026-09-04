@@ -399,6 +399,12 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # scoreboard to read, which is a different zero from "nothing is on".
         "scoreboard_pairings": 0,
         "scoreboard_priced": 0,
+        # ux/1048: and how many of them OPEN. Declared by `build_slate` at zero
+        # and filled by `apply_espn_event_links` in the route, because the
+        # answer needs a database and this builder is pure. Present-at-zero
+        # rather than absent: an absent key and a genuine zero are the same
+        # bytes to a reader, which is the confusion this whole shape guards.
+        "scoreboard_linked": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }

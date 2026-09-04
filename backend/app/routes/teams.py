@@ -5,6 +5,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.utils.event_completion import RECENT_RAIL_STATUSES
 from app.utils.lifecycle import served_event_status
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -95,7 +96,16 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # #1204: include 'closed'-settled, not just 'completed' — a settled
             # doubleheader game (and every source that closes rather than completes)
             # was orphaned from recent games (only 1 of 2 surfaced).
-            Event.status.in_(["completed", "closed"]),
+            #
+            # 🔴 AND `suspended` — live/056, the same omission #1204 describes
+            # one state later. `upcoming_q` above is live/scheduled gated on
+            # `now - 2h`; a match is suspended precisely because hours have
+            # passed. Between the two, a rain-delayed match was on NEITHER of
+            # its two teams' pages. `RecentGameCard` was taught the state in the
+            # same change — without that it would have graded the PARTIAL score
+            # as a result ("L 1–2"), which is the false Final live/048 removed,
+            # printed by a different component.
+            Event.status.in_(RECENT_RAIL_STATUSES),
             Event.commence_time >= now - timedelta(days=30),
         )
         .order_by(Event.commence_time.desc())
