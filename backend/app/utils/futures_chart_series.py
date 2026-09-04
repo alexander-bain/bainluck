@@ -66,6 +66,8 @@ the layering testable at the seam, which is the only place it can go wrong.
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Iterable, Optional, Sequence
 
@@ -255,6 +257,164 @@ def normalize_points(
             continue
         cleaned.setdefault(ts, p)
     return sorted(cleaned.items(), key=lambda p: p[0])
+
+
+# ---------------------------------------------------------------------------
+# Question identity — WHICH question, before WHOSE roster
+# ---------------------------------------------------------------------------
+
+#: Words that name the ANSWER SHAPE and never the question. Two markets that
+#: differ only in these words are the same question asked twice — "Winner" and
+#: "Champion" and "Outright" are three venues' words for one thing.
+#:
+#: Everything NOT in here is identity-bearing, which is the whole point: this is
+#: a subtraction list, not a similarity score, so a word nobody thought about
+#: (`polka`, `jersey`, `sprint`) keeps two questions apart by default.
+GENERIC_QUESTION_WORDS = frozenset({
+    "winner", "winners", "win", "wins", "won", "champion", "champions",
+    "championship", "championships", "title", "titles", "outright",
+    "outrights", "tournament", "tourney", "event", "election", "elections",
+    "singles", "doubles",
+    # Articles and joiners. `by` is here for "By-Election", which folds to two
+    # tokens; both venues spell it the same way, so dropping it is symmetric.
+    "a", "an", "the", "of", "to", "and", "at", "in", "for", "on", "by",
+})
+
+#: Words that name WHAT KIND OF COMPETITOR wins, which is an answer shape and
+#: not a question — "Italian Grand Prix Winner" and "Italian Grand Prix: Driver
+#: Winner" are one race.
+#:
+#: 🔴 THE COUNTERPARTS ARE DELIBERATELY ABSENT. `constructor`, `team`,
+#: `manufacturer` and `stable` are the OTHER answer to the same race and stay
+#: identity-bearing, so a drivers' market can never fold into a constructors'
+#: one. Never add a word here without checking that its counterpart is a word
+#: this set does not contain.
+COMPETITOR_ROLE_WORDS = frozenset({
+    "driver", "drivers", "rider", "riders", "golfer", "golfers",
+    "player", "players", "individual",
+})
+
+#: One office, two spellings. Venues name the same race differently often enough
+#: that a bare string comparison loses correct pairs — Kalshi writes "Ceará
+#: gubernatorial election winner?" for Polymarket's "Ceará Governor Election
+#: Winner". Folded BEFORE the generic words are subtracted.
+IDENTITY_SYNONYMS = {
+    "gubernatorial": "governor",
+    "mayoral": "mayor",
+    "presidential": "president",
+    "parliamentary": "parliament",
+    "senatorial": "senate",
+    "congressional": "congress",
+}
+
+#: Gender is fenced SEPARATELY from the tournament, because it is the one
+#: qualifier that two markets can differ on while sharing every other word: the
+#: men's and women's US Open titles both fold to `{us, open}`. ATP and WTA are
+#: gender words wearing a tour's name.
+GENDER_WORDS = {
+    "men": "men", "mens": "men", "man": "men", "male": "men", "atp": "men",
+    "women": "women", "womens": "women", "woman": "women", "female": "women",
+    "ladies": "women", "wta": "women",
+    "mixed": "mixed",
+}
+
+
+def _fold_question(text: str) -> list[str]:
+    """A market name as ASCII lowercase tokens. Apostrophes CLOSE, not split.
+
+    "Men's" must fold to `mens` and not to `men` + `s`: a one-letter token is
+    noise in every set operation below, and the possessive is the same word.
+    Handles the curly apostrophe too — Polymarket writes "Men’s", Kalshi writes
+    "Men's", and a fence that reads those as different questions is a fence that
+    fails on the exact pair it exists for.
+    """
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    ascii_text = "".join(c for c in decomposed if not unicodedata.combining(c))
+    ascii_text = ascii_text.replace("'", "").replace("’", "")
+    return [t for t in re.split(r"[^a-zA-Z0-9]+", ascii_text.lower()) if t]
+
+
+def _is_year(token: str) -> bool:
+    """A season stamp. One venue prints it, the other does not, always."""
+    return len(token) == 4 and token.isdigit() and token[:2] in ("19", "20")
+
+
+def question_identity(
+    name: Optional[str], *, category: Optional[str] = None
+) -> tuple[frozenset[str], Optional[str]]:
+    """WHICH question a market name asks: `(identity tokens, gender or None)`.
+
+    The tokens left after subtracting the words that describe an answer rather
+    than a question, the season, and the sport category — which carries no
+    information here because the caller has already fenced on it.
+
+        "US Open Men's Singles Winner"        -> ({us, open}, "men")
+        "2026 Men’s US Open Winner (Tennis)"  -> ({us, open}, "men")
+        "Cincinnati Open: Winner"             -> ({cincinnati, open}, None)
+
+    Gender comes out separately because it is the qualifier two markets can
+    differ on while every other word agrees.
+    """
+    tokens: set[str] = set()
+    gender: Optional[str] = None
+    category_tokens = set(_fold_question(category or ""))
+    for raw in _fold_question(name or ""):
+        token = IDENTITY_SYNONYMS.get(raw, raw)
+        if token in GENDER_WORDS:
+            gender = GENDER_WORDS[token]
+            continue
+        if token in GENERIC_QUESTION_WORDS or token in COMPETITOR_ROLE_WORDS:
+            continue
+        if _is_year(token) or token in category_tokens:
+            continue
+        tokens.add(token)
+    return frozenset(tokens), gender
+
+
+def same_question(
+    left: Optional[str], right: Optional[str], *, category: Optional[str] = None
+) -> bool:
+    """Do two market names ask the SAME question? The fence, and it is strict.
+
+    🔴 **WHY THIS EXISTS (CERT-881).** Cross-venue legs used to be chosen by
+    outcome-name overlap alone. Measured on production 2026-09-04, over the
+    exact population the fill task nominates, that picked the WRONG event four
+    times:
+
+        Kalshi US Open Men's Singles  -> Polymarket "Cincinnati Open: Winner"
+                                         (0.879, beating the real US Open's 0.826)
+        Kalshi Italian Grand Prix     -> Polymarket "Spanish Grand Prix" (1.000)
+        Polymarket Vuelta a Espana    -> Kalshi Vuelta POLKA DOT JERSEY (1.000)
+        Polymarket Berlin/Sachsen-Anhalt/Mecklenburg state elections
+                                      -> Kalshi Rhineland-Palatinate (1.000)
+
+    A roster is not an identity. Every tournament on a tour draws from one pool
+    of players, every Grand Prix from one grid, and every German state election
+    from one set of parties — so overlap approaches 1.0 exactly where it is most
+    wrong. `blend_venues()` then averages another event's prices into this
+    event's line, and the chart is denser and false.
+
+    EQUALITY, NOT CONTAINMENT. A candidate whose identity is a superset —
+    "Vuelta a Espana: Blue And White Polka Dot Jersey" over "Vuelta a Espana" —
+    is a DIFFERENT prize in the same race, and containment would admit it. The
+    cost of equality is the occasional correct pair refused when two venues
+    spell a race differently; that costs the chart one venue's density and never
+    costs it the truth, which is the right way round for this trade.
+
+    An empty identity on either side never matches: a name that folds to nothing
+    is a name this fence cannot vouch for.
+    """
+    left_tokens, left_gender = question_identity(left, category=category)
+    right_tokens, right_gender = question_identity(right, category=category)
+    if not left_tokens or not right_tokens:
+        return False
+    if left_tokens != right_tokens:
+        return False
+    # An unstated gender is not a contradiction — "Cincinnati Open: Winner"
+    # names no draw and is refused on its tokens, not on this.
+    if left_gender and right_gender and left_gender != right_gender:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
