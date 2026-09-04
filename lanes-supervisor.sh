@@ -79,6 +79,18 @@ while true; do
     G="$ALIVE"
     while [ "$G" -lt "$LANE4_GRADERS" ]; do launch "$LANE4_RUNNER"; G=$((G + 1)); done
   fi
+  # The measurement bus — exactly one (lanes.conf). Supervised for the same
+  # reason the graders are, and it matters more over a weekend than on a weekday:
+  # the bus is the instrument the heartbeats read, so a bus that dies unattended
+  # on Saturday is a hole in the record nobody notices until Monday. Guarded on
+  # existence so an older checkout without the script supervises everything else
+  # normally instead of looping on a relaunch that cannot work.
+  if [ -n "${BUS_RUNNER:-}" ] && [ -f "$BUS_RUNNER" ]; then
+    if [ "$(count_running "$BUS_RUNNER")" -eq 0 ]; then
+      echo "[supervisor] $(date '+%H:%M:%S') measurement bus is not running — relaunching"
+      launch "$BUS_RUNNER"
+    fi
+  fi
   [ "$DRYRUN" -eq 1 ] && { echo "[dry-run] one pass done, exiting"; exit 0; }
   sleep 300
 done
