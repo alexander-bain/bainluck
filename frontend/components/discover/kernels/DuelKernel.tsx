@@ -11,6 +11,7 @@
  * Shape `duel` → kernel `split` (see lib/marketShape.ts).
  */
 
+import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { KernelCard, type KernelState, type KernelGrade } from "./KernelCard";
 import type { AngleValue } from "./AngleBadge";
 import { CATEGORY_GRADIENTS } from "../constants";
@@ -44,8 +45,12 @@ export interface DuelKernelProps {
   winner?: "home" | "away" | null;
 }
 
+// UX-1065 (#2936): the crest fallback took the LAST word, so "Altrincham FC"
+// and "Hartlepool United FC" both painted "FC" — two identical crests on one
+// card. Taking three characters of the pair-aware short name instead gives
+// "ALT" and "HAR", and leaves "Los Angeles Lakers" -> "LAK" unchanged.
 function abbr(team: string): string {
-  return (team.split(" ").pop() || "").slice(0, 3).toUpperCase();
+  return teamShortName(team).slice(0, 3).toUpperCase();
 }
 
 function Crest({ team, color, logo, score, show }: { team: string; color: string; logo?: string | null; score?: number | null; show: boolean }) {
@@ -126,7 +131,11 @@ export function DuelKernel(props: DuelKernelProps) {
       {settled && winner && (
         <div className="mt-0.5 flex items-center gap-2">
           <span className="text-sm font-semibold text-text-primary">
-            {(winner === "home" ? homeTeam : awayTeam).split(" ").pop()} won
+            {/* UX-1065 (#2936): pair-aware, so this can never read "FC won". */}
+            {(() => {
+              const pair = teamShortNames({ name: homeTeam }, { name: awayTeam });
+              return winner === "home" ? pair.home : pair.away;
+            })()} won
           </span>
           <span className="rounded bg-accent-live/15 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-accent-live">Final</span>
         </div>

@@ -16,6 +16,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   isFinishedStatus,
@@ -208,9 +209,13 @@ export default function EventCard({
   const homeFlagUrl = showFlags ? flagUrl(event.home_team) : null;
   const awayFlagUrl = showFlags ? flagUrl(event.away_team) : null;
 
-  // Short team names (last word) for compact display
-  const homeShort = event.home_team.split(" ").pop() || event.home_team;
-  const awayShort = event.away_team.split(" ").pop() || event.away_team;
+  // Short team names for compact display. UX-1065 (#2936): the last word alone
+  // renders "Town" for Ipswich Town and "FC" for both sides of an FC-vs-FC
+  // fixture, so the pair is decided together in `lib/teamShortName.ts`.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
+    { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+  );
 
   return (
     // UX-P083 (#1860) / UX-P154: the stable hook the browser rail counts and the

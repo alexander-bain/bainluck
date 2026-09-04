@@ -83,6 +83,7 @@ import {
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
+import { teamShortNames } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources } from "@/lib/confidence";
@@ -599,6 +600,15 @@ export default function EventPage({ params }: EventPageProps) {
       Math.abs(homeProb - openingHomeProb) > 0.001,
   });
 
+  // UX-1065 (#2936): the hero's compact team names. Decided for BOTH sides at
+  // once so the pair can never read "IPS vs Liverpool" or "FC vs FC" — see
+  // `lib/teamShortName.ts`. Before this, the hero applied `split(" ").pop()`
+  // per side and named Ipswich Town "Town" three times on one page.
+  const heroShortNames = teamShortNames(
+    { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
+    { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+  );
+
   // L2-112 Item 1: settled events get a winner treatment (final score + winner
   // chip), NOT a stale pregame percentage. Mirrors the futures settled-hero rule
   // (FuturesHero.tsx) — the probability journey stays in the chart below.
@@ -946,7 +956,7 @@ export default function EventPage({ params }: EventPageProps) {
                 sportKey={event.sport}
                 className="text-xs font-semibold text-text-primary hover:underline"
               >
-                {event.home_team.split(" ").pop()}
+                {heroShortNames.home}
               </TeamNameLink>
               {(event.standings_context?.home || event.home_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">
@@ -1003,7 +1013,7 @@ export default function EventPage({ params }: EventPageProps) {
                 const delta = homeProb - openingHomeProb;
                 const absDelta = Math.abs(delta);
                 if (absDelta < 0.01) return null; // Less than 1% change — not meaningful
-                const homeShort = event.home_team.split(" ").pop() || event.home_team;
+                const homeShort = heroShortNames.home;
                 const isPositive = delta > 0;
                 return (
                   <div className="flex items-center gap-1.5 mt-2">
@@ -1108,7 +1118,7 @@ export default function EventPage({ params }: EventPageProps) {
                 sportKey={event.sport}
                 className="text-xs font-semibold text-text-primary hover:underline"
               >
-                {event.away_team.split(" ").pop()}
+                {heroShortNames.away}
               </TeamNameLink>
               {(event.standings_context?.away || event.away_team_data?.record) && (
                 <span className="text-[11px] text-text-muted">

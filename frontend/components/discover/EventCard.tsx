@@ -1,5 +1,6 @@
 "use client";
 
+import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
@@ -146,12 +147,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         {isLive && <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />LIVE</div>}
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{(data.away_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}</div>}
+          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamShortName(data.away_team).slice(0, 3).toUpperCase()}</div>}
           {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{(data.home_team.split(" ").pop() || "").slice(0, 3).toUpperCase()}</div>}
+          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{teamShortName(data.home_team).slice(0, 3).toUpperCase()}</div>}
           {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>
@@ -217,7 +218,15 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             {data.home_score != null && data.away_score != null && data.home_score !== data.away_score && (
               <span className="text-sm font-semibold text-text-primary">
-                {(data.home_score > data.away_score ? data.home_team : data.away_team).split(" ").pop()} won
+                {/* UX-1065 (#2936): the winner is named by the pair-aware short
+                    name, so this sentence can never read "FC won". */}
+                {(() => {
+                  const pair = teamShortNames(
+                    { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
+                    { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
+                  );
+                  return data.home_score > data.away_score ? pair.home : pair.away;
+                })()} won
               </span>
             )}
             <span className="text-[11px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-accent-live/15 text-accent-live">Final</span>
