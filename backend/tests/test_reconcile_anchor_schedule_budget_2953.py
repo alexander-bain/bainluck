@@ -118,6 +118,53 @@ def _wire(monkeypatch, rows, *, eligible, remaining, clock=None):
         monkeypatch.setattr(rail, "_time", clock)
 
 
+class TestTheRouterBoundStaysOffTheBatchCaller:
+    """A bound built for the endpoint must not silently shrink the sweep.
+
+    `reconcile`'s defaults describe the ONE caller behind Heroku's 30-second
+    router. The nightly sentinel runs in a Celery worker with its own 300s
+    deadline and no router at all, so inheriting either default costs it reach
+    it never needed to give up: at `limit=25` the 12-page cap binds first and a
+    night covers 300 rows instead of ~500, and at `budget_seconds=18` every
+    100-row page would be cut at ~30.
+
+    Both were live regressions in the first draft of #2953 — the shared
+    constant was doing two jobs, and shrinking it for one silently shrank the
+    other.
+    """
+
+    def test_the_sweep_does_not_inherit_the_routers_page_size(self):
+        from app.tasks import anchor_schedule_sentinel as sweep
+
+        assert sweep.SWEEP_PAGE_LIMIT > rail.DEFAULT_LIMIT
+
+    def test_the_sweep_page_cap_is_not_what_bounds_a_night(self):
+        """The deadline should bind before the page cap, or reach is left unused."""
+        from app.tasks import anchor_schedule_sentinel as sweep
+
+        seconds_per_page = sweep.SWEEP_PAGE_LIMIT * 0.59
+        pages_the_deadline_allows = sweep.DEFAULT_DEADLINE_SECONDS / seconds_per_page
+        assert pages_the_deadline_allows < sweep.DEFAULT_MAX_PAGES
+
+    def test_the_sweeps_per_page_budget_clears_a_full_page(self):
+        """Otherwise `reconcile` truncates every page and the cap returns."""
+        from app.tasks import anchor_schedule_sentinel as sweep
+
+        assert sweep.SWEEP_PAGE_BUDGET_SECONDS > sweep.SWEEP_PAGE_LIMIT * 0.59
+
+    def test_the_sweep_passes_its_own_budget_rather_than_taking_the_default(self):
+        """The wiring, not just the constants: a constant nobody passes is a comment."""
+        import inspect
+
+        from app.tasks import anchor_schedule_sentinel as sweep
+
+        source = inspect.getsource(sweep)
+        assert "budget_seconds=SWEEP_PAGE_BUDGET_SECONDS" in source
+        # And the router's constant is no longer imported here at all, so it
+        # cannot come back as a default by accident.
+        assert "DEFAULT_LIMIT," not in source
+
+
 class TestTheDefaultLimitIsMeasured:
     """The constant, and the arithmetic that let the wrong one stand."""
 

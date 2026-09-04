@@ -811,6 +811,7 @@ async def reconcile(
     horizon: timedelta = DEFAULT_HORIZON,
     cursor: Optional[str] = None,
     exclude_sports: frozenset[str] = frozenset(),
+    budget_seconds: float = EXAMINE_BUDGET_SECONDS,
 ) -> dict[str, Any]:
     """Ask the authority about every anchored near-future row's kickoff.
 
@@ -822,10 +823,18 @@ async def reconcile(
 
     ═══ PAGING, AND THE ONE WORD A PAGE MAY NOT SAY ═══
 
-    ``limit`` is a router-timeout bound well under the population (100 against
+    ``limit`` is a router-timeout bound well under the population (25 against
     685), so an unattended sweep is necessarily several calls. ``next_cursor``
     makes them *consecutive* instead of each restarting at the oldest row; pass
     it back as ``cursor`` until it comes back ``None``.
+
+    ``budget_seconds`` is the wall clock that actually ends a page, and its
+    default is sized for **the HTTP caller**, which is the only one facing a
+    30-second router. A caller that is NOT behind a router — the nightly
+    sentinel runs in a Celery worker with its own 300s deadline — must say so by
+    passing its own, or it silently inherits a bound built for somebody else's
+    constraint and pages a third as far as it could. Both defaults on this
+    function describe the admin endpoint; batch callers declare their own.
 
     Three counts, and they are three different questions:
 
@@ -924,7 +933,7 @@ async def reconcile(
         # answered row: `rows[-1]` below is what builds `next_cursor`, and a
         # page that examined nothing would have no cursor to hand its
         # successor and would loop the driver forever on the same page.
-        if _time.monotonic() - started_at >= EXAMINE_BUDGET_SECONDS:
+        if _time.monotonic() - started_at >= budget_seconds:
             stopped_by = "budget"
             break
 
