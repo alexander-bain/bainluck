@@ -1271,7 +1271,36 @@ def free_background_slots(
 #: chart beat names its queue rather than defaulting into it, the benign
 #: direction this guard reserves. All prior lanes' cost declarations above remain
 #: accurate as written.
-BACKGROUND_BEAT_COUNT = 115
+#: 🔴 RE-DERIVED at authority/015 (2026-09-04, #2867 / D50 step 3): **115 → 117,
+#: explicit 70 → 72.** Two beats, one per sport, both explicitly routed here:
+#: `stamp-nba-statpal-fixtures-hourly` at `crontab(minute=17)` and
+#: `stamp-nhl-statpal-fixtures-hourly` at `crontab(minute=19)`. RE-DERIVED by
+#: RUNNING the census in `test_typeahead_beat_budget.py` over the assembled
+#: `beat_schedule`, which printed `explicit 72 implicit 45 total 117` — not by
+#: adding 2 to 115 (#1910), which would have been right only by luck. The
+#: fall-through half is UNMOVED at **45**: both beats name their queue rather
+#: than defaulting into it, the benign direction this guard reserves.
+#:
+#: THEIR COST, declared here because this is where costs are declared. Per pass,
+#: per sport: TWO HTTP reads (StatPal `season-schedule` — the whole season in one
+#: call, 1206 NBA and 1404 NHL games measured 2026-09-04 — and `livescores`,
+#: which is legitimately empty until the seasons open 9/19 and 10/3), plus ONE
+#: indexed candidate query bounded to one hour either side of the outermost start
+#: StatPal served. Measured against production the same day, that query returns
+#: **41 NBA rows and 32 NHL rows**; it does not walk the events table and its cost
+#: does not grow with the season.
+#:
+#: `background` rather than `heavy` because there is no multi-minute compute here,
+#: and rather than `realtime` for the same reason as the NFL stamper above:
+#: NOTHING READS THE STAMP YET. It is identity written dark under D50, and a beat
+#: with no reader has no claim on the live queue.
+#:
+#: The two minutes were chosen by running the minute census over the assembled
+#: schedule (CERT-418's lesson), not by reading the file: `:17` and `:19` each
+#: carry zero other crontab fires, sit outside the settlement sweep's `:31`–`:47`
+#: window, and share a minute with neither each other nor the NFL stamper at
+#: `:23` — so no two StatPal readers ever run together.
+BACKGROUND_BEAT_COUNT = 117
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
