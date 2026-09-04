@@ -3,7 +3,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { Event } from "@/lib/types";
-import { prematchReading, prematchSourceLegend } from "@/lib/prematchReading";
 import EventCard from "./EventCard";
 
 /**
@@ -121,21 +120,6 @@ export default function LeagueGameRail({
     ) : null;
   }
 
-  // THE LEGEND FOR THE MARK THE CARDS DREW (D57 / ux/1053). A settled card
-  // prints `†` beside a pre-match number that came from a sportsbook median
-  // rather than a prediction market, and D57's shape is "a mark on the number,
-  // and a note below saying what the mark means". The rail counts what its OWN
-  // cards will mark, using the same reader they use, so the note can never
-  // describe a mark that is not on screen — or miss one that is.
-  const markedCards = events.filter(
-    (event) =>
-      prematchReading({
-        prematch_odds: event.prematch_odds,
-        opening_odds: event.opening_odds,
-      })?.marker != null,
-  ).length;
-  const sourceLegend = settled ? prematchSourceLegend(markedCards) : "";
-
   return (
     <section data-section-key={settled ? "results" : "games"} aria-label={title}>
       {header ?? (
@@ -200,12 +184,13 @@ export default function LeagueGameRail({
           )}
         </p>
       )}
-      {sourceLegend && (
-        <p className="mt-1 text-xs text-text-muted" data-testid="rail-prematch-source-note">
-          The grey figure beside a name is what the market gave that team before
-          the game started. {sourceLegend}
-        </p>
-      )}
+      {/* THE LEGEND WAS HERE (D57 corrected, Alex 2026-09-03 4:15pm).
+          ux/1053 gave this rail a note counting the `†` marks its cards drew —
+          "N of them are a sportsbook opening rather than a prediction
+          market's". Alex struck the marks and the claim together: *"We don't
+          need to say anything about sportsbooks."* The rail draws
+          `EventCard`s, the cards carry the treatment, and a section that has to
+          explain its own numbers in a footnote has the wrong treatment. */}
     </section>
   );
 }

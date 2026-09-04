@@ -27,10 +27,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import FeedCard from "@/components/FeedCard";
 import { EventCard as DiscoverEventCard } from "@/components/discover/EventCard";
 import type { FeedEventData, FeedItem } from "@/lib/types";
-import {
-  PREMATCH_SOURCE_MARKER,
-  PREMATCH_SOURCE_TOOLTIP,
-} from "@/lib/prematchReading";
+import { PREMATCH_NUMBER_CLASS } from "@/lib/prematchReading";
 import { visibleTextFromHtml } from "@/lib/copyBans";
 
 jest.mock("next/link", () => {
@@ -102,6 +99,21 @@ function printedPercent(html: string, testid: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/**
+ * WHAT A SIGHTED READER GETS — `visibleTextFromHtml` minus the `sr-only` spans.
+ *
+ * The D57-corrected symmetry guard needs this because the two rungs are
+ * deliberately NOT identical to a screen reader: the spoken clause still names
+ * its rung ("sportsbooks opened" vs "the market gave"), which is CERT-812's
+ * repair and survives the correction. What Alex struck is the caveat a sighted
+ * reader can see. Comparing raw visible text would fail on the one difference
+ * that is supposed to be there, so the guard strips exactly that and compares
+ * the rest — the pixels.
+ */
+function sightedText(html: string): string {
+  return visibleTextFromHtml(html.replace(/<span class="sr-only">[\s\S]*?<\/span>/g, " "));
+}
+
 // CARRIES BOTH RUNGS ON PURPOSE. `opening_odds` is present on most settled
 // events (36 of the 40 most recent finals, production 2026-09-03), so a fixture
 // without it would make the "drops the Opened footnote" assertion vacuous — the
@@ -158,31 +170,77 @@ describe("the /sports FINAL card", () => {
     expect(html).toContain("Won as 40% underdog");
   });
 
-  it("marks a sportsbook reading, in a footnote mark and never the word", () => {
-    // Alex: "labelled when not a prediction market." D57 kept the distinction
-    // and took the word away — this used to assert the literal string
-    // "Pre-match · books", which is the thing Alex read on the hub and asked
-    // us to stop printing.
+  it("prints a sportsbook reading EXACTLY as it prints a market one", () => {
+    // ═══ D57 AS CORRECTED (Alex, 2026-09-03 4:15pm) ═══
+    //
+    // This assertion has been three different things in one day. It asserted
+    // the literal string "Pre-match · books"; then, when Alex read that on the
+    // hub, it asserted a `†` and a "from sportsbooks" tooltip. Alex on round
+    // two: *"We don't need to say anything about sportsbooks … just show the
+    // %."* So the caveat is struck, not re-worded, and the guard inverts: the
+    // two rungs must be INDISTINGUISHABLE to a reader.
+    //
+    // SYMMETRY IS THE ASSERTION, and it is why both fixtures carry 60/40. A
+    // pair of one-sided `not.toContain`s would pass against a card that had
+    // simply lost the mark on both rungs for an unrelated reason; comparing the
+    // two renders' visible text catches any future per-rung branch whatever
+    // costume it arrives in — a word, a glyph, a colour word, a caption.
     const booksRung = renderFeedCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
+    const marketRung = renderFeedCard(
+      makeData({
+        prematch_odds: {
+          home_probability: 0.6,
+          away_probability: 0.4,
+          home_rendered_percent: 60,
+          away_rendered_percent: 40,
+          source: "kalshi",
+        },
+      } as Partial<FeedEventData>)
+    );
 
     expect(printedPercent(booksRung, "feed-card-prematch-home")).toBe(60);
-    expect(booksRung).toContain(PREMATCH_SOURCE_MARKER);
-    expect(booksRung).toContain(PREMATCH_SOURCE_TOOLTIP);
-    // THE D57 ASSERTION ITSELF, on the rendered text rather than on the
-    // constant — `visibleTextFromHtml` strips attributes, so the payload's own
+    expect(printedPercent(marketRung, "feed-card-prematch-home")).toBe(60);
+    expect(sightedText(booksRung)).toBe(sightedText(marketRung));
+
+    // And named individually, because "identical" would also be satisfied by
+    // both arms carrying the mark. These are the three things D57 round one
+    // shipped, each asserted gone.
+    expect(booksRung).not.toContain("†");
+    expect(booksRung).not.toContain("from sportsbooks");
+    expect(sightedText(booksRung)).not.toMatch(/\bPre-match\b/);
+    // The word itself, on the rendered text rather than on a constant —
+    // `visibleTextFromHtml` strips attributes, so the payload's own
     // `data-prematch-source="books"` is exempt exactly as the copy gate has it.
-    // The data contract keeps the id; the reader never sees it.
     expect(visibleTextFromHtml(booksRung)).not.toMatch(/\bbooks\b/i);
 
-    // The control arm: a prediction-market rung wears no mark and no tooltip,
-    // so the mark still means something when it does appear.
-    const marketRung = renderFeedCard(KALSHI_FINAL);
-    expect(marketRung).not.toContain(PREMATCH_SOURCE_MARKER);
-    expect(marketRung).not.toContain(PREMATCH_SOURCE_TOOLTIP);
+    // THE DATA CONTRACT SURVIVES THE COPY. A cert still has to be able to ask
+    // which rung a figure came from; what it may not do is read the answer off
+    // the pixels. Deleting the attribute with the caption would have made this
+    // correction unverifiable.
+    expect(booksRung).toContain('data-prematch-source="books"');
+    expect(marketRung).toContain('data-prematch-source="kalshi"');
+  });
+
+  it("draws the number in the ONE shared treatment, on both rungs", () => {
+    // Alex: *"we've solved that problem on event cards elsewhere … find it,
+    // reuse it, do not invent a third."* The treatment is the whole of what
+    // makes a pre-match figure legible as one, now that no word does it, so
+    // the class list is asserted rather than assumed — and asserted from the
+    // exported constant, so a surface cannot drift by editing its own copy.
+    for (const html of [
+      renderFeedCard(KALSHI_FINAL),
+      renderFeedCard(
+        makeData({
+          opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
+        })
+      ),
+    ]) {
+      expect(html).toContain(PREMATCH_NUMBER_CLASS);
+    }
   });
 
   it("says which rung the spoken sentence is quoting, not just the visible label", () => {
@@ -260,23 +318,38 @@ describe("the Discover FINAL card", () => {
     expect(html).toContain("Padres won");
   });
 
-  it("marks a sportsbook reading here too, and still never the word", () => {
-    const html = renderDiscoverCard(
+  it("prints both rungs identically here too (D57 corrected)", () => {
+    const books = renderDiscoverCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
+    const market = renderDiscoverCard(
+      makeData({
+        prematch_odds: {
+          home_probability: 0.6,
+          away_probability: 0.4,
+          home_rendered_percent: 60,
+          away_rendered_percent: 40,
+          source: "kalshi",
+        },
+      } as Partial<FeedEventData>)
+    );
 
-    expect(html).toContain(PREMATCH_SOURCE_MARKER);
-    expect(html).toContain(PREMATCH_SOURCE_TOOLTIP);
-    expect(visibleTextFromHtml(html)).not.toMatch(/\bbooks\b/i);
+    expect(sightedText(books)).toBe(sightedText(market));
+    expect(books).not.toContain("†");
+    expect(books).not.toContain("from sportsbooks");
+    expect(visibleTextFromHtml(books)).not.toMatch(/\bbooks\b/i);
+    expect(books).toContain('data-prematch-source="books"');
 
-    // This card renders the "Pre-match" caption on BOTH rungs, so the control
-    // arm is the tooltip and the mark, not the caption's absence.
-    const marketRung = renderDiscoverCard(KALSHI_FINAL);
-    expect(marketRung).toContain("Pre-match");
-    expect(marketRung).not.toContain(PREMATCH_SOURCE_MARKER);
-    expect(marketRung).not.toContain(PREMATCH_SOURCE_TOOLTIP);
+    // THE CAPTION STAYS, AND IS THE SAME CAPTION ON BOTH ARMS. This card has no
+    // score column for the grey figures to contrast against, so the word
+    // "Pre-match" is carrying the tense here — Alex's ask was that the tense be
+    // clear. What it may not do is vary by rung, which is what the conditional
+    // tooltip made it do.
+    expect(books).toContain("Pre-match");
+    expect(market).toContain("Pre-match");
+    expect(books).toContain(PREMATCH_NUMBER_CLASS);
   });
 
   it("and says so in the spoken sentence too, not only the label", () => {

@@ -25,7 +25,7 @@ import {
 import {
   isPredictionMarketSource,
   prematchReading,
-  PREMATCH_SOURCE_TOOLTIP,
+  PREMATCH_NUMBER_CLASS,
 } from "@/lib/prematchReading";
 
 type SourceSection = 'featured' | 'sport_category' | 'recently_finished' | 'archived' | 'search_results' | 'pinned' | 'my_stuff';
@@ -95,18 +95,18 @@ function AnimatedProbability({
 //
 // Grey on BOTH rows, winner included, and that is a rule rather than a shade:
 // bold on a settled card means "this is what happened", and a prior is the
-// opposite of that. Same treatment ux/1036 shipped on `FeedCard`.
+// opposite of that. The treatment is `PREMATCH_NUMBER_CLASS` and is no longer
+// spelled out here — "same treatment ux/1036 shipped on `FeedCard`" was a
+// comment claiming a shared answer over two copies of a class list, and the two
+// copies drifted from the hub's third.
 //
 // `null` renders NOTHING. A settled game we hold no pre-match reading for shows
 // an empty slot, never a fabricated figure — the same refusal the rail already
 // makes for an unpriced fixture (#1776 / register E2).
 //
-// THE MARK RIDES THE NUMBER, and it does not add a line. D57 made the caveat a
-// footnote mark precisely so it could sit on the figure it qualifies; the
-// tournament hub already draws it this way, and `LeagueGameRail` prints the
-// legend the mark points at below the grid. `aria-hidden` on the mark alone —
-// the sr-only clause above it has already said "sportsbooks opened" in words,
-// so a screen reader hears the rung once.
+// NO MARK RIDES THE NUMBER (D57 corrected). This card carried a dagger with a
+// "from sportsbooks" tooltip; Alex overruled the whole caveat, not its wording.
+// The rung survives as `data-prematch-source` and in the spoken clause.
 function PrematchPercent({
   reading,
   side,
@@ -124,7 +124,7 @@ function PrematchPercent({
     side === "home" ? reading.homeProbability : reading.awayProbability;
   return (
     <span
-      className="flex-shrink-0 font-mono tabular-nums text-[11px] text-text-muted"
+      className={`flex-shrink-0 ${PREMATCH_NUMBER_CLASS}`}
       data-testid={`event-card-prematch-${side}`}
       data-prematch={probability}
       data-prematch-source={reading.source}
@@ -133,15 +133,6 @@ function PrematchPercent({
         {said} {team}{" "}
       </span>
       {percent}%
-      {reading.marker && (
-        <sup
-          aria-hidden="true"
-          title={PREMATCH_SOURCE_TOOLTIP}
-          className="ml-0.5 text-[9px] font-medium text-text-muted"
-        >
-          {reading.marker}
-        </sup>
-      )}
     </span>
   );
 }

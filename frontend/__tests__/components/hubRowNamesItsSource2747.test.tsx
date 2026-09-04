@@ -40,10 +40,28 @@
  *
  * The 222 market slots carry `prematch_source: null`, because the live payload
  * was served by master, where `_prematch_by_pair` predates the field. That is the
- * rollout / cached-payload path and it is the one that must NOT acquire a books
- * marker — absent means "a prediction-market opening", never "unknown rung". The
- * explicit `kalshi` / `polymarket` values get their own arm below, written the
- * way `_prematch_by_pair` writes them.
+ * rollout / cached-payload path and it is the one that must NOT be spoken as a
+ * sportsbook opening — absent means "a prediction-market opening", never
+ * "unknown rung". The explicit `kalshi` / `polymarket` values get their own arm
+ * below, written the way `_prematch_by_pair` writes them.
+ *
+ * ═══ D57 CORRECTED (Alex, 2026-09-03 4:15pm) — THE VISIBLE HALF IS STRUCK ═══
+ *
+ * CERT-812 required attribution "for visible and spoken". This file shipped
+ * both: a `†` on the figure with a "from sportsbooks" tooltip, and the rung's
+ * own spoken clause. Alex overruled the visible half outright:
+ *
+ *   > We don't need to say anything about sportsbooks. Our whole product is
+ *   > probabilities and how they're moving. Just show the %.
+ *
+ * So this file now guards the OPPOSITE of what it guarded this morning on the
+ * visible register, and the SAME thing on the spoken one — which is the honest
+ * shape of the correction. CERT-812's real complaint was that a screen-reader
+ * user heard "the market gave" over a sportsbook median; that is still fixed
+ * and still asserted here. What is gone is the glyph a sighted reader saw, and
+ * the tests that demanded it are inverted rather than deleted: a struck caveat
+ * with no guard is a caveat that grows back, which is the lesson `BOOKS_MARKER`
+ * taught `lib/tournamentResults.ts` twice in one day.
  */
 
 import React from "react";
@@ -52,17 +70,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import {
   prematchAttribution,
-  prematchSourceNote,
   type ResultPlayer,
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
-/* D57: `PREMATCH_SOURCE_MARKER` is gone from `tournamentResults` — the hub imports the
-   shared marker now, so this file asserts against the same one constant every
-   surface renders rather than against a hub-private copy of it. */
+/* D57 CORRECTED: there is no marker constant to import any more. What the hub
+   shares with the three card surfaces is the TREATMENT — one class list, one
+   owner — which is what replaced the caveat and is asserted below. */
 import {
   isPredictionMarketSource,
-  PREMATCH_SOURCE_MARKER,
+  PREMATCH_NUMBER_CLASS,
 } from "@/lib/prematchReading";
 
 import hub from "../fixtures/tournamentHubBooksRung.20260903T0310Z.json";
@@ -94,8 +111,8 @@ function render(
 }
 
 /**
- * Depth-counted rather than a lazy `[\s\S]*?` — the prior cell CONTAINS spans
- * (the clause and the marker), so a non-greedy match closes on the first inner
+ * Depth-counted rather than a lazy `[\s\S]*?` — the prior cell CONTAINS a span
+ * (the sr-only clause), so a non-greedy match closes on the first inner
  * `</span>` and silently drops cells. My first run yielded 9 where the markup
  * declared 10, which is why `priorsChecked` exists.
  */
@@ -125,7 +142,13 @@ function cellsOf(html: string, testid: string): string[] {
 }
 
 /**
- * Every rendered prior, as a `(source, marker, clause, subject)` TUPLE.
+ * Every rendered prior, as a `(source, seen, clause, subject)` TUPLE.
+ *
+ * `seen` is what a SIGHTED reader gets from the cell — its text with the
+ * `sr-only` clause removed. It replaces the old `marker` field, and it is the
+ * better probe: `marker` could only ever go red on the one glyph it named,
+ * while `seen` goes red on any per-rung visible difference at all, including
+ * the next one someone invents.
  *
  * Read off the prior cell itself and not off free text, for the reason
  * ux/1016's lesson #6 gives: a `toContain` on "sportsbooks opened" is satisfied
@@ -142,15 +165,17 @@ function cellsOf(html: string, testid: string): string[] {
  */
 function priors(html: string): Array<{
   source: string | null;
-  marker: string | null;
+  seen: string;
   clause: string | null;
   said: string | null;
 }> {
   return cellsOf(html, "result-prematch").map((cell) => {
     const sourceMatch = cell.match(/data-prematch-source="([^"]*)"/);
-    const markerMatch = cell.match(
-      /data-testid="result-prematch-marker"[^>]*>([^<]*)</,
-    );
+    const seen = cell
+      .replace(/<span class="sr-only">[\s\S]*?<\/span>/g, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
     const saidMatch = cell.match(/class="sr-only">([^<]*)</);
     const said = saidMatch ? saidMatch[1].trim() : null;
     let clause: string | null = null;
@@ -158,7 +183,7 @@ function priors(html: string): Array<{
     else if (said?.startsWith(MARKET_SAID)) clause = MARKET_SAID;
     return {
       source: sourceMatch ? sourceMatch[1] : null,
-      marker: markerMatch ? markerMatch[1].trim() : null,
+      seen,
       clause,
       said,
     };
@@ -276,13 +301,30 @@ function allRendered() {
   ];
 }
 
-describe("SHIP — a books prior says so, in both registers", () => {
-  test("the VISIBLE marker lands on exactly the books slots", () => {
+describe("SHIP — the rung is spoken and never shown (D57 corrected)", () => {
+  test("NOTHING VISIBLE separates a books cell from a market one", () => {
+    // This is the inversion. It used to demand a `†` on exactly the 122 books
+    // slots; Alex struck the caveat, so the assertion is that all 344 cells
+    // print a bare percent and nothing else.
+    //
+    // WHY A SHAPE AND NOT A `not.toContain("†")`. A negative on one glyph is
+    // green against the next costume the distinction wears — a word, a colour
+    // word, an asterisk, a "(sb)". `/^\d+%$/` over every cell is the claim
+    // Alex actually made: just show the %.
     const rows = allRendered();
-    expect(rows.filter((r) => r.marker === PREMATCH_SOURCE_MARKER)).toHaveLength(
-      EXPECTED_BOOKS_SLOTS,
-    );
-    expect(rows.filter((r) => r.marker !== null)).toHaveLength(EXPECTED_BOOKS_SLOTS);
+    expect(rows).toHaveLength(EXPECTED_BOOKS_SLOTS + EXPECTED_MARKET_SLOTS);
+    const notBare = rows.filter((r) => !/^\d+%$/.test(r.seen));
+    expect(notBare).toHaveLength(0);
+  });
+
+  test("and the books cells are drawn in the SAME treatment as the rest", () => {
+    // Alex: "find it, reuse it, do not invent a third." The hub had invented
+    // its own (12px, text-text-secondary, no mono) while the three card
+    // surfaces shared one; it now renders the shared constant.
+    const html = render("mens-singles");
+    expect(html).toContain(PREMATCH_NUMBER_CLASS);
+    // The old hub-private treatment, named so this cannot silently return.
+    expect(html).not.toContain("text-[12px] tabular-nums text-text-secondary");
   });
 
   test("the SPOKEN clause names sportsbooks on exactly the books slots", () => {
@@ -306,14 +348,17 @@ describe("SHIP — a books prior says so, in both registers", () => {
     expect(wrong).toHaveLength(0);
   });
 
-  test("CONTROL (green on the parent too) — marker and clause never disagree", () => {
-    // Arm-independent by design: on the parent nothing is marked and every
-    // clause is the market one, so the biconditional holds there as well. It is
-    // here to catch a HALF-fix — counter-cases (A) and (B) below ship exactly
-    // one of the two registers, and this is the test that refuses both.
-    for (const row of allRendered()) {
-      expect(row.marker === PREMATCH_SOURCE_MARKER).toBe(row.clause === BOOKS_SAID);
-    }
+  test("CONTROL — the spoken clause still splits the population it always did", () => {
+    // The half-fix this refuses: deleting the visible caveat AND the spoken
+    // one, which would hand CERT-812's defect straight back to the reader who
+    // cannot see the layout. The counts are the fixture's, so this arm is
+    // independent of anything the render decides.
+    const rows = allRendered();
+    const spoken = new Set(rows.map((r) => r.clause));
+    expect(spoken).toEqual(new Set([BOOKS_SAID, MARKET_SAID]));
+    expect(rows.filter((r) => r.clause === BOOKS_SAID)).toHaveLength(
+      EXPECTED_BOOKS_SLOTS,
+    );
   });
 
   test("the rung reaches the DOM as a queryable fact on the cell", () => {
@@ -324,7 +369,7 @@ describe("SHIP — a books prior says so, in both registers", () => {
 // ────────────────────── THE CONTROL ARM: prediction market ──────────────────
 
 describe("CONTROL — a prediction-market prior renders exactly as it always did", () => {
-  test("a market-only player never hears sportsbooks and never gets a marker", () => {
+  test("a market-only player never hears sportsbooks", () => {
     const allowed = allowedClauses();
     const marketOnly = allRendered().filter((r) => {
       const permitted = allowed.get(subjectOf(r));
@@ -336,8 +381,8 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     // number is the useful one, and the gap is what proves the binding test
     // above is doing work a count could not (ux/1016's lesson #5).
     expect(marketOnly).toHaveLength(154);
-    expect(marketOnly.every((r) => r.marker === null)).toBe(true);
     expect(marketOnly.every((r) => r.clause === MARKET_SAID)).toBe(true);
+    expect(marketOnly.every((r) => /^\d+%$/.test(r.seen))).toBe(true);
   });
 
   test("the number of priors on the page is unchanged by this diff", () => {
@@ -347,16 +392,16 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
   });
 
   test.each(["kalshi", "polymarket"])(
-    "an explicit %s source is silent too — the label is books-only",
+    "an explicit %s source is silent too — the clause is books-only",
     (source) => {
       const rows = priorsChecked(render("mens-singles", withSource(source)));
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((r) => r.marker === null)).toBe(true);
       expect(rows.every((r) => r.clause === MARKET_SAID)).toBe(true);
+      expect(rows.every((r) => /^\d+%$/.test(r.seen))).toBe(true);
     },
   );
 
-  test("a row with no prior at all renders no cell, no marker, no clause", () => {
+  test("a row with no prior at all renders no cell and no clause", () => {
     // Men's: 116 rows, 232 player slots, but only 170 carry a prior
     // (106 market + 64 books). The other 62 get an empty grid cell with no
     // testid — the column keeps its place and claims nothing.
@@ -370,7 +415,8 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThan(170);
     for (const row of rows) {
-      expect(row.marker === PREMATCH_SOURCE_MARKER).toBe(row.clause === BOOKS_SAID);
+      expect(row.seen).toMatch(/^\d+%$/);
+      expect(row.clause).not.toBeNull();
     }
   });
 });
@@ -382,49 +428,53 @@ describe("one decision, one owner", () => {
     for (const source of ["kalshi", "polymarket", "books", "betfair", "", null]) {
       const attribution = prematchAttribution(player(source));
       const isMarket = source === null || isPredictionMarketSource(source);
-      expect(attribution.marker === null).toBe(isMarket);
       expect(attribution.said).toBe(isMarket ? MARKET_SAID : BOOKS_SAID);
     }
   });
 
-  test("an unrecognised rung is labelled, not silently passed as a market", () => {
+  test("an unrecognised rung is spoken as a sportsbook, not passed as a market", () => {
     // The safe direction: anything that is not a named prediction market gets
-    // the caveat. A new sportsbook rung must not arrive unlabelled.
-    const attribution = prematchAttribution(player("draftkings"));
-    expect(attribution.marker).toBe(PREMATCH_SOURCE_MARKER);
-    expect(attribution.said).toBe(BOOKS_SAID);
+    // the honest clause. A new sportsbook rung must not arrive as "the market
+    // gave" — which is the only register the caveat still lives in.
+    expect(prematchAttribution(player("draftkings")).said).toBe(BOOKS_SAID);
   });
 
-  test("a player with no prior gets no marker whatever its source says", () => {
+  test("the rung is still a queryable fact on a cell with a prior", () => {
     expect(prematchAttribution(player("books", null)).source).toBe("books");
-    // The component gates on `prior`, so the marker never renders; assert the
-    // rendered fact rather than the helper's opinion.
+    // The component gates on `prior`, so a source with no number reaches no
+    // attribute. `data-prematch-source` is what a cert reads now that nothing
+    // visible answers the question — deleting it with the caption would have
+    // made this correction unverifiable.
     const html = render("mens-singles");
-    const cells = html.match(/data-testid="result-prematch-marker"/g) ?? [];
-    const bookCells = (html.match(/data-prematch-source="books"/g) ?? []).length;
-    expect(cells.length).toBe(bookCells);
+    const rows = priorsChecked(html);
+    expect(rows.filter((r) => r.source === "books")).toHaveLength(
+      (html.match(/data-prematch-source="books"/g) ?? []).length,
+    );
+    expect(rows.filter((r) => r.source === "books").length).toBeGreaterThan(0);
   });
 });
 
-// ───────────────────────── the footer is now a legend ───────────────────────
+// ─────────────────── the footer stopped attributing a venue ─────────────────
 
-describe("the footnote stops being the only attribution", () => {
-  test("it names the marker so the count points at findable rows", () => {
-    const note = prematchSourceNote(MATCHES);
-    expect(note).toContain(PREMATCH_SOURCE_MARKER);
-    expect(note).toMatch(/^61 of them are a sportsbook opening/);
-  });
-
-  test("it is silent when nothing needs the caveat (CONTROL)", () => {
-    const marketOnly = (withSource("kalshi").matches as unknown as TournamentResult[]);
-    expect(prematchSourceNote(marketOnly)).toBe("");
-  });
-
-  test("the legend and the rows agree on the count", () => {
+describe("the footnote (D57 corrected)", () => {
+  test("it no longer counts sportsbook rows at all", () => {
+    // `prematchSourceNote` printed "61 of them are a sportsbook opening rather
+    // than a prediction market's, marked † beside the number" under this list.
+    // Alex: "We don't need to say anything about sportsbooks." Both halves of
+    // that sentence are asserted gone from the rendered page — the venue claim
+    // and the mark it pointed at.
     const html = `${render("mens-singles")}${render("womens-singles")}`;
-    const marked = (html.match(/data-testid="result-prematch-marker"/g) ?? []).length;
-    // 61 matches, both players marked.
-    expect(marked).toBe(122);
-    expect(prematchSourceNote(MATCHES)).toContain("61 of them");
+    expect(html).not.toContain("sportsbook opening");
+    expect(html).not.toContain("†");
+    expect(html).not.toContain("results-prematch-source-note");
+  });
+
+  test("but the coverage sentence — a different fact — survives", () => {
+    // The regression arm. The footnote also says how many rows carry a prior at
+    // all, which is UX-P146's honesty about an empty column and has nothing to
+    // do with venues. Striking the wrong sentence would have taken it too.
+    const html = render("mens-singles");
+    expect(html).toContain('data-testid="results-prematch-note"');
+    expect(html).toContain("before the match started");
   });
 });

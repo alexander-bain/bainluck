@@ -38,11 +38,7 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import {
-  isPredictionMarketSource,
-  prematchSourceLegend,
-  PREMATCH_SOURCE_MARKER,
-} from "./prematchReading";
+import { isPredictionMarketSource } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -86,7 +82,8 @@ export interface ResultPlayer {
    *
    * Optional, and absent means what it has always meant: a prediction-market
    * opening, which needs no caveat. A `books` reading is a different claim and
-   * says so — see `prematchSourceNote`.
+   * says so IN THE SPOKEN CLAUSE ONLY — see `prematchAttribution`. It said so
+   * visibly until D57 was corrected; nothing on the row names a rung now.
    */
   prematch_source?: string | null;
 }
@@ -682,80 +679,25 @@ export function prematchAbsenceNote(coverage: PrematchCoverage): string {
   );
 }
 
-/**
- * ═══ WHAT CERT-812 BLOCKED, AND WHY THE COUNT BELOW WAS NEVER THE FIX ═══
+/* `prematchSourceNote`, `isBooksPrior` AND `BOOKS_MARKER` WERE ALL HERE.
  *
- * Alex: *"labelled when not a prediction market."* The grey figures on this list
- * are described as "what the market gave that player", and that sentence is only
- * true of the Kalshi and Polymarket rungs. A sportsbook median is a different
- * claim in the same shape, and ux/1034 A3 is the standing lesson about printing
- * one as the other on this exact list.
+ * `BOOKS_MARKER` was the word `books`, printed beside every sportsbook-rung
+ * figure on the finished list. D57 round one deleted it in favour of the shared
+ * `PREMATCH_SOURCE_MARKER` — a dagger — and left `prematchSourceNote` as the
+ * legend counting the daggers, plus `isBooksPrior` as its population predicate.
  *
- * Round one answered that with THIS FUNCTION ALONE — an aggregate footer saying
- * "N of them are a sportsbook opening" over a list of 172 rows that named none of
- * them. CERT-812: *"the Shelton–Hurkacz 68/32 books row renders bare percentages,
- * and each accessible sentence falsely says 'the market gave'; only an aggregate
- * footer says some unidentified rows are sportsbook openings."* A count is not an
- * attribution: it tells a reader that somewhere on this page a number means
- * something else, and leaves them unable to find out which.
+ * D57 CORRECTED (Alex, 2026-09-03 4:15pm) takes all three. *"We don't need to
+ * say anything about sportsbooks. Our whole product is probabilities and how
+ * they're moving. Just show the %."* There is no visible caveat to mark, so
+ * there is nothing for a legend to explain and no population for a predicate to
+ * select. Deleted rather than left unexported: three dead symbols about a struck
+ * distinction are how it grows back, which is the lesson `BOOKS_MARKER` itself
+ * taught this file six hours ago.
  *
- * So the count stays — it is a true and useful summary — but it is now a LEGEND
- * for a per-row marker rather than the whole of the labelling, and
- * `prematchAttribution` below is what each row actually consumes.
- *
- * ═══ AND THE POPULATION WAS NEVER EMPTY ═══
- *
- * Round one's comment here read *"silent when every prior is a prediction-market
- * one — which is the whole served population today."* That was true when it was
- * written, against commit 1. Commit 2 (`76c463f4`) added `apply_books_prematch`,
- * which is the rung that fills exactly the rows this claimed could not be
- * reached — and the comment survived into it unchanged.
- *
- * Measured on the served hub payload 2026-09-03, replaying the shipped
- * `names_agree` bijection over the live rows: 245 result rows, 134 with no
- * market prior, **63 of those resolve to an event carrying opening odds and 61
- * pass the bijection**. So the list goes to 172 priors of which **61 (35%) are
- * sportsbook openings** — not zero, and not an edge case. Every one of them was
- * rendering a bare percentage under "the market gave".
- *
- * ═══ ux/1053: THE SENTENCE MOVED, THE COUNTING STAYED ═══
- *
- * A second surface draws the mark now (`LeagueGameRail`, on /sports Finished and
- * the league page's Recent Results), so the WORDING went to live beside the mark
- * in `lib/prematchReading.ts` — the module whose opening line is "this module is
- * the one place that decides". What stays here is the only part that is about
- * tournaments: a MATCH counts once however many of its two players carry a books
- * prior. That is a population question, not a copy one.
+ * What survives is `prematchAttribution`, below, because the SPOKEN clause
+ * survives — see its doc.
  */
-export function prematchSourceNote(matches: TournamentResult[]): string {
-  let books = 0;
-  for (const match of matches) {
-    if (match.players.some(isBooksPrior)) books += 1;
-  }
-  return prematchSourceLegend(books);
-}
 
-/** Does this player's prior come from a rung that needs saying out loud? */
-function isBooksPrior(player: ResultPlayer): boolean {
-  return (
-    typeof player.prematch_probability === "number" &&
-    player.prematch_source != null &&
-    !isPredictionMarketSource(player.prematch_source)
-  );
-}
-
-/* `BOOKS_MARKER` WAS HERE, AND WAS THE WORD `books` (D57, Alex 2026-09-03).
- *
- * Its comment argued for a word over a glyph on the grounds that the two card
- * surfaces already printed the word, so a glyph here would be "a seventh
- * private answer to a question `prematchReading` already owns". The reasoning
- * was right and the premise is what Alex overruled: the word is out on ALL
- * THREE surfaces, so the shared answer is now a marker, and it is
- * `PREMATCH_SOURCE_MARKER` — imported, exactly as `isPredictionMarketSource`
- * is, and for the same reason. The constant is DELETED rather than re-pointed
- * at the glyph: a second exported name for one decision is how this module
- * drifted from `prematchReading` the first time.
- */
 
 /**
  * PER-VALUE ATTRIBUTION: what this one number is, in the two registers a row has
@@ -784,24 +726,18 @@ export interface PrematchAttribution {
   source: string | null;
   /** The spoken clause, always present — the sentence names its own rung. */
   said: string;
-  /** The visible marker, or `null` when the reading needs no caveat. */
-  marker: string | null;
 }
 
 export function prematchAttribution(player: ResultPlayer): PrematchAttribution {
   const source = player.prematch_source ?? null;
   // An ABSENT source means what it has always meant on this payload: a
   // prediction-market opening from `_prematch_by_pair`, which predates the
-  // field. Absent must not read as "unknown rung" and pick up a books marker —
-  // that would put the caveat on 111 rows that do not need it.
+  // field. Absent must not read as "unknown rung" and be spoken as a sportsbook
+  // opening — that would put the caveat on 111 rows that do not need it.
   if (isPredictionMarketSource(source) || source === null) {
-    return { source, said: "Before the match, the market gave", marker: null };
+    return { source, said: "Before the match, the market gave" };
   }
-  return {
-    source,
-    said: "Before the match, sportsbooks opened",
-    marker: PREMATCH_SOURCE_MARKER,
-  };
+  return { source, said: "Before the match, sportsbooks opened" };
 }
 
 /** Newest first — a results list is read from the top for what just happened. */

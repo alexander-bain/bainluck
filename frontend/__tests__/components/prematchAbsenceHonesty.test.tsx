@@ -41,12 +41,10 @@ import TournamentResults from "@/components/tournament/TournamentResults";
 import {
   prematchAbsenceNote,
   prematchCoverage,
-  prematchSourceNote,
   resultsForDraw,
   type TournamentResult,
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
-import { PREMATCH_SOURCE_MARKER } from "@/lib/prematchReading";
 
 import hub from "../fixtures/tournamentHubUsOpen.20260903.json";
 
@@ -168,61 +166,25 @@ describe("ux/1034 A3 — why a finished row has no pre-match number", () => {
   });
 });
 
-// ═══ ux/1036 / #2747 — AND THE LABEL WHEN THE PRIOR IS A SPORTSBOOK'S ═══
+// ═══ ux/1036 / #2747 / D57 CORRECTED — AND NO LABEL AT ALL ═══
 //
-// The books rung now fills rows the market channel cannot reach: measured by
-// replaying the served payload (2026-09-03) through `apply_books_prematch`,
-// 111 of 245 rows carried a prior and 172 do — including Shelton–Hurkacz, the
-// row Alex read, at 68% labelled `books`.
+// This block asserted `prematchSourceNote`, the footer sentence counting the
+// priors that came from a sportsbook median: *"1 of them is a sportsbook
+// opening rather than a prediction market's, marked † beside the number."*
 //
-// The sentence above those numbers says the grey figure is "what the market gave
-// that player". That is true of Kalshi and Polymarket and NOT of a sportsbook
-// median, and printing the second as the first on this exact list is the defect
-// ux/1034 A3 removed from the sentence beside it.
-describe("ux/1036 — a sportsbook prior says so", () => {
-  const row = (source: string | null) => ({
-    matchup_key: `espn:${source ?? "none"}`,
-    draw: "mens-singles",
-    draw_label: "Men's Singles",
-    round: "R64",
-    players: [
-      { entity_key: "a", display_name: "Ben Shelton", seed: null, is_winner: true,
-        prematch_probability: 0.6792, prematch_source: source },
-      { entity_key: "b", display_name: "Hubert Hurkacz", seed: null, is_winner: false,
-        prematch_probability: 0.3208, prematch_source: source },
-    ],
-    winner_entity_key: "a",
-    score: "6-4, 6-4",
-    completed_at: "2026-09-02T19:00:00Z",
-    source_round: "Round 2",
-    source: "espn",
-  }) as unknown as TournamentResult;
-
-  it("counts and names the books rows", () => {
-    // ux/1040 (CERT-812) EXTENDED this string rather than replacing what it
-    // asserted. Round one's note was the ONLY place the books rung was named,
-    // over a list that identified none of the rows it meant — which is what the
-    // block called "an aggregate footer about unidentified rows". The count is
-    // still correct and still asserted; it now also names the per-row marker it
-    // is a legend for. The test's own title always said "and NAMES the books
-    // rows", which round one did not do.
-    // D57: the legend names the MARK, and the mark is not the word. Pinned
-    // through the shared constant rather than a second copy of the glyph — the
-    // whole point of the legend is that it prints the same character the rows
-    // do, and a literal here could go green while they disagreed.
-    expect(prematchSourceNote([row("books"), row("kalshi")])).toBe(
-      "1 of them is a sportsbook opening rather than a prediction market's, " +
-        `marked ${PREMATCH_SOURCE_MARKER} beside the number.`,
-    );
-  });
-
-  it("says nothing when every prior is a prediction market's", () => {
-    // Silent on today's whole served population, which is the point: a caveat
-    // printed under numbers it does not describe is noise.
-    expect(prematchSourceNote([row("kalshi"), row("polymarket")])).toBe("");
-  });
-
-  it("says nothing on a payload that predates the field", () => {
-    expect(prematchSourceNote([row(null)])).toBe("");
-  });
-});
+// Alex struck it on 2026-09-03 at 4:15pm: *"We don't need to say anything about
+// sportsbooks. Our whole product is probabilities and how they're moving. Just
+// show the %."* The function is deleted, so the three tests that pinned its
+// wording are deleted with it — a test pinning the exact prose of a struck
+// sentence is not a guard, it is the sentence stored somewhere else.
+//
+// The guard that replaces them is not here. It is
+// `hubRowNamesItsSource2747.test.tsx`, which now asserts the inversion over the
+// live fixture (no venue claim renders anywhere on the page, on 344 prior cells
+// and in the footer) and keeps the spoken clause CERT-812 bought. One owner for
+// one claim, which is what this pair of files got wrong the first time: the
+// wording lived in `prematchReading`, the population in `tournamentResults`,
+// and its assertions in two test files that had to agree by hand.
+//
+// WHAT STAYS IN THIS FILE is everything above — the coverage sentence, which is
+// a different fact (how many rows carry a prior at all) and survives untouched.

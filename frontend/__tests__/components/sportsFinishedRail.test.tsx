@@ -33,7 +33,7 @@ jest.mock("../../hooks", () => ({
 import LeagueGameRail from "../../components/LeagueGameRail";
 import { feedEventToEvent } from "../../lib/feedEventToEvent";
 import { leagueGameToEvent } from "../../lib/leagueCards";
-import { PREMATCH_SOURCE_MARKER } from "../../lib/prematchReading";
+import { PREMATCH_NUMBER_CLASS } from "../../lib/prematchReading";
 
 /**
  * The Cardinals–Dodgers card off the served payload,
@@ -253,18 +253,32 @@ describe("the feed's one-line story survives the shared card", () => {
   });
 });
 
-describe("the footnote mark, and the legend it points at (D57)", () => {
-  test("a sportsbook rung wears the mark AND the rail explains it", () => {
+describe("no footnote mark, and no legend (D57 CORRECTED)", () => {
+  // These three tests asserted the opposite this morning: a `†` on a
+  // sportsbook rung, a rail legend counting the marks, and the count's exact
+  // wording. Alex, 2026-09-03 4:15pm: *"We don't need to say anything about
+  // sportsbooks. Our whole product is probabilities and how they're moving.
+  // Just show the %."* Inverted rather than deleted — the rail is where the
+  // legend lived, so it is where the guard that it stays gone belongs.
+
+  test("a sportsbook rung renders the bare percent, no mark, no legend", () => {
     const html = rail([feedEventToEvent(finishedFeedEvent())]);
-    expect(html).toContain(PREMATCH_SOURCE_MARKER);
-    expect(html).toContain('data-testid="rail-prematch-source-note"');
-    expect(html).toContain(`marked ${PREMATCH_SOURCE_MARKER} beside the number`);
-    // D57: the WORD never appears on a surface.
+    expect(html).not.toContain("†");
+    expect(html).not.toContain('data-testid="rail-prematch-source-note"');
+    expect(html).not.toContain("sportsbook opening");
+    // The WORD, still banned (D57's ban survives its own first fix). The
+    // negative lookahead spares `data-prematch-source="books"`, which is the
+    // data contract and is asserted present two lines down.
     expect(html).not.toMatch(/\bbooks\b(?!")/);
+    expect(html).toContain('data-prematch-source="books"');
   });
 
-  test("a prediction-market rung wears NO mark and needs NO legend", () => {
-    const html = rail([
+  test("SYMMETRY — the market rung renders the same way, in the same treatment", () => {
+    // The arm that makes the one above mean something. A rail that had simply
+    // lost its numbers would pass every negative assertion; this one requires
+    // that the two rungs are drawn identically and that the drawing is the
+    // shared treatment rather than a fourth private class list.
+    const market = rail([
       feedEventToEvent(
         finishedFeedEvent({
           prematch_odds: {
@@ -277,12 +291,19 @@ describe("the footnote mark, and the legend it points at (D57)", () => {
         }),
       ),
     ]);
-    expect(html).toContain("88%");
-    expect(html).not.toContain(PREMATCH_SOURCE_MARKER);
-    expect(html).not.toContain('data-testid="rail-prematch-source-note"');
+    expect(market).toContain("88%");
+    expect(market).not.toContain("†");
+    expect(market).not.toContain('data-testid="rail-prematch-source-note"');
+    expect(market).toContain(PREMATCH_NUMBER_CLASS);
+    expect(rail([feedEventToEvent(finishedFeedEvent())])).toContain(
+      PREMATCH_NUMBER_CLASS,
+    );
   });
 
-  test("the legend counts the marks actually drawn, not the cards rendered", () => {
+  test("a rail of mixed rungs says nothing about any of them", () => {
+    // Was: "the legend counts the marks actually drawn". There is nothing left
+    // to count, and a rail with one of each rung is the case where a surviving
+    // per-rung branch would show up.
     const html = rail([
       feedEventToEvent(finishedFeedEvent({ id: 1 })),
       feedEventToEvent(
@@ -296,7 +317,8 @@ describe("the footnote mark, and the legend it points at (D57)", () => {
         }),
       ),
     ]);
-    expect(html).toContain("1 of them is a sportsbook opening");
+    expect(html).not.toContain("of them is a sportsbook opening");
+    expect(html).not.toContain("†");
   });
 });
 

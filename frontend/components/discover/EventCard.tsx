@@ -23,7 +23,7 @@ import {
 import {
   isPredictionMarketSource,
   prematchReading,
-  PREMATCH_SOURCE_TOOLTIP,
+  PREMATCH_NUMBER_CLASS,
 } from "@/lib/prematchReading";
 
 interface EventCardProps extends CardActionCallbacks {
@@ -280,7 +280,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
             data-prematch-source={prematch.source}
           >
             <span
-              className="font-mono tabular-nums text-text-muted"
+              className={PREMATCH_NUMBER_CLASS}
               data-testid="event-card-prematch-away"
               data-prematch={prematch.awayProbability}
             >
@@ -289,35 +289,23 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               </span>
               {prematch.awayPercent}%
             </span>
-            <span
-              className="text-text-muted text-[10px]"
-              {...(prematch.marker
-                ? {
-                    title: PREMATCH_SOURCE_TOOLTIP,
-                    "aria-label": `Pre-match — ${PREMATCH_SOURCE_TOOLTIP}`,
-                  }
-                : {})}
-            >
-              {/* Alex: mark it when it is not a prediction market. A sportsbook
-                  median is a different claim from a prediction-market opening
-                  and must not be printed as one — ux/1034 A3's lesson.
+            {/* THE CAPTION STAYS, AND SAYS ONLY THE TENSE (D57 corrected).
+                This card has no score column for the grey numbers to contrast
+                against — the layout is a bare two-number strip — so the word
+                "Pre-match" is doing the job the treatment does elsewhere, and
+                Alex's ask was that the tense be clear, not that captions go.
 
-                  D57: the mark used to be the word — `Pre-match · books` — and
-                  a caption that says "books" to a reader who did not ask is a
-                  gambling noun on a probability card. The distinction survives
-                  as the footnote mark; the words are in the tooltip. The tooltip
-                  is spread on CONDITIONALLY, because a prediction-market card
-                  renders this same caption and must not claim a rung it is not
-                  on. */}
+                What goes is everything that named a VENUE: the `†` and the
+                conditional "from sportsbooks" tooltip. Note the tooltip was
+                spread on only for the books rung, which made the caption two
+                different captions depending on where the number came from —
+                exactly the distinction Alex overruled. It is now one caption on
+                every settled card. */}
+            <span className="text-text-muted text-[10px]" data-testid="event-card-prematch-caption">
               Pre-match
-              {prematch.marker && (
-                <sup aria-hidden="true" className="ml-0.5">
-                  {prematch.marker}
-                </sup>
-              )}
             </span>
             <span
-              className="font-mono tabular-nums text-text-muted"
+              className={PREMATCH_NUMBER_CLASS}
               data-testid="event-card-prematch-home"
               data-prematch={prematch.homeProbability}
             >

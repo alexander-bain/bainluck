@@ -36,7 +36,7 @@ import {
 import {
   isPredictionMarketSource,
   prematchReading,
-  PREMATCH_SOURCE_TOOLTIP,
+  PREMATCH_NUMBER_CLASS,
 } from "@/lib/prematchReading";
 import TeamNameLink from "./TeamNameLink";
 
@@ -668,7 +668,7 @@ function EventFeedCard({
                   that — it is what was thought before anything had. */}
               {prematch && prematch.awayPercent !== null && (
                 <span
-                  className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                  className={`flex-shrink-0 ${PREMATCH_NUMBER_CLASS}`}
                   data-testid="feed-card-prematch-away"
                   data-prematch={prematch.awayProbability}
                   data-prematch-source={prematch.source}
@@ -694,7 +694,7 @@ function EventFeedCard({
               />
               {prematch && prematch.homePercent !== null && (
                 <span
-                  className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                  className={`flex-shrink-0 ${PREMATCH_NUMBER_CLASS}`}
                   data-testid="feed-card-prematch-home"
                   data-prematch={prematch.homeProbability}
                   data-prematch-source={prematch.source}
@@ -774,12 +774,19 @@ function EventFeedCard({
 
         {/* Bottom row: reason + context + thumbs.
 
-            ux/1036 — the settled card's source label goes HERE, in the slot
-            `Opened X/Y` vacated, and not on a line of its own. A caption under
-            the team rows added a row to every FINAL card at phone width, which
-            is the width Alex was reading; this keeps the card the height it
-            already was. */}
-        {(item.reason || openedContext || prematch?.marker) && (
+            THE SOURCE CAPTION IS GONE (D57 corrected). ux/1036 put a source
+            label in the slot `Opened X/Y` vacated; D57 round one turned it into
+            `Pre-match†` with a sportsbooks tooltip. Alex: *"We don't need to say
+            anything about sportsbooks … just show the %."* Note what the caption
+            was actually keyed on — `prematch?.marker`, i.e. the RUNG. A caption
+            that appears on sportsbook rows and not on prediction-market ones is
+            the venue distinction still being drawn, in a costume. It goes whole,
+            and this row is back to reason + `Opened X/Y` + thumbs.
+
+            What replaces it is the treatment on the numbers above:
+            `PREMATCH_NUMBER_CLASS`, small grey mono against the bold score in
+            the next column. */}
+        {(item.reason || openedContext) && (
           <div className="flex items-center justify-between gap-2 mt-1.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               {item.reason && (
@@ -794,30 +801,6 @@ function EventFeedCard({
                   {openedContext}
                 </span>
               )}
-              {/* Alex: "labelled when not a prediction market." One marker for
-                  the pair — both grey numbers always come off the same rung,
-                  and saying it twice on one card is noise.
-
-                  D57: this read `Pre-match · books`. The rung still gets said,
-                  and the caption still only appears on the rung that needs it,
-                  but the word is a footnote mark now and the sentence lives in
-                  the tooltip. `aria-hidden` on the mark alone: the caption's
-                  own `aria-label` speaks the whole thing, so a screen reader
-                  gets one sentence rather than a word and a dagger. */}
-              {prematch?.marker && (
-                <span
-                  className="text-[11px] text-text-muted flex-shrink-0"
-                  data-testid="feed-card-prematch-label"
-                  data-prematch-source={prematch.source}
-                  title={PREMATCH_SOURCE_TOOLTIP}
-                  aria-label={`Pre-match — ${PREMATCH_SOURCE_TOOLTIP}`}
-                >
-                  Pre-match
-                  <sup aria-hidden="true" className="ml-0.5">
-                    {prematch.marker}
-                  </sup>
-                </span>
-              )}
             </div>
             <ThumbButtons
               category={category}
@@ -827,7 +810,7 @@ function EventFeedCard({
           </div>
         )}
         {/* Thumbs-only row when no reason or context */}
-        {!item.reason && !openedContext && !prematch?.marker && (
+        {!item.reason && !openedContext && (
           <div className="flex items-center justify-end mt-1">
             <ThumbButtons
               category={category}

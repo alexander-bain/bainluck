@@ -14,7 +14,6 @@ import {
   prematchAttribution,
   prematchCoverage,
   prematchPercents,
-  prematchSourceNote,
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
@@ -27,7 +26,7 @@ import {
   type TournamentResults as ResultsModel,
 } from "@/lib/tournamentResults";
 /* D57: the marker's tooltip, from the module that owns the marker itself. */
-import { PREMATCH_SOURCE_TOOLTIP } from "@/lib/prematchReading";
+import { PREMATCH_NUMBER_CLASS } from "@/lib/prematchReading";
 
 /**
  * FINISHED MATCHES — Alex's item 9, with the data behind it.
@@ -252,7 +251,7 @@ function ResultRow({
                 fact and an empty span carrying the name of a number would
                 make every row look like it had one. */}
             <span
-              className={`text-right text-[12px] tabular-nums text-text-secondary ${edge}${cellHover}`}
+              className={`text-right ${PREMATCH_NUMBER_CLASS} ${edge}${cellHover}`}
               data-testid={prior ? "result-prematch" : undefined}
               /* CERT-812 required this at the ROW, not just in the footer. The
                  rung is a queryable fact per number now, so a guard can assert
@@ -261,44 +260,31 @@ function ResultRow({
             >
               {/* Ruling 2 again: a number names its own question. The column
                   has no header — there is no room for one beside a score — so
-                  the sentence travels with each number for a screen reader,
-                  and the section's footnote carries it for everyone else.
+                  the sentence travels with each number for a screen reader.
 
                   CERT-812: that sentence used to be the literal string "the
                   market gave" on EVERY row, so the one reader who cannot see a
                   label got the exact false claim this ship exists to stop
                   making — on 61 of today's 172 priors. It is now the rung's own
-                  clause, from the same decision the marker uses. */}
+                  clause, and it SURVIVES D57's correction: what Alex struck was
+                  the visible venue caveat, and a spoken clause that names its
+                  rung is not visible chrome. A screen reader hears the same
+                  honest sentence it has heard since CERT-812.
+
+                  THE VISIBLE HALF IS GONE (D57 corrected). This cell printed
+                  `books` beside every figure, then a `†` with a "from
+                  sportsbooks" tooltip. Alex: *"We don't need to say anything
+                  about sportsbooks … just show the %."* The cell now prints the
+                  percent and nothing else, in the shared treatment — which is
+                  the other half of the correction: this cell had invented its
+                  own (12px, `text-text-secondary`, no mono) while the three card
+                  surfaces shared one. */}
               {prior && (
                 <>
                   <span className="sr-only">
                     {attribution.said} {player.display_name}{" "}
                   </span>
                   {prior}
-                  {/* THE VISIBLE HALF. A sportsbook number says so beside
-                      itself; a prediction-market one renders exactly as it
-                      always did, so this change is strictly additive on the 111
-                      rows that were already honest. `aria-hidden` because the
-                      sr-only clause above already said it in words — a screen
-                      reader hearing the marker after "sportsbooks opened
-                      Shelton" would hear the rung twice.
-
-                      D57: this used to be the WORD, and the word was `books` on
-                      every finished row of the list. It is a footnote mark now,
-                      with the footnote's own sentence in the tooltip and the
-                      section legend below carrying the same mark. Superscript
-                      and 9px so a dense two-player row does not gain a line:
-                      the mark rides the baseline of the figure it qualifies. */}
-                  {attribution.marker && (
-                    <sup
-                      aria-hidden="true"
-                      data-testid="result-prematch-marker"
-                      title={PREMATCH_SOURCE_TOOLTIP}
-                      className="ml-0.5 text-[9px] font-medium text-text-muted"
-                    >
-                      {attribution.marker}
-                    </sup>
-                  )}
                 </>
               )}
             </span>
@@ -439,9 +425,13 @@ export default function TournamentResults({
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
   const prior = prematchCoverage(matches);
-  /* ux/1036: whether any of those priors is a sportsbook opening rather than a
-     prediction market's, which is a different claim and has to say so. */
-  const sourceNote = prematchSourceNote(matches);
+  /* `prematchSourceNote` WAS HERE (D57 corrected, Alex 2026-09-03). It counted
+     the priors that came from a sportsbook median and printed "N of them are a
+     sportsbook opening rather than a prediction market's, marked † beside the
+     number" under this list. Alex struck the whole claim, not its wording: "We
+     don't need to say anything about sportsbooks." The legend had no mark left
+     to explain in any case — the daggers went with it. The coverage sentence
+     below is a different fact (how many rows have a prior at all) and stays. */
   /* #2450: the total says which population it is over, or says nothing. */
   const population = resultsPopulationNote(matches);
   /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
@@ -518,19 +508,6 @@ export default function TournamentResults({
           The grey figure beside a name is what the market gave that player{" "}
           <b className="font-semibold text-text-secondary">before the match started</b> —
           its opening number, not a reading taken after the result was known.{" "}
-          {/* ux/1036, Alex: "labelled when not a prediction market."
-
-              CERT-812 corrected two things about this block. The comment that
-              stood here claimed the books population was "empty on today's
-              served payload" — written against commit 1 and left unchanged by
-              commit 2, which added the very rung that fills it. Measured, it is
-              61 of 172 priors. And this note was the ONLY place the distinction
-              was drawn, over a list that named none of the rows it meant; it is
-              now the legend for the per-row marker `prematchAttribution` sets,
-              not the whole of the labelling. */}
-          {sourceNote && (
-            <span data-testid="results-prematch-source-note">{sourceNote} </span>
-          )}
           {prior.withPrior < prior.total && (
             <>
               Shown on{" "}

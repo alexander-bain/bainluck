@@ -34,7 +34,10 @@
  * a median across whichever sportsbooks were still quoting (#1841). An
  * unlabelled fallback would be the old footnote with a new shape.
  *
- * ═══ WHY ONLY THE BOOKS RUNG IS LABELLED ═══
+ * ═══ WHY ONLY THE BOOKS RUNG WAS LABELLED (SUPERSEDED — read to the end) ═══
+ *
+ * Kept because it is the argument Alex overruled, and a deleted argument comes
+ * back. Nothing below this heading describes the current render.
  *
  * Alex: *"labelled when not a prediction market."* A prediction-market opening
  * is the thing this product is about and reads as itself. A sportsbook median is
@@ -55,18 +58,32 @@
  * product, and a reader who does not reads a word with no meaning stapled to
  * every number on the list.
  *
- * D57's default, taken: **the word never appears on a surface.** What survives
- * is the DISTINCTION, which ux/1034 A3 and CERT-812 both paid for — a
- * sportsbook median is a different claim from a prediction-market opening and
- * may not be printed as one. So the caveat keeps its per-number position and
- * loses its voice: a small neutral marker beside the figure, the tooltip
- * saying what it means in Alex's own words, and the section footnote that
- * already explains the class doing the explaining. The row should not shout it.
+ * ═══ THE FIRST ANSWER WAS WRONG TOO (D57 CORRECTED, Alex 2026-09-03 4:15pm) ═══
  *
- * The spoken sentence is UNCHANGED and still says "sportsbooks opened" in full.
- * A marker is a visual shorthand for a reader who can see the legend; a screen
- * reader gets the sentence, which is why the marker is `aria-hidden` at every
- * render site rather than given an accessible name that would say it twice.
+ * Round one deleted the word and kept the caveat: a dagger beside the figure, a
+ * `title` reading "pre-match number, from sportsbooks", and a section legend
+ * counting the daggers. Alex, on that:
+ *
+ *   > We don't need to say anything about sportsbooks. Our whole product is
+ *   > probabilities and how they're moving. Just show the %, but if it's a
+ *   > pre-match probability that we're comparing to the final score, THAT
+ *   > should be visually clear — and we've solved that problem on event cards
+ *   > elsewhere.
+ *
+ * So the DISTINCTION is overruled, not just its wording. ux/1034 A3 and CERT-812
+ * both bought the rule "a sportsbook median may not be printed as a
+ * prediction-market opening", and both were arguing about a surface that made a
+ * VENUE CLAIM in words. This surface no longer makes one: nothing visible says
+ * where the figure came from, so nothing visible can say it wrongly. What
+ * remains to be true is what the number IS — a pre-match reading being compared
+ * to a settled result — and that is a job for the treatment, not for a glyph.
+ *
+ * `PREMATCH_NUMBER_CLASS` below is that treatment, and it is one string because
+ * Alex's instruction was "find it, reuse it, do not invent a third". The
+ * distinction survives where it costs a reader nothing: in `data-prematch-source`
+ * (a queryable fact, which is what a cert reads) and in the spoken clause, which
+ * still names its own rung so the one reader who cannot see the layout is not
+ * handed a claim the page never made in pixels.
  */
 
 import type { FeedEventData } from "@/lib/types";
@@ -77,48 +94,37 @@ export const BOOKS_SOURCE = "books";
 const PREDICTION_MARKET_SOURCES = new Set(["kalshi", "polymarket"]);
 
 /**
- * THE MARKER, AND THE ONE PLACE IT IS DECIDED (D57).
+ * THE ONE TREATMENT FOR A PRE-MATCH NUMBER ON A SETTLED SURFACE (D57 corrected).
  *
- * A dagger and not an invented badge: it is the typographic footnote mark, so
- * it already means "there is a note about this below" to a reader who has never
- * seen this page, and the note is genuinely below — `prematchSourceNote` is the
- * legend and cites this same constant, so the mark on the row and the mark in
- * the sentence explaining it cannot drift apart.
+ * ═══ WHY IT IS A CONSTANT AND NOT FOUR CLASS LISTS ═══
  *
- * Not a coloured dot, not a `ⓘ`: both read as an affordance and neither of them
- * is one. This is a footnote on a number.
+ * Alex: *"we've solved that problem on event cards elsewhere … find it, reuse
+ * it, do not invent a third."* There were FOUR when he said it. `FeedCard` and
+ * `EventCard` agreed (`font-mono text-[11px] tabular-nums text-text-muted`),
+ * Discover's `EventCard` inherited `text-sm` from its strip, and the tournament
+ * hub had invented its own (`text-[12px] text-text-secondary`, no mono) — which
+ * is the surface Alex was reading. Four surfaces printing one thing four ways is
+ * the same failure `prematchReading` was written to stop, one layer down: this
+ * module already owned WHICH number, and did not own what it LOOKS like.
+ *
+ * ═══ WHAT THE TREATMENT HAS TO DO ═══
+ *
+ * Say "this is not the result" without a word. Three properties carry it, and
+ * each is load-bearing:
+ *
+ *   - `text-text-muted` — grey on BOTH rows, winner included. Bold on a settled
+ *     card means "this is what happened"; a prior is the opposite of that, so
+ *     the winner's prior is grey too. This is the rule ux/1036 shipped.
+ *   - `font-mono` + `tabular-nums` — the figure reads as a measurement in a
+ *     column, and the two numbers in a pair line up digit for digit.
+ *   - `text-[11px]` — smaller than the score it sits beside. The settled score
+ *     is the loud thing on the row; the prior is context for it.
+ *
+ * The contrast against the bold score in the next column IS the "visually
+ * clear" Alex asked for. It needs no legend, and a legend is what it replaced.
  */
-export const PREMATCH_SOURCE_MARKER = "†";
-
-/**
- * What the marker says on hover. Alex's wording, verbatim and lower case —
- * "pre-match number, from sportsbooks". It states what the figure IS before it
- * states where it came from, because the reader's question is the first one.
- */
-export const PREMATCH_SOURCE_TOOLTIP = "pre-match number, from sportsbooks";
-
-/**
- * THE LEGEND THE MARK POINTS AT — one sentence, one owner (ux/1053).
- *
- * D57's whole shape is "a footnote mark on the number, and a note below that
- * says what the mark means". The mark has lived here since D57; the note lived
- * in `lib/tournamentResults.ts`, because the hub was the only surface that had
- * one. `LeagueGameRail` is the second, so the sentence moves next to the mark it
- * explains and `prematchSourceNote` delegates rather than restating — a second
- * wording of one legend is exactly the drift that put a private `BOOKS_MARKER`
- * three files from `PREMATCH_SOURCE_MARKER`.
- *
- * `""` for a count of zero is a render instruction: a legend for a mark that
- * appears nowhere is chrome explaining nothing.
- */
-export function prematchSourceLegend(booksCount: number): string {
-  if (booksCount <= 0) return "";
-  return (
-    `${booksCount} of them ${booksCount === 1 ? "is" : "are"} a sportsbook ` +
-    `opening rather than a prediction market's, marked ` +
-    `${PREMATCH_SOURCE_MARKER} beside the number.`
-  );
-}
+export const PREMATCH_NUMBER_CLASS =
+  "font-mono text-[11px] tabular-nums text-text-muted";
 
 export interface PrematchReading {
   /** Whole percents, away first — rounded ONCE as a pair (UX-P114). */
@@ -127,19 +133,18 @@ export interface PrematchReading {
   /** The raw probabilities, for `data-` attributes and screen-reader prose. */
   awayProbability: number;
   homeProbability: number;
-  /** Which rung. */
-  source: string;
   /**
-   * The MARKER the card prints beside the pair, or `null` when the reading
-   * needs no caveat. Only ever set for a non-prediction-market rung.
+   * Which rung — for `data-prematch-source` and for the spoken clause, and for
+   * nothing a reader can see.
    *
-   * Was `label`, and was the word `books` (D57). Renamed rather than quietly
-   * refilled: three components read this field and a glyph arriving under the
-   * name `label` would have compiled at all three and been rendered as a word
-   * at whichever one next grew a `Pre-match · ${label}` template. The rename is
-   * what makes every call site show up in the diff.
+   * `label` (the word `books`) became `marker` (a dagger) in D57 round one and
+   * is now GONE, not renamed a third time. A field whose only consumer is a
+   * render site is how the caveat came back wearing a glyph; the rung is still
+   * here, on the one field that was always a fact rather than a decoration, and
+   * a surface that wants to print it has to reach for `isPredictionMarketSource`
+   * on purpose.
    */
-  marker: string | null;
+  source: string;
 }
 
 export function isPredictionMarketSource(source: string | null | undefined): boolean {
@@ -175,7 +180,6 @@ export function prematchReading(
       awayProbability: away,
       homeProbability: served.home_probability,
       source: served.source,
-      marker: sourceMarker(served.source),
     };
   }
 
@@ -199,7 +203,6 @@ export function prematchReading(
     awayProbability: away,
     homeProbability: opening.home_probability,
     source: BOOKS_SOURCE,
-    marker: sourceMarker(BOOKS_SOURCE),
   };
 }
 
@@ -210,8 +213,4 @@ export function prematchReading(
  */
 function isUsable(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1;
-}
-
-function sourceMarker(source: string): string | null {
-  return isPredictionMarketSource(source) ? null : PREMATCH_SOURCE_MARKER;
 }

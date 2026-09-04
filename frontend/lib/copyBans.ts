@@ -91,11 +91,19 @@ export const JARGON_BANS: CopyBan[] = [
  * ═══ WHY THE PLURAL ONLY, AND WHY `sportsbooks` SURVIVES ═══
  *
  * `\bbooks\b` cannot match inside `sportsbooks` — there is no word boundary
- * between `sport` and `books` — and that is deliberate rather than lucky.
- * `sportsbooks` is the plain-English word Alex chose for the replacement
- * tooltip ("pre-match number, from sportsbooks"), and the accessible sentence
- * on every one of these rows says "sportsbooks opened". The banned thing is the
- * trade shorthand used as a LABEL, not the honest noun used in a sentence.
+ * between `sport` and `books` — and that is deliberate rather than lucky. The
+ * accessible sentence on every one of these rows still says "sportsbooks
+ * opened", and `/about` and `/calibration` still describe our sources in full
+ * English sentences. The banned thing is the trade shorthand used as a LABEL,
+ * not the honest noun used in a sentence.
+ *
+ * ═══ THE RULE OUTLIVED THE FIX IT SHIPPED WITH (D57 corrected) ═══
+ *
+ * Round one's replacement — a `†` on the number with a "pre-match number, from
+ * sportsbooks" tooltip — is itself deleted: Alex ruled the venue caveat off the
+ * surface entirely, not just its wording (`lib/prematchReading.ts` carries the
+ * quote). This ban is unchanged and is the reason the word cannot come back
+ * under a third name while the argument is being had.
  *
  * The singular `book` is deliberately NOT banned: `/about` and the calibration
  * cohort note both use it inside real sentences ("not one book's opinion"),
@@ -107,7 +115,7 @@ export const SOURCE_LABEL_BANS: CopyBan[] = [
   {
     id: "books-label",
     pattern: /\bbooks\b/i,
-    why: '"books" is trade shorthand for our counterparties — it reads as a gambling reference and means nothing to a reader; the marker is a footnote mark and the words are "from sportsbooks" (D57)',
+    why: '"books" is trade shorthand for our counterparties — it reads as a gambling reference and means nothing to a reader; a settled surface just shows the % (D57 as corrected)',
   },
 ];
 
