@@ -126,6 +126,34 @@ export const GRID_STICKY_NAME =
   "lg:static lg:z-auto lg:ml-0 lg:mr-0 lg:pl-0 lg:pr-0";
 
 /**
+ * ═══ AND IT COMES TO REST ON WHOLE COLUMNS (#3087, second half) ═══
+ *
+ * A frozen name column and a free scroll produce a number that is WRONG on
+ * screen. Photographed on production at `scrollLeft = 74` with the sticky cell
+ * live and nothing else: the QF column sits half under the name box and Alcaraz's
+ * row reads `Carlos Alcaraz  5%  67%  62%  43%` — his real QF number is **75%**.
+ * A reader has no way to know the 7 is behind the name. "One number per
+ * question" cannot survive a resting position that eats a digit.
+ *
+ * So the scroller snaps, and the snap line is the sticky cell's right edge
+ * rather than the scrollport's: `scroll-padding-left` = the row's own padding
+ * plus the name track plus the gap = `14 + 118 + 6 = 138px`, which is exactly the
+ * measured width of the sticky box on production. Each value cell is a
+ * `snap-start` target, so the rest positions are `0` and `52`
+ * (`GRID_COLUMN_WIDTH_PX + GRID_GAP_PX`) — at 0 the grid reads R16→FINAL, at 52
+ * it reads QF→**TITLE**, and at neither is any column half-hidden.
+ *
+ * ⚠️ `138` IS WRITTEN OUT because Tailwind's JIT scans source text and cannot
+ * execute an expression — the same trap `GRID_SIZING` documents above. It is
+ * transcription, not judgement, and `playoffGrid.test.tsx` parses the number
+ * back out and asserts it equals the three constants added together, so the day
+ * one of them changes the guard fails instead of the layout.
+ *
+ * `lg:snap-none` because above the breakpoint the grid does not scroll at all.
+ */
+export const GRID_SCROLL_SNAP = "snap-x snap-mandatory scroll-pl-[138px] lg:snap-none";
+
+/**
  * ═══ THE SPARK BARS — RULED IN (UX-P147) ═══
  *
  * UX-P146 built these behind a prop defaulting to OFF and rendered both
@@ -467,7 +495,7 @@ export default function PlayoffGrid({
           over the wrong column. */}
       <div
         className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
-          scrolls ? "overflow-x-auto lg:overflow-x-visible" : ""
+          scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""
         }`}
         data-testid="grid-scroller"
       >
@@ -488,7 +516,9 @@ export default function PlayoffGrid({
             {grid.columns.map((column) => (
               <span
                 key={column.key}
-                className={`text-right ${column.kind === "title" ? "text-text-secondary" : ""}`}
+                className={`text-right${scrolls ? " snap-start" : ""} ${
+                  column.kind === "title" ? "text-text-secondary" : ""
+                }`}
                 title={column.long_label}
                 data-testid="grid-column"
                 data-column={column.key}
@@ -546,7 +576,11 @@ export default function PlayoffGrid({
                   )}
                 </span>
                 {grid.columns.map((column) => (
-                  <span key={column.key} className="text-right">
+                  <span
+                    key={column.key}
+                    className={`text-right${scrolls ? " snap-start" : ""}`}
+                    data-testid="grid-value-cell"
+                  >
                     <Cell
                       cell={row.cells[column.key]}
                       column={column}

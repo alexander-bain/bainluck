@@ -21,7 +21,10 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import PlayoffGrid, { GRID_STICKY_NAME } from "@/components/tournament/PlayoffGrid";
+import PlayoffGrid, {
+  GRID_SCROLL_SNAP,
+  GRID_STICKY_NAME,
+} from "@/components/tournament/PlayoffGrid";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import {
   columnSumSentence,
@@ -30,7 +33,9 @@ import {
   gridCellGlyph,
   gridEvalVerdict,
   GRID_CARD_CONTENT_PX,
+  GRID_COLUMN_WIDTH_PX,
   GRID_GAP_PX,
+  GRID_NAME_WIDTH_PX,
   GRID_ROW_PADDING_PX,
   gridScrolls,
   gridWidthPx,
@@ -555,6 +560,48 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
     expect(fiveHtml).toContain("lg:static");
     expect(fiveHtml).toContain("lg:ml-0");
     expect(fiveHtml).toContain("lg:pl-0");
+  });
+
+  it("comes to rest on WHOLE columns — the snap line is the sticky cell's right edge", () => {
+    // The defect the sticky column created, photographed on production at
+    // scrollLeft = 74: the QF column sat half under the name box and Alcaraz's
+    // row read `Carlos Alcaraz  5%  67%  62%  43%` — his QF number is 75%.
+    // Snapping removes the resting position that eats a digit.
+    const five = grid({ columns: COLUMNS.slice(0, 5) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    expect(html).toContain("snap-x snap-mandatory");
+    // Every value cell is a target — header and rows, or the header drifts off
+    // the column it names at the snap position.
+    // Read whole tags: the header cell carries a `title=` between its class and
+    // its testid, so a class-then-testid regex silently sees the rows only —
+    // which is half a guard for a defect that lives in both.
+    const valueCells = [...html.matchAll(/<span\s([^>]*)>/g)]
+      .map((m) => m[1])
+      .filter((attrs) => /data-testid="grid-(column|value-cell)"/.test(attrs))
+      .map((attrs) => /class="([^"]*)"/.exec(attrs)?.[1] ?? "");
+    expect(valueCells.length).toBe(5 * 2); // one header cell + one row cell, ×5 columns
+    for (const cls of valueCells) expect(cls).toContain("snap-start");
+
+    // THE ARITHMETIC, parsed back out of the literal Tailwind class. 138 is the
+    // row's own padding + the name track + the gap, i.e. the exact width of the
+    // sticky box; if any of the three moves, this fails instead of the layout.
+    const padding = /scroll-pl-\[(\d+)px\]/.exec(GRID_SCROLL_SNAP);
+    expect(padding).not.toBeNull();
+    expect(Number(padding![1])).toBe(
+      GRID_ROW_PADDING_PX + GRID_NAME_WIDTH_PX + GRID_GAP_PX
+    );
+    expect(Number(padding![1])).toBe(138);
+    // Which puts the rest positions at 0 and one column-plus-gap along, where
+    // the reader can read QF→TITLE whole.
+    expect(GRID_COLUMN_WIDTH_PX + GRID_GAP_PX).toBe(52);
+    expect(GRID_SCROLL_SNAP).toContain("lg:snap-none");
+  });
+
+  it("does not snap a grid that does not scroll", () => {
+    const three = grid({ columns: COLUMNS.slice(0, 3) });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={three} />);
+    expect(html).not.toContain("snap-x");
+    expect(html).not.toContain("snap-start");
   });
 
   it("leaves the name's own content alone — face, name, seed, truncation", () => {
