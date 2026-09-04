@@ -174,6 +174,26 @@ class _MarkerWriteFailsRedis(_FakeRedis):
         super().setex(key, ttl, value)
 
 
+class _ContinuationWriteFailsRedis(_FakeRedis):
+    """The mirror of :class:`_MarkerWriteFailsRedis` — the marker lands and the
+    position does not (CERT-898's named follow-up).
+
+    Marker-first ordering makes THIS the likely half, which is exactly why it
+    needs its own arm: the store is left holding a claim that names a position
+    it does not have. The binding refuses it, so the direction is safe; what it
+    costs is the close, and that cost is what this arm pins.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.fail_cursor_writes = False
+
+    def setex(self, key, ttl, value):
+        if self.fail_cursor_writes and key == sentinel.CURSOR_STATE_KEY:
+            raise RuntimeError("continuation write failed")
+        super().setex(key, ttl, value)
+
+
 class _BrokenRedis:
     """Every call raises — the outage arm."""
 
@@ -752,6 +772,92 @@ class TestTheWindowPassIsWhatCloses:
         assert night_three["filing"] is None, (
             "a lost marker write must never produce a GREEN close — 4242 is "
             "still drifting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_lost_continuation_write_costs_the_close_and_never_the_coverage(
+        self, monkeypatch
+    ):
+        """The OTHER half of the same fault (CERT-898's named follow-up).
+
+        CERT-896 guarded the dangerous direction — the position advances and the
+        claim does not. Marker-first ordering makes the MIRROR the likely one:
+        the claim lands naming ``c2`` and the position write fails, so the store
+        holds ``c1`` beside a marker that says ``c2``. Under the binding that is
+        a mismatch, so it reads as a broken chain.
+
+        That is conservative rather than wrong, and this arm says so precisely:
+        the fault costs the CLOSE and never the COVERAGE. Night three re-sweeps
+        the slice the lost write un-advanced past and re-finds the same drifting
+        row — the sweep is read-only and idempotent, so a stale position loses
+        nothing. What it loses is the pass, and a later clean tail on the broken
+        chain still cannot close.
+
+        **Why this is not "fixed" by resuming ``c1`` as a valid pass.** The two
+        divergences are told apart only by ordering the cursors, and the
+        ordering has a hole: an exhausted resume restarts the sweep at the
+        oldest row mid-run (``restarted_from_exhausted_cursor``), which walks
+        the position BACKWARDS. Chain that with a lost marker write on the
+        restarting night and a marker that is "ahead" is a stale claim after
+        all — drift seen by the restarting night is not in it, and the close
+        would be a false GREEN. Strict equality has no such hole. The cost this
+        arm pins is the price of that, and it is the right price.
+        """
+        redis = _ContinuationWriteFailsRedis()
+
+        def window(cursor):
+            if cursor is None:
+                return _page(has_more=True, next_cursor="c1", eligible=999)
+            if cursor == "c1":  # the slice that finds the drift
+                return _page(
+                    moves=[_move(4242)], has_more=True, next_cursor="c2", eligible=999
+                )
+            return _page(has_more=False, eligible=999)  # a clean tail
+
+        def night():
+            return _run_with_stub_session(
+                monkeypatch,
+                max_pages=1,
+                deadline_seconds=60.0,
+                redis=redis,
+                page_for=window,
+            )
+
+        night_one = await night()
+        assert night_one["continuation"] == "c1"
+
+        redis.fail_cursor_writes = True
+        night_two = await night()
+        assert night_two["filing"]["red"] is True, "the drift was found and filed"
+        assert night_two["continuation"] == "c2"
+
+        # The divergence, asserted directly — otherwise this could pass against
+        # a store where the two keys never came apart at all.
+        assert redis.data[sentinel.CURSOR_STATE_KEY] == b"c1", "position stuck"
+        assert b'"drift_seen": true' in redis.data[sentinel.PASS_STATE_KEY]
+        assert b'"cursor": "c2"' in redis.data[sentinel.PASS_STATE_KEY], "claim ahead"
+
+        redis.fail_cursor_writes = False
+        night_three = await night()
+        assert night_three["resumed_from"] == "c1", "the stale position, re-swept"
+        assert night_three["pass_open"] is False, "the claim names c2, the cursor is c1"
+        assert night_three["complete"] is False
+        assert night_three["moves"] != [], (
+            "the coverage is NOT lost — the re-swept slice re-finds 4242, which "
+            "is what makes the broken chain merely expensive"
+        )
+        assert night_three["filing"]["red"] is True
+
+        # And the broken chain stays broken: a clean tail arriving on it reaches
+        # the end of the window and still cannot close.
+        night_four = await night()
+        assert night_four["resumed_from"] == "c2"
+        assert night_four["reached_window_end"] is True
+        assert night_four["pass_open"] is False, "night three cleared the marker"
+        assert night_four["complete"] is False
+        assert night_four["filing"] is None, (
+            "a clean tail on a chain broken by a lost continuation write must "
+            "not close either"
         )
 
     @pytest.mark.asyncio
