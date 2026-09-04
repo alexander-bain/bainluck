@@ -7,6 +7,7 @@ import type { RelatedFuture, RelatedFuturesResponse, TeamProgressionResponse } f
 import { fetchRelatedFutures, formatProbability } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { disambiguateLabels } from "@/lib/labelDisambiguation";
+import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -1120,8 +1121,11 @@ function TitleComparison({
   homeTeamColor: string;
   awayTeamColor: string;
 }) {
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  // UX-1065 (#2936): "Ipswich Town" is not "Town". Decide the pair together.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   return (
     <div className="rounded-xl p-4 bg-surface-elevated/40 border border-surface-elevated mb-4">
@@ -1349,8 +1353,11 @@ function PlayoffPathPair({
     );
   }
 
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  // UX-1065 (#2936): the club-type word is not the club's name.
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -1427,6 +1434,7 @@ interface WinTotalThreshold {
 // ─── V5 WIN TOTALS GAUGE ───
 function WinTotalsGauge({
   teamName,
+  shortName,
   teamColor,
   standings,
   thresholds,
@@ -1434,6 +1442,13 @@ function WinTotalsGauge({
   logo,
 }: {
   teamName: string;
+  /**
+   * UX-1065 (#2936): REQUIRED, not defaulted. The two gauges render side by
+   * side, so the compact name is a decision about the PAIR and only the parent
+   * can make it. A default here would let the next call site silently
+   * re-acquire `.pop()` with every test still green.
+   */
+  shortName: string;
   teamColor: string;
   standings?: TeamStandings;
   thresholds: WinTotalThreshold[];
@@ -1442,7 +1457,6 @@ function WinTotalsGauge({
 }) {
   if (thresholds.length === 0) return null;
 
-  const shortName = teamName.split(" ").pop() || teamName;
   const wins = standings?.wins;
   const losses = standings?.losses;
   const totalGames = sportKey ? SEASON_GAMES[sportKey] || 82 : 82;
@@ -1639,8 +1653,11 @@ function WinTotalsPair({
 }) {
   if (homeFutures.length === 0 && awayFutures.length === 0 && !homeStandings && !awayStandings) return null;
 
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
+  // UX-1065 (#2936): decided as a pair, so the two columns cannot both read "FC".
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   // Separate win total futures from other season stats
   function extractWinTotals(futures: RelatedFuture[]): { winTotals: WinTotalThreshold[]; other: RelatedFuture[] } {
@@ -1700,6 +1717,7 @@ function WinTotalsPair({
           {awayExtracted.winTotals.length >= 2 ? (
             <WinTotalsGauge
               teamName={awayTeam}
+              shortName={awayShort}
               teamColor={awayColor}
               standings={awayStandings}
               thresholds={awayExtracted.winTotals}
@@ -1710,6 +1728,7 @@ function WinTotalsPair({
           {homeExtracted.winTotals.length >= 2 ? (
             <WinTotalsGauge
               teamName={homeTeam}
+              shortName={homeShort}
               teamColor={homeColor}
               standings={homeStandings}
               thresholds={homeExtracted.winTotals}
@@ -1768,7 +1787,11 @@ function MatchupGrid({
     groups[key].push(f);
   }
 
-  const shortName = teamName.split(" ").pop() || teamName;
+  // UX-1065 (#2936): this component is currently UNREACHABLE — `MatchupGrid` is
+  // declared here, never called and never exported, so this line ships no pixel
+  // today. Routed through the helper anyway so the defective pattern is not
+  // sitting in the file for the next reader to copy.
+  const shortName = teamShortName(teamName);
   const abbrev = teamName.split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase();
 
   return (
@@ -1975,15 +1998,16 @@ function TradeWatchPair({
     .sort((a, b) => (b[1].probability || 0) - (a[1].probability || 0))
     .slice(0, 3);
 
+  // UX-1065 (#2936): a trade destination is a team name, not its last word.
+  const destShort = teamShortNames({ name: homeTeam }, { name: awayTeam });
+
   return (
     <div className="space-y-1">
       {topTrades.map(([playerName, f]) => {
         // Determine which team this trade destination is for
         const isHomeDest = homeTrades.includes(f);
         const destColor = isHomeDest ? homeColor : awayColor;
-        const destTeam = isHomeDest
-          ? (homeTeam.split(" ").pop() || homeTeam)
-          : (awayTeam.split(" ").pop() || awayTeam);
+        const destTeam = isHomeDest ? destShort.home : destShort.away;
         return (
           <Link
             key={f.outcome_id}
@@ -2224,8 +2248,12 @@ export default function RelatedFutures({
 
   const hColor = homeTeamColor || DEFAULT_COLOR;
   const aColor = awayTeamColor || DEFAULT_COLOR;
-  const homeShort = homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeam.split(" ").pop() || awayTeam;
+  // UX-1065 (#2936): the Bigger Picture section on the reported event page.
+  // This is the derivation that printed "Town" against "Liverpool".
+  const { home: homeShort, away: awayShort } = teamShortNames(
+    { name: homeTeam },
+    { name: awayTeam },
+  );
 
   // Categorize futures for each team (pass team names for mismatch filtering)
   const homeCats = categorizeFutures(home_team_futures, homeTeam, awayTeam);
