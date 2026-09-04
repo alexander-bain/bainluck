@@ -64,21 +64,144 @@ function SetCell({
   );
 }
 
+/**
+ * ONE LINE, for a list of matches (live/061, #2746 scope item 1).
+ *
+ * `6-4 4-6 2-1` — set scores in play order, each set's winner bolded, the
+ * tiebreak as a superscript on the loser, the set in play marked. That is the
+ * same set of rules the grid above draws by, applied along one axis instead of
+ * two, because a slate row's job is to be SCANNED.
+ *
+ * ═══ WHY IT PRINTS PAIRS AND NOT TWO ROWS ═══
+ *
+ * A reader scanning thirty rows wants "who is winning and how far in", and a
+ * `6-4` pair answers both in four characters. The two-row grid answers it
+ * better for one match and thirty times worse for thirty.
+ *
+ * ═══ WHAT IT WILL NOT DRAW ═══
+ *
+ * The point score and the serving dot, both of which the full variant shows.
+ * They move every few seconds and this list refreshes every 180 seconds by
+ * design, so on a slate row they would be the one element guaranteed to be
+ * stale — a wrong "40-30" is worse than no point score, and the match page one
+ * tap away is where the live-cadence answer lives.
+ *
+ * `state_disagrees` is not surfaced here either: it is a caveat about the
+ * source, and a caveat needs room to be read. The row is still honest — it
+ * shows a real line from a real read — and the match page states the caveat.
+ */
+function CompactLine({
+  linescore,
+  sets,
+  current,
+  className,
+}: {
+  linescore: Linescore;
+  sets: NonNullable<Linescore["sets"]>;
+  current: number | null;
+  className?: string;
+}) {
+  const completionLabel =
+    linescore.completion === "retired"
+      ? "ret."
+      : linescore.completion === "walkover"
+        ? "w/o"
+        : linescore.completion === "abandoned"
+          ? "abd."
+          : null;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-baseline gap-1.5 font-mono tabular-nums text-xs leading-tight",
+        className,
+      )}
+      aria-label={`Set scores: ${linescore.line}`}
+    >
+      {sets.map((set, index) => {
+        const live = index + 1 === current;
+        return (
+          <span
+            key={index}
+            className={cn(
+              "whitespace-nowrap",
+              live ? "text-text-primary" : "text-text-secondary",
+            )}
+          >
+            <span className={cn(set.won_by === "home" && "font-bold text-text-primary")}>
+              {set.home === null ? "–" : set.home}
+              {/* Same rule as the grid: the superscript belongs to the LOSER of
+                  the set, and to nobody while the tiebreak is unfinished. */}
+              {set.won_by !== null && set.won_by !== "home" && set.home_tiebreak !== null && (
+                <sup className="text-[9px] font-normal text-text-muted">
+                  {set.home_tiebreak}
+                </sup>
+              )}
+            </span>
+            <span className="text-text-muted">-</span>
+            <span className={cn(set.won_by === "away" && "font-bold text-text-primary")}>
+              {set.away === null ? "–" : set.away}
+              {set.won_by !== null && set.won_by !== "away" && set.away_tiebreak !== null && (
+                <sup className="text-[9px] font-normal text-text-muted">
+                  {set.away_tiebreak}
+                </sup>
+              )}
+            </span>
+          </span>
+        );
+      })}
+      {completionLabel && (
+        <span className="font-sans text-[10px] uppercase tracking-wide text-text-muted">
+          {completionLabel}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function TennisLinescore({
   linescore,
   homeName,
   awayName,
   className,
+  variant = "full",
 }: {
   linescore: Linescore | null | undefined;
   homeName: string;
   awayName: string;
   className?: string;
+  /**
+   * `"full"` is the two-row grid above, for a page about ONE match.
+   *
+   * `"compact"` (live/061, #2746 scope item 1) is one line for a LIST of
+   * matches — the tournament hub's slate row, where thirty of these sit under
+   * each other and a two-row table per row would turn a scannable card into a
+   * wall of grids. It prints the same sets in the same order off the same
+   * payload; what it drops is the player-name column (the row already names
+   * both players, directly above), the point score, and the serving dot.
+   *
+   * It is deliberately the SAME component rather than a second one. Two
+   * renderers of one linescore is how the hub and the match page would come to
+   * disagree about a tiebreak, and the superscript rule below is exactly the
+   * kind of thing that only stays right in one place.
+   */
+  variant?: "full" | "compact";
 }) {
   const sets = linescore?.sets;
   if (!linescore || !Array.isArray(sets) || sets.length === 0) return null;
 
   const current = linescore.current_set;
+
+  if (variant === "compact") {
+    return (
+      <CompactLine
+        linescore={linescore}
+        sets={sets}
+        current={current}
+        className={className}
+      />
+    );
+  }
 
   /**
    * The caption beside the grid.

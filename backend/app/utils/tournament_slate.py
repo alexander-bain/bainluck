@@ -298,6 +298,52 @@ def _side_view(
     }
 
 
+def _slate_linescore(
+    matchup: dict[str, Any],
+    listed: Optional[dict[str, Any]],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """``{"linescore": ...}`` when ESPN states one for this fixture, else ``{}``.
+
+    Returns a dict to be splatted into the row, so a refusal contributes NO KEY
+    rather than a null.  The three refusals ``authority_linescore`` can give
+    (not played, no line at all, orientation unresolved) are all the same thing
+    to this caller — there is no line to draw — and the reason is not carried
+    onto the row because no renderer can act on it.  A card with nothing to say
+    about the score says nothing, which is live/056's rule: a rail that lies is
+    worse than one that is quiet.
+
+    ``listed`` is the ``order_of_play`` entry, and it is the ONLY source read
+    here.  It carries ``sides``/``completion``/``was_suspended`` off the same
+    scoreboard fetch that produced ``state`` and ``status_detail``, so the set
+    line and the caption beside it describe one instant of one match.
+
+    ORIENTATION IS THIS FUNCTION'S REASON TO EXIST.  ``authority_linescore``
+    needs our home/away order, which the scoreboard parser cannot know; the
+    register's pairing supplies it here.  When the two cannot be reconciled the
+    line is refused outright rather than guessed, because a linescore with the
+    columns swapped is an inverted result that nothing downstream doubts.
+    """
+    if listed is None:
+        return {}
+
+    players = matchup.get("players")
+    if not isinstance(players, list) or len(players) != 2:
+        return {}
+
+    # LAZY, for the same reason the `espn_tennis` imports in this module are —
+    # `test_comparison_specimen` runs the specimen producer with `-S`, and
+    # `tennis_linescore` reaches SQLAlchemy through its own import chain.
+    from app.utils.tennis_linescore import authority_linescore
+
+    built = authority_linescore(
+        [str(p) for p in players], listed, observed_at=now
+    )
+    line = built.get("linescore")
+    return {"linescore": line} if line else {}
+
+
 def build_match_row(
     reg: TournamentRegister,
     matchup: dict[str, Any],
@@ -634,6 +680,25 @@ def build_match_row(
         # ESPN's display text for that state ("2nd Set"). Beside the enum, never
         # instead of it: a renderer branches on `live_state` and prints this.
         "status_detail": status_detail,
+        # ═══ THE SET-BY-SET SCORE (live/061, #2746 scope item 1) ═══
+        #
+        # `status_detail` says "2nd Set"; this says 6-4, 3-6, 2-1. The slate is
+        # the list a reader opens to see what is on, and "2nd Set" beside two
+        # names is the one thing on that row that tells them nothing about the
+        # match.
+        #
+        # EMITTED ONLY WHEN IT EXISTS. `authority_linescore` returns a line or a
+        # named reason and never both, and the key is dropped on a reason — a
+        # `"linescore": null` on all 32 rows of a card that has not started is
+        # 32 nulls a reader's browser downloads to learn nothing (the same rule
+        # `routes/events.py` applies to the event payload).
+        #
+        # SAME BOARD READ, SAME BEAT. The ingredients come off the
+        # `order_of_play` entry, which `sync-tournament-results` refreshes every
+        # 180 seconds. That cadence is DELIBERATE and this row does not change
+        # it: a tennis slate is a list of what is on, not a live scoreboard, and
+        # the 30-second SLA belongs to the match page that opens from it.
+        **_slate_linescore(matchup, listed, now=now),
         # IS `scheduled_date` A TIME, OR A DAY WEARING ONE (Q463)?
         #
         # `True` means the source has not published an order of play for this

@@ -51,6 +51,7 @@ import {
   type RoundName,
 } from "./bracket";
 import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import type { TennisLinescore } from "./types";
 import {
   formatSlateProbability,
   matchBroadcast,
@@ -177,6 +178,15 @@ export interface MatchListEntry {
    * is why `liveMatchLabel` refuses it rather than the row printing it.
    */
   statusDetail: string | null;
+  /**
+   * The set-by-set score (live/061, #2746 scope item 1), or `null`.
+   *
+   * Unlike `score` below, this is NOT a seam waiting for a feed — the slate
+   * carries it today, off ESPN's board, for every fixture the scoreboard has a
+   * line for. `null` means the source states none, which is the ordinary case
+   * for a match that has not started; it never means zero-all.
+   */
+  linescore: TennisLinescore | null;
   drawLabel: string | null;
   sides: [MatchListSide, MatchListSide];
   decided: boolean;
@@ -541,6 +551,7 @@ export function matchListFromSlate(
       startIsTbd: match.start_is_tbd === true,
       liveState: match.live_state ?? null,
       statusDetail: match.status_detail ?? null,
+      linescore: match.linescore ?? null,
       drawLabel: match.draw_label ?? null,
       sides,
       decided,
@@ -681,6 +692,11 @@ export function matchListFromBracket(
         startIsTbd: joined?.start_is_tbd === true,
         liveState: joined?.live_state ?? null,
         statusDetail: joined?.status_detail ?? null,
+        // The bracket path gets the line from the SLATE row it joined to, and
+        // from nowhere else — a draw slot carries no score. `null` when the
+        // fixture is not on today's slate, which is the ordinary case for a
+        // bracket match days out.
+        linescore: joined?.linescore ?? null,
         drawLabel: joined?.draw_label ?? null,
         sides,
         decided,

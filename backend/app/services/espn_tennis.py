@@ -859,6 +859,26 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             # wants to DRAW this pairing rather than compare it
                             # reads this; see `_competitor_view`.
                             "competitors": competitor_views,
+                            # ═══ THE SET LINE'S INGREDIENTS (live/061, #2746
+                            # scope item 1) ═══
+                            #
+                            # `authority_linescore` reads exactly these three
+                            # beside `state`/`status_detail`/`espn_competition_id`,
+                            # which this entry already carries. They are carried
+                            # UNORIENTED and the line is NOT built here, because
+                            # orientation needs OUR home/away pairing and this
+                            # loop does not know it — `build_match_row` does, and
+                            # that is where the line is assembled.
+                            #
+                            # Carried off THIS read of the board, not fetched
+                            # again: the whole point of the arrangement is that
+                            # the set line and the state it is captioned by
+                            # describe the same instant. The slate row therefore
+                            # inherits this map's 180-second beat and makes no
+                            # request of its own.
+                            "sides": competition_sides(competition),
+                            "completion": completion_of(status),
+                            "was_suspended": competition.get("wasSuspended") is True,
                         }
                         stats[slate_state] += 1
                     else:

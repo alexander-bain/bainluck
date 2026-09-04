@@ -4,6 +4,7 @@ import React from "react";
 
 import EventCardShell from "@/components/EventCardShell";
 import LiquidityMark from "@/components/LiquidityMark";
+import TennisLinescore from "@/components/TennisLinescore";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -380,6 +381,26 @@ function MatchRow({
               {liveLabel}
             </span>
           )}
+          {/* THE SET LINE, BESIDE THE BADGE THAT SAYS WHICH SET (live/061,
+              #2746 scope item 1).
+
+              It sits here, in the meta row, rather than under the names,
+              because "3rd Set" and "6-4 4-6 2-1" are two halves of one
+              sentence about the same moment and a reader should not have to
+              look in two places for them.
+
+              Renders NOTHING when there is no line — `TennisLinescore` returns
+              `null` for an absent or empty one, so an upcoming row is
+              byte-for-byte the row it was before this shipped. That is the
+              second direction of the guard: the flood shows AND the quiet row
+              stays quiet (gotcha #43). */}
+          <TennisLinescore
+            variant="compact"
+            linescore={entry.linescore}
+            homeName={entry.sides[0].displayName}
+            awayName={entry.sides[1].displayName}
+            className="normal-case tracking-normal"
+          />
           {time && <span className="tabular-nums">{time}</span>}
           {(liveLabel !== null || time) && entry.drawLabel && (
             <span aria-hidden="true">·</span>
