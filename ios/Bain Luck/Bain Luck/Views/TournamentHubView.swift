@@ -318,30 +318,42 @@ private struct TournamentHubBoardCard: View {
     let board: TournamentHubPresentation.BoardSection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(board.rows) { row in
-                HStack(spacing: 10) {
-                    Text(row.rank.map(String.init) ?? "–")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 16, alignment: .trailing)
-                    TournamentHubFlag(url: row.flagUrl)
-                    Text(row.name)
-                        .font(.subheadline)
-                        .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    if let delta = row.deltaPoints {
-                        Text(delta > 0
-                             ? "+\(String(format: "%.0f", delta))"
-                             : String(format: "%.0f", delta))
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(delta > 0 ? DS.emerald : DS.danger)
+        VStack(alignment: .leading, spacing: 12) {
+            // The chart first, then the list it summarises. #2911: the race is
+            // the story and the standings are the detail, not the other way
+            // round — and a reader who sees three named lines then reads the
+            // same three names at the top of the list never has to work out
+            // which rows are drawn.
+            RaceChartView(data: board.chart)
+                .id(board.id)
+
+            Divider().overlay(DS.border)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(board.rows) { row in
+                    HStack(spacing: 10) {
+                        Text(row.rank.map(String.init) ?? "–")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 16, alignment: .trailing)
+                        TournamentHubFlag(url: row.flagUrl)
+                        Text(row.name)
+                            .font(.subheadline)
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        if let delta = row.deltaPoints {
+                            Text(delta > 0
+                                 ? "+\(String(format: "%.0f", delta))"
+                                 : String(format: "%.0f", delta))
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(delta > 0 ? DS.emerald : DS.danger)
+                        }
+                        Text(row.percentText)
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .frame(minWidth: 44, alignment: .trailing)
                     }
-                    Text(row.percentText)
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(DS.textPrimary)
-                        .frame(minWidth: 44, alignment: .trailing)
                 }
             }
 
