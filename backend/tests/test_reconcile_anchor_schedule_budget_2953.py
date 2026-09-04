@@ -118,6 +118,25 @@ def _wire(monkeypatch, rows, *, eligible, remaining, clock=None):
         monkeypatch.setattr(rail, "_time", clock)
 
 
+def _sweep_module():
+    """The sentinel MODULE — never `from app.tasks import anchor_schedule_sentinel`.
+
+    `app/tasks/__init__.py` defines a Celery task with that exact name, so the
+    package attribute is whichever of the two bound last: the submodule if it
+    was imported first, the task if `__init__` finished after. Both happen. The
+    plain import passed the whole of this file locally and then failed four
+    tests on CI shard 3, where `inspect.getsource` returned the six-line task
+    wrapper instead of the module and every constant lookup raised
+    `AttributeError` on a Task object.
+
+    `import_module` reads `sys.modules` by full dotted path, so it cannot
+    resolve to the task no matter what imported what first.
+    """
+    from importlib import import_module
+
+    return import_module("app.tasks.anchor_schedule_sentinel")
+
+
 class TestTheRouterBoundStaysOffTheBatchCaller:
     """A bound built for the endpoint must not silently shrink the sweep.
 
@@ -134,13 +153,13 @@ class TestTheRouterBoundStaysOffTheBatchCaller:
     """
 
     def test_the_sweep_does_not_inherit_the_routers_page_size(self):
-        from app.tasks import anchor_schedule_sentinel as sweep
+        sweep = _sweep_module()
 
         assert sweep.SWEEP_PAGE_LIMIT > rail.DEFAULT_LIMIT
 
     def test_the_sweep_page_cap_is_not_what_bounds_a_night(self):
         """The deadline should bind before the page cap, or reach is left unused."""
-        from app.tasks import anchor_schedule_sentinel as sweep
+        sweep = _sweep_module()
 
         seconds_per_page = sweep.SWEEP_PAGE_LIMIT * 0.59
         pages_the_deadline_allows = sweep.DEFAULT_DEADLINE_SECONDS / seconds_per_page
@@ -148,7 +167,7 @@ class TestTheRouterBoundStaysOffTheBatchCaller:
 
     def test_the_sweeps_per_page_budget_clears_a_full_page(self):
         """Otherwise `reconcile` truncates every page and the cap returns."""
-        from app.tasks import anchor_schedule_sentinel as sweep
+        sweep = _sweep_module()
 
         assert sweep.SWEEP_PAGE_BUDGET_SECONDS > sweep.SWEEP_PAGE_LIMIT * 0.59
 
@@ -156,7 +175,7 @@ class TestTheRouterBoundStaysOffTheBatchCaller:
         """The wiring, not just the constants: a constant nobody passes is a comment."""
         import inspect
 
-        from app.tasks import anchor_schedule_sentinel as sweep
+        sweep = _sweep_module()
 
         source = inspect.getsource(sweep)
         assert "budget_seconds=SWEEP_PAGE_BUDGET_SECONDS" in source
