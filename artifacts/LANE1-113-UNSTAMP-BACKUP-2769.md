@@ -97,6 +97,8 @@ async def m():
 asyncio.run(m())
 ```
 
+**Fidelity note.** The program that actually ran printed the prefix `LANE1-114-UNSTAMP`, not `LANE1-113-`: this session was numbered 114 by mistake for its first half and renumbered to 113 (the directive it consumed) afterwards. The dyno log for `run.8124` therefore reads `LANE1-114-UNSTAMP … rowcount=1` eleven times. Nothing else about the run differs from the text above.
+
 ## 4. THE ONE-COMMAND RESTORE
 
 Put the file below on disk and run the two lines. It is the repair rail's own undo statement
