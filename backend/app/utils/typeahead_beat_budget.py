@@ -1300,7 +1300,48 @@ def free_background_slots(
 #: carry zero other crontab fires, sit outside the settlement sweep's `:31`–`:47`
 #: window, and share a minute with neither each other nor the NFL stamper at
 #: `:23` — so no two StatPal readers ever run together.
-BACKGROUND_BEAT_COUNT = 117
+#:
+#: 🔴 RE-DERIVED at authority/017 (2026-09-04, #2867 / D50 step 5): **117 → 118,
+#: explicit 72 → 73.** One beat, explicitly routed here:
+#: `stamp-mlb-statpal-fixtures-hourly` at `crontab(minute=21)`. RE-DERIVED by
+#: RUNNING the census in `test_typeahead_beat_budget.py` over the assembled
+#: `beat_schedule`, which printed `explicit 73 implicit 45 total 118` — not by
+#: adding 1 to 117 (#1910). The fall-through half is UNMOVED at **45**: the beat
+#: names its queue rather than defaulting into it, the benign direction this
+#: guard reserves.
+#:
+#: **And this guard caught the omission, which is the reserved red working.** The
+#: beat was pushed without the re-derivation and CI backend shard 2 went red on
+#: `73 != 72`. The lane's focused local run (D40) had missed it because this file
+#: is named after `typeahead` and the `-k` band was named after the feature — the
+#: census lives nowhere near the words a StatPal change would think to select.
+#:
+#: ITS COST, declared here because this is where costs are declared. Per pass:
+#: TWO HTTP reads (StatPal `season-schedule` and `livescores`) plus ONE indexed
+#: candidate query bounded to one hour either side of the outermost start StatPal
+#: served. Two things make MLB's cost different from its two siblings' and both
+#: make it SMALLER: its `season-schedule` is a rolling ~17-day window rather than
+#: a whole season (227 games measured 2026-09-04, against NBA's 1206 and NHL's
+#: 1404), so the read and the candidate window are both bounded by a fortnight.
+#: Against production the same day the candidate query returns **252 rows**.
+#:
+#: MLB is, however, the first of the four whose season is IN PROGRESS, so it is
+#: the first for which the `livescores` read returns anything (16 rows) rather
+#: than a legitimate empty. That is one more parsed payload per pass, not one
+#: more request.
+#:
+#: `background` rather than `heavy` because there is no multi-minute compute, and
+#: rather than `realtime` for the same reason as the three stampers above:
+#: NOTHING READS THE STAMP YET. Identity written dark under D50, and a beat with
+#: no reader has no claim on the live queue.
+#:
+#: `:21` was chosen by RUNNING the minute census over the assembled schedule
+#: (CERT-418's lesson), not by reading the file: of 154 beat entries it carries
+#: zero other crontab fires, sits outside the settlement sweep's `:31`–`:47`, is
+#: 19 minutes after `sync-statpal-schedules-mlb` at `:02`, and is two minutes
+#: clear of the NHL stamper at `:19` and the NFL one at `:23` — so the four
+#: StatPal readers sit at `:17`/`:19`/`:21`/`:23` and no two ever run together.
+BACKGROUND_BEAT_COUNT = 118
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
