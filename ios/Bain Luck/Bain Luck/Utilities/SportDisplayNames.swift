@@ -118,3 +118,34 @@ func isInternationalSport(_ sportKey: String?) -> Bool {
     ]
     return patterns.contains(where: { key.contains($0) })
 }
+
+/// SF Symbol for a full sport KEY (`"tennis_atp_us_open"`, `"basketball_nba"`),
+/// matched on the family prefix.
+///
+/// Search's filter row used to carry a hand-written list of seven families and
+/// send the family token as the API's `sport` parameter — but that parameter is
+/// an exact `Sport.key` match, so every one of those pills returned nothing
+/// (measured 2026-09-03: `?q=lakers` → 5 NBA hits, `?q=lakers&sport=basketball`
+/// → 0). The row is now built from the server's own `sports` facet, which speaks
+/// exact keys, and needs an icon for a key rather than for a family.
+func sportSymbolName(forSportKey key: String) -> String {
+    let lowered = key.lowercased()
+    let symbols: [(prefix: String, symbol: String)] = [
+        ("basketball", "basketball.fill"),
+        ("americanfootball", "football.fill"),
+        ("baseball", "baseball.fill"),
+        ("icehockey", "hockey.puck.fill"),
+        ("soccer", "soccerball"),
+        ("golf", "figure.golf"),
+        ("tennis", "figure.tennis"),
+        ("mma", "figure.boxing"),
+        ("boxing", "figure.boxing"),
+        ("cricket", "figure.cricket"),
+        ("rugby", "figure.rugby"),
+        ("motorsports", "flag.checkered"),
+        ("aussierules", "figure.australian.football"),
+        ("lacrosse", "figure.lacrosse"),
+    ]
+    for entry in symbols where lowered.hasPrefix(entry.prefix) { return entry.symbol }
+    return "sportscourt"
+}

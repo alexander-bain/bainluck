@@ -12,6 +12,22 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var error: String?
     @Published var selectedSport = ""
+    /// The sport filter row, built from the server's own facet for the current
+    /// query rather than from a hand-written family list.
+    ///
+    /// `GET /api/events/search?sport=` is an EXACT `Sport.key` match
+    /// (`routes/events.py`, `Sport.key == sport`), and the old client list sent
+    /// family tokens — `basketball`, `golf`, `tennis` — that are not keys. Every
+    /// pill therefore returned zero results: measured 2026-09-03, `?q=lakers`
+    /// gives 5 NBA hits and `?q=lakers&sport=basketball` gives 0. Alex reported
+    /// the symptom he could see ("tennis isn't a pill to select"); the row was
+    /// dead for all seven sports it did list.
+    ///
+    /// Held from the last UNFILTERED search on purpose: the server narrows the
+    /// facet to the selected key once a filter is applied, so recomputing from
+    /// every response would collapse the row to one pill on first tap and strand
+    /// the reader there with no way back.
+    @Published private(set) var sportFacets: [SportFacet] = []
     @Published var recentSearches: [String] = []
     @Published private(set) var trendingSearches: [TrendingQuery] = []
 
@@ -83,6 +99,7 @@ final class SearchViewModel: ObservableObject {
             // can never overwrite the newest results.
             guard generation == searchGeneration else { return }
             results = response
+            if sport == nil { sportFacets = Self.rankedFacets(response.sports) }
             suggestions = []
             error = nil
             loading = false
@@ -109,6 +126,30 @@ final class SearchViewModel: ObservableObject {
         debounceTask?.cancel()
         searchGeneration &+= 1
         loading = false
+    }
+
+    /// Biggest bucket first, ties broken by name so the row is stable across two
+    /// identical searches. Zero-count facets are dropped — a pill that can only
+    /// ever return nothing is the defect this row is replacing.
+    static func rankedFacets(_ facets: [SportFacet]?) -> [SportFacet] {
+        (facets ?? [])
+            .filter { $0.count > 0 }
+            .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
+    }
+
+    /// Reset every piece of search state at once — the field, the results, the
+    /// filter and the facet row it was built from. The clear button used to reset
+    /// four of these inline and would have left a stale facet row standing over
+    /// an empty screen.
+    @MainActor
+    func clear() {
+        cancelInFlightWork()
+        query = ""
+        suggestions = []
+        results = nil
+        selectedSport = ""
+        sportFacets = []
+        didYouMean = nil
     }
 
     @MainActor

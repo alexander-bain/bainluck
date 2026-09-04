@@ -841,13 +841,11 @@ struct OddsChartView: View {
             }
         }
         .chartXAxis {
-            let domain = xAxisDomain(for: dataPoints)
-            let duration = domain.upperBound.timeIntervalSince(domain.lowerBound)
-            let strideMinutes = duration > 10800 ? 60 : duration > 5400 ? 30 : 15
-            AxisMarks(values: .stride(by: .minute, count: strideMinutes)) { _ in
+            let plan = Self.xAxisPlan(for: xAxisDomain(for: dataPoints))
+            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
+                AxisValueLabel(format: plan.format, anchor: .top)
                     .font(.system(size: 9))
             }
         }
@@ -1214,6 +1212,105 @@ struct OddsChartView: View {
         let range = maxDate.timeIntervalSince(minDate)
         let padding = max(range * 0.02, 60)
         return minDate.addingTimeInterval(-padding)...maxDate.addingTimeInterval(padding)
+    }
+
+    // MARK: - X-Axis Ticks
+
+    /// How to tick and label the time axis for one chart domain.
+    ///
+    /// The axis used to hard-code a 15/30/**60**-minute stride and an
+    /// `hour().minute()` label, whatever the span. That is fine for the case it
+    /// was written against — a three-hour game — and unreadable for anything
+    /// else: an UPCOMING match carries hours of pre-match history, so Alex's
+    /// Shelton–Shapovalov page (24 + 47 points over a **17-hour** span, measured
+    /// 2026-09-03) drew ~18 hourly labels of the form "11:18 PM" into ~350 points
+    /// of width, which overprint into a smear. It also never named a day, so a
+    /// domain crossing midnight labelled two different days identically.
+    ///
+    /// So the stride is chosen from the domain: the smallest natural interval
+    /// whose tick count fits the label's own budget (short labels tolerate more
+    /// ticks than "Wed 6 AM" does), and the label carries a weekday exactly when
+    /// the domain spans more than one calendar day. No smoothing, no invented
+    /// points — this is labelling only.
+    struct XAxisPlan: Equatable {
+        enum LabelStyle: Equatable {
+            /// "6:45 PM" — within one day, ticks finer than an hour.
+            case timeOfDay
+            /// "6 PM" — within one day, hourly or coarser ticks.
+            case hourOfDay
+            /// "Wed 6 PM" — the domain spans more than one calendar day.
+            case dayAndHour
+            /// "Sep 3" — the domain spans days, ticks a day or coarser.
+            case calendarDay
+        }
+
+        let component: Calendar.Component
+        let count: Int
+        let labelStyle: LabelStyle
+
+        var format: Date.FormatStyle {
+            switch labelStyle {
+            case .timeOfDay: return .dateTime.hour().minute()
+            case .hourOfDay: return .dateTime.hour()
+            case .dayAndHour: return .dateTime.weekday(.abbreviated).hour()
+            case .calendarDay: return .dateTime.month(.abbreviated).day()
+            }
+        }
+    }
+
+    /// Candidate strides, coarsening. `seconds` is nominal (used only to estimate
+    /// a tick count); the axis itself strides by the calendar component, so DST
+    /// and month length stay the calendar's problem, not ours.
+    private static let xAxisStrides: [(component: Calendar.Component, count: Int, seconds: TimeInterval)] = [
+        (.minute, 5, 300), (.minute, 10, 600), (.minute, 15, 900), (.minute, 30, 1800),
+        (.hour, 1, 3600), (.hour, 2, 7200), (.hour, 3, 10800), (.hour, 4, 14400),
+        (.hour, 6, 21600), (.hour, 8, 28800), (.hour, 12, 43200),
+        (.day, 1, 86400), (.day, 2, 172800), (.day, 7, 604800),
+        (.day, 14, 1209600), (.day, 30, 2592000), (.day, 60, 5184000),
+        (.day, 90, 7776000), (.day, 180, 15552000), (.day, 365, 31536000),
+    ]
+
+    /// How many labels of each style fit legibly at 9pt across a phone-width
+    /// chart. Longer labels get a smaller budget — that is the whole mechanism
+    /// that stops the smear.
+    private static func maxTicks(for style: XAxisPlan.LabelStyle) -> Int {
+        switch style {
+        case .timeOfDay: return 6
+        case .hourOfDay: return 6
+        case .dayAndHour: return 5
+        case .calendarDay: return 6
+        }
+    }
+
+    private static func labelStyle(
+        strideSeconds: TimeInterval, spansMultipleDays: Bool
+    ) -> XAxisPlan.LabelStyle {
+        if strideSeconds >= 86400 { return .calendarDay }
+        if spansMultipleDays { return .dayAndHour }
+        return strideSeconds < 3600 ? .timeOfDay : .hourOfDay
+    }
+
+    /// Pick the finest stride whose labels still fit. Falls through to the
+    /// coarsest candidate for a domain wider than a month, so a chart always has
+    /// an axis — an unlabelled axis is not an improvement on a crowded one.
+    static func xAxisPlan(
+        for domain: ClosedRange<Date>, calendar: Calendar = .current
+    ) -> XAxisPlan {
+        let duration = max(domain.upperBound.timeIntervalSince(domain.lowerBound), 0)
+        let spansMultipleDays = !calendar.isDate(
+            domain.lowerBound, inSameDayAs: domain.upperBound)
+
+        for candidate in xAxisStrides {
+            let style = labelStyle(
+                strideSeconds: candidate.seconds, spansMultipleDays: spansMultipleDays)
+            let ticks = duration / candidate.seconds
+            if ticks <= Double(maxTicks(for: style)) {
+                return XAxisPlan(
+                    component: candidate.component, count: candidate.count, labelStyle: style)
+            }
+        }
+        let last = xAxisStrides[xAxisStrides.count - 1]
+        return XAxisPlan(component: last.component, count: last.count, labelStyle: .calendarDay)
     }
 
     // MARK: - Period Label Normalization

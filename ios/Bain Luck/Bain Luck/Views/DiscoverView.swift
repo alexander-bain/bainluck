@@ -13,67 +13,9 @@ private enum DiscoverGroupedItem: Identifiable {
     }
 }
 
-private enum NativeDiscoverAction {
-    case detailOpen
-    case like
-    case unlike
-    case share
-    case contextExpand
-    case contextCollapse
-}
-
-private struct NativeDiscoverProfile {
-    private static let storageKey = "discover_interaction_profile_native_v1"
-    private static let categoryCooldownScore = -3.0
-    private var categoryScores: [String: Double]
-
-    static func load() -> NativeDiscoverProfile {
-        let raw = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: Double] ?? [:]
-        return NativeDiscoverProfile(categoryScores: raw)
-    }
-
-    mutating func record(category: String, action: NativeDiscoverAction) {
-        let key = category.lowercased()
-        let weight: Double
-        switch action {
-        case .detailOpen: weight = 1.5
-        case .like: weight = 2.0
-        case .unlike: weight = -1.0
-        case .share: weight = 3.0
-        case .contextExpand: weight = 0.35
-        case .contextCollapse: weight = 0.0
-        }
-        categoryScores[key] = min(30, max(-10, (categoryScores[key] ?? 0) + weight))
-        save()
-    }
-
-    func adjustment(for category: String) -> Double {
-        let score = categoryScores[category.lowercased()] ?? 0
-        guard abs(score) >= 2 else { return 0 }
-        return min(12, max(-8, score))
-    }
-
-    func suppresses(category: String) -> Bool {
-        (categoryScores[category.lowercased()] ?? 0) <= Self.categoryCooldownScore
-    }
-
-    func topAffinities(limit: Int = 3) -> [(String, Double)] {
-        categoryScores
-            .filter { abs($0.value) >= 2 }
-            .sorted { abs($0.value) > abs($1.value) }
-            .prefix(limit)
-            .map { ($0.key, $0.value) }
-    }
-
-    mutating func reset() {
-        categoryScores = [:]
-        save()
-    }
-
-    private func save() {
-        UserDefaults.standard.set(categoryScores, forKey: Self.storageKey)
-    }
-}
+/// #1221: the profile itself now lives in `DiscoverInteractionProfile` (decaying,
+/// testable). This alias keeps the call sites below reading as they did.
+private typealias NativeDiscoverAction = DiscoverInteractionProfile.Action
 
 struct NativeDiscoverDebugCard: Codable {
     let itemType: String
@@ -183,14 +125,14 @@ struct DiscoverView: View {
 
     // Never let client-side filtering (dismiss + group-collapse) shrink the
     // rendered feed below this many cards when the API returned more (#1221).
-    private static let feedFloor = 8
+    static let feedFloor = 8
     private static let dismissTTL: TimeInterval = 14 * 24 * 3600
     private static let dismissCap = 500
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
     @State private var resolutions: [Resolution] = []
-    @State private var interactionProfile = NativeDiscoverProfile.load()
+    @State private var interactionProfile = DiscoverInteractionProfile.load()
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
@@ -551,21 +493,59 @@ struct DiscoverView: View {
         // backfill the least-recently-dismissed so a heavy dismiss history can't
         // collapse the feed to ~2 cards. Never backfills stale rot — staleBase
         // already excludes it.
-        let kept = staleBase.filter { dismissedAt[itemId($0)] == nil }
-        let dismissBase: [FeedItem]
-        if kept.count >= Self.feedFloor || kept.count == staleBase.count {
-            dismissBase = kept
-        } else {
-            let backfill = staleBase
-                .filter { dismissedAt[itemId($0)] != nil }
-                .sorted { (dismissedAt[itemId($0)] ?? 0) < (dismissedAt[itemId($1)] ?? 0) }
-                .prefix(Self.feedFloor - kept.count)
-            dismissBase = kept + backfill
-        }
+        let dismissBase = Self.applyFloor(
+            to: staleBase,
+            keeping: { dismissedAt[itemId($0)] == nil },
+            // Least-recently-dismissed first: an old swipe has earned its way back
+            // before a fresh one has.
+            backfillPriority: { -(dismissedAt[itemId($0)] ?? 0) }
+        )
 
-        // 3. Category cooldown (soft). Fallback: keep base if it empties.
-        let cooldownFiltered = dismissBase.filter { !interactionProfile.suppresses(category: itemCategory($0)) }
-        return cooldownFiltered.isEmpty ? dismissBase : cooldownFiltered
+        // 3. Category cooldown (soft) — floored EXACTLY like the dismiss stage
+        // above (#1221). This was the last unfloored subtractive stage in the
+        // client, and it is the one that actually starved Alex's phone: the old
+        // rule dropped every card in a cooled-down category and only fell back
+        // when the result was empty, so a profile that had cooled the big
+        // categories cut a healthy 50-card page to 3 while `/api/feed` was
+        // serving 50. (Measured on the live page of 2026-09-03: 50 cards over 14
+        // categories, the 11 largest suppressed → 3 left.) The companion half of
+        // the fix is in `DiscoverInteractionProfile`, where a cooldown now decays
+        // instead of blacklisting a category for the life of the install.
+        //
+        // Backfill order is least-cooled-first, so the profile still decides WHICH
+        // cards come back — a cooldown stays a downrank, it just can no longer
+        // empty the feed underneath the reader.
+        return Self.applyFloor(
+            to: dismissBase,
+            keeping: { !interactionProfile.suppresses(category: itemCategory($0)) },
+            backfillPriority: { interactionProfile.score(for: itemCategory($0)) }
+        )
+    }
+
+    /// Apply one soft, subtractive client filter without letting it shrink the
+    /// rendered feed below `feedFloor` while the API has handed us more (#1221).
+    ///
+    /// Static + internal so the floor is unit-testable without standing up a
+    /// `View`: the two stages that use it are the two that starved the feed, and
+    /// "a client filter never empties a healthy page" is the contract, not an
+    /// implementation detail of either one.
+    ///
+    /// - Parameters:
+    ///   - keeping: the filter's own verdict — `true` keeps the item outright.
+    ///   - backfillPriority: ordering over the REMOVED items when the floor has to
+    ///     put some back. Higher comes back first.
+    static func applyFloor(
+        to base: [FeedItem],
+        keeping isKept: (FeedItem) -> Bool,
+        backfillPriority: (FeedItem) -> Double
+    ) -> [FeedItem] {
+        let kept = base.filter(isKept)
+        if kept.count >= feedFloor || kept.count == base.count { return kept }
+        let backfill = base
+            .filter { !isKept($0) }
+            .sorted { backfillPriority($0) > backfillPriority($1) }
+            .prefix(feedFloor - kept.count)
+        return kept + backfill
     }
 
     /// Memoized presentation (L2-202 / C42 P2). SwiftUI re-evaluates every
