@@ -1185,7 +1185,21 @@ def free_background_slots(
 #: printed value — `explicit 67 implicit 45 total 112` — is what stands here. It
 #: was not obtained by adding 1 + 1 (#1910). Both lanes' cost declarations above
 #: remain accurate as written.
-BACKGROUND_BEAT_COUNT = 112
+#:
+#: 🔴 authority/009 (2026-09-04): 112 -> 113, explicit 67 -> 68.
+#: `stamp-nfl-statpal-fixtures-hourly`, `crontab(minute=23)`, explicitly routed
+#: here. RE-DERIVED BY RUNNING the census below over the assembled schedule
+#: (`explicit 68 implicit 45 total 113`), not by adding one (#1910).
+#:
+#: Cost, declared rather than assumed: TWO HTTP reads (StatPal `season-schedule`
+#: — the whole season in one call, 374 games measured — and `livescores`) plus
+#: ONE indexed candidate query bounded to a window of one hour either side of the
+#: outermost kickoff StatPal served. It does not walk the events table and its
+#: cost does not grow with the season. `background` rather than `heavy` because
+#: there is no multi-minute compute here, and rather than `realtime` because
+#: NOTHING READS THE STAMP YET — it is identity written dark under D50, and a
+#: beat with no reader has no claim on the live queue.
+BACKGROUND_BEAT_COUNT = 113
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

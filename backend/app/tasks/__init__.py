@@ -4820,11 +4820,28 @@ celery_app.conf.beat_schedule = {
         # arm is what wants a live cadence, and nothing reads the stamp yet, so
         # an hour is the honest interval until a reader exists.
         #
+        # 🔴 A CRONTAB, NOT `3600.0`, AND THE GUARD IS WHY. This entry was first
+        # written as a bare interval and
+        # `test_settlement_sweep_beat.TestG8TheFireMinuteIsClearOnItsOwnQueue`
+        # went red: `BACKGROUND_INTERVAL_FLOOR` admits an interval beat onto this
+        # queue only at `period <= 180s`, on the argument that such a beat fires
+        # during every minute anyway and no placement can avoid it. An hourly
+        # beat is the opposite — it fires once, it can be placed, and leaving it
+        # floating would have parked it on an arbitrary minute forever. The guard
+        # asked the right question and the answer is a placement.
+        #
+        # :23 was chosen by RUNNING the census over the assembled schedule, not
+        # by reading the file (CERT-418's lesson). It is one of fourteen minutes
+        # carrying ZERO other background crontab fires, it is outside the
+        # settlement sweep's :31–:47 run window, and it sits 20 minutes after
+        # `sync-statpal-schedules-nfl` at :03 so the two StatPal readers never
+        # share a minute.
+        #
         # Two HTTP reads and one bounded candidate query per pass. The candidate
         # window is one hour either side of the outermost kickoff StatPal served,
         # so it never walks the events table.
         "task": "app.tasks.stamp_nfl_statpal_fixtures",
-        "schedule": 3600.0,
+        "schedule": crontab(minute=23),
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {

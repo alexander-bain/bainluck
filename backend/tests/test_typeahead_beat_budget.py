@@ -843,6 +843,13 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     the merge. Both numbers were re-derived by RUNNING the census below over the
     assembled schedule on the merged tree, never by adding. Fall-through stays
     at **45**.
+
+    🔴 **RE-DERIVED (authority/009, 2026-09-04): 112 → 113, explicit 67 → 68.**
+    `stamp-nfl-statpal-fixtures-hourly` (#2867, D50) names `background`
+    explicitly, so the fall-through half is UNMOVED at **45** — the benign
+    direction this docstring reserves. Obtained by RUNNING the census below,
+    which printed `explicit 68 implicit 45 total 113`, never by adding one
+    (#1910). The cost declaration is on `BACKGROUND_BEAT_COUNT`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -859,9 +866,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 67, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 68, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 112
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 113
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
