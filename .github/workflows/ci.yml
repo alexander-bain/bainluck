@@ -643,6 +643,33 @@ jobs:
             exit 1
           fi
 
+      - name: "#2867 already-linked lookup (real Postgres)"
+        # CERT-871 FOLLOW-UP `AUTHORITY-006-ALREADY-LINKED-RECEIPTS`. The forward
+        # linker asks for candidates with `statpal_fixture_id IS NULL`, so a
+        # fixture it linked on an EARLIER pass finds nothing and reports as
+        # unmatched — i.e. as "StatPal has a match we do not hold", the opposite
+        # of the truth. On a 10-minute beat that buries the real misses under a
+        # day's worth of its own successes.
+        #
+        # `_already_linked` is the disambiguation and it needs a server for three
+        # reasons: `= ANY(:fixture_ids)` is Postgres array binding with no sqlite
+        # equivalent and no mock that can be wrong about it; the join is a
+        # `VARCHAR` column against a Python `str`, and an int/str coercion on
+        # either side misses EVERY row while raising nothing; and only the server
+        # can be asked whether the predicate is scoped as written.
+        #
+        # Batch-size arm included: a one-id batch would execute even if the array
+        # binding degenerated to a scalar, so one test runs the real ~70-id pass.
+        # Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_link_tennis_already_linked_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/tennisalready2867.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tennisalready2867.txt; then
+            echo "::error::#2867 already-linked lookup gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

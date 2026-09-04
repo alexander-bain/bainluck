@@ -77,6 +77,20 @@ comes back as `COLLISION` and is reported rather than overwritten.
 
 It never re-links a row that already holds a StatPal id, and it never touches a
 row outside tennis.
+
+**A link is both shapes or neither.** Only `WROTE` and `CONFIRMED` mean the anchor
+names this event; every other anchor outcome rolls the column write back and is
+receipted. Committing on "not a COLLISION" was a whitelist written as a
+blacklist, and it let `STALE_INCUMBENT` and `NO_KEY` leave a row whose column
+says linked while the anchor table says nothing — a disagreement no reader can
+see and the D51 restore does not know about (CERT-871 FOLLOW-UP
+`AUTHORITY-006-LINK-WRITE-OUTCOMES`).
+
+**"Already linked" is not "unmatched".** A fixture linked on an earlier pass has
+no candidate by construction, so it has to be recognised rather than receipted as
+a miss; otherwise a task running every 10 minutes buries the handful of real
+misses under its own successes (CERT-871 FOLLOW-UP
+`AUTHORITY-006-ALREADY-LINKED-RECEIPTS`).
 """
 
 from __future__ import annotations
@@ -88,7 +102,12 @@ from typing import Any, Optional
 
 from sqlalchemy import text
 
-from app.services.anchor_channel import COLLISION, WROTE, record_anchor
+from app.services.anchor_channel import (
+    COLLISION,
+    CONFIRMED,
+    WROTE,
+    record_anchor,
+)
 from app.services.statpal_api import StatPalFixture, get_statpal_service
 from app.utils.provider_anchor_keys import statpal_anchor_key, statpal_id_space
 from app.utils.tennis_name_matching import DOUBLES_MARKER, pair_matches
@@ -113,8 +132,10 @@ MATCH_WINDOW = timedelta(hours=36)
 #: Every tennis row in the window that has no StatPal id yet, with its sport key.
 #:
 #: `statpal_fixture_id IS NULL` is the whole of the re-link guard: a row that
-#: already carries an id is not revisited, so a task that runs every 15 minutes
-#: does not re-derive 30,000 rows' worth of decisions to write nothing.
+#: already carries an id is not revisited, so a task that runs every 10 minutes
+#: does not re-derive 30,000 rows' worth of decisions to write nothing. The cost
+#: of that guard is `ALREADY_LINKED_IDS` below — an already-linked fixture finds
+#: no candidate here and has to be told apart from a genuine miss somewhere else.
 CANDIDATES = """
 SELECT e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time,
        e.sport_id
@@ -131,6 +152,25 @@ UPDATE events
    SET statpal_fixture_id = :fixture_id
  WHERE id = :event_id
    AND statpal_fixture_id IS NULL
+"""
+
+#: Which of this pass's fixture ids are ALREADY on one of our rows.
+#:
+#: CERT-871 FOLLOW-UP `AUTHORITY-006-ALREADY-LINKED-RECEIPTS`. The candidate
+#: query deliberately excludes rows that already carry a StatPal id, so a fixture
+#: linked on an earlier pass finds no candidate and used to be reported as
+#: UNMATCHED — i.e. as *"StatPal has this match and we do not"*, which is the
+#: opposite of what happened. On a task that runs every 10 minutes that is not a
+#: cosmetic mislabel: within a day the unmatched receipts are almost entirely
+#: successes, and the genuine misses — the ones worth a person's attention — are
+#: buried in them.
+#:
+#: One statement for the whole batch rather than a lookup per miss: ~70 ids, one
+#: indexed `= ANY`, asked once.
+ALREADY_LINKED_IDS = """
+SELECT statpal_fixture_id, id
+  FROM events
+ WHERE statpal_fixture_id = ANY(:fixture_ids)
 """
 
 
@@ -150,6 +190,10 @@ class LinkRun:
     ambiguous: list[dict[str, Any]] = field(default_factory=list)
     unmatched: list[dict[str, Any]] = field(default_factory=list)
     collisions: list[dict[str, Any]] = field(default_factory=list)
+    #: Fixtures whose candidate was found and whose column write went through,
+    #: but whose ANCHOR write refused. Rolled back, never committed. CERT-871
+    #: FOLLOW-UP `AUTHORITY-006-LINK-WRITE-OUTCOMES`.
+    write_refusals: list[dict[str, Any]] = field(default_factory=list)
     sources_read: list[str] = field(default_factory=list)
     read_failures: list[str] = field(default_factory=list)
 
@@ -162,6 +206,7 @@ class LinkRun:
             "ambiguous": len(self.ambiguous),
             "unmatched": len(self.unmatched),
             "collisions": len(self.collisions),
+            "write_refusals": len(self.write_refusals),
             "sources_read": self.sources_read,
             "read_failures": self.read_failures,
         }
@@ -172,6 +217,18 @@ def _is_doubles(fixture: StatPalFixture) -> bool:
         fixture.away_team or ""
     )
 
+
+#: `_link_one`'s own outcome for "the column was already claimed between the
+#: candidate query and the write". Not an anchor outcome — `anchor_channel` never
+#: returns it — so it is named here rather than borrowed from there.
+LOST_RACE = "LOST_RACE"
+
+#: The ONLY two anchor outcomes that mean the anchor names this event, so the
+#: only two under which the column write may be committed. A whitelist, not a
+#: blacklist: a new outcome added to `anchor_channel` must be considered here
+#: explicitly, and until it is, it refuses and is receipted (CERT-871
+#: FOLLOW-UP `AUTHORITY-006-LINK-WRITE-OUTCOMES`).
+COMMITTABLE_OUTCOMES = frozenset({WROTE, CONFIRMED})
 
 #: The four things one fixture can be. A verdict, not a score.
 VERDICT_DOUBLES = "DOUBLES"
@@ -292,6 +349,23 @@ async def _candidates(session, start: datetime, end: datetime) -> list[dict[str,
     ]
 
 
+async def _already_linked(
+    session, fixtures: list[StatPalFixture]
+) -> dict[str, int]:
+    """`{fixture_id: event_id}` for the fixtures one of our rows already holds.
+
+    CERT-871 FOLLOW-UP `AUTHORITY-006-ALREADY-LINKED-RECEIPTS`. Asked once per
+    pass, over the ids this pass actually read.
+    """
+    ids = [f.fixture_id for f in fixtures if f.fixture_id]
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(text(ALREADY_LINKED_IDS), {"fixture_ids": ids})
+    ).fetchall()
+    return {str(r[0]): r[1] for r in rows}
+
+
 async def _link_one(session, fixture: StatPalFixture, candidate: dict) -> str:
     """Write both shapes for one match. Returns the anchor outcome.
 
@@ -304,7 +378,7 @@ async def _link_one(session, fixture: StatPalFixture, candidate: dict) -> str:
         {"event_id": candidate["id"], "fixture_id": fixture.fixture_id},
     )
     if not (result.rowcount or 0):
-        return "LOST_RACE"
+        return LOST_RACE
 
     key = statpal_anchor_key(
         fixture.fixture_id, statpal_id_space(candidate["sport_key"])
@@ -356,6 +430,7 @@ async def _run_link_tennis_statpal_fixtures(
 
     async with get_task_session() as session:
         pool = await _candidates(session, window_start, window_end)
+        linked_already = await _already_linked(session, fixtures)
 
         for fixture in fixtures:
             verdict, matches = classify_fixture(fixture, pool)
@@ -364,6 +439,14 @@ async def _run_link_tennis_statpal_fixtures(
                 run.doubles_skipped += 1
                 continue
             if verdict == VERDICT_UNMATCHED:
+                # Asked BEFORE the receipt is written, not after. A fixture we
+                # linked on an earlier pass has no candidate by construction —
+                # `CANDIDATES` filters `statpal_fixture_id IS NULL` — so without
+                # this it reports as "StatPal has a match we do not hold", which
+                # is the opposite of the truth and drowns the real misses.
+                if fixture.fixture_id in linked_already:
+                    run.already_linked += 1
+                    continue
                 run.unmatched.append(_receipt(fixture))
                 continue
             if verdict == VERDICT_AMBIGUOUS:
@@ -402,15 +485,38 @@ async def _run_link_tennis_statpal_fixtures(
                 run.unmatched.append(_receipt(fixture, error=str(e)))
                 continue
 
-            if outcome == COLLISION:
-                await session.rollback()
-                run.collisions.append(
-                    _receipt(fixture, event_id=candidate["id"], outcome=outcome)
-                )
-                continue
-            if outcome == "LOST_RACE":
+            if outcome == LOST_RACE:
                 run.already_linked += 1
                 await session.rollback()
+                continue
+
+            if outcome not in COMMITTABLE_OUTCOMES:
+                # CERT-871 FOLLOW-UP `AUTHORITY-006-LINK-WRITE-OUTCOMES`.
+                #
+                # Only WROTE and CONFIRMED mean the anchor names this event. The
+                # branch used to name COLLISION alone and commit everything else,
+                # which is a whitelist written as a blacklist: `STALE_INCUMBENT`
+                # and `NO_KEY` both fell through to the commit and left the
+                # column set with NO ANCHOR AT ALL.
+                #
+                # That row is worse than an unlinked one. `events.statpal_fixture_id`
+                # says linked, the anchor table says nothing, and the two
+                # disagree silently — a reader that consults the column believes
+                # the link and ruling 048's drain clause never sees it. It is
+                # also invisible to the D51 restore, which only knows the rows
+                # the one-time apply wrote.
+                #
+                # Rolled back and receipted, carrying the outcome that caused it,
+                # so a new anchor outcome arrives as a named finding rather than
+                # as a half-written link nobody counted.
+                await session.rollback()
+                run.write_refusals.append(
+                    _receipt(fixture, event_id=candidate["id"], outcome=outcome)
+                )
+                if outcome == COLLISION:
+                    run.collisions.append(
+                        _receipt(fixture, event_id=candidate["id"], outcome=outcome)
+                    )
                 continue
 
             await session.commit()
@@ -433,4 +539,5 @@ async def _run_link_tennis_statpal_fixtures(
         "ambiguous_receipts": run.ambiguous,
         "unmatched_receipts": run.unmatched,
         "collision_receipts": run.collisions,
+        "write_refusal_receipts": run.write_refusals,
     }
