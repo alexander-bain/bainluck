@@ -24,8 +24,18 @@ struct EventCardView: View {
     private var awayWon: Bool { isFinished && (event.awayScore ?? 0) > (event.homeScore ?? 0) }
     private var homeWon: Bool { isFinished && (event.homeScore ?? 0) > (event.awayScore ?? 0) }
 
-    private var awayColor: Color { Color(hex: event.awayTeamData?.primaryColor ?? "#6b7280") }
-    private var homeColor: Color { Color(hex: event.homeTeamData?.primaryColor ?? "#6b7280") }
+    /// #2902 — these two used to fall back to the SAME grey, so every card
+    /// whose sides have no brand colour (all tennis, all golf pairings, any
+    /// unmapped team) drew a bar with no visible split. The palette guarantees
+    /// the pair reads apart; see `ProbabilityBarPalette`.
+    private var barColors: (away: Color, home: Color) {
+        ProbabilityBarPalette.colors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
+    }
+    private var awayColor: Color { barColors.away }
+    private var homeColor: Color { barColors.home }
 
     #if os(macOS)
     @State private var isHovered = false
