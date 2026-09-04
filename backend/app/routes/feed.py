@@ -5564,6 +5564,16 @@ _REGIONAL_FEATURE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
+# The alias list is a module constant, so its word-boundary patterns are knowable
+# at import. Building them per alias per call cost a cold Discover build 8,544
+# runtime re.escape + re._compile cache lookups (LAT-P223 profile, 712 calls).
+_REGIONAL_FEATURE_ALIAS_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    tuple(
+        (re.compile(rf"\b{re.escape(alias)}\b"), region_tokens)
+        for alias, region_tokens in _REGIONAL_FEATURE_ALIASES
+    )
+)
+
 
 def _discover_feature_tokens(
     *,
@@ -5612,8 +5622,8 @@ def _discover_feature_tokens(
         for term in ("president", "election", "senate", "house", "primary")
     ):
         tokens.add("topic:elections")
-    for alias, region_tokens in _REGIONAL_FEATURE_ALIASES:
-        if re.search(rf"\b{re.escape(alias)}\b", lower):
+    for alias_pattern, region_tokens in _REGIONAL_FEATURE_ALIAS_PATTERNS:
+        if alias_pattern.search(lower):
             tokens.update(region_tokens)
 
     # Entity-ish tokens: proper-name bigrams catch artists, teams, politicians,
@@ -5697,15 +5707,25 @@ def _discover_semantic_tokens(
     item_name: str | None,
     category: str | None,
     item_type: str | None = None,
+    feature_tokens: set[str] | None = None,
 ) -> set[str]:
-    """Derive compact semantic tokens for soft dismiss propagation."""
-    tokens = {
-        token
-        for token in _discover_feature_tokens(
+    """Derive compact semantic tokens for soft dismiss propagation.
+
+    ``feature_tokens`` lets a caller that has already computed
+    ``_discover_feature_tokens`` for this same ``(item_name, category,
+    item_type)`` hand the result in rather than pay for it twice. It is read
+    and filtered, never mutated. Omit it and this derives its own — the two
+    scoring loops are the only callers that already hold one.
+    """
+    if feature_tokens is None:
+        feature_tokens = _discover_feature_tokens(
             item_name=item_name,
             category=category,
             item_type=item_type,
         )
+    tokens = {
+        token
+        for token in feature_tokens
         if token.startswith(("topic:", "region:", "team:"))
     }
     lower = (item_name or "").lower()
@@ -6237,7 +6257,16 @@ async def _score_events(
             )
             highlight_result.reasons = extra_reasons
 
-            # Apply personalization multiplier
+            # Apply personalization multiplier. The two token derivations take the
+            # same name and category, and the semantic one is a filter over the
+            # feature one — so derive it once and hand it down (LAT-P224).
+            _pers_item_name = f"{event.away_team_name} vs {event.home_team_name}"
+            _pers_category = _personalization_category_from_sport_key(sport_key)
+            _pers_feature_tokens = _discover_feature_tokens(
+                item_name=_pers_item_name,
+                category=_pers_category,
+                item_type="event",
+            )
             p_result = compute_event_multiplier(
                 ctx=ctx,
                 home_team_id=event.home_team_id,
@@ -6246,18 +6275,13 @@ async def _score_events(
                 event_id=event.id,
                 home_score=event.home_score,
                 away_score=event.away_score,
-                feature_tokens=list(
-                    _discover_feature_tokens(
-                        item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                        category=_personalization_category_from_sport_key(sport_key),
-                        item_type="event",
-                    )
-                )
+                feature_tokens=list(_pers_feature_tokens)
                 + list(
                     _discover_semantic_tokens(
-                        item_name=f"{event.away_team_name} vs {event.home_team_name}",
-                        category=_personalization_category_from_sport_key(sport_key),
+                        item_name=_pers_item_name,
+                        category=_pers_category,
                         item_type="event",
+                        feature_tokens=_pers_feature_tokens,
                     )
                 ),
             )
@@ -8354,6 +8378,13 @@ async def _score_futures(
                         )
 
             outcome_names = [o.name for o in market.outcomes if o.name]
+            # Derive the feature tokens once and hand them to the semantic
+            # derivation, which is a filter over them (LAT-P224).
+            _pers_feature_tokens = _discover_feature_tokens(
+                item_name=market.name,
+                category=market.llm_sport_category,
+                item_type="futures",
+            )
             p_result = compute_futures_multiplier(
                 ctx=ctx,
                 sport_category=market.llm_sport_category,
@@ -8361,18 +8392,13 @@ async def _score_futures(
                 futures_market_id=market.id,
                 sport_key=market.sport.key if market.sport else None,
                 outcome_names=outcome_names,
-                feature_tokens=list(
-                    _discover_feature_tokens(
-                        item_name=market.name,
-                        category=market.llm_sport_category,
-                        item_type="futures",
-                    )
-                )
+                feature_tokens=list(_pers_feature_tokens)
                 + list(
                     _discover_semantic_tokens(
                         item_name=market.name,
                         category=market.llm_sport_category,
                         item_type="futures",
+                        feature_tokens=_pers_feature_tokens,
                     )
                 )
                 + _discover_llm_feature_tokens(discover_llm_metadata),
