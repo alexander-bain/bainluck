@@ -27,7 +27,7 @@ Multiplier sources (applied additively, then clamped):
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from app.utils.feed_market_quality import _SPORTS_CATEGORIES
@@ -625,6 +625,62 @@ def followed_sport_categories(
         if category:
             followed.add(category)
     return followed
+
+
+#: How far ahead a followed sport's markets count as "what is on" (ux/1070 item
+#: 5). Two weeks: long enough to hold the tournament that starts this week and
+#: the one after it, short enough that a golf follow is never the 2027 Ryder Cup.
+MY_STUFF_FOLLOW_WINDOW_DAYS = 14
+
+#: Tier 3 is the AWARDS tier. Kalshi files the PGA's FILM awards under
+#: `llm_sport_category = "golf"` ("PGA Award for Best Animated Theatrical Motion
+#: Picture?"), so a golf follow that admitted tier 3 would put the
+#: Oscars-adjacent ones on a golf fan's page.
+_MY_STUFF_AWARD_TIER = 3
+
+
+def my_stuff_admits_followed_sport(
+    *,
+    category: str | None,
+    market_tier: int | None,
+    resolution_date: datetime | None,
+    followed_categories: set[str],
+    now: datetime,
+    window_days: int = MY_STUFF_FOLLOW_WINDOW_DAYS,
+) -> bool:
+    """Does a followed SPORT admit this futures market to My Stuff on its own?
+
+    ux/1070 item 5. My Stuff's futures half admits a market only when it touches
+    one of the viewer's TEAMS, so a sport played by individuals can never reach
+    it: golf and tennis have no team to match on. Alex follows PGA golf at 1.0
+    and this week the site holds a whole tournament grid — Winner, Top 5, Top
+    10, Top 20, Make the Cut — and his My Stuff could show none of it
+    (2026-09-04).
+
+    So a followed sport admits its own markets, bounded three ways, because
+    "everything in golf" is a different page:
+
+      * the sport must be FOLLOWED — `followed_categories` is the caller's,
+        already narrowed to the sports that have no team dimension, so this
+        never loosens the team-match rule for baseball or football;
+      * the market must resolve inside the window — this is "what is on this
+        week", not the 2027 Ryder Cup — and an undated market is NOT admitted,
+        because a missing date is not evidence of imminence;
+      * awards are excluded (`_MY_STUFF_AWARD_TIER`).
+
+    `now` and `resolution_date` must agree about tzinfo; callers normalise with
+    `_utc` before calling, because a naive/aware compare raises rather than
+    answering the question.
+    """
+    if not category:
+        return False
+    if category.strip().lower() not in followed_categories:
+        return False
+    if market_tier == _MY_STUFF_AWARD_TIER:
+        return False
+    if resolution_date is None:
+        return False
+    return now <= resolution_date <= now + timedelta(days=window_days)
 
 
 def _lookup_sport_affinity(

@@ -34,6 +34,7 @@ import {
   extractMarketType,
 } from "@/lib/myStuffProgression";
 import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
+import { followedSportFutures } from "@/lib/myStuffSections";
 import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
@@ -277,7 +278,11 @@ function MyTeamsFeed({ principal }: { principal: string }) {
 
     for (const item of feedData.items) {
       if (item.type === "futures") {
-        // Skip futures from feed — team futures section handles them
+        // Team-sport futures arrive again — merged, laddered and deduped across
+        // sources — from `/api/feed/my-team-futures`, so they are skipped here.
+        // A FOLLOWED sport with no teams (golf, tennis) has no team block to
+        // arrive in and gets its own section below; dropping it here would
+        // throw away a market the server admitted on purpose (ux/1070 item 5).
         continue;
       }
       if (item.type === "tournament") {
@@ -346,10 +351,18 @@ function MyTeamsFeed({ principal }: { principal: string }) {
     return sections;
   }, [feedData]);
 
+  // ux/1070 item 5: the markets that arrived because of a SPORT follow rather
+  // than a team follow — golf and tennis, which have no team block to live in.
+  const followedSportItems = useMemo(
+    () => (feedData ? followedSportFutures(feedData.items) : []),
+    [feedData],
+  );
+
   const hasEvents = feedSections.length > 0;
   const hasFutures = Boolean(teamFuturesData && teamFuturesData.items.length > 0);
   const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
-  const hasContent = hasEvents || hasFutures || hasPinned;
+  const hasFollowedSport = followedSportItems.length > 0;
+  const hasContent = hasEvents || hasFutures || hasPinned || hasFollowedSport;
 
   // ---- Attribution (L2-217 Item 3 / C88) ------------------------------------
   // Two distinct milestones, both hook-ordered ABOVE every conditional return.
@@ -357,7 +370,9 @@ function MyTeamsFeed({ principal }: { principal: string }) {
   // fires only once a real card is actually committed to the DOM. An empty
   // success, a required failure, or a superseded identity therefore reports a
   // classified outcome but never a first-card time.
-  const requiredRenderableCount = feedSections.reduce((n, s) => n + s.items.length, 0);
+  const requiredRenderableCount =
+    feedSections.reduce((n, s) => n + s.items.length, 0) +
+    followedSportItems.length;
   const requiredSettled = Boolean(feedData) || Boolean(feedError);
   const outcomeClass = classifyMyStuffOutcome({
     identityReady: true,
@@ -534,6 +549,39 @@ function MyTeamsFeed({ principal }: { principal: string }) {
                   </div>
                 </section>
               ))}
+
+              {/* ux/1070 item 5 — the sports you follow that have no teams.
+                  A PGA follow used to reach this page as a single tournament
+                  card with four names on it; the tournament's own grid
+                  (Winner · Top 5 · Top 10 · Top 20 · Make the Cut) was in the
+                  database and had nowhere to be rendered. */}
+              {hasFollowedSport && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">&#127937;</span>
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Your Sports This Week
+                    </h2>
+                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                      {followedSportItems.length}
+                    </span>
+                  </div>
+                  <div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                  >
+                    {followedSportItems.map((item) => (
+                      <FeedCard
+                        key={`my-sport-${(item.data as FeedFuturesData).id}`}
+                        item={item}
+                        category={
+                          (item.data as FeedFuturesData).llm_sport_category ?? "other"
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Your Teams' Odds Section */}
               {hasFutures && (
