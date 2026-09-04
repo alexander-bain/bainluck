@@ -77,7 +77,7 @@ class TestEventConceptRoute:
         The flip must scan the whole winner group and fuse from whichever sibling
         carries a live leaderboard."""
         from datetime import datetime, timezone
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         async def _fake(slug, db):
             return _golf_detail_leaderboard_mismatch()
@@ -87,7 +87,7 @@ class TestEventConceptRoute:
         fresh = datetime.now(timezone.utc).isoformat()
         # The winner-group IN() query returns both markets; only the datagolf
         # sibling (id=2) carries a live leaderboard.
-        mock_db.execute.return_value = _query_result([
+        mock_db.execute.return_value = _entity_result([
             ("odds_api:the_open:winner", {}),  # id=1 evolution market, EMPTY
             ("datagolf:pga:100:win", {          # id=2 sibling, live leaderboard
                 "leaderboard": [
@@ -158,8 +158,8 @@ class TestTennisEventAdapter:
     """#999 slice 2: tennis winner-field renders through the same envelope."""
 
     async def test_tennis_winner_field(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result  # mock result
-        mock_db.execute.return_value = _query_result([_tennis_winner_market()])
+        from tests.integration.test_route_weather import _entity_result  # mock result
+        mock_db.execute.return_value = _entity_result([_tennis_winner_market()])
 
         resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
         assert resp.status_code == 200
@@ -176,8 +176,8 @@ class TestTennisEventAdapter:
         assert body["sections"][0]["type"] == "winner"
 
     async def test_tennis_no_markets_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([])
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([])
         resp = await client.get("/api/event/event:tennis:2026-wimbledon-winner")
         assert resp.status_code == 404
 
@@ -209,13 +209,13 @@ class TestTennisSettled:
     champion so the page renders 'Won' instead of a stale probability."""
 
     async def test_settled_marks_champion_and_survives_resolution(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         # In prod the broadened query keeps recently-resolved winner markets in the
         # result set; the mock returns rows regardless of the WHERE, so this proves
         # the adapter builds a settled envelope from a `resolved` market rather than
         # skipping it (the pre-L2-81 status=="open" filter would have dropped it →
         # None → 404).
-        mock_db.execute.return_value = _query_result([_tennis_settled_winner_market()])
+        mock_db.execute.return_value = _entity_result([_tennis_settled_winner_market()])
         resp = await client.get("/api/event/event:tennis:wimbledon")
         assert resp.status_code == 200  # did NOT 404 after the market resolved
         body = resp.json()
@@ -265,8 +265,8 @@ class TestTennisPriceSettledCrown:
     RAW price BEFORE #23 normalization dilutes the leader under the crown threshold."""
 
     async def test_price_settled_market_crowns_leader(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([_tennis_price_settled_market()])
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([_tennis_price_settled_market()])
         resp = await client.get("/api/event/event:tennis:2026-womens-wimbledon")
         assert resp.status_code == 200
         body = resp.json()
@@ -290,7 +290,7 @@ class TestTennisPriceSettledCrown:
         downgraded to 'live' so the field still renders — and no champion is fabricated."""
         from types import SimpleNamespace
         from datetime import datetime, timezone, timedelta
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         mkt = SimpleNamespace(
             id=114156, name="2026 Men’s Wimbledon Winner", status="open",
             llm_sport_category="tennis", source="polymarket",
@@ -302,7 +302,7 @@ class TestTennisPriceSettledCrown:
                 _tennis_outcome("Other", 1.0),
             ],
         )
-        mock_db.execute.return_value = _query_result([mkt])
+        mock_db.execute.return_value = _entity_result([mkt])
         resp = await client.get("/api/event/event:tennis:2026-mens-wimbledon")
         assert resp.status_code == 200
         body = resp.json()
@@ -333,7 +333,7 @@ class TestTennisCanonicalResolution:
     and a gendered slug never crosses to the opposite gender."""
 
     async def test_richest_market_wins(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         sparse = _tennis_winner(
             1, "Wimbledon Women's Singles Winner",
             [("Aryna Sabalenka", 0.6)], source="kalshi",
@@ -344,7 +344,7 @@ class TestTennisCanonicalResolution:
              ("Iga Swiatek", 0.22), ("Elena Rybakina", 0.20)],
             source="polymarket",
         )
-        mock_db.execute.return_value = _query_result([sparse, rich])
+        mock_db.execute.return_value = _entity_result([sparse, rich])
 
         # Bare slug -> the richer (Polymarket, 4-player) field, not the sparse one.
         resp = await client.get("/api/event/event:tennis:wimbledon")
@@ -356,7 +356,7 @@ class TestTennisCanonicalResolution:
         assert body["event"]["key"] == "event:tennis:2026-women-s-wimbledon-winner"
 
     async def test_gendered_slug_does_not_cross(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         womens = _tennis_winner(
             1, "2026 Women's Wimbledon Winner",
             [("Aryna Sabalenka", 0.3), ("Coco Gauff", 0.3), ("Iga Swiatek", 0.3)],
@@ -365,7 +365,7 @@ class TestTennisCanonicalResolution:
             2, "2026 Men's Wimbledon Winner",
             [("Carlos Alcaraz", 0.5), ("Jannik Sinner", 0.4)],
         )
-        mock_db.execute.return_value = _query_result([womens, mens])
+        mock_db.execute.return_value = _entity_result([womens, mens])
 
         # A men's slug must land on the men's field even though it is sparser.
         resp = await client.get("/api/event/event:tennis:wimbledon-men-s-singles-winner")
@@ -393,7 +393,7 @@ class TestF1EventAdapter:
     """#999 L2-72: F1 winner-field (motorsports) renders through the envelope."""
 
     async def test_f1_winner_field(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         winner = _f1_market(
             1, "British Grand Prix Winner", "KXF1RACE-BRIGP26",
             [("Lando Norris", 0.35), ("Max Verstappen", 0.30), ("Charles Leclerc", 0.20)],
@@ -402,7 +402,7 @@ class TestF1EventAdapter:
             2, "British Grand Prix: Sprint Race Winner", "KXF1RACESPRINT-BRIGP26",
             [("Max Verstappen", 0.4), ("Lando Norris", 0.35)],
         )
-        mock_db.execute.return_value = _query_result([winner, sprint])
+        mock_db.execute.return_value = _entity_result([winner, sprint])
         resp = await client.get("/api/event/event:f1:british-grand-prix")
         assert resp.status_code == 200
         body = resp.json()
@@ -414,8 +414,8 @@ class TestF1EventAdapter:
         assert any("Sprint" in (c.get("market_name") or "") for c in body["children"])
 
     async def test_f1_no_markets_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([])
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([])
         resp = await client.get("/api/event/event:f1:british-grand-prix")
         assert resp.status_code == 404
 
@@ -423,12 +423,12 @@ class TestF1EventAdapter:
         """L2-83: an UPCOMING GP (>4d out) exposes start_date = the race time so the
         L2-78 countdown chip renders (daysUntilStart needs a start). Without it the
         chip could never show for F1."""
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         winner = _f1_market(
             1, "Hungarian Grand Prix Winner", "KXF1RACE-HUNGP26",
             [("Lando Norris", 0.4), ("Max Verstappen", 0.35)], rd_days=10,
         )
-        mock_db.execute.return_value = _query_result([winner])
+        mock_db.execute.return_value = _entity_result([winner])
         resp = await client.get("/api/event/event:f1:hungarian-grand-prix")
         assert resp.status_code == 200
         ev = resp.json()["event"]
@@ -439,12 +439,12 @@ class TestF1EventAdapter:
     async def test_f1_price_settled_crowns_winner(self, client, mock_db):
         """L2-83: a settled race whose leader is priced ~1.0 (grading lag) is crowned
         via the display `won` flag — parity with tennis."""
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         winner = _f1_market(
             1, "British Grand Prix Winner", "KXF1RACE-BRIGP26",
             [("Lando Norris", 0.98), ("Max Verstappen", 0.02)], rd_days=-1,
         )
-        mock_db.execute.return_value = _query_result([winner])
+        mock_db.execute.return_value = _entity_result([winner])
         resp = await client.get("/api/event/event:f1:british-grand-prix")
         assert resp.status_code == 200
         body = resp.json()
@@ -469,7 +469,7 @@ class TestUFCEventAdapter:
     """#999 L2-72: UFC card renders as co_equal_list (the TwoSidedTimeline variant)."""
 
     async def test_ufc_co_equal_card(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         f1 = _ufc_fight(
             101, "Fight Night: Collins vs Tanzilovi",
             "kalshi:KXUFCFIGHT-26JUN20COLTAN", ("Collins", 0.6), ("Tanzilovi", 0.4), ct_hours=1,
@@ -486,8 +486,8 @@ class TestUFCEventAdapter:
         # 1st execute = Kalshi FuturesMarket query; 2nd = events-table schedule
         # (no bouts seeded here — the Kalshi path is what's under test).
         mock_db.execute.side_effect = [
-            _query_result([f1, f2, prop]),
-            _query_result([]),
+            _entity_result([f1, f2, prop]),
+            _entity_result([]),
         ]
         resp = await client.get("/api/event/event:ufc:26jun20")
         assert resp.status_code == 200
@@ -502,8 +502,8 @@ class TestUFCEventAdapter:
         assert not any("Title" in (c.get("market_name") or "") for c in body["children"])
 
     async def test_ufc_no_card_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([])
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([])
         resp = await client.get("/api/event/event:ufc:26jun20")
         assert resp.status_code == 404
 
@@ -512,7 +512,7 @@ class TestUFCEventAdapter:
         section — Kalshi occurrence + Polymarket method props ride along, while
         the matchup-shaped negrisk bundle is excluded."""
         from types import SimpleNamespace
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         fight = _ufc_fight(
             201, "UFC 329: McGregor vs. Holloway 2",
@@ -547,8 +547,8 @@ class TestUFCEventAdapter:
         )
 
         mock_db.execute.side_effect = [
-            _query_result([fight, method, occ, bundle]),  # Kalshi markets
-            _query_result([]),                            # events-table schedule
+            _entity_result([fight, method, occ, bundle]),  # Kalshi markets
+            _entity_result([]),                            # events-table schedule
         ]
         resp = await client.get("/api/event/event:ufc:26jul11")
         assert resp.status_code == 200
@@ -597,7 +597,7 @@ class TestAwardsEventAdapter:
     nomination/novelty markets ride along as props. Design §6."""
 
     async def test_oscars_categories_and_edition_filter(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         best_pic = _award_market(
             1, "Oscar winner: Best Picture", "KXOSCARPIC-27",
@@ -620,7 +620,7 @@ class TestAwardsEventAdapter:
             5, "Who will attend the Oscars?", "KXOSCARGUESTS-26",
             [("Yes", 0.5), ("No", 0.5)],
         )
-        mock_db.execute.return_value = _query_result(
+        mock_db.execute.return_value = _entity_result(
             [best_pic, best_dir, best_act, noms, guests_26]
         )
 
@@ -646,7 +646,7 @@ class TestAwardsEventAdapter:
         assert any(s["type"] == "categories" for s in body["sections"])
 
     async def test_bare_slug_picks_latest_rich_edition(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         # 2026 edition (3 categories) and 2027 edition (3 categories) both "rich" —
         # a bare slug picks the LATEST rich edition (2027).
@@ -660,7 +660,7 @@ class TestAwardsEventAdapter:
             _award_market(21, "Oscar winner: Best Director", "KXOSCARDIR-27", [("Coogler", 0.5), ("Chazelle", 0.4)]),
             _award_market(22, "Oscar winner: Best Actor", "KXOSCARACTO-27", [("Washington", 0.5), ("Butler", 0.4)]),
         ]
-        mock_db.execute.return_value = _query_result(e26 + e27)
+        mock_db.execute.return_value = _entity_result(e26 + e27)
 
         resp = await client.get("/api/event/event:awards:oscars")
         assert resp.status_code == 200
@@ -672,7 +672,7 @@ class TestAwardsEventAdapter:
         )
 
     async def test_settled_marquee_crowns_price_leader(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         # A concluded category whose leader is priced ~1.0 but not yet graded — the
         # display `won` crown fires (parity with tennis/f1), status flips to settled.
@@ -680,7 +680,7 @@ class TestAwardsEventAdapter:
             30, "Oscar winner: Best Picture", "KXOSCARPIC-26",
             [("Oppenheimer", 0.98), ("Barbie", 0.02)],
         )
-        mock_db.execute.return_value = _query_result([best_pic])
+        mock_db.execute.return_value = _entity_result([best_pic])
         resp = await client.get("/api/event/event:awards:oscars-2026")
         assert resp.status_code == 200
         body = resp.json()
@@ -691,7 +691,7 @@ class TestAwardsEventAdapter:
     async def test_year_end_backstop_never_reaches_the_page(self, client, mock_db):
         from datetime import datetime, timezone
 
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         # Measured on production 2026-09-01: the marquee markets for Oscars 2027,
         # Grammys 2027 and Tonys 2026 all carried this identical instant, and the
@@ -702,7 +702,7 @@ class TestAwardsEventAdapter:
             50, "Oscar winner: Best Picture", "KXOSCARPIC-27",
             [("Sinners", 0.4), ("Hamnet", 0.3)], rd=backstop,
         )
-        mock_db.execute.return_value = _query_result([best_pic])
+        mock_db.execute.return_value = _entity_result([best_pic])
         resp = await client.get("/api/event/event:awards:oscars-2027")
         assert resp.status_code == 200
         body = resp.json()
@@ -714,7 +714,7 @@ class TestAwardsEventAdapter:
     async def test_a_published_ceremony_date_still_reaches_the_page(self, client, mock_db):
         from datetime import datetime, timezone
 
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         # THE CONTROL, and the reason this is a suppression and not a deletion: the
         # Emmys carry a real published date (production served 09-14T14:00:00Z) and
@@ -724,21 +724,21 @@ class TestAwardsEventAdapter:
             51, "Emmy Award for Outstanding Drama Series", "KXEMMYDSERIES-27",
             [("Severance", 0.5), ("The Pitt", 0.3)], rd=real,
         )
-        mock_db.execute.return_value = _query_result([drama])
+        mock_db.execute.return_value = _entity_result([drama])
         resp = await client.get("/api/event/event:awards:emmys-2027")
         assert resp.status_code == 200
         assert resp.json()["event"]["end_date"] == real.isoformat()
 
     async def test_no_markets_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([])
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([])
         resp = await client.get("/api/event/event:awards:oscars")
         assert resp.status_code == 404
 
     async def test_unknown_ceremony_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
         # Golden Globes has no config yet -> 404 (adapter returns None), not a crash.
-        mock_db.execute.return_value = _query_result([
+        mock_db.execute.return_value = _entity_result([
             _award_market(40, "Golden Globe: Best Picture", "KXGLOBEPIC-27", [("A", 0.5)]),
         ])
         resp = await client.get("/api/event/event:awards:golden-globes")
@@ -774,7 +774,7 @@ class TestElectionEventAdapter:
     (govt shutdown / turnout / margin) and other-edition (2028 pres) are excluded."""
 
     async def test_races_children_primaries_props_novelties_excluded(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         ca_gov = _election_market(
             1, "California Governor winner?", "KXGOVCA-26",
@@ -806,7 +806,7 @@ class TestElectionEventAdapter:
             [("Newsom", 0.3), ("AOC", 0.2)],
         )
 
-        mock_db.execute.return_value = _query_result(
+        mock_db.execute.return_value = _entity_result(
             [ca_gov, ak_gov, oh_primary, fl_seats, shutdown, turnout, pres28]
         )
         resp = await client.get("/api/event/event:election:2026-midterms")
@@ -837,10 +837,10 @@ class TestElectionEventAdapter:
         assert races_section["total"] == 2
 
     async def test_no_races_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
+        from tests.integration.test_route_weather import _entity_result
 
         # Only novelties + primaries, no genuine general race -> honest 404 (no stub).
-        mock_db.execute.return_value = _query_result([
+        mock_db.execute.return_value = _entity_result([
             _election_market(1, "Ohio Republican Senate nominee?", "KXSENATEOHSR-26", [("A", 0.6), ("B", 0.3)]),
             _election_market(2, "How long will the government shutdown last?", "KXGOVTSHUTLENGTH-26", [("1-7 days", 0.5), ("8+", 0.5)]),
         ])
@@ -848,8 +848,8 @@ class TestElectionEventAdapter:
         assert resp.status_code == 404
 
     async def test_unknown_election_404(self, client, mock_db):
-        from tests.integration.test_route_weather import _query_result
-        mock_db.execute.return_value = _query_result([
+        from tests.integration.test_route_weather import _entity_result
+        mock_db.execute.return_value = _entity_result([
             _election_market(1, "California Governor winner?", "KXGOVCA-30", [("A", 0.5), ("B", 0.4)]),
         ])
         # 2030 has no config -> adapter returns None -> 404, not a crash.

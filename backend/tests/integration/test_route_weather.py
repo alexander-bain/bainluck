@@ -115,7 +115,23 @@ class _MockResult:
 
 
 def _query_result(items, rows=None):
+    """`scalars()` -> the entities; `all()` -> the column rows, none by default."""
     return _MockResult(items, rows)
+
+
+def _entity_result(items):
+    """For a route whose only query is an ENTITY select it reads through
+    `result.all()` rather than `result.scalars().all()`.
+
+    `test_route_event_concept.py` imports this — `prefetch_open_markets` and the
+    evolution-series builder both call `result.all()`, and every one of those
+    calls wants the fixture's markets back. It used to import `_query_result`,
+    which meant the same thing until ux/1069 (#2960) gave the weather route a
+    second, COLUMN query and `all()` had to start answering that one instead.
+    Two callers wanting two different rows out of one mocked `execute` is why
+    the question is now asked by name.
+    """
+    return _MockResult(items, rows=items)
 
 
 # ============================================================================
