@@ -78,7 +78,7 @@ from app.utils.feed_event_candidates import (
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
 from app.utils.graded_card import card_sum_reason, rendered_card_percents
-from app.utils.prematch_reading import PREDICTION_MARKET_SOURCES
+from app.utils.prematch_reading import PREMATCH_PRIOR_SQL, prematch_prior_binds
 from app.utils.discover_bundles import (
     assemble_awards_theme_bundles,
     assemble_discover_comparison_bundles,
@@ -6040,33 +6040,28 @@ async def _score_events(
     # so an unfiltered "latest snapshot" would render the result back as a
     # forecast on every card.
     #
-    # Bounded and index-shaped exactly like the fallback query above — an
-    # `event_id = ANY(:ids)` over `ix_winprob_event_source`, no scan. Measured on
-    # production 2026-09-03 over 40 finished events: 41ms, 12 of the 40 carrying
-    # a prediction-market prior against 36 carrying a books one. Restricted to
-    # settled events because a scheduled or live card does not print this.
+    # Restricted to settled events because a scheduled or live card does not
+    # print this.
+    #
+    # 🔴 LAT-P222: the cutoff comes from the CALLER, not from a join. The first
+    # shape of this read joined `win_prob_snapshots` back to `events` for
+    # `commence_time` — a bound the planner cannot evaluate until it holds the
+    # snapshot row, so it probed `events_pkey` 24,528 times to return 53 rows and
+    # became 86% of this whole stage (935.9 ms of 1,088.2 ms, measured on a
+    # production dyno 2026-09-04). Every one of those cutoffs is already on the
+    # hydrated `Event` objects in `events`, ten lines up. `prematch_prior_binds`
+    # reads them off in one pass; the statement then touches one table.
+    #
+    # Both shapes timed in ONE probe against ONE id list, four interleaved reps,
+    # production dyno: **p50 1,126.9 ms -> 117.5 ms, 1,075,139 buffers -> 19,859,
+    # and the same 53 rows**. Equivalence is a CI gate, not a claim:
+    # `tests/integration/test_prematch_prior_lateral_equivalence_pg.py`.
     prematch_by_event: dict[int, dict[str, tuple]] = {}
-    settled_ids = [
-        e.id for e in events if e.status in ("completed", "closed")
-    ]
-    if settled_ids:
+    pm_binds = prematch_prior_binds(events)
+    if pm_binds is not None:
         from sqlalchemy import text
 
-        pm_result = await db.execute(
-            text("""
-                SELECT DISTINCT ON (s.event_id, s.source)
-                       s.event_id, s.source,
-                       s.home_win_probability, s.away_win_probability
-                FROM win_prob_snapshots s
-                JOIN events e ON e.id = s.event_id
-                WHERE s.event_id = ANY(:ids)
-                  AND s.source = ANY(:sources)
-                  AND s.home_win_probability IS NOT NULL
-                  AND s.captured_at <= e.commence_time
-                ORDER BY s.event_id, s.source, s.captured_at DESC
-            """),
-            {"ids": settled_ids, "sources": list(PREDICTION_MARKET_SOURCES)},
-        )
+        pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), pm_binds)
         for row in pm_result.all():
             prematch_by_event.setdefault(row.event_id, {})[row.source] = (
                 float(row.home_win_probability),

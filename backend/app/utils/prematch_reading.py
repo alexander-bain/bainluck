@@ -59,7 +59,8 @@ UX-P114 gave.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Optional
+from datetime import datetime
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 # The two prediction-market rungs, in Alex's order. Source ids as the payload and
 # `win_prob_snapshots.source` spell them — never a display name; those are the
@@ -181,3 +182,118 @@ def resolve_prematch_reading(
             "source": source,
         }
     return None
+
+
+# ── READING IT OUT OF THE SNAPSHOT TABLE (LAT-P222) ──────────────────────────
+#
+# The statement below is the ux/1036 read, and for its first two days it was
+# written the obvious way: join `win_prob_snapshots` back to `events` and
+# compare `s.captured_at <= e.commence_time`. That comparison is the reason a
+# cold Discover build spent most of a second here.
+#
+# Postgres cannot evaluate a bound it has to fetch. With `commence_time` living
+# on the other table, the planner drives from the SNAPSHOT side and probes
+# `events_pkey` once per candidate snapshot row. Measured on a production dyno
+# 2026-09-04 with the app's own binds (`ARTIFACT-LAT-P222-prematch-mechanism-*`):
+# **loops=24528, 753,087 buffer hits, 53 rows returned** — 99.2% of those hits
+# are the inner probe. The stage profile put this ONE query at **86.0% of the
+# whole `events` stage** (935.9 ms of 1,088.2 ms).
+#
+# The fix is not an index and not a rewrite of the ranking: it is noticing that
+# `_score_events` already HOLDS every cutoff it is asking the database to go and
+# find. `commence_time` is on each hydrated `Event` ten lines above the call. So
+# the caller supplies the cutoffs and the statement stops reading `events` at
+# all — `unnest` of two aligned arrays, one `DISTINCT ON` per event through
+# `ix_winprob_event_source`. Proven on production over the same id list, in one
+# probe, four reps each: **set-identical 53 rows** at 98.8 ms / 19,747 buffers
+# against the join's 878.8–1,278.5 ms (`ARTIFACT-LAT-P222-prematch-ceiling-*`).
+#
+# 🔴 The semantics that must survive any future edit here, because none of them
+# is visible in a latency number:
+#
+#   * "the LAST reading at or before kickoff, per source" — `DISTINCT ON
+#     (s.source)` ordered `s.source, s.captured_at DESC` inside the lateral is
+#     the same selection the outer `DISTINCT ON (s.event_id, s.source)` made,
+#     one event at a time.
+#   * a settled market prices the winner at ~100%, and the same table holds the
+#     in-play and post-settlement readings. Drop the cutoff and every finished
+#     card renders its own result back as a forecast. That is the defect this
+#     bound exists to prevent and it is why the gate for it executes rows
+#     (`tests/integration/test_prematch_prior_lateral_equivalence_pg.py`).
+#   * the two arrays are POSITIONAL. `unnest(a, b)` pairs by index, so a filter
+#     applied to one and not the other silently attributes one game's kickoff to
+#     another game's prices — a wrong answer no latency measurement would
+#     notice. They are therefore built by ONE pass, in
+#     `settled_prematch_cutoffs`, and never assembled at the call site.
+PREMATCH_PRIOR_SQL = """
+    SELECT x.event_id, x.source,
+           x.home_win_probability, x.away_win_probability
+    FROM unnest(cast(:ids as integer[]), cast(:cutoffs as timestamptz[]))
+         AS t(event_id, cutoff)
+    CROSS JOIN LATERAL (
+        SELECT DISTINCT ON (s.source)
+               s.event_id, s.source,
+               s.home_win_probability, s.away_win_probability
+        FROM win_prob_snapshots s
+        WHERE s.event_id = t.event_id
+          AND s.source = ANY(:sources)
+          AND s.home_win_probability IS NOT NULL
+          AND s.captured_at <= t.cutoff
+        ORDER BY s.source, s.captured_at DESC
+    ) x
+"""
+
+#: The statuses whose cards print a pre-match reading. A scheduled or live card
+#: does not, so its snapshots are never fetched. Held here rather than inlined
+#: at the call site so the gate and the caller cannot disagree about what
+#: "settled" means.
+SETTLED_STATUSES: frozenset[str] = frozenset({"completed", "closed"})
+
+
+def settled_prematch_cutoffs(
+    events: Iterable[Any],
+) -> tuple[list[int], list[datetime]]:
+    """The `(ids, cutoffs)` binds for :data:`PREMATCH_PRIOR_SQL`.
+
+    ONE pass over the hydrated events, appending to both lists together, so the
+    two arrays are index-aligned *by construction* rather than by two
+    comprehensions agreeing. `unnest(a, b)` pairs positionally: a future edit
+    that filters one list and not the other would hand one game's kickoff time
+    to another game's prices, and the response would still be well-formed.
+
+    Two rows are dropped, both deliberately:
+
+    * anything not settled — those cards print no pre-match reading;
+    * anything with no ``commence_time``. The join this replaced compared
+      ``s.captured_at <= e.commence_time``, and ``x <= NULL`` is NULL, so such
+      an event contributed no rows there either. Excluding it here keeps that
+      exactly, and does it where a reader can see it instead of leaving it to
+      three-valued logic to agree by accident.
+    """
+    ids: list[int] = []
+    cutoffs: list[datetime] = []
+    for event in events:
+        if getattr(event, "status", None) not in SETTLED_STATUSES:
+            continue
+        cutoff = getattr(event, "commence_time", None)
+        if cutoff is None:
+            continue
+        ids.append(event.id)
+        cutoffs.append(cutoff)
+    return ids, cutoffs
+
+
+def prematch_prior_binds(
+    events: Iterable[Any],
+    sources: Sequence[str] = PREDICTION_MARKET_SOURCES,
+) -> Optional[dict]:
+    """Every bind :data:`PREMATCH_PRIOR_SQL` takes, or ``None`` to skip the read.
+
+    ``None`` when no candidate is settled — the read is not merely empty then,
+    it is unnecessary, and a round trip that can only return zero rows is one
+    the cold build should not pay for.
+    """
+    ids, cutoffs = settled_prematch_cutoffs(events)
+    if not ids:
+        return None
+    return {"ids": ids, "cutoffs": cutoffs, "sources": list(sources)}
