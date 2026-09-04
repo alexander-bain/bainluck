@@ -194,12 +194,24 @@ class _FakeResult:
 
 
 class _FakeDB:
-    """Just enough session for `_list_event_bouts`: one SELECT of Event rows."""
+    """Just enough session for the lister's TWO reads, told apart by name.
 
-    def __init__(self, events=()):
+    `list_card_concepts` selects Event rows (`_list_event_bouts`) and then
+    FuturesOutcome rows (`_attach_headline_bouts`). A fake that answers both
+    with one list is the shared-mock trap: handing the bout rows to the outcome
+    reader used to raise inside `_attach_headline_bouts`, which catches
+    everything on purpose, so the fold assertions below stayed green while the
+    headline path was never exercised at all. Dispatch on the statement so a
+    wrong answer is a wrong answer rather than a silent skip.
+    """
+
+    def __init__(self, events=(), outcomes=()):
         self._events = list(events)
+        self._outcomes = list(outcomes)
 
-    async def execute(self, *_a, **_k):
+    async def execute(self, statement, *_a, **_k):
+        if "futures_outcomes" in str(statement):
+            return _FakeResult(self._outcomes)
         return _FakeResult(self._events)
 
 
