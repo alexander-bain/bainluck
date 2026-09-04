@@ -3005,3 +3005,167 @@ class TestCheckAndFixInversionPeerConsensus:
         )
         out = await _check_and_fix_inversion(session, 1, 0.0005, "polymarket")
         assert out == pytest.approx(0.0005)
+
+# =============================================================================
+# #2871 — a derivative market may not mint the game it is a derivative of
+#
+# Polymarket titles a prop as "Team A vs. Team B - <market type>". extract_matchup
+# splits on " vs. ", so the market type stays glued to team_b, and
+# _create_event_from_prediction_market stamps that raw string as the away team's
+# name. Because an id-less Polymarket claim never absorbs (ruling 048), each
+# distinct suffix minted its own event — production held one Swiss Superleague
+# fixture as five separate games ("FC Thun / Lausanne-Sport - Total Corners",
+# "- Exact Score", "- First Team to Score", …), and /search rendered the props
+# INSTEAD of the real fixture.
+#
+# The repair refuses the auto-create, in the same place and shape as the Q435
+# tennis-prop refusal. It deliberately does NOT clean the parsed name: the
+# suffix is load bearing, because `_MATCHUP_NON_GAME_KEYWORDS` reads "winner"
+# out of "… - First 5 Innings Winner" to keep a period market out of a
+# full-game blend (the G3 kill in test_kalshi_market_backfill_reserve).
+# =============================================================================
+
+# One case per vocabulary entry: dropping any single phrase must turn exactly
+# one of these red. A single "some suffix is caught" assertion would stay green
+# on a narrower list.
+DERIVATIVE_SUFFIXES = [
+    "Exact Score",
+    "Correct Score",
+    "Halftime Result",
+    "First Team to Score",
+    "Second Half Result",
+    "Total Corners",
+    "Both Teams to Score",
+    "1st Half Exact Score",
+    "1st Half First Team to Score",
+    "2nd Half First Team to Score",
+    "First 5 Innings Winner",
+    "1st Inning Winner",
+    "Map 2 Winner",
+]
+
+# Titles that must NOT be read as derivatives. Each is a distinct reason.
+NON_DERIVATIVE_TITLES = [
+    # A series game number designates a distinct REAL game. Treating it as a
+    # market type would refuse every game of a series after the first.
+    "Mets vs. Dodgers - Game 4",
+    # The game's own container market — this is the row that legitimately
+    # creates the fixture for leagues The Odds API does not cover.
+    "CF Estrela da Amadora vs. FC Porto - More Markets",
+    "Athletics vs. Chicago White Sox - Player Props",
+    # A hyphen inside a club name is not a suffix boundary.
+    "FC Thun vs. Lausanne-Sport",
+    "Brighton & Hove Albion vs. Wolverhampton",
+    # No dash at all.
+    "Warriors vs Celtics",
+    # The colon form is a different rule (_GAME_PROP_RE) and already correct.
+    "Minnesota at Dallas: Total Points",
+]
+
+
+class _DerivMatchup:
+    def __init__(self, team_a, team_b):
+        self.team_a = team_a
+        self.team_b = team_b
+
+
+class _DerivMarket:
+    """The fields `_create_event_from_prediction_market` reads, and no others."""
+
+    def __init__(self, name, source="polymarket"):
+        self.source = source
+        self.external_id = None
+        self.name = name
+        self.llm_sport_category = "soccer"
+        self.commence_time = datetime(2026, 9, 3, tzinfo=timezone.utc)
+
+
+class TestDerivativeMarketIsNotEvidenceOfAGame:
+    """#2871 — a prop suffix is a market type, not half of the away team's name."""
+
+    @pytest.mark.parametrize("suffix", DERIVATIVE_SUFFIXES)
+    def test_suffix_is_recognised_as_derivative(self, suffix):
+        from app.utils.prediction_market_matching import is_derivative_market_name
+
+        assert is_derivative_market_name(
+            f"Vancouver FC vs. FC Supra Du Quebec - {suffix}"
+        ) is True, f"{suffix!r} would still mint an event named after the market type"
+
+    @pytest.mark.parametrize("title", NON_DERIVATIVE_TITLES)
+    def test_real_fixture_titles_are_not_derivatives(self, title):
+        from app.utils.prediction_market_matching import is_derivative_market_name
+
+        assert is_derivative_market_name(title) is False, (
+            f"{title!r} was read as a derivative — its game would never be created"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("suffix", DERIVATIVE_SUFFIXES)
+    async def test_auto_create_refuses_without_touching_the_db(self, suffix):
+        """BEHAVIOURAL, not source-inspection. `session=None` is the assertion:
+        the refusal must land BEFORE anything reaches the registry, so a None
+        session can never be dereferenced. A refusal that happened after
+        find_or_create_event would already have written the bogus event."""
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+
+        result = await _create_event_from_prediction_market(
+            None,
+            _DerivMatchup("Vancouver FC", f"FC Supra Du Quebec - {suffix}"),
+            _DerivMarket(f"Vancouver FC vs. FC Supra Du Quebec - {suffix}"),
+            datetime(2026, 9, 3, tzinfo=timezone.utc),
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_the_container_market_control_is_not_refused(self):
+        """The control that makes the test above mean something.
+
+        The SAME call for the game's own container market must run PAST the
+        refusal and only then fail on the None session. Without this, a
+        function that returned None unconditionally would pass — and the real
+        fixtures for leagues The Odds API does not cover would silently stop
+        being created.
+        """
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+
+        with pytest.raises(AttributeError):
+            await _create_event_from_prediction_market(
+                None,
+                _DerivMatchup("CF Estrela da Amadora", "FC Porto"),
+                _DerivMarket("CF Estrela da Amadora vs. FC Porto - More Markets"),
+                datetime(2026, 9, 3, tzinfo=timezone.utc),
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_series_game_still_creates_its_own_event(self):
+        """Game 4 and Game 5 are two real games; neither may be refused."""
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+
+        for n in (4, 5):
+            with pytest.raises(AttributeError):
+                await _create_event_from_prediction_market(
+                    None,
+                    _DerivMatchup("Mets", f"Dodgers - Game {n}"),
+                    _DerivMarket(f"Mets vs. Dodgers - Game {n}"),
+                    datetime(2026, 9, 3, tzinfo=timezone.utc),
+                )
+
+    def test_the_suffix_is_left_on_the_parsed_name(self):
+        """The G3 kill depends on it (_MATCHUP_NON_GAME_KEYWORDS reads 'winner').
+
+        This is the guard against 'fixing' #2871 by cleaning the name in
+        _normalize_variants, which reads as an obvious improvement and silently
+        admits period markets into the full-game blend.
+        """
+        assert is_game_level_market(
+            "Boston Red Sox vs. Miami Marlins - First 5 Innings Winner"
+        ) is False
+        matchup = extract_matchup("FC Thun vs. Lausanne-Sport - Total Corners")
+        assert matchup is not None
+        assert matchup.team_b == "Lausanne-Sport - Total Corners"

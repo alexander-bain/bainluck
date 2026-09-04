@@ -4405,6 +4405,25 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
+    # #2871: same principle, the Polymarket shape. A title ending in a
+    # dash-introduced market type ("… vs. … - Exact Score", "- Total Corners",
+    # "- Halftime Result") is a derivative of a game, not evidence of one.
+    # extract_matchup splits on " vs. ", so the market type rides into team_b
+    # and the stamp below would name the away team "Lausanne-Sport - Total
+    # Corners". Because an id-less Polymarket claim never absorbs (ruling 048),
+    # each distinct suffix minted its own event: one real fixture became five
+    # rows in /search. The game's own container market ("- More Markets") does
+    # not match this and still creates the fixture normally.
+    from app.utils.prediction_market_matching import is_derivative_market_name
+
+    if is_derivative_market_name(market.name):
+        logger.debug(
+            "Refusing auto-create from derivative market '%s' (#2871) — a prop "
+            "or period market is not evidence that a game exists",
+            market.name,
+        )
+        return None
+
     # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
     # and championship suffixes that may leak through ("Canada Medal" → "Canada")
     team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
