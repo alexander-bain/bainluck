@@ -1,7 +1,7 @@
 # lane1/098 — the symmetric write failure, and the accent that finally made it onto a card
 
 **PILLAR: TRUTH.** **SHIP: a 49ers fan stops seeing their team play twice in Week 1.**
-Kickoff Thu 9/10 — **six days.** Session ran Fri 2026-09-04, ~01:25–03:10am PT.
+Kickoff Thu 9/10 — **six days.** Session ran Fri 2026-09-04, ~01:25–02:00am PT.
 
 Night two of the repaired sentinel was **not readable this session** — it runs 06:40Z Sat 9/5,
 roughly 22 hours after this session began. Item 2 of the 097→098 restock is carried forward
@@ -76,7 +76,7 @@ that is the right price.
 
 ## 2. Item one — the merge did NOT land. Do not merge it yourself either
 
-`69c9ac98` is **still not an ancestor of origin/master** as of 03:05am PT.
+`69c9ac98` is **still not an ancestor of origin/master** as of 02:00am PT.
 
 - `runner-inbox/integrator/152-merge-69c9ac988f7191c6bb5ff74202626c10a03909da.md` is **queued and
   untouched**, behind `150-merge-native-006-us-open-faces.md` and `151-merge-5a36edba…`; `153`
