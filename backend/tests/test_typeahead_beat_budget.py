@@ -859,6 +859,22 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     re-derivation, and this assertion is what caught it — as a red CI backend
     shard 1 reading `68 != 67`, found by CERT-863 rather than by the lane that
     added the beat. That is the reserved red behaviour working, not a break.
+
+    🔴 **RE-DERIVED AT THE REBASE (authority/009 → master, 2026-09-04): 113 →
+    114, explicit 68 → 69.** `stamp-nfl-statpal-fixtures-hourly` (#2867, D50)
+    names `background` explicitly, so the fall-through half is UNMOVED at **45**
+    — the benign direction this docstring reserves.
+
+    This is INT-158's collision for the FOURTH time: CAL-P998 and authority/009
+    each moved the constant 112 → 113 for a different beat, each correct against
+    its own base, and 113 is the one number wrong on the composed tree. Note what
+    that does to THIS file specifically — both branches edited the two assertions
+    below to the identical `68` and `113`. The constant conflicted loudly and
+    the guard did not, so the assertion is the half that can auto-merge into a
+    number no longer true of the tree it is asserting about. Obtained by RUNNING
+    the census below on the rebased tree, which printed `explicit 69 implicit 45
+    total 114`, never by adding one (#1910). The cost declaration is on
+    `BACKGROUND_BEAT_COUNT`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -875,9 +891,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 68, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 69, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 113
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 114
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
