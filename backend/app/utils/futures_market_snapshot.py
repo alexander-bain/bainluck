@@ -149,6 +149,28 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
     "external_id",
 )
 
+# ux/1070 item 5 wanted a price AGE here and `last_updated` is deliberately NOT
+# in the tuple above. It was added, and two guards in a row priced the decision:
+# `test_feed_outcome_projection_cert622` demanded the projection grow (correct —
+# an unprojected read is a MissingGreenlet inside the serializer), and then
+# `test_feed_market_load_fits_the_shared_wire_lat_p221` measured the result at
+# 3,361,009 B against a 2,928,973 B budget — a 15% growth in a shared Redis
+# artifact, for one timestamp repeated across up to 193 outcomes per market.
+#
+# `FuturesMarket.updated_at` is already in `MARKET_COLUMNS`, one value per market
+# instead of one per outcome, and it carries the same signal: measured on
+# production 2026-09-04 across the whole in-window golf/tennis population, the
+# market row's age and `max(outcome.last_updated)` agreed to within 0.4h on every
+# row (1023.3/1023.3, 656.2/656.2, 239.9/239.9, 237.4/237.8, 92.9/92.9). The
+# poller touches the market row when it writes prices.
+#
+# The caveat, stated rather than discovered later: a non-price write to the
+# market row would make a stale-priced market look fresh. That is tolerable here
+# because the threshold sits in a measured 6h–92h gap with nothing in it, so
+# being wrong by a few hours changes no card. If a surface ever needs a true
+# per-outcome price age, add the column AND re-budget the wire — do not quietly
+# reinterpret this one.
+
 #: Columns loaded for the related `Sport`.
 SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 
@@ -172,6 +194,7 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: MEANING of every position, and only the version stops that entry being read.
 #: So: the version guards the shape a row CLAIMS, per-row arity guards the shape
 #: it HAS, and neither is the other's backstop.
+#:
 SNAPSHOT_SCHEMA_VERSION = 2
 
 

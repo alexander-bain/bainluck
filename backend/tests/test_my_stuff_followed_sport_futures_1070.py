@@ -37,9 +37,12 @@ basketball, hockey, soccer and MMA keep the team-match rule exactly as written.
 Following the NBA does not put every NBA market on your page; following golf puts
 this week's golf on it, because there is nothing else golf could mean.
 
-The three bounds below are the whole of "this week's golf": followed, dated
-inside the window, not an award. Each one has a defect behind it and each is
-pinned here.
+The five bounds below are the whole of "this week's golf": followed, dated inside
+the window, not an award, a FIELD rather than one match, and PRICED RECENTLY.
+Each one has a measured defect behind it and each is pinned here. The last two
+were both found by measuring the section this queue had already built — the first
+three alone admit 4,039 markets, and 11 of the 23 that survive the fourth carry
+prices between four and forty-three days old.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ import pytest
 
 from app.utils.personalization import (
     MY_STUFF_FOLLOW_WINDOW_DAYS,
+    MY_STUFF_MAX_PRICE_AGE_HOURS,
     followed_sport_categories,
     my_stuff_admits_followed_sport,
 )
@@ -77,6 +81,7 @@ def admits(**overrides) -> bool:
         "now": NOW,
         "name": "Omega European Masters - Winner",
         "outcome_count": 193,
+        "priced_at": NOW,
     }
     kwargs.update(overrides)
     return my_stuff_admits_followed_sport(**kwargs)
@@ -208,8 +213,12 @@ class TestTheWindowIsThisWeekNotThisDecade:
     def test_the_window_is_measured_from_now_not_from_the_clock(self):
         """Gotcha #44: offset from the anchor, never branch on the real clock."""
         later = NOW + timedelta(days=200)
-        assert not admits(now=later)
-        assert admits(now=later, resolution_date=later + timedelta(days=2))
+        # `priced_at` moves with the clock too — otherwise this asserts the
+        # freshness bound by accident and stops testing the window at all.
+        assert not admits(now=later, priced_at=later)
+        assert admits(
+            now=later, resolution_date=later + timedelta(days=2), priced_at=later
+        )
 
 
 class TestAFieldIsNotAMatch:
@@ -308,6 +317,97 @@ class TestAFieldIsNotAMatch:
         assert not admits(name=None, outcome_count=2)
 
 
+class TestThePriceIsFromThisWeekToo:
+    """The bound I missed on the first pass, found by measuring my own ship.
+
+    The field bound got the section to 23 markets. Measured again for FRESHNESS,
+    11 of those 23 were not current — on a page headed "what is on this week",
+    during a live US Open. Every age below is production, 2026-09-04.
+    """
+
+    @pytest.mark.parametrize(
+        "name,hours",
+        [
+            ("US Open 2026: To Reach Quarterfinals (Men's Singles)", 239.9),
+            ("US Open 2026: To Reach the Final (Men's Singles)", 239.9),
+            ("US Open 2026: To Reach Round of 16 (Women's Singles)", 239.9),
+            ("US Open 2026: To Reach Semifinals (Women's Singles)", 237.8),
+        ],
+    )
+    def test_a_ten_day_old_bracket_during_the_tournament(self, name, hours):
+        """The worst of the eleven, because the answer has visibly changed.
+
+        These fields were priced before the tournament reached this round, so
+        they list players who have since been knocked out as live chances to
+        reach it. Not merely stale — contradicted by the scoreboard on the same
+        page.
+        """
+        assert not admits(
+            category="tennis",
+            name=name,
+            outcome_count=44,
+            priced_at=NOW - timedelta(hours=hours),
+        )
+
+    def test_the_forty_three_day_old_golf_prop(self):
+        """"Scottie Scheffler: Next Tournament Win", 1023.3h, never moved."""
+        assert not admits(
+            name="Scottie Scheffler: Next Tournament Win",
+            outcome_count=13,
+            priced_at=NOW - timedelta(hours=1023.3),
+        )
+
+    def test_a_first_round_leader_market_in_the_third_round(self):
+        """92.9h old, and the round it asks about finished days ago."""
+        assert not admits(
+            name="DP World Tour: European Masters First Round Leader",
+            outcome_count=5,
+            priced_at=NOW - timedelta(hours=92.9),
+        )
+
+    def test_the_live_tournament_grid_is_admitted(self):
+        """The other side: DataGolf polls the Omega grid live, 0.0h."""
+        assert admits(priced_at=NOW)
+
+    def test_the_us_open_winner_fields_are_admitted(self):
+        """5.3h and 5.7h — a real poll cadence, not a stale row."""
+        for hours in (5.3, 5.7):
+            assert admits(
+                category="tennis",
+                name="2026 Men’s US Open Winner (Tennis)",
+                outcome_count=41,
+                priced_at=NOW - timedelta(hours=hours),
+            )
+
+    def test_an_unpriced_market_is_not_a_fresh_one(self):
+        """Absent evidence excludes, the same direction as every other bound."""
+        assert not admits(priced_at=None)
+
+    def test_the_cut_sits_in_the_measured_gap(self):
+        """Not knife-edge, and this is the assertion that says why.
+
+        The observed populations were 0.0–5.7h and 92.9h+. Nothing in between,
+        so a late poll cannot flap a card in and out of the section. If someone
+        tightens this below the real poll cadence, the live cards start
+        disappearing intermittently — which is why the floor is asserted and not
+        just the ceiling.
+        """
+        assert 6 < MY_STUFF_MAX_PRICE_AGE_HOURS < 92
+        assert admits(priced_at=NOW - timedelta(hours=MY_STUFF_MAX_PRICE_AGE_HOURS))
+        assert not admits(
+            priced_at=NOW - timedelta(hours=MY_STUFF_MAX_PRICE_AGE_HOURS, seconds=1)
+        )
+
+    def test_a_future_timestamp_does_not_crash_or_admit_wrongly(self):
+        """Clock skew between the dyno and a provider is not a fresh price.
+
+        It is fresher than fresh, so it passes — deliberately. The alternative
+        (rejecting it) would blank the section on a clock wobble, which is a
+        worse failure than showing a price that is at worst seconds early.
+        """
+        assert admits(priced_at=NOW + timedelta(minutes=5))
+
+
 class TestAwardsAreNotSport:
     def test_the_pga_film_awards_do_not_ride_a_golf_follow(self):
         """The Producers Guild of America is also "PGA".
@@ -395,6 +495,14 @@ class TestTheRouteSubtractsTheTeamSports:
             "the followed-sport admission no longer reads the market's name — "
             "every two-sided match prop in the sport is back on the page"
         )
+        # Anchored on the line START, not on `priced_at=` as a bare substring:
+        # `_unused_priced_at=` contains that, so the loose pin survives the kwarg
+        # being renamed out of the call. Second instance of this collision in
+        # this file — see the note above about `market_name=market.name`.
+        assert "\n                    priced_at=_utc(market.updated_at)," in call, (
+            "the followed-sport admission no longer reads the price age — the "
+            "ten-day-old US Open bracket is back on a page headed 'this week'"
+        )
         assert "outcome_count=len(market.outcomes or [])," in call, (
             "the followed-sport admission no longer reads the field size — the "
             "empty-shell cards are back and the section renders titles with "
@@ -461,6 +569,7 @@ class TestAgainstAlexsOwnFollows:
             now=NOW,
             name="Omega European Masters - Winner",
             outcome_count=193,
+            priced_at=NOW,
         )
 
     def test_the_field_bound_defaults_to_admitting_nothing(self):

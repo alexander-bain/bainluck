@@ -645,6 +645,19 @@ _MY_STUFF_AWARD_TIER = 3
 #: as a card with nothing on it.
 _MY_STUFF_MIN_FIELD_OUTCOMES = 3
 
+#: How old a price may be and still be "what is on this week".
+#:
+#: MEASURED, not chosen. On production 2026-09-04 the markets this section admits
+#: split into two populations with nothing between them: the live ones were
+#: polled 0.0h ago (the DataGolf Omega European Masters grid) and 5.3–5.7h ago
+#: (the Polymarket US Open Winner fields), and the dead ones 92.9h, 237.4–239.9h,
+#: 656.2h and 1023.3h ago. No market anywhere between 6h and 92h, so the cut is
+#: not knife-edge and a late poll cannot flap a card in and out.
+#:
+#: 48h sits in that gap with room on both sides: a source that refreshes at least
+#: every two days qualifies, and the 10-day-old US Open bracket does not.
+MY_STUFF_MAX_PRICE_AGE_HOURS = 48
+
 
 def my_stuff_admits_followed_sport(
     *,
@@ -655,7 +668,9 @@ def my_stuff_admits_followed_sport(
     now: datetime,
     name: str | None = None,
     outcome_count: int = 0,
+    priced_at: datetime | None = None,
     window_days: int = MY_STUFF_FOLLOW_WINDOW_DAYS,
+    max_price_age_hours: int = MY_STUFF_MAX_PRICE_AGE_HOURS,
 ) -> bool:
     """Does a followed SPORT admit this futures market to My Stuff on its own?
 
@@ -676,7 +691,8 @@ def my_stuff_admits_followed_sport(
         week", not the 2027 Ryder Cup — and an undated market is NOT admitted,
         because a missing date is not evidence of imminence;
       * awards are excluded (`_MY_STUFF_AWARD_TIER`);
-      * the market must be a FIELD, not one match — see below.
+      * the market must be a FIELD, not one match — see below;
+      * the price must be FRESH — see below.
 
     ═══ WHY THE FIELD BOUND IS THE LOAD-BEARING ONE ═══
 
@@ -701,6 +717,27 @@ def my_stuff_admits_followed_sport(
     Top 20, Make the Cut — which is exactly what Alex asked for), tennis 4,021 →
     11 (both US Open singles winners and the four To-Reach rounds per draw).
 
+    ═══ AND THE PRICE HAS TO BE FROM THIS WEEK TOO ═══
+
+    Those 23 were measured again for FRESHNESS and 11 of them were not current.
+    Eight "US Open 2026: To Reach the Quarterfinals" style fields had not been
+    polled in ten days — during the tournament, so their brackets describe a draw
+    whose players have since been knocked out. "Scottie Scheffler: Next
+    Tournament Win" was 43 days old and had never moved. "Who will attend the US
+    Open Finals?" was 27 days old. A "First Round Leader" market, four days old,
+    on a tournament in its third round.
+
+    Nearly half the section would have been numbers that are no longer true, on a
+    page headed "what is on this week", which is a worse page than the one this
+    queue set out to fix and is the reliability bar rather than a nicety. So
+    `priced_at` — the newest outcome price on the market — must be inside
+    `max_price_age_hours`, and an unpriced market is not admitted.
+
+    Freshness is checked LAST because it is the bound most likely to change
+    underneath us: lane1b's series-discovery ingest (#2927) is what makes the
+    stale Kalshi rows current, and when it lands these cards start appearing
+    without this function changing.
+
     `now` and `resolution_date` must agree about tzinfo; callers normalise with
     `_utc` before calling, because a naive/aware compare raises rather than
     answering the question.
@@ -722,7 +759,13 @@ def my_stuff_admits_followed_sport(
         return False
     if resolution_date is None:
         return False
-    return now <= resolution_date <= now + timedelta(days=window_days)
+    if not (now <= resolution_date <= now + timedelta(days=window_days)):
+        return False
+    # A price we have never captured is not a fresh price. Same direction as
+    # every other bound here: absent evidence excludes.
+    if priced_at is None:
+        return False
+    return now - priced_at <= timedelta(hours=max_price_age_hours)
 
 
 def _lookup_sport_affinity(

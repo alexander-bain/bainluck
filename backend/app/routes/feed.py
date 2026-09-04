@@ -8383,8 +8383,19 @@ async def _score_futures(
                     now=now,
                     name=market.name,
                     # Already loaded — `outcome_team_ids` above walks the same
-                    # list, so the field test costs no read.
+                    # list, so the field and freshness tests cost no read.
                     outcome_count=len(market.outcomes or []),
+                    # The MARKET row's age, not a per-outcome one. The obvious
+                    # read is `max(o.last_updated)`, and it costs a column on
+                    # every outcome in the shared Redis artifact — measured at
+                    # +15% on a 2.9 MB budget for one timestamp repeated across
+                    # up to 193 outcomes. `updated_at` is already loaded, is one
+                    # value per market, and measured within 0.4h of the outcome
+                    # timestamps on every row of the in-window population. Full
+                    # reasoning and its caveat: the note under `OUTCOME_COLUMNS`
+                    # in `futures_market_snapshot.py`. `_utc` for the same
+                    # naive/aware reason as `resolution_date`.
+                    priced_at=_utc(market.updated_at),
                 )
                 if not _followed_sport_market:
                     # Skip Tier 3 sports — same filter as events to avoid false
