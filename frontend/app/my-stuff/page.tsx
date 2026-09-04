@@ -33,6 +33,8 @@ import {
   detectMarketTypeFromName,
   extractMarketType,
 } from "@/lib/myStuffProgression";
+import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
+import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
 export default function MyStuffPage() {
@@ -958,7 +960,7 @@ function TeamFuturesSection({
       {(displayedAwards.length > 0 || displayedOther.length > 0) && (
         <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
           {displayedAwards.length > 0 && (
-            <MergedFuturesGroup label="Awards & Players" items={displayedAwards} />
+            <AwardsGroup items={displayedAwards} />
           )}
           {displayedOther.length > 0 && (
             <MergedFuturesGroup
@@ -989,6 +991,122 @@ function TeamFuturesSection({
 // ---------------------------------------------------------------------------
 // Flat items (awards, other) — individual rows with cross-source merging
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Awards & Players — ux/1070 item 4
+//
+// The award is a HEADING and the nominees are rows under it. Before this, the
+// three Red Sox names on the AL MVP market were three rows each repeating "AL
+// MVP Winner? · 2026", each wearing the team crest and none wearing a face.
+// The card contract (#2910) row is: the nominee, the number, the movement.
+// ---------------------------------------------------------------------------
+
+function AwardsGroup({ items }: { items: MergedTeamFuture[] }) {
+  const groups = useMemo(
+    () =>
+      groupAwardRows(
+        items.map((m) => ({
+          key: `${m.primary.market_id}-${m.primary.outcome_id}`,
+          marketId: m.primary.market_id,
+          marketName: m.primary.market_name || "",
+          outcomeName: m.primary.outcome_name || "",
+          teamName: m.primary.matched_team.name || "",
+          seasonLabel: deriveSeasonYear(m.primary),
+          probability: m.sources.length > 1 ? m.avgProbability : m.primary.probability,
+          change: m.bestChange,
+          rank: m.primary.rank,
+          totalOutcomes: m.primary.total_outcomes,
+          sources: m.sources.map((s) => ({
+            source: s.source,
+            probability: s.probability,
+          })),
+        })),
+      ),
+    [items],
+  );
+
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-widest text-text-muted px-3 pt-2.5 pb-1">
+        Awards &amp; Players
+      </p>
+      {groups.map((group) => (
+        <div key={group.marketId} className="border-t border-surface-border/40">
+          <Link
+            href={`/futures/${group.marketId}`}
+            className="flex items-baseline gap-1.5 px-3 pt-2 pb-1 hover:bg-surface-elevated/50 transition-colors"
+          >
+            <span className="text-xs font-semibold text-text-primary">
+              {group.title}
+            </span>
+            {group.seasonLabel && (
+              <span className="text-[11px] text-text-muted">
+                {group.seasonLabel}
+              </span>
+            )}
+          </Link>
+          <div className="divide-y divide-surface-border/40">
+            {group.nominees.map((nominee) => (
+              <AwardNomineeRow key={nominee.key} nominee={nominee} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AwardNomineeRow({ nominee }: { nominee: AwardNominee }) {
+  const pct =
+    nominee.probability !== null ? Math.round(nominee.probability * 100) : null;
+  const change = nominee.change;
+  const showChange =
+    change !== null && change !== 0 && Math.abs(change) >= 0.001;
+
+  return (
+    <Link
+      href={`/futures/${nominee.marketId}`}
+      className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-elevated/50 transition-colors"
+    >
+      {/* The nominee's own face. `showsFace` is false for a team-named outcome
+          ("Boston" on Best Record), which keeps its crest. */}
+      {nominee.showsFace ? (
+        <EntityImage
+          type="wikipedia"
+          name={nominee.outcomeName}
+          size={24}
+          className="flex-shrink-0 rounded-full"
+        />
+      ) : (
+        <div className="w-6 h-6 flex-shrink-0 rounded-full bg-surface-elevated" />
+      )}
+      <p className="flex-1 min-w-0 text-sm text-text-primary truncate">
+        {nominee.outcomeName}
+      </p>
+      {nominee.rank && nominee.totalOutcomes && (
+        <span className="text-[11px] text-text-muted flex-shrink-0 tabular-nums">
+          #{nominee.rank} of {nominee.totalOutcomes}
+        </span>
+      )}
+      <span className="text-sm font-bold text-text-primary font-mono tabular-nums flex-shrink-0 w-10 text-right">
+        {pct !== null ? `${pct}%` : "-"}
+      </span>
+      <span
+        className={`text-[11px] font-medium flex-shrink-0 w-11 text-right ${
+          showChange
+            ? change! > 0
+              ? "text-accent-live"
+              : "text-accent-danger"
+            : "text-transparent"
+        }`}
+      >
+        {showChange
+          ? `${change! > 0 ? "↑" : "↓"}${Math.abs(change! * 100).toFixed(1)}%`
+          : " "}
+      </span>
+    </Link>
+  );
+}
 
 function MergedFuturesGroup({
   label,
