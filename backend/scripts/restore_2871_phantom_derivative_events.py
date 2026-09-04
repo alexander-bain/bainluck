@@ -12,9 +12,12 @@ WHAT IT PUTS BACK, in FK-safe order (parents before children, moves last):
   1. `events`   — re-inserts every row the repair deleted, with its original id.
      Ids are re-used, not re-allocated, so every child FK still resolves and the
      sequence is untouched (all of these ids sit far below `max(id)`).
-  2. `events.away_team_name` — restores the pre-repair value on the Branch B
-     survivors that were renamed rather than deleted. This is the ONLY column
-     the repair wrote to `events`, so it is the only one restored.
+  2. `events.away_team_name` + `events.win_probability_sources` — restores the
+     pre-repair values on the Branch B survivors, which are renamed rather than
+     deleted. These are the only two columns the repair writes to `events`, and
+     it writes them in one transaction, so they are put back in one statement:
+     restoring the name without the blend would leave a state the repair never
+     produced. The blend is exact JSONB, not a re-derivation.
   3. `win_prob_snapshots`, `event_provider_anchors`, `line_movement_analyses` —
      re-inserts the deleted children. These have FKs to `events`, which is why
      step 1 has to come first.
@@ -54,6 +57,26 @@ CHILD_TABLES = (
     "event_provider_anchors",
     "line_movement_analyses",
 )
+
+
+# The two `events` columns the repair writes, put back in one statement. Named
+# as a template so the guard suite can execute the SHIPPED text against a
+# seeded row and prove the JSON round-trips byte-for-byte, rather than merely
+# reading it (CERT-880's second required test).
+#
+# `IS DISTINCT FROM` and not `<>`: the repair sets `win_probability_sources` to
+# NULL, and `NULL <> '{"polymarket": ...}'` is NULL, not true — a `<>` here
+# would silently restore nothing at all, which is the failure mode an undo can
+# least afford.
+RESTORE_EVENT_COLUMNS_SQL = """
+UPDATE events e
+SET away_team_name = b.away_team_name,
+    win_probability_sources = b.win_probability_sources
+FROM {bak} b
+WHERE e.id = b.id
+  AND (e.away_team_name <> b.away_team_name
+       OR e.win_probability_sources IS DISTINCT FROM b.win_probability_sources)
+"""
 
 
 async def _exists(session, table):
@@ -117,8 +140,9 @@ async def run(apply, drop_backups):
             SELECT COUNT(*) FROM {BAK_PREFIX}events b
             JOIN events e ON e.id = b.id
             WHERE e.away_team_name <> b.away_team_name
+               OR e.win_probability_sources IS DISTINCT FROM b.win_probability_sources
         """))).scalar() or 0
-        print(f"  {'events.away_team_name':>24}: {renamed:>7} renames reverted")
+        print(f"  {'events name + blend':>24}: {renamed:>7} rows reverted")
 
         repoint = 0
         if await _exists(s, BAK_PREFIX + "market_repoint"):
@@ -143,14 +167,14 @@ async def run(apply, drop_backups):
         await s.commit()
         print(f"\nrestored {n} events")
 
-        # 2. the one column the repair wrote.
-        n = (await s.execute(text(f"""
-            UPDATE events e SET away_team_name = b.away_team_name
-            FROM {BAK_PREFIX}events b
-            WHERE e.id = b.id AND e.away_team_name <> b.away_team_name
-        """))).rowcount or 0
+        # 2. the two columns the repair wrote, restored together — the rename
+        #    and the blend clear are applied in one transaction, so putting one
+        #    back without the other would leave a state the repair never
+        #    produced.
+        n = (await s.execute(text(RESTORE_EVENT_COLUMNS_SQL.format(
+            bak=BAK_PREFIX + "events")))).rowcount or 0
         await s.commit()
-        print(f"reverted {n} away_team_name renames")
+        print(f"reverted {n} away_team_name / win_probability_sources writes")
 
         # 3. children, now that their parents are back.
         for t in CHILD_TABLES:

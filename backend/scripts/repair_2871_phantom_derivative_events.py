@@ -52,15 +52,21 @@ date(commence_time))``. Per group:
   **Branch A — a real counterpart exists (~31%).** The survivor is the real
   event. Every bogus member is deleted; its markets move to the real event.
 
-  **Branch B — no counterpart (~69%).** The survivor is the oldest bogus member,
-  with `away_team_name` rewritten to the cleaned name — a single-column UPDATE
-  that turns the phantom back into the fixture it always was. The rest of the
-  group is deleted and their markets move onto it.
+  **Branch A' — a unique token-variant counterpart within ±3 days.** Same
+  treatment; the survivor is that real event. See below.
 
-`home_team_name` is polluted 0 times out of 12,725: `extract_matchup` splits on
-`" vs. "`, so the suffix can only ever ride on team_b. `away_team_name` is the
-only `events` column this writes. `home_team_id`/`away_team_id` are NULL on all
-of them, so no `teams` row is entangled.
+  **Branch B — no counterpart at all.** The survivor is the oldest bogus member,
+  with `away_team_name` rewritten to the cleaned name and
+  `win_probability_sources` cleared, in one transaction. The rest of the group
+  is deleted and their markets move onto it.
+
+  **DEFER — a plausible but unresolvable neighbour.** Untouched and reported.
+
+`home_team_name` is polluted 0 times out of 12,746: `extract_matchup` splits on
+`" vs. "`, so the suffix can only ever ride on team_b. `away_team_name` and
+`win_probability_sources` are the only `events` columns this writes, and only
+ever on a Branch B survivor. `home_team_id`/`away_team_id` are NULL on all of
+them, so no `teams` row is entangled.
 
 CHILDREN, and why each disposition is what it is:
 
@@ -100,28 +106,45 @@ CHILDREN, and why each disposition is what it is:
   phantom's garbage name. Re-pointing would put corners-derived taxonomy on the
   real event; deleting lets the survivor regenerate its own.
 
-THE RESIDUAL THIS LEAVES, MEASURED — a Branch B survivor can land on a date a
-few days off the fixture it describes, because a Polymarket commence_time is
-often the market's close time rather than the game's start (gotcha #14). The
-worked example is the one on the #2871 screenshot: the five `FC Thun /
-Lausanne-Sport` phantoms are stamped **Aug 30**, while the real fixture is
-`Thun / Lausanne-Sport` on **Sep 2** — 2.3 days away AND under a variant home
-name, so neither the window nor the exact-home test reaches it.
+BRANCH A' AND DEFER — what CERT-880's first finding bought
+----------------------------------------------------------
 
-The window was checked against widening rather than assumed. Day-gap from each
-Branch B group to its nearest exact-home counterpart:
+A Branch B survivor can land on a date a few days off the fixture it describes,
+because a Polymarket `commence_time` is often the market's close time rather
+than the game's start (gotcha #14). The worked example is the one on the #2871
+screenshot: the five `FC Thun / Lausanne-Sport` phantoms are stamped **Aug 30**,
+while the real fixture is `Thun / Lausanne-Sport` on **Sep 2** — 2.3 days away
+AND under a variant home name, so the strict Branch A test reaches neither.
+
+Renaming that group produces a clean-looking Aug 30 fake sitting beside the real
+Sep 2 fixture. That is *worse* than the phantom it replaced, by exactly the
+argument used above for the curves: it now looks legitimate. So two arms:
+
+  **Branch A' — resolve.** A UNIQUE non-bogus event with the exact cleaned away
+  name, a whole-TOKEN home-name variant, within ±3 days. 128 fixtures / 218
+  events, Thun among them. Uniqueness is the guard against the two-legs problem;
+  token boundaries stop `FC` matching every club. Deliberately conservative.
+
+  **DEFER — leave it alone.** A plausible but unresolvable neighbour (two or
+  more candidates within ±3 days, or any candidate 3-7 days out). 339 fixtures /
+  539 events, untouched and reported. An obviously-broken row is better than a
+  convincing fake, and resolving these is name-variant work — lane1's, D39.
+
+The ±2-day window was checked against widening rather than assumed. Day-gap from
+each Branch B group to its nearest exact-home counterpart:
 
     2-3 days 98 | 3-5 days 164 | 5-8 days 164 | 8-30 days 961 | 30+ 183
     | none at any date 2,448 (61%)
 
-There is no spike just outside ±2 days; the mass sits at 8-30 days, which is
-what "two clubs meet twice a season" looks like. Widening to ±5 days would
-absorb 262 groups and start merging genuinely distinct fixtures, so the window
-stands. The residual is ~98 groups (2.4% of Branch B) that end up as a second
-dated row for a pairing we already hold nearby — against 2-5 garbage-named rows
-each today. The name-variant half (`FC Thun` ≡ `Thun`, ~510 groups within ±7
-days) is team-identity work and belongs to lane1 under D39; recovering it here
-would manufacture the twins that rule is there to prevent.
+No spike just outside ±2 days; the mass sits at 8-30 days, which is what "two
+clubs meet twice a season" looks like. Widening the STRICT arm would start
+merging genuinely distinct fixtures, so it stands and the looseness is confined
+to A' with its uniqueness guard.
+
+After both arms, every one of the 3,552 remaining Branch B fixtures has NO
+candidate at all within ±7 days under any home-name variant — so a rename can no
+longer manufacture a fake beside a real fixture. That is closed by construction,
+not by margin.
 
 LIVE ROWS ARE DEFERRED, NOT SWEPT. Events currently `status='live'` are held
 back unless `--include-live`. They are transient — every one measured was a
@@ -234,6 +257,58 @@ LEFT JOIN events r
 ORDER BY b.id, r.id
 """
 
+# Per-FIXTURE counterpart search, one notch looser than `_PLAN_SQL`'s strict arm,
+# and the answer to CERT-880's first finding: renaming a phantom into a
+# clean-looking fake that sits beside the real fixture is worse than leaving it
+# obviously broken.
+#
+# Looser on two axes and ONLY two: the home name may be a whole-TOKEN variant
+# (`FC Thun` ~ `Thun`, `Colorado Rapids SC` ~ `Colorado Rapids`), and the window
+# opens to ±3 days because a Polymarket `commence_time` is often the market's
+# close time rather than the game's start (gotcha #14). The away name still has
+# to match exactly.
+#
+# Token-boundary containment, not substring: `X = Y`, `X LIKE 'Y %'` or
+# `X LIKE '% Y'`. Plain containment would make `FC` a variant of every club with
+# `FC` in its name. It is deliberately conservative — `US Sassuolo Calcio` ~
+# `Sassuolo` is NOT caught, and an unmatched group defers rather than merging
+# wrongly. (A `%` or `_` inside a club name can only ADD a candidate, which
+# pushes the group to DEFER. It fails safe.)
+#
+# UNIQUENESS IS THE GUARD against the two-legs problem: clubs do meet twice in a
+# week (cup + league). Exactly one candidate resolves; two or more defer.
+_ALIAS_SQL = f"""
+WITH b AS (
+    SELECT e.home_team_name AS home, e.commence_time,
+           regexp_replace(e.away_team_name, :deriv_re, '', 'i') AS clean_away
+    FROM events e WHERE {_POPULATION}
+),
+g AS (
+    SELECT home, clean_away, date(commence_time) AS d, MIN(commence_time) AS ct
+    FROM b GROUP BY 1, 2, 3
+),
+c AS (
+    SELECT g.home, g.clean_away, g.d, r.id AS rid,
+           ABS(EXTRACT(EPOCH FROM (r.commence_time - g.ct)) / 86400) AS days
+    FROM g
+    JOIN events r
+      ON r.away_team_name = g.clean_away
+     AND r.away_team_name !~* :deriv_re
+     AND ( lower(r.home_team_name) = lower(g.home)
+        OR lower(r.home_team_name) LIKE lower(g.home) || ' %'
+        OR lower(r.home_team_name) LIKE '% ' || lower(g.home)
+        OR lower(g.home) LIKE lower(r.home_team_name) || ' %'
+        OR lower(g.home) LIKE '% ' || lower(r.home_team_name) )
+     AND r.commence_time BETWEEN g.ct - INTERVAL '7 days'
+                             AND g.ct + INTERVAL '7 days'
+)
+SELECT home, clean_away, d,
+       COUNT(*) FILTER (WHERE days <= 3) AS n3,
+       COUNT(*) AS n7,
+       MIN(rid) FILTER (WHERE days <= 3) AS alias_id
+FROM c GROUP BY 1, 2, 3
+"""
+
 _CENSUS_SQL = f"""
 SELECT e.status, COUNT(*) AS n
 FROM events e WHERE {_POPULATION}
@@ -287,6 +362,26 @@ SQL = {
         "UPDATE events SET away_team_name = :clean "
         "WHERE id = :survivor AND away_team_name <> :clean"
     ),
+    # CERT-880's second finding, and it was a real hole: deleting the
+    # `win_prob_snapshots` HISTORY left the blend on the event row itself.
+    # `events.win_probability_sources` is the JSONB that
+    # `compute_aggregate_probability()` reads and that search emits as
+    # `hero_probability` — measured, 1,276 of 4,024 Branch B survivors carry one,
+    # every value derived from the derivative market's own price. Event 15298202
+    # holds `{"polymarket": {"value": 0.445}}`, which is the "Thun 46% — Corners
+    # 54%" on the production screenshot. A survivor renamed to the real fixture
+    # while still holding that number is exactly the "worse because it now looks
+    # legitimate" case, so it is cleared in the SAME transaction as the rename.
+    #
+    # Branch A/A' survivors are REAL events with their own legitimate blend and
+    # are never touched. Only the former phantom is cleared. Measured: no other
+    # probability column is populated on any survivor — opening_/closing_
+    # home_probability, espn_win_prob_home, home_score and box_score_data are all
+    # 0 of 4,024 — so this one column is the whole exposure.
+    "clear_blend": (
+        "UPDATE events SET win_probability_sources = NULL "
+        "WHERE id = :survivor AND win_probability_sources IS NOT NULL"
+    ),
     "event_delete": "DELETE FROM events WHERE id = ANY(CAST(:doomed AS int[]))",
 }
 
@@ -304,18 +399,40 @@ def backup_is_exact(recon):
 class Group:
     """One fixture: the rows that must collapse into a single event."""
 
-    __slots__ = ("home", "clean_away", "date", "members", "real_event_id")
+    __slots__ = ("home", "clean_away", "date", "members", "real_event_id",
+                 "alias_event_id", "nearby")
 
     def __init__(self, home, clean_away, date, real_event_id):
         self.home = home
         self.clean_away = clean_away
         self.date = date
         self.real_event_id = real_event_id
+        self.alias_event_id = None  # unique token-variant counterpart within ±3d
+        self.nearby = 0             # any such counterpart within ±7d
         self.members = []  # list of dicts, ordered by id
 
     @property
     def branch(self):
-        return "A" if self.real_event_id is not None else "B"
+        """A / A' resolve onto a real event; B renames; DEFER is left alone.
+
+        DEFER exists because of CERT-880: a group with a plausible but
+        unresolvable nearby counterpart must NOT be renamed. Renaming it
+        produces a clean-looking fake sitting beside the real fixture, which is
+        worse than the obviously-broken row it replaced. Left untouched and
+        reported instead — resolving it is name-variant work and lane1's
+        under D39.
+        """
+        if self.real_event_id is not None:
+            return "A"
+        if self.alias_event_id is not None:
+            return "A'"
+        if self.nearby:
+            return "DEFER"
+        return "B"
+
+    @property
+    def actionable(self):
+        return self.branch != "DEFER"
 
     @property
     def has_live(self):
@@ -323,15 +440,17 @@ class Group:
 
     @property
     def survivor_id(self):
-        """Branch A survives onto the real event; Branch B onto its oldest row."""
+        """A/A' survive onto the real event; B onto its own oldest row."""
         if self.real_event_id is not None:
             return self.real_event_id
+        if self.alias_event_id is not None:
+            return self.alias_event_id
         return self.members[0]["id"]
 
     @property
     def doomed_ids(self):
-        """Every member that goes away. Branch B keeps its survivor."""
-        keep = None if self.real_event_id is not None else self.members[0]["id"]
+        """Every member that goes away. Only Branch B keeps one of its own."""
+        keep = self.members[0]["id"] if self.branch == "B" else None
         return [m["id"] for m in self.members if m["id"] != keep]
 
     @property
@@ -368,6 +487,12 @@ async def build_plan(session, include_live=False):
             f"{disagree[:3]!r}. Refusing to run — one vocabulary or none."
         )
 
+    alias = {}
+    for a in (await session.execute(
+        text(_ALIAS_SQL), {"deriv_re": DERIV_RE}
+    )).mappings().all():
+        alias[(a["home"], a["clean_away"], a["d"])] = a
+
     groups = {}
     for r in rows:
         key = (r["home_team_name"], r["clean_away"], r["d"])
@@ -383,14 +508,23 @@ async def build_plan(session, include_live=False):
         g.members.append(dict(r))
 
     ordered = []
-    for g in groups.values():
+    for key, g in groups.items():
         g.members.sort(key=lambda m: m["id"])
+        a = alias.get(key)
+        if a:
+            # Exactly one candidate resolves; two or more are ambiguous and the
+            # group defers (see `_ALIAS_SQL` — uniqueness is the guard against
+            # merging two legs of the same pairing).
+            g.alias_event_id = a["alias_id"] if a["n3"] == 1 else None
+            g.nearby = a["n7"] or 0
         ordered.append(g)
     ordered.sort(key=lambda g: (g.home or "", g.clean_away or "", str(g.date)))
 
     live = [g for g in ordered if g.has_live]
-    actionable = ordered if include_live else [g for g in ordered if not g.has_live]
-    return actionable, live, len(rows)
+    deferred = [g for g in ordered if not g.actionable]
+    actionable = [g for g in ordered
+                  if g.actionable and (include_live or not g.has_live)]
+    return actionable, live, deferred, len(rows)
 
 
 # --------------------------------------------------------------------------
@@ -484,7 +618,12 @@ async def apply_group(session, g):
     survivor = g.survivor_id
     doomed = g.doomed_ids
     members = g.member_ids
-    counts = {"repointed": 0, "deleted_children": 0, "renamed": 0, "deleted_events": 0}
+    counts = {"repointed": 0, "deleted_children": 0, "renamed": 0,
+              "blend_cleared": 0, "deleted_events": 0}
+    if g.branch == "DEFER":
+        # A plausible but unresolvable nearby counterpart. Renaming it would
+        # manufacture a clean-looking fake beside the real fixture (CERT-880).
+        return counts
 
     # 1. Markets move off the doomed rows onto the survivor, ledgered first.
     if doomed:
@@ -506,7 +645,10 @@ async def apply_group(session, g):
         )
         counts["deleted_children"] += res.rowcount or 0
 
-    # 3. Branch B: the one column this repair writes to `events`.
+    # 3. Branch B: the two columns this repair writes to `events`, in the same
+    #    transaction. A survivor renamed to the real fixture while still holding
+    #    the corners-derived blend is the "worse because it now looks
+    #    legitimate" case, so the rename and the clear are never separable.
     #    NOTE: `events` has NO `updated_at` column (only `created_at`) — an
     #    `updated_at = NOW()` here fails every rename. `futures_markets` does
     #    have one, which is why step 1 sets it and this does not.
@@ -515,6 +657,10 @@ async def apply_group(session, g):
             text(SQL["rename"]), {"clean": g.clean_away, "survivor": survivor}
         )
         counts["renamed"] = res.rowcount or 0
+        res = await session.execute(
+            text(SQL["clear_blend"]), {"survivor": survivor}
+        )
+        counts["blend_cleared"] = res.rowcount or 0
 
     # 4. The rows that never were.
     if doomed:
@@ -547,19 +693,28 @@ async def run(args):
             if args.apply or args.backup:
                 return
 
-        actionable, live, rows = await build_plan(s, include_live=args.include_live)
+        actionable, live, deferred, rows = await build_plan(
+            s, include_live=args.include_live)
         if args.limit:
             actionable = actionable[:args.limit]
 
-        branch_a = [g for g in actionable if g.branch == "A"]
-        branch_b = [g for g in actionable if g.branch == "B"]
+        by = {b: [g for g in actionable if g.branch == b] for b in ("A", "A'", "B")}
         n_delete = sum(len(g.doomed_ids) for g in actionable)
-        n_rename = len(branch_b)
+        n_rename = len(by["B"])
 
+        n_a, n_alias, n_b = len(by["A"]), len(by["A'"]), len(by["B"])
         print(f"\n=== plan: {len(actionable)} fixtures "
-              f"({len(branch_a)} Branch A / {len(branch_b)} Branch B) ===")
+              f"(A {n_a} / A' {n_alias} / B {n_b}) ===")
         print(f"  events deleted : {n_delete}")
-        print(f"  events renamed : {n_rename}  (Branch B survivors)")
+        print(f"  events renamed : {n_rename}  (Branch B survivors, blend cleared)")
+        if deferred:
+            print(f"  DEFERRED (ambiguous): {len(deferred)} fixtures / "
+                  f"{sum(len(g.members) for g in deferred)} events — a plausible "
+                  f"but unresolvable nearby counterpart; left untouched rather "
+                  f"than renamed into a clean-looking fake (CERT-880)")
+            for g in deferred[:5]:
+                print(f"    ~ {g.home} vs {g.clean_away} {g.date} "
+                      f"({len(g.members)} rows, {g.nearby} nearby)")
         if live:
             print(f"  DEFERRED (live): {len(live)} fixtures / "
                   f"{sum(len(g.members) for g in live)} events — held back; they "
@@ -601,7 +756,8 @@ async def run(args):
 
         # ---- apply ----
         print(f"\n=== applying to {len(actionable)} fixtures ===")
-        tot = {"repointed": 0, "deleted_children": 0, "renamed": 0, "deleted_events": 0}
+        tot = {"repointed": 0, "deleted_children": 0, "renamed": 0,
+               "blend_cleared": 0, "deleted_events": 0}
         failures = []
         for i, g in enumerate(actionable, 1):
             # One bad fixture must never wipe the pass (gotcha #42).
