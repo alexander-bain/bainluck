@@ -5,6 +5,7 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import select, distinct, and_, or_, func
 from sqlalchemy.orm import selectinload
@@ -2353,6 +2354,7 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
     from app.services import espn_tennis
     from app.utils.espn_tennis_anchor import authority_score_write
     from app.utils.tennis_linescore import authority_linescore
+    from app.utils.tennis_line_source import select_line, statpal_linescore
     import asyncio as _asyncio
 
     stats: dict = {
@@ -2367,6 +2369,11 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
         "score_writes": 0,
         "score_refused": {},
         "row_errors": 0,
+        # live/059 addendum (D59 = A′) — which source spoke for each line.
+        "statpal_anchored": 0,
+        "statpal_lines": 0,
+        "statpal_board": None,
+        "state_disagreements": 0,
     }
 
     now = datetime.now(timezone.utc)
@@ -2391,6 +2398,11 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
                 Event.home_score,
                 Event.away_score,
                 Event.linescore,
+                # live/059 addendum: the join that decides which source speaks
+                # for this match's line. A non-null, namespace-recognised
+                # fixture id IS the StatPal anchor (`statpal_anchor_key`
+                # refuses an unrecognised namespace, and so does the selector).
+                Event.statpal_fixture_id,
             )
             .join(Sport, Sport.id == Event.sport_id)
             .where(
@@ -2431,8 +2443,26 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
         stats["competitions"] = len(competitions)
         by_id = {c["espn_competition_id"]: c for c in competitions}
 
+        # ═══ live/059 addendum (D59 = A′): THE FINER BOARD, ONCE PER PASS ═══
+        #
+        # ESPN's tennis scoreboard publishes no point score and no server —
+        # measured over the whole US Open board. StatPal's livescores publish
+        # both. The anchor is what makes them the SAME match, so the board is
+        # only fetched when at least one candidate row carries one: no anchored
+        # rows, no request, and the pass is byte-for-byte what it was before
+        # this addendum.
+        anchored_ids = {
+            key for key in (_statpal_lookup_id(fid) for *_rest, fid in rows)
+            if key is not None
+        }
+        stats["statpal_anchored"] = len(anchored_ids)
+        statpal_by_fixture = (
+            await _fetch_statpal_tennis_board(stats) if anchored_ids else {}
+        )
+
         for (
-            event_id, espn_id, home_name, away_name, home_score, away_score, held
+            event_id, espn_id, home_name, away_name, home_score, away_score, held,
+            statpal_fixture_id,
         ) in rows:
             try:
                 competition = by_id.get(str(espn_id))
@@ -2451,10 +2481,43 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
                     stats["linescore_refused"][verdict["reason"]] = (
                         stats["linescore_refused"].get(verdict["reason"], 0) + 1
                     )
-                elif _linescore_changed(held, verdict["linescore"]):
-                    values["linescore"] = verdict["linescore"]
-                else:
-                    stats["linescore_unchanged"] += 1
+
+                # ═══ THE SWITCH (D59 = A′). ONE SOURCE, WHOLE. ═══
+                #
+                # `select_line` receives two complete payloads and returns one
+                # of them with ESPN's state on top. It is never handed a FIELD,
+                # which is the structural half of "a mixed line is impossible";
+                # `assert_atomic` inside it is the runtime half. When no anchor
+                # exists — every row today, until authority/007's linker runs —
+                # `statpal` is None, the selector composes ESPN's line whole,
+                # and the write is what it was.
+                statpal_verdict = None
+                fixture_key = _statpal_lookup_id(statpal_fixture_id)
+                if fixture_key and fixture_key in statpal_by_fixture:
+                    statpal_verdict = statpal_linescore(
+                        ours, statpal_by_fixture[fixture_key], observed_at=now
+                    )
+                    if statpal_verdict["reason"] is not None:
+                        stats["linescore_refused"][
+                            f"statpal:{statpal_verdict['reason']}"
+                        ] = stats["linescore_refused"].get(
+                            f"statpal:{statpal_verdict['reason']}", 0
+                        ) + 1
+
+                chosen = select_line(
+                    espn=verdict["linescore"],
+                    statpal=(statpal_verdict or {}).get("linescore"),
+                    has_statpal_anchor=bool(fixture_key),
+                )
+                if chosen is not None:
+                    if chosen.get("source") == "statpal":
+                        stats["statpal_lines"] += 1
+                    if chosen.get("state_disagrees"):
+                        stats["state_disagreements"] += 1
+                    if _linescore_changed(held, chosen):
+                        values["linescore"] = chosen
+                    else:
+                        stats["linescore_unchanged"] += 1
 
                 # THE SET COUNT TOO, THROUGH THE EXISTING RULE. `home_score` is
                 # what every non-tennis surface already reads, and leaving it on
@@ -2499,6 +2562,85 @@ async def _poll_live_tennis_scores(limit: int = 200) -> dict:
     return {"status": "ok", **stats}
 
 
+def _statpal_lookup_id(fixture_id) -> Optional[str]:
+    """The id to look this match up by on StatPal's own board, or None.
+
+    🔴 **DELIBERATELY NOT** `provider_anchor_keys.statpal_namespace`. That
+    function answers a different question — "is this id safe to key a
+    cross-source ABSORPTION on" — and it answers it by namespace, `^\\d{6}$` or
+    `^\\d{10}$`. Tennis fixture ids are SEVEN digits (`2631278`, measured on the
+    live board 2026-09-04) and match neither, which is the gap `authority/003`
+    exists to close. Gating this lookup on that function would make the whole
+    source selector unreachable for the one sport it was written for, and it
+    would do it silently.
+
+    The question here is smaller and does not need the namespace: we are asking
+    StatPal for the match StatPal calls this id. A wrong id misses the board and
+    the row falls back to ESPN's line whole — the same outcome as no id at all,
+    with no capacity to bind two rows together. All the shape test has to do is
+    keep a junk value from costing a request.
+    """
+    token = str(fixture_id or "").strip()
+    return token if token.isdigit() else None
+
+
+async def _fetch_statpal_tennis_board(stats: dict) -> dict:
+    """StatPal's live tennis board, keyed by fixture id — ONE request per pass.
+
+    live/059 addendum (D59 = A′). Returns the RAW match dicts, not
+    :class:`StatPalFixture`, because the fixture dataclass drops ``game_score``
+    and ``serve`` and those two fields are the entire reason this source is
+    consulted.
+
+    A failure returns ``{}`` and is NAMED in `stats["statpal_board"]`. Empty and
+    failed must not read the same (gotcha #53): an empty board means every
+    anchored match falls back to ESPN's line whole, which is correct and quiet;
+    a failed fetch means the same thing and is worth seeing in a verdict.
+    """
+    from app.services.statpal_api import get_statpal_service, is_available
+
+    if not is_available():
+        stats["statpal_board"] = "no_api_key"
+        return {}
+    service = get_statpal_service()
+    try:
+        data = await service._get("tennis", "livescores")
+    except Exception as exc:  # noqa: BLE001 — a dark venue never costs the pass
+        stats["statpal_board"] = f"error:{type(exc).__name__}"
+        logger.warning("Live tennis poll: StatPal board unavailable: %s", str(exc)[:160])
+        return {}
+    finally:
+        try:
+            await service.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not isinstance(data, dict):
+        stats["statpal_board"] = "unreadable"
+        return {}
+    # The payload key is `livescores` on this endpoint and `scores` on the daily
+    # ones. Both are read because the two endpoints are the same shape under two
+    # names, and hard-coding one is how a future switch becomes a silent zero.
+    section = data.get("livescores") or data.get("scores") or {}
+    tournaments = section.get("tournament") or []
+    if isinstance(tournaments, dict):
+        tournaments = [tournaments]
+
+    out: dict = {}
+    for tournament in tournaments:
+        matches = (tournament or {}).get("match") or []
+        if isinstance(matches, dict):
+            matches = [matches]
+        for match in matches:
+            if not isinstance(match, dict):
+                continue
+            fixture_id = str(match.get("id") or "").strip()
+            if fixture_id:
+                out[fixture_id] = match
+    stats["statpal_board"] = len(out)
+    return out
+
+
 def _linescore_changed(held, fresh: dict) -> bool:
     """Is this a NEW reading, or the same one with a new clock on it?
 
@@ -2510,9 +2652,17 @@ def _linescore_changed(held, fresh: dict) -> bool:
 
     A held value that is not a dict (never written, or written by something
     older than this shape) is a change: writing is how it becomes readable.
+
+    live/059 addendum: `score_as_of` is the SECOND clock in the payload — the
+    chosen source's own stamp, carried so a reader can be told the score is a
+    moment old. It moves every pass for exactly the same reason `observed_at`
+    does, and leaving it in this comparison would put the whole live population
+    back on a write three times a minute. Both clocks are excluded, by the same
+    rule and for the same reason.
     """
+    _CLOCKS = ("observed_at", "score_as_of")
     if not isinstance(held, dict):
         return True
-    return {k: v for k, v in held.items() if k != "observed_at"} != {
-        k: v for k, v in fresh.items() if k != "observed_at"
+    return {k: v for k, v in held.items() if k not in _CLOCKS} != {
+        k: v for k, v in fresh.items() if k not in _CLOCKS
     }

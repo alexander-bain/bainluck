@@ -105,6 +105,23 @@ export default function TennisLinescore({
     { name: awayName, side: "away" },
   ];
 
+  /**
+   * live/059 addendum (D59 = A′) — THE CURRENT GAME, when the line's source
+   * carries one.
+   *
+   * `points` and `serving` are non-null only on a StatPal line, because ESPN's
+   * tennis scoreboard publishes neither. They are read off THIS payload and
+   * never off any other object, which is the renderer's half of the atomicity
+   * rule: the sets above and the points below are the same source's reading of
+   * the same instant, or the points are not shown at all.
+   *
+   * The point column is only drawn while a set is in play. A finished match has
+   * no current game, and a trailing "40–30" beside a final score is the kind of
+   * leftover a reader reads as live.
+   */
+  const points = current !== null ? linescore.points : null;
+  const serving = current !== null ? linescore.serving : null;
+
   return (
     <div className={cn("flex flex-col items-center gap-1", className)}>
       <table
@@ -115,6 +132,16 @@ export default function TennisLinescore({
           {rows.map(({ name, side }) => (
             <tr key={side}>
               <td className="pr-2 text-xs font-semibold text-text-primary whitespace-nowrap">
+                {/* THE SERVER, as a scoreboard marks it — a dot beside the name.
+                    Rendered only when the line's own source states it, so an
+                    ESPN line is byte-for-byte what it was. */}
+                {serving === side && (
+                  <span
+                    aria-label="serving"
+                    title="Serving"
+                    className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-accent-primary align-middle"
+                  />
+                )}
                 {shortName(name)}
               </td>
               {sets.map((set, index) => (
@@ -142,6 +169,15 @@ export default function TennisLinescore({
                   emphasis={index + 1 === current || set.won_by === side}
                 />
               ))}
+              {/* THE POINT SCORE — its own column, set apart by a rule, because
+                  it is a different unit from every cell to its left. A "40" in
+                  the same run of columns as "6" and "7" reads as a set score of
+                  forty. */}
+              {points && (
+                <td className="border-l border-surface-border pl-2 text-center font-mono tabular-nums text-base leading-tight font-bold text-text-primary">
+                  {(side === "home" ? points.home : points.away) ?? "–"}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -149,6 +185,15 @@ export default function TennisLinescore({
       {caption && (
         <span className="text-[11px] uppercase tracking-wide text-text-muted">
           {caption}
+        </span>
+      )}
+      {/* THE DISAGREEMENT, said out loud (D59 = A′). ESPN owns the state; when
+          the source that owns the SCORE has not caught up with it, the reader is
+          told the score is a moment old rather than shown a line that pretends
+          the two agree. */}
+      {linescore.state_disagrees && (
+        <span className="text-[11px] text-text-muted">
+          Score as of the last update from the live feed
         </span>
       )}
     </div>

@@ -69,9 +69,19 @@ export function sportKeepsALinescore(sport: string | null | undefined): boolean 
   return FINER_GRAIN_SPORT_PREFIXES.includes(String(sport ?? "").split("_")[0]);
 }
 
-/** The shape this module reads. The full type is `TennisLinescore`. */
+/**
+ * The shape this module reads. The full type is `TennisLinescore`.
+ *
+ * live/059 addendum (D59 = A′): `state` is now nullable. The line's SCORE may
+ * come from StatPal while its STATE comes from ESPN, and on the rare pass where
+ * ESPN refused the fixture entirely there is a score with no state — `null`
+ * rather than a borrowed word, because a state from anything but the state
+ * authority is the mix that build forbids. `null !== "decided"`, so such a page
+ * keeps polling, which is the right answer: it has a score and no idea whether
+ * the match is still on.
+ */
 interface LinescoreLike {
-  state?: string;
+  state?: string | null;
 }
 
 export interface LiveDetailRefreshInput {

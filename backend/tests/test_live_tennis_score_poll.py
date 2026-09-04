@@ -113,9 +113,38 @@ def _install(monkeypatch, *, rows, payloads=None, errors=None, fetches=None):
     return session
 
 
-def _row(event_id, espn_id, home, away, home_score=None, away_score=None, held=None):
-    """The scalar tuple the task selects — id, espn_id, names, score, linescore."""
-    return (event_id, espn_id, home, away, home_score, away_score, held)
+def _row(event_id, espn_id, home, away, home_score=None, away_score=None, held=None,
+         statpal_fixture_id=None):
+    """The scalar tuple the task selects.
+
+    live/059 addendum (D59 = A′) added `statpal_fixture_id` — the join that
+    decides which source speaks for this match's line. Defaulting it to None
+    keeps every case below on the ESPN arm, which is the state of every row in
+    production until authority/007's linker runs, and is what makes those cases
+    controls for the switch rather than casualties of it.
+    """
+    return (event_id, espn_id, home, away, home_score, away_score, held,
+            statpal_fixture_id)
+
+
+def _held_line(observed_at, names=("Alexei Popyrin", "Alejandro Tabilo")):
+    """The composed linescore the task writes for `LIVE_BOARD`, at a given clock.
+
+    live/059 addendum (D59 = A′): what lands in `events.linescore` is no longer
+    `authority_linescore`'s raw payload — it is `select_line`'s composition of
+    it, which names its source and carries the score's own stamp. A held-value
+    fixture has to be built the same way or the comparison is between two
+    different shapes.
+    """
+    from app.services.espn_tennis import scoreboard_competitions
+    from app.utils.tennis_line_source import select_line
+    from app.utils.tennis_linescore import authority_linescore
+
+    competition = scoreboard_competitions([LIVE_BOARD])[0]
+    espn = authority_linescore(
+        list(names), competition, observed_at=observed_at
+    )["linescore"]
+    return select_line(espn=espn, statpal=None, has_statpal_anchor=False)
 
 
 LIVE_BOARD = _payload([
@@ -195,15 +224,13 @@ class TestWhatItWrites:
         whole would call every pass a change and write the entire live
         population to Postgres three times a minute for nothing."""
         from app.tasks.espn_sync import _poll_live_tennis_scores
-        from app.utils.tennis_linescore import authority_linescore
-        from app.services.espn_tennis import scoreboard_competitions
 
-        competition = scoreboard_competitions([LIVE_BOARD])[0]
-        held = authority_linescore(
-            ["Alexei Popyrin", "Alejandro Tabilo"],
-            competition,
-            observed_at=NOW - timedelta(minutes=5),
-        )["linescore"]
+        # live/059 addendum: `held` is built through the SAME composition the
+        # task writes — `select_line` over the ESPN payload with no StatPal
+        # anchor. Building it from `authority_linescore` alone would compare a
+        # pre-addendum shape against a post-addendum one and call every pass a
+        # change, which is the very write storm this test exists to forbid.
+        held = _held_line(NOW - timedelta(minutes=5))
 
         session = _install(
             monkeypatch,
@@ -308,7 +335,7 @@ class TestTheSilences:
         session = _install(
             monkeypatch,
             rows=[
-                (2, "182709", None, None, None, None, None),
+                (2, "182709", None, None, None, None, None, None),
                 _row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo"),
             ],
             payloads=[LIVE_BOARD],
@@ -346,3 +373,221 @@ class TestTheSilences:
 
         assert stats["linescore_refused"] == {"no-line": 1}
         assert session.updates == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# live/059 addendum (D59 = A′) — the per-match source selector, in the poll
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+STATPAL_MATCH = {
+    "id": "2631278", "status": "Set 3", "tb": "False",
+    "player": [
+        # StatPal, a minute later than the ESPN board: Popyrin has taken the
+        # sixth game of set three. Every score value therefore DIFFERS from
+        # LIVE_BOARD's, which is what lets these tests detect a merge.
+        {"name": "A. Popyrin", "id": "1", "game_score": "40", "serve": "True",
+         "s1": "6", "s2": "6", "s3": "6", "s4": "", "s5": "",
+         "totalscore": "1", "winner": "False"},
+        {"name": "A. Tabilo", "id": "2", "game_score": "30", "serve": "False",
+         "s1": "2", "s2": "7", "s3": "5", "s4": "", "s5": "",
+         "totalscore": "1", "winner": "False"},
+    ],
+}
+
+
+def _install_statpal(monkeypatch, matches, *, fetches=None):
+    """Stub StatPal's live board. Records whether it was asked at all."""
+    from app.tasks import espn_sync
+
+    async def _board(stats):
+        if fetches is not None:
+            fetches.append(True)
+        stats["statpal_board"] = len(matches)
+        return matches
+
+    monkeypatch.setattr(espn_sync, "_fetch_statpal_tennis_board", _board)
+
+
+class TestTheSourceSelectorInThePoll:
+    async def test_no_anchored_row_means_statpal_is_never_asked(self, monkeypatch):
+        """THE GATE, and it is the reason this addendum costs nothing today.
+
+        Every production tennis row carries no StatPal fixture id until
+        authority/007's linker runs. No anchor, no request — the pass is what it
+        was before the switch existed.
+        """
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        fetches: list = []
+        _install_statpal(monkeypatch, {}, fetches=fetches)
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo")],
+            payloads=[LIVE_BOARD],
+        )
+
+        stats = await _poll_live_tennis_scores()
+
+        assert fetches == [], "StatPal was fetched for a match with no anchor"
+        assert stats["statpal_anchored"] == 0
+        assert session.updates[0]["linescore"]["source"] == "espn"
+
+    async def test_a_junk_fixture_id_never_costs_a_request(self, monkeypatch):
+        """The shape test's only job. A non-numeric id cannot name a StatPal
+        match, so asking the board about it is a request bought for nothing."""
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        fetches: list = []
+        _install_statpal(monkeypatch, {"2631278": STATPAL_MATCH}, fetches=fetches)
+        _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="not-an-id")],
+            payloads=[LIVE_BOARD],
+        )
+
+        stats = await _poll_live_tennis_scores()
+
+        assert fetches == []
+        assert stats["statpal_anchored"] == 0
+
+    async def test_an_anchored_row_takes_the_WHOLE_line_from_statpal(self, monkeypatch):
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        _install_statpal(monkeypatch, {"2631278": STATPAL_MATCH})
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],
+        )
+
+        stats = await _poll_live_tennis_scores()
+
+        line = session.updates[0]["linescore"]
+        assert stats["statpal_anchored"] == 1
+        assert stats["statpal_lines"] == 1
+        assert line["source"] == "statpal"
+        assert line["line"] == "6-2, 6-7, 6-5"
+        assert line["points"] == {"home": "40", "away": "30"}
+        assert line["serving"] == "home"
+
+    async def test_the_written_line_is_never_mixed(self, monkeypatch):
+        """🔴 THE INVARIANT, asserted on the row that reaches Postgres.
+
+        The ESPN board says `6-2, 6-7(4), 6-5` with no points; StatPal says
+        `6-2, 6-7, 6-5` with `40-30`. A merge would print ESPN's bracketed
+        tiebreak beside StatPal's points — two true halves, one false line.
+        """
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+        from app.utils.tennis_line_source import SCORE_FIELDS, statpal_linescore
+
+        _install_statpal(monkeypatch, {"2631278": STATPAL_MATCH})
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],
+        )
+
+        await _poll_live_tennis_scores()
+        line = session.updates[0]["linescore"]
+
+        expected = statpal_linescore(
+            ["Alexei Popyrin", "Alejandro Tabilo"], STATPAL_MATCH,
+            observed_at=datetime.fromisoformat(line["observed_at"]),
+        )["linescore"]
+        for field in SCORE_FIELDS:
+            assert line[field] == expected[field], (
+                f"score field {field!r} did not come from StatPal — the line is mixed"
+            )
+        # …and ESPN's tiebreak bracket, which StatPal does not publish, is
+        # absent rather than borrowed.
+        assert "(4)" not in line["line"]
+
+    async def test_espn_keeps_the_state_even_on_a_statpal_line(self, monkeypatch):
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        _install_statpal(monkeypatch, {"2631278": STATPAL_MATCH})
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],
+        )
+
+        await _poll_live_tennis_scores()
+        line = session.updates[0]["linescore"]
+
+        assert line["state"] == "in_progress"
+        assert line["state_source"] == "espn"
+
+    async def test_a_statpal_board_that_omits_the_fixture_falls_back_whole(
+        self, monkeypatch
+    ):
+        """Silence from the anchored source is not a reason to build half a line."""
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        _install_statpal(monkeypatch, {})
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],
+        )
+
+        stats = await _poll_live_tennis_scores()
+        line = session.updates[0]["linescore"]
+
+        assert stats["statpal_lines"] == 0
+        assert line["source"] == "espn"
+        assert line["line"] == "6-2, 6-7(4), 6-5"
+        assert line["points"] is None
+
+    async def test_a_disagreement_is_recorded_with_the_scores_own_stamp(
+        self, monkeypatch
+    ):
+        """ESPN's state, StatPal's last score, StatPal's clock — Alex's rule."""
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        finished = dict(STATPAL_MATCH, status="Finished")
+        _install_statpal(monkeypatch, {"2631278": finished})
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],   # ESPN still says in_progress
+        )
+
+        stats = await _poll_live_tennis_scores()
+        line = session.updates[0]["linescore"]
+
+        assert stats["state_disagreements"] == 1
+        assert line["state"] == "in_progress"          # ESPN's
+        assert line["source"] == "statpal"             # the linked source's score
+        assert line["score_as_of"] == line["observed_at"]
+        assert line["state_disagrees"] is True
+
+    async def test_a_dark_statpal_board_is_named_and_costs_nothing(self, monkeypatch):
+        """An empty board and a failed fetch mean the same thing to a reader and
+        must not read the same in a verdict (gotcha #53)."""
+        from app.tasks import espn_sync
+        from app.tasks.espn_sync import _poll_live_tennis_scores
+
+        async def _boom(stats):
+            stats["statpal_board"] = "error:RuntimeError"
+            return {}
+
+        monkeypatch.setattr(espn_sync, "_fetch_statpal_tennis_board", _boom)
+        session = _install(
+            monkeypatch,
+            rows=[_row(15300836, "182709", "Alexei Popyrin", "Alejandro Tabilo",
+                       statpal_fixture_id="2631278")],
+            payloads=[LIVE_BOARD],
+        )
+
+        stats = await _poll_live_tennis_scores()
+
+        assert stats["statpal_board"] == "error:RuntimeError"
+        assert session.updates[0]["linescore"]["source"] == "espn"

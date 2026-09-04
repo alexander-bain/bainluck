@@ -274,3 +274,50 @@ describe("the event page actually uses this rule", () => {
     expect(source).not.toMatch(/streamConnectedRef\.current\s*\n?\s*\?\s*0/);
   });
 });
+
+/**
+ * live/059 addendum (D59 = A′) — a score with no state still polls.
+ *
+ * The composed linescore takes its SCORE from whichever source the match is
+ * anchored to and its STATE from ESPN, always. On a pass where ESPN refused the
+ * fixture entirely, the payload therefore carries a real score and `state:
+ * null` — deliberately, because a state word from anything but the state
+ * authority is exactly the mix the addendum forbids.
+ *
+ * `null` must read as NOT decided. Reading it as decided would silence the poll
+ * on a page that has a score and no idea whether the match is still being
+ * played — CERT-858's defect, arriving through the state field instead of the
+ * sport field.
+ */
+describe("a linescore whose state is null (live/059 addendum)", () => {
+  test("the stream is still blind to the score", () => {
+    expect(
+      streamIsBlindToTheScore({
+        status: "live",
+        sport: "tennis_atp_us_open",
+        linescore: { state: null },
+      }),
+    ).toBe(true);
+  });
+
+  test("CONTROL — a decided line still stops the poll", () => {
+    expect(
+      streamIsBlindToTheScore({
+        status: "live",
+        sport: "tennis_atp_us_open",
+        linescore: { state: "decided" },
+      }),
+    ).toBe(false);
+  });
+
+  test("a connected stream on a null-state line asks for a bounded interval", () => {
+    expect(
+      liveDetailRefreshInterval({
+        streamConnected: true,
+        status: "live",
+        sport: "tennis_atp_us_open",
+        linescore: { state: null },
+      }),
+    ).toBeGreaterThan(0);
+  });
+});

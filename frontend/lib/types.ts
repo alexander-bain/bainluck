@@ -181,10 +181,17 @@ export interface TennisLinescoreSet {
 }
 
 export interface TennisLinescore {
-  source: string;
+  /**
+   * WHICH SOURCE THE SCORE CAME FROM — and it is the whole score, or none of it
+   * (live/059 addendum, D59 = A′). `"espn"` carries sets and games; `"statpal"`
+   * carries sets, games, points AND the server, because the two feeds observe
+   * the same match seconds apart and a line assembled from both prints a game
+   * score belonging to a different game.
+   */
+  source: "espn" | "statpal";
   /** What the numbers count. Always `"games"` today — stated, not assumed. */
   unit: string;
-  state: "in_progress" | "decided";
+  state: "in_progress" | "decided" | null;
   /** `final` | `retired` | `walkover` | `abandoned` | `unknown`. */
   completion: string | null;
   /** ESPN's own display text for the moment — "3rd Set", "Interrupted". */
@@ -198,8 +205,29 @@ export interface TennisLinescore {
   games: { home: number; away: number };
   /** Home first, always: `"6-2, 6-7(4), 6-5"`. */
   line: string;
-  /** When WE read it. ESPN publishes no per-competition write timestamp. */
+  /** When WE read it. Neither venue publishes a per-match write timestamp. */
   observed_at: string;
+  /**
+   * The CURRENT GAME's point score — `{"home": "40", "away": "30"}`. `null`
+   * whenever the match is not in play, and `null` for every ESPN line: ESPN's
+   * tennis scoreboard publishes no point score at all, measured over the whole
+   * US Open board. Present-and-null is the honest answer ("this source does not
+   * say"); the key is never omitted, because an absent key invites a renderer
+   * to go looking for the number somewhere else.
+   */
+  points: { home: string | null; away: string | null } | null;
+  /** Who is serving. `null` on every ESPN line, same reason as `points`. */
+  serving: "home" | "away" | null;
+  /** Which source owns `state`. Always `"espn"` under D27, or null if silent. */
+  state_source: "espn" | null;
+  /** The SCORE's own clock — `source`'s read, for an honest "as of". */
+  score_as_of: string | null;
+  /**
+   * The two feeds currently describe different match states (one says the match
+   * is over, the other still has it in play). The state shown is ESPN's; the
+   * score is the linked source's last, and `score_as_of` says when.
+   */
+  state_disagrees: boolean;
 }
 
 export interface Event {
