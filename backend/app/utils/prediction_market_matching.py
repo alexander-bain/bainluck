@@ -428,6 +428,83 @@ def bracket_refusal_reason(team_a: str, team_b: str) -> Optional[str]:
     return None
 
 
+# ── #3026: a question is not a game ──────────────────────────────────────────
+
+# A competitor slot that itself carries a whole matchup. "Announcers" vs
+# "Alabama vs Michigan College Basketball Game" is a broadcast prop whose title
+# the parse split on the wrong separator, keeping the *series* name as one team
+# and the *entire game description* as the other. A real club is never named
+# "<A> vs <B>": 164 events in production match, all 164 fictional, zero
+# legitimate rows lost (measured 2026-09-04).
+_EMBEDDED_MATCHUP_RE = re.compile(r'\svs\.?\s', re.IGNORECASE)
+
+# A question left in a team slot. "Who will win Nets" / "Bucks" and
+# "What will the announcers say during Netherlands" / "Japan" are questions the
+# parse beheaded at " vs "-ish punctuation; the tail is a real team, the head is
+# never one. 13 + 86 events, zero legitimate rows.
+_QUESTION_OPENER_RE = re.compile(r'^(?:who|what)\s', re.IGNORECASE)
+
+# "Will" needs its own rule because it is also a first name. `^will\s` alone
+# refuses the UFC fighters Will Fleury and Will Davis — real competitors in real
+# rows. Requiring FOUR OR MORE whitespace-separated tokens separates the clause
+# ("Will Greg Mueller Finish Top 3") from the person ("Will Fleury") and costs
+# nothing: it still catches all 11 offenders and refuses none of the 3 people.
+# Sizing the obvious rule against production and rejecting it is the #2993
+# lesson applied again.
+_WILL_CLAUSE_RE = re.compile(r'^will(?:\s+\S+){3,}', re.IGNORECASE)
+
+
+def name_embeds_a_matchup(name: str) -> bool:
+    """True when a single competitor name contains a whole matchup (#3026).
+
+    Examples:
+        "Alabama vs Michigan College Basketball Game" → True
+        "Albany vs. Buffalo" → True
+        "Paper Rex" → False
+        "Vsevolod Kovalenko" → False (no whitespace either side of "vs")
+    """
+    return bool(name) and _EMBEDDED_MATCHUP_RE.search(name) is not None
+
+
+def is_question_fragment(name: str) -> bool:
+    """True when a whole competitor name is the head of a question (#3026).
+
+    Examples:
+        "Who will win Nets" → True
+        "What will the announcers say during Netherlands" → True
+        "Will Greg Mueller Finish Top 3" → True (four or more tokens)
+        "Will Fleury" → False (a UFC fighter, two tokens)
+        "Whoville Wanderers" → False ("Who" is not a whole token)
+    """
+    if not name:
+        return False
+    stripped = name.strip()
+    return bool(
+        _QUESTION_OPENER_RE.match(stripped) or _WILL_CLAUSE_RE.match(stripped)
+    )
+
+
+def question_refusal_reason(team_a: str, team_b: str) -> Optional[str]:
+    """Why this parsed matchup is a question rather than a game, or None (#3026).
+
+    Kept separate from `bracket_refusal_reason` on purpose: that predicate is
+    also the scope of #2993's cleanup, which reads it to decide which production
+    rows it may touch. Widening it in place would silently widen a repair that
+    has already pre-registered its 17-row disposition. Both are called at the
+    mint; neither is called inside `extract_matchup`, so what links today still
+    links — only what gets STAMPED changes.
+
+    274 production rows across the two shapes, 7 of them still non-terminal, and
+    zero legitimate creations refused (measured 2026-09-04).
+    """
+    for slot, name in (("home", team_a), ("away", team_b)):
+        if name_embeds_a_matchup(name):
+            return f"{slot} name {name!r} contains a whole matchup, so it is not a competitor"
+        if is_question_fragment(name):
+            return f"{slot} name {name!r} is the head of a question, not a competitor"
+    return None
+
+
 def _strip_trailing_paren(name: str) -> str:
     """Strip trailing parenthetical context from market names.
 
