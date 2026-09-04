@@ -55,7 +55,14 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 import FeedCard from "../../components/FeedCard";
-import { AWAY_DEFAULT, HOME_DEFAULT, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
+import { hexToRgb } from "@/lib/teamColors";
+import {
+  AWAY_DEFAULT,
+  HOME_DEFAULT,
+  SEGMENT_OPACITY,
+  MIN_PAIR_DISTANCE,
+  colorDistance,
+} from "@/lib/probabilityBarPair";
 
 type TeamColors = { primary_color?: string | null } | null;
 
@@ -173,9 +180,27 @@ describe("the bar is drawn at all", () => {
     }
   });
 
-  it("the two halves are not the same colour — the native sibling's symptom (#2902)", () => {
+  it("the two halves are DISTINGUISHABLE, not merely different strings — the native sibling's symptom (#2902)", () => {
+    // ⚠️ `expect(away).not.toBe(home)` is green on the bug: master's two halves
+    // are the strings `var(--color-text-muted)` and `var(--color-accent-brand)`,
+    // which are unequal while both paint nothing. The claim has to be about the
+    // colours, so it is measured with the same rule the module enforces.
     const seg = bySide(renderToStaticMarkup(<FeedCard item={gameCard(null, null)} />));
-    expect(seg.away.backgroundColor).not.toBe(seg.home.backgroundColor);
+    const rgb = (hex: string) => {
+      const p = hexToRgb(hex);
+      if (!p) throw new Error(`segment colour ${hex} is not a paintable colour`);
+      const n = p.split(" ").map(Number);
+      return [n[0], n[1], n[2]] as [number, number, number];
+    };
+    const paint = (hex: string) =>
+      rgb(hex).map((v) => SEGMENT_OPACITY * v + (1 - SEGMENT_OPACITY) * 255) as unknown as [
+        number,
+        number,
+        number,
+      ];
+    expect(
+      colorDistance(paint(seg.away.backgroundColor), paint(seg.home.backgroundColor))
+    ).toBeGreaterThanOrEqual(MIN_PAIR_DISTANCE);
   });
 
   it("the data-bar-segment markers agree with the side each segment is rounded on", () => {
