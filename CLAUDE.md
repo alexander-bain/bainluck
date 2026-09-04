@@ -352,3 +352,4 @@ When fixing ANY data quality, matching, or display issue: (1) audit BEFORE: `pyt
 Read `.claude/handoff/ORCHESTRATOR-HANDOFF.md` first — it lists the files to read, the mechanics,
 and the open threads. Heartbeats are scheduled fresh sessions that run its checklist. Lanes:
 this section is not for you.
+- PLAIN ENGLISH FOR ALEX: YOUR-TURN.md and alex-inbox notes never use undefined jargon ("cert" → "review"; "merged" → "went live"; "twin" → "two rows for one game"). YOUR-TURN §0 is the glossary. Lettered decisions with a recommendation and a default. Stamp Pacific time correctly (UTC−7 in summer).

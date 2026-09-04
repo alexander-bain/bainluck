@@ -587,3 +587,48 @@ def test_restock_dry_run_does_not_requeue_running_directives(tmp_path):
     assert rc == 0, out
     assert running.exists(), "dry-run re-queued an in-flight directive"
     assert not (handoff / "runner-inbox" / "demo" / "001-in-flight.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# The LOOK rail (integrator/134, 2026-09-03)
+# ---------------------------------------------------------------------------
+# Same class as the launcher drift above, one level down. Standing notice 4 and
+# ruling D48 tell EVERY lane to screenshot production with `tools/look.sh` before
+# calling a rendered change done — but look.sh, its renderer (`shop-shot.mjs`) and
+# its slicer (`crop.py`) were never `git add`ed. They existed on exactly one laptop.
+# A fresh clone, a CI job or a second machine ran the documented command and got
+# "No such file or directory", so the LOOK rule was unenforceable anywhere else.
+#
+# `git ls-files` is the assertion, not `Path.exists()`: the files were PRESENT on
+# the machine that wrote them the whole time. Presence is what made the gap
+# invisible; trackedness is the property that was actually missing.
+
+LANE_TOOLS = {
+    "tools/look.sh": "the LOOK rail every lane is told to run (notice 4, D48)",
+    "tools/shop-shot.mjs": "the sandbox-capable renderer look.sh delegates to",
+    "tools/crop.py": "slices a tall shot into readable bands for a LOOK pass",
+    "tools/stage-cert.sh": "atomic cert id allocation (notice 8c)",
+}
+
+
+@pytest.mark.parametrize("rel,why", sorted(LANE_TOOLS.items()))
+def test_lane_operating_tool_is_tracked_in_git(rel, why):
+    """A tool the docs order every lane to run must live in the repo, not on a laptop."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", rel],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    assert tracked.returncode == 0, (
+        f"{rel} is not tracked by git, but the operating docs require it: {why}. "
+        "A fresh clone or a second machine cannot run it. `git add` it."
+    )
+
+
+@pytest.mark.parametrize("rel", ["tools/look.sh", "tools/shop-shot.mjs", "tools/stage-cert.sh"])
+def test_lane_operating_tool_is_executable(rel):
+    """Tracked but chmod-000 is the same outage with a longer error message."""
+    path = REPO / rel
+    assert path.exists(), f"{rel} is tracked but missing from the checkout"
+    assert os.access(path, os.X_OK), f"{rel} is tracked but not executable"
