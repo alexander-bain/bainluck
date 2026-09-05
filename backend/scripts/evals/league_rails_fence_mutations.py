@@ -127,8 +127,17 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M4-sibling-fenced-too",
         ROUTE,
-        '        .order_by(\n            case((Event.status == "live", 0), else_=1),\n            Event.commence_time.asc(),\n        )',
-        '        .offset(literal_column("0"))\n        .order_by(\n            case((Event.status == "live", 0), else_=1),\n            Event.commence_time.asc(),\n        )',
+        # 🔴 RE-TARGETED by Q438 (#1207). The needle was the raw
+        # `case((Event.status == "live", 0), else_=1)`, which is now
+        # `live_first_order(now)` — the shared clause that applies the same
+        # live-AND-started predicate `served_event_status` applies on the
+        # display side, so a rail cannot sort a row as live while printing it
+        # as scheduled. The MEASUREMENT this needle protects is unchanged: the
+        # upcoming rail must NOT acquire the results rail's optimization fence.
+        # The route keeps its Q438 comment ABOVE `.order_by(` so this needle
+        # stays comment-free and does not drift on a reworded sentence.
+        "        .order_by(\n            live_first_order(now),\n            Event.commence_time.asc(),\n        )",
+        '        .offset(literal_column("0"))\n        .order_by(\n            live_first_order(now),\n            Event.commence_time.asc(),\n        )',
         "tidying the two rails into a matching pair undoes a measurement",
     ),
     (

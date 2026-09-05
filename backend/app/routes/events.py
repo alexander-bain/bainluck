@@ -29,6 +29,10 @@ from app.services.anchor_channel import (
 )
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
+from app.utils.event_rails import (
+    live_first_order,
+    live_scheduled_settled_order,
+)
 from app.utils.lifecycle import served_event_status
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
@@ -2618,12 +2622,10 @@ async def faceted_search(
         select(Event)
         .options(selectinload(Event.sport))
         .where(*conditions)
+        # Q438/CERT-1924: through the shared clause. A premature-live row sorts
+        # with the scheduled games this same payload serves it as.
         .order_by(
-            case(
-                (Event.status == "live", 0),
-                (Event.status == "scheduled", 1),
-                else_=2,
-            ),
+            live_scheduled_settled_order(now),
             Event.commence_time.desc(),
         )
         .offset(offset_val)
@@ -3807,13 +3809,11 @@ async def search_events(
         .where(*event_conditions)
     )
 
-    # Custom ordering: live first, then upcoming (soonest), then completed (most recent)
-    # Using CASE statement for status priority
-    status_order = case(
-        (Event.status == "live", 0),
-        (Event.status == "scheduled", 1),
-        else_=2
-    )
+    # Custom ordering: live first, then upcoming (soonest), then completed (most
+    # recent). Q438/CERT-1924: "live" here means live AND started, so a row that
+    # is live before its own kickoff ranks with the upcoming games search prints
+    # it as, rather than at the head of the results.
+    status_order = live_scheduled_settled_order(now)
 
     # Tag-based relevance boost within each status group.
     # Events with contextual LLM tags (rivalry, elimination, etc.) or
@@ -5838,7 +5838,10 @@ async def typeahead_search(
             Event.commence_time <= now + timedelta(days=7),
         )
         .order_by(
-            case((Event.status == "live", 0), else_=1),
+            # Q438: live-AND-started. This pool serves its status through
+            # `served_event_status`, so ordering on the raw column would sort a
+            # row above the field that the same payload prints as `scheduled`.
+            live_first_order(now),
             Event.commence_time.asc(),
         )
         .limit(_EVENT_POOL_FETCH_LIMIT)
@@ -6413,7 +6416,8 @@ async def typeahead_search(
                         Event.commence_time <= now + timedelta(days=7),
                     )
                     .order_by(
-                        case((Event.status == "live", 0), else_=1),
+                        # Q438: live-AND-started, matching the pool above.
+                        live_first_order(now),
                         Event.commence_time.asc(),
                     )
                     .limit(3)
@@ -6425,7 +6429,15 @@ async def typeahead_search(
                         "type": "event",
                         "text": f"{event.away_team_name} at {event.home_team_name}",
                         "event_id": event.id,
-                        "status": event.status,
+                        # Q438: typeahead's OTHER event pool (above) already went
+                        # through the invariant; this fuzzy pool was left raw, so
+                        # the same row could read `live` or `scheduled` depending
+                        # on which arm matched the query.
+                        "status": served_event_status(
+                            event.status,
+                            event.commence_time,
+                            datetime.now(timezone.utc),
+                        ),
                         "sport_key": event.sport.key if event.sport else None,
                         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
                         "home_logo": home.logo_url_small if home else None,
