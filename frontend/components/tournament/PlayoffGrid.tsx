@@ -13,8 +13,8 @@ import {
   formatGridCell,
   gridCellExplanation,
   gridCellGlyph,
+  gridScrollFloorPx,
   gridScrolls,
-  gridWidthPx,
   markedCellCount,
   type GridCell,
   type GridColumn,
@@ -505,7 +505,7 @@ export default function PlayoffGrid({
             narrow. Ruling 5 applies where ruling 5 was measured. */}
         <div
           className={scrolls ? "lg:!min-w-0" : undefined}
-          style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}
+          style={scrolls ? { minWidth: `${gridScrollFloorPx(grid.columns.length)}px` } : undefined}
         >
           <div
             className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
