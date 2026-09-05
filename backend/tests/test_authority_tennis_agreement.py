@@ -16,6 +16,7 @@ invariant_not_the_feature`).
 
 from __future__ import annotations
 
+import itertools
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -598,6 +599,129 @@ class TestTheDefaultJoinDidNotMove:
             "statpal_unusable_names": 0,
             "our_unusable_names": 0,
         }
+
+
+class TestThePublishedNumberDoesNotDependOnArrivalOrder:
+    """CERT-1915. SQL arrival order is not identity evidence.
+
+    The join used to discover equal-distance rivals while it was already
+    consuming availability, so a chain like `f1->{r1,r2}, f2->{r2,r3}` published
+    one pair under one ordering and none under a permutation. A row whose numbers
+    move when the same data arrives in a different order is not a measurement.
+
+    These sweep EVERY permutation rather than checking one alternative ordering:
+    a single swap can miss the case, and the invariant is over the whole
+    symmetric group, not over one sample of it.
+    """
+
+    @staticmethod
+    def _signature(fixtures, rows):
+        singles = build_tennis_agreements(
+            fixtures=list(fixtures), rows=list(rows)
+        )[SINGLES]
+        identity = singles["identity"]
+        return (
+            identity["both"],
+            identity["statpal_only"],
+            identity["ours_only"],
+            singles["denominator"],
+            singles["excluded"].get(AMBIGUOUS_REFUSAL, 0),
+            singles["excluded"].get(AMBIGUOUS_CANDIDATE_ROWS, 0),
+        )
+
+    def _invariant(self, fixtures, rows):
+        seen = {
+            self._signature(pf, pr)
+            for pf in itertools.permutations(fixtures)
+            for pr in itertools.permutations(rows)
+        }
+        assert len(seen) == 1, (
+            f"the published counts depend on arrival order: {sorted(seen)}"
+        )
+        return seen.pop()
+
+    def test_the_chain_graph_is_order_invariant(self):
+        """CERT-1915's exact shape: two fixtures sharing a middle row."""
+        alc = lambda ref: f(ref, "C. Alcaraz", "J. Sinner")  # noqa: E731
+        ours = lambda ref: r(ref, "Carlos Alcaraz", "Jannik Sinner")  # noqa: E731
+        both, sp, ours_only, denom, amb, amb_rows = self._invariant(
+            [alc("f1"), alc("f2")], [ours("r1"), ours("r2"), ours("r3")]
+        )
+        # Nothing in the data chooses, so nothing is published — and crucially
+        # the SAME nothing under all twelve orderings.
+        assert (both, sp, ours_only, denom) == (0, 0, 0, 0)
+        assert (amb, amb_rows) == (2, 3)
+
+    def test_a_forced_pair_beside_a_contest_is_order_invariant(self):
+        early, late = NOW, NOW + timedelta(days=7)
+        both, sp, ours_only, denom, amb, amb_rows = self._invariant(
+            [
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            [
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
+                r("13", "Carlos Alcaraz", "Jannik Sinner", start=late),
+            ],
+        )
+        assert both == 1 and (amb, amb_rows) == (1, 2)
+
+    def test_the_repeat_meeting_pairing_is_order_invariant(self):
+        early, late = NOW, NOW + timedelta(days=7)
+        both, sp, ours_only, denom, amb, _ = self._invariant(
+            [
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            [
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
+            ],
+        )
+        assert (both, sp, ours_only, denom, amb) == (2, 0, 0, 2, 0)
+
+    def test_a_timed_candidate_outranks_an_untimed_one(self):
+        """Which row paired, not how many — the counts cannot see this.
+
+        A fixture with one timed and one untimed candidate must take the timed
+        one: a start we can compare is evidence and a missing start is not.
+        Found by mutation, because inverting the two produces the SAME
+        `both=1, ours_only=1` while joining the fixture to the wrong row. A
+        count-shaped assertion is blind to a mis-assignment that conserves
+        totals.
+        """
+        join = pair_tennis_sides(
+            [f("1", "C. Alcaraz", "J. Sinner", start=NOW)],
+            [
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=NOW),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=None),
+            ],
+        )
+        assert [(fx.ref, row.ref) for fx, row in join.paired] == [("1", "11")]
+        assert [row.ref for row in join.ours_only] == ["12"]
+
+    def test_a_resolved_pair_can_force_a_second_one(self):
+        """The fixpoint earns its loop, and the inference is real.
+
+        `r11` is provably fixture 1's — it is the unique nearest of a fixture
+        that is its own unique nearest. Fixture 2 is equidistant from `r11` and
+        `r12`, so it is contested in round one and FORCED in round two: if `r11`
+        belongs to fixture 1, fixture 2 must be `r12`.
+        """
+        early = NOW
+        late = NOW + timedelta(days=2)
+        both, sp, ours_only, denom, amb, _ = self._invariant(
+            [
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            [
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late + timedelta(days=2)),
+            ],
+        )
+        assert (both, amb) == (2, 0)
 
 
 class TestARowDescribesTheJoinItActuallyUsed:

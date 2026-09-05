@@ -297,111 +297,107 @@ def _ambiguity(
     return receipt, candidates
 
 
+#: Sort key for one candidate edge. A timed edge always beats an untimed one, so
+#: `min()` over a mixed candidate set is meaningful without a special case: a
+#: fixture with any timed candidate is never decided by an untimed one.
+_UNTIMED = (1, timedelta(0))
+
+
+def _edge_key(fixture: Side, row: Side) -> tuple[int, timedelta]:
+    if fixture.start is None or row.start is None:
+        return _UNTIMED
+    return (0, abs(fixture.start - row.start))
+
+
 def _pair_with_tie_detection(
     fixtures: Sequence[Side], rows: Sequence[Side]
 ) -> tuple[list[tuple[Side, Side]], list[Side], list[Side], list[Side], list[Side]]:
-    """Pair by nearest start, refusing only the assignments that are TIED.
+    """Pair only the assignments the graph FORCES; refuse every remaining contest.
 
     Returns `(paired, tied_fixtures, tied_rows, spare_fixtures, spare_rows)`.
 
-    **A candidate set is not ambiguous because it is large; it is ambiguous when
-    the tiebreak cannot break it.** That is CERT-1913's correction and it is the
-    module's own declared contract finally implemented: the start time chooses
-    WHICH of two admissible pairings is made and never whether one is made. Two
-    Alcaraz-Sinner fixtures a week apart against one row sitting on the earlier
-    kickoff are not indistinguishable — the clock says which — so that row pairs
-    and the later fixture is an honest `statpal_only`.
+    **The published number may not depend on the order the rows arrived in**, and
+    that is CERT-1915. The previous version discovered equal-distance rivals while
+    it was already consuming availability, so on a chain like `f1→{r1,r2},
+    f2→{r2,r3}` it published one pair under one ordering and none under a
+    permutation. SQL arrival order is not identity evidence.
 
-    A selection is TIED when, at the moment it is made, another still-available
-    candidate competing for the same fixture or the same row sits at the SAME
-    distance. Then the greedy choice would be arbitrary, and an arbitrary choice
-    is exactly what this module refuses to publish. Both endpoints and every
-    competitor are withdrawn and reported.
+    So nothing is decided by walking. Each round reads an IMMUTABLE snapshot of
+    the remaining graph and takes only the edges it forces:
 
-    Untimed candidates are settled last and any contested untimed choice is a tie
-    by construction: with no clock there is nothing to break it, and arrival order
-    is not evidence.
+        an edge (f, r) is FORCED when r is the unique nearest candidate of f
+        AND f is the unique nearest candidate of r.
 
-    Note the granularity — this is per ASSIGNMENT, not per component. A component
-    holding one clean pair and one genuine tie keeps the clean pair, because
-    discarding a match we can prove in order to refuse one we cannot is how a
-    repair for over-publishing becomes a defect of under-publishing (CERT-1913).
+    Forced edges cannot conflict with each other — two of them sharing an endpoint
+    would contradict the uniqueness that made them forced — so the whole set is
+    applied at once and the result is a function of the graph, not of the loop.
+
+    Rounds repeat to a fixpoint, because resolving one edge can force another and
+    that inference is real: if `r1` is provably `f1`'s, then an `f2` tied between
+    `r1` and `r2` must be `r2`. Iterating is still order-independent, since each
+    round is computed from the snapshot before any of it is applied.
+
+    Whatever still has an edge when no round can force anything is a genuine
+    contest — nothing in the data chooses — and is refused and reported rather
+    than assigned. A side with no edge at all was never a contest: it is an
+    ordinary `statpal_only` or `ours_only` miss.
+
+    The tiebreak is the start time (`_edge_key`), which is the module's declared
+    contract: it chooses WHICH pairing is made and never whether one is made. A
+    timed edge always outranks an untimed one, and a contest that is untimed on
+    both sides has nothing to break it — arrival order is not evidence.
     """
-    timed: list[tuple[timedelta, int, int]] = []
-    untimed: list[tuple[int, int]] = []
+    edges: dict[tuple[int, int], tuple[int, timedelta]] = {}
     for fi, f in enumerate(fixtures):
         for ri, r in enumerate(rows):
-            if not _sides_agree(f, r):
-                continue
-            gap = None if f.start is None or r.start is None else abs(f.start - r.start)
-            if gap is None:
-                untimed.append((fi, ri))
-            else:
-                timed.append((gap, fi, ri))
-    timed.sort(key=lambda c: (c[0], c[1], c[2]))
+            if _sides_agree(f, r):
+                edges[(fi, ri)] = _edge_key(f, r)
 
-    used_f: set[int] = set()
-    used_r: set[int] = set()
-    tied_f: set[int] = set()
-    tied_r: set[int] = set()
-    paired: list[tuple[Side, Side]] = []
+    live_f = set(range(len(fixtures)))
+    live_r = set(range(len(rows)))
+    paired_idx: list[tuple[int, int]] = []
 
-    def _available(fi: int, ri: int) -> bool:
-        return fi not in used_f and ri not in used_r
+    while True:
+        # Read the whole snapshot BEFORE deciding anything from it.
+        nearest_f: dict[int, list[int]] = {}
+        for fi in live_f:
+            cands = [(edges[(fi, ri)], ri) for ri in live_r if (fi, ri) in edges]
+            if cands:
+                best = min(k for k, _ in cands)
+                nearest_f[fi] = sorted(ri for k, ri in cands if k == best)
+        nearest_r: dict[int, list[int]] = {}
+        for ri in live_r:
+            cands = [(edges[(fi, ri)], fi) for fi in live_f if (fi, ri) in edges]
+            if cands:
+                best = min(k for k, _ in cands)
+                nearest_r[ri] = sorted(fi for k, fi in cands if k == best)
 
-    for gap, fi, ri in timed:
-        if not _available(fi, ri):
-            continue
-        rivals = [
-            (g2, fj, rj)
-            for g2, fj, rj in timed
-            if (fj, rj) != (fi, ri)
-            and g2 == gap
-            and (fj == fi or rj == ri)
-            and _available(fj, rj)
-        ]
-        if rivals:
-            for g2, fj, rj in [(gap, fi, ri), *rivals]:
-                used_f.add(fj)
-                used_r.add(rj)
-                tied_f.add(fj)
-                tied_r.add(rj)
-            continue
-        used_f.add(fi)
-        used_r.add(ri)
-        paired.append((fixtures[fi], rows[ri]))
+        forced = sorted(
+            (fi, rs[0])
+            for fi, rs in nearest_f.items()
+            if len(rs) == 1 and nearest_r.get(rs[0]) == [fi]
+        )
+        if not forced:
+            break
+        for fi, ri in forced:
+            paired_idx.append((fi, ri))
+            live_f.discard(fi)
+            live_r.discard(ri)
 
-    for fi, ri in untimed:
-        if not _available(fi, ri):
-            continue
-        rivals = [
-            (fj, rj)
-            for fj, rj in untimed
-            if (fj, rj) != (fi, ri)
-            and (fj == fi or rj == ri)
-            and _available(fj, rj)
-        ]
-        if rivals:
-            for fj, rj in [(fi, ri), *rivals]:
-                used_f.add(fj)
-                used_r.add(rj)
-                tied_f.add(fj)
-                tied_r.add(rj)
-            continue
-        used_f.add(fi)
-        used_r.add(ri)
-        paired.append((fixtures[fi], rows[ri]))
+    contested_f = sorted(
+        fi for fi in live_f if any((fi, ri) in edges for ri in live_r)
+    )
+    contested_r = sorted(
+        ri for ri in live_r if any((fi, ri) in edges for fi in live_f)
+    )
+    contested_f_set, contested_r_set = set(contested_f), set(contested_r)
 
-    spare_f = [
-        f for i, f in enumerate(fixtures) if i not in used_f and i not in tied_f
-    ]
-    spare_r = [r for i, r in enumerate(rows) if i not in used_r and i not in tied_r]
     return (
-        paired,
-        [fixtures[i] for i in sorted(tied_f)],
-        [rows[i] for i in sorted(tied_r)],
-        spare_f,
-        spare_r,
+        [(fixtures[fi], rows[ri]) for fi, ri in sorted(paired_idx)],
+        [fixtures[i] for i in contested_f],
+        [rows[i] for i in contested_r],
+        [fixtures[i] for i in sorted(live_f) if i not in contested_f_set],
+        [rows[i] for i in sorted(live_r) if i not in contested_r_set],
     )
 
 
