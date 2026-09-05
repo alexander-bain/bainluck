@@ -15,16 +15,21 @@ Cerundolo` (two players, one surname, in the same tournament).
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
+from app.utils import authority_tennis_names
 from app.utils.authority_tennis_names import (
     AMBIGUOUS,
     MATCHED,
     NO_CANDIDATE,
+    ORDER_ALIASES,
     UNREADABLE,
+    _ORDER_ALIASES_MEASURED,
+    _ORDER_ALIASES_REVIEWED,
     doubles_key,
     fold_tennis_name,
     is_doubles_name,
@@ -51,6 +56,26 @@ def corpus() -> list[str]:
     # under-count.
     assert len(names) == doc["count"] == 7731
     return names
+
+
+def _orders_by_multiset(
+    corpus: list[str],
+) -> dict[tuple[str, ...], set[tuple[str, ...]]]:
+    """Every singles name in the field, grouped by token multiset -> the written
+    orders that multiset appears in.
+
+    Singles only: a doubles team is unordered by construction (`doubles_key`
+    sorts, and all 159 measured pair-order collisions were one team stored
+    twice), so pair order is not the class this is looking for.
+    """
+    orders: dict[tuple[str, ...], set[tuple[str, ...]]] = defaultdict(set)
+    for name in corpus:
+        if is_doubles_name(name) or not looks_like_a_player(name):
+            continue
+        tokens = tuple(_tokens(name))
+        if tokens:
+            orders[tuple(sorted(tokens))].add(tokens)
+    return orders
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,8 +308,15 @@ def test_no_two_different_players_collide_on_a_full_key(corpus):
 
     # Pinned so a loosening of the identity rule has to say so. Measured by
     # importing the shipped module, never carried over from a scratch script.
-    assert matched_on_contested == 171
-    assert len(contested) - unexpressable - matched_on_contested == 400
+    #
+    # 171 before the order-alias review, 170 after: the one key that moved is
+    # `P. garcia`, whose claimants are `Garcia Perez`, `Garcia-Perez` and
+    # `Perez-Garcia`. A sorted identity called those one player and returned
+    # MATCHED; an ordered one refuses them by name. Each of these is a whole
+    # class of silent substitution, so the direction of a change here matters
+    # more than the digit — DOWN is a refusal being added, UP is a tolerance.
+    assert matched_on_contested == 170
+    assert len(contested) - unexpressable - matched_on_contested == 401
 
 
 def test_a_repeated_token_is_a_different_player_not_a_reordering():
@@ -328,6 +360,144 @@ def test_the_reorder_tolerance_still_matches_the_players_it_exists_for():
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CERT-1891's follow-up: which re-orderings are one player is REVIEWED
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_swapped_compound_surname_is_not_a_reordering():
+    """CERT-1891's `AUTHORITY-029-ORDER-PERMUTATION-ALLOWLIST`, and it was never
+    hypothetical: all three of these names are in the pinned production corpus.
+
+    Fixing CERT-1890 replaced a `frozenset` with `sorted()`, which preserves
+    multiplicity but still erases ORDER — so `G. Perez` came back MATCHED against
+    a candidate set spanning two different Spanish compound surnames and silently
+    picked the first. In Spanish the order IS the surname (paternal, then
+    maternal), so `Garcia-Perez` and `Perez-Garcia` may well be two families.
+
+    Nothing in our column can settle that, which is the reason to refuse rather
+    than a reason to guess.
+    """
+    ours = ["Garcia Perez", "Garcia-Perez", "Perez-Garcia"]
+    for theirs in ("G. Perez", "P. Garcia"):
+        got = resolve_tennis_name(theirs, ours)
+        assert got.outcome == AMBIGUOUS, (theirs, got)
+        assert got.matched is None
+        # The receipt names all three so the reader can see which surnames the
+        # field cannot tell apart.
+        assert got.candidates == ("Garcia Perez", "Garcia-Perez", "Perez-Garcia")
+
+    # The hyphen is a spelling, not a discriminator: those two ARE one identity.
+    assert register_identity("Garcia Perez") == register_identity("Garcia-Perez")
+    assert register_identity("Garcia-Perez") != register_identity("Perez-Garcia")
+
+
+def test_every_reviewed_order_alias_folds_in_both_directions(corpus):
+    """The control, run over the whole allowlist instead of two chosen rows.
+
+    Every class on the list must fold whichever way round it is written — that
+    is what being on the list MEANS — and each entry must still be reachable as
+    one player through the resolver, not merely equal under `register_identity`.
+    """
+    assert ORDER_ALIASES == _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
+    assert not (_ORDER_ALIASES_MEASURED & _ORDER_ALIASES_REVIEWED)
+
+    for multiset in sorted(ORDER_ALIASES):
+        forward = " ".join(multiset)
+        backward = " ".join(reversed(multiset))
+        assert register_identity(forward) == register_identity(backward), multiset
+        # And the resolver agrees: one player, not two.
+        surname, initial = multiset[0], multiset[-1][0]
+        got = resolve_tennis_name(f"{initial.upper()}. {surname}", [forward, backward])
+        assert got.outcome == MATCHED, (multiset, got)
+
+    # Every REVIEWED entry is here because the field holds only one of its
+    # orders. If the second spelling ever arrives it belongs in the MEASURED set
+    # instead, and this says so rather than letting the two sets drift.
+    written_orders = _orders_by_multiset(corpus)
+    for multiset in sorted(_ORDER_ALIASES_REVIEWED):
+        assert len(written_orders.get(multiset, ())) <= 1, multiset
+
+
+def test_no_permutation_class_in_the_field_is_unreviewed(corpus):
+    """The anti-rot half. A new permutation class appearing in a refreshed corpus
+    fails here until a person has read it and put it on one list or the other.
+
+    This is the sweep CERT-1890's lesson demands and the one the old sweep could
+    not be: grouping by the token multiset only finds these because the matcher
+    no longer treats the multiset as the identity. Group by what the matcher
+    REQUIRES, not by what it returns.
+    """
+    written_orders = _orders_by_multiset(corpus)
+    both_ways = {m for m, orders in written_orders.items() if len(orders) > 1}
+
+    # Measured by importing the shipped module over the pinned corpus, never
+    # carried from the scratch script that designed the rule.
+    assert len(both_ways) == 8
+    assert both_ways - ORDER_ALIASES == {("garcia", "perez")}
+
+    # …and the refusal is real, not just an omission from a list.
+    assert register_identity("Garcia Perez") != register_identity("Perez Garcia")
+
+
+def test_the_allowlist_cannot_be_padded_to_silence_a_failure(corpus):
+    """The anti-bloat half, which is the one that keeps the list honest.
+
+    Without it the cheapest way to green a failing sweep is to append the class
+    that failed — turning a reviewed allowlist back into the blanket sort it
+    replaced, one entry at a time. So MEASURED must be exactly the classes the
+    field spells both ways minus the refused one, and REVIEWED must be named in
+    the module's own header where the reasoning is written down.
+    """
+    written_orders = _orders_by_multiset(corpus)
+    both_ways = {m for m, orders in written_orders.items() if len(orders) > 1}
+    assert _ORDER_ALIASES_MEASURED == both_ways - {("garcia", "perez")}
+
+    header = authority_tennis_names.__doc__ or ""
+    for multiset in sorted(_ORDER_ALIASES_REVIEWED):
+        spelled = {" ".join(multiset), " ".join(reversed(multiset))}
+        assert any(
+            form.lower() in fold_tennis_name(header) for form in spelled
+        ), multiset
+
+
+def test_the_header_quotes_the_permutation_counts_it_measured(corpus):
+    """The 374 lesson (CERT-1895), applied to this section's own arithmetic.
+
+    A number in operator-facing prose is a measurement and needs a source. Every
+    integer in the header's re-ordering section must be one this test derived by
+    importing the shipped module over the pinned corpus — so a reviewer editing
+    the list without touching the prose, or the prose without the list, fails
+    here rather than shipping a paragraph that describes a different module.
+    """
+    written_orders = _orders_by_multiset(corpus)
+    both_ways = {m for m, orders in written_orders.items() if len(orders) > 1}
+
+    derived = {
+        len(both_ways),  # 8 classes the field spells more than one way
+        len(_ORDER_ALIASES_MEASURED),  # 7 of them fold
+        len(both_ways - ORDER_ALIASES),  # 1 is refused
+        len(_ORDER_ALIASES_REVIEWED),  # 2 reviewed but one-directional
+        len(ORDER_ALIASES),  # 9 in total
+    }
+
+    header = authority_tennis_names.__doc__ or ""
+    marker = "AND WHICH RE-ORDERINGS ARE ONE PLAYER"
+    assert marker in header, "the section this test guards was renamed or removed"
+    # Bounded to this section's own body: drop the rest of its heading (up to the
+    # closing `═══`) and stop at the next one. Reading to the end of the
+    # docstring instead sweeps in the doubles and cost tables, whose numbers this
+    # test has no business adjudicating — and it did, the first time it ran.
+    section = header.split(marker, 1)[1].split("═══", 2)[1]
+    assert "Spanish" in section, "the section ended before the text it guards"
+
+    quoted = {int(n) for n in re.findall(r"\d+", section)}
+    assert quoted, "the section stopped quoting any number at all"
+    # The relation, not the digits: a reversion fails because no measurement
+    # produces the number it wrote, never because a literal was blacklisted.
+    assert quoted == derived, (sorted(quoted), sorted(derived))
+
+
 def test_the_field_holds_exactly_two_repeated_token_collisions(corpus):
     """The sweep that would have caught CERT-1890, over the real field.
 
@@ -359,11 +529,15 @@ def test_the_field_holds_exactly_two_repeated_token_collisions(corpus):
             if got.outcome != MATCHED or len(got.candidates) < 2:
                 continue
             # MATCHED against two or more names is only legal when they are one
-            # player spelled differently. Under the shipped identity that holds;
-            # the assertion is that it holds by REORDERING, never by discarding a
-            # repeat.
-            token_multisets = {tuple(sorted(_tokens(c))) for c in got.candidates}
-            assert len(token_multisets) == 1, (theirs, got.candidates)
+            # player spelled differently, and the SHIPPED identity is what says
+            # so. This line used to read
+            # `{tuple(sorted(_tokens(c))) for c in got.candidates}` — a
+            # re-implementation of the identity as a sorted multiset, which is
+            # the same mistake CERT-1890 caught one level down: it grouped by
+            # exactly what the matcher returned, so it could not fail while the
+            # matcher sorted, and it waved `Garcia-Perez`/`Perez-Garcia` through.
+            identities = {register_identity(c) for c in got.candidates}
+            assert len(identities) == 1, (theirs, got.candidates)
             if any(
                 len(set(_tokens(c))) != len(_tokens(c)) for c in got.candidates
             ):  # pragma: no cover - defensive

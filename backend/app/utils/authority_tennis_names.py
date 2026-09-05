@@ -87,6 +87,42 @@ The corollary is that a two-character surname is safe here where the older
 field; they are only wildcards under prefix matching, which this module does not
 do.
 
+═══ AND WHICH RE-ORDERINGS ARE ONE PLAYER — REVIEWED, NOT ASSUMED ═══
+
+Admitting the surname-first reading above says a *StatPal* name may be joined
+under either reading. It does not say that two of OUR names which are token
+permutations of each other are one player, and the second claim is the one that
+can silently substitute. Swept over the whole field, **8 token multisets are
+spelled in more than one order**, and they do not all mean the same thing:
+
+=========================================  ===  ==============================
+class                                        n  reading
+=========================================  ===  ==============================
+Chinese / Korean / Taiwanese / Indian        7  one player, both name orders
+Spanish compound surname                     1  order is part of the surname
+=========================================  ===  ==============================
+
+The seven fold (:data:`_ORDER_ALIASES_MEASURED`). The eighth does not:
+``Garcia Perez``, ``Garcia-Perez`` and ``Perez-Garcia`` are all in the register,
+and in Spanish a compound surname is ordered paternal-then-maternal, so swapping
+it names a different family. Nothing in our column can tell us whether it is one
+player or two, and **that is the answer, not an obstacle to it** — the module
+refuses what it cannot verify (see :func:`register_identity`).
+
+A sweep of today's corpus is not the whole list, though, and the gap is the
+reduced-fixture trap wearing a new hat: it measures the orders our column
+*happens to hold*, not which re-orderings *mean one player*. ``Shang Juncheng``
+and ``Zheng Qinwen`` are named as one player right here and in the tests, yet
+the register has only ever received one spelling of each, so the sweep cannot
+see them. They are :data:`_ORDER_ALIASES_REVIEWED`, and :data:`ORDER_ALIASES` is
+the union — **9 classes: 7 measured, 2 reviewed.**
+
+The rule is therefore not "sort the tokens". It is: *an order difference is a
+DIFFERENCE until a human has read the pair and said otherwise.* A permutation
+class that shows up in a refreshed corpus and is not on the list fails the sweep
+until someone reviews it, which is the whole point — the alternative is a
+tolerance that widens itself every time the field grows.
+
 ═══ DOUBLES ═══
 
 Order carries no information — ``Rojer/ Winegar`` and ``Winegar/Rojer`` are one
@@ -148,6 +184,54 @@ _NON_NAME = re.compile(r"[^a-z0-9 ]+")
 #: that collide with each other and with nothing real. Excluded by a property of
 #: the string rather than by a list, because the list would rot.
 _NOT_A_PLAYER = re.compile(r"\b(winner|champion|title|outright|field)\b")
+
+#: Permutation classes the field spells in BOTH orders today — found by sweeping
+#: the 2026-09-05 corpus for token multisets with more than one written order,
+#: then reading each one. Each is a convention where the family name leads and
+#: our column stored both readings of the same human:
+#:
+#: * ``Bu Yunchaokete``, ``Guo Hanyu``, ``Ma Yexin``, ``Wu Yibing`` — Chinese
+#: * ``Liang En-Shuo`` — Taiwanese; ``Im Hee-Rae`` — Korean
+#: * ``Sasikumar Mukund`` — Indian
+#:
+#: The sweep found eight. The eighth, ``('garcia', 'perez')``, is deliberately
+#: ABSENT — see the module header. A list of reviewed aliases is exactly the
+#: place where "we do not know" has to look like an omission rather than
+#: dissolve into a sort.
+_ORDER_ALIASES_MEASURED: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("bu", "yunchaokete"),
+        ("en", "liang", "shuo"),
+        ("guo", "hanyu"),
+        ("hee", "im", "rae"),
+        ("ma", "yexin"),
+        ("mukund", "sasikumar"),
+        ("wu", "yibing"),
+    }
+)
+
+#: Reviewed aliases the field currently spells only ONE way.
+#:
+#: These are here because **a corpus sweep measures what our column happens to
+#: hold today, which is a reduced fixture of the aliasing relation itself.** Both
+#: are named as one-player-two-orders by this module's header and by its tests;
+#: the register simply has not received the second spelling yet. Deriving the
+#: list from today's corpus alone would silently drop them and then refuse a pair
+#: we have already reviewed, the first day the other spelling arrives.
+_ORDER_ALIASES_REVIEWED: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("juncheng", "shang"),  # Shang Juncheng — corpus holds only `Juncheng Shang`
+        ("qinwen", "zheng"),  # Zheng Qinwen — corpus holds only `Qinwen Zheng`
+    }
+)
+
+#: The token multisets our register spells in more than one order for ONE
+#: player. Keyed on the sorted tokens; membership is what lets
+#: :func:`register_identity` ignore order for that class and only that class.
+#: **Reviewed, never derived** — the sweep proposes, a person disposes.
+ORDER_ALIASES: frozenset[tuple[str, ...]] = (
+    _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
+)
 
 
 def fold_tennis_name(name: object) -> str:
@@ -244,28 +328,45 @@ def our_tennis_keys(name: object) -> frozenset[TennisKey]:
 def register_identity(name: object) -> tuple[str, ...]:
     """The identity two of our register's names share **iff they are one player**.
 
-    Order-insensitive because our column stores both readings of the same player
-    (``Wu Yibing`` beside ``Yibing Wu``), and **multiplicity-preserving because a
-    repeated token is a different name, not a re-ordering of the same one.**
+    Two reductions were tried here and both deleted a discriminator:
 
-    The first version of this used a `frozenset`, and the corpus sweep could not
-    see the hole because it re-implemented the same `frozenset` instead of
-    calling this. On the real field ``Garcia`` and ``Garcia Garcia`` both fold to
-    ``{'garcia'}`` — as do ``Rodriguez`` and ``Rodriguez Rodriguez`` — so
-    ``G. Garcia`` resolved MATCHED against two people and silently picked the
-    first, which is precisely the substitution this module is built to refuse.
-    A sorted tuple keeps ``('garcia',)`` and ``('garcia', 'garcia')`` apart while
-    still folding ``Wu Yibing`` onto ``Yibing Wu``.
+    A `frozenset` erased MULTIPLICITY. On the real field ``Garcia`` and
+    ``Garcia Garcia`` both fold to ``{'garcia'}`` — as do ``Rodriguez`` and
+    ``Rodriguez Rodriguez`` — so ``G. Garcia`` resolved MATCHED against two
+    people and silently picked the first (CERT-1890).
 
-    This is the same shape as the suffix rule above: **a reduction that deletes a
-    discriminator is not a normalisation.**
+    `sorted()` erased ORDER. It keeps ``('garcia',)`` and ``('garcia',
+    'garcia')`` apart, so it fixed the first bug, but it still declares every
+    token permutation one player: ``Garcia-Perez`` and ``Perez-Garcia`` fold
+    together and ``G. Perez`` again returns MATCHED against a candidate set
+    holding both spellings.
+
+    So order is a DIFFERENCE by default and tokens are compared in the order
+    they were written; the seven reviewed classes in :data:`ORDER_ALIASES` — the
+    Chinese, Korean, Taiwanese and Indian names our column stores under both
+    readings, ``Wu Yibing`` beside ``Yibing Wu`` — are the only ones that fold.
+    That keeps the reason the module exists while making the tolerance
+    enumerable, which a sort can never be.
+
+    Note the shape both bugs share, because it is the general lesson and not a
+    tennis one: **a reduction that deletes a discriminator is not a
+    normalisation**, and neither one was visible to a sweep that grouped by the
+    same reduction the matcher used. Group by what the matcher REQUIRES.
     """
     if is_doubles_name(name):
         pair = doubles_key(name)
         # A malformed pair gets an identity of its own rather than collapsing
-        # onto every other unreadable row.
+        # onto every other unreadable row. Doubles order genuinely carries no
+        # information — a team is unordered, and all 159 measured pair-order
+        # collisions were one team stored twice — so `doubles_key` sorts and no
+        # allowlist is needed on this branch.
         return pair if pair is not None else ("?", fold_tennis_name(name))
-    return tuple(sorted(_tokens(name)))
+    tokens = tuple(_tokens(name))
+    multiset = tuple(sorted(tokens))
+    # Returning the sorted form for a reviewed class and the written order
+    # otherwise cannot cross classes: a name outside the class has a different
+    # multiset, so it can never produce this one as its written order.
+    return multiset if multiset in ORDER_ALIASES else tokens
 
 
 def keys_agree(ours: TennisKey, theirs: TennisKey) -> bool:
@@ -354,12 +455,13 @@ def resolve_tennis_name(
         for c in candidates
         if isinstance(c, str) and tennis_names_agree(c, theirs)
     ]
-    # Two candidates that are a re-ordering of the same tokens are ONE player our
-    # register lists twice — `Wu Yibing` beside `Yibing Wu`, `Shang Juncheng`
-    # beside `Juncheng Shang` — and calling that ambiguous would refuse exactly
-    # the players the order tolerance exists for. Two candidates whose tokens
-    # actually differ (`Adam Martin`, `Andrej Martin`), or which differ only in
-    # how many times a token repeats (`Garcia`, `Garcia Garcia`), are two people.
+    # Two candidates that are a REVIEWED re-ordering of the same tokens are ONE
+    # player our register lists twice — `Wu Yibing` beside `Yibing Wu` — and
+    # calling that ambiguous would refuse exactly the players the order tolerance
+    # exists for. Everything else is two people: tokens that actually differ
+    # (`Adam Martin`, `Andrej Martin`), tokens that differ in how many times one
+    # repeats (`Garcia`, `Garcia Garcia`), and tokens that differ only in order
+    # without a review behind them (`Garcia-Perez`, `Perez-Garcia`).
     # `register_identity` is the one place that judgment lives — the sweep calls
     # it too, so a loosening cannot hide from the corpus.
     distinct = {register_identity(h) for h in hits}
