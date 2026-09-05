@@ -1264,8 +1264,15 @@ def _live_prewarm_state() -> dict:
       selected — the pass then reports `no_live_shapes`, which reads as healthy.
       An empty set beside a live scoreboard is the tell, and it is only visible
       from here.
-    * **That set's TTL.** It is a dead-man's switch (300s, > the 120s host beat)
-      and a TTL near zero means the host rail has stopped refreshing it.
+    * **That set's HEARTBEAT.** The set carries a reserved
+      `FEED_PREWARM_LIVE_HEARTBEAT_FIELD` written by every successful warm, and
+      `present` reads THAT rather than the key's TTL. The TTL cannot answer the
+      question: Redis has no empty hash, so clearing the last live label deletes
+      the key and a healthy quiet night returns `TTL -2` exactly like a rail that
+      has not warmed in 300s (CERT-1914's BLOCK — the first version of this
+      endpoint reported the two as the same fact). `ttl_seconds` is still
+      returned, because a TTL falling toward zero while the heartbeat is present
+      is the dead-man's switch about to fire.
 
     Read-only. Four bounded commands, no broadcast, nothing written.
     """
@@ -1273,6 +1280,7 @@ def _live_prewarm_state() -> dict:
         FEED_LIVE_PREWARM_ENABLED_KEY,
         FEED_LIVE_PREWARM_STATUS_KEY,
         FEED_PREWARM_ENABLED_KEY,
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
         FEED_PREWARM_LIVE_SHAPES_KEY,
         FEED_PREWARM_LIVE_SHAPES_TTL_S,
     )
@@ -1330,22 +1338,51 @@ def _live_prewarm_state() -> dict:
     def _s(raw):
         return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
 
-    labels = sorted(_s(k) for k, v in (members.value or {}).items() if _s(v) == "1")
+    fields = {_s(k): _s(v) for k, v in (members.value or {}).items()}
+    # The heartbeat is not a shape. Popped before the labels are read so it can
+    # never be reported as live (CERT-1914 repair).
+    heartbeat = fields.pop(FEED_PREWARM_LIVE_HEARTBEAT_FIELD, None)
+    labels = sorted(k for k, v in fields.items() if v == "1")
     ttl_left = ttl.value if ttl.ok and isinstance(ttl.value, int) else None
+
+    # `present` IS THE HEARTBEAT, NOT THE TTL. Redis has no empty hash, so when
+    # the last live label is cleared the key itself disappears and `ttl` returns
+    # -2 — meaning the previous `ttl_left != -2` reported a healthy quiet night
+    # as an expired dead-man's switch, which is the exact confusion this endpoint
+    # was built to remove (CERT-1914). The heartbeat is written by every
+    # successful warm, so its presence, and only its presence, says a warmer has
+    # run inside the TTL.
+    last_warm_at = None
+    last_warm_age_s = None
+    if heartbeat is not None:
+        try:
+            last_warm_at = int(heartbeat)
+            last_warm_age_s = max(
+                0, int(datetime.now(timezone.utc).timestamp()) - last_warm_at
+            )
+        except (TypeError, ValueError):
+            # A malformed heartbeat is still evidence a warmer wrote here, but it
+            # cannot be aged. Reported as present with an unreadable age rather
+            # than silently dropped to "absent" — the two have opposite remedies.
+            last_warm_at = None
+
     out["selection"] = {
         "key": FEED_PREWARM_LIVE_SHAPES_KEY,
         "live_labels": labels,
         "count": len(labels),
         "ttl_seconds": ttl_left,
         "ttl_configured_s": FEED_PREWARM_LIVE_SHAPES_TTL_S,
-        # -2 is "no such key" in Redis; an absent dead-man's switch is not the
-        # same fact as an empty one and must not be reported as `count: 0` alone.
-        "present": ttl_left != -2,
+        "present": heartbeat is not None,
+        "last_warm_at": last_warm_at,
+        "last_warm_age_s": last_warm_age_s,
         "note": (
-            "Written only by a SUCCESSFUL warm. Empty while games are live means "
-            "the host rail is not publishing, and the 40s pass will report "
-            "`no_live_shapes` — which is also what a genuinely quiet night looks "
-            "like. Compare against the scoreboard, not against this field alone."
+            "`present` means a warm succeeded inside the dead-man's-switch TTL — "
+            "it reads the heartbeat field, not the key's TTL, because clearing "
+            "the last live label deletes the hash and a quiet night would "
+            "otherwise be indistinguishable from a dead rail. `present: true` "
+            "with `count: 0` is a genuinely quiet night. `present: false` means "
+            "no warmer has succeeded in "
+            f"{FEED_PREWARM_LIVE_SHAPES_TTL_S}s — the host rail is down."
         ),
     }
     return out

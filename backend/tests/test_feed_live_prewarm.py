@@ -957,3 +957,98 @@ def test_the_shared_warmer_reports_liveness_in_its_result():
     source = textwrap.dedent(inspect.getsource(pcp._prewarm_feed_shape))
     assert '"live": live' in source
     assert "_record_shape_liveness(rc, label, live)" in source
+
+
+# --- CERT-1914: the live set's dead-man's switch must be readable -------------
+
+
+def test_no_shape_label_can_collide_with_the_heartbeat_field():
+    """The heartbeat shares the live-set hash, so its name must be unusable as a label.
+
+    A shape called `__host_warm_at` would be silently dropped from `live_labels`
+    by the exclusion this repair adds, and would never be republished. Asserted
+    over the declared shape sets rather than over a literal, so enrolling a new
+    shape re-runs the check.
+    """
+    from app.tasks.precompute_category_pages import (
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+        FEED_PREWARM_SHAPES,
+        GROUPED_FEED_PREWARM_SHAPES,
+    )
+
+    labels = {s["label"] for s in FEED_PREWARM_SHAPES}
+    labels |= {s["label"] for s in GROUPED_FEED_PREWARM_SHAPES}
+    assert labels, "no shapes were read — this guard would pass vacuously"
+    assert FEED_PREWARM_LIVE_HEARTBEAT_FIELD not in labels
+
+
+def test_the_heartbeat_is_written_on_every_successful_warm_live_or_not():
+    """Both directions, because the quiet one is the direction that was broken.
+
+    A live warm keeping the key alive was never in doubt — it writes a label. The
+    failure was the NOT-live warm, whose only write was an `hdel`, and which
+    therefore deleted the very key a reader consults to decide whether warms are
+    happening at all.
+    """
+    from app.tasks.precompute_category_pages import (
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+        FEED_PREWARM_LIVE_SHAPES_KEY,
+        FEED_PREWARM_LIVE_SHAPES_TTL_S,
+        _record_shape_liveness,
+    )
+
+    for live in (True, False):
+        rc = MagicMock()
+        _record_shape_liveness(rc, "sports", live=live)
+        written = {
+            call.args[1]
+            for call in rc.hset.call_args_list
+            if call.args and call.args[0] == FEED_PREWARM_LIVE_SHAPES_KEY
+        }
+        assert FEED_PREWARM_LIVE_HEARTBEAT_FIELD in written, (
+            f"no heartbeat written on a live={live} warm — the dead-man's switch "
+            "cannot tell a quiet rail from a dead one"
+        )
+        rc.expire.assert_called_with(
+            FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S
+        )
+
+
+def test_the_heartbeat_is_written_before_the_label_is_cleared():
+    """Order is the guarantee, not an accident of how it reads.
+
+    If the `hdel` ran first, clearing the last live label would delete the hash
+    and a concurrent reader would see the switch fired on a healthy rail — the
+    same wrong answer, in a smaller window. Writing the heartbeat first means the
+    hash always holds a field and `hdel` can never empty it.
+    """
+    from app.tasks.precompute_category_pages import (
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+        _record_shape_liveness,
+    )
+
+    order = []
+    rc = MagicMock()
+    rc.hset.side_effect = lambda k, f, v: order.append(("hset", f))
+    rc.hdel.side_effect = lambda k, f: order.append(("hdel", f))
+    _record_shape_liveness(rc, "sports", live=False)
+
+    assert ("hdel", "sports") in order, "the label was never cleared"
+    assert order.index(("hset", FEED_PREWARM_LIVE_HEARTBEAT_FIELD)) < order.index(
+        ("hdel", "sports")
+    ), "the heartbeat is written after the hdel, leaving a window with no key"
+
+
+def test_the_heartbeat_is_not_selected_as_a_live_shape():
+    """`_live_prewarm_labels` must exclude it, or the rail reports a phantom."""
+    from app.tasks.precompute_category_pages import (
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+        _live_prewarm_labels,
+    )
+
+    rc = MagicMock()
+    rc.hgetall.return_value = {
+        b"sports": b"1",
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD.encode(): b"1788624114",
+    }
+    assert _live_prewarm_labels(rc) == {"sports"}

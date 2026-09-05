@@ -25,7 +25,12 @@ from app.routes import admin
 from app.tasks.precompute_category_pages import (
     FEED_LIVE_PREWARM_ENABLED_KEY,
     FEED_LIVE_PREWARM_STATUS_KEY,
+    FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+    FEED_PREWARM_LIVE_SHAPES_KEY,
+    FEED_PREWARM_LIVE_SHAPES_TTL_S,
+    FEED_PREWARM_SHAPES,
     FEED_PREWARM_STATUS_KEY,
+    _record_shape_liveness,
 )
 
 BOOM = RuntimeError("Error 111 connecting to rediss://h:secretpw@ec2.example:6379")
@@ -231,27 +236,136 @@ def test_an_unset_switch_reads_as_ON_because_the_pass_only_stops_on_a_literal_ze
         assert out["switches"][name]["default_when_unset"] == "on"
 
 
-def test_an_absent_live_set_is_not_the_same_fact_as_an_empty_one():
-    """`count: 0` twice, two different diagnoses.
+class _RedisHashFake:
+    """Redis hash semantics, in the one respect that broke CERT-1914.
 
-    An EMPTY set means warms are running and finding nothing live — a quiet night.
-    An ABSENT set (Redis `ttl` -2) means the dead-man's switch expired: no
-    successful warm in 300s, so the 40s pass now selects nothing and reports
-    `no_live_shapes`, which reads as healthy. That is the failure mode #3233's
-    production reading could not rule out, and it is one integer apart from the
-    healthy one.
+    **Redis has no empty hash.** `HDEL` of the last remaining field deletes the
+    KEY, after which `HGETALL` returns `{}` and `TTL` returns -2 — the same pair
+    a genuinely expired key returns. The first version of this endpoint was
+    tested against a `MagicMock` scripted with `hash_state={}, ttl=180`, a state
+    the real store cannot produce, and it passed while production could only ever
+    show `{}` with `-2`. The fake is the fix: it is driven by the REAL writer, so
+    a fixture nobody could observe cannot be written by accident.
     """
-    with _with_conn(_conn(values={}, hash_state={}, ttl=-2)):
-        gone = admin._live_prewarm_state()
-    with _with_conn(_conn(values={}, hash_state={}, ttl=180)):
+
+    def __init__(self):
+        self.store: dict[str, dict[str, str]] = {}
+        self.ttls: dict[str, int] = {}
+
+    # --- writer surface (what `_record_shape_liveness` calls) ---
+    def hset(self, key, field, value):
+        self.store.setdefault(key, {})[str(field)] = str(value)
+
+    def hdel(self, key, field):
+        h = self.store.get(key)
+        if not h:
+            return 0
+        removed = h.pop(str(field), None) is not None
+        if not h:  # 🔴 the whole point: an emptied hash ceases to exist
+            self.store.pop(key, None)
+            self.ttls.pop(key, None)
+        return int(removed)
+
+    def expire(self, key, seconds):
+        if key not in self.store:
+            return 0  # EXPIRE on a missing key is a no-op in Redis
+        self.ttls[key] = int(seconds)
+        return 1
+
+    # --- reader surface ---
+    def hgetall(self, key):
+        return dict(self.store.get(key, {}))
+
+    def ttl(self, key):
+        if key not in self.store:
+            return -2
+        return self.ttls.get(key, -1)
+
+    def get(self, key):
+        return None
+
+    def evict(self, key):
+        """The dead-man's switch firing: the TTL ran out and Redis dropped it."""
+        self.store.pop(key, None)
+        self.ttls.pop(key, None)
+
+
+def test_the_fake_deletes_a_hash_whose_last_field_is_removed():
+    """The precondition the next test depends on, asserted before it is relied on.
+
+    If the fake tolerated an empty hash, the regression below would pass against
+    a store that cannot exist and would prove nothing — which is exactly how the
+    original defect survived its own test.
+    """
+    fake = _RedisHashFake()
+    fake.hset(FEED_PREWARM_LIVE_SHAPES_KEY, "sports", "1")
+    fake.expire(FEED_PREWARM_LIVE_SHAPES_KEY, 300)
+    assert fake.ttl(FEED_PREWARM_LIVE_SHAPES_KEY) == 300
+
+    fake.hdel(FEED_PREWARM_LIVE_SHAPES_KEY, "sports")
+    assert fake.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY) == {}
+    assert fake.ttl(FEED_PREWARM_LIVE_SHAPES_KEY) == -2, (
+        "the fake kept an empty hash alive — Redis does not, and a test built on "
+        "it cannot see the CERT-1914 defect"
+    )
+
+
+def test_a_quiet_night_and_a_dead_rail_stay_distinguishable_through_the_real_writer():
+    """`count: 0` twice, two different diagnoses — driven by the writer, not a fixture.
+
+    A QUIET night: every shape warmed successfully, none of them live. The real
+    `_record_shape_liveness` runs for all five and `hdel`s each label, which in
+    real Redis would delete the hash and report the rail dead. The heartbeat is
+    what keeps the key alive and the reading honest.
+
+    A DEAD rail: no warm inside the dead-man's-switch TTL, so Redis dropped the
+    key. `present` must be False here and only here.
+    """
+    fake = _RedisHashFake()
+    for shape in FEED_PREWARM_SHAPES:
+        _record_shape_liveness(fake, shape["label"], live=False)
+
+    assert fake.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY), (
+        "a full round of quiet warms emptied the live set, so the key is gone and "
+        "a healthy rail now reads as an expired dead-man's switch"
+    )
+
+    with _with_conn(fake):
         quiet = admin._live_prewarm_state()
 
-    assert gone["selection"]["count"] == quiet["selection"]["count"] == 0
-    assert gone["selection"]["present"] is False
+    fake.evict(FEED_PREWARM_LIVE_SHAPES_KEY)
+    with _with_conn(fake):
+        dead = admin._live_prewarm_state()
+
+    assert quiet["selection"]["count"] == dead["selection"]["count"] == 0
     assert quiet["selection"]["present"] is True, (
-        "an empty-but-present live set is being reported as absent, so a quiet "
-        "night looks like an expired dead-man's switch"
+        "a quiet night is being reported as an expired dead-man's switch"
     )
+    assert dead["selection"]["present"] is False
+    assert quiet["selection"]["last_warm_age_s"] is not None
+    assert dead["selection"]["last_warm_age_s"] is None
+    assert quiet["selection"]["ttl_seconds"] == FEED_PREWARM_LIVE_SHAPES_TTL_S, (
+        "the TTL was not refreshed by a quiet warm, so the switch expires under a "
+        "rail that is succeeding every time"
+    )
+
+
+def test_a_live_warm_does_not_report_the_heartbeat_as_a_shape():
+    """The heartbeat shares the hash and is not a first-paint shape.
+
+    Counted as one, it would inflate `live_labels` on the surface built to make
+    that number trustworthy.
+    """
+    fake = _RedisHashFake()
+    _record_shape_liveness(fake, "sports", live=True)
+    _record_shape_liveness(fake, "discover", live=False)
+
+    with _with_conn(fake):
+        out = admin._live_prewarm_state()
+
+    assert out["selection"]["live_labels"] == ["sports"]
+    assert out["selection"]["count"] == 1
+    assert FEED_PREWARM_LIVE_HEARTBEAT_FIELD not in out["selection"]["live_labels"]
 
 
 def test_the_live_set_reports_only_the_labels_actually_marked_live():

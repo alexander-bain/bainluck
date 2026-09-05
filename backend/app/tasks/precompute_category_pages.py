@@ -590,6 +590,29 @@ FEED_PREWARM_LIVE_SHAPES_KEY = "bainluck:precompute:feed_prewarm:live_shapes"
 #: dead-man's switch, not a cache.
 FEED_PREWARM_LIVE_SHAPES_TTL_S = 300
 
+#: Reserved field inside `FEED_PREWARM_LIVE_SHAPES_KEY` holding the epoch of the
+#: last SUCCESSFUL warm, written on every warm whether or not the shape was live.
+#:
+#: WHY IT EXISTS (CERT-1914's BLOCK). Without it this key is not a dead-man's
+#: switch, it is two facts nothing can tell apart. Redis has no empty hash: the
+#: `hdel` below, applied to the LAST remaining live label, deletes the key. So a
+#: healthy quiet night — every shape warmed, none of them live — leaves
+#: `hgetall` returning `{}` and `TTL` returning `-2`, which is byte-for-byte the
+#: reading produced by a rail that has not warmed in 300s. That is precisely the
+#: one question the key exists to answer, and it was unanswerable. The heartbeat
+#: is always written, so the hash is never empty, so the key's absence means what
+#: the TTL comment above claims it means.
+#:
+#: A FIELD AND NOT A SECOND KEY, deliberately: the TTL that expires has to be the
+#: same TTL the labels live under. Two keys can disagree about whether the switch
+#: has fired, and the disagreement would be invisible for exactly one dead-man's
+#: period — the window in which someone is reading this to decide whether the
+#: rail is dead.
+#:
+#: Excluded from the live labels by name in `_live_prewarm_labels`; a shape label
+#: can never collide with it (guard: `test_feed_live_prewarm.py`).
+FEED_PREWARM_LIVE_HEARTBEAT_FIELD = "__host_warm_at"
+
 
 def _record_shape_liveness(rc, label: str, live: bool) -> None:
     """Record (or clear) one shape's liveness in the shared live set. Never raises.
@@ -598,13 +621,37 @@ def _record_shape_liveness(rc, label: str, live: bool) -> None:
     the set, or the 40s pass keeps rebuilding a payload whose own TTL is 60/300
     and which the 120s pass already covers — paying three times over for nothing.
     The set is therefore always written, in both directions, on every warm.
+
+    THE HEARTBEAT IS WRITTEN FIRST, and the order is load-bearing rather than
+    stylistic. Writing it after the `hdel` would leave a real window — short, but
+    a window — in which the last live label has gone, the hash has therefore
+    ceased to exist, and a concurrent reader sees the dead-man's switch as fired
+    on a rail that is warming perfectly. Writing it first means the hash always
+    holds at least one field, so `hdel` can never empty it and the deletion this
+    repair is about cannot occur at all.
+
+    THE TTL IS NOW REFRESHED UNCONDITIONALLY. It used to be refreshed only on the
+    `live` branch, so a run of quiet warms let a 300s dead-man's switch expire
+    underneath a rail that was succeeding every time — the same false "the rail
+    is dead" reading by a second route.
     """
+    # Imported here rather than read off a module-global: this module has no
+    # module-level `time`, and a bare `_time` would raise `NameError` straight
+    # into the `except` below — silently disabling the heartbeat while every test
+    # that patches `rc` still passes. A guard asserts the write actually happens.
+    import time as _clock
+
     try:
+        rc.hset(
+            FEED_PREWARM_LIVE_SHAPES_KEY,
+            FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+            str(int(_clock.time())),
+        )
         if live:
             rc.hset(FEED_PREWARM_LIVE_SHAPES_KEY, label, "1")
-            rc.expire(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S)
         else:
             rc.hdel(FEED_PREWARM_LIVE_SHAPES_KEY, label)
+        rc.expire(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S)
     except Exception:
         logger.debug("live-shape marker write failed for %s", label, exc_info=True)
 
@@ -624,7 +671,16 @@ def _live_prewarm_labels(rc) -> set[str]:
         return set()
     labels = set()
     for key in raw:
-        labels.add(key.decode() if isinstance(key, (bytes, bytearray)) else str(key))
+        label = key.decode() if isinstance(key, (bytes, bytearray)) else str(key)
+        # The dead-man's-switch heartbeat shares this hash and is NOT a shape.
+        # Excluded by name: it matches no entry in `FEED_PREWARM_SHAPES`, so it
+        # could never become a build target, but it WOULD inflate `live_labels`
+        # in the status report and, through the `exclude=` argument, mask a
+        # genuinely absent shape that happened to share its name. Both are
+        # reporting bugs in the surface this key exists to make honest.
+        if label == FEED_PREWARM_LIVE_HEARTBEAT_FIELD:
+            continue
+        labels.add(label)
     return labels
 
 
