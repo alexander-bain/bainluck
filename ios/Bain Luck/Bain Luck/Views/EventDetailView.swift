@@ -604,6 +604,21 @@ struct EventDetailView: View {
                                     .map { abs(home - $0) > 0.001 } ?? false
                             )?.rawValue)
                         }
+                        // #3313 — the MATCH primitive at GLYPH size. The bars
+                        // beside it grade CONFIDENCE (how many sources, did it
+                        // move at all); this grades RECENCY of movement, which
+                        // nothing on the hero answered: "+2% since open" is the
+                        // whole match, and the full chart is a scroll away.
+                        //
+                        // Gated on a delivering stream, matching the web's
+                        // `streamConnected`. On the poll the hero already carries
+                        // a countdown ring, and a ten-minute window refreshed
+                        // every thirty seconds is three vertices — under
+                        // `minimumPoints`, so it would draw nothing anyway.
+                        if isLive, vm.streamDelivering, let history = vm.history {
+                            LiveSparklineChart(
+                                points: OddsChartView.chartPoints(from: history))
+                        }
                     } else {
                         Text("vs")
                             .font(.title2)
