@@ -81,6 +81,22 @@ final class TournamentHubRenderSmokeTests: XCTestCase {
             "the empty and populated states must not rasterise identically")
     }
 
+    /// #3043. The presentation tests prove the five questions REDUCE correctly;
+    /// this proves the surface actually draws them. A section wired into the
+    /// value type and left out of the view passes every one of those tests and
+    /// is invisible on the phone — which is exactly how the web's own props
+    /// section spent a release rendering an empty state nobody could see
+    /// (UX-P139, "the section was INVISIBLE in the artifact Alex viewed").
+    func testTheCuratedQuestionsAreDrawnAndNotJustComputed() throws {
+        let withProps = try render(
+            try TournamentHubPropsFixture.presentation(), name: "props", scale: 1)
+        let withoutProps = try render(presentation(Self.emptyJSON), name: "props-none", scale: 1)
+        XCTAssertGreaterThan(
+            withProps.count, withoutProps.count,
+            "five questions must make the page taller than the sentence that "
+            + "stands in for them")
+    }
+
     func testRenderingIsDeterministicForAFixedPayload() throws {
         let first = try render(presentation(Self.emptyJSON), name: "empty-a")
         let second = try render(presentation(Self.emptyJSON), name: "empty-b")
