@@ -43,6 +43,9 @@ nonisolated struct TournamentHubResponse: Decodable, Sendable {
     let bracket: [String: [TournamentHubOpaqueEntry]]
     let eventLinks: TournamentHubEventLinks?
     let broadcasts: [TournamentHubBroadcast]
+    /// The curated questions — "Will Sinner actually play?" (#3043). Five
+    /// entries for `us-open` today; the register caps it, not the client.
+    let props: [TournamentHubProp]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -60,11 +63,13 @@ nonisolated struct TournamentHubResponse: Decodable, Sendable {
         bracket = (try? c.decodeIfPresent([String: [TournamentHubOpaqueEntry]].self, forKey: .bracket)) ?? [:]
         eventLinks = try? c.decodeIfPresent(TournamentHubEventLinks.self, forKey: .eventLinks)
         broadcasts = (try? c.decodeIfPresent([TournamentHubBroadcast].self, forKey: .broadcasts)) ?? []
+        props = (try? c.decodeIfPresent([TournamentHubProp].self, forKey: .props)) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case slug, title, subtitle, season, generatedAt, drawReleased, mainDrawLabel
         case mainDrawStartsAt, slate, results, boards, bracket, eventLinks, broadcasts
+        case props
     }
 }
 
@@ -368,6 +373,117 @@ nonisolated struct TournamentHubTrendPoint: Decodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey { case date, probability }
+}
+
+// MARK: - Props (the curated questions)
+
+/// One curated question — the shape `frontend/lib/tournamentProps.ts` calls a
+/// `PropMarket`, decoded for the phone (#3043).
+///
+/// ═══ WHY `settled` IS MODELLED BEFORE ANY OF THE PRICE TELEMETRY ═══
+///
+/// The register decides that a question has CLOSED; nothing on the client may
+/// infer it (UX-P207, and Alex's standing ruling 2, "settled means settled").
+/// The specimen is on the wire today:
+///
+///     key=sinner-competes   settled=true   settled_answer="No"
+///     outcomes[0] = Yes, probability 0.01, still quoted by Kalshi
+///
+/// A client that decodes `probability` and ignores `settled` prints **"Yes 1%"**
+/// as the current answer to a question that was answered **No** on 30 August.
+/// Each half is locally true and the composite is the exact failure ruling 2
+/// exists to prevent, so `settled` is not an optional nicety here — it is the
+/// field that decides what the card is allowed to say.
+///
+/// The card's own health telemetry (`liquidity_reasons`, `mixed_freshness`,
+/// `stale_outcomes`, `freshest_*`) is deliberately NOT modelled: the phone
+/// draws none of it, and `age_hours` per printed outcome already carries the
+/// only freshness fact the card states.
+nonisolated struct TournamentHubProp: Decodable, Sendable, Identifiable {
+    let key: String
+    /// The question, phrased as a person would ask it.
+    let title: String
+    /// One clause on why it is interesting, or nil.
+    let hook: String?
+    let draw: String?
+    let source: String?
+    let outcomes: [TournamentHubPropOutcome]
+    /// The outcome whose probability answers `title`. `nil` is a SUPPORTED
+    /// state, not a missing value — it selects the ranked-field rendering.
+    let answerEntityKey: String?
+    /// How many MARKETS the register declared for this one question. Anything
+    /// above 1 is a comparison, and a comparison missing a leg is never live
+    /// (CERT-430). Absent reads as 1: treating an old capture as an ordinary
+    /// card is the safe direction.
+    let legs: Int?
+    /// `true`, and only the literal `true`, means the question has closed.
+    let settled: Bool?
+    /// The result in words — "No". Nil when the register knows only THAT it closed.
+    let settledAnswer: String?
+    let settledAt: String?
+    let priceState: String?
+    let ageHours: Double?
+
+    var id: String { key }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        title = try c.decode(String.self, forKey: .title)
+        hook = try c.decodeIfPresent(String.self, forKey: .hook)
+        draw = try c.decodeIfPresent(String.self, forKey: .draw)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        outcomes = (try? c.decodeIfPresent([TournamentHubPropOutcome].self, forKey: .outcomes)) ?? []
+        answerEntityKey = try c.decodeIfPresent(String.self, forKey: .answerEntityKey)
+        legs = try c.decodeIfPresent(Int.self, forKey: .legs)
+        // NOT `(try? …) ?? false`. A payload that grows `settled: "yes"` one day
+        // must fail this decode into `nil` and render OPEN, which a guard
+        // catches — rather than quietly deciding every card on the page has
+        // closed, or that this one has.
+        settled = try? c.decodeIfPresent(Bool.self, forKey: .settled)
+        settledAnswer = try c.decodeIfPresent(String.self, forKey: .settledAnswer)
+        settledAt = try c.decodeIfPresent(String.self, forKey: .settledAt)
+        priceState = try c.decodeIfPresent(String.self, forKey: .priceState)
+        ageHours = try c.decodeIfPresent(Double.self, forKey: .ageHours)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key, title, hook, draw, source, outcomes, answerEntityKey, legs
+        case settled, settledAnswer, settledAt, priceState, ageHours
+    }
+}
+
+/// One row of a question. `probabilityIsLive` is THIS row's own freshness, not
+/// the card's: the rule the whole app shares is that a card is as fresh as its
+/// oldest printed number, and that rule needs the per-row flag to compute.
+nonisolated struct TournamentHubPropOutcome: Decodable, Sendable, Identifiable {
+    let entityKey: String
+    let displayName: String
+    /// 0–1 fraction, or nil when this row has no price at all. Never `?? 0`.
+    let probability: Double?
+    let probabilityIsLive: Bool?
+    let ageHours: Double?
+    let priceState: String?
+    /// Does this row answer the card's question? Curated, never inferred.
+    let isAnswer: Bool?
+
+    var id: String { entityKey }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        entityKey = try c.decode(String.self, forKey: .entityKey)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        probability = try c.decodeIfPresent(Double.self, forKey: .probability)
+        probabilityIsLive = try c.decodeIfPresent(Bool.self, forKey: .probabilityIsLive)
+        ageHours = try c.decodeIfPresent(Double.self, forKey: .ageHours)
+        priceState = try c.decodeIfPresent(String.self, forKey: .priceState)
+        isAnswer = try c.decodeIfPresent(Bool.self, forKey: .isAnswer)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case entityKey, displayName, probability, probabilityIsLive
+        case ageHours, priceState, isAnswer
+    }
 }
 
 // MARK: - Links and broadcasts
