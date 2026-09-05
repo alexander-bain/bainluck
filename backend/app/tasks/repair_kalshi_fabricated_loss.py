@@ -14,6 +14,32 @@ an endpoint that returns its own census, never an incantation):
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
     ...then drain with ?after_date=<..>&after_id=<..> from ``next_cursor``
 
+CAL-P1008 — THE CAPTURE IS PART OF THE RUNBOOK, not housekeeping after it. The
+durable plan slot (:data:`PLAN_IDENTITY`) holds ONE plan and a drain over
+:data:`APPLY_MARKET_CAP` markets per call runs many, so batch N+1's dry-run
+destroys the only per-leg record of what batch N's RESTORE arm touched — that arm
+writes ``api_settlement`` back over ``api_settlement`` and leaves no marker to
+find its rows by afterwards. Every dry-run response therefore carries
+``plan_artifact``: the byte-identical banked payload, each leg with its verdict
+and the prior state the apply compares on. Save it before the next dry-run::
+
+    for each batch N:
+        apply=false  → save the WHOLE response as batchN-plan.json, read it
+        apply=true&plan_hash=<hash from that response>
+                     → save the whole response as batchN-applied.json
+    ...then re-census; finished is the addressed bands measuring 0.
+
+Undo, per batch, from those two files. The retraction arm can also be found from
+the database alone by its ``ungradeable_result`` marker; the restore arm cannot,
+so ``batchN-plan.json`` is the whole of its reversibility::
+
+    UPDATE futures_outcomes SET is_winner = false
+    WHERE id = ANY(<batchN-plan.json legs where verdict = 'restore_winner'>)
+      AND is_winner AND resolution_source = 'api_settlement';
+
+A drain run without that capture is a repair whose restore arm cannot be
+reversed, which is not the bar D51 = B(b) sets for applying one unattended.
+
 CAL-P058 — WHAT C-CERT-1852 CHANGED HERE, and it is the write protocol, not the
 judgment. The certification confirmed the judgment is genuinely per-leg and that
 the four venue specimens reproduce; it BLOCKED the branch on five defects in how
@@ -189,6 +215,26 @@ _VENUE_MAX_PAGES = 3
 #: Durable identity of the reviewed plan artifact. ONE slot: a dry-run
 #: overwrites it, and the content address is what stops an operator applying the
 #: page they read two pages ago.
+#:
+#: CAL-P1008 — that one slot is also the only record of WHICH LEG GOT WHICH
+#: VERDICT, and that is the undo. The prior state is not the hard part: both
+#: writing verdicts require ``is_winner = false`` and
+#: :data:`REPAIRABLE_SOURCE`, so the pre-image is a rail-wide constant, not a
+#: per-leg fact. What is per-leg is the ARM.
+#:
+#: * Retraction is self-identifying afterwards — it stamps
+#:   :data:`RETRACTION_SOURCE`, so its rows can be found by that marker alone.
+#: * Restore leaves NO marker. It sets ``is_winner = true`` and writes
+#:   ``api_settlement`` back over ``api_settlement``, so a restored leg is
+#:   byte-identical to a Kalshi winner nobody ever touched. Only the plan says
+#:   which ones they were, and ``plan_leg_ids`` in the response is both arms
+#:   mixed together with no verdict on them.
+#:
+#: So batch N+1's dry-run overwrites the only thing that can reverse batch N's
+#: restore arm. The dry-run therefore hands the whole artifact back in
+#: ``plan_artifact`` — see :func:`_dry_run` — so the operator's captured response
+#: IS the backup and the durable slot is a convenience, not the record of last
+#: resort.
 PLAN_IDENTITY = "calibration:repair:kalshi_fabricated_loss:plan"
 
 
@@ -1058,6 +1104,26 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         "plan_note": plan_note,
         "plan_leg_ids": list(plan.leg_ids),
         "plan_market_ids": list(plan.market_ids),
+        # CAL-P1008: the per-leg VERDICT travels with the response, not only
+        # into the one durable slot the next batch overwrites. `plan_leg_ids`
+        # above is both arms mixed with no verdict on them, and the restore arm
+        # leaves no marker in the row it writes, so without this a drain of more
+        # than APPLY_MARKET_CAP markets — i.e. every real drain — cannot say
+        # afterwards which legs it flipped, and D51 = B(b)'s "writes a backup
+        # first, ships a one-command restore" is unmet from batch two onward.
+        # This is the exact payload that was banked, so a captured response
+        # re-decodes to this same `plan_hash`: a restorable artifact, not a
+        # description of one.
+        "plan_artifact": plan.as_payload(),
+        "plan_artifact_note": (
+            "This IS the backup — capture it per batch BEFORE the next dry-run: "
+            f"the durable slot at {PLAN_IDENTITY} holds one plan and batch N+1 "
+            "overwrites batch N. Undo the retraction arm by its "
+            f"{RETRACTION_SOURCE} marker; undo the restore arm ONLY from the "
+            "legs here whose verdict is restore_winner, because that arm writes "
+            "api_settlement back over api_settlement and leaves nothing in the "
+            "row to find it by."
+        ),
         "apply_instruction": (
             f"POST …/kalshi-fabricated-loss?apply=true&plan_hash={plan.plan_hash}"
             if plan_ok
