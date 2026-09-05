@@ -181,12 +181,28 @@ def _row_at_kinds(
     return row
 
 
+#: The kinds of `DERIVED_MARKET_COLUMNS`, declared BY NAME because they are not
+#: on `FuturesMarket` and `_column_kinds` therefore cannot introspect them. A
+#: derived column added without a line here is a `KeyError` in this fixture, not
+#: a silently-cheap `str` that shrinks the artifact relative to production —
+#: which is the whole reason the loaded kinds are introspected in the first
+#: place. `price_polled_at` is a `datetime`, and a datetime is a TAGGED value on
+#: this wire (~31 bytes of codec around it), so it must be measured as one.
+_DERIVED_KINDS = {"price_polled_at": "dt"}
+
+
 def _production_scale_payload() -> dict:
     """A `to_plain`-shaped artifact at the measured production shape."""
     rng = random.Random(20260904)
-    market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS)
+    market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS) + [
+        _DERIVED_KINDS[name] for name in fs.DERIVED_MARKET_COLUMNS
+    ]
     outcome_kinds = _column_kinds(FuturesOutcome, fs.OUTCOME_COLUMNS)
-    market_null = _nullable(FuturesMarket, fs.MARKET_COLUMNS)
+    # Derived values are nullable by construction: `to_plain` writes `None` for
+    # a market the caller's map does not cover (a market with no outcome rows).
+    market_null = _nullable(FuturesMarket, fs.MARKET_COLUMNS) + [True] * len(
+        fs.DERIVED_MARKET_COLUMNS
+    )
     outcome_null = _nullable(FuturesOutcome, fs.OUTCOME_COLUMNS)
     per_market = PROD_OUTCOMES // PROD_MARKETS
     remainder = PROD_OUTCOMES - per_market * PROD_MARKETS

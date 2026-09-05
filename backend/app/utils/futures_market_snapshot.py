@@ -69,7 +69,12 @@ from typing import Any, Iterable, Sequence
 
 #: Columns loaded for `FuturesMarket` on the Discover futures candidate query.
 #:
-#: ORDER IS THE WIRE FORMAT. A row is a positional list, not a dict, because the
+#: ORDER IS THE WIRE FORMAT — of the FIRST part of the market row. The row is
+#: `MARKET_ROW_COLUMNS`: these loaded columns, then `DERIVED_MARKET_COLUMNS`.
+#: This tuple alone is what `market_load_options()` projects, so it alone is the
+#: load surface; nothing derived may be added here.
+#:
+#: A row is a positional list, not a dict, because the
 #: repeated key names of a 700-row dict payload are pure overhead on a shared
 #: artifact that is size-capped (`MAX_ENVELOPE_BYTES`). Reordering or removing
 #: requires a `SNAPSHOT_SCHEMA_VERSION` bump, which is part of the cache key and
@@ -149,6 +154,85 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
     "external_id",
 )
 
+# ux/1070 item 5 wanted a price AGE, and `last_updated` is deliberately NOT in
+# the outcome tuple above. It was added there once, and two guards in a row
+# priced that decision: `test_feed_outcome_projection_cert622` demanded the
+# projection grow (correct — an unprojected read is a MissingGreenlet inside the
+# serializer), and then `test_feed_market_load_fits_the_shared_wire_lat_p221`
+# measured the result at 3,361,009 B against a 2,928,973 B budget — a 15% growth
+# in a shared Redis artifact, for one timestamp repeated across up to 193
+# outcomes per market. That refusal stands.
+#
+# 🔴 WHAT DID **NOT** WORK, AND WHY IT IS WRITTEN HERE (CERT-949):
+# the next attempt read `FuturesMarket.updated_at` instead — already loaded, one
+# value per market, and measured on production 2026-09-04 within 0.4h of
+# `max(outcome.last_updated)` on every row of the in-window population. The
+# measurement was real and the inference from it was still wrong.
+# `FuturesMarket.updated_at` is `onupdate=func.now()`: it means ANY write, and
+# `app/tasks/enrich_markets.py` runs a SIX-HOURLY update of `hook_description` /
+# `hook_generated_at` / `hook_leader_at_generation` / `market_metadata` that
+# touches no price. So a market whose prices last moved in May reads as hours
+# fresh — and it re-stamps exactly the stale markets the bound exists to
+# exclude, because a stale market is the one whose hook keeps being regenerated.
+# The defence offered at the time ("the threshold sits in a measured 6h–92h gap")
+# does not survive the writer's own cadence being INSIDE that gap.
+#
+# So the signal is derived, not borrowed: `price_polled_at` below.
+
+#: Outcome columns LOADED but never carried on the wire.
+#:
+#: The load surface is a superset of the wire format for exactly one reason, and
+#: this is the whole of it: `price_polled_at` is folded out of these values at
+#: BUILD time (`to_plain`), while the hydrated rows are still in hand, and the
+#: per-outcome value itself never needs to reach a reader.
+#:
+#: The rule the wire format actually enforces is unchanged — anything the
+#: SERIALIZER reads must be loaded AND carried, or the cached path serves `None`
+#: where the direct path serves a value. Nothing downstream reads
+#: `outcome.last_updated`; `test_my_stuff_price_freshness_cert949.py` pins that,
+#: because reading it off a rebuilt snapshot is an `AttributeError` in the
+#: per-item serializer, i.e. the whole futures pool (gotcha #42).
+#:
+#: MEASURED, and the measurement is why it is done this way (production
+#: 2026-09-05, EXPLAIN ANALYZE, the ~700-id candidate set): a separate
+#: `SELECT market_id, MAX(last_updated) … GROUP BY market_id` over the same ids
+#: is a second bitmap heap scan of the same 9,220 rows and costs **423 ms warm**
+#: — roughly 72% of the entire 588 ms `market_load` stage, on the flagship
+#: route's cold build. Adding the column to the outcome SELECT that is already
+#: fetching those rows is inside that statement's own run-to-run noise
+#: (base 493/741/426 ms vs wide 531/242/292 ms, interleaved).
+OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated",)
+
+#: Market-level values that are COMPUTED for the artifact, not loaded from the
+#: `futures_markets` row.
+#:
+#: `price_polled_at` is `MAX(FuturesOutcome.last_updated)` for the market — the
+#: newest price-poll stamp across its outcomes, which is the question "are these
+#: numbers current?" asked of the rows that actually hold the numbers. It is
+#: derived because neither carrier alone can answer it: the market row's own
+#: timestamps mean "any write" (see the note above), and the per-outcome column
+#: costs 15% of a size-capped shared artifact to say one thing per market.
+#:
+#: These ride in the SAME positional row as `MARKET_COLUMNS`, appended after it —
+#: see `MARKET_ROW_COLUMNS`. They are NOT in `MARKET_COLUMNS` for a mechanical
+#: reason as well as a conceptual one: `market_load_options()` does
+#: `getattr(FuturesMarket, c)` over that tuple, and there is no such attribute.
+#:
+#: The honest bound on what this measures: `last_updated` is written by the price
+#: writers (`futures_price_refresh`, `kalshi`, `kalshi_ws`, `polymarket_ws`,
+#: `tournament_price_refresh`) and also by the settlement writers in
+#: `backfill_winners`. A settlement write therefore reads as a poll — which is a
+#: far narrower overlap than "any write", and it lands on markets that have just
+#: RESOLVED, i.e. the ones a `resolution_date`-in-the-future window already
+#: excludes.
+DERIVED_MARKET_COLUMNS: tuple[str, ...] = ("price_polled_at",)
+
+#: The full positional market row on the wire: loaded columns, then derived ones.
+#: Building/validating/rebuilding all go through this, so the appended block can
+#: never drift out of position — and `market_load_options()` keeps using
+#: `MARKET_COLUMNS` alone, which is still exactly the load surface.
+MARKET_ROW_COLUMNS: tuple[str, ...] = MARKET_COLUMNS + DERIVED_MARKET_COLUMNS
+
 #: Columns loaded for the related `Sport`.
 SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 
@@ -172,7 +256,13 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: MEANING of every position, and only the version stops that entry being read.
 #: So: the version guards the shape a row CLAIMS, per-row arity guards the shape
 #: it HAS, and neither is the other's backstop.
-SNAPSHOT_SCHEMA_VERSION = 2
+#:
+#: v3 — `DERIVED_MARKET_COLUMNS` appended to the market row (`price_polled_at`,
+#: CERT-949). The bump is not optional politeness: an in-flight v2 entry has a
+#: market row one value SHORT, and the reader must not decide that every market
+#: has an unknown price age for the life of that entry. Under v3 those entries
+#: are simply never read and expire under their own TTL.
+SNAPSHOT_SCHEMA_VERSION = 3
 
 
 class _Snapshot:
@@ -213,7 +303,12 @@ class FuturesMarketSnapshot(_Snapshot):
         outcomes: list[FuturesOutcomeSnapshot],
         sport: SportSnapshot | None,
     ) -> None:
-        for name, value in zip(MARKET_COLUMNS, values):
+        # `MARKET_ROW_COLUMNS`, not `MARKET_COLUMNS`: the derived values are part
+        # of the row and a snapshot that dropped them would report "price age
+        # unknown" for every market on the cached path while the build path knew
+        # it — a DIFFERENT feed, which is the failure this module exists to make
+        # impossible.
+        for name, value in zip(MARKET_ROW_COLUMNS, values):
             self.__dict__[name] = value
         self.__dict__["outcomes"] = outcomes
         self.__dict__["sport"] = sport
@@ -233,7 +328,10 @@ def market_load_options() -> list[Any]:
     return [
         load_only(*(getattr(FuturesMarket, c) for c in MARKET_COLUMNS)),
         selectinload(FuturesMarket.outcomes).load_only(
-            *(getattr(FuturesOutcome, c) for c in OUTCOME_COLUMNS)
+            *(
+                getattr(FuturesOutcome, c)
+                for c in OUTCOME_COLUMNS + OUTCOME_LOAD_ONLY_EXTRA
+            )
         ),
         selectinload(FuturesMarket.sport).load_only(
             *(getattr(Sport, c) for c in SPORT_COLUMNS)
@@ -251,6 +349,25 @@ def _row(instance: Any, columns: tuple[str, ...]) -> list[Any]:
     return [state.get(name) for name in columns]
 
 
+def _price_polled_at(outcomes: Iterable[Any]) -> Any:
+    """`MAX(outcome.last_updated)` for one market, or `None` if it has no price.
+
+    Folded here, at build time, off the hydrated rows — see
+    `OUTCOME_LOAD_ONLY_EXTRA` for why this is not a second query and not a wire
+    column. `__dict__.get`, never `getattr`, for this module's usual reason: a
+    deferred attribute lazy-loads and raises `MissingGreenlet` on this async
+    path. That also means a projection that stops loading the column degrades to
+    `None` — "we do not know" — rather than to a wrong answer, and `None` is
+    exclusion at every consumer.
+    """
+    stamps = [
+        stamp
+        for stamp in (o.__dict__.get("last_updated") for o in outcomes)
+        if stamp is not None
+    ]
+    return max(stamps) if stamps else None
+
+
 def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     """Convert hydrated ORM markets into the shareable plain-data artifact.
 
@@ -260,7 +377,17 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     `datetime` are carried AS THEMSELVES rather than normalised to float/str:
     the scoring path compares and rounds these values, and a snapshot that
     silently changed their type would change the feed.
+
+    This is also where `DERIVED_MARKET_COLUMNS` are folded — the one moment in
+    the request when the hydrated outcome rows exist and their price-poll stamps
+    can be reduced to one value per market. A market with no outcomes, or one
+    whose stamps are all `NULL`, gets `None`: "we do not know", which every
+    consumer must read as not-fresh rather than fresh (gotcha #53).
     """
+    # Keyed by column NAME and read by name below, so a derived column added to
+    # the tuple without a producer here is a `KeyError` at build time rather
+    # than a row of the wrong width that the validator then rejects forever.
+    producers = {"price_polled_at": _price_polled_at}
     rows: list[list[Any]] = []
     for market in markets:
         state = market.__dict__
@@ -268,7 +395,8 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
         sport = state.get("sport")
         rows.append(
             [
-                _row(market, MARKET_COLUMNS),
+                _row(market, MARKET_COLUMNS)
+                + [producers[name](outcomes) for name in DERIVED_MARKET_COLUMNS],
                 [_row(o, OUTCOME_COLUMNS) for o in outcomes],
                 _row(sport, SPORT_COLUMNS) if sport is not None else None,
             ]
@@ -312,7 +440,7 @@ def _validated_rows(payload: Any) -> list | None:
         if not isinstance(row, (list, tuple)) or len(row) != 3:
             return None
         market_values, outcome_rows, sport_values = row
-        if not _is_value_tuple(market_values, len(MARKET_COLUMNS)):
+        if not _is_value_tuple(market_values, len(MARKET_ROW_COLUMNS)):
             return None
         if not isinstance(outcome_rows, (list, tuple)):
             return None
@@ -362,6 +490,8 @@ def is_snapshot_payload(payload: Any) -> bool:
 
 __all__ = [
     "MARKET_COLUMNS",
+    "DERIVED_MARKET_COLUMNS",
+    "MARKET_ROW_COLUMNS",
     "OUTCOME_COLUMNS",
     "SPORT_COLUMNS",
     "SNAPSHOT_SCHEMA_VERSION",

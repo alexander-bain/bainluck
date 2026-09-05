@@ -200,6 +200,8 @@ from app.utils.personalization import (
     PersonalizationContext,
     compute_event_multiplier,
     compute_futures_multiplier,
+    followed_sport_categories,
+    my_stuff_admits_followed_sport,
 )
 from app.routes.admin_utils import _check_admin_auth, _resolve_admin_email
 from app.utils import futures_market_snapshot as _futures_snapshot
@@ -2760,9 +2762,33 @@ async def get_feed(
             _timings, _started_at, _previous_at, "team_enrichment"
         )
 
+        # ux/1070 item 1 — MY STUFF'S CONTENT CONTRACT, read ONCE for both of
+        # the tiers below.
+        #
+        # The events half of this build is filtered to the viewer's teams and
+        # the futures half to the same. The two tiers that follow — golf
+        # tournaments and event concepts — were appended to the SAME item list
+        # with no personalization gate whatsoever, so the page that promises
+        # "only what you follow" served a cycling grand tour in Live Now and a
+        # Formula 1 Grand Prix in Upcoming to a viewer who follows Boston teams,
+        # PGA golf and tennis (Alex, 2026-09-04 7:00am shop). Nothing leaked
+        # through a follow: neither tier ever asked what he follows.
+        #
+        # Empty is a real answer here. On My Stuff a viewer with no high sport
+        # affinity gets NO concept tier and NO golf tier, rather than the global
+        # one — the opposite default from a `sport:` tag or a category slug,
+        # which narrow a tier that is legitimately global elsewhere.
+        _my_stuff_follows: set[str] = set()
+        if my_teams_only:
+            from app.utils.personalization import followed_sport_categories
+
+            _my_stuff_follows = followed_sport_categories(ctx.sport_affinities)
+
         # === SCORE GOLF TOURNAMENTS ===
         # Skip golf tournaments if a non-golf sport tag is active
         _skip_golf = not include_events
+        if my_teams_only and "golf" not in _my_stuff_follows:
+            _skip_golf = True
         if static_tag_filter:
             sport_tags = [t for t in static_tag_filter if t.startswith("sport:")]
             if sport_tags and "sport:golf" not in sport_tags:
@@ -2852,6 +2878,29 @@ async def get_feed(
                 # is a way of saying a source, not the source.
                 _narrow_skip, _concept_sport_filter = narrow_concept_filters(
                     _concept_sport_filter, _cat_concept_filter
+                )
+                _skip_concepts = _skip_concepts or _narrow_skip
+        if my_teams_only:
+            # ux/1070 item 1: My Stuff's follow list is a third claim about this
+            # tier, and it is the one that closes by default — see
+            # `_my_stuff_follows` above. Narrowed through the same
+            # source-identity intersection the tag and category claims use, so a
+            # viewer who follows MMA gets the UFC source and nothing else, and a
+            # viewer who follows neither MMA nor motorsports nor cycling gets no
+            # concept tier at all rather than the global one.
+            from app.utils.event_concept_population import (
+                concept_filter_for_follows,
+                narrow_concept_filters as _narrow_concept_filters,
+            )
+
+            _follow_skip, _follow_filter = concept_filter_for_follows(
+                _my_stuff_follows
+            )
+            if _follow_skip:
+                _skip_concepts = True
+            else:
+                _narrow_skip, _concept_sport_filter = _narrow_concept_filters(
+                    _concept_sport_filter, _follow_filter
                 )
                 _skip_concepts = _skip_concepts or _narrow_skip
         if not _skip_concepts:
@@ -7583,6 +7632,26 @@ async def _score_futures(
     # For my_teams_only: use full Team.name (not alternate_names) to avoid false positives.
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
+    # ux/1070 item 5 — THE SPORTS YOU FOLLOW THAT HAVE NO TEAMS.
+    #
+    # The futures half below admits a market only when it touches one of the
+    # viewer's TEAMS, so a sport played by individuals can never reach it: golf
+    # and tennis are not even in `MY_STUFF_ALLOWED_CATEGORIES`. Alex follows PGA
+    # golf at 1.0 and this week the site holds a whole tournament grid — Winner,
+    # Top 5, Top 10, Top 20, Make the Cut — and his My Stuff could not show one
+    # of them, because there is no team in golf to match on (2026-09-04).
+    #
+    # Subtracting `MY_STUFF_ALLOWED_CATEGORIES` is what keeps this from being a
+    # loosening: baseball and football stay on the team-match rule exactly as
+    # before, and only a sport with no team dimension is admitted on the follow
+    # alone. The rest of the bound lives in `my_stuff_admits_followed_sport`.
+    _my_stuff_follow_categories: set[str] = set()
+    if my_teams_only:
+        _my_stuff_follow_categories = (
+            followed_sport_categories(ctx.sport_affinities)
+            - MY_STUFF_ALLOWED_CATEGORIES
+        )
+
     # === CANDIDATE-ID BASE (Queue 285) ===
     # The Discover futures candidate pools depend ONLY on (now, sport_filter,
     # static_tag_filter) — never on the user, session, limit, offset, or
@@ -7738,6 +7807,13 @@ async def _score_futures(
                 .options(*base_options)
                 .where(FuturesMarket.id.in_(market_ids))
             )
+            # `to_plain` folds `price_polled_at` (CERT-949) out of the outcome
+            # rows this SELECT just loaded, while they are still hydrated and at
+            # no extra query. The obvious alternative — a second
+            # `SELECT market_id, MAX(last_updated) … GROUP BY market_id` over the
+            # same ids — was written and measured on production at 423 ms warm,
+            # ~72% of this whole stage, and thrown away
+            # (`OUTCOME_LOAD_ONLY_EXTRA` carries the numbers).
             return _futures_snapshot.to_plain(result.scalars().unique().all())
 
         _snapshot_payload = await _pic.get_or_build(
@@ -8329,15 +8405,51 @@ async def _score_futures(
 
             # my_teams_only: skip futures that don't involve the user's teams
             if my_teams_only:
-                # Skip Tier 3 sports — same filter as events to avoid false
-                # positives from name collisions. BR42/BR43.
                 market_sport_key = market.sport.key if market.sport else None
-                if market_sport_key and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS:
-                    continue
-                # Also filter by llm_sport_category for markets without a sport FK
-                if not market_sport_key and market.llm_sport_category:
-                    if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                _market_category = market.llm_sport_category or (
+                    _personalization_category_from_sport_key(market_sport_key)
+                )
+                # ux/1070 item 5: a FOLLOWED sport with no team dimension is
+                # admitted on its own account, inside the tournament window and
+                # never as an award. See `_my_stuff_follow_categories` above.
+                # `_utc` because a market rehydrated from the shared snapshot can
+                # arrive naive, and a naive/aware compare raises inside the loop
+                # rather than answering the question.
+                _followed_sport_market = my_stuff_admits_followed_sport(
+                    category=_market_category,
+                    market_tier=market.market_tier,
+                    resolution_date=_utc(market.resolution_date),
+                    followed_categories=_my_stuff_follow_categories,
+                    now=now,
+                    name=market.name,
+                    # Already loaded — `outcome_team_ids` above walks the same
+                    # list, so the field and freshness tests cost no read.
+                    outcome_count=len(market.outcomes or []),
+                    # WHEN THE PRICES WERE POLLED — `MAX(outcome.last_updated)`,
+                    # folded per market by `to_plain` and carried on the row as
+                    # `price_polled_at` (`DERIVED_MARKET_COLUMNS`).
+                    # NOT `market.updated_at`: that column is `onupdate` on ANY
+                    # write and the six-hourly hook enricher bumps it without
+                    # touching a price, which is CERT-949 and is why this reads
+                    # a derived value instead of a free one.
+                    # `__dict__.get` because a market rehydrated from a snapshot
+                    # written by an older build has no such key and must read as
+                    # UNKNOWN (⇒ not admitted), never as fresh. `_utc` for the
+                    # same naive/aware reason as `resolution_date`.
+                    priced_at=_utc(market.__dict__.get("price_polled_at")),
+                )
+                if not _followed_sport_market:
+                    # Skip Tier 3 sports — same filter as events to avoid false
+                    # positives from name collisions. BR42/BR43.
+                    if (
+                        market_sport_key
+                        and market_sport_key not in MY_STUFF_ALLOWED_SPORT_KEYS
+                    ):
                         continue
+                    # Also filter by llm_sport_category for markets without a sport FK
+                    if not market_sport_key and market.llm_sport_category:
+                        if market.llm_sport_category not in MY_STUFF_ALLOWED_CATEGORIES:
+                            continue
 
                 matched_by_id = bool(set(outcome_team_ids) & user_team_ids)
 
@@ -8367,7 +8479,11 @@ async def _score_futures(
                         if matched_by_name:
                             break
 
-                if not matched_by_id and not matched_by_name:
+                if (
+                    not matched_by_id
+                    and not matched_by_name
+                    and not _followed_sport_market
+                ):
                     continue
 
             # Collect matched outcome details for "why is this here?" context
@@ -9960,7 +10076,14 @@ async def _score_event_concepts(
         # None for an absent or ambiguous crown by design, and a settled concept
         # that cannot say what happened is the same empty envelope as an unsettled
         # one that cannot say what is likely.
-        _concept_can_render = bool(_leader) or bool(
+        # ux/1070 item 2: a fight card's main event — two fighters, two numbers,
+        # from the one two-sided market. It answers the card's question better
+        # than the outright leader does (which on a fight card is the most
+        # lopsided bout of the night, often not even the one the card is named
+        # for), so it is BOTH a thing to render and a thing that can render:
+        # a card carrying a real bout is never the bare tile Q407 Item 3 drops.
+        _headline_bout = c.get("headline_bout") if not _is_whathit else None
+        _concept_can_render = bool(_leader) or bool(_headline_bout) or bool(
             _is_whathit
             and _champion
             and (_champion.get("winner") or _champion.get("result_summary"))
@@ -10007,6 +10130,11 @@ async def _score_event_concepts(
                     # field, so the renderer's "has a leader" test is a presence
                     # test and an older client ignores it.
                     **({"leader": _leader} if _leader else {}),
+                    # ux/1070 item 2: the main event as a BOUT. Absent (not
+                    # null) when the card has no priced two-sided main event, so
+                    # a renderer that has not learned it — and every shipped iOS
+                    # build — keeps rendering exactly what it rendered before.
+                    **({"headline_bout": _headline_bout} if _headline_bout else {}),
                 },
                 # #235 Item 4: pin while live OR in the T+36h WHAT-HIT window.
                 "_marquee_pin": pin_state in ("live", "whathit"),
