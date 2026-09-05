@@ -226,6 +226,12 @@ _REPAIRS = {
     # generation invalidation and reports `success: false` if it cannot prove it.
     # Paging is a keyset: `?after_date=&after_id=` from `next_cursor`; `?offset=`
     # is refused BY NAME because this rail deletes from its own population.
+    # CAL-P1014 (#3262): a venue 429 is a BUDGET STOP, not a verdict. The page
+    # stops there, the refused market is not counted as examined and the cursor
+    # does not advance past it, so the resume asks it again — before this, 15 of
+    # every 40 markets were recorded `unknown` and stepped over for good. Read
+    # `stopped_on_venue_rate_limit`; if it is true on every call, lower `?limit=`
+    # (measured 2026-09-05: limit=10 drew no refusals, 20 drew 6, 40 drew 15).
     # Accepts ?limit=&sport=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
