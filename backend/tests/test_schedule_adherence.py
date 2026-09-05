@@ -1041,24 +1041,28 @@ class TestEmitSideCounterSaysWhichEndLostTheFires:
         assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.001)
 
     def test_a_subtraction_would_have_said_the_opposite(self):
-        # The mutation-shaped control. On the row above, `emitted - deliveries`
-        # is 15 - 2160 = -2145; floored at zero that reads "no loss" by luck,
-        # and with the operands the other way round (`deliveries - emitted`)
-        # it reads 2145 undelivered fires out of 15 published. Both are
-        # nonsense, and both are what publishing the DIFFERENCE would produce.
-        # The rates are equal, so the only correct answer is 0.
+        # THE MUTATION-SHAPED CONTROL, and it is deliberately the drift in the
+        # direction that does NOT get rescued by a clamp. A mature 24h emit
+        # counter against a delivery counter 600s old, both at 0.025/s: the
+        # correct answer is 0% loss, and `(emitted - delivered) / emitted` is
+        # (2160 - 15) / 2160 = 0.993 — a healthy beat reported as discarding
+        # 99% of its fires, on a surface whose job is to name a dead rail.
+        #
+        # The mirror row above (`test_wildly_drifted_windows_still_grade`) has
+        # the drift the other way, where a subtraction floors to zero and reads
+        # healthy BY LUCK. A difference is wrong in both directions; only one
+        # of them looks wrong.
         g = adherence(
             starts=0, starts_window_s=86400.0,
-            deliveries=2160, deliveries_window_s=86400.0,
-            emitted=15, emitted_window_s=600.0,
+            deliveries=15, deliveries_window_s=600.0,
+            emitted=2160, emitted_window_s=86400.0,
             interval_s=40.0,
         )
         assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.001)
-        assert g["undelivered_fraction"] <= 1.0
         # And the module publishes both counters WITH both windows, so a reader
         # can redo the division rather than trust it.
-        assert g["emitted"] == 15 and g["emitted_window_s"] == 600.0
-        assert g["deliveries"] == 2160 and g["deliveries_window_s"] == 86400.0
+        assert g["emitted"] == 2160 and g["emitted_window_s"] == 86400.0
+        assert g["deliveries"] == 15 and g["deliveries_window_s"] == 600.0
 
     def test_the_difference_itself_is_never_published(self):
         g = adherence(**self.BROKER_LOSS)
