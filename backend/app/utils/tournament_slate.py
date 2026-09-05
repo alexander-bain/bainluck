@@ -308,6 +308,104 @@ def _side_view(
     }
 
 
+def _linescore_field(
+    ours: list[Any],
+    listed: Optional[dict[str, Any]],
+    *,
+    home_entity_key: Any,
+    away_entity_key: Any,
+) -> dict[str, Any]:
+    """``{"linescore": ...}`` when ESPN states one for this fixture, else ``{}``.
+
+    Returns a dict to be splatted into the row, so a refusal contributes NO KEY
+    rather than a null.  Every refusal ``authority_games_line`` can give — not
+    played, no line at all, orientation unresolved, ragged — is the same thing
+    to this caller: there is no line to draw.  The reason is deliberately not
+    carried onto the row, because no renderer can act on it and a card with
+    nothing true to say about the score says nothing.
+
+    ═══ WHY THE HUB NEEDS THIS AT ALL (live/063, #2746) ═══
+
+    Measured on production 2026-09-05: all 18 rows of ``/tournaments/us-open``
+    came from the scoreboard pass, and the one match on court published
+    ``status_detail: "1st Set"`` with no score of any kind.  The FINISHED panel
+    two columns over was printing ``6-3, 6-2, 6-4`` for every match that had
+    ended.  So the page could say what a match FINISHED at and not what one is
+    AT — the reader who most needs the number is the only one denied it.
+
+    ``listed`` is the ``order_of_play`` entry and is the ONLY source read here.
+    It carries ``sides`` off the same scoreboard fetch that produced ``state``
+    and ``status_detail``, so the line and the caption beside it describe one
+    instant of one match rather than two reads stitched together.
+
+    ``ours`` is the two people IN THE ORDER THIS ROW'S ``sides`` ARE BUILT,
+    which is the whole of what the authority needs from us: the scoreboard
+    parser cannot know our home/away and :func:`orient_sides` refuses to guess
+    it.  Both row builders here have such an order and neither can borrow the
+    other's — the register path has its pinned pairing, the authority path has
+    ESPN's own top-to-bottom — so the order is a parameter rather than
+    something re-derived in here.
+
+    ═══ THE ANCHOR: WHY home/away IS NOT ENOUGH ON ITS OWN ═══
+
+    ``home``/``away`` is a POSITIONAL claim, true only relative to the ``sides``
+    list it was built beside.  Every renderer downstream is free to re-order
+    those sides — the hub sorts the favourite first, the bracket join adopts the
+    draw's top/bottom — and a positional score carried across a re-order is an
+    inverted result that nothing downstream doubts.  It is the exact failure
+    ``orient_sides`` refuses to risk upstream, re-introduced two layers later.
+
+    So the line states WHICH TWO ENTITIES its columns belong to.  A consumer
+    that re-orders sides re-orients the score by id — a comparison, not a guess
+    — and a consumer that cannot match the ids has a positive signal that it
+    must not draw the line at all.
+    """
+    if listed is None:
+        return {}
+    if len(ours) != 2 or not all(ours):
+        return {}
+    if not home_entity_key or not away_entity_key:
+        return {}
+
+    # LAZY, for the same reason this module's other cross-package imports are:
+    # `test_comparison_specimen` runs the specimen producer under `-S`, and
+    # `espn_tennis_anchor` reaches SQLAlchemy through its own import chain.
+    from app.utils.espn_tennis_anchor import authority_games_line
+
+    # ONE MALFORMED BOARD ENTRY MUST NOT COST THE CARD (gotcha #42).
+    #
+    # The line is an enrichment on a row that was complete without it, and the
+    # only source that can supply a broken `listed` is the live scoreboard —
+    # which is where every row of this card now comes from. An unguarded raise
+    # would blank the whole hub mid-tournament to avoid printing one set score,
+    # which is the trade backwards.
+    try:
+        built = authority_games_line([str(p) for p in ours], listed)
+    except Exception:  # noqa: BLE001 — a bad line costs the line, never the row
+        logger.warning(
+            "slate linescore failed for competition %s",
+            listed.get("espn_competition_id"),
+            exc_info=True,
+        )
+        return {}
+
+    if built.get("reason") is not None:
+        return {}
+    sets = built.get("sets") or []
+    if not sets:  # pragma: no cover — `no-line` is a named refusal above
+        return {}
+    return {
+        "linescore": {
+            "sets": [[int(h), int(a)] for h, a in sets],
+            "home_games": built.get("home_games"),
+            "away_games": built.get("away_games"),
+            "home_entity_key": str(home_entity_key),
+            "away_entity_key": str(away_entity_key),
+            "source": "espn",
+        }
+    }
+
+
 def build_match_row(
     reg: TournamentRegister,
     matchup: dict[str, Any],
@@ -644,6 +742,21 @@ def build_match_row(
         # ESPN's display text for that state ("2nd Set"). Beside the enum, never
         # instead of it: a renderer branches on `live_state` and prints this.
         "status_detail": status_detail,
+        # WHAT THE SETS WERE PLAYED TO (live/063, #2746), oriented to the
+        # register's pinned pairing.
+        #
+        # `views[i]["entity_key"] is players[i]` by construction of the loop
+        # above, so the display names are already in this row's own side order
+        # and each column's owner is named rather than positional. EMITTED ONLY
+        # WHEN IT EXISTS — `_linescore_field` returns `{}` on every refusal, and
+        # a `"linescore": null` on all 96 rows of a draw that has not started is
+        # bytes every reader pays for to be told nothing.
+        **_linescore_field(
+            [v["display_name"] for v in views],
+            listed,
+            home_entity_key=views[0]["entity_key"],
+            away_entity_key=views[1]["entity_key"],
+        ),
         # IS `scheduled_date` A TIME, OR A DAY WEARING ONE (Q463)?
         #
         # `True` means the source has not published an order of play for this
@@ -1020,6 +1133,22 @@ def authority_match_row(
         "live_state": str(listed.get("state") or "") or None,
         "status_detail": listed.get("status_detail"),
         "start_is_tbd": listed.get("start_is_tbd") is True,
+        # AND THE GAMES UNDER THAT SET LABEL (live/063, #2746).
+        #
+        # THIS is the path that matters for the ship. Measured on production
+        # 2026-09-05, all 18 rows of the US Open hub were built here — the
+        # register holds one round and the tournament is past it — so a line
+        # emitted only on the register path would be a line no reader sees.
+        #
+        # `ordered` is ESPN's own top-to-bottom, the same sequence `sides` was
+        # just built from, so `ordered[i]` and `sides[i]` are one player and the
+        # names below are already in this row's side order.
+        **_linescore_field(
+            [c.get("name") for c in ordered],
+            listed,
+            home_entity_key=sides[0]["entity_key"],
+            away_entity_key=sides[1]["entity_key"],
+        ),
         "sides": sides,
         # UNPRICED, `coherent: False` with `priced: False` is the released-draw
         # shape the card already renders (UX-P142): a full row, faces and names,

@@ -50,6 +50,7 @@ import {
   type PrematchPair,
   type RoundName,
 } from "./bracket";
+import { orientLinescore, type SlateLinescore } from "./linescore";
 import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
 import {
   formatSlateProbability,
@@ -177,6 +178,14 @@ export interface MatchListEntry {
    * is why `liveMatchLabel` refuses it rather than the row printing it.
    */
   statusDetail: string | null;
+  /**
+   * The set-by-set games (live/063, #2746), ORIENTED TO `sides` — or `null`.
+   *
+   * `null` means there is no line this row may draw, which covers both "ESPN
+   * states none" (the ordinary case for a match that has not started) and "the
+   * line could not be pointed at these two sides". It never means zero-all.
+   */
+  linescore: SlateLinescore | null;
   drawLabel: string | null;
   sides: [MatchListSide, MatchListSide];
   decided: boolean;
@@ -541,6 +550,19 @@ export function matchListFromSlate(
       startIsTbd: match.start_is_tbd === true,
       liveState: match.live_state ?? null,
       statusDetail: match.status_detail ?? null,
+      // ORIENTED TO THE SIDES AS DISPLAYED, NOT AS SERVED.
+      //
+      // `sides` was just sorted favourite-first, so on every row where the
+      // underdog was served first the backend's `home` column is now this
+      // row's SECOND side. Passing the line through unchanged would print the
+      // set score against the wrong player — a swapped `6-4, 2-1` that reads
+      // as a completely different match and that nothing on the card
+      // contradicts.
+      linescore: orientLinescore(
+        match.linescore,
+        sides[0].entityKey,
+        sides[1].entityKey,
+      ),
       drawLabel: match.draw_label ?? null,
       sides,
       decided,
@@ -681,6 +703,23 @@ export function matchListFromBracket(
         startIsTbd: joined?.start_is_tbd === true,
         liveState: joined?.live_state ?? null,
         statusDetail: joined?.status_detail ?? null,
+        // The bracket path gets the line from the SLATE row it joined to, and
+        // from nowhere else — a draw slot carries no score. `null` when the
+        // fixture is not on today's slate, which is the ordinary case for a
+        // bracket match days out.
+        //
+        // AND IT IS RE-ORIENTED, BECAUSE THE JOIN IS ORDER-BLIND. `pairKey`
+        // sorts its two keys so a slate row matches its bracket fixture
+        // whichever way round each names the pair — which is what makes the
+        // join work, and exactly what makes the score's columns unsafe to
+        // carry across it. These sides are the DRAW's top/bottom; the line's
+        // columns are the slate row's, and about half the time those are
+        // opposite.
+        linescore: orientLinescore(
+          joined?.linescore,
+          sides[0].entityKey,
+          sides[1].entityKey,
+        ),
         drawLabel: joined?.draw_label ?? null,
         sides,
         decided,

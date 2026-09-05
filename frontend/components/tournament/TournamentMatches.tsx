@@ -4,6 +4,7 @@ import React from "react";
 
 import EventCardShell from "@/components/EventCardShell";
 import LiquidityMark from "@/components/LiquidityMark";
+import { formatLinescore } from "@/lib/linescore";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -364,6 +365,9 @@ function MatchRow({
      attribute rather than overloading that one. */
   const inPlay = liveLabel !== null;
   const names = entry.sides.map((side) => side.displayName).join(" v ");
+  /* `entry.linescore` is already pointed at `entry.sides` by `matchList` — the
+     orientation is done where the sort that broke it happens, not here. */
+  const line = formatLinescore(entry.linescore);
 
   /* #2452: ONE rounding for the pair, here, where both sides are in scope. */
   const [firstPercent, secondPercent] = renderedDuelPercents(
@@ -392,7 +396,16 @@ function MatchRow({
         className="p-3.5 sm:p-3.5"
         dataAttrs={{ "data-match-card": entry.id }}
       >
-        <div className="mb-1 flex items-center gap-2 text-[10.5px] uppercase tracking-[0.06em] text-text-muted">
+        {/* `flex-wrap` because a five-set line is 23 characters and this row
+            has four other things in it (live/063). Measured at 390px: without
+            it the flex items SHRINK and their text wraps inside them, so
+            "6-4, 4-6, 7-6, 6-7, 6-6" broke after "6-" and put a lone "6" on the
+            next line — a set score split down the middle. Nothing clipped, so
+            an overflow check called it a fit; only the picture showed it.
+
+            A no-op for every row that already fitted, which is all of them: a
+            flex container only wraps once its content exceeds the line. */}
+        <div className="mb-1 flex flex-wrap items-center gap-2 text-[10.5px] uppercase tracking-[0.06em] text-text-muted">
           {liveLabel !== null && (
             <span
               className="inline-flex items-center gap-1 rounded bg-accent-live/15 px-1.5 py-0.5 font-semibold text-accent-live"
@@ -403,6 +416,28 @@ function MatchRow({
                 className="h-1.5 w-1.5 rounded-full bg-accent-live motion-safe:animate-pulse"
               />
               {liveLabel}
+            </span>
+          )}
+          {/* THE SET LINE, BESIDE THE BADGE THAT SAYS WHICH SET (live/063,
+              #2746).
+
+              It sits here, in the meta row, rather than under the names,
+              because "1ST SET" and "6-4, 2-1" are two halves of one sentence
+              about the same moment and a reader should not have to look in two
+              places for them.
+
+              Renders NOTHING when there is no line: `line` is empty for every
+              row `orientLinescore` refused and for every match that has not
+              started, so an upcoming row is byte-for-byte the row it was
+              before this shipped. That is the second direction of the guard —
+              the live row gains the score AND the quiet row stays quiet
+              (gotcha #43). */}
+          {line !== "" && (
+            <span
+              className="whitespace-nowrap tabular-nums normal-case tracking-normal text-text-secondary"
+              data-testid="match-linescore"
+            >
+              {line}
             </span>
           )}
           {time && <span className="tabular-nums">{time}</span>}
