@@ -306,15 +306,62 @@ _PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
 # So membership becomes discovered. These constants are the BOUNDS on that
 # discovery, not the membership itself.
 # ---------------------------------------------------------------------------
-#: Tags whose series are discovered. Deliberately one tag: this is the widening
-#: knob, and a tag goes in only once its open-event population has been
-#: measured against the fetch budget. `Sports` in full is 3,648 series and
-#: 1,263 with open events — discovery scoped to the whole category would need
-#: ~380s of paging against a 240s budget, so "discover everything" is not a
-#: braver version of this, it is a beat that finishes nothing.
-_DISCOVERY_TAGS = ("Tennis",)
-#: Hard cap on series one beat may ADD. Today's tennis selection is ~30.
-_DISCOVERY_MAX_SERIES = 40
+#: Tags whose series are discovered. A tag goes in only once its open-event
+#: population has been measured against the fetch budget. `Sports` in full is
+#: ~4,073 series with open events across 13,946 open events — discovery scoped
+#: to the whole category would need ~380s of paging against a 240s budget, so
+#: "discover everything" is not a braver version of this, it is a beat that
+#: finishes nothing.
+#:
+#: **Football added 2026-09-05 (lane1b/040).** Measured at the venue by tag
+#: catalog + one exhausted open-listing census (70 pages, 13,946 events, 22s),
+#: `scripts/census_sports_tag_coverage.py`, all nine SPORTS_TAGS:
+#:
+#:     tag              listed  live  openEv   UNCARRIED  selectable(openEv)
+#:     Football            552   264    2874        2744          40 / 958
+#:     Soccer             1403   580    3243        3243          40 / 390
+#:     Baseball            214    98     883         794          40 / 351
+#:     Basketball          534   138     321         315          40 / 199
+#:     Tennis (today)      140    39     329         300          27 / 179
+#:     Hockey               72    21      78          75          16 /  54
+#:     Golf                118    19      22          21          18 /  21
+#:     Olympics             46     0       0           0           0 /   0
+#:     Winter Olympics       0     0       0           0           0 /   0
+#:
+#: Football is the darkest tag by a wide margin and the one in season: 2,744
+#: open events the venue lists in series the hand list does not name. Soccer
+#: holds more raw events but 2,526 of its 3,243 are `heavy_payload_shape`
+#: (KXMLSGAME, KXLALIGAGAME…) — the #995 population — so its selectable yield is
+#: 390 against Football's 958. Soccer is the natural next widening once the
+#: market backfill's headroom is measured, not this one.
+_DISCOVERY_TAGS = ("Tennis", "Football")
+#: Hard cap on series one beat may ADD, across all tags, split per tag by
+#: `_fair_shares`. Raised 40 → 60 on 2026-09-05, sized by replaying the shipped
+#: per-series loop against the live venue rather than by arithmetic
+#: (`scripts/probe_discovery_fetch_cost.py`). The cost is NOT proportional to
+#: series count — football's nested pages carry 11,239 markets across 44 pages
+#: where tennis's 27 pages carry 815 — so the whole selection was timed:
+#:
+#:     cap 60 (Tennis 27 + Football 33, 64 pages): 10 samples,
+#:         median 16.7s, worst 22.3s, against `_DISCOVERY_RESERVE_S` = 25.0s
+#:     cap 54 (27 + 27, 58 pages): median 16.1s, worst 17.5s
+#:
+#: So 60 fits with the worst observation still inside the reserve. The single
+#: 22.3s outlier was a cold connection pool on the first run; the other nine
+#: samples span 15.8-17.5s. Cost is dominated by the fixed `sleep(0.2)` per page
+#: (12.8s of the 64-page total), which is why adding series is cheaper than the
+#: series count suggests and why the page ceiling matters more than the cap.
+#:
+#: An overrun is survivable, not silent: the loop is deadline-checked per series
+#: AND per page, so it truncates, reports `fetch_truncated_after`, and — because
+#: the tags are interleaved — costs every tag its smallest series rather than one
+#: tag its whole draw. It never eats the market backfill's 45s floor.
+#:
+#: 60 is also the number at which tennis loses nothing. Its selection is 27, so
+#: on an equal split of 30 it releases 3 to Football, which takes 33. Measured:
+#: `selected_per_tag = {'Football': 33, 'Tennis': 27}`, 0 tennis series lost
+#: against the shipped tennis-only selection.
+_DISCOVERY_MAX_SERIES = 60
 #: Refuse a series holding more open events than one beat could drain.
 _DISCOVERY_MAX_OPEN_EVENTS = 100
 #: Events per page for a discovered series. `_MAIN_SCAN_PAGE_LIMIT`'s value and
@@ -1089,6 +1136,14 @@ class KalshiAPIService(BaseAPIClient):
         here is the venue's own catalog, so a series we have never held is
         exactly as visible as one we have.
 
+        The receipt carries ``by_tag`` — the tickers themselves, per tag, not
+        just a count. Selection needs to know which tag a ticker came from,
+        because the cap is split per tag rather than shared (lane1b/040): a flat
+        list cannot express "tennis keeps its 27", and ranked flat against
+        Football's catalog tennis drops to 3. ``by_tag`` lives in the catalog
+        sub-receipt, which ``summarize_discovery_receipt`` drops, so it costs the
+        persisted ring nothing.
+
         Never raises, for the same reason as the census.
         """
         import asyncio
@@ -1097,6 +1152,7 @@ class KalshiAPIService(BaseAPIClient):
         tickers: list[str] = []
         seen: set[str] = set()
         per_tag: dict[str, int] = {}
+        by_tag: dict[str, list[str]] = {}
         requests = 0
         error: Optional[str] = None
 
@@ -1130,6 +1186,7 @@ class KalshiAPIService(BaseAPIClient):
                         if t and t not in seen:
                             seen.add(t)
                             tickers.append(t)
+                            by_tag.setdefault(tag, []).append(t)
                             per_tag[tag] = per_tag.get(tag, 0) + 1
                     page += 1
                     if not cursor:
@@ -1139,7 +1196,12 @@ class KalshiAPIService(BaseAPIClient):
                 logger.warning("Kalshi series discovery failed for tag %s: %s", tag, e)
                 continue
 
-        receipt = {"tags": list(tags), "per_tag": per_tag, "requests": requests}
+        receipt = {
+            "tags": list(tags),
+            "per_tag": per_tag,
+            "by_tag": by_tag,
+            "requests": requests,
+        }
         if error:
             receipt["error"] = error
         return tickers, receipt
@@ -1192,8 +1254,13 @@ class KalshiAPIService(BaseAPIClient):
             deadline=deadline, progress_cb=progress_cb,
         )
 
+        # Tagged when the catalog said which tag each ticker came from, so the
+        # cap splits per tag instead of letting the biggest catalog take it all
+        # (lane1b/040). Falls back to the flat list if `by_tag` is missing — a
+        # degraded catalog must still select something.
+        _by_tag = disc_receipt.get("by_tag")
         selected, receipt = select_discovered_series(
-            discovered=discovered,
+            discovered=_by_tag if _by_tag else discovered,
             open_counts=counts,
             guaranteed=_SPORTS_SERIES_TICKERS,
             heavy_tokens=_HEAVY_TOKENS,

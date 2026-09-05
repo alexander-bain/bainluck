@@ -538,7 +538,14 @@ class TestWiring:
     def test_discovery_tags_are_measured_before_they_are_added(self):
         # Widening this is the whole knob. It is asserted so that adding a tag
         # is a deliberate act with a test to update, not a one-word edit.
-        assert ka._DISCOVERY_TAGS == ("Tennis",)
+        # Football added 2026-09-05 (lane1b/040) — see FOOTBALL_OPEN_COUNTS for
+        # the venue measurement that chose it over the other seven tags.
+        assert ka._DISCOVERY_TAGS == ("Tennis", "Football")
+
+    def test_the_series_cap_is_the_measured_one(self):
+        # 40 -> 60. Raising it further without re-timing the loop is how the
+        # discovery reserve starts overrunning the market backfill's floor.
+        assert ka._DISCOVERY_MAX_SERIES == 60
 
     def test_discovered_series_fetch_with_nested_markets_page_size(self):
         # 50, and for #995's reason: discovered series are fetched WITH nested
