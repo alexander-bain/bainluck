@@ -330,6 +330,7 @@ class TestBeatScheduleCompleteness:
         # never makes a third-party call inside a GET.
         "sync-tournament-results",
         "link-tournament-matchups",
+        "schedule-sentinel-daily",
         "horizon-sentinel-daily",
         "settled-concept-sentinel-daily",
         "board-sentinel-daily",

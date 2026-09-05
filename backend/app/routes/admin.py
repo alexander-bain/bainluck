@@ -1708,6 +1708,63 @@ async def get_grid_sentinel_last(
     )
 
 
+@router.post("/schedule-sentinel/run")
+async def trigger_schedule_sentinel(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    file_issues: bool = Query(True, description="File GitHub issues (False = detect-only)"),
+    leagues: str = Query(None, description="Comma-separated league slugs (default: all registered)"),
+    inline: bool = Query(False, description="Run inline and return the scorecard (default: enqueue on worker)"),
+):
+    """#1796 (Queue 342): on-demand run of the Schedule Sentinel — the
+    COMPLETENESS check.
+
+    Every other check verifies that what exists renders; this one reconciles our
+    per-league game set against an AUTHORITATIVE external schedule (MLB Stats API
+    / ESPN) over a rolling yesterday/today/tomorrow window, so a game that was
+    never created stops being invisible. Reports MISSING / EXTRA / DUPLICATE /
+    MISATTACHED (FK-dereferenced) / SCORE DISAGREEMENT, classified REAL vs
+    EXPLAINED vs WATCH so RED means REAL. Coverage is reported as "N of M leagues
+    have a truth source" — an uncovered league is NOT COVERED, never green.
+    ``?inline=true&file_issues=false`` is the verification form. Read-only against
+    production + DB; never writes market data (gotcha #21)."""
+    _check_admin_secret(secret, request=request)
+
+    league_list = (
+        [s.strip() for s in leagues.split(",") if s.strip()] if leagues else None
+    )
+
+    if inline:
+        from app.tasks.schedule_sentinel import _run_schedule_sentinel
+
+        return await _run_schedule_sentinel(
+            file_issues=file_issues, leagues=league_list
+        )
+
+    result = _safe_send_task(
+        "app.tasks.schedule_sentinel",
+        kwargs={"file_issues": file_issues, "leagues": league_list},
+    )
+    return {"status": "enqueued", "task_id": result.id}
+
+
+@router.get("/schedule-sentinel/last")
+async def get_schedule_sentinel_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """#1796 (Queue 342): read the last cached Schedule Sentinel run (verdict
+    scorecard + coverage label + filed issues). Lets an enqueued worker run be
+    inspected without re-running, and is the persisted scorecard the cockpit
+    schedule-completeness tile consumes."""
+    _check_admin_secret(secret, request=request)
+
+    return await _sentinel_last_payload(
+        "bainluck:schedule_sentinel:last", db, identity="sentinel:schedule"
+    )
+
+
 @router.post("/grid-register-sentinel/run")
 async def trigger_grid_register_sentinel(
     request: Request,

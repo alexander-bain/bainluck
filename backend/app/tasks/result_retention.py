@@ -158,6 +158,7 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.refresh_prop_families",
         "app.tasks.regenerate_tags",
         "app.tasks.regrade_polymarket_under_signflip",
+        "app.tasks.schedule_sentinel",
         "app.tasks.seed_entity_registry",
         "app.tasks.send_bug_fixed_email",
         "app.tasks.settled_concept_sentinel",

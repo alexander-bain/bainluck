@@ -717,6 +717,7 @@ HEAVY_TASKS = {
     "app.tasks.grid_sentinel",
     "app.tasks.grid_register_sentinel",
     "app.tasks.tournament_register_sentinel",
+    "app.tasks.schedule_sentinel",
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
@@ -3260,6 +3261,31 @@ def tournament_register_sentinel(self, file_issues=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=840, time_limit=900,
+                 name="app.tasks.schedule_sentinel")
+def schedule_sentinel(self, file_issues=True, leagues=None):
+    """Schedule Sentinel (#1796, Queue 342): the COMPLETENESS check.
+
+    Every other check verifies that what exists renders; this one verifies that
+    what should exist, exists. It reconciles our per-league game set against an
+    AUTHORITATIVE external schedule (MLB Stats API for MLB, ESPN elsewhere) over a
+    rolling yesterday/today/tomorrow window and reports four classes — MISSING,
+    EXTRA/DUPLICATE, MISATTACHED (dereferencing the team FK, because #1779's rows
+    had correct names and wrong ids), and SCORE DISAGREEMENT on settled games.
+    Classifies REAL vs EXPLAINED (postponement / rain-out / doubleheader
+    re-schedule) vs WATCH so RED means REAL, files ONE deduped issue per league,
+    and states coverage as "N of M leagues have a truth source" — a league with no
+    authority is NOT COVERED, never green. Read-only; files work, never data
+    (gotcha #21). The 840s soft limit (under the 900s hard limit, clear of the
+    global 300s) plus the run's 480s inner deadline keep it from SIGKILLing
+    untracked (#966)."""
+    from app.tasks.schedule_sentinel import _run_schedule_sentinel
+    return _tracked_run(
+        "schedule_sentinel",
+        _run_schedule_sentinel(file_issues=file_issues, leagues=leagues),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=840, time_limit=900, name="app.tasks.horizon_sentinel")
 def horizon_sentinel(self, file_issues=True):
     """Horizon Sentinel (Queue #223): read THE HORIZON CALENDAR
@@ -5027,6 +5053,33 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=36, hour=7),  # Daily 07:36 UTC
         "options": {"queue": "heavy"},
     },
+    "schedule-sentinel-daily": {
+        # #1796 (Queue 342): the COMPLETENESS sentinel — reconciles our per-league
+        # game set against an authoritative external schedule so a game that was
+        # never created stops being invisible to every check we have. Files one
+        # deduped issue per RED league; a league with no truth source is reported
+        # NOT COVERED rather than scored green. heavy queue (#233).
+        #
+        # 07:36 -> 08:00 (integrator rescue, 2026-09-05). This branch was written
+        # against a master where 07:36 was free; `tournament-register-sentinel-daily`
+        # (UX-P134) has since taken that exact minute on the same queue, so the
+        # branch's original slot is now a double-book that
+        # `test_beat_does_not_collide_with_a_sibling_sentinel` (this branch's own
+        # guard, below) refuses.
+        #
+        # 08:00 rather than another minute inside the 07:32-07:40 gap, because the
+        # load-bearing half of the original intent is "after the 07:05 MLB self-heal
+        # so it measures the healed slate", and the other half was only ever about
+        # not contending for the heavy dyno. This is the LONGEST task in the morning
+        # block (840s soft limit vs 300s for its siblings), so a slot wedged between
+        # two sentinels four minutes apart could never honour "never contended"
+        # anyway — it would run straight through them. 08:00 sits after the whole
+        # stagger (which now ends 07:55 with the board sentinel) and is the first
+        # minute at which a 14-minute run collides with nothing.
+        "task": "app.tasks.schedule_sentinel",
+        "schedule": crontab(minute=0, hour=8),  # Daily 08:00 UTC
+        "options": {"queue": "heavy"},
+    },
     "horizon-sentinel-daily": {
         # Queue #223: marquee-event early-warning sentinel. Daily (07:40 UTC,
         # after the grid sentinel) — reads THE HORIZON CALENDAR
@@ -5055,10 +5108,18 @@ celery_app.conf.beat_schedule = {
         # execution source — duplicate sentinel fingerprints, stale Inbox cards,
         # template-P1 share, blocked-in-Inbox, missing area labels. Classifies REAL
         # vs UNKNOWN so RED means real; files one deduped cleanup issue and closes
-        # it on green via the shared filing rail. Daily (07:50 UTC, after the other
-        # sentinels so it observes a settled board). heavy queue (#233).
+        # it on green via the shared filing rail. Daily, LAST in the morning stagger
+        # so it observes a settled board. heavy queue (#233).
+        #
+        # 07:50 -> 07:55 (queue 388). `typeahead-index-sentinel` landed on master at
+        # 07:50 while this branch already held 07:50, so the collision existed in
+        # NEITHER tree alone and appeared only in the PR's merge ref — which is what
+        # `test_beat_does_not_collide_with_a_sibling_sentinel` is for (#232's
+        # congestion, #233's protected window). Both authors' stated intents are
+        # honoured by moving THIS one: typeahead only asks to be after the 07:45
+        # settled-concept sentinel, while this task asks to be last.
         "task": "app.tasks.board_sentinel",
-        "schedule": crontab(minute=50, hour=7),  # Daily 07:50 UTC
+        "schedule": crontab(minute=55, hour=7),  # Daily 07:55 UTC
         "options": {"queue": "heavy"},
     },
     "anchor-schedule-sentinel-daily": {
