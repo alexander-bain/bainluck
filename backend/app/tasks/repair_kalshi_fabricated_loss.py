@@ -95,15 +95,23 @@ invalidation could still report green having done nothing:
     a newer checkpoint's banked phases are provably still sitting there — counted
     as success. The record in the store is now read back and judged by
     ``app/utils/calibration_invalidation.main_checkpoint_is_invalidation``.
-4b. **The invalidation obligation OUTLIVES the response.** The apply commits its
-    rows before invalidating, so a failed invalidation is a debt; that debt used
-    to vanish with the HTTP response. A retry of the same plan then drifted on
-    its own committed row, called the invalidation with an empty id set, got
-    ``nothing_written`` and returned ``success: true``. The debt is now persisted
-    at :data:`OBLIGATION_IDENTITY` BEFORE the invalidation is attempted, a retry
-    retries that exact obligation's market ids, and ``nothing_written`` is a
-    discharge only for a plan proven never to have written — never for one whose
-    legs drifted, and never for one carrying an open debt.
+4b. **The invalidation obligation OUTLIVES the response.** Rows are committed
+    before the curve is invalidated, so a failed invalidation is a debt; that
+    debt used to vanish with the HTTP response. A retry of the same plan then
+    drifted on its own committed row, called the invalidation with an empty id
+    set, got ``nothing_written`` and returned ``success: true``. The debt now
+    lives at :data:`OBLIGATION_IDENTITY`, a retry retries that exact
+    obligation's market ids, and ``nothing_written`` is a discharge only for a
+    plan proven never to have written — never for one whose legs drifted, and
+    never for one carrying an open debt.
+4c. **The debt is staged in the transaction that creates it** (CAL-P1009-R,
+    CERT-1872). "Before the invalidation" was still after the COMMIT, and a
+    process loss in that interval left a stale published curve with no durable
+    retry handle at all. Both writers of the one slot — the apply and the
+    restore — now stage their OPEN debt through :func:`_stage_obligation` in the
+    same transaction as the rows, gated on containment read back from the store,
+    and commit once. Rows and the debt they owe land together or not at all; a
+    staging failure rolls the whole thing back and no row moves.
 
 The fifth finding is answered in ``app/utils/kalshi_fabricated_loss.py``: the
 venue-to-stored-leg join now lives in :func:`~app.utils.kalshi_fabricated_loss.plan_market_legs`,
@@ -149,14 +157,17 @@ from sqlalchemy import text
 
 from app.utils.calibration_invalidation import (
     INVALIDATION_OBLIGATION_SCHEMA,
+    RESTORE_DISCHARGES,
     discharge_obligation,
     invalidation_discharged,
     main_checkpoint_is_invalidation,
     new_obligation,
+    obligation_contains,
     obligation_is_open,
     obligation_leg_ids,
     obligation_market_ids,
     obligation_plan_hash,
+    obligation_retry_instruction,
 )
 from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
@@ -819,6 +830,13 @@ async def _load_receipt(plan_hash: str):
 
 OBLIGATION_IDENTITY = "calibration:repair:kalshi_fabricated_loss:invalidation_obligation"
 
+#: The two writers of that one slot. CAL-P1009: they move the same rows in
+#: OPPOSITE directions, so an open debt must say which one made it — the escape
+#: from an unpaid invalidation is to re-run the action that created it, and
+#: guessing wrong redoes a repair somebody deliberately undid.
+OBLIGATION_OWNER_APPLY = "repair:kalshi-fabricated-loss"
+OBLIGATION_OWNER_RESTORE = "repair:kalshi-fabricated-loss-restore"
+
 #: An obligation must never age out of visibility. A debt that becomes
 #: unreadable because it got old is the same false-green one door down, so the
 #: bound is a year and an expiry reads as UNREADABLE (which refuses) rather than
@@ -869,6 +887,75 @@ async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
         return False, f"obligation persist raised: {type(exc).__name__}"
     ok = result.get("status") in ("ok", "superseded")
     return ok, "ok" if ok else f"obligation persist rejected: {result.get('status')}"
+
+
+async def _stage_obligation(session, record: dict[str, Any]) -> tuple[bool, str]:
+    """STAGE the debt in the caller's open transaction. ``(ok, note)``.
+
+    CAL-P1009-R (CERT-1872). Banking the OPEN debt on its own session *after*
+    the rows were committed left a window with a name: the rows land, the record
+    of what they owe does not, and a process loss in between leaves the
+    published curve stale with nothing durable naming what would pay it. That is
+    the same hole CERT-1858 closed one slot over for the undo receipt, and the
+    same answer applies — the debt is staged in the SAME transaction as the row
+    mutations and the caller commits ONCE. Rows and the debt they create land
+    together or not at all; a staging failure is the caller's rollback, and no
+    row moves.
+
+    (The sibling rail ``repair_pm_never_graded`` reaches the same doctrine from
+    the other side, opening an intent over the APPROVED set before its first
+    write and refusing if it cannot. Here the debt is exactly what was written,
+    which is knowable only once the loop has run — so it rides the transaction
+    instead of preceding it.)
+
+    Read-back is the gate, never the status: see
+    :func:`~app.utils.calibration_invalidation.obligation_contains`.
+    """
+    from app.services.durable_snapshots import publish_snapshot_in_txn, read_snapshot
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_in_txn(
+            session,
+            DurableEnvelope.build(
+                identity=OBLIGATION_IDENTITY,
+                schema_version=INVALIDATION_OBLIGATION_SCHEMA,
+                payload=record,
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        return False, f"obligation stage raised: {type(exc).__name__}"
+
+    status = result.get("status")
+    try:
+        back = await read_snapshot(
+            session,
+            OBLIGATION_IDENTITY,
+            expected_version=INVALIDATION_OBLIGATION_SCHEMA,
+            max_age_s=_OBLIGATION_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"obligation read-back raised: {type(exc).__name__}"
+    if back.status == "missing":
+        return (
+            False,
+            f"obligation absent after staging ({status}): this write did not land",
+        )
+    if not back.ok or back.envelope is None:
+        return False, f"obligation not readable after staging: {back.status}"
+
+    contained, why = obligation_contains(
+        back.envelope.payload,
+        plan_hash=record["plan_hash"],
+        owner=record["owner"],
+        market_ids=record["market_ids"],
+        leg_ids=record["leg_ids"],
+    )
+    if not contained:
+        return False, f"obligation does not carry this debt ({status}): {why}"
+    return True, f"ok ({status})"
 
 
 async def _main_checkpoint_after_read() -> tuple[bool, str, str]:
@@ -1384,6 +1471,11 @@ async def _apply_reviewed_plan(session, plan_hash, started):
     showed that the debt used to die with the HTTP response, after which a retry
     of the same plan drifted on its own committed row, invalidated nothing, and
     reported ``success: true``. The ledger is what a retry retries.
+
+    CAL-P1009-R (CERT-1872) closes the last gap in that: the OPEN debt is STAGED
+    IN THE SAME TRANSACTION as the rows, not published after the commit, so the
+    interval in which a process loss could take the debt and leave the rows no
+    longer exists. See :func:`_stage_obligation`.
     """
     plan, reason = await _load_plan()
     ok, refusals = bind_apply(plan, decode_reason=reason, presented_hash=plan_hash)
@@ -1425,7 +1517,14 @@ async def _apply_reviewed_plan(session, plan_hash, started):
 
     prior_open = prior is not None and obligation_is_open(prior)
     prior_hash = obligation_plan_hash(prior) if prior_open else None
-    if prior_open and prior_hash != plan.plan_hash:
+    prior_owner = prior.get("owner") if prior_open and isinstance(prior, dict) else None
+    # CAL-P1009: a debt the RESTORE created is never dischargeable by an apply,
+    # not even of its own plan_hash. Re-applying it does pay the curve — by
+    # rewriting the very repair the restore undid, which is a decision no
+    # retry-shaped call gets to make silently. Both mismatch cases refuse under
+    # the same name, and the reason quotes the record instead of assuming it.
+    restore_owned = prior_owner == OBLIGATION_OWNER_RESTORE
+    if prior_open and (restore_owned or prior_hash != plan.plan_hash):
         return {
             "apply": True,
             "measured": False,
@@ -1434,11 +1533,17 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                 "plan_hash": prior_hash,
                 "market_ids": obligation_market_ids(prior),
                 "leg_ids": obligation_leg_ids(prior),
+                "owner": prior_owner,
+                "discharged_by": obligation_retry_instruction(prior),
             },
             "reason": (
-                "A previous apply committed rows whose calibration invalidation "
-                "never discharged. Re-apply THAT plan_hash until it does; a new "
-                "page would compound an unpaid debt against the published curve."
+                "A previous "
+                + ("restore" if restore_owned else "apply")
+                + " committed rows whose calibration invalidation never "
+                "discharged, and this call cannot pay that debt: "
+                + obligation_retry_instruction(prior)
+                + " A new page would compound an unpaid debt against the "
+                "published curve."
             ),
             "success": False,
             "elapsed_s": round(time.monotonic() - started, 1),
@@ -1617,8 +1722,58 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "elapsed_s": round(time.monotonic() - started, 1),
         }
 
+    # --- The debt, staged in the SAME transaction as the rows ----------------
+    # CAL-P1009-R (CERT-1872) named this window on the restore; it is the same
+    # window here, on the writer that made the ledger necessary in the first
+    # place. Committing the rows and only then publishing the OPEN debt leaves
+    # an interval in which a process loss takes the debt with it. The union, not
+    # this call's `written` set: on a retry the rows are already committed, so
+    # `written` is empty and the ledger is the ONLY surviving record of what the
+    # curve is owed.
+    owed_market_ids = sorted({index[i].market_id for i in written} | set(prior_ids))
+    owed_leg_ids = sorted(set(written) | set(prior_legs))
+    receipt = (
+        new_obligation(
+            plan_hash=plan.plan_hash,
+            market_ids=owed_market_ids,
+            leg_ids=owed_leg_ids,
+            owner=OBLIGATION_OWNER_APPLY,
+        )
+        if written
+        else (prior if prior_open else None)
+    )
+
+    obligation_persisted, obligation_note = True, "nothing owed"
     if written:
+        obligation_persisted, obligation_note = await _stage_obligation(session, receipt)
+        if not obligation_persisted:
+            await session.rollback()
+            return {
+                "apply": True,
+                "measured": False,
+                "refused": ["INVALIDATION_DEBT_NOT_STAGED"],
+                "plan_hash": plan.plan_hash,
+                "obligation_identity": OBLIGATION_IDENTITY,
+                "obligation_note": obligation_note,
+                "legs_written": 0,
+                "rolled_back": True,
+                "reason": (
+                    "The invalidation these rows would owe the published curve "
+                    "could not be staged, so the whole transaction was rolled "
+                    "back and NO row was changed. Rows committed with no durable "
+                    "debt can leave the curve stale with nothing naming what "
+                    "would pay it. Retry the same plan_hash."
+                ),
+                "prices_touched": False,
+                "success": False,
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         await session.commit()
+    elif owed_market_ids:
+        # A retry whose rows already landed: it owes nothing NEW and stages
+        # nothing. The OPEN record in the slot is the debt, and re-writing it
+        # would be a durable write inside a transaction this call never commits.
+        obligation_note = "carried forward — the open record in the slot is the debt"
 
     # Re-READ rather than trust the rowcounts: a mutation that fails to apply
     # reports green, so the proof is the database's own answer.
@@ -1643,23 +1798,6 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "winners_now": row.winners_now,
             "scope": "the markets in THIS plan only",
         }
-
-    # --- The debt, recorded BEFORE it is paid --------------------------------
-    # The union, not this call's `written` set. On a retry the rows are already
-    # committed, so `written` is empty and the ledger is the ONLY surviving
-    # record of what the curve is owed. Persisting first means a crash between
-    # the write and the invalidation leaves the debt visible rather than gone.
-    owed_market_ids = sorted({index[i].market_id for i in written} | set(prior_ids))
-    owed_leg_ids = sorted(set(written) | set(prior_legs))
-    receipt = new_obligation(
-        plan_hash=plan.plan_hash,
-        market_ids=owed_market_ids,
-        leg_ids=owed_leg_ids,
-        owner="repair:kalshi-fabricated-loss",
-    )
-    obligation_persisted, obligation_note = (
-        await _save_obligation(receipt) if owed_market_ids else (True, "nothing owed")
-    )
 
     invalidation = await invalidate_calibration_generation(session, set(owed_market_ids))
 
@@ -1757,6 +1895,9 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             },
             "owed_market_ids": owed_market_ids,
             "owed_leg_ids": owed_leg_ids,
+            # CAL-P1009-R: staged in the same transaction as the rows it is the
+            # debt for, not published after them.
+            "staged_with_the_rows": bool(written),
             "persisted_before_invalidating": obligation_persisted,
             "persist_note": obligation_note,
             "discharged": discharged,
@@ -1835,6 +1976,18 @@ async def restore(
        — the same discipline ``apply=true`` is held to, for the same reason.
     4. **A row that has moved is reported by id and skipped.** Never widened,
        never retried without a fresh receipt.
+    5. **It joins the invalidation obligation ledger** (CAL-P1009). A restore
+       moves grades, so it owes the published curve an invalidation exactly as
+       an apply does — and it writes the same one durable slot. Before it
+       reverses anything it reads the ledger and refuses if the read is UNKNOWN;
+       its own OPEN debt is STAGED IN THE TRANSACTION THAT REVERSES THE ROWS
+       (CAL-P1009-R, CERT-1872 — banking it after the commit left a window in
+       which a process loss took the debt and left the curve stale), carrying
+       any prior debt's ids forward in the union so the slot never drops one;
+       and it discharges only on the proved invalidation. The record says a
+       RESTORE discharges it: the previous shape would have told an operator to
+       re-apply the plan, which pays the curve by redoing the repair the restore
+       had just undone.
 
     The dry-run tells you what it would touch without touching it. It reads the
     receipt and reports, and it deliberately does NOT pre-check the rows: a
@@ -1916,6 +2069,35 @@ async def restore(
             "success": True,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
+
+    # --- The outstanding debt, read BEFORE the first write -------------------
+    # CAL-P1009. The obligation ledger is ONE slot and the apply already writes
+    # it, so a restore that reversed rows and then banked its own debt without
+    # reading first would ERASE an apply's unpaid invalidation — the single-slot
+    # hazard, on the recovery path. Reading first lets this call carry that debt
+    # forward in its own record instead of overwriting it. UNKNOWN is not "no
+    # debt": reversing rows while unable to read what is owed is how the union
+    # loses an id.
+    prior, prior_note = await _load_obligation()
+    if prior_note not in ("ok", "missing"):
+        return {
+            "restore": True,
+            "apply": True,
+            "measured": False,
+            "refused": ["OBLIGATION_LEDGER_UNREADABLE"],
+            "obligation_note": prior_note,
+            "presented_plan_hash": plan_hash,
+            "reason": (
+                "The invalidation obligation ledger could not be read, so this "
+                "restore cannot tell an unpaid invalidation from none — and its "
+                "own debt would land in the same slot. Nothing was written."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+    prior_open = prior is not None and obligation_is_open(prior)
+    prior_ids = obligation_market_ids(prior) if prior_open else []
+    prior_legs = obligation_leg_ids(prior) if prior_open else []
 
     reversed_ids: list[int] = []
     drift: list[dict[str, Any]] = []
@@ -2021,21 +2203,99 @@ async def restore(
             "elapsed_s": round(time.monotonic() - started, 1),
         }
 
+    # --- The debt, staged in the SAME transaction as the reversals -----------
+    # CAL-P1009-R (CERT-1872). Recording it after the commit was still a hole:
+    # committing the reversed rows and only then publishing the OPEN debt leaves
+    # an interval in which a process loss takes the debt with it, and what
+    # survives is a stale published curve with no durable retry handle. So the
+    # debt rides the reversal's own transaction — both, or neither.
+    #
+    # The union carries any prior open debt forward. Invalidation here is
+    # WHOLESALE by construction (it discards the staged cursor and the main
+    # checkpoint outright), so one proved invalidation genuinely pays every id
+    # in the union, and the one slot never drops one.
+    touched_markets = sorted({index[i]["market_id"] for i in reversed_ids})
+    owed_market_ids = sorted(set(touched_markets) | set(prior_ids))
+    owed_leg_ids = sorted(set(reversed_ids) | set(prior_legs))
+    receipt = (
+        new_obligation(
+            plan_hash=plan_hash,
+            market_ids=owed_market_ids,
+            leg_ids=owed_leg_ids,
+            owner=OBLIGATION_OWNER_RESTORE,
+            retry_instruction=RESTORE_DISCHARGES,
+        )
+        if reversed_ids
+        else (prior if prior_open else None)
+    )
+
+    obligation_persisted, obligation_note = True, "nothing owed"
     if reversed_ids:
+        obligation_persisted, obligation_note = await _stage_obligation(session, receipt)
+        if not obligation_persisted:
+            await session.rollback()
+            return {
+                "restore": True,
+                "apply": True,
+                "measured": False,
+                "refused": ["INVALIDATION_DEBT_NOT_STAGED"],
+                "plan_hash": plan_hash,
+                "obligation_identity": OBLIGATION_IDENTITY,
+                "obligation_note": obligation_note,
+                "legs_reversed": 0,
+                "rolled_back": True,
+                "reason": (
+                    "The invalidation these reversals would owe the published "
+                    "curve could not be staged, so the whole transaction was "
+                    "rolled back and NO row was reversed. Reversed rows whose "
+                    "debt is not durable can leave the curve stale with nothing "
+                    "naming what would pay it, and reporting that state honestly "
+                    "is not a substitute for not creating it. Retry the same "
+                    "plan_hash."
+                ),
+                "prices_touched": False,
+                "success": False,
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         await session.commit()
+    elif owed_market_ids:
+        # Nothing left to reverse, so this call owes nothing NEW and stages
+        # nothing: the OPEN record already in the slot IS the debt, and
+        # re-writing it would be a durable write inside a transaction this call
+        # never commits. This is the retry the ledger exists for — the ids come
+        # from that record and the invalidation below is what pays them.
+        obligation_note = "carried forward — the open record in the slot is the debt"
 
     # Same discipline as the apply: the curve is invalidated and the
     # invalidation is PROVED, not declared. A restore moves grades, so a banked
     # unit computed from the repaired rows is as wrong as one computed from the
     # unrepaired rows would have been.
-    touched_markets = sorted({index[i]["market_id"] for i in reversed_ids})
-    invalidation = await invalidate_calibration_generation(session, set(touched_markets))
+    invalidation = await invalidate_calibration_generation(session, set(owed_market_ids))
     discharged, discharge_note = invalidation_discharged(
         status=invalidation["status"],
         wrote_rows=bool(reversed_ids),
         drift_count=len(drift),
-        prior_obligation_open=False,
+        prior_obligation_open=prior_open,
     )
+
+    obligation_cleared = True
+    clear_note = "nothing owed"
+    if owed_market_ids:
+        if discharged:
+            obligation_cleared, clear_note = await _save_obligation(
+                discharge_obligation(
+                    receipt,
+                    proof={
+                        "staged_after_read": invalidation.get("banked_units_after"),
+                        "main_checkpoint_after_read": invalidation.get(
+                            "main_checkpoint_after_read"
+                        ),
+                    },
+                )
+            )
+        else:
+            obligation_cleared = False
+            clear_note = "left OPEN — the invalidation has not discharged"
 
     attempted = sorted(reversed_ids + [d["leg_id"] for d in drift])
     attempted_equals_receipt = attempted == sorted(index)
@@ -2063,6 +2323,23 @@ async def restore(
         "calibration_invalidation": invalidation,
         "invalidation_discharged": discharged,
         "invalidation_note": discharge_note,
+        # CAL-P1009: the restore's own debt, in the ledger the apply reads.
+        "invalidation_obligation": {
+            "identity": OBLIGATION_IDENTITY,
+            "owner": (receipt or {}).get("owner", OBLIGATION_OWNER_RESTORE),
+            "carried_prior_debt": bool(prior_ids or prior_legs),
+            "prior_obligation_open": prior_open,
+            "market_ids": owed_market_ids,
+            "leg_ids": owed_leg_ids,
+            # CAL-P1009-R: not "persisted, afterwards" — staged in the same
+            # transaction as the rows it is the debt for.
+            "staged_with_the_reversals": bool(reversed_ids),
+            "persisted_before_invalidating": obligation_persisted,
+            "persist_note": obligation_note,
+            "discharged": obligation_cleared,
+            "discharge_note": clear_note,
+            "discharged_by": obligation_retry_instruction(receipt),
+        },
         "declared_curve_movement": declared_curve_movement(
             winners_restored=-winners_unrestored, losses_retracted=-retractions_undone
         ),
@@ -2070,12 +2347,17 @@ async def restore(
         "cursor_contract": contract,
         "prices_touched": False,
         "success": (
-            discharged and attempted_equals_receipt and contract["action"] != "REFUSE"
+            discharged
+            and obligation_persisted
+            and obligation_cleared
+            and attempted_equals_receipt
+            and contract["action"] != "REFUSE"
         ),
         "success_note": (
-            "success is FALSE unless every leg the receipt names was ATTEMPTED "
-            "and the calibration invalidation proved itself. Rows may be "
-            "reversed while success is false; drift is reported, never hidden."
+            "success is FALSE unless every leg the receipt names was ATTEMPTED, "
+            "the calibration invalidation proved itself, and this restore's own "
+            "obligation was banked and then discharged. Rows may be reversed "
+            "while success is false; drift is reported, never hidden."
         ),
         "elapsed_s": round(time.monotonic() - started, 1),
     }

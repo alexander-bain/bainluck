@@ -530,15 +530,28 @@ class TestSpecimenTwoRetryCannotLaunderAFailure:
         assert inv.calls == [], "the invalidation is never reached"
 
     @pytest.mark.asyncio
-    async def test_an_unrecorded_debt_cannot_report_success(self, monkeypatch):
-        """If the ledger write itself fails, the run has no retry handle."""
+    async def test_an_unrecorded_debt_writes_no_rows_at_all(self, monkeypatch):
+        """If the ledger write itself fails, the run has no retry handle.
+
+        CAL-P1009-R (CERT-1872) hardens what that costs. It used to commit the
+        rows and report the missing debt honestly — but an honest report of a
+        stale curve nothing can pay is not a substitute for not creating one, so
+        the debt is now staged in the row transaction and a staging failure
+        rolls the whole thing back. The atomicity itself is proved in
+        ``test_kalshi_fabricated_loss_p1008.py``, whose session models an
+        in-transaction durable write; this store applies writes immediately, so
+        what it can say is that the apply REFUSES and reaches neither the commit
+        nor the invalidation.
+        """
         store, plan, inv, session = self._install(monkeypatch, ["invalidated"])
         store.forced_status[OBLIGATION_IDENTITY] = "error"
 
         out = await rail.repair(session, apply=True, plan_hash=plan.plan_hash)
 
-        assert out["legs_written"] == 1
-        assert out["invalidation_obligation"]["persisted_before_invalidating"] is False
+        assert out["refused"] == ["INVALIDATION_DEBT_NOT_STAGED"]
+        assert out["legs_written"] == 0 and out["rolled_back"] is True
+        assert session.commits == 0, "rows committed owing an unrecorded debt"
+        assert inv.calls == [], "the invalidation is never reached"
         assert out["success"] is False
 
     @pytest.mark.asyncio
