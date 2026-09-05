@@ -22,8 +22,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import PlayoffGrid, {
+  GRID_COL_TRACK_FIXED,
+  GRID_COL_TRACK_FLEX,
   GRID_SCROLL_SNAP,
   GRID_STICKY_NAME,
+  gridTemplate,
 } from "@/components/tournament/PlayoffGrid";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
 import {
@@ -624,6 +627,42 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
     expect(gridScrollFloorPx(5)).toBe(436);
     // Four columns: overflows by 22, rounds to 52 → floor 384.
     expect(gridScrollFloorPx(4)).toBe(384);
+  });
+
+  it("A SCROLLING PHONE GRID HAS FIXED VALUE TRACKS, or the floor is eaten", () => {
+    // The floor adds width ABOVE the grid's natural width. Free space goes to
+    // flexible tracks, so with `1fr` value columns the rounding fed the columns
+    // instead of the gutter: measured on production, 46 -> 52 wide, step
+    // 52 -> 58, and 104 stopped being a whole step. Fixed tracks while scrolling
+    // is the property that makes `gridScrollFloorPx` mean what it says.
+    const base = (v: string) => v.split(" ").filter((c) => !c.startsWith("lg:"));
+    const lg = (v: string) => v.split(" ").filter((c) => c.startsWith("lg:"));
+
+    // The scrolling variant's PHONE track is a fixed length — no `1fr` anywhere.
+    expect(base(GRID_COL_TRACK_FIXED).join(" ")).not.toContain("1fr");
+    expect(base(GRID_COL_TRACK_FIXED)).toEqual([
+      `[--grid-col-track:${GRID_COLUMN_WIDTH_PX}px]`,
+    ]);
+    // The non-scrolling variant keeps the flexible track that fills the card.
+    expect(base(GRID_COL_TRACK_FLEX).join(" ")).toContain("1fr");
+    // Above `lg` nothing scrolls, so the two must not disagree.
+    expect(lg(GRID_COL_TRACK_FIXED)).toEqual(lg(GRID_COL_TRACK_FLEX));
+
+    // …and the template consumes the variable rather than hard-coding a track.
+    expect(gridTemplate(5)).toContain("var(--grid-col-track)");
+    expect(gridTemplate(5)).not.toContain("1fr");
+
+    // The plant rule: the RENDER picks the right variant for each state.
+    const five = grid({ columns: COLUMNS });
+    const wide = renderToStaticMarkup(<PlayoffGrid grid={five} />);
+    expect(gridScrolls(5)).toBe(true);
+    for (const c of GRID_COL_TRACK_FIXED.split(" ")) expect(wide).toContain(c);
+
+    const three = grid({ columns: COLUMNS.slice(0, 3) });
+    const narrow = renderToStaticMarkup(<PlayoffGrid grid={three} />);
+    expect(gridScrolls(3)).toBe(false);
+    for (const c of GRID_COL_TRACK_FLEX.split(" ")) expect(narrow).toContain(c);
+    expect(narrow).not.toContain(`[--grid-col-track:${GRID_COLUMN_WIDTH_PX}px] `);
   });
 
   it("a grid that fits keeps its own width — nothing to round", () => {
