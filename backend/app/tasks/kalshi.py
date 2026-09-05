@@ -1181,6 +1181,21 @@ async def _poll_kalshi_markets():
                                 opening_american_odds=opening_american,
                                 opening_captured_at=opening_at,
                                 rank=rank,
+                                # CAL-P1004R (CERT-948, extended to this site).
+                                # `graded_cols` reached only `update_set`, so the
+                                # conflict arm was fixed and the INSERT arm was
+                                # not — and this is the file's bulk CREATOR of
+                                # outcome rows. Naming no `is_winner` means the
+                                # column's `server_default false`, so every leg
+                                # the poll saw for the FIRST time was born a
+                                # declared loss, including one already
+                                # `finalized`/`yes` at the venue. Explicit pair:
+                                # the grade when Kalshi answered, SQL NULL when
+                                # it has not.
+                                is_winner=graded_cols.get("is_winner"),
+                                resolution_source=graded_cols.get(
+                                    "resolution_source"
+                                ),
                             )
                             .on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
@@ -3890,6 +3905,15 @@ async def _create_settled_market(
         # 2026-09-04). `gradeable_winner` is three-state: None means the venue has
         # not answered, and neither column is written at all.
         graded_cols = graded_columns(m.status, m.result)
+        # CAL-P1004R (CERT-948). The INSERT arm must name the pair EXPLICITLY,
+        # because `**graded_cols` contributes nothing when the venue is silent
+        # and `futures_outcomes.is_winner` carries both `default=False` and
+        # `server_default=text("false")` (models.py). An omitted column is not
+        # an absent grade — it is the column default, so the row being born was
+        # still recorded as a declared LOSS while `on_conflict_do_nothing`
+        # correctly protected every row that already existed. Ungraded now
+        # stores SQL NULL on both columns: "the venue has not answered" is a
+        # value we write, not a value we decline to write.
         base_stmt = pg_insert(FuturesOutcome).values(
             market_id=market_id,
             external_id=m.ticker,
@@ -3897,7 +3921,8 @@ async def _create_settled_market(
             current_probability=prob,
             current_american_odds=american,
             volume=int(m.volume) if m.volume is not None else None,
-            **graded_cols,
+            is_winner=graded_cols.get("is_winner"),
+            resolution_source=graded_cols.get("resolution_source"),
         )
         # The conflict path is a RESOLUTION write or it is nothing. Splatting an
         # empty `graded_cols` into `set_` would have left `last_updated =
