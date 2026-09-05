@@ -254,12 +254,39 @@ class TestInterruptedAndTerminalStatuses:
 
 class TestStillDark:
 
-    def test_shared_parser_still_returns_nothing_for_both_payloads(self, service, nfl_payload, tennis_payload):
-        """`sync_statpal_schedules` reads `get_fixtures()`, which reads
-        `_parse_fixtures`. If this ever returns rows, NFL and tennis start being
-        written to the events table by the next beat, unreviewed."""
-        assert service._parse_fixtures(nfl_payload, "nfl") == []
+    def test_tennis_is_still_dark_to_the_ingestion_parser(self, service, tennis_payload):
+        """Tennis, and ONLY tennis, still reads as nothing on the shared parser.
+
+        This used to assert NFL as well, for the right reason: `_parse_fixtures`
+        returning rows means the next beat starts writing those sports to the
+        events table, and the pair was unreviewed. NFL has since been reviewed
+        and permitted (#3193) — measured 2026-09-05, its `statpal_only` is 0 over
+        a 322-game denominator and both future NFL events already carry a StatPal
+        id, so Step 1 finds them and the pass creates nothing.
+
+        **Tennis has not been, and the measurement says do not.**
+        `STATPAL_SPORT_MAPPING` claims tennis under `tennis_atp`/`tennis_wta`
+        while the tennis linker anchors under `tennis_atp_us_open` /
+        `tennis_wta_us_open`. Registry Step 1 is sport-scoped (D55/#2879), so it
+        would refuse the very rows it should have matched, and the non-anchoring
+        StatPal listing claim (ruling 048) would CREATE — a second copy of every
+        US Open match, hourly. Reconciling those keys is an identity question and
+        belongs to lane1 (D39/#2693).
+
+        So this is a HOLD with a reason, not a leftover. If it fails, the tennis
+        shapes have been taught to the shared parser: check the sport-key
+        reconciliation landed first, or the site grows twins.
+        """
         assert service._parse_fixtures(tennis_payload, "tennis") == []
+
+    def test_nfl_is_no_longer_dark_and_that_was_the_point(self, service, nfl_payload):
+        """The other half of the old pin, inverted (#3193).
+
+        Kept as an assertion rather than deleted so the two sports cannot drift
+        back into being described together: they are dark for different reasons
+        and only one of them has been cleared.
+        """
+        assert len(service._parse_fixtures(nfl_payload, "nfl")) == 17
 
     @pytest.mark.asyncio
     async def test_get_fixtures_for_tennis_makes_no_request_at_all(self, service):

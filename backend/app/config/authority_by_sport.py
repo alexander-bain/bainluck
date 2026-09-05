@@ -105,8 +105,8 @@ AUTHORITY_BY_SPORT: dict[str, str] = {
 #: whose payload that chain cannot parse has an hourly task that creates nothing,
 #: hour after hour, greenly.
 #:
-#: Twelve sports are in `STATPAL_SPORT_MAPPING` and four are on the beat; of those
-#: four, **three parse**. `golf_pga` and the seven soccer leagues are livescore-only
+#: Twelve sports are in `STATPAL_SPORT_MAPPING` and four are on the beat; since
+#: #3193, **all four parse**. `golf_pga` and the seven soccer leagues are livescore-only
 #: ON PURPOSE — the soccer season-schedule endpoint returns thousands of global
 #: fixtures and overwhelms a single run — so their absence is a standing fact, not
 #: a gap to close in passing.
@@ -124,48 +124,53 @@ DISCOVERY_SCHEDULED_SPORTS: frozenset[str] = frozenset(
         "basketball_nba",
         "icehockey_nhl",
         "baseball_mlb",
+        # Moved up from the dict below by #3193, which is what that entry said to
+        # do the day someone taught `_extract_match_items` the stage nesting. The
+        # ingest parser now reads 17 of 17 on the pinned payload, so the hourly
+        # beat can create an NFL game ESPN missed.
+        #
+        # This removes a REFUSAL REASON that had become false; it does not flip
+        # anything. NFL's clock is 1/7, and `flip_permitted` still refuses on the
+        # streak — which is the honest refusal, where "the beat creates nothing"
+        # had stopped being one.
+        "americanfootball_nfl",
     }
 )
 
 #: On the discovery beat, and discovering nothing. Each entry is a live defect,
 #: named rather than silently dropped from the set above.
 #:
-#: **NFL, found by CERT-1875 and reproduced on the pinned real payload.** The
-#: `season-schedule` response nests its games `scores.tournament.stage[] → week[] →
-#: matches → match`, two levels below where `_extract_match_items` looks (it knows
-#: `tournament.match` and `tournament.week`). Measured on
-#: `statpal_nfl_season_schedule_20260903.json`, which retains **17** of the live
-#: season's matches: the authority parser reads 17 of 17, the ingest parser reads
-#: **0**. So the hourly `sync-statpal-schedules-nfl` beat has been creating no NFL
-#: events at all. (The count is the FIXTURE's, deliberately — it is a reduced
-#: sample, and quoting the live season's game count beside a reduced-fixture
-#: measurement is how a number gets attributed to a file that never held it. The
-#: live population, if you want one, is the agreement row's own denominator: 322.)
+#: **Empty since #3193.** NFL was the only entry, found by CERT-1875: its
+#: `season-schedule` response nests games `scores.tournament.stage[] → week[] →
+#: matches → match`, two levels below where `_extract_match_items` looked, so the
+#: hourly `sync-statpal-schedules-nfl` beat created no NFL events at all while
+#: reporting success. The tell was that **the authority read path parsed it fine**
+#: — `_parse_nfl_season_schedule` walks the nesting — so NFL's agreement row read
+#: 99.69% and its clock ran on a number produced by the path that does not write.
+#: *Two parsers over one payload, one of them blind, and the blind one is the only
+#: one that creates.*
 #:
-#: The reason this was invisible: **the authority read path parses it fine.**
-#: `get_schedule_fixtures("nfl")` → `_parse_nfl_season_schedule` walks the stage
-#: nesting correctly, which is why NFL's agreement row reads 99.69% and its
-#: seven-day clock is running. Two parsers over one payload, one of them blind, and
-#: the blind one is the only one that writes. That is the shape: *the number that
-#: looks good comes from the path that does not create anything.*
+#: `_extract_match_items` learned the nesting and now reads 17 of 17 on the same
+#: pinned payload, so NFL moved into the set above. Kept as a named, empty dict
+#: rather than deleted, because the shape it describes is not NFL-specific and the
+#: next sport to land in it should land somewhere that already explains itself.
 #:
-#: Being listed here is not a permanent exemption — it is a bug with a name. The
-#: fix is to teach the ingest parser the stage nesting (or route it through
-#: `_parse_nfl_season_schedule`), which is a change to what a live task WRITES and
-#: therefore its own ship, not a line in a config. `test_authority_flip_switch`
-#: asserts each excluded sport still parses zero, so the day someone fixes it the
-#: test fails and says to move the sport into the set above.
-DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE: dict[str, str] = {
-    "americanfootball_nfl": (
-        "sync-statpal-schedules-nfl runs hourly and creates nothing: "
-        "get_fixtures('nfl') parses 0 of the 17 matches in the pinned real "
-        "payload because they nest under "
-        "scores.tournament.stage[].week[].matches.match, which "
-        "_extract_match_items does not walk. The authority read path "
-        "(_parse_nfl_season_schedule) reads all 17 of the same payload, which is "
-        "why the agreement row looks healthy. CERT-1875"
-    ),
-}
+#: **What made it safe to fix, measured on production 2026-09-05:** teaching the
+#: parser and starting to create events are the same change — a StatPal listing
+#: claim is not id-anchored (ruling 048), and an id-less claim never absorbs, it
+#: CREATES. The count of new rows a fixed parser would write is exactly the number
+#: of StatPal fixtures we do not already hold under a matching id, and the NFL
+#: agreement row publishes that as `statpal_only: 0` over 322 games. Both future
+#: NFL events carried a StatPal id, so Step 1 finds them. Zero new rows.
+#:
+#: **Tennis is NOT the next entry here, and must not be added without reading
+#: this.** The same measurement says the opposite for tennis: `STATPAL_SPORT_MAPPING`
+#: claims it under `tennis_atp`/`tennis_wta`, the tennis linker anchors under
+#: `tennis_atp_us_open`/`tennis_wta_us_open`, and registry Step 1 is sport-scoped
+#: (D55/#2879) — so it would refuse the rows it should match and create a second
+#: copy of every US Open match, hourly. Tennis belongs in the third list below,
+#: for the reason given there; the parser is the easy half and is not the risk.
+DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE: dict[str, str] = {}
 
 #: Stamped and measured daily, with no `sync_statpal_schedules` beat AT ALL.
 #:

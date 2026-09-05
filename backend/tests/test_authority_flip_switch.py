@@ -623,28 +623,62 @@ def test_tennis_is_blind_to_the_ingest_parser_on_both_of_its_real_payloads():
         )
 
 
-def test_nfl_cannot_be_flipped_today_and_its_running_clock_does_not_change_that():
-    """The ship of CERT-1875's repair, stated where it bites.
+def test_nfl_is_refused_on_its_clock_now_that_the_discovery_refusal_is_gone():
+    """CERT-1875's refusal is retired by its own repair (#3193).
 
-    NFL's seven-day clock started 2026-09-05 and reads MEETS at 99.69%. Before
-    this repair, seven of those days would have returned `permitted=True` for a
-    sport whose event-creating path has never created an event. It now refuses,
-    by name, with the beat's own failure quoted into the reason.
+    It used to read: *seven MEETS days would return `permitted=True` for a sport
+    whose event-creating path has never created an event*, and it refused by
+    name with the beat's failure quoted. That refusal was true for as long as
+    `get_fixtures("nfl")` parsed 0 of 17. The parser now reads all 17, so the
+    sentence would be a false statement about a live task, and a refusal nobody
+    can act on is worse than no refusal.
+
+    What must NOT change is the answer for NFL **today**: still no. It is now
+    refused on the clock — 1 of 7 — which is the honest reason, where "the beat
+    creates nothing" had stopped being one. A refusal that names the wrong cause
+    sends the next person to fix something that already works.
     """
     assert "americanfootball_nfl" in SHADOW_STAMPERS
     assert GOVERNING_IDENTITY_NUMBERS.get("americanfootball_nfl")
 
+    short = _run_of(REQUIRED_STREAK_DAYS - 1, GATE_MEETS)
+    permitted, why = flip_permitted("americanfootball_nfl", short)
+
+    assert not permitted
+    assert "no working StatPal discovery pass" not in why, (
+        "the discovery refusal outlived the defect it described — #3193 taught "
+        "_extract_match_items the stage nesting and the beat now creates"
+    )
+    assert str(REQUIRED_STREAK_DAYS) in why, (
+        f"a refusal on the clock has to say how many days: {why!r}"
+    )
+
+
+def test_a_genuine_seven_now_reaches_the_gate_but_flips_nothing_by_itself():
+    """The other side of the same change, pinned because it is consequential.
+
+    With the discovery path working, seven real MEETS days make
+    `flip_permitted` say yes — that is D50's sentence in code and it is the
+    intended consequence of #3193, not a side effect of it.
+
+    **Saying yes is not flipping.** `AUTHORITY_BY_SPORT` still reads ESPN for
+    every sport; changing one is a separate edit that CI refuses without a
+    `FLIP_EVIDENCE` entry, and D50's second half — a YOUR-TURN entry Alex has
+    seen — is not a thing code can check at all. This test asserts both halves
+    together so that "the gate opened" can never be read as "the sport flipped".
+
+    NFL's real clock is 1 of 7 as of 2026-09-05, so the earliest a genuine seven
+    exists is 2026-09-11. The run here is synthetic.
+    """
     permitted, why = flip_permitted(
         "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
+    assert permitted, f"a genuine seven should reach the gate: {why!r}"
 
-    assert not permitted
-    assert "no working StatPal discovery pass" in why
-    assert "creates nothing" in why, (
-        "the refusal must quote the actual failure; a generic 'no discovery pass' "
-        "reads as 'nobody built it yet' for a sport where somebody did"
+    assert AUTHORITY_BY_SPORT["americanfootball_nfl"] == ESPN, (
+        "the gate opening must not move the switch — the flip is a separate, "
+        "evidenced, attended edit (D50)"
     )
-    assert "not a wait" in why
 
 
 def _nfl_pinned_parser_counts() -> tuple[int, int]:
@@ -674,69 +708,60 @@ def _nfl_pinned_parser_counts() -> tuple[int, int]:
     return len(authority), len(ingest)
 
 
-def test_the_nfl_refusal_quotes_the_count_its_own_parsers_actually_read():
-    """CERT-1887's follow-up, `AUTHORITY-028-PIN-REFUSAL-DENOMINATOR`.
+def test_nfls_two_parsers_read_the_same_payload_the_same_way():
+    """CERT-1887's follow-up, `AUTHORITY-028-PIN-REFUSAL-DENOMINATOR`, resolved.
 
-    The refusal reason names a live defect to an operator, and the credibility
-    of a named defect is entirely in its numbers. CERT-1887 corrected this text
-    from the live season's **374** games to the **17** the reduced fixture
-    actually retains — a full-census number standing beside a reduced-fixture
-    measurement, which is how a figure gets attributed to a file that never held
-    it. Nothing then stopped the old wording coming back: the sibling tests
-    proved the ingest parser reads zero and that the reason names the defect,
-    but neither one read the denominator.
+    This used to assert that the REFUSAL TEXT quoted only counts measured on the
+    pinned bytes — CERT-1887 had corrected it from the live season's **374**
+    games to the **17** the reduced fixture retains, a full-census number
+    standing beside a reduced-fixture measurement, and nothing stopped the old
+    wording coming back.
 
-    So this asserts the relation rather than the digits: **every count in the
-    refusal is a number this test measured by running the shipped parsers over
-    the pinned bytes.** A reversion to 374 fails not because 374 is blacklisted
-    but because no parser produces it. Regenerate the fixture with more games
-    and this fails too — correctly, because the sentence would then be stale.
+    #3193 retired the refusal by fixing the defect it described, so there is no
+    text left to audit. What survives is the thing the refusal was *about*, and
+    it is the stronger assertion: **the two parsers over these bytes now agree.**
+    The defect was never "the number is 0" — it was that one payload had two
+    readers and only the blind one wrote. Equality says that is gone without
+    pinning 17 in a third place, and it keeps holding if the fixture is
+    regenerated with more games.
     """
     authority_count, ingest_count = _nfl_pinned_parser_counts()
 
     # The shape CERT-1875 found: two parsers over one payload, and the blind one
     # is the only one that writes. If this ever stops holding, the refusal is
     # describing a defect that no longer exists.
-    assert ingest_count == 0, (
-        "the ingest parser now reads the pinned NFL payload — the refusal text "
-        "is stale and NFL may belong in `DISCOVERY_SCHEDULED_SPORTS`"
+    assert ingest_count > 0, (
+        "the ingest parser reads nothing again — #3193 has regressed and the "
+        "hourly NFL beat is back to creating no events, greenly"
     )
-    assert authority_count > 0, (
-        "the authority parser reads nothing either, so this is not the "
-        "one-blind-parser defect the refusal describes"
+    assert authority_count > 0, "the authority parser reads nothing either"
+
+    # The two parsers now AGREE, and that is the repair. The shape CERT-1875
+    # found was two parsers over one payload where only the blind one writes;
+    # equality is how that shape is asserted gone, rather than by pinning 17
+    # twice. Regenerate the fixture with more games and this still holds.
+    assert authority_count == ingest_count, (
+        f"the pinned NFL payload parses {authority_count} on the authority path "
+        f"and {ingest_count} on the ingest path. They read the same bytes; a gap "
+        "means one of them is blind to a shape the other walks, which is exactly "
+        "the defect #3193 repaired (CERT-1875)"
     )
 
-    # CERT-1887's measurement, pinned once. Re-derived above, not carried.
-    assert (authority_count, ingest_count) == (17, 0), (
-        f"the pinned NFL payload now parses {authority_count}/{ingest_count} "
-        "(authority/ingest), not 17/0. Update "
-        "`DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE['americanfootball_nfl']` and the "
-        "docstring above it in the same commit — the refusal quotes these counts"
-    )
-
-    _, why = flip_permitted(
-        "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
-    )
-
-    assert f"0 of the {authority_count} matches" in why, (
-        "the refusal must say how many matches the payload holds, in the "
-        f"payload's own terms; expected '0 of the {authority_count} matches' in: {why}"
-    )
-    assert f"reads all {authority_count}" in why, (
-        "the refusal must say the authority parser reads the whole payload — "
-        "that contrast IS the finding, and without the count it is an adjective"
-    )
-
-    # The general form: no invented number survives here. `CERT-1875` is a
-    # citation, not a count, so it is stripped before the sweep.
+    # And the reason NFL is refused today no longer mentions the parser at all.
+    # The `AUTHORITY-028` rule that produced this test still binds every OTHER
+    # entry in the dict: a count in an operator-facing reason must be one that
+    # was measured on the bytes being described. The dict is empty, so the sweep
+    # below is over nothing today and becomes live again with the next entry.
     import re
 
-    quoted = {int(n) for n in re.findall(r"\d+", re.sub(r"CERT-\d+", "", why))}
-    assert quoted <= {authority_count, ingest_count}, (
-        f"the refusal quotes {sorted(quoted - {authority_count, ingest_count})}, "
-        "which no parser in this test produced. A count in an operator-facing "
-        "reason must be one that was measured on the bytes being described"
-    )
+    for sport_key, reason in DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.items():
+        quoted = {int(n) for n in re.findall(r"\d+", re.sub(r"CERT-\d+", "", reason))}
+        assert quoted <= {authority_count, ingest_count}, (
+            f"{sport_key}'s refusal quotes "
+            f"{sorted(quoted - {authority_count, ingest_count})}, which no parser "
+            "in this test produced. A count in an operator-facing reason must be "
+            "one that was measured on the bytes being described (CERT-1887)"
+        )
 
 
 def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():

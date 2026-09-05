@@ -181,6 +181,34 @@ def _parser_capable_sports() -> set[str]:
     return capable
 
 
+def _count_nfl_game_nodes(payload: dict) -> int:
+    """How many games are IN the NFL payload, counted without the parser.
+
+    Deliberately its own walk, not a call into `_extract_match_items` and not a
+    shared helper with it. A count derived from the thing under test can only
+    ever agree with it: if the production walker missed a stage, a counter built
+    on the same walk would miss it too and the test would pass at 4 of 17.
+
+    So this hard-codes the vendor's documented nesting and nothing else, and
+    tolerates the one-or-many collapse at every level because StatPal serves a
+    single child as a bare dict (Pre Season does; Week 1 does not).
+    """
+
+    def many(v):
+        return v if isinstance(v, list) else ([] if v is None else [v])
+
+    total = 0
+    tournament = (payload.get("scores") or {}).get("tournament")
+    if not isinstance(tournament, dict):
+        return 0
+    for stage in many(tournament.get("stage")):
+        for week in many(stage.get("week")) if isinstance(stage, dict) else []:
+            for group in many(week.get("matches")) if isinstance(week, dict) else []:
+                if isinstance(group, dict):
+                    total += len([m for m in many(group.get("match")) if isinstance(m, dict)])
+    return total
+
+
 def _tiers() -> tuple[set[str], set[str], set[str]]:
     """(discovery-resilient, livescore-only, no-fallback) over ESPN's sports.
 
@@ -284,19 +312,24 @@ def test_the_three_coverage_tiers_partition_every_espn_sport():
     assert discovery | livescore_only | none_at_all == set(ESPN_SPORT_MAPPING)
 
 
-def test_discovery_resilient_sports_are_the_three_whose_parser_can_read_them():
-    """Measured 2026-09-05. THREE, not four — NFL's beat parses nothing.
+def test_discovery_resilient_sports_are_the_four_whose_parser_can_read_them():
+    """Measured 2026-09-05. FOUR — NFL rejoined when its parser was fixed.
 
     These are the only sports for which the ship's first clause — *every game
     exists on the site before any market lists it* — holds while ESPN is dark.
 
-    The first cut of this test said four, on the strength of four beat entries.
-    `sync-statpal-schedules-nfl` is one of them and it creates nothing: the
-    production parser returns 0 rows on NFL's own recorded season-schedule
-    payload, which contains 17 games. A registered beat was never evidence.
+    The count has now been wrong in both directions, which is why it is derived
+    and not typed. The first cut said four on the strength of four beat entries,
+    and `sync-statpal-schedules-nfl` was one of them while creating nothing. It
+    then said three for as long as NFL's parser read 0 of the 17 games in its
+    own recorded payload (#3193). It says four again because
+    `_extract_match_items` learned the `stage -> week -> matches -> match`
+    nesting, and `_parser_capable_sports()` re-measures that against the pinned
+    capture on every run. A registered beat is still not evidence; a parse is.
     """
     discovery, _, _ = _tiers()
     assert discovery == {
+        "americanfootball_nfl",
         "baseball_mlb",
         "basketball_nba",
         "icehockey_nhl",
@@ -307,19 +340,23 @@ def test_discovery_resilient_sports_are_the_three_whose_parser_can_read_them():
     )
 
 
-def test_nfls_hourly_discovery_beat_parses_nothing_and_that_is_a_live_defect():
-    """The defect behind the correction above, pinned so it cannot be forgotten.
+def test_the_nfl_schedule_parser_reads_every_game_in_its_own_payload():
+    """#3193, the repair of the defect this file used to pin.
 
-    `sync-statpal-schedules-nfl` is registered, runs hourly, and returns
-    success. `_sync_statpal_schedules` -> `get_fixtures("nfl")` ->
-    `_parse_fixtures` yields zero rows on the provider's real recorded payload,
-    so the pass creates no events at all — gotcha #53's silent zero, on the one
-    sport whose seven-day authority clock is running.
+    `sync-statpal-schedules-nfl` ran hourly, reported success, and created
+    nothing for as long as `_parse_fixtures` returned 0 rows on NFL's real
+    recorded season-schedule — gotcha #53's silent zero, on the one sport whose
+    seven-day authority clock is running.
 
-    This test asserts the BROKEN state deliberately, and it is written to fail
-    loudly when the parser is fixed rather than to sit green forever. When it
-    fails, that is the good news: delete it and move NFL back into the tier
-    above.
+    It replaces `test_nfls_hourly_discovery_beat_parses_nothing_and_that_is_a_
+    live_defect`, which asserted the broken state and was written to fail when
+    fixed. It did, which was the good news.
+
+    The count is compared against the game nodes actually IN the payload rather
+    than against a literal, because a fixture edited down to fewer games would
+    satisfy a pinned 17 without the parser reading anything, and because a
+    partial fix — one stage, one week shape — is the failure mode with teeth
+    here. Every game or it has not landed.
     """
     from app.services.statpal_api import StatPalAPIService
 
@@ -333,13 +370,20 @@ def test_nfls_hourly_discovery_beat_parses_nothing_and_that_is_a_live_defect():
     service = StatPalAPIService()
     for path in payloads:
         payload = json.loads(path.read_text())
+        expected = _count_nfl_game_nodes(payload)
+        assert expected, f"{path.name}: no game nodes to find — check the capture"
         parsed = service._parse_fixtures(payload, "nfl")
-        assert parsed == [], (
-            f"{path.name}: the NFL schedule parser now returns {len(parsed)} "
-            "fixtures. This is a FIX, not a regression — NFL can discover "
-            "again. Delete this test and move americanfootball_nfl back into "
-            "test_discovery_resilient_sports_are_the_three_whose_parser_can_"
-            "read_them, and tell the authority lane it may be re-permitted."
+        assert len(parsed) == expected, (
+            f"{path.name}: the NFL parser read {len(parsed)} of {expected} games "
+            "in the provider's own payload. NFL is in the discovery-resilient "
+            "tier on the strength of this number; a partial read means an ESPN "
+            "outage hides whichever games sit in the shape it missed (#3193)."
+        )
+        assert all(f.start_time for f in parsed), (
+            f"{path.name}: a fixture parsed with no start_time. "
+            "`_sync_statpal_schedules` treats a fixture with no start_time as "
+            "PAST and never creates it, so a discovery path that reaches the "
+            "games and loses their clocks discovers nothing."
         )
 
 
@@ -353,11 +397,11 @@ def test_livescore_only_sports_cannot_discover_and_that_is_recorded():
     """
     _, livescore_only, _ = _tiers()
     assert livescore_only == {
-        # Registered on the discovery beat, and still here: the hourly NFL run
-        # parses 0 of the 17 games in its own recorded payload, so it can update
-        # what something else created and nothing more. See
-        # test_nfls_hourly_discovery_beat_parses_nothing_and_that_is_a_live_defect.
-        "americanfootball_nfl",
+        # americanfootball_nfl WAS here — registered on the discovery beat and
+        # still unable to discover, because the parser read 0 of the 17 games in
+        # its own payload. #3193 fixed the parser and it moved up a tier. Nothing
+        # about this set's MEANING changed: it is still "mapped, but cannot
+        # create", and NFL simply stopped qualifying.
         "golf_pga",
         "soccer_epl",
         "soccer_france_ligue_one",

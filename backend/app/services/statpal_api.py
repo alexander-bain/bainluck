@@ -837,6 +837,35 @@ class StatPalAPIService(BaseAPIClient):
                                     all_matches.extend(week_matches)
                                 elif isinstance(week_matches, dict):
                                     all_matches.append(week_matches)
+                    # NFL nests two levels deeper than every other v1 sport:
+                    #   tournament -> stage[] -> week[] -> matches -> match
+                    # where `matches` is a DATE GROUP (or a list of them), each
+                    # holding `match`, and both `matches` and `match` are served
+                    # as a bare dict when the group has exactly one game. Nothing
+                    # above reaches it: `tournament.match` and `tournament.week`
+                    # are both absent, so the whole payload fell through to the
+                    # catch-all, which handed back the response ENVELOPE as one
+                    # item — not empty, which is why a guard asserting emptiness
+                    # here would read false while sounding right.
+                    #
+                    # `sync-statpal-schedules-nfl` therefore ran hourly, reported
+                    # success and read 0 of the 17 games in its own recorded
+                    # response (#3193). Gotcha #53 exactly: an empty result is
+                    # the same shape as "no games this hour", so nothing alerted.
+                    for stage in _as_list(tournament.get("stage")):
+                        if not isinstance(stage, dict):
+                            continue
+                        for week_entry in _as_list(stage.get("week")):
+                            if not isinstance(week_entry, dict):
+                                continue
+                            for group in _as_list(week_entry.get("matches")):
+                                if not isinstance(group, dict):
+                                    continue
+                                # Not filtered to dicts here: `_parse_single_fixture`
+                                # already returns None for a non-dict item, and
+                                # two places rejecting the same thing means one of
+                                # them is never exercised by any payload.
+                                all_matches.extend(_as_list(group.get("match")))
                     if all_matches:
                         return all_matches
                 # Alternate: {"scores": {"match": [...]}}
@@ -1392,6 +1421,24 @@ class StatPalAPIService(BaseAPIClient):
 # =============================================================================
 # Helper functions
 # =============================================================================
+
+def _as_list(val) -> list:
+    """One-or-many, the way StatPal actually serves it.
+
+    Every level of the NFL schedule nesting collapses to a bare dict when it
+    holds exactly one child — `stage`, `week`, `matches` and `match` all do it,
+    and which ones collapse depends on the week. Pre Season serves one match as
+    a dict where Week 1 serves thirteen as a list, in the same response.
+
+    So a walker that branches on `isinstance(x, list)` reads whichever arm the
+    fixture happened to record and drops the other silently. `None` is the empty
+    list rather than `[None]`, so a missing level ends the walk instead of
+    handing a `None` to the next one.
+    """
+    if val is None:
+        return []
+    return val if isinstance(val, list) else [val]
+
 
 def _safe_int(val) -> Optional[int]:
     """Safely convert a value to int, returning None on failure."""
