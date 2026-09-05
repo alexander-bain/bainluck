@@ -2553,3 +2553,62 @@ class MarketLinkChange(Base):
         # "Everything that ever happened to this market's link."
         Index("ix_link_change_market", "market_id", "changed_at"),
     )
+
+
+class ClientTimingEvent(Base):
+    """A single client-observed performance packet (LAT-P232, #2751).
+
+    THE SHIP THIS SERVES. Every latency claim this lane has ever made is a
+    server-side proxy for a wait it cannot see: the felt number — how long after
+    a tap the reader actually sees a card — is computed in the browser on every
+    screen arrival (`first_card_ms`, marked "🔴 THE NEEDLE" in
+    `lib/screenTiming.ts`) and then thrown away, because its only transport was
+    gtag and this lane holds no GA credential. This table is where it lands
+    instead.
+
+    WHAT MAY BE IN HERE. `app/utils/client_timing_contract.py` is the authority
+    and carries the full privacy claim. In short: durations, counts and bounded
+    enums that are ALREADY sent to Google for that same reader, in that same
+    moment, under that same consent grant. No user id, no session id, no cookie,
+    no token, no query string, no entity id, no free text, no IP. Route-shaped
+    fields are shape-masked before they get here, so this table is strictly
+    NARROWER than what GA already receives.
+
+    There is deliberately no foreign key and no user column. A row cannot be
+    attributed to a person, and that is a property of the schema, not of the
+    code that writes it.
+    """
+
+    __tablename__ = "client_timing_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    #: One of `client_timing_contract.ACCEPTED_EVENT_NAMES`.
+    event_name: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # --- promoted dimensions ------------------------------------------------
+    # Copies of allowlisted keys that also live in `params`. Promoted so the
+    # aggregate read can GROUP BY them on a plain btree index instead of a
+    # functional one over JSONB.
+
+    #: Shape-masked surface slug, e.g. `discover`, `event/:id`. Never a raw path.
+    surface: Mapped[Optional[str]] = mapped_column(String(64))
+    app_build: Mapped[Optional[str]] = mapped_column(String(64))
+    device_class: Mapped[Optional[str]] = mapped_column(String(64))
+    network_class: Mapped[Optional[str]] = mapped_column(String(64))
+    entry: Mapped[Optional[str]] = mapped_column(String(64))
+    outcome_class: Mapped[Optional[str]] = mapped_column(String(64))
+
+    #: The whole validated packet, exactly as stored by the contract module.
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Every read is "this event, in this window" — the pair, in that order.
+        Index("ix_client_timing_name_time", "event_name", "created_at"),
+        # A retention sweep walks the window alone.
+        Index("ix_client_timing_created_at", "created_at"),
+    )
