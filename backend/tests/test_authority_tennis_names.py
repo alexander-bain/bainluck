@@ -31,6 +31,7 @@ from app.utils.authority_tennis_names import (
     looks_like_a_player,
     _tokens,
     our_tennis_keys,
+    register_identity,
     resolve_tennis_name,
     statpal_tennis_key,
     tennis_names_agree,
@@ -252,6 +253,7 @@ def test_no_two_different_players_collide_on_a_full_key(corpus):
 
     # Every contested key, resolved against its own claimants, must refuse.
     unexpressable = 0
+    matched_on_contested = 0
     for (surname, initial), names in contested.items():
         theirs = f"{initial.upper()}. {surname}" if initial else surname
         got = resolve_tennis_name(theirs, sorted(names))
@@ -266,14 +268,117 @@ def test_no_two_different_players_collide_on_a_full_key(corpus):
             continue
         assert got.outcome in (AMBIGUOUS, MATCHED)
         if got.outcome == MATCHED:
+            matched_on_contested += 1
             # The only permitted MATCH on a contested key is one player our
-            # register spells more than one way.
-            token_sets = {frozenset(fold_tennis_name(n).split()) for n in names}
-            assert len(token_sets) == 1, (surname, initial, sorted(names))
+            # register spells more than one way. Judged by calling the SHIPPED
+            # identity, never by re-implementing it: the first version of this
+            # sweep re-derived the rule as a `frozenset` and so agreed with the
+            # production bug instead of catching it (CERT-1890).
+            identities = {register_identity(n) for n in got.candidates}
+            assert len(identities) == 1, (surname, initial, sorted(names))
 
     # Bounded rather than ignored: if this grows, our column is accumulating a
     # new punctuation shape and the join is quietly losing reach.
     assert unexpressable <= 12
+
+    # Pinned so a loosening of the identity rule has to say so. Measured by
+    # importing the shipped module, never carried over from a scratch script.
+    assert matched_on_contested == 171
+    assert len(contested) - unexpressable - matched_on_contested == 400
+
+
+def test_a_repeated_token_is_a_different_player_not_a_reordering():
+    """CERT-1890. `Garcia` and `Garcia Garcia` are two people in our register and
+    both are reachable from StatPal's `G. Garcia`, because a bare surname carries
+    no initial to disagree with. The first identity was a `frozenset`, which folds
+    them onto `{'garcia'}` and returned MATCHED with two candidates — a silent
+    substitution of one player for another, the exact failure this module is
+    biased against.
+
+    All four names are in the pinned production corpus; see the sweep below for
+    the field-level count.
+    """
+    for theirs, a, b in [
+        ("G. Garcia", "Garcia", "Garcia Garcia"),
+        ("R. Rodriguez", "Rodriguez", "Rodriguez Rodriguez"),
+    ]:
+        got = resolve_tennis_name(theirs, [a, b])
+        assert got.outcome == AMBIGUOUS, (theirs, got)
+        # The receipt names both players rather than reporting a skip.
+        assert got.candidates == (a, b)
+        assert got.matched is None
+        assert register_identity(a) != register_identity(b)
+
+
+def test_the_reorder_tolerance_still_matches_the_players_it_exists_for():
+    """The control on the repair. Multiplicity must be preserved WITHOUT
+    re-breaking Chinese name order, which is the whole reason the module exists:
+    one player our register lists in both readings is still one player."""
+    for theirs, a, b in [
+        ("Y. Wu", "Wu Yibing", "Yibing Wu"),
+        ("J. Shang", "Shang Juncheng", "Juncheng Shang"),
+    ]:
+        got = resolve_tennis_name(theirs, [a, b])
+        assert got.outcome == MATCHED, (theirs, got)
+        assert register_identity(a) == register_identity(b)
+    # Doubles fold across our two separator spellings and across pair order,
+    # which is order-insensitivity, not multiplicity.
+    assert register_identity("Cigarran/Rodriguez") == register_identity(
+        "Rodriguez / Cigarran"
+    )
+
+
+def test_the_field_holds_exactly_two_repeated_token_collisions(corpus):
+    """The sweep that would have caught CERT-1890, over the real field.
+
+    The bucket sweep above cannot see this class at all, and that is worth
+    stating: it groups by exact key, but `keys_agree` treats a missing initial as
+    UNKNOWN, so `Garcia` (`('garcia', None)`) and `Garcia Garcia`
+    (`('garcia', 'g')`) never share a bucket even though one StatPal name reaches
+    both. Bucketing by key duplicates a production assumption the resolver does
+    not make.
+
+    So sweep the reachability class instead — `keys_agree` requires surname
+    equality, so a StatPal name can only reach names sharing its folded surname —
+    and probe every initial the field actually carries for that surname.
+    """
+    by_surname: dict[str, set[str]] = defaultdict(set)
+    initials: dict[str, set[str | None]] = defaultdict(set)
+    for name in corpus:
+        for surname, initial in our_tennis_keys(name):
+            by_surname[surname].add(name)
+            initials[surname].add(initial)
+
+    repeated_token_collisions = []
+    for surname, names in by_surname.items():
+        for initial in initials[surname]:
+            theirs = f"{initial.upper()}. {surname}" if initial else surname
+            if statpal_tennis_key(theirs) is None:
+                continue
+            got = resolve_tennis_name(theirs, sorted(names))
+            if got.outcome != MATCHED or len(got.candidates) < 2:
+                continue
+            # MATCHED against two or more names is only legal when they are one
+            # player spelled differently. Under the shipped identity that holds;
+            # the assertion is that it holds by REORDERING, never by discarding a
+            # repeat.
+            token_multisets = {tuple(sorted(_tokens(c))) for c in got.candidates}
+            assert len(token_multisets) == 1, (theirs, got.candidates)
+            if any(
+                len(set(_tokens(c))) != len(_tokens(c)) for c in got.candidates
+            ):  # pragma: no cover - defensive
+                repeated_token_collisions.append((theirs, got.candidates))
+
+    assert repeated_token_collisions == []
+
+    # The two the repair actually flipped from MATCHED to AMBIGUOUS. Named rather
+    # than counted, so a regression says which player got substituted.
+    for theirs, a, b in [
+        ("R. Rodriguez", "Rodriguez", "Rodriguez Rodriguez"),
+        ("Z. Zhao", "Zhao", "Zhao Zhao"),
+    ]:
+        assert a in corpus and b in corpus, (a, b)
+        assert resolve_tennis_name(theirs, [a, b]).outcome == AMBIGUOUS
 
 
 def test_admitting_the_asian_reading_costs_what_the_header_says(corpus):

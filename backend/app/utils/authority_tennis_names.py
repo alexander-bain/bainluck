@@ -119,8 +119,10 @@ from typing import Iterable, Optional
 #: — 32.5% of the field — and is a real key, not a missing one.
 TennisKey = tuple[str, Optional[str]]
 
-#: A doubles team: the two folded surnames, unordered.
-DoublesKey = frozenset[str]
+#: A doubles team: the two folded surnames, order-insensitive but
+#: multiplicity-preserving — a sorted pair, NOT a set. See
+#: :func:`register_identity` for why the distinction is load-bearing.
+DoublesKey = tuple[str, ...]
 
 _NON_NAME = re.compile(r"[^a-z0-9 ]+")
 
@@ -191,7 +193,7 @@ def doubles_key(name: object) -> Optional[DoublesKey]:
     parts = [p for p in parts if p]
     if len(parts) != 2:
         return None
-    return frozenset(parts)
+    return tuple(sorted(parts))
 
 
 def statpal_tennis_key(name: object) -> Optional[TennisKey]:
@@ -237,6 +239,33 @@ def our_tennis_keys(name: object) -> frozenset[TennisKey]:
         # surname-first: "Wu Yibing" -> ('wu', 'y')
         keys.add((" ".join(toks[:cut]), toks[cut][0]))
     return frozenset(keys)
+
+
+def register_identity(name: object) -> tuple[str, ...]:
+    """The identity two of our register's names share **iff they are one player**.
+
+    Order-insensitive because our column stores both readings of the same player
+    (``Wu Yibing`` beside ``Yibing Wu``), and **multiplicity-preserving because a
+    repeated token is a different name, not a re-ordering of the same one.**
+
+    The first version of this used a `frozenset`, and the corpus sweep could not
+    see the hole because it re-implemented the same `frozenset` instead of
+    calling this. On the real field ``Garcia`` and ``Garcia Garcia`` both fold to
+    ``{'garcia'}`` — as do ``Rodriguez`` and ``Rodriguez Rodriguez`` — so
+    ``G. Garcia`` resolved MATCHED against two people and silently picked the
+    first, which is precisely the substitution this module is built to refuse.
+    A sorted tuple keeps ``('garcia',)`` and ``('garcia', 'garcia')`` apart while
+    still folding ``Wu Yibing`` onto ``Yibing Wu``.
+
+    This is the same shape as the suffix rule above: **a reduction that deletes a
+    discriminator is not a normalisation.**
+    """
+    if is_doubles_name(name):
+        pair = doubles_key(name)
+        # A malformed pair gets an identity of its own rather than collapsing
+        # onto every other unreadable row.
+        return pair if pair is not None else ("?", fold_tennis_name(name))
+    return tuple(sorted(_tokens(name)))
 
 
 def keys_agree(ours: TennisKey, theirs: TennisKey) -> bool:
@@ -301,12 +330,17 @@ def resolve_tennis_name(
 ) -> TennisResolution:
     """Which candidate IS this StatPal name — or a named refusal.
 
-    **Two matches is not a match.** The global field has 577 contested keys, and
+    **Two matches is not a match.** The global field has 572 contested keys, and
     a resolver that picked the first would silently substitute one player for
     another; a false agreement here is the silent failure this module is biased
     against. Resolution is against the CANDIDATE set the caller supplies — one
     tournament-day, not the whole register — so most global collisions are never
     reachable in practice and the ones that are get reported by name.
+
+    Contested KEYS undercount what is reachable, and the test file sweeps both:
+    `keys_agree` reads a missing initial as UNKNOWN, so `Garcia` and
+    `Garcia Garcia` are both reachable from `G. Garcia` while sitting under
+    different keys. The reachability class is the SURNAME, not the key.
     """
     theirs_is_doubles = is_doubles_name(theirs)
     if theirs_is_doubles:
@@ -324,12 +358,11 @@ def resolve_tennis_name(
     # register lists twice — `Wu Yibing` beside `Yibing Wu`, `Shang Juncheng`
     # beside `Juncheng Shang` — and calling that ambiguous would refuse exactly
     # the players the order tolerance exists for. Two candidates whose tokens
-    # actually differ (`Adam Martin`, `Andrej Martin`) are two people. So
-    # identity is the unordered token set, which separates those two cases and
-    # folds our two doubles spellings at the same time.
-    distinct = {
-        doubles_key(h) if is_doubles_name(h) else frozenset(_tokens(h)) for h in hits
-    }
+    # actually differ (`Adam Martin`, `Andrej Martin`), or which differ only in
+    # how many times a token repeats (`Garcia`, `Garcia Garcia`), are two people.
+    # `register_identity` is the one place that judgment lives — the sweep calls
+    # it too, so a loosening cannot hide from the corpus.
+    distinct = {register_identity(h) for h in hits}
     if not hits:
         return TennisResolution(NO_CANDIDATE)
     if len(distinct) > 1:
