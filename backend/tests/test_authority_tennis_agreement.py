@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.utils.authority_agreement import (
+    DEFAULT_EXCLUDED_KEYS,
     GATE_PENDING,
     Join,
     GOVERNING_IDENTITY_NUMBERS,
@@ -42,6 +43,7 @@ from app.utils.authority_tennis_agreement import (
     SINGLES,
     STATPAL_TENNIS_REACH,
     TENNIS_MEASUREMENT_HORIZON,
+    TENNIS_REFUSAL_NAMES,
     UNSOLVED_COMPONENT_FIXTURES,
     UNSOLVED_COMPONENT_ROWS,
     TENNIS_TIGHTEST_GAP,
@@ -334,8 +336,8 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             "finding, not an exclusion"
         )
         assert singles["denominator"] == 2
-        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
-        assert AMBIGUOUS_CANDIDATE_ROWS not in singles["excluded"]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 0
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 0
 
     def test_an_ambiguity_does_not_remove_an_unrelated_row(self):
         """The other over-removal direction: a wholly unrelated pairing survives."""
@@ -382,7 +384,7 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         assert singles["identity"]["statpal_only"] == 0
         assert singles["identity"]["ours_only"] == 0
         assert singles["denominator"] == 2
-        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 0
 
     def test_the_repeat_meetings_pair_by_nearest_start(self):
         """Not just THAT they pair — that they pair with the right one.
@@ -456,7 +458,7 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         assert singles["identity"]["both"] == 1
         assert singles["identity"]["statpal_only"] == 1
         assert singles["denominator"] == 2
-        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 0
 
     def test_a_genuinely_tied_spare_fixture_still_refuses(self):
         """The other half: when the clock CANNOT distinguish, it is still a tie.
@@ -507,7 +509,7 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=None)],
         )
         assert rows[SINGLES]["identity"]["both"] == 1
-        assert AMBIGUOUS_REFUSAL not in rows[SINGLES]["excluded"]
+        assert rows[SINGLES]["excluded"][AMBIGUOUS_REFUSAL] == 0
 
     def test_ambiguity_is_counted_over_matches_not_over_names(self):
         """The invariant behind both regressions, stated once.
@@ -531,7 +533,7 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         allowed = build_tennis_agreements(fixtures=fixtures, rows=split_rows)
 
         assert refused[SINGLES]["excluded"][AMBIGUOUS_REFUSAL] == 1
-        assert AMBIGUOUS_REFUSAL not in allowed[SINGLES]["excluded"]
+        assert allowed[SINGLES]["excluded"][AMBIGUOUS_REFUSAL] == 0
         assert refused[SINGLES]["identity"]["both"] == 0
         assert allowed[SINGLES]["identity"]["both"] == 1
 
@@ -541,7 +543,7 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
             rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
         )
-        assert AMBIGUOUS_REFUSAL not in rows[SINGLES]["excluded"]
+        assert rows[SINGLES]["excluded"][AMBIGUOUS_REFUSAL] == 0
         assert rows[SINGLES]["identity"]["both"] == 1
 
 
@@ -1152,3 +1154,147 @@ class TestAZeroYieldIsARowAndNotASkip:
         for key in rows:
             assert rows[key]["read"] == "READ-FAILED"
             assert "identity" not in rows[key]
+
+
+class TestARefusalNameReadsAsMeasuredWhetherOrNotItFired:
+    """#3275. One census, one convention.
+
+    `excluded` published its three default keys at `0` always, and a strategy's
+    refusal names only when non-zero — so a default key at zero said *measured,
+    none* and a strategy key at zero said nothing at all, in the same dict.
+
+    That difference has teeth for `MAX_ASSIGNMENTS_PER_COMPONENT`, whose
+    docstring says in as many words that **zero is the expected reading**: the
+    bound exists to be raised when it bites. An operator watching for that could
+    not tell *it did not bite today* from *it can no longer be reported* — a
+    renamed key, a regressed refusal path, a strategy swapped out. Both looked
+    identical, because the key was simply not there. It is the same "not
+    measured" vs "measured and disagreed" distinction the row gets right one
+    level up, where `agreement: null` carries a note saying which one it is.
+
+    Each of the four names is separately shown NON-zero by the specimens above
+    (`AMBIGUOUS_REFUSAL`, `AMBIGUOUS_CANDIDATE_ROWS`, and both
+    `UNSOLVED_COMPONENT_*` under the oversized component), so a seeded `0` here
+    is a reading and not a constant.
+    """
+
+    def test_a_strategy_refusal_name_publishes_zero_when_nothing_was_refused(self):
+        """The failing test #3275 names. Before the fix this is a `KeyError`."""
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
+        )
+        singles = rows[SINGLES]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 0
+        assert singles["excluded"][UNSOLVED_COMPONENT_FIXTURES] == 0
+        assert singles["excluded"][UNSOLVED_COMPONENT_ROWS] == 0
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 0
+
+    def test_both_draws_publish_the_vocabulary_even_with_nothing_to_refuse(self):
+        """The doubles row has no fixtures at all and still answers the question.
+
+        A draw the pass barely touched is exactly where an absent key would be
+        easiest to mistake for a quiet day.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
+        )
+        for key in (SINGLES, DOUBLES):
+            for name in TENNIS_REFUSAL_NAMES:
+                assert rows[key]["excluded"][name] == 0, (
+                    f"{key} left {name} out of its census entirely"
+                )
+
+    def test_a_seeded_zero_still_rises_when_that_refusal_actually_fires(self):
+        """The pairing the issue requires: the seed must not BE the answer.
+
+        Satisfying the test above with a constant `0` would publish a number
+        that can never move — the monitorability hole, one layer deeper. So the
+        same two names are driven off zero by a real ambiguity while the two
+        names that did NOT fire stay at a measured zero.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "G. Garcia", "J. Sinner")],
+            rows=[
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Jannik Sinner"),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 1
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
+        # Not seeded over: these two genuinely did not fire on this pass.
+        assert singles["excluded"][UNSOLVED_COMPONENT_FIXTURES] == 0
+        assert singles["excluded"][UNSOLVED_COMPONENT_ROWS] == 0
+
+    def test_the_receipts_block_is_keyed_by_the_same_vocabulary(self):
+        """`excluded` and `receipts` may not disagree about which names exist.
+
+        Every other receipt key publishes an empty list when it has nothing to
+        show; a refusal's receipt going absent instead would reintroduce the bug
+        one field over, and an operator cross-reading the two blocks would find
+        a count with no place to look.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
+        )
+        singles = rows[SINGLES]
+        for name in TENNIS_REFUSAL_NAMES:
+            assert singles["receipts"][name] == []
+
+    def test_the_default_join_publishes_no_refusal_it_cannot_make(self):
+        """The seeding is the STRATEGY's vocabulary, not a new shared default.
+
+        NFL, NBA and NHL have seven-day clocks running on rows from the key
+        join. Leaking tennis's four names into their census at `0` would invent
+        four permanent readings about a refusal those sports have no code to
+        make.
+        """
+        row = build_agreement_row(
+            sport_key="americanfootball_nfl",
+            fixtures=[f("1", "Bears", "Packers")],
+            rows=[r("11", "Bears", "Packers")],
+            normalize=lambda v: (v or "").strip().lower(),
+        )
+        assert set(row["excluded"]) == set(DEFAULT_EXCLUDED_KEYS)
+
+    def test_a_join_emitting_a_refusal_name_it_never_declared_is_refused(self):
+        """The wrong half of the vocabulary drifting is worse than the old bug.
+
+        A typo'd or renamed emit would publish the real count under a name
+        nothing watches, while the declared name sat at a seeded `0` — absent
+        reads as unknown, but a wrong `0` reads as measured.
+        """
+        with pytest.raises(ValueError, match="did not declare"):
+            Join(
+                fixtures=[],
+                rows=[],
+                paired=[],
+                statpal_only=[],
+                ours_only=[],
+                unusable_fixtures=[],
+                unusable_rows=[],
+                refusals={"unsolved_componant": [{"ref": "1"}]},
+                refusal_names=(UNSOLVED_COMPONENT_FIXTURES,),
+            )
+
+    def test_a_refusal_name_colliding_with_a_default_excluded_key_is_refused(self):
+        """The seed is merged into the same dict the defaults are counted into.
+
+        A strategy declaring `our_unusable_names` would zero a count the row had
+        already measured — an exclusion silently moving the denominator, which
+        is the one thing `excluded` exists to prevent.
+        """
+        with pytest.raises(ValueError, match="collide"):
+            Join(
+                fixtures=[],
+                rows=[],
+                paired=[],
+                statpal_only=[],
+                ours_only=[],
+                unusable_fixtures=[],
+                unusable_rows=[],
+                refusal_names=("our_unusable_names",),
+            )
