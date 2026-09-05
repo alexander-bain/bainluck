@@ -24,6 +24,16 @@ zero-yield discipline is documented at its definition below and was ratified by
 CERT-766 / CAL-P992 — none of it is re-argued here, because none of it changed
 in this move. What is NEW in this module is only :func:`run_sweep`: the bound,
 unattended entry point the beat calls, and the terminal truth it returns.
+
+CAL-P1019 / #2722 — THE SWEEP NOW READS THE VENUE'S STATUS, NOT ONLY ITS DATES.
+Every candidate's event is already fetched with its nested markets, and every
+leg of that payload carries the venue's own ``status``. It was being discarded.
+That is the only signal that reaches the 20% of the settled cohort Kalshi
+finalises EARLY — measured at the venue 2026-09-02, 10 of 49 sampled settled
+markets still hold a FUTURE ``close_time``, so no date field and no date
+predicate can ever select them, and the row goes on claiming to be open. The
+write is at :data:`UPDATE_SQL`: ``status`` and ``settled_at``, on the venue's
+word only, and never a grade (#1852's line is unchanged).
 """
 
 from __future__ import annotations
@@ -40,7 +50,10 @@ from sqlalchemy import text
 # raised before argparse ran, so the script could not select a row, let alone
 # write one, and the catch-up this whole ship depends on was a no-op.
 from app.services.kalshi_api import KalshiAPIService
-from app.utils.kalshi_resolution_window import derive_resolution_window
+from app.utils.kalshi_resolution_window import (
+    derive_resolution_window,
+    derive_venue_settlement,
+)
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
 # The band's calendar. Reused rather than restated: this is the SAME Eastern
@@ -340,10 +353,40 @@ COUNT_SQL = """
 #: `updated_at` is BOUND, not `now()`: the two date columns and the stamp then come
 #: from one instant the caller controls, so the guard can assert on the exact
 #: parameters that reach the driver instead of on a value the database invents.
+#:
+#: THE STATUS HALF — CAL-P1019 / #2722. Until this change the only way a Kalshi row
+#: could stop claiming to be open was a DATE predicate going past
+#: (`status <> 'resolved' AND resolution_date < now()`, #1818's repair). Measured at
+#: the venue 2026-09-02: of 49 sampled markets Kalshi had already settled, **10 (20%)
+#: still carry a future `close_time`** because they finalised EARLY, so no date field
+#: reaches them — ever. Meanwhile this sweep was reading `status` off every leg of
+#: every candidate and throwing it away.
+#:
+#: So the write is conditional on the VENUE's own word (`derive_venue_settlement`),
+#: never on a clock: `venue_settled` is true only when the event has legs and every
+#: one of them is `settled`/`finalized`. `ELSE status` — not a plain assignment —
+#: because this statement also runs for the rows the venue still lists as open, and
+#: those must come out of it byte-identical.
+#:
+#: IT WRITES `status` AND `settled_at`, AND NOTHING THAT IS A GRADE. #1852's line is
+#: unchanged and #2722 restates it: `is_winner`, prices and probabilities are a
+#: different defect with a different rail, and moving a date and a grade in one pass
+#: is how #1852 happened. `test_the_update_never_writes_a_grade` holds that boundary
+#: against the statement text.
+#:
+#: The two dates became COALESCE for one reason: a settled row the venue gives no
+#: derivable date for must still be able to stop looking open. Its write arrives with
+#: `resolution_date = None`, and a plain assignment would blank a date we already
+#: hold in order to record a status. For every row that HAS a derived date the two
+#: spellings are identical, so no existing behaviour moves.
 UPDATE_SQL = """
     UPDATE futures_markets
-    SET resolution_date = :resolution_date,
-        expiration_time = :expiration_time,
+    SET resolution_date = COALESCE(:resolution_date, resolution_date),
+        expiration_time = COALESCE(:expiration_time, expiration_time),
+        status = CASE WHEN :venue_settled THEN 'resolved' ELSE status END,
+        settled_at = CASE WHEN :venue_settled
+                          THEN COALESCE(settled_at, :updated_at)
+                          ELSE settled_at END,
         updated_at = :updated_at
     WHERE id = :id
 """
@@ -417,6 +460,15 @@ async def run_backfill(
         "fallback_no_close_time": 0,
         "unresolvable_at_venue": 0,
         "errors": 0,
+        # #2722, the settlement half. `venue_settled` is the yield that matters
+        # now: rows this batch stopped calling open because Kalshi says they are
+        # over. `venue_partially_settled` is reported beside it so an event
+        # settling leg by leg reads as the expected state it is rather than as a
+        # miss, and `settled_without_date` counts the rows that could only be
+        # reached this way — the date columns had nothing to say about them.
+        "venue_settled": 0,
+        "venue_partially_settled": 0,
+        "settled_without_date": 0,
     }
     samples: list[dict] = []
 
@@ -463,6 +515,15 @@ async def run_backfill(
             stats["unresolvable_at_venue"] += 1
             return None
 
+        # #2722 — the venue's own word, off the payload we already have. Read
+        # BEFORE the date derivation and independently of it, because that is
+        # the whole point: settlement must not be reachable only through a date.
+        settlement = derive_venue_settlement([m.get("status") for m in markets])
+        if settlement.settled:
+            stats["venue_settled"] += 1
+        elif settlement.reason == "partially_settled":
+            stats["venue_partially_settled"] += 1
+
         window = derive_resolution_window(
             [
                 _Leg(_parse(m.get("close_time")), _parse(m.get("expiration_time")))
@@ -471,7 +532,20 @@ async def run_backfill(
         )
         if window.resolution_date is None:
             stats["unresolvable_at_venue"] += 1
-            return None
+            if not settlement.settled:
+                return None
+            # Settled at the venue with no date we can derive. The row still
+            # stops claiming to be open: "Kalshi says this is over" is a fact
+            # about the market, not about our date columns, and the COALESCEd
+            # UPDATE leaves whatever date we hold exactly where it is.
+            stats["settled_without_date"] += 1
+            return {
+                "id": market_id,
+                "resolution_date": None,
+                "expiration_time": None,
+                "venue_settled": True,
+                "updated_at": now,
+            }
         if window.used_expiration_fallback:
             stats["fallback_no_close_time"] += 1
 
@@ -496,6 +570,7 @@ async def run_backfill(
             "id": market_id,
             "resolution_date": window.resolution_date,
             "expiration_time": window.expiration_time,
+            "venue_settled": settlement.settled,
             "updated_at": now,
         }
 
@@ -533,7 +608,7 @@ async def run_backfill(
         "stats": stats,
         "newly_past_samples": samples,
     }
-    if stats["unresolvable_at_venue"] == len(rows):
+    if stats["unresolvable_at_venue"] == len(rows) and not writes:
         # Every slot in the batch went to a row this script may not write. Those
         # rows keep their slot, so an unattended re-run selects them again.
         report["batch_fully_unresolvable"] = (

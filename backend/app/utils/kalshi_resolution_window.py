@@ -46,6 +46,15 @@ scheduled close. No date field can reach those; only venue ``status`` can, which
 ``_backfill_from_settled_events``'s job (gotcha #33). This fix is 80% of the
 cohort, not 100%, and must not be reported as the whole of #1818.
 
+**AMENDMENT, CAL-P1019 / #2722.** That residual now has a second reader here:
+:func:`derive_venue_settlement`. The same payload this module reads for dates
+carries the venue's ``status`` per leg, and the sweep was discarding it — so a
+market Kalshi had already finalised kept ``status='open'`` in our rows and went on
+renting a dead last-trade price as a live probability (#2660's card). Reading it
+costs no extra venue call and writes no grade. It does not retire
+``_backfill_from_settled_events``, which enumerates settled events series by
+series; it is the second, non-date-gated way in.
+
 NO DATA LOSS. The backstop keeps its own column (``FuturesMarket.expiration_time``),
 so every consumer that genuinely wants "the last date this could possibly resolve"
 still has it, and the 421/421 provenance reproduction in CAL-P061 stays checkable.
@@ -99,6 +108,91 @@ class ResolutionWindow:
     #: rather than re-deriving it by comparing the two dates (which cannot
     #: distinguish "fell back" from "close == expiration", 73% of active rows).
     used_expiration_fallback: bool
+
+
+#: The venue statuses that mean "Kalshi says this market is over".
+#:
+#: CAL-P1019 / #2722 — THE RESIDUAL NAMED ABOVE, ANSWERED. The 10 of 49 settled
+#: markets whose ``close_time`` is still in the future cannot be reached by any
+#: date field, only by the venue's own ``status``. That status arrives on the
+#: SAME payload this module already reads for dates
+#: (``/events/{ticker}?with_nested_markets=true``) and was being discarded.
+#:
+#: MEASURED SHAPE, live public Kalshi API 2026-09-05 (``/events?status=settled``,
+#: nested markets), e.g. ``KXG7LEADEROUT-45JAN01-MCAR``::
+#:
+#:     status "finalized", result "no",
+#:     close_time 2026-07-20T14:22:46Z, expiration_time 2045-01-01T15:00:00Z
+#:
+#: WHY ONLY THESE TWO WORDS. ``settled`` and ``finalized`` are the venue's
+#: terminal states — the market is over and Kalshi has said what happened.
+#: ``closed`` is deliberately NOT here: it means trading stopped with the result
+#: still pending, and our ``status='resolved'`` is the gate a dozen grading and
+#: calibration queries read (``fm.status = 'resolved'`` appears 14 times in
+#: ``backfill_winners.py`` alone), so admitting a pending market would open those
+#: paths on a market with nothing to grade. ``determined`` is excluded for the
+#: same reason: payouts are not final and the venue may still move it.
+VENUE_SETTLED_STATUSES = frozenset({"settled", "finalized"})
+
+
+@dataclass(frozen=True)
+class VenueSettlement:
+    """Whether the VENUE considers one event over. A status read, never a grade.
+
+    This carries no winner, no result and no price on purpose. Moving a date and
+    a grade in one pass is how #1852 happened, and #2722 restates the line for
+    this ship: whatever fixes it writes ``status``, and must still not write
+    grades. The caller therefore has nothing here it could accidentally grade
+    with.
+    """
+
+    #: True only when the event has legs and EVERY leg is terminal at the venue.
+    settled: bool
+
+    #: How many legs the venue sent, and how many of them are terminal. Reported
+    #: so a partially-settled event is legible as a real, expected state rather
+    #: than as a failed read.
+    legs_total: int
+    legs_settled: int
+
+    #: Which of the four outcomes this was, in one word, for the run's report.
+    reason: str
+
+
+def derive_venue_settlement(statuses: Sequence[Optional[str]]) -> VenueSettlement:
+    """Read the venue's settlement fact off one event's leg statuses.
+
+    ``statuses`` is ``[m.get("status") for m in event["markets"]]`` — strings,
+    not dicts, so this module stays free of the payload's shape and a guard can
+    state its cases in four words each.
+
+    ALL legs must be terminal. An event is one row for us
+    (``futures_markets.external_id`` is the event ticker) but many markets at the
+    venue, and a Kalshi event can finalise leg by leg — a tennis set-winner event
+    settles its first-set leg while the match is still running. Flipping the row
+    on the first terminal leg would mark a live market over, which is the same
+    class of defect as #2351 (one leg's answer written to every sibling), read
+    from the other direction.
+
+    An unreadable status is not a settlement. A missing or unknown word answers
+    ``False`` rather than being treated as "probably over": the cost of waiting
+    one more sweep is a day, and the cost of being wrong is a live market showing
+    as resolved.
+    """
+    legs = [(s or "").strip().lower() for s in statuses]
+    if not legs:
+        # 200-with-no-markets. Gotcha #53: an empty list is a response shape, not
+        # a fact about settlement.
+        return VenueSettlement(False, 0, 0, "no_legs")
+
+    settled_legs = sum(1 for s in legs if s in VENUE_SETTLED_STATUSES)
+    if any(not s for s in legs):
+        return VenueSettlement(False, len(legs), settled_legs, "status_absent")
+    if settled_legs == len(legs):
+        return VenueSettlement(True, len(legs), settled_legs, "settled")
+    if settled_legs:
+        return VenueSettlement(False, len(legs), settled_legs, "partially_settled")
+    return VenueSettlement(False, len(legs), settled_legs, "open_at_venue")
 
 
 def _max_or_none(values: Iterable[Optional[datetime]]) -> Optional[datetime]:
