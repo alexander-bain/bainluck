@@ -396,9 +396,18 @@ async def test_the_nfl_pass_folds_its_own_day_into_the_durable_ledger(drive, mon
     monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
     monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
 
+    # TWO games. A single-fixture population scores `TOO-FEW-TO-SCORE` — 100% of
+    # one game is arithmetic, not agreement — and this test is about whether the
+    # pass FOLDS its day into the ledger, not about whether the day clears.
     summary, _session = await drive(
-        [_fixture("280445", "Arizona Cardinals", "Los Angeles Chargers", KICKOFF)],
-        [_candidate(1, "Arizona Cardinals", "Los Angeles Chargers", KICKOFF)],
+        [
+            _fixture("280445", "Arizona Cardinals", "Los Angeles Chargers", KICKOFF),
+            _fixture("280446", "Chicago Bears", "Green Bay Packers", KICKOFF),
+        ],
+        [
+            _candidate(1, "Arizona Cardinals", "Los Angeles Chargers", KICKOFF),
+            _candidate(2, "Chicago Bears", "Green Bay Packers", KICKOFF),
+        ],
     )
 
     streak = summary["agreement"]["streak"]

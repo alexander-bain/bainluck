@@ -243,12 +243,6 @@ GATE_PENDING = "PENDING-NO-GOVERNING-NUMBER"
 #: a streak is a spec decision, not a rendering detail.
 GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING})
 
-#: How many consecutive advancing days a governing number needs before a flip is
-#: permitted. D50's "7-day", stated once so the count is done in code rather than
-#: by a reader scrolling the ledger — `streak_from_gates` is the only place the
-#: word "consecutive" is turned into a number.
-FLIP_STREAK_DAYS = 7
-
 #: The smallest denominator a percentage may be scored on and still reach
 #: `MEETS`.
 #:
@@ -309,7 +303,11 @@ IDENTITY_DENOMINATORS: dict[str, Callable[[dict[str, Any]], int]] = {
 #: row, every percentage carries the denominator it was scored on, and there are
 #: five gate states rather than pass/fail.
 FLIP_GATE_SUMMARY = (
-    f"D50: a flip needs {FLIP_STREAK_DAYS} consecutive daily rows clearing "
+    # The 7 is a literal here and `authority_streak.REQUIRED_STREAK_DAYS`
+    # elsewhere, because that module imports THIS one and the constant cannot
+    # live upstream of its own owner without a cycle. They are pinned together
+    # by `test_the_summary_and_the_streak_counter_agree_on_seven`.
+    f"D50: a flip needs 7 consecutive daily rows clearing "
     f"{FLIP_BAR_PCT}%, plus a YOUR-TURN entry Alex has seen. Identity governs; "
     "schedule and anchors are reported and gate nothing. WHICH of identity's "
     "two numbers scores a sport is per sport (D63), so do not compare a "
@@ -1007,36 +1005,3 @@ def _gate_text(identity: dict[str, Any]) -> str:
         for name in governing["numbers"]
     )
     return f"{gate}({scored} vs {governing['bar_pct']}%)"
-
-
-def streak_from_gates(gates: Sequence[str]) -> int:
-    """How many consecutive advancing days the gate states end on.
-
-    The seven-day count, done in code. It was being done by a person reading
-    down `ARTIFACT-M-R-AUTHORITY-LEDGER.md`, which is exactly the arrangement
-    D46 moved out of the calibration lane: the app scores, the bus reads.
-
-    `gates` is oldest-first, and only the tail matters — a streak is what the
-    run of days ENDS on, not the best run it ever had.
-
-    Four tokens carry and are skipped rather than counted: the three in
-    `GATES_CARRY_STREAK` plus `READ-FAILED`, which is not a gate state at all —
-    a failed read never reaches `governing_identity`, and the ledger line for
-    that day already says "streak carried unchanged". A day StatPal could not be
-    read, a day with nothing to divide by, and a day too small to score are all
-    days on which nobody disagreed; resetting on them would mean the bar could
-    only ever be cleared by seven consecutive busy days.
-
-    `BELOW` resets, and anything unrecognised resets too: a gate state this
-    function has not been taught is not evidence of agreement.
-    """
-    carried = GATES_CARRY_STREAK | {READ_FAILED}
-    streak = 0
-    for gate in reversed(list(gates)):
-        if gate == GATE_MEETS:
-            streak += 1
-        elif gate in carried:
-            continue
-        else:
-            break
-    return streak

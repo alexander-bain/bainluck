@@ -24,11 +24,10 @@ from app.utils.authority_agreement import (
     FLIP_BAR_PCT,
     GATE_BELOW,
     GATE_MEETS,
-    GATE_NO_SCORE,
-    GATE_PENDING,
     READ_FAILED,
 )
 from app.utils.authority_streak import (
+    DAY_STATES_CARRY,
     LEDGER_RETAINED_DAYS,
     REQUIRED_STREAK_DAYS,
     STOP_BELOW,
@@ -103,7 +102,24 @@ def test_a_day_is_a_utc_calendar_date_and_naive_input_is_not_local_time():
     assert utc_day(datetime(2026, 9, 6, 8, 0, tzinfo=east)) == "2026-09-05"
 
 
-@pytest.mark.parametrize("gate", [GATE_MEETS, GATE_BELOW, GATE_NO_SCORE, GATE_PENDING])
+def _all_gate_states():
+    """Every `GATE_*` the agreement module defines, discovered rather than typed.
+
+    This list used to be a four-name literal, which meant a fifth gate state
+    could be added upstream and neither of the two tests below would notice —
+    the exact failure their docstrings promise to catch. `TOO-FEW-TO-SCORE`
+    (authority/024) was that fifth state.
+    """
+    from app.utils import authority_agreement as aa
+
+    return sorted(
+        getattr(aa, name)
+        for name in dir(aa)
+        if name.startswith("GATE_") and isinstance(getattr(aa, name), str)
+    )
+
+
+@pytest.mark.parametrize("gate", _all_gate_states())
 def test_every_gate_state_survives_the_trip_into_the_ledger(gate):
     assert day_state(row(gate)) == gate
     assert fold_day(empty_ledger(SPORT), row(gate), at=NOON)["days"][0]["state"] == gate
@@ -186,9 +202,14 @@ def test_a_below_day_resets_the_streak_and_the_row_names_the_day_it_lost():
     assert streak["meets_flip_gate"] is False
 
 
-@pytest.mark.parametrize("carrier", [GATE_NO_SCORE, GATE_PENDING, READ_FAILED])
+@pytest.mark.parametrize("carrier", sorted(DAY_STATES_CARRY))
 def test_a_carrying_day_neither_advances_nor_resets_and_is_declared(carrier):
-    """Spec rule 6 / gotcha #53: "we could not look" is not "we disagreed"."""
+    """Spec rule 6 / gotcha #53: "we could not look" is not "we disagreed".
+
+    Parametrised over `DAY_STATES_CARRY` itself, so a state added to that
+    frozenset is a state this test starts covering the same day. It was a
+    three-name literal, and `TOO-FEW-TO-SCORE` joined the set without it.
+    """
     streak = ledger_of([GATE_MEETS] * 7 + [carrier])["streak"]
     assert streak["days"] == 7, f"{carrier} must not reset a real streak"
     assert streak["meets_flip_gate"] is True

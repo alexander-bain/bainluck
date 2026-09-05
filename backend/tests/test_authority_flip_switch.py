@@ -18,16 +18,17 @@ Three defect classes, each with its own band below:
     Every reason a day cannot be scored — StatPal unreachable, nothing to divide
     by, too few games — is a day nobody disagreed on. Resetting on those means
     the bar can only be cleared by seven consecutive busy days, which is a bar
-    nobody set. Only `BELOW` resets.
+    nobody set. Only `BELOW` resets. The WALK itself is
+    `authority_streak.compute_streak` (authority/021) and is tested in its own
+    file; what is tested here is the seam — that a state added to the gate
+    constants actually reaches that walk as a carrying one.
 
 `the switch refuses for the RIGHT reason`
-    "Not yet" has four meanings and three of them are not waits: no id join, no
-    governing number ruled, a real streak short of seven, and a broken streak.
-    Collapsing them into `False` is how MLB spent a day being waited on when
-    what it needed was a ruling.
+    "Not yet" has five meanings and only one is a defect: no id join, no
+    governing number ruled, no ledger at all, a real streak short of seven, and
+    a broken streak. Collapsing them into `False` is how MLB spent a day being
+    waited on when what it needed was a ruling.
 """
-
-import pytest
 
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
@@ -40,20 +41,42 @@ from app.config.authority_by_sport import (
 )
 from app.utils.authority_agreement import (
     FLIP_BAR_PCT,
-    FLIP_STREAK_DAYS,
     GATE_BELOW,
     GATE_MEETS,
     GATE_NO_SCORE,
-    GATE_PENDING,
     GATE_TOO_FEW,
     GOVERNING_IDENTITY_NUMBERS,
     IDENTITY_DENOMINATORS,
     MINIMUM_SCORED_DENOMINATOR,
-    READ_FAILED,
     SHADOW_STAMPERS,
     governing_identity,
-    streak_from_gates,
 )
+from app.utils.authority_streak import REQUIRED_STREAK_DAYS
+
+
+def _day(day: str, state: str) -> dict:
+    """One durable-ledger day entry, in the only two fields the walk reads.
+
+    Deliberately not built by `authority_streak.day_entry`: that function is the
+    producer and `compute_streak` is the consumer, and driving both ends from one
+    helper would hide a disagreement between them rather than surface it.
+    """
+    return {"day": day, "state": state}
+
+
+def _run_of(n: int, state: str) -> list[dict]:
+    """`n` CONSECUTIVE days ending 2026-09-30, all in one state.
+
+    Consecutive on purpose: `compute_streak` stops at a day with no stored row,
+    so a list of `n` entries with gaps in the dates is not a streak of `n` and a
+    helper that produced one would make every test below quietly weaker.
+    """
+    from datetime import date, timedelta
+
+    end = date(2026, 9, 30)
+    return [
+        _day((end - timedelta(days=n - 1 - i)).isoformat(), state) for i in range(n)
+    ]
 
 
 def _identity(*, both: int, statpal_only: int = 0, ours_only: int = 0) -> dict:
@@ -202,51 +225,57 @@ def test_the_ledger_line_prints_the_denominator_beside_the_percentage():
 
 # ---------------------------------------------------------------------------
 # a small day carries, it never resets
+#
+# The WALK is `authority_streak.compute_streak`, which shipped with
+# authority/021 and is tested in `test_authority_streak.py`. Nothing here
+# re-tests it. What is tested here is the one thing that changed: `TOO-FEW-TO-SCORE`
+# is a NEW day-state, and it reaches that walk through `GATES_CARRY_STREAK`.
+# A fifth state that the walk has never been taught does not carry — it stops
+# the walk by name (D55) — so the two modules agreeing about it is a real seam.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "carried", [GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING, READ_FAILED]
-)
-def test_an_unscorable_day_carries_the_streak_rather_than_resetting_it(carried):
-    """Four ways a day says nothing, and none of them is a disagreement.
+def test_the_new_gate_state_reaches_the_streak_walk_as_a_carrying_day():
+    """The seam. `DAY_STATES_CARRY` is built from `GATES_CARRY_STREAK`.
 
-    `READ_FAILED` is in here because it is NOT a gate state — a failed read
-    returns before `governing_identity` is ever called — and a counter that only
-    understands gate states would reset a six-day streak the morning StatPal 500s.
+    If `TOO-FEW-TO-SCORE` had been added without going into that frozenset, the
+    walk would have hit `else` and stopped by name — a six-day streak ended by a
+    quiet Tuesday. That is the correct failure for an unknown state and the wrong
+    one for this state, and only this test can tell them apart.
     """
-    gates = [GATE_MEETS, GATE_MEETS, carried, GATE_MEETS]
-    assert streak_from_gates(gates) == 3
+    from app.utils.authority_streak import DAY_STATES_CARRY
+
+    assert GATE_TOO_FEW in DAY_STATES_CARRY
+    assert GATE_BELOW not in DAY_STATES_CARRY
+    assert GATE_MEETS not in DAY_STATES_CARRY
 
 
-def test_a_day_below_the_bar_resets_the_streak():
-    gates = [GATE_MEETS] * 6 + [GATE_BELOW]
-    assert streak_from_gates(gates) == 0
-    assert streak_from_gates(gates + [GATE_MEETS]) == 1
+def test_a_too_few_day_neither_advances_nor_resets_a_real_streak():
+    """End to end through the shipped walk, not through a reimplementation."""
+    from app.utils.authority_streak import compute_streak
+
+    days = [
+        _day("2026-09-01", GATE_MEETS),
+        _day("2026-09-02", GATE_MEETS),
+        _day("2026-09-03", GATE_TOO_FEW),
+        _day("2026-09-04", GATE_MEETS),
+    ]
+    streak = compute_streak(days)
+
+    assert streak["days"] == 3
+    assert "2026-09-03" in streak["carried_days"]
 
 
-def test_the_streak_is_the_tail_not_the_best_run():
-    """Six good days, one bad, one good is 1 — not 6, and not 7."""
-    gates = [GATE_MEETS] * 6 + [GATE_BELOW, GATE_MEETS]
-    assert streak_from_gates(gates) == 1
+def test_the_summary_and_the_streak_counter_agree_on_seven():
+    """Two modules, one seven.
 
-
-def test_an_unrecognised_gate_state_resets():
-    """A state this counter has not been taught is not evidence of agreement."""
-    assert streak_from_gates([GATE_MEETS] * 7 + ["SOMETHING-NEW"]) == 0
-
-
-def test_no_days_is_not_a_streak():
-    assert streak_from_gates([]) == 0
-
-
-def test_a_carried_day_cannot_manufacture_a_seventh():
-    """Six MEETS and a quiet day is six, not seven.
-
-    Carrying means "leave it as it was", and the cheapest way to get this wrong
-    is to skip the day and then count the list's length.
+    `REQUIRED_STREAK_DAYS` cannot live in `authority_agreement` — `authority_streak`
+    imports that module, so the constant would sit upstream of its own owner. The
+    summary therefore carries a literal, and this is what stops the two drifting.
     """
-    assert streak_from_gates([GATE_MEETS] * 6 + [GATE_NO_SCORE]) == 6
+    from app.utils.authority_agreement import FLIP_GATE_SUMMARY
+
+    assert f"{REQUIRED_STREAK_DAYS} consecutive daily rows" in FLIP_GATE_SUMMARY
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +322,7 @@ def test_an_unknown_sport_key_resolves_to_espn_and_does_not_raise():
 
 
 def test_a_sport_with_no_shadow_stamper_is_refused_as_a_build_not_a_wait():
-    permitted, why = flip_permitted("soccer_epl", [GATE_MEETS] * 10)
+    permitted, why = flip_permitted("soccer_epl", _run_of(10, GATE_MEETS))
     assert not permitted
     assert "no shadow stamper" in why
     assert "not a wait" in why
@@ -304,21 +333,36 @@ def test_a_sport_with_no_governing_number_is_refused_as_a_ruling_not_a_wait():
     assert "baseball_mlb" in SHADOW_STAMPERS
     assert not GOVERNING_IDENTITY_NUMBERS.get("baseball_mlb")
 
-    permitted, why = flip_permitted("baseball_mlb", [GATE_MEETS] * 10)
+    permitted, why = flip_permitted("baseball_mlb", _run_of(10, GATE_MEETS))
     assert not permitted
     assert "governing identity number" in why
     assert "not more days" in why
 
 
-def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along():
-    permitted, why = flip_permitted("basketball_nba", [GATE_MEETS] * 6)
+def test_a_sport_with_no_ledger_is_refused_as_not_measured():
+    """An empty ledger has never been held to the bar.
+
+    `compute_streak` returns `None` here, deliberately, and reporting that as
+    "0/7 consecutive days" would describe a sport that FAILED a bar nobody ever
+    applied to it. Gotcha #53 at the flip gate.
+    """
+    permitted, why = flip_permitted("basketball_nba", [])
     assert not permitted
-    assert f"6/{FLIP_STREAK_DAYS}" in why
+    assert "not measured" in why
+    assert "0/" not in why
+
+
+def test_a_short_streak_is_refused_as_a_wait_and_says_how_far_along():
+    permitted, why = flip_permitted("basketball_nba", _run_of(6, GATE_MEETS))
+    assert not permitted
+    assert f"6/{REQUIRED_STREAK_DAYS}" in why
     assert "not a defect" in why
 
 
 def test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex():
-    permitted, why = flip_permitted("basketball_nba", [GATE_MEETS] * FLIP_STREAK_DAYS)
+    permitted, why = flip_permitted(
+        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+    )
     assert permitted
     assert "YOUR-TURN" in why
     assert str(FLIP_BAR_PCT) in why
@@ -335,9 +379,11 @@ def test_seven_days_of_too_few_does_not_permit_a_flip():
     day = governing_identity("basketball_nba", _identity(both=1))["gate"]
     assert day == GATE_TOO_FEW
 
-    permitted, why = flip_permitted("basketball_nba", [day] * FLIP_STREAK_DAYS)
+    permitted, why = flip_permitted(
+        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, day)
+    )
     assert not permitted
-    assert f"0/{FLIP_STREAK_DAYS}" in why
+    assert f"0/{REQUIRED_STREAK_DAYS}" in why
 
 
 def test_todays_real_nba_and_nhl_populations_still_clear_the_floor():

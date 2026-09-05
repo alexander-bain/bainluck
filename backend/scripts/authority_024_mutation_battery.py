@@ -33,11 +33,14 @@ REPO = Path(__file__).resolve().parents[1]
 
 AGREEMENT = "app/utils/authority_agreement.py"
 SWITCH = "app/config/authority_by_sport.py"
+STAMPER_TESTS = "tests/test_stamp_v1_agreement_row.py"
 
 TESTS = (
     "tests/test_authority_flip_switch.py",
     "tests/test_authority_governing_number.py",
     "tests/test_authority_agreement_endpoint.py",
+    "tests/test_authority_streak.py",
+    STAMPER_TESTS,
 )
 
 FLIP = "tests/test_authority_flip_switch.py::"
@@ -85,17 +88,6 @@ MUTATIONS = [
         "test_the_ledger_line_carries_the_verdict_so_the_bus_never_picks_a_number",
     ),
     (
-        # A too-small day filed as a disagreement. Both are "did not advance"
-        # and only one of them resets seven days of real agreement.
-        "too-few-collapsed-into-below",
-        AGREEMENT,
-        'GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING})',
-        'GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})',
-        FLIP
-        + "test_an_unscorable_day_carries_the_streak_rather_than_resetting_it"
-        + "[TOO-FEW-TO-SCORE]",
-    ),
-    (
         # The two identity numbers sharing one denominator. They differ by
         # exactly the StatPal-only games, which is the entire reason the row
         # carries two numbers instead of one.
@@ -113,7 +105,8 @@ MUTATIONS = [
         AGREEMENT,
         "    build = IDENTITY_DENOMINATORS.get(name)\n    if build is None:\n        return None",
         "    build = IDENTITY_DENOMINATORS.get(name)\n    if build is None:\n        return 999",
-        FLIP + "test_an_unteachable_governing_number_scores_nothing_rather_than_meeting",
+        FLIP
+        + "test_an_unteachable_governing_number_scores_nothing_rather_than_meeting",
     ),
     (
         # The ledger line back to `covers=100.0%` with no population. This is
@@ -125,34 +118,36 @@ MUTATIONS = [
         FLIP + "test_the_ledger_line_prints_the_denominator_beside_the_percentage",
     ),
     (
-        # A failed read resetting the streak. READ-FAILED is not a gate state,
-        # so a counter that only knows gate states throws away six good days the
-        # first morning StatPal 500s — spec rule 6, gotcha #53.
-        "read-failed-resets-the-streak",
+        # The new state added to the gate constants but NOT to the carrying set.
+        # `authority_streak.DAY_STATES_CARRY` is built from `GATES_CARRY_STREAK`,
+        # so this is one frozenset away from a six-day streak ended by a quiet
+        # Tuesday — the walk stops by name on a state it has not been taught.
+        "new-state-never-reaches-the-streak-walk",
         AGREEMENT,
-        "    carried = GATES_CARRY_STREAK | {READ_FAILED}",
-        "    carried = GATES_CARRY_STREAK",
-        FLIP
-        + "test_an_unscorable_day_carries_the_streak_rather_than_resetting_it"
-        + "[READ-FAILED]",
+        "GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING})",
+        "GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})",
+        FLIP + "test_the_new_gate_state_reaches_the_streak_walk_as_a_carrying_day",
     ),
     (
-        # "Carried" read as "counted": six good days and a quiet Tuesday
-        # manufacturing the seventh.
-        "a-carried-day-counts-as-agreement",
+        # The whole ship, at the task level: a one-game day banked as a pass and
+        # folded into the durable ledger as MEETS, which is a flip seven quiet
+        # days away. Pinned on the stamper path, not the unit.
+        "one-game-day-folded-into-the-ledger-as-a-pass",
         AGREEMENT,
-        "        elif gate in carried:\n            continue",
-        "        elif gate in carried:\n            streak += 1",
-        FLIP + "test_a_carried_day_cannot_manufacture_a_seventh",
+        "MINIMUM_SCORED_DENOMINATOR = 2",
+        "MINIMUM_SCORED_DENOMINATOR = 1",
+        STAMPER_TESTS
+        + "::test_a_one_game_day_is_folded_as_carried_and_advances_no_streak",
     ),
     (
-        # The streak as the best run rather than the run it ends on. A sport
-        # that agreed for six days in July would flip in September.
-        "streak-is-the-best-run-not-the-tail",
-        AGREEMENT,
-        "        else:\n            break\n    return streak",
-        "        else:\n            continue\n    return streak",
-        FLIP + "test_the_streak_is_the_tail_not_the_best_run",
+        # "Not measured" reported as a streak of zero. An empty ledger has never
+        # been held to the bar, and saying 0/7 describes a sport that failed one
+        # (gotcha #53).
+        "no-ledger-reported-as-a-streak-of-zero",
+        SWITCH,
+        "    if streak is None:",
+        "    if False:",
+        FLIP + "test_a_sport_with_no_ledger_is_refused_as_not_measured",
     ),
     (
         # A fifth gate state that the payload's opening sentence never mentions.
@@ -170,9 +165,10 @@ MUTATIONS = [
         # exactly like a sport that has not qualified.
         "seventh-day-does-not-count",
         SWITCH,
-        "    if streak < FLIP_STREAK_DAYS:",
-        "    if streak <= FLIP_STREAK_DAYS:",
-        FLIP + "test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex",
+        "    if days < REQUIRED_STREAK_DAYS:",
+        "    if days <= REQUIRED_STREAK_DAYS:",
+        FLIP
+        + "test_seven_days_permits_the_measured_half_and_says_the_other_half_is_alex",
     ),
     (
         # MLB waited on instead of ruled on. Ten perfect days do not move a
@@ -182,7 +178,8 @@ MUTATIONS = [
         SWITCH,
         "    if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):",
         "    if False and not GOVERNING_IDENTITY_NUMBERS.get(sport_key):",
-        FLIP + "test_a_sport_with_no_governing_number_is_refused_as_a_ruling_not_a_wait",
+        FLIP
+        + "test_a_sport_with_no_governing_number_is_refused_as_a_ruling_not_a_wait",
     ),
     (
         # The switch thrown in a diff, with no evidence and no YOUR-TURN entry.
@@ -250,9 +247,18 @@ def main() -> int:
             hashlib.sha256(path.read_text().encode()).hexdigest() == before
         ), f"{label}: restore was not byte-identical"
         _purge_pycache()
-        (killed if code != 0 else survived).append(label)
+        # gotcha #124: `1` is a RESULT; every other non-zero code is a story
+        # about the harness. Exit 4 is pytest's usage error, which is what a
+        # renamed or deleted test node returns — and counting that as a kill is
+        # how a battery reports a guard it never ran. It happened here: the
+        # `too-few-collapsed-into-below` mutation kept pointing at a test node
+        # this ship had since deleted, and read KILLED (exit 4).
+        if code not in (0, 1):
+            print(f"  {label}: HARNESS FAILURE (exit {code}) on {test} — abort")
+            return 4
+        (killed if code == 1 else survived).append(label)
         print(
-            f"  {label}: {'KILLED' if code != 0 else 'SURVIVED'} (exit {code}) via {test}"
+            f"  {label}: {'KILLED' if code == 1 else 'SURVIVED'} (exit {code}) via {test}"
         )
 
     print(f"\n{len(killed)}/{len(MUTATIONS)} killed, {len(survived)} survived")
