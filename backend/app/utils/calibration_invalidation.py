@@ -43,6 +43,8 @@ __all__ = [
     "INVALIDATION_OBLIGATION_SCHEMA",
     "OBLIGATION_DISCHARGED",
     "OBLIGATION_OPEN",
+    "REAPPLY_DISCHARGES",
+    "RESTORE_DISCHARGES",
     "discharge_obligation",
     "invalidation_discharged",
     "main_checkpoint_is_invalidation",
@@ -50,6 +52,7 @@ __all__ = [
     "obligation_is_open",
     "obligation_market_ids",
     "obligation_plan_hash",
+    "obligation_retry_instruction",
 ]
 
 #: Envelope version for the obligation ledger. Bump when a reader must refuse an
@@ -113,12 +116,31 @@ def main_checkpoint_is_invalidation(payload: Any) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
+#: What discharges a debt an APPLY created.
+REAPPLY_DISCHARGES = "Re-apply this exact plan_hash until this record reads discharged."
+
+#: What discharges a debt a RESTORE created — and it is NOT the apply.
+#:
+#: CAL-P1009: the two actions move the same rows in opposite directions, so the
+#: instruction cannot be shared. A restore's unpaid invalidation retried by
+#: re-applying its plan pays the debt by REDOING the repair somebody just chose
+#: to undo. The retry that is actually owed is the restore itself: it re-reads
+#: this record's market ids and invalidates over them even when it has nothing
+#: left to reverse.
+RESTORE_DISCHARGES = (
+    "Re-run the RESTORE of this exact plan_hash until this record reads "
+    "discharged. Do NOT re-apply the plan — that pays the debt by redoing the "
+    "repair this restore undid."
+)
+
+
 def new_obligation(
     *,
     plan_hash: str,
     market_ids: Iterable[int],
     leg_ids: Iterable[int],
     owner: str,
+    retry_instruction: str = REAPPLY_DISCHARGES,
 ) -> dict[str, Any]:
     """An OPEN debt, bound to the plan and to the write receipt that created it.
 
@@ -126,6 +148,11 @@ def new_obligation(
     every call — not this call's ``written`` set. That distinction IS the fix:
     on the retry the rows are already committed, so ``written`` is empty and the
     only surviving record of what must be invalidated is this one.
+
+    ``retry_instruction`` is carried in the record rather than known by the
+    reader, because the ledger is ONE slot shared by two writers that move rows
+    in opposite directions. A reader that assumed the instruction would tell an
+    operator to re-apply a plan whose whole point was that it had been undone.
     """
     return {
         "schema": INVALIDATION_OBLIGATION_SCHEMA,
@@ -134,10 +161,10 @@ def new_obligation(
         "market_ids": sorted({int(m) for m in market_ids}),
         "leg_ids": sorted({int(x) for x in leg_ids}),
         "owner": owner,
+        "retry_instruction": retry_instruction,
         "note": (
             "Rows are committed and the calibration generation is NOT proven "
-            "discarded. Re-apply this exact plan_hash until this record reads "
-            "discharged."
+            f"discarded. {retry_instruction}"
         ),
     }
 
@@ -186,6 +213,20 @@ def obligation_plan_hash(obligation: Any) -> Optional[str]:
         return None
     value = obligation.get("plan_hash")
     return value if isinstance(value, str) else None
+
+
+def obligation_retry_instruction(obligation: Any) -> str:
+    """What the RECORD says pays it — never what the reader assumes.
+
+    A record written before this field existed, or one whose field is the wrong
+    shape, falls back to the apply's instruction: that is what every such record
+    in the store was in fact created by.
+    """
+    if isinstance(obligation, dict):
+        value = obligation.get("retry_instruction")
+        if isinstance(value, str) and value:
+            return value
+    return REAPPLY_DISCHARGES
 
 
 # ---------------------------------------------------------------------------

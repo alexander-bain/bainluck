@@ -149,6 +149,7 @@ from sqlalchemy import text
 
 from app.utils.calibration_invalidation import (
     INVALIDATION_OBLIGATION_SCHEMA,
+    RESTORE_DISCHARGES,
     discharge_obligation,
     invalidation_discharged,
     main_checkpoint_is_invalidation,
@@ -157,6 +158,7 @@ from app.utils.calibration_invalidation import (
     obligation_leg_ids,
     obligation_market_ids,
     obligation_plan_hash,
+    obligation_retry_instruction,
 )
 from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
@@ -819,6 +821,13 @@ async def _load_receipt(plan_hash: str):
 
 OBLIGATION_IDENTITY = "calibration:repair:kalshi_fabricated_loss:invalidation_obligation"
 
+#: The two writers of that one slot. CAL-P1009: they move the same rows in
+#: OPPOSITE directions, so an open debt must say which one made it — the escape
+#: from an unpaid invalidation is to re-run the action that created it, and
+#: guessing wrong redoes a repair somebody deliberately undid.
+OBLIGATION_OWNER_APPLY = "repair:kalshi-fabricated-loss"
+OBLIGATION_OWNER_RESTORE = "repair:kalshi-fabricated-loss-restore"
+
 #: An obligation must never age out of visibility. A debt that becomes
 #: unreadable because it got old is the same false-green one door down, so the
 #: bound is a year and an expiry reads as UNREADABLE (which refuses) rather than
@@ -1425,7 +1434,14 @@ async def _apply_reviewed_plan(session, plan_hash, started):
 
     prior_open = prior is not None and obligation_is_open(prior)
     prior_hash = obligation_plan_hash(prior) if prior_open else None
-    if prior_open and prior_hash != plan.plan_hash:
+    prior_owner = prior.get("owner") if prior_open and isinstance(prior, dict) else None
+    # CAL-P1009: a debt the RESTORE created is never dischargeable by an apply,
+    # not even of its own plan_hash. Re-applying it does pay the curve — by
+    # rewriting the very repair the restore undid, which is a decision no
+    # retry-shaped call gets to make silently. Both mismatch cases refuse under
+    # the same name, and the reason quotes the record instead of assuming it.
+    restore_owned = prior_owner == OBLIGATION_OWNER_RESTORE
+    if prior_open and (restore_owned or prior_hash != plan.plan_hash):
         return {
             "apply": True,
             "measured": False,
@@ -1434,11 +1450,17 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                 "plan_hash": prior_hash,
                 "market_ids": obligation_market_ids(prior),
                 "leg_ids": obligation_leg_ids(prior),
+                "owner": prior_owner,
+                "discharged_by": obligation_retry_instruction(prior),
             },
             "reason": (
-                "A previous apply committed rows whose calibration invalidation "
-                "never discharged. Re-apply THAT plan_hash until it does; a new "
-                "page would compound an unpaid debt against the published curve."
+                "A previous "
+                + ("restore" if restore_owned else "apply")
+                + " committed rows whose calibration invalidation never "
+                "discharged, and this call cannot pay that debt: "
+                + obligation_retry_instruction(prior)
+                + " A new page would compound an unpaid debt against the "
+                "published curve."
             ),
             "success": False,
             "elapsed_s": round(time.monotonic() - started, 1),
@@ -1655,7 +1677,7 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         plan_hash=plan.plan_hash,
         market_ids=owed_market_ids,
         leg_ids=owed_leg_ids,
-        owner="repair:kalshi-fabricated-loss",
+        owner=OBLIGATION_OWNER_APPLY,
     )
     obligation_persisted, obligation_note = (
         await _save_obligation(receipt) if owed_market_ids else (True, "nothing owed")
@@ -1835,6 +1857,15 @@ async def restore(
        — the same discipline ``apply=true`` is held to, for the same reason.
     4. **A row that has moved is reported by id and skipped.** Never widened,
        never retried without a fresh receipt.
+    5. **It joins the invalidation obligation ledger** (CAL-P1009). A restore
+       moves grades, so it owes the published curve an invalidation exactly as
+       an apply does — and it writes the same one durable slot. Before it
+       reverses anything it reads the ledger and refuses if the read is UNKNOWN;
+       after it commits it banks its own OPEN debt, carrying any prior debt's
+       ids forward in the union so the slot never drops one, and discharges only
+       on the proved invalidation. The record says a RESTORE discharges it: the
+       previous shape would have told an operator to re-apply the plan, which
+       pays the curve by redoing the repair the restore had just undone.
 
     The dry-run tells you what it would touch without touching it. It reads the
     receipt and reports, and it deliberately does NOT pre-check the rows: a
@@ -1916,6 +1947,35 @@ async def restore(
             "success": True,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
+
+    # --- The outstanding debt, read BEFORE the first write -------------------
+    # CAL-P1009. The obligation ledger is ONE slot and the apply already writes
+    # it, so a restore that reversed rows and then banked its own debt without
+    # reading first would ERASE an apply's unpaid invalidation — the single-slot
+    # hazard, on the recovery path. Reading first lets this call carry that debt
+    # forward in its own record instead of overwriting it. UNKNOWN is not "no
+    # debt": reversing rows while unable to read what is owed is how the union
+    # loses an id.
+    prior, prior_note = await _load_obligation()
+    if prior_note not in ("ok", "missing"):
+        return {
+            "restore": True,
+            "apply": True,
+            "measured": False,
+            "refused": ["OBLIGATION_LEDGER_UNREADABLE"],
+            "obligation_note": prior_note,
+            "presented_plan_hash": plan_hash,
+            "reason": (
+                "The invalidation obligation ledger could not be read, so this "
+                "restore cannot tell an unpaid invalidation from none — and its "
+                "own debt would land in the same slot. Nothing was written."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+    prior_open = prior is not None and obligation_is_open(prior)
+    prior_ids = obligation_market_ids(prior) if prior_open else []
+    prior_legs = obligation_leg_ids(prior) if prior_open else []
 
     reversed_ids: list[int] = []
     drift: list[dict[str, Any]] = []
@@ -2029,13 +2089,52 @@ async def restore(
     # unit computed from the repaired rows is as wrong as one computed from the
     # unrepaired rows would have been.
     touched_markets = sorted({index[i]["market_id"] for i in reversed_ids})
-    invalidation = await invalidate_calibration_generation(session, set(touched_markets))
+
+    # --- The debt, recorded BEFORE it is paid --------------------------------
+    # The same three moves the apply makes, in the same order, for the same
+    # reason: a crash between the reversal and the invalidation must leave the
+    # debt VISIBLE rather than gone. The union carries any prior open debt
+    # forward — invalidation is per market id, so invalidating over the union
+    # genuinely pays both, and the one slot never drops one.
+    owed_market_ids = sorted(set(touched_markets) | set(prior_ids))
+    owed_leg_ids = sorted(set(reversed_ids) | set(prior_legs))
+    receipt = new_obligation(
+        plan_hash=plan_hash,
+        market_ids=owed_market_ids,
+        leg_ids=owed_leg_ids,
+        owner=OBLIGATION_OWNER_RESTORE,
+        retry_instruction=RESTORE_DISCHARGES,
+    )
+    obligation_persisted, obligation_note = (
+        await _save_obligation(receipt) if owed_market_ids else (True, "nothing owed")
+    )
+
+    invalidation = await invalidate_calibration_generation(session, set(owed_market_ids))
     discharged, discharge_note = invalidation_discharged(
         status=invalidation["status"],
         wrote_rows=bool(reversed_ids),
         drift_count=len(drift),
-        prior_obligation_open=False,
+        prior_obligation_open=prior_open,
     )
+
+    obligation_cleared = True
+    clear_note = "nothing owed"
+    if owed_market_ids:
+        if discharged:
+            obligation_cleared, clear_note = await _save_obligation(
+                discharge_obligation(
+                    receipt,
+                    proof={
+                        "staged_after_read": invalidation.get("banked_units_after"),
+                        "main_checkpoint_after_read": invalidation.get(
+                            "main_checkpoint_after_read"
+                        ),
+                    },
+                )
+            )
+        else:
+            obligation_cleared = False
+            clear_note = "left OPEN — the invalidation has not discharged"
 
     attempted = sorted(reversed_ids + [d["leg_id"] for d in drift])
     attempted_equals_receipt = attempted == sorted(index)
@@ -2063,6 +2162,20 @@ async def restore(
         "calibration_invalidation": invalidation,
         "invalidation_discharged": discharged,
         "invalidation_note": discharge_note,
+        # CAL-P1009: the restore's own debt, in the ledger the apply reads.
+        "invalidation_obligation": {
+            "identity": OBLIGATION_IDENTITY,
+            "owner": OBLIGATION_OWNER_RESTORE,
+            "carried_prior_debt": bool(prior_ids or prior_legs),
+            "prior_obligation_open": prior_open,
+            "market_ids": owed_market_ids,
+            "leg_ids": owed_leg_ids,
+            "persisted_before_invalidating": obligation_persisted,
+            "persist_note": obligation_note,
+            "discharged": obligation_cleared,
+            "discharge_note": clear_note,
+            "discharged_by": RESTORE_DISCHARGES,
+        },
         "declared_curve_movement": declared_curve_movement(
             winners_restored=-winners_unrestored, losses_retracted=-retractions_undone
         ),
@@ -2070,12 +2183,17 @@ async def restore(
         "cursor_contract": contract,
         "prices_touched": False,
         "success": (
-            discharged and attempted_equals_receipt and contract["action"] != "REFUSE"
+            discharged
+            and obligation_persisted
+            and obligation_cleared
+            and attempted_equals_receipt
+            and contract["action"] != "REFUSE"
         ),
         "success_note": (
-            "success is FALSE unless every leg the receipt names was ATTEMPTED "
-            "and the calibration invalidation proved itself. Rows may be "
-            "reversed while success is false; drift is reported, never hidden."
+            "success is FALSE unless every leg the receipt names was ATTEMPTED, "
+            "the calibration invalidation proved itself, and this restore's own "
+            "obligation was banked and then discharged. Rows may be reversed "
+            "while success is false; drift is reported, never hidden."
         ),
         "elapsed_s": round(time.monotonic() - started, 1),
     }

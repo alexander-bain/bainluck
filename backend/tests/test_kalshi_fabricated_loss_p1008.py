@@ -36,6 +36,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.tasks import repair_kalshi_fabricated_loss as rail
+from app.tasks.calibration_main_build import CHECKPOINT_IDENTITY
+from app.utils.calibration_invalidation import (
+    REAPPLY_DISCHARGES,
+    RESTORE_DISCHARGES,
+    obligation_market_ids,
+    obligation_retry_instruction,
+)
 from app.utils.kalshi_fabricated_loss import (
     REPAIRABLE_SOURCE,
     RETRACTION_SOURCE,
@@ -1287,3 +1294,193 @@ class TestContainmentIsPure:
             written_legs=[self.LEG],
         )
         assert (ok, why) == (False, REASON_APPLIED_SOURCE_MISMATCH)
+
+
+# =============================================================================
+# CAL-P1009 — the restore joins the invalidation obligation ledger
+#
+# The apply owes the published curve an invalidation for every row it writes,
+# and it carries that debt in ONE durable slot so a crash between the write and
+# the invalidation leaves the debt visible. The restore writes the same rows in
+# the opposite direction and did not join that ledger at all. Two consequences,
+# and the first one stops the drain dead:
+#
+# 1. An apply whose invalidation failed leaves an OPEN debt naming its plan. Undo
+#    it, and the debt survives the undo — so every later page of the drain is
+#    refused with OUTSTANDING_INVALIDATION, and the only escape the rail names is
+#    to re-apply the plan that was just deliberately undone.
+# 2. The slot has one writer's worth of room. A restore banking its own debt
+#    without reading first would erase an apply's.
+#
+# The invalidation is WHOLESALE by construction (it discards the staged cursor
+# and the main checkpoint outright), so one proved invalidation genuinely pays
+# every outstanding market id — which is why carrying the prior debt into the
+# union is the truth here and not a convenience.
+# =============================================================================
+
+
+class TestTheRestoreJoinsTheObligationLedger:
+    @pytest.mark.asyncio
+    async def test_an_undone_repair_stops_blocking_every_later_page(self, monkeypatch):
+        """THE SPECIMEN. Pre-fix the second page is refused, and the refusal's
+        own advice is to redo the repair the operator undid."""
+        store = _txn_store(monkeypatch)
+        store.unreadable[CHECKPOINT_IDENTITY] = "unavailable"  # cannot prove itself
+
+        one = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        applied = await _apply(monkeypatch, one, session)
+        assert applied["legs_written"] == 1
+        assert applied["invalidation_obligation"]["discharged"] is False
+
+        store.unreadable.pop(CHECKPOINT_IDENTITY)  # the store recovers
+        undone = await rail.restore(session, apply=True, plan_hash=one.plan_hash)
+        assert undone["legs_reversed"] == 1
+        assert undone["success"] is True
+
+        # The next page of the drain — a DIFFERENT plan, nothing to do with the
+        # one that was undone.
+        two = _plan((4, 200, "retract_fabricated"))
+        out = await _apply(monkeypatch, two, _UndoSession([_row(4)]))
+
+        assert "refused" not in out, out.get("reason")
+        assert out["legs_written"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_prior_debt_is_carried_rather_than_overwritten(self, monkeypatch):
+        """The one slot must never lose an id to the restore's own record."""
+        store = _txn_store(monkeypatch)
+
+        one = _plan((1, 100, "restore_winner"))
+        s1 = _UndoSession([_row(1)])
+        assert (await _apply(monkeypatch, one, s1))["success"] is True
+
+        # A later page's invalidation fails: an OPEN debt on market 200.
+        store.unreadable[CHECKPOINT_IDENTITY] = "unavailable"
+        two = _plan((4, 200, "retract_fabricated"))
+        second = await _apply(monkeypatch, two, _UndoSession([_row(4)]))
+        assert second["invalidation_obligation"]["discharged"] is False
+        assert obligation_market_ids(store.payload(rail.OBLIGATION_IDENTITY)) == [200]
+
+        # Undo page ONE while that debt is still open and still unpayable.
+        undone = await rail.restore(s1, apply=True, plan_hash=one.plan_hash)
+
+        banked = store.payload(rail.OBLIGATION_IDENTITY)
+        assert obligation_market_ids(banked) == [100, 200], "the slot dropped a debt"
+        assert banked["owner"] == rail.OBLIGATION_OWNER_RESTORE
+        assert undone["invalidation_obligation"]["carried_prior_debt"] is True
+        assert undone["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_ledger_refuses_before_reversing_anything(
+        self, monkeypatch
+    ):
+        """UNKNOWN is not 'no debt' — and here it is also 'no room to bank mine'."""
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+        await _apply(monkeypatch, plan, session)
+        before = copy.deepcopy(session.rows)
+
+        store.unreadable[rail.OBLIGATION_IDENTITY] = "unavailable"
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["refused"] == ["OBLIGATION_LEDGER_UNREADABLE"]
+        assert out["success"] is False
+        assert session.rows == before, "a refusal that had already written"
+
+    @staticmethod
+    async def _unpaid_restore(monkeypatch):
+        """Apply, then undo, with the undo's invalidation unable to prove itself.
+
+        The state the next two tests are each about one half of: rows reversed,
+        an OPEN debt sitting in the shared slot, and the debt made by the
+        RESTORE rather than by the apply.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        await _apply(monkeypatch, plan, session)
+
+        store.unreadable[CHECKPOINT_IDENTITY] = "unavailable"  # RESTORE cannot pay
+        undone = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+        assert undone["legs_reversed"] == 1 and undone["success"] is False
+        return store, plan
+
+    @pytest.mark.asyncio
+    async def test_an_unpaid_restores_record_says_a_RESTORE_pays_it(self, monkeypatch):
+        store, _ = await self._unpaid_restore(monkeypatch)
+
+        banked = store.payload(rail.OBLIGATION_IDENTITY)
+        assert obligation_retry_instruction(banked) == RESTORE_DISCHARGES
+        assert "Do NOT re-apply" in banked["note"]
+
+    @pytest.mark.asyncio
+    async def test_the_reapply_of_an_undone_plan_is_refused(self, monkeypatch):
+        """Re-applying that same plan_hash WOULD pay the curve — by rewriting the
+        repair the restore just undid. That is not a retry's decision to make."""
+        store, plan = await self._unpaid_restore(monkeypatch)
+
+        again = await _apply(monkeypatch, plan, _UndoSession([_row(1)]))
+
+        assert again["refused"] == ["OUTSTANDING_INVALIDATION"]
+        assert again["outstanding_obligation"]["owner"] == rail.OBLIGATION_OWNER_RESTORE
+        assert again["outstanding_obligation"]["discharged_by"] == RESTORE_DISCHARGES
+
+    @pytest.mark.asyncio
+    async def test_re_running_the_restore_pays_a_debt_it_cannot_reverse_again(
+        self, monkeypatch
+    ):
+        """The retry handle the ledger exists to provide, on the undo path.
+
+        Nothing is left to reverse — the rows already moved — so the ONLY record
+        of what the curve is owed is the banked obligation. Pre-fix there is no
+        such record and the market ids are gone with the response.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        await _apply(monkeypatch, plan, session)
+
+        store.unreadable[CHECKPOINT_IDENTITY] = "unavailable"
+        first = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+        assert first["legs_reversed"] == 1 and first["success"] is False
+
+        store.unreadable.pop(CHECKPOINT_IDENTITY)
+        second = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert second["legs_reversed"] == 0, "there is nothing left to reverse"
+        # The ids come from the LEDGER, not from this call's (empty) reversals.
+        # Without the banked debt they would be `[]`, which the invalidation
+        # answers `nothing_written` — the false green this ledger exists to stop.
+        assert second["invalidation_obligation"]["market_ids"] == [100]
+        assert second["calibration_invalidation"]["status"] == "invalidated"
+        assert second["invalidation_obligation"]["discharged"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_unbankable_debt_cannot_report_success(self, monkeypatch):
+        """If the ledger write fails, the restore has no retry handle either."""
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        await _apply(monkeypatch, plan, session)
+
+        store.forced_status[rail.OBLIGATION_IDENTITY] = "error"
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["legs_reversed"] == 1
+        assert out["invalidation_obligation"]["persisted_before_invalidating"] is False
+        assert out["success"] is False
+
+
+class TestTheRetryInstructionIsCarriedNotAssumed:
+    """Pure. One slot, two writers, opposite directions."""
+
+    def test_a_record_written_before_the_field_existed_reads_as_the_applys(self):
+        assert obligation_retry_instruction({"state": "open"}) == REAPPLY_DISCHARGES
+        assert obligation_retry_instruction(None) == REAPPLY_DISCHARGES
+
+    def test_the_two_instructions_are_not_the_same_sentence(self):
+        assert RESTORE_DISCHARGES != REAPPLY_DISCHARGES
+        assert "re-apply" in REAPPLY_DISCHARGES.lower()
+        assert "do not re-apply" in RESTORE_DISCHARGES.lower()
