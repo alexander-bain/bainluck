@@ -4,8 +4,15 @@ A Celery beat entry publishes on a fixed period whether or not the previous
 delivery has finished. When a task's duration exceeds its own interval it
 **laps**: every tick adds a copy the worker will eventually have to run, and the
 queue grows without bound. Measured on production 2026-09-05, `realtime` was
-282 → 349 deep with **85 copies of `poll_all_odds`** queued (30 s beat, p95
-118.2 s → 3.94× its own interval), against `worker-realtime --concurrency=4`.
+282 → 349 deep with **85 copies of `poll_all_odds`** queued against
+`worker-realtime --concurrency=4`.
+
+(That filing quoted the lap ratio as p95 ÷ interval = 3.94×. That framing is
+wrong and is corrected under "WHY THIS IS ENOUGH" below: slot demand is
+**mean** ÷ interval = 2.37×. The defect was real either way, but p95 misranks
+the offenders — `warm_typeahead` looks like the second-worst lapper at 2.88×
+p95 while actually holding 0.30 slots, because it is a fast task with a long
+tail.)
 
 The casualty was not odds polling — it was everything else sharing the queue.
 `prewarm_live_feed_shapes`, the 40 s rail that is the only thing that can hold a
@@ -37,13 +44,73 @@ Four properties this has to have, and how each is obtained:
   us to today's behaviour; letting the guard become a second outage would be
   worse than the one it repairs.
 
+WHY THIS IS ENOUGH — and the arithmetic that says so
+----------------------------------------------------
+
+A lease bounds the WORK, not the QUEUE. A pass longer than its own interval
+still holds ONE FULL worker slot continuously, so the queue only drains if the
+*capped* demand fits the pool. The number to compute is
+``sum(min(1, mean / interval))`` — **mean**, not p95: a slot is occupied for the
+mean duration, and ranking by p95 misreads which task is actually the hog.
+(Credit: latency/167, #3251. Measured on production 2026-09-05 19:0xZ, 50-run
+duration rings via `/api/admin/task-metrics`. Gotcha: that endpoint is keyed by
+the `_tracked_run` LABEL, not the task name — `?task=poll_all_odds` says
+`no_data`, `?task=poll_odds` returns the ring.)
+
+    label                      mean    interval   demand   capped
+    poll_odds                  71.0s     30s       2.37     1.00
+    espn_sync                  77.0s     60s       1.28     1.00
+    datagolf_inplay            76.9s     90s       0.85     0.85
+    prewarm_live_feed_shapes   19.7s     40s       0.49     0.49
+    transition_statuses         7.7s     60s       0.13     0.13
+    statpal_livescores          2.2s     30s       0.07     0.07
+    statpal_plays / mlb_sync     —         —        0.01     0.01
+                                                  -----    -----
+                                                   5.21     3.56   vs concurrency=4
+
+Uncapped 5.21 against 4 workers is why the queue grew without bound. Capped 3.56
+is why it now drains — and the margin is **0.44 slots (11%)**, which is thin.
+Two entries sit AT the cap, meaning `poll_all_odds` and `sync_espn_live_events`
+run back-to-back with no idle: any lengthening of the small tasks eats the
+headroom, and the queue tips back to growing. Re-run the sum before adding
+anything to `realtime`.
+
+Observed after deploy (`a705abcc`): `realtime` depth 623 → 550 at **−11.9/min**,
+where the pre-ship trend was **+1.7/min**; skip counters
+(`bainluck:inflight:skipped:*`) at 153 / 27 / 17 / 7 for the four tasks. The
+derivative flipping sign is the proof, not the depth — the depth was still
+falling from the backlog accumulated before the deploy.
+
+⚠️ A DRAINED QUEUE IS NOT A WARM FRONT PAGE. `prewarm_live_feed_shapes` spends
+mean 19.7s / p50 20.1 / max 20.2 against `FEED_LIVE_REPUBLISH_BUDGET_S = 20` —
+49 of 50 runs cut off AT the budget, so that is a ceiling, not a measurement,
+and its last result was `0`. Getting its slot back does not make it warm
+anything. Tracked separately as #3268; never read one claim as the other.
+
 Trade-off, stated rather than hidden: the TTL is sized off the runtime's
-*guaranteed* bound (`task_time_limit`), not off a measured p95, because a
-measured number rots and an enforced one cannot. The cost is that a hard-killed
-holder can stall its own task for up to the TTL; the benefit is that two copies
-can never both call The Odds API and bill the 5M/month quota twice for the same
-tick. Duplicate spend on the most constrained resource in the system is the
-worse failure, so the bound that cannot be undershot is the one we use.
+*guaranteed* bound (`task_time_limit`), not off a measured p95 or max, because a
+measured number rots and an enforced one cannot. The two errors are NOT
+symmetric, which is the whole reason for the choice:
+
+* **Too short** — the lease lapses mid-pass and a second copy starts while the
+  first is still running. Both call The Odds API and bill the 5M/month quota
+  twice for the same tick. Duplicate spend on the most constrained resource in
+  the system, and it is silent.
+* **Too long** — a hard-killed holder stalls its own task until the TTL expires.
+  Bounded, self-correcting, and visible in the skip counter.
+
+So the bound that cannot be undershot is the one we use. Concretely: a
+198 s TTL (max-measured × 1.5, sized off latency/167's 131.8 s max) was
+considered and REJECTED — the very next 50-run ring showed a 234.8 s pass, which
+that TTL would have undershot, admitting exactly the double-billing above.
+
+The residual cost is real and worth knowing: a clean Celery warm shutdown
+unwinds the `with` and releases, so only a SIGKILL reaches the bad case — but
+Heroku cycles workers on every master merge, and a 71 s mean pass will not
+finish inside the 30 s grace, so it IS reachable. A kill at the 300 s limit
+leaves only 30 s of dark; a kill 30 s into a pass leaves ~300 s. Releasing held
+leases from a `worker_shutting_down` handler would close it; not done here
+because it is new scope on a merged ship (filed rather than smuggled in).
 """
 
 from __future__ import annotations
