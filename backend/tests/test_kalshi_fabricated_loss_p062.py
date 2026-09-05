@@ -82,7 +82,21 @@ class _DurableStore:
 
         monkeypatch.setattr(ds, "read_snapshot_standalone", self.read)
         monkeypatch.setattr(ds, "publish_snapshot_standalone", self.publish)
+        # CAL-P1008-R3: the apply now stages its undo receipt in the caller's
+        # transaction (`publish_snapshot_in_txn`) so rows and receipt commit
+        # together. Unpatched, these reach a real database and every apply in
+        # this file refuses. The pair here takes effect IMMEDIATELY — atomicity
+        # itself is the subject of `test_kalshi_fabricated_loss_p1008.py`, which
+        # installs a session-aware version over the top of this one.
+        monkeypatch.setattr(ds, "read_snapshot", self.read_in_txn)
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", self.publish_in_txn)
         return self
+
+    async def read_in_txn(self, db, identity, **kwargs):
+        return await self.read(identity, **kwargs)
+
+    async def publish_in_txn(self, db, envelope):
+        return await self.publish(envelope)
 
     # -- inspection --------------------------------------------------------
     def seed(self, identity: str, schema: str, payload) -> None:

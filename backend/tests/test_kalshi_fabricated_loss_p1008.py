@@ -29,6 +29,8 @@ Reverting the ``plan_artifact`` line turns 1, 2 and 3 red.
 
 from __future__ import annotations
 
+import copy
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -51,6 +53,7 @@ from app.utils.repair_apply_plan import (
     decode_applied_receipt,
     decode_plan,
 )
+from app.utils.durable_state import EnvelopeRead
 from tests.test_kalshi_fabricated_loss_p062 import (
     _CASSession,
     _FakeResult,
@@ -161,10 +164,59 @@ class _Venue:
         self.closed = True
 
 
+#: The store the current test installed. `_UndoSession` needs it to apply its
+#: staged durable writes on commit, and threading it through every construction
+#: site would obscure what each test is actually saying.
+_CURRENT_STORE = None
+
+
+def _txn_store(monkeypatch):
+    """The seeded one-slot store, with the in-transaction pair installed."""
+    return _install_txn_durables(_seeded_store(monkeypatch), monkeypatch)
+
+
+def _install_txn_durables(store, monkeypatch):
+    """Teach the p062 store the IN-TRANSACTION pair, and model atomicity.
+
+    CERT-1858's repair turns on the applied receipt landing in the same
+    transaction as the rows, so a store whose writes take effect immediately
+    could not tell the fixed rail from the broken one. Here a
+    ``publish_snapshot_in_txn`` is held on the SESSION until that session
+    commits, and discarded if it rolls back — which is the whole property under
+    test.
+    """
+    import app.services.durable_snapshots as ds
+
+    async def _read_in_txn(db, identity, *, expected_version=None, max_age_s=None):
+        for env in getattr(db, "pending_durable", []):
+            if env.identity == identity:
+                return EnvelopeRead(status="ok", tier="durable", envelope=env)
+        return await store.read(
+            identity, expected_version=expected_version, max_age_s=max_age_s
+        )
+
+    async def _publish_in_txn(db, envelope):
+        status = store.forced_status.get(envelope.identity, "ok")
+        if status in ("ok", "superseded"):
+            db.pending_durable.append(envelope)
+        return {
+            "status": status,
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+        }
+
+    monkeypatch.setattr(ds, "read_snapshot", _read_in_txn)
+    monkeypatch.setattr(ds, "publish_snapshot_in_txn", _publish_in_txn)
+    global _CURRENT_STORE
+    _CURRENT_STORE = store
+    monkeypatch.setattr(sys.modules[__name__], "_CURRENT_STORE", store, raising=False)
+    return store
+
+
 @pytest.fixture
 def store(monkeypatch):
     """The one-slot durable store, seeded so the invalidation half is realistic."""
-    return _seeded_store(monkeypatch)
+    return _txn_store(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -312,7 +364,7 @@ class TestTheRestoreArmLeavesNoMarker:
         same row state — so no post-hoc query over ``futures_outcomes`` can tell
         the repaired one from the one that was always right.
         """
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = build_plan(
             [
                 PlannedLeg(
@@ -329,7 +381,7 @@ class TestTheRestoreArmLeavesNoMarker:
 
         monkeypatch.setattr(rail, "_load_plan", _load)
 
-        session = _CASSession(
+        session = _UndoSession(
             [
                 {"id": 1, "is_winner": False, "resolution_source": REPAIRABLE_SOURCE},
                 {"id": 2, "is_winner": False, "resolution_source": REPAIRABLE_SOURCE},
@@ -340,13 +392,19 @@ class TestTheRestoreArmLeavesNoMarker:
         assert out["legs_written"] == 2
 
         def _state(row):
-            return {k: v for k, v in row.items() if k != "id"}
+            return {k: v for k, v in row.items() if k not in ("id", "last_updated")}
 
         restored, untouched = _state(session.rows[1]), _state(session.rows[9])
         assert restored == untouched, (
-            "if these ever differ the restore arm has grown a marker and the "
-            "captured plan stops being the only way back"
+            "if the GRADES ever differ the restore arm has grown a marker and "
+            "the receipt stops being the only way back"
         )
+        # `last_updated` does move — that is CAL-P1008-R2's version stamp, and
+        # it is deliberately NOT a marker you can query for: its value is a
+        # timestamp nothing but the receipt knows. It tells a restore holding
+        # the receipt whether the row is still the one the apply left; it
+        # cannot tell anyone which rows the repair touched.
+        assert session.rows[1]["last_updated"] != session.rows[9].get("last_updated")
         # The retraction arm, by contrast, names itself in the row.
         assert session.rows[2]["resolution_source"] == RETRACTION_SOURCE
         assert RETRACTION_SOURCE != REPAIRABLE_SOURCE
@@ -462,6 +520,26 @@ class _UndoSession(_CASSession):
         ),
     )
 
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        #: Durable envelopes staged in this transaction, not yet committed.
+        self.pending_durable = []
+        self._committed_rows = copy.deepcopy(self.rows)
+        self.durable_store = _CURRENT_STORE
+
+    async def commit(self):
+        await super().commit()
+        self._committed_rows = copy.deepcopy(self.rows)
+        for env in self.pending_durable:
+            self.durable_store.rows[env.identity] = env
+        self.pending_durable = []
+
+    async def rollback(self):
+        await super().rollback()
+        # Uncommitted row changes AND uncommitted durable writes both vanish.
+        self.rows = copy.deepcopy(self._committed_rows)
+        self.pending_durable = []
+
     @staticmethod
     def _halves(sql):
         """(set_clause, where_clause). Split first, so neither half can read the
@@ -530,7 +608,7 @@ async def _apply(monkeypatch, plan, session):
 class TestTheReceiptIsBankedBeforeTheWrite:
     @pytest.mark.asyncio
     async def test_the_apply_banks_a_per_plan_receipt(self, monkeypatch):
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(1), _row(2)])
 
@@ -556,7 +634,7 @@ class TestTheReceiptIsBankedBeforeTheWrite:
         restore's compare-and-set finds nothing to reverse. Rows written with no
         receipt are the unrecoverable state. So the apply must refuse.
         """
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"))
         store.forced_status[rail.receipt_identity(plan.plan_hash)] = "rejected"
         session = _UndoSession([_row(1)])
@@ -575,7 +653,7 @@ class TestTheReceiptIsBankedBeforeTheWrite:
         `PLAN_IDENTITY` is one slot; a receipt address is derived from the
         plan's own content, so two batches occupy two addresses.
         """
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
         one = _plan((1, 100, "restore_winner"))
         two = _plan((4, 200, "restore_winner"))
         assert one.plan_hash != two.plan_hash
@@ -593,7 +671,7 @@ class TestTheReceiptIsBankedBeforeTheWrite:
 class TestTheRestoreRuns:
     @pytest.mark.asyncio
     async def test_the_dry_run_reports_both_arms_and_writes_nothing(self, monkeypatch):
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(1), _row(2)])
         await _apply(monkeypatch, plan, session)
@@ -611,7 +689,7 @@ class TestTheRestoreRuns:
         self, monkeypatch
     ):
         """Gotcha #53 on the undo path: an unreadable receipt is not an absence."""
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         out = await rail.restore(
             _UndoSession([]), apply=True, plan_hash="deadbeef-not-a-plan"
         )
@@ -621,7 +699,7 @@ class TestTheRestoreRuns:
 
     @pytest.mark.asyncio
     async def test_no_plan_hash_is_refused_by_name(self, monkeypatch):
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         out = await rail.restore(_UndoSession([]), apply=True)
         assert out["refused"] == ["PLAN_HASH_REQUIRED"]
         assert out["success"] is False
@@ -637,7 +715,7 @@ class TestTheCatchingTest:
 
     @pytest.mark.asyncio
     async def test_two_batches_then_restore_batch_one_only(self, monkeypatch):
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
 
         # --- batch one: one leg per arm, plus a leg something else will move --
         one = _plan(
@@ -705,7 +783,7 @@ class TestTheCatchingTest:
         After the first restore the rows are no longer in the post-apply state,
         so the compare-and-set finds nothing — reported as drift, not as work.
         """
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(1), _row(2)])
         await _apply(monkeypatch, plan, session)
@@ -769,7 +847,7 @@ class TestASameValuedConcurrentGradeSurvives:
     @pytest.mark.asyncio
     async def test_before_a_skipped_apply(self, monkeypatch):
         """The exact CERT-970 reproduction."""
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(1), _row(2)])
 
@@ -802,7 +880,7 @@ class TestASameValuedConcurrentGradeSurvives:
         a legitimate re-affirmation that is now their grade, not ours. Values are
         identical; only the version moved.
         """
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(1), _row(2)])
 
@@ -828,7 +906,7 @@ class TestASameValuedConcurrentGradeSurvives:
         self, monkeypatch
     ):
         """The structural version of the two cases above."""
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(2)])  # leg 1's row does not exist at all
 
@@ -852,7 +930,7 @@ class TestASameValuedConcurrentGradeSurvives:
         The retry must ADD it; and a third apply that writes nothing must not
         erase either.
         """
-        _seeded_store(monkeypatch)
+        _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
         session = _UndoSession([_row(2)])
 
@@ -870,28 +948,69 @@ class TestASameValuedConcurrentGradeSurvives:
         assert out["leg_ids"] == [1, 2]
 
     @pytest.mark.asyncio
-    async def test_committed_rows_with_no_applied_receipt_are_not_a_success(
+    async def test_a_receipt_that_cannot_be_staged_rolls_the_whole_apply_back(
         self, monkeypatch
     ):
-        """Rows nothing can reverse are a failure, reported, not left to be found."""
-        store = _seeded_store(monkeypatch)
-        plan = _plan((1, 100, "restore_winner"))
-        session = _UndoSession([_row(1)])
+        """CERT-1858's catching test. The row must be UNCHANGED, not reported.
+
+        An earlier version of this test asserted that an apply which wrote rows
+        it could not bank a receipt for said so — ``reversible: false`` — and
+        called that the fix. It is not. An honest description of an
+        unrecoverable row is not a defence against creating one. The receipt is
+        now STAGED in the same transaction as the mutations, so a staging
+        failure takes the rows with it.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+        before = copy.deepcopy(session.rows)
         store.forced_status[rail.applied_identity(plan.plan_hash)] = "rejected"
 
         out = await _apply(monkeypatch, plan, session)
 
-        assert out["legs_written"] == 1
-        assert out["undo"]["applied_receipt_banked"] is False
-        assert out["undo"]["reversible"] is False
         assert out["success"] is False
+        assert out["measured"] is False
+        assert out["refused"] == ["UNDO_RECEIPT_NOT_STAGED"]
+        assert out["rolled_back"] is True
+        assert out["legs_written"] == 0
+        # The rows the compare-and-set matched are back as they were, and this
+        # session never committed.
+        assert session.rows == before
+        assert session.commits == 0
+        assert session.pending_durable == []
+        # Nothing reached the store either, so there is no half-receipt to
+        # mislead a later restore.
+        assert store.payload(rail.applied_identity(plan.plan_hash)) is None
+
+    @pytest.mark.asyncio
+    async def test_a_staging_failure_with_nothing_written_is_not_a_rollback(
+        self, monkeypatch
+    ):
+        """The other side of it: no rows, no alarm.
+
+        A plan whose legs all drift writes nothing, so there is nothing to
+        protect and nothing to roll back. Refusing here would turn a harmless
+        no-op into an alarm, and an alarm nobody can act on is how a real one
+        gets ignored.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1, is_winner=True)])  # already moved
+        store.forced_status[rail.applied_identity(plan.plan_hash)] = "rejected"
+
+        out = await _apply(monkeypatch, plan, session)
+
+        assert out["measured"] is True
+        assert out["legs_written"] == 0
+        assert out["concurrent_drift_count"] == 1
+        assert out.get("rolled_back") is None
 
     @pytest.mark.asyncio
     async def test_a_restore_refuses_when_only_the_plan_receipt_exists(
         self, monkeypatch
     ):
         """The pre-write receipt is forensics, never a licence to write."""
-        store = _seeded_store(monkeypatch)
+        store = _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"))
         session = _UndoSession([_row(1)])
         store.forced_status[rail.applied_identity(plan.plan_hash)] = "rejected"

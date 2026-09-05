@@ -640,53 +640,70 @@ def applied_identity(plan_hash: str) -> str:
     return f"calibration:repair:kalshi_fabricated_loss:applied:{plan_hash}"
 
 
-async def _save_applied(plan_hash: str, written_legs) -> tuple[bool, str, int]:
-    """Merge-bank the rows this apply actually wrote. ``(ok, note, leg_count)``.
+async def _stage_applied(session, plan_hash: str, written_legs) -> tuple[bool, str, int]:
+    """STAGE the applied receipt in the caller's open transaction.
 
-    Read-then-merge-then-write, deliberately: a retry of a partly-applied plan
-    must ADD its legs, and an apply that wrote nothing must not blank the record
-    of one that wrote something.
+    CAL-P1008-R3 (CERT-1858). Banking this on its own session after the apply's
+    commit was still a hole: rows landed, the receipt did not, and the rail
+    reported the state honestly — ``reversible: false`` — which is a description
+    of an unrecoverable row, not a defence against one. Reporting a hole is not
+    closing it.
+
+    So the receipt is staged in the SAME transaction as the outcome mutations
+    and the caller commits ONCE (the CERT-851 pattern that
+    :func:`publish_snapshot_in_txn` exists for). Rows and their undo record land
+    together or not at all; a staging failure is the caller's rollback, and the
+    rows are left exactly as they were.
+
+    Read-then-merge-then-stage: a retry of a partly-applied plan must ADD its
+    legs, and an apply that wrote nothing must not blank the record of one that
+    wrote something. The read is on the SAME session, so it sees this
+    transaction's own state rather than a stale snapshot beside it.
     """
-    from app.services.durable_snapshots import (
-        publish_snapshot_standalone,
-        read_snapshot_standalone,
-    )
+    from app.services.durable_snapshots import publish_snapshot_in_txn, read_snapshot
     from app.utils.durable_state import DurableEnvelope
 
     identity = applied_identity(plan_hash)
     existing = None
     try:
-        read = await read_snapshot_standalone(
+        read = await read_snapshot(
+            session,
             identity,
             expected_version=APPLIED_RECEIPT_SCHEMA,
             max_age_s=_RECEIPT_MAX_AGE_S,
         )
     except Exception as exc:  # noqa: BLE001
-        # Cannot read is NOT "nothing banked" (gotcha #53). Overwriting here
-        # could erase an earlier call's written set, so refuse to bank at all.
+        # Cannot read is NOT "nothing banked" (gotcha #53). Merging onto an
+        # unknown base could erase an earlier call's written set, so refuse.
         return False, f"applied receipt read raised: {type(exc).__name__}", 0
-    if read.status not in ("missing",):
+    if read.status != "missing":
         if not read.ok or read.envelope is None:
             return False, f"applied receipt unreadable: {read.status}", 0
         existing = read.envelope.payload
 
     payload = build_applied_receipt(plan_hash, written_legs, existing=existing)
+    if not written_legs:
+        # Nothing was written, so there is nothing to record and the merge is a
+        # no-op by construction. Staging it anyway would leave a durable write
+        # pending in a transaction this call never commits.
+        return True, "nothing written; receipt unchanged", payload["leg_count"]
     try:
-        result = await publish_snapshot_standalone(
+        result = await publish_snapshot_in_txn(
+            session,
             DurableEnvelope.build(
                 identity=identity,
                 schema_version=APPLIED_RECEIPT_SCHEMA,
                 payload=payload,
                 complete=True,
                 source="repair:kalshi-fabricated-loss",
-            )
+            ),
         )
     except Exception as exc:  # noqa: BLE001
-        return False, f"applied receipt persist raised: {type(exc).__name__}", 0
+        return False, f"applied receipt stage raised: {type(exc).__name__}", 0
     ok = result.get("status") in ("ok", "superseded")
     return (
         ok,
-        "ok" if ok else f"applied receipt persist rejected: {result.get('status')}",
+        "ok" if ok else f"applied receipt stage rejected: {result.get('status')}",
         payload["leg_count"],
     )
 
@@ -1530,18 +1547,44 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "elapsed_s": round(time.monotonic() - started, 1),
         }
 
+    # CAL-P1008-R2/R3 (CERT-970, CERT-1858): the record of what was WRITTEN is
+    # staged in THIS transaction, before the single commit below. The pre-write
+    # plan receipt is the forensic record if the process dies mid-write; THIS
+    # one is what a restore binds to, each leg carrying the version the apply
+    # stamped. It merges, so a retry adds its legs and an empty write set cannot
+    # blank an earlier call's record.
+    #
+    # The rows and their undo record therefore land together or not at all. If
+    # staging fails there is nothing to report honestly about, because nothing
+    # was committed.
+    applied_ok, applied_note, applied_leg_count = await _stage_applied(
+        session, plan.plan_hash, written_legs
+    )
+    if written and not applied_ok:
+        await session.rollback()
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": ["UNDO_RECEIPT_NOT_STAGED"],
+            "plan_hash": plan.plan_hash,
+            "applied_identity": applied_identity(plan.plan_hash),
+            "applied_receipt_note": applied_note,
+            "legs_written": 0,
+            "rolled_back": True,
+            "reason": (
+                "The record of which rows this apply wrote could not be staged, "
+                "so the whole transaction was rolled back and NO row was "
+                "changed. Rows without that record cannot be reversed, and an "
+                "honest report of an unrecoverable row is not a substitute for "
+                "not creating one. Retry the same plan_hash."
+            ),
+            "prices_touched": False,
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
     if written:
         await session.commit()
-
-    # CAL-P1008-R2 (CERT-970): AFTER the commit, bank what was actually written.
-    # The pre-write receipt records the plan and is the forensic record if this
-    # process dies mid-write; THIS one records the rows, each with the version
-    # the apply stamped, and it is the only thing a restore is allowed to act
-    # on. Banking merges, so a retry adds its legs and an empty write set cannot
-    # blank an earlier call's record.
-    applied_ok, applied_note, applied_leg_count = await _save_applied(
-        plan.plan_hash, written_legs
-    )
 
     # Re-READ rather than trust the rowcounts: a mutation that fails to apply
     # reports green, so the proof is the database's own answer.
