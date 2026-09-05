@@ -97,8 +97,26 @@ class TestTheLedgerPathIsAPropertyOfTheRepositoryNotOfTheCaller:
         )
 
     def test_ledger_path_points_at_the_committed_ledger(self):
+        """MOVED by CAL-P1002, and the move made this guard stricter.
+
+        The ledger was committed at ``artifacts/calibration-scorecard/``. Heroku
+        builds this app through ``subdir-heroku-buildpack`` with
+        ``PROJECT_PATH=backend``, so the repo-root ``artifacts/`` tree is not in
+        the slug — and once D62 made the app READ the ledger, that path would
+        have been present in every test and absent on every production request.
+        CAL-P129's own defect (a path resolved somewhere real code never looks)
+        in the one environment that serves readers.
+
+        So the assertion is now two, not one: the exact path, AND that it is
+        inside ``backend/`` — which is the property that survives if anyone ever
+        tidies the file somewhere prettier.
+        """
         assert ledger_mod.LEDGER_PATH == (
-            _REPO / "artifacts" / "calibration-scorecard" / "measured-sigma.json"
+            _BACKEND / "app" / "data" / "calibration_measured_sigma.json"
+        )
+        assert _BACKEND in ledger_mod.LEDGER_PATH.parents, (
+            "PROJECT_PATH=backend — a ledger outside backend/ is not deployed, "
+            "so the app would read it fine locally and never in production."
         )
 
     def test_ledger_path_does_not_move_when_the_cwd_does(self, tmp_path, monkeypatch):
@@ -220,18 +238,31 @@ class TestTheBoardReadsTheSameFromEitherDirectory:
         """Two identically-empty overlays would satisfy the test above."""
         root, _ = both
         ms = root["measured_sigma"]
-        assert ms["queued_cells_measured"] >= 12
-        assert ms["queued_cells_refuted"] >= 1
+        assert ms["decides"] is True
+        assert ms["material_cells_measured"] + ms["material_cells_carried"] >= 12
+        assert ms["cells_refuted"] >= 1
         assert ms["refuted_excess_outcomes"] > 0
 
     def test_the_whole_result_is_identical_apart_from_nothing(self, both):
         root, backend = both
         assert root == backend
 
-    def test_the_needle_the_program_is_steered_by_is_unchanged(self, both):
-        """The fix reports; it must not decide. CAL-P128 claim 4, still true."""
+    def test_the_needle_is_the_same_from_both_directories(self, both):
+        """CAL-P129's claim, unchanged: whatever the needle reads, a chdir must
+        not change it. What it reads DID change — D62 made the measured sigma
+        decide, so the captured q268 payload now scores one cell higher — and
+        the row basis is asserted beside it so this test cannot be satisfied by
+        two identically-broken runs.
+        """
         root, backend = both
-        assert root["counts"]["cells_at_bar"] == backend["counts"]["cells_at_bar"] == 29
+        assert root["counts"]["cells_at_bar"] == backend["counts"]["cells_at_bar"]
+        assert root["counts"]["cells_at_bar_row_basis"] == 29, (
+            "the pre-D62 reading of this captured payload, kept as the anchor"
+        )
+        assert root["counts"]["cells_at_bar"] > 29, (
+            "and the measurement moved it — a run where it did not would mean "
+            "the ledger silently failed to load"
+        )
         assert root["done"] is False
 
 
@@ -258,7 +289,8 @@ class TestOptingOutIsStillPossibleAndStillExplicit:
             )
             assert proc.returncode == 0, proc.stderr[-3000:]
             res = json.loads(out.read_text())
-            assert res["measured_sigma"]["queued_cells_measured"] == 0
+            assert res["measured_sigma"]["decides"] is False
+            assert res["measured_sigma"]["material_cells_measured"] == 0
             assert res["counts"]["cells_at_bar"] == 29
         finally:
             out.unlink(missing_ok=True)

@@ -94,9 +94,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # run from the repo root or from `backend/`. CAL-P998.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# The MEASURED sigma ledger (CAL-P128). Imported, never re-implemented, and
-# deliberately one-way: the ledger imports nothing from this file, so
+# The MEASURED sigma ledger. Imported, never re-implemented, and deliberately
+# one-way: the ledger imports nothing from this file, so
 # `calibration_cluster_sigma` can keep importing BOTH without a cycle.
+#
+# CAL-P1002: the ledger's CONSUMING half (statuses, bands, `lookup`, `load`)
+# moved to `app/utils/calibration_sigma.py` when D62 made it decide a served
+# number; this script's import still resolves every one of those names, because
+# the builder re-exports them for exactly this reason.
 import calibration_sigma_ledger as sigma_ledger  # noqa: E402
 
 # --------------------------------------------------------------------------
@@ -110,10 +115,15 @@ import calibration_sigma_ledger as sigma_ledger  # noqa: E402
 # definitions the served field would be a second implementation of the bar —
 # and a bar that exists twice is a bar that moves once.
 #
-# What stays in this file is what the app has no business carrying: the
-# measured cluster-bootstrap sigma overlay (reports, decides nothing), the
-# markdown renderer, and the history ledger. Each constant's full derivation
-# now lives with it in the app module.
+# CAL-P1002 / D62 = A: THE OVERLAY WENT WITH THEM. The measured
+# cluster-bootstrap sigma used to live in this file and decide nothing. It now
+# decides which cells are queued, so by the same argument it had to move to
+# where `cells_at_bar` is computed — otherwise the served needle and this
+# script's needle are two numbers from day one, which is what D46 ended.
+#
+# What stays in this file is what the app has no business carrying: the markdown
+# renderer, the history ledger, and the self-check. Each constant's full
+# derivation now lives with it in the app module.
 # --------------------------------------------------------------------------
 from app.utils.calibration_scoring import (  # noqa: E402
     BAR_PP,
@@ -125,28 +135,42 @@ from app.utils.calibration_scoring import (  # noqa: E402
     GAME_CATEGORIES,
     HEADLINE_TARGET_PP,
     MIN_CELL_N,
+    SIGMA_BASIS_MEASURED,
+    SIGMA_BASIS_PER_CELL,
+    SIGMA_BASIS_ROW,
     SIGMA_GATE,
     VERDICT_EXEMPT,
     VERDICT_PASS,
     VERDICT_QUEUED,
     VERDICT_UNDER_SIGMA,
+    attach_measured_sigma,
     bar_for,
     category_scorecard,
     cell_counts,
     cell_se_pp,
     classify,
+    deciding_sigma,
     fold,
     per_class,
     score_cells,
+    sigma_overlay,
 )
 
+# `attach_measured_sigma` and `deciding_sigma` are re-exported without being
+# called here: this file's own consumers and its guards resolve them through
+# `calibration_scorecard`, and the point of CAL-P1002 is that the name they get
+# is the APP's function and not a local one. Listing them says that on purpose,
+# rather than a `noqa` that reads as an oversight someone tidied around.
 __all__ = [
     "BAR_PP", "CELL_KEYS", "CLASS_A", "CLASS_B", "CLASS_BARS_PP", "CLASS_C",
     "CLASS_RATIONALE",
-    "GAME_CATEGORIES", "HEADLINE_TARGET_PP", "MIN_CELL_N", "SIGMA_GATE",
+    "GAME_CATEGORIES", "HEADLINE_TARGET_PP", "MIN_CELL_N",
+    "SIGMA_BASIS_MEASURED", "SIGMA_BASIS_PER_CELL", "SIGMA_BASIS_ROW",
+    "SIGMA_GATE",
     "VERDICT_EXEMPT", "VERDICT_PASS", "VERDICT_QUEUED", "VERDICT_UNDER_SIGMA",
-    "bar_for", "cell_se_pp", "classify", "fold", "needle", "record", "score",
-    "self_check", "load_history", "render_markdown",
+    "attach_measured_sigma", "bar_for", "cell_se_pp", "classify",
+    "deciding_sigma", "fold", "needle", "record", "score", "self_check",
+    "sigma_overlay", "load_history", "render_markdown",
 ]
 
 CLASS_RATIONALE: dict[str, str] = {
@@ -237,164 +261,70 @@ def self_check(payload: dict) -> dict:
 # Score
 # --------------------------------------------------------------------------
 
-#: Basis labels for a cell's sigma. A sigma on this board is now one of two
-#: different quantities and they must never share a column unlabelled
-#: (CAL-P127 lesson 10: a proof and an estimate do not belong in the same one).
-SIGMA_BASIS_ROW = "binomial_row_estimate"
-SIGMA_BASIS_MEASURED = "measured_cluster_bootstrap"
-
-
-def _attach_measured_sigma(cell: dict, ledger: dict | None, pop: str | None) -> None:
-    """Overlay the measured cluster-bootstrap sigma onto a scored cell.
-
-    WHY THIS REPORTS AND DOES NOT DECIDE
-    ------------------------------------
-    It would be one line to make ``verdict`` key off the measured sigma, and on
-    the evidence that is the correct end state: ``SIGMA_GATE`` is a ratified
-    rule about *standard errors*, the row-grain SE is a documented estimate of
-    that quantity, and a measurement of the same quantity beats an estimate of
-    it. Substituting one for the other honours the ratified rule rather than
-    changing it.
-
-    But the substitution moves ``cells_at_bar`` -- the NEEDLE, the one number
-    the program is steered by and the one Alex reads. Moving a lane's headline
-    metric as a side effect of an instrument landing is precisely how a board
-    starts flattering itself, and this program has been bitten by that already
-    (16-CAL: the published 1.89 should be 2.31). A finding that shortens the
-    queue deserves more suspicion than one that lengthens it, not less.
-
-    So the measured sigma lands as a SEPARATE column with its own verdict,
-    where it is visible on the board itself instead of buried in a handoff
-    paragraph, and the flip is Alex's call. Everything needed to make that call
-    is on the page; nothing has moved under him.
-
-    AN ENTRY WHOSE CELL HAS MOVED IS DROPPED, NOT DOWNGRADED
-    --------------------------------------------------------
-    A bootstrap SE describes one specific set of rows. When those rows change,
-    the entry describes a population nobody is looking at. Such an entry is
-    reported as ``STALE`` and contributes NO sigma -- gotcha #53: the ledger
-    returning a number is not the number applying here.
-
-    CAL-P998 narrowed the test and did not weaken it. Until then the test was
-    ``population_version`` identity, and on 2026-09-03 that left the overlay
-    covering **0 of 14 queued cells** with 14 measured entries committed to the
-    ledger -- the board running entirely on the estimate the overlay exists to
-    correct, because the producer had restaged twice. The ledger now asks
-    whether the CELL moved (``CELL_DRIFT_BAND`` on the payload's own ``n``)
-    rather than whether the version string did, and an entry from another
-    population whose cell is unchanged comes back ``CARRIED``.
-
-    ``CARRIED`` is reported and it feeds the ``_with_carried`` projection, and
-    it is counted in its OWN bucket everywhere -- never pooled into
-    ``queued_cells_measured``. The measured population and the measurement's
-    date print on the row, because the residual a size test cannot cover (a
-    cell that exchanged its rows and kept its count) is a question about age,
-    and the answer to it belongs on the board rather than in this docstring.
-
-    A ``POPULATION_DIVERGENCE`` entry is the subtler case and it gets the
-    subtler treatment: its numbers ARE shown, because they are the only
-    measurement of that cell anyone has, but it is counted as neither
-    established nor refuted. When the rail and the payload disagree about how
-    many rows the cell has, the SE and the excess describe different
-    populations and their ratio is not a sigma of either.
-
-    Which side is wrong is NOT decided here and must not be guessed. On
-    ``polymarket/basketball`` -- 0.641, and the only cell this sweep would
-    otherwise have removed -- the payload is the inflated side: CAL-P126
-    measured it 43.44% phantom, 13,116 rows for 7,419 distinct outcomes. On
-    ``polymarket/hockey`` (0.780) there is no phantom measurement and no
-    warrant for assuming the same cause.
-    """
-    cell["sigma_basis"] = SIGMA_BASIS_ROW
-    if not ledger:
-        return
-    entry, status = sigma_ledger.lookup(
-        ledger, cell["source"], cell["category"], pop, cell.get("n")
-    )
-    cell["sigma_ledger_status"] = status
-    if status not in (
-        sigma_ledger.STATUS_FRESH,
-        sigma_ledger.STATUS_CARRIED,
-        sigma_ledger.STATUS_POPULATION_DIVERGENCE,
-    ):
-        return
-    se = entry.get("se_bootstrap_pp")
-    if not se:
-        return
-    # The PAYLOAD excess over the MEASURED SE -- the documented basis shift,
-    # spelled out in the ledger's own docstring.
-    sigma_m = round(cell["excess_pp"] / se, 2)
-    cell["sigma_measured"] = sigma_m
-    cell["se_measured_pp"] = round(se, 4)
-    cell["variance_ratio_vs_board"] = entry.get("variance_ratio_vs_board")
-    cell["effective_n"] = entry.get("effective_n")
-    cell["exact_coverage"] = entry.get("exact_coverage")
-    cell["measured_at_population"] = entry.get("population_version")
-    if status == sigma_ledger.STATUS_CARRIED:
-        # The three facts that let a reader age the measurement themselves,
-        # which is the residual a size test cannot cover.
-        cell["measured_carried"] = True
-        cell["carried_drift"] = sigma_ledger.cell_drift(entry, cell.get("n"))
-        cell["measured_generated_at"] = entry.get("generated_at")
-    if status == sigma_ledger.STATUS_POPULATION_DIVERGENCE:
-        # Reported above, decides nothing. No `measured_verdict` at all rather
-        # than a hedged one: a verdict field that sometimes means "probably" is
-        # how a caveat gets counted as a result two sessions later.
-        return
-    if cell["verdict"] == VERDICT_EXEMPT:
-        cell["measured_verdict"] = VERDICT_EXEMPT
-    elif cell["excess_pp"] <= 0:
-        cell["measured_verdict"] = VERDICT_PASS
-    elif sigma_m >= SIGMA_GATE:
-        cell["measured_verdict"] = VERDICT_QUEUED
-    else:
-        cell["measured_verdict"] = VERDICT_UNDER_SIGMA
-
-
 def score(payload: dict, ledger: dict | None = None) -> dict:
     """Score the published payload.
 
-    ``ledger`` is the MEASURED sigma ledger (CAL-P128). It is reported and it
-    does NOT decide anything. See :func:`_attach_measured_sigma` for why that
-    separation is deliberate rather than timid.
-    """
-    pop = payload.get("population_version")
-    # CAL-P998: the fold, the bars and the verdict are the APP's
-    # (`app/utils/calibration_scoring.py`) — this file no longer holds a second
-    # copy of them. The overlay below is still this file's, because it reports
-    # and decides nothing.
-    cells = score_cells(payload)
-    for c in cells:
-        _attach_measured_sigma(c, ledger, pop)
-    # `score_cells` already ranks; the overlay adds columns, never a key the
-    # ranking reads, so the order is unchanged. Re-sorted anyway so this
-    # function's contract does not depend on that staying true.
-    cells.sort(key=lambda c: (-c["excess_outcomes"], -c["n"]))
+    ``ledger`` is the MEASURED sigma ledger. Since D62 = A it DECIDES: a cell
+    with a usable measured standard error is queued or not on that number
+    rather than on ``50/sqrt(n)``. Passing ``None`` scores on the estimate
+    alone, which is the pre-D62 board and is still what runs when the ledger
+    cannot be read.
 
+    CAL-P1002: the fold, the bars, the verdict AND the overlay are all the
+    APP's (:mod:`app.utils.calibration_scoring`) — this file holds no second
+    copy of any of them, so a figure printed here and a figure served by
+    ``/api/calibration`` are the same number by construction rather than by
+    agreement.
+    """
+    cells = score_cells(payload, ledger)
     counts = cell_counts(cells)
     material = [c for c in cells if c["verdict"] != VERDICT_EXEMPT]
     queued = [c for c in cells if c["verdict"] == VERDICT_QUEUED]
     headline = payload.get("mce_closing_line")
 
-    # The measured-sigma overlay, counted rather than described. These are
-    # REPORTING counts: `cells_queued` above is untouched.
-    # `measured` counts only cells whose measurement is allowed to DECIDE.
-    # A POPULATION_DIVERGENCE cell has a sigma_measured and no measured_verdict, and it
-    # is counted in its own bucket so it can never be silently read as either.
-    verdicted = [c for c in queued if c.get("measured_verdict") is not None]
-    # CARRIED never pools into `measured`. Both are verdict-capable; only one
-    # was measured on the population being scored, and a projection that cannot
-    # be split back into those two halves is a projection nobody can audit.
-    carried = [c for c in verdicted if c.get("measured_carried")]
-    measured = [c for c in verdicted if not c.get("measured_carried")]
-    refuted = [c for c in measured if c["measured_verdict"] == VERDICT_UNDER_SIGMA]
-    refuted_carried = [
-        c for c in carried if c["measured_verdict"] == VERDICT_UNDER_SIGMA
-    ]
+    # The overlay's audit trail, in this file's own vocabulary. `measured` and
+    # `carried` stay SPLIT — both are verdict-capable, only one was measured on
+    # the population being scored, and a count that cannot be split back into
+    # those two halves is a count nobody can audit. A POPULATION_DIVERGENCE cell
+    # is in neither: it shows its numbers and decides nothing.
+    def _decided(rows, carried):
+        return [
+            c
+            for c in rows
+            if c.get("sigma_basis") == SIGMA_BASIS_MEASURED
+            and bool(c.get("measured_carried")) is carried
+        ]
+
+    # Over MATERIAL cells, not just queued ones: since the overlay decides, a
+    # cell it took OFF the queue is no longer in `queued` and counting the
+    # overlay's coverage there would make it shrink as it succeeds.
+    measured = _decided(material, False)
+    carried = _decided(material, True)
     low_cov = [
         c
-        for c in queued
+        for c in material
         if c.get("sigma_ledger_status") == sigma_ledger.STATUS_POPULATION_DIVERGENCE
+    ]
+    # The cells the measurement actually took off the queue — over-bar on the
+    # estimate, not established on the measurement.
+    refuted = [
+        c
+        for c in measured
+        if c["verdict_row_basis"] == VERDICT_QUEUED and c["verdict"] != VERDICT_QUEUED
+    ]
+    refuted_carried = [
+        c
+        for c in carried
+        if c["verdict_row_basis"] == VERDICT_QUEUED and c["verdict"] != VERDICT_QUEUED
+    ]
+    # And the other direction, which must be counted with the same care: a cell
+    # the estimate cleared and the measurement queues. There are none on the
+    # 2026-09-04 board, and a projection that can only ever shorten the queue is
+    # one nobody should trust — so it is computed, not assumed.
+    added = [
+        c
+        for c in material
+        if c["verdict"] == VERDICT_QUEUED and c["verdict_row_basis"] != VERDICT_QUEUED
     ]
 
     return {
@@ -420,6 +350,13 @@ def score(payload: dict, ledger: dict | None = None) -> dict:
             "reader_bar_pp": BAR_PP,
             "min_cell_n": MIN_CELL_N,
             "sigma_gate": SIGMA_GATE,
+            # The gate's VALUE is unchanged since the 2026-08-28 ratification;
+            # D62 changed its INPUT. Banked with every history point for the
+            # same reason `class_bars_pp` is: a series that changes definition
+            # and cannot say so is a chart that lies about its units.
+            "sigma_gate_basis": (
+                SIGMA_BASIS_PER_CELL if ledger is not None else SIGMA_BASIS_ROW
+            ),
             "headline_target_pp": HEADLINE_TARGET_PP,
         },
         # The NEEDLE and its arithmetic — computed by the same function
@@ -430,45 +367,55 @@ def score(payload: dict, ledger: dict | None = None) -> dict:
         # this `cells_total` is published as `cells_scored`. The mapping is
         # pinned by `test_calibration_scoring_998.py`.
         "counts": counts,
-        # REPORTING ONLY — see `_attach_measured_sigma`. None of these feed
-        # `cells_at_bar`, `done`, or any verdict. They exist so the size of the
-        # pending question is on the board rather than in a handoff note.
+        # DECIDING since D62 = A (2026-09-04). Until then every field in this
+        # block was a projection named `_if_applied`; the projection became the
+        # reading, so the fields that used to hold the counterfactual now hold
+        # what happened and the counterfactual is the ROW basis. The direction
+        # of the "if" flipped, not the arithmetic.
         "measured_sigma": {
-            "queued_cells_measured": len(measured),
-            "queued_cells_unmeasured": (
-                len(queued) - len(measured) - len(carried) - len(low_cov)
+            "decides": ledger is not None,
+            "material_cells": len(material),
+            "material_cells_measured": len(measured),
+            "material_cells_carried": len(carried),
+            "material_cells_low_coverage": len(low_cov),
+            "material_cells_unmeasured": (
+                len(material) - len(measured) - len(carried) - len(low_cov)
             ),
-            "queued_cells_low_coverage": len(low_cov),
             "low_coverage_cells": [c["cell"] for c in low_cov],
-            "queued_cells_refuted": len(refuted),
-            "refuted_cells": [c["cell"] for c in refuted],
-            "refuted_excess_outcomes": sum(c["excess_outcomes"] for c in refuted),
-            # CARRIED (CAL-P998): measured on an earlier population, cell
-            # unmoved. Its own counts, its own projection, never folded into
-            # the two above — the whole point of the status is that a reader
-            # can still tell the two apart.
-            "queued_cells_carried": len(carried),
+            # CARRIED (CAL-P998) stays its own bucket even though it now
+            # decides alongside FRESH: the whole warrant for carrying an entry
+            # is that a reader can still tell the two apart, and it is the
+            # re-measure backlog the measurement lane works off.
             "carried_cells": [c["cell"] for c in carried],
             "carried_from_populations": sorted(
-                {c["measured_at_population"] for c in carried if c.get("measured_at_population")}
+                {
+                    c["measured_at_population"]
+                    for c in carried
+                    if c.get("measured_at_population")
+                }
             ),
-            "queued_cells_refuted_carried": len(refuted_carried),
+            # What the measurement DID: cells taken off the queue, and cells
+            # put on it. Both directions, because a correction that can only
+            # ever shorten the board is one nobody should trust.
+            "cells_refuted": len(refuted) + len(refuted_carried),
+            "refuted_cells": [c["cell"] for c in refuted],
             "refuted_cells_carried": [c["cell"] for c in refuted_carried],
-            "refuted_excess_outcomes_carried": sum(
-                c["excess_outcomes"] for c in refuted_carried
+            "refuted_excess_outcomes": sum(
+                c["excess_outcomes"] for c in refuted + refuted_carried
             ),
-            # What the needle WOULD read if the gate were applied to the
-            # measured SE wherever one exists. Named `_if_applied` because it
-            # is a projection, not a reading.
-            "cells_at_bar_if_applied": len(material) - len(queued) + len(refuted),
-            # The same projection at the weaker evidence standard. Two numbers
-            # rather than one because the flip is Alex's call and the two
-            # halves of the evidence are not equally strong; collapsing them
-            # would hide which half is doing the work.
-            "cells_at_bar_if_applied_with_carried": (
-                len(material) - len(queued) + len(refuted) + len(refuted_carried)
+            "cells_added": len(added),
+            "added_cells": [c["cell"] for c in added],
+            # The needle on the estimate alone — what this board read before
+            # D62, published beside what it reads now.
+            "cells_at_bar_row_basis": counts["cells_at_bar_row_basis"],
+            "cells_at_bar_delta_vs_row_basis": (
+                counts["cells_at_bar"] - counts["cells_at_bar_row_basis"]
             ),
         },
+        # The served block's own receipt, computed by the same function
+        # `/api/calibration` publishes — so the script cannot describe the flip
+        # differently from the wire.
+        "sigma_overlay": sigma_overlay(cells, ledger),
         "per_class": per_class(cells),
         # The CATEGORY cut the measurement bus has been doing by hand off
         # `by_category` (`14/36 cats ece<=3.0`). Rendered here beside the cell
@@ -523,12 +470,23 @@ def _point_key(point: dict) -> tuple:
     Points banked before the ratification carry no ``thresholds`` key at all;
     they are keyed as the flat bar they were actually scored against, never as
     "unknown", so the pre-ratification history cannot collide with a re-score.
+
+    THE SIGMA BASIS IS IN THE KEY FOR THE SAME REASON THE BARS ARE — CAL-P1002.
+    D62 changed the gate's INPUT on 2026-09-04, so one curve now has two
+    defensible readings (34/48 on the estimate, 35/48 on the measurement) and
+    they are different readings, not a repeat. Without the basis in the key the
+    second one is silently refused as a duplicate and the series' first
+    post-D62 point goes missing — which is exactly what happened to the first
+    ratified point until the bars were added here. Points banked before D62
+    carry no basis and are keyed as the row estimate they were actually scored
+    against, never as "unknown".
     """
     thresholds = point.get("thresholds") or {}
     bars = thresholds.get("class_bars_pp")
     if not bars:
         bars = {k: BAR_PP for k in CLASS_BARS_PP}
-    return (point.get("generated_at"), tuple(sorted(bars.items())))
+    basis = thresholds.get("sigma_gate_basis") or SIGMA_BASIS_ROW
+    return (point.get("generated_at"), tuple(sorted(bars.items())), basis)
 
 
 def record(result: dict, path: Path) -> str:
@@ -641,51 +599,94 @@ def render_markdown(result: dict, history: list[dict]) -> str:
             f"{p['queued']} | {p['outcomes']:,} |"
         )
     ms = result.get("measured_sigma") or {}
-    if ms.get("queued_cells_low_coverage"):
+    if not ms.get("decides"):
         L.append(
-            f"- ⚠️ **{ms['queued_cells_low_coverage']} queued cell(s) have a "
-            f"measured sigma that is NOT allowed to decide** — the exact rail "
-            f"and the payload disagree about the cell's population by more "
-            f"than {round((1 - sigma_ledger.COVERAGE_BAND[0]) * 100)}%, so the SE "
-            f"and the excess are not measurements of the same rows: "
-            f"{', '.join(ms['low_coverage_cells'])}. Which side is inflated is "
-            "a per-cell question — basketball is 43.44% phantom (CAL-P126)."
+            "- ⚠️ **scored on the row-grain estimate alone** — no measured-sigma "
+            "ledger was supplied, so `50/sqrt(n)` decided every cell. Since "
+            "D62 = A that is a degraded reading, not the normal one."
         )
-    if ms.get("queued_cells_measured"):
+    else:
         L.append(
-            f"- measured sigma on **{ms['queued_cells_measured']}** of the "
-            f"{c['cells_queued']} queued cells "
-            f"({ms['queued_cells_unmeasured']} still on the row-grain estimate) "
-            f"— **{ms['queued_cells_refuted']} of the measured cells "
-            f"{'is' if ms['queued_cells_refuted'] == 1 else 'are'} NOT "
-            f"established** at the ratified gate "
-            f"({ms['refuted_excess_outcomes']:,} excess-outcomes). The needle "
-            f"would read **{ms['cells_at_bar_if_applied']}/{c['cells_material']}** "
-            "if the gate were applied to the measured SE. It is NOT applied — "
-            "the verdict column below is unchanged, pending Alex."
+            f"- **the measured sigma DECIDES** (D62 = A, 2026-09-04): the "
+            f"ratified {SIGMA_GATE} sigma gate is applied to the measured "
+            f"cluster-bootstrap SE on **"
+            f"{ms['material_cells_measured'] + ms['material_cells_carried']}** of "
+            f"the {ms['material_cells']} material cells and to `50/sqrt(n)` on "
+            f"the other {ms['material_cells_unmeasured'] + ms['material_cells_low_coverage']}. "
+            f"On the estimate alone the needle reads "
+            f"**{ms['cells_at_bar_row_basis']}/{c['cells_material']}**; measured, "
+            f"**{c['cells_at_bar']}/{c['cells_material']}** "
+            f"({ms['cells_at_bar_delta_vs_row_basis']:+d})."
         )
-    if ms.get("queued_cells_carried"):
+    moved = (result.get("sigma_overlay") or {}).get("cells_moved") or []
+    if moved:
+        # The cells the measurement moved get their OWN table, because a cell
+        # taken OFF the queue is by definition absent from the queued table
+        # below — and a board that hides the rows its own correction removed is
+        # a board you cannot check the correction against.
+        L.append("")
         L.append(
-            f"- **{ms['queued_cells_carried']}** of the {c['cells_queued']} queued "
-            f"cells carry a sigma measured on an EARLIER population "
-            f"({', '.join(ms['carried_from_populations']) or 'unknown'}) whose cell "
-            f"has not moved by more than "
+            f"**What the measurement changed** — {ms.get('cells_refuted', 0)} off "
+            f"the queue, {ms.get('cells_added', 0)} on. Both directions: a "
+            "correction that can only ever shorten the board is one nobody "
+            "should trust."
+        )
+        L.append("")
+        L.append(
+            "| cell | from | to | sigma row | sigma meas | SE meas pp | "
+            "ledger | excess-outcomes |"
+        )
+        L.append("|---|---|---|--:|--:|--:|---|--:|")
+        for m in moved:
+            sm = m["sigma_measured"]
+            se = m["se_measured_pp"]
+            sm_txt = "—" if sm is None else format(sm, ".2f")
+            if m.get("measured_at_population") and m["ledger_status"] == (
+                sigma_ledger.STATUS_CARRIED
+            ):
+                # CARRIED marks itself in the CELL, not only in a bullet above
+                # it: a reader scanning a sigma must not have to remember a
+                # summary line to know it was measured on another population.
+                sm_txt += f"↩{m['measured_at_population']}"
+            L.append(
+                f"| `{m['cell']}` | {m['from']} | {m['to']} | "
+                f"{m['sigma_row']:.2f} | {sm_txt} | "
+                f"{'—' if se is None else format(se, '.4f')} | "
+                f"{m['ledger_status']} | {m['excess_outcomes']:,} |"
+            )
+    if ms.get("material_cells_low_coverage"):
+        L.append(
+            f"- ⚠️ **{ms['material_cells_low_coverage']} cell(s) have a measured "
+            f"sigma that is NOT allowed to decide** — the exact rail and the "
+            f"payload disagree about the cell's population by more than "
+            f"{round((1 - sigma_ledger.COVERAGE_BAND[0]) * 100)}%, so the SE and "
+            f"the excess are not measurements of the same rows: "
+            f"{', '.join(ms['low_coverage_cells'])}. They keep being decided by "
+            "the estimate. Which side is inflated is a per-cell question — "
+            "basketball is 43.44% phantom (CAL-P126)."
+        )
+    if ms.get("material_cells_carried"):
+        L.append(
+            f"- **{ms['material_cells_carried']}** of the deciding measurements "
+            f"were taken on an EARLIER population "
+            f"({', '.join(ms['carried_from_populations']) or 'unknown'}) whose "
+            f"cell has not moved by more than "
             f"{round((1 - sigma_ledger.CELL_DRIFT_BAND[0]) * 100)}%: "
-            f"{', '.join(ms['carried_cells'])}. Counted apart from the measured "
-            f"cells above on purpose — **{ms['queued_cells_refuted_carried']}** of "
-            f"them {'is' if ms['queued_cells_refuted_carried'] == 1 else 'are'} NOT "
-            f"established at the ratified gate "
-            f"({ms['refuted_excess_outcomes_carried']:,} excess-outcomes), which "
-            f"would put the needle at "
-            f"**{ms['cells_at_bar_if_applied_with_carried']}/{c['cells_material']}** "
-            "at the weaker evidence standard. Also NOT applied. Each carried cell "
-            "is a standing re-measure request."
+            f"{', '.join(ms['carried_cells'])}. They decide — the SE is the term "
+            "that does not move when the ECE, the bar or the population version "
+            "do — and they are still counted apart, because each one is a "
+            "standing re-measure request."
         )
     L.append("")
     L.append(
-        "| # | cell | class | ECE pp | n | gap pp | bar | excess pp | sigma | "
+        "| # | cell | class | ECE pp | n | gap pp | bar | excess pp | sigma row | "
         "sigma meas | var ratio | eff n | excess-outcomes |"
     )
+    # `sigma row` is the ESTIMATE, always. The deciding sigma is whichever of
+    # the two columns is not "—" — since D62 the measured one wins where it
+    # exists — and printing a merged "sigma" column would put a proof and an
+    # estimate under one heading, which is the defect these two columns exist
+    # to expose (CAL-P127 lesson 10).
     L.append("|--:|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
     for i, cell in enumerate(
         [x for x in result["cells"] if x["verdict"] == VERDICT_QUEUED], 1
@@ -697,7 +698,7 @@ def render_markdown(result: dict, history: list[dict]) -> str:
         if sm is None:
             sm_txt, deff_txt, eff_txt = "—", "—", "—"
         else:
-            if cell.get("measured_verdict") is None:
+            if cell.get("sigma_basis") != SIGMA_BASIS_MEASURED:
                 # POPULATION_DIVERGENCE: shown in parentheses, which is the render's way
                 # of saying this number is evidence and not a verdict.
                 sm_txt = f"({sm:.2f})⚠️"
@@ -718,7 +719,7 @@ def render_markdown(result: dict, history: list[dict]) -> str:
         L.append(
             f"| {i} | `{cell['cell']}` | {cell['class'][0]} | {cell['ece']:.2f} | "
             f"{cell['n']:,} | {cell['gap']:+.2f} | {cell['bar_pp']} | "
-            f"{cell['excess_pp']:+.2f} | {cell['sigma']:.1f} | {sm_txt} | "
+            f"{cell['excess_pp']:+.2f} | {cell['sigma_row']:.1f} | {sm_txt} | "
             f"{deff_txt} | {eff_txt} | {cell['excess_outcomes']:,} |"
         )
     return "\n".join(L)

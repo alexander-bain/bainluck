@@ -257,18 +257,40 @@ class TestOneDefinition:
         assert sc.MIN_CELL_N == scoring.MIN_CELL_N
         assert sc.SIGMA_GATE == scoring.SIGMA_GATE
 
-    def test_the_app_module_imports_nothing_from_the_app(self):
+    def test_the_app_module_imports_only_leaves_that_import_nothing(self):
         """Same rule as ``sport_keys.py``: this module is consumed by a route, a
         script and (via the route) the request path, so a circular import would
-        be discovered at dyno boot."""
+        be discovered at dyno boot.
+
+        AMENDED CAL-P1002. The rule was "imports nothing from the app" and D62
+        made that unsatisfiable: the measured-sigma overlay decides a served
+        number, so it has to be read here, and its reader is an app module.
+        Loosening the rule to "one import is fine" would give up the property
+        the rule protects, so the test asserts the property instead — every
+        app module this one imports must ITSELF import nothing from the app.
+        Two leaves cannot form a cycle. A third leaf is admissible on the same
+        terms; a non-leaf is not, and this fails if one appears.
+        """
         from pathlib import Path
 
-        src = Path(scoring.__file__).read_text()
-        offenders = [
-            ln for ln in src.splitlines()
-            if ln.startswith(("import app", "from app"))
-        ]
-        assert offenders == []
+        def _app_imports(path: Path) -> list[str]:
+            return [
+                ln.strip()
+                for ln in path.read_text().splitlines()
+                if ln.startswith(("import app", "from app"))
+            ]
+
+        direct = _app_imports(Path(scoring.__file__))
+        assert direct == ["from app.utils import calibration_sigma as sigma_ledger"], (
+            f"new app import in calibration_scoring: {direct}. Every one of these "
+            "runs at dyno boot; add it only with the leaf argument above made again."
+        )
+        from app.utils import calibration_sigma
+
+        assert _app_imports(Path(calibration_sigma.__file__)) == [], (
+            "calibration_sigma must stay a leaf — it is the only thing that makes "
+            "calibration_scoring's one app import safe."
+        )
 
     def test_the_script_still_reports_its_historical_shape(self):
         """CONTROL — green before this queue and after it.

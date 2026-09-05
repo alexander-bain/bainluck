@@ -287,10 +287,16 @@ class TestTheVarianceRatioIsNamedForWhatItIsARatioTo:
 
     def test_a_cell_measuring_below_one_gets_a_HIGHER_sigma_not_a_lower_one(self):
         """Cricket reads 5.87 on the board and 8.42 measured. The overlay must
-        be able to make a cell MORE established, or it is not a measurement."""
+        be able to make a cell MORE established, or it is not a measurement.
+
+        Compared against ``sigma_row``, not ``sigma``: since D62 ``sigma`` IS
+        the measured value here, and the old form of this assertion silently
+        became ``x > x``.
+        """
         led = _ledger_with(0.6113)
         cell = cs.score(_payload(3252, 8.11), led)["cells"][0]
-        assert cell["sigma_measured"] > cell["sigma"]
+        assert cell["sigma_measured"] > cell["sigma_row"]
+        assert cell["sigma"] == cell["sigma_measured"]
 
     def test_matching_ses_give_a_ratio_of_one(self):
         """The degenerate end: if the bootstrap agrees with the board's bound,
@@ -333,24 +339,35 @@ class TestPopulationDivergenceReportsButDoesNotDecide:
         assert cell["sigma_measured"] is not None
         assert cell["exact_coverage"] == pytest.approx(0.641, abs=0.001)
 
-    def test_but_it_carries_no_verdict_at_all(self):
-        """Not a hedged verdict — NO verdict. A field that sometimes means
-        'probably' is how a caveat gets counted as a result two sessions on."""
+    def test_but_it_decides_nothing_even_now_that_measurements_decide(self):
+        """AMENDED CAL-P1002 — and this is the half of D62 that did NOT change.
+
+        Before D62 this asserted the absence of a ``measured_verdict`` field,
+        which after the flip would pass vacuously (nothing sets that field any
+        more). The claim was never about the field: it is that a cell whose SE
+        and excess describe different populations has no sigma to offer. So it
+        is now asserted where it can fail — the deciding basis stays the row
+        estimate and the verdict is identical to the no-ledger board.
+        """
         cell = cs.score(_payload(13135, 4.24), self._low_cov_ledger())["cells"][0]
-        assert cell.get("measured_verdict") is None
+        assert cell["sigma_measured"] is not None, "the number is still shown"
+        assert cell["sigma_basis"] == cs.SIGMA_BASIS_ROW
+        assert cell["sigma"] == cell["sigma_row"]
+        assert cell["verdict"] == cell["verdict_row_basis"]
 
     def test_it_is_counted_in_its_own_bucket_never_as_refuted(self):
         ms = cs.score(_payload(13135, 4.24), self._low_cov_ledger())["measured_sigma"]
-        assert ms["queued_cells_low_coverage"] == 1
-        assert ms["queued_cells_refuted"] == 0
-        assert ms["queued_cells_measured"] == 0
+        assert ms["material_cells_low_coverage"] == 1
+        assert ms["cells_refuted"] == 0
+        assert ms["material_cells_measured"] == 0
 
-    def test_a_low_coverage_cell_does_not_move_the_projection(self):
+    def test_a_low_coverage_cell_does_not_move_the_needle(self):
+        """The two bases must AGREE here — that is what "decides nothing" means
+        once the overlay decides. Before D62 the same claim read the other way
+        round, against a projection."""
         r = cs.score(_payload(13135, 4.24), self._low_cov_ledger())
-        assert (
-            r["measured_sigma"]["cells_at_bar_if_applied"]
-            == r["counts"]["cells_at_bar"]
-        )
+        assert r["counts"]["cells_at_bar_row_basis"] == r["counts"]["cells_at_bar"]
+        assert r["measured_sigma"]["cells_at_bar_delta_vs_row_basis"] == 0
 
     def test_the_render_parenthesises_it(self):
         md = cs.render_markdown(
@@ -431,8 +448,21 @@ class TestStalenessIsAState:
         assert built["entries"]["kalshi/golf"]["population_version"] == "q268"
 
 
-class TestTheOverlayReportsAndDoesNotDecide:
-    """Claim 4. The needle must not move because an instrument landed."""
+class TestTheOverlayDecidesAndSaysSo:
+    """Claim 4, INVERTED by Alex's D62 = A on 2026-09-04 — and the inversion is
+    the whole content of CAL-P1002, so it is pinned here rather than in a new
+    file with the old claim quietly deleted.
+
+    The old claim was "the needle must not move because an instrument landed",
+    and the reasoning behind it was never that the measurement is wrong: it was
+    that a finding which shortens the queue deserves more suspicion than one
+    that lengthens it, so the flip is Alex's call and not an instrument's side
+    effect. Alex made the call. What survives of the old claim is everything
+    except the veto — the needle may now move, and it may move ONLY where the
+    ledger says a measurement is allowed to decide, and every move must be
+    visible on the board with both numbers beside it. Those are the tests
+    below, and they are strictly harder than the ones they replace.
+    """
 
     #: A cell the row-grain estimate QUEUES and the measured SE REFUTES.
     #: n=20,500 at 3.88 pp is golf: excess +0.88, row sigma 2.5, and an SE of
@@ -450,38 +480,78 @@ class TestTheOverlayReportsAndDoesNotDecide:
         """A no-op overlay would make every test below pass vacuously."""
         _, with_ledger = self._both()
         cell = with_ledger["cells"][0]
-        assert cell["sigma"] >= cs.SIGMA_GATE
+        assert cell["sigma_row"] >= cs.SIGMA_GATE
         assert cell["sigma_measured"] < cs.SIGMA_GATE
-        assert cell["verdict"] == cs.VERDICT_QUEUED
-        assert cell["measured_verdict"] == cs.VERDICT_UNDER_SIGMA
+        assert cell["verdict_row_basis"] == cs.VERDICT_QUEUED
 
-    def test_the_verdict_does_not_move(self):
+    def test_the_verdict_moves_and_the_measurement_is_what_moved_it(self):
         without, with_ledger = self._both()
-        assert with_ledger["cells"][0]["verdict"] == without["cells"][0]["verdict"]
+        assert without["cells"][0]["verdict"] == cs.VERDICT_QUEUED
+        cell = with_ledger["cells"][0]
+        assert cell["verdict"] == cs.VERDICT_UNDER_SIGMA
+        assert cell["sigma_basis"] == cs.SIGMA_BASIS_MEASURED
+        assert cell["sigma"] == cell["sigma_measured"]
 
-    def test_the_needle_does_not_move(self):
+    def test_the_needle_moves_by_exactly_the_cells_the_measurement_took_off(self):
         without, with_ledger = self._both()
-        for k in ("cells_at_bar", "cells_queued", "cells_unestablished"):
-            assert with_ledger["counts"][k] == without["counts"][k], k
-        assert with_ledger["done"] == without["done"]
+        assert with_ledger["counts"]["cells_queued"] == (
+            without["counts"]["cells_queued"] - 1
+        )
+        assert with_ledger["counts"]["cells_at_bar"] == (
+            without["counts"]["cells_at_bar"] + 1
+        )
 
-    def test_the_projection_is_reported_and_labelled_as_one(self):
-        _, with_ledger = self._both()
+    def test_the_row_basis_needle_is_still_published_beside_it(self):
+        """The counterfactual did not disappear when it stopped being the
+        reading — it swapped places with the projection. A needle that changed
+        basis without its old value beside it is a needle nobody can check."""
+        without, with_ledger = self._both()
+        assert with_ledger["counts"]["cells_at_bar_row_basis"] == (
+            without["counts"]["cells_at_bar"]
+        )
         ms = with_ledger["measured_sigma"]
-        assert ms["queued_cells_refuted"] == 1
+        assert ms["cells_refuted"] == 1
         assert ms["refuted_cells"] == ["kalshi/golf"]
-        # The projection differs from the reading — that IS the finding.
-        assert ms["cells_at_bar_if_applied"] == with_ledger["counts"]["cells_at_bar"] + 1
+        assert ms["cells_at_bar_delta_vs_row_basis"] == 1
+
+    def test_every_move_is_named_on_the_wire_with_both_sigmas(self):
+        """``sigma_overlay.cells_moved`` is the receipt. Without it the flip is
+        a number that changed and nothing that says which rows changed it."""
+        _, with_ledger = self._both()
+        moved = with_ledger["sigma_overlay"]["cells_moved"]
+        assert [m["cell"] for m in moved] == ["kalshi/golf"]
+        m = moved[0]
+        assert m["from"] == cs.VERDICT_QUEUED
+        assert m["to"] == cs.VERDICT_UNDER_SIGMA
+        assert m["sigma_row"] >= cs.SIGMA_GATE > m["sigma_measured"]
+
+    def test_it_can_ADD_a_cell_to_the_queue_not_only_remove_one(self):
+        """A correction that can only ever shorten the board is one nobody
+        should trust. cricket measures 8.05 against an estimate of 5.34 — the
+        measured SE runs both ways and the counting has to as well.
+
+        n=20,500 at 3.10 pp is +0.10 excess: row sigma 0.29, under the gate. An
+        SE of 0.03 pp puts the measurement at 3.33, over it.
+        """
+        result = cs.score(_payload(20_500, 3.10), _ledger_with(0.03))
+        cell = result["cells"][0]
+        assert cell["verdict_row_basis"] == cs.VERDICT_UNDER_SIGMA
+        assert cell["verdict"] == cs.VERDICT_QUEUED
+        ms = result["measured_sigma"]
+        assert ms["cells_added"] == 1
+        assert ms["added_cells"] == ["kalshi/golf"]
+        assert ms["cells_at_bar_delta_vs_row_basis"] == -1
 
     def test_an_established_cell_is_not_counted_as_refuted(self):
         """The overlay must be capable of CONFIRMING a cell, not only killing
         one. polymarket/baseball measured 4.91 and stayed on the queue."""
-        _, _ = self._both()
         result = cs.score(_payload(20_500, 3.88), _ledger_with(0.1))
-        assert result["cells"][0]["measured_verdict"] == cs.VERDICT_QUEUED
-        assert result["measured_sigma"]["queued_cells_refuted"] == 0
+        cell = result["cells"][0]
+        assert cell["verdict"] == cs.VERDICT_QUEUED == cell["verdict_row_basis"]
+        assert result["measured_sigma"]["cells_refuted"] == 0
+        assert result["sigma_overlay"]["cells_moved"] == []
 
-    def test_unmeasured_queued_cells_are_counted_not_assumed(self):
+    def test_unmeasured_cells_are_counted_not_assumed(self):
         payload = {
             "buckets": [
                 _bucket("kalshi", "golf", 5, 20_500, int(20_500 * (0.5 - 0.0388)), 0.50),
@@ -491,8 +561,18 @@ class TestTheOverlayReportsAndDoesNotDecide:
             "population_version": "q268",
         }
         ms = cs.score(payload, _ledger_with(self.REFUTING_SE))["measured_sigma"]
-        assert ms["queued_cells_measured"] == 1
-        assert ms["queued_cells_unmeasured"] == 1
+        assert ms["material_cells_measured"] == 1
+        assert ms["material_cells_unmeasured"] == 1
+
+    def test_scoring_without_a_ledger_still_gives_the_pre_d62_board(self):
+        """The row basis is not deleted, it is the documented fallback — and it
+        is what runs when the committed ledger cannot be read."""
+        without, _ = self._both()
+        assert without["measured_sigma"]["decides"] is False
+        assert without["cells"][0]["sigma_basis"] == cs.SIGMA_BASIS_ROW
+        assert without["counts"]["cells_at_bar_row_basis"] == (
+            without["counts"]["cells_at_bar"]
+        )
 
 
 class TestProofAndEstimateNeverShareAColumn:
@@ -505,13 +585,21 @@ class TestProofAndEstimateNeverShareAColumn:
         assert "| — |" in row
         assert row.count("2.5") <= 1, "the row-grain sigma must not be reprinted"
 
-    def test_a_measured_cell_renders_its_measured_sigma_and_flags_a_refusal(self):
+    def test_a_measured_cell_that_left_the_queue_is_still_on_the_board(self):
+        """AMENDED CAL-P1002. Before D62 a refuted cell stayed in the queued
+        table wearing a 🔴; now the measurement takes it OFF the queue, so the
+        queued table is exactly where it is no longer. A board that drops the
+        rows its own correction removed cannot be used to check the correction
+        — so the render prints them in their own table, with both sigmas.
+        """
         md = cs.render_markdown(
             cs.score(_payload(20_500, 3.88), _ledger_with(0.5929493304062452)), []
         )
+        assert "What the measurement changed" in md
         row = [l for l in md.splitlines() if "kalshi/golf" in l][0]
-        assert "1.48" in row
-        assert "🔴" in row, "a cell under the ratified gate must be visibly flagged"
+        assert "1.48" in row, "the measured sigma that moved it"
+        assert "2.5" in row, "and the estimate it replaced, on the same row"
+        assert cs.VERDICT_QUEUED in row and cs.VERDICT_UNDER_SIGMA in row
 
     def test_every_cell_carries_the_basis_that_produced_its_sigma(self):
         cell = cs.score(_payload(20_500, 3.88), None)["cells"][0]
@@ -526,8 +614,15 @@ class TestTheLedgerDoesNotDriftFromTheBoard:
 
     def test_the_ledger_imports_nothing_from_the_scorecard(self):
         """One-way on purpose: `calibration_cluster_sigma` already imports the
-        scorecard, and the scorecard now imports the ledger. A back-edge here
-        would close the cycle and break both."""
+        scorecard, and the scorecard imports the ledger. A back-edge here would
+        close the cycle and break both.
+
+        AMENDED CAL-P1002: the ledger now imports its own reading half from
+        `app.utils.calibration_sigma`, so "no `calibration_` import at all" is
+        no longer the test. The CYCLE is what the claim is about, and the app
+        module is a leaf that imports nothing — so the test names the two
+        scripts that would actually close it.
+        """
         src = (_SCRIPTS / "calibration_sigma_ledger.py").read_text()
         # Import STATEMENTS, not prose — the docstring names the scorecard
         # repeatedly and should be free to.
@@ -536,4 +631,9 @@ class TestTheLedgerDoesNotDriftFromTheBoard:
             for l in src.splitlines()
             if l.startswith(("import ", "from ")) or l.strip().startswith("import ")
         ]
-        assert not [l for l in imports if "calibration_" in l], imports
+        back_edges = [
+            l
+            for l in imports
+            if "calibration_scorecard" in l or "calibration_cluster_sigma" in l
+        ]
+        assert not back_edges, back_edges
