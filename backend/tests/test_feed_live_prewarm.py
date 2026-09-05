@@ -31,10 +31,13 @@ import pytest
 
 from app.utils.feed_cache import (
     FEED_LIVE_REPUBLISH_BUDGET_S,
+    FEED_LIVE_REPUBLISH_CONCURRENCY,
     FEED_LIVE_REPUBLISH_PERIOD_S,
+    FEED_PREWARM_MIN_VIABLE_BUILD_S,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     live_republish_headroom_s,
+    live_republish_target_headroom_s,
 )
 
 pcp = import_module("app.tasks.precompute_category_pages")
@@ -356,25 +359,40 @@ def test_no_live_target_can_be_starved_by_the_ones_ahead_of_it():
     than the assertion it fixes: a guard can be red-proof-shaped and still be
     testing nothing, and the only thing that showed it was mutating the code it
     claimed to protect.
+
+    🔴 **#3233 REWROTE HALF 1, AND THE REASON IS THE POINT OF THIS WHOLE FILE.**
+    Half 1 used to assert `warmed[0][1] == BUDGET/N` — that the first target got
+    *exactly* its fair share and no more. That assertion was green in CI every day
+    while production published nothing, because **`BUDGET/N` was the defect**: at
+    N=5 the fair share is 4 s, one feed build costs more than that, and a
+    perfectly fair division of a wall that is too small starts five builds and
+    kills all five. The test was pinned to the mechanism instead of to the
+    property, so it defended the bug.
+
+    The property it should always have asserted is *no target is starved* — which
+    now means: every target that is STARTED gets at least what a build costs, and
+    a target that cannot get that is skipped rather than started and killed.
+
+    Half 2 is unchanged and still valid: `_prewarm_target_deadline` is still the
+    allocator for the 120 s host pass, and its fair-share proof is a real property
+    of that helper, tested here where it was first written down.
     """
     n = len(pcp.FEED_PREWARM_SHAPES)
     floor = FEED_LIVE_REPUBLISH_BUDGET_S / n
 
-    # --- half 1: the allocation the pass actually performs -------------------
-    # With instant warms the remaining budget never falls, so fair share makes
-    # the FIRST target's slice exactly BUDGET/N. A naive `deadline = budget_left`
-    # hands it the whole budget instead, which is the shape being excluded.
+    # --- half 1: no started target is under-funded, and none is silently lost --
     rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
     _, warmed = _run_live_pass(rc)
-    assert len(warmed) == n
-    assert warmed[0][1] == pytest.approx(floor), (
-        f"first target got {warmed[0][1]}s of the {FEED_LIVE_REPUBLISH_BUDGET_S}s "
-        f"budget, not its {floor}s fair share — the budget is not being divided"
+    assert len(warmed) == n, (
+        f"{n - len(warmed)} of {n} live targets never started — a live shape "
+        "dropped from a pass is a 60s cold window for whoever opens that tab"
     )
     for label, deadline_s in warmed:
-        assert (
-            deadline_s >= floor - 1e-9
-        ), f"{label} was allotted {deadline_s}s, below the {floor}s floor"
+        assert deadline_s >= FEED_PREWARM_MIN_VIABLE_BUILD_S, (
+            f"{label} was started with {deadline_s}s, under the "
+            f"{FEED_PREWARM_MIN_VIABLE_BUILD_S}s a build costs — a target that "
+            "cannot finish must be SKIPPED, not started and killed (#3233)"
+        )
 
     # --- half 2: the adversarial case, where every target eats its whole slice -
     # This is the scenario that starves a naive shared budget, simulated rather
@@ -387,6 +405,252 @@ def test_no_live_target_can_be_starved_by_the_ones_ahead_of_it():
             "floor, when every target ahead of it consumed its full allowance"
         )
         budget_left = max(0.0, budget_left - deadline_s)
+
+
+# --- #3233: the wall has to cover the work, not just be divided fairly -------
+
+
+def test_pass_budget_covers_every_target_at_the_declared_concurrency():
+    """The invariant #3233 was the absence of, and the reason it is a test.
+
+    #2236 compared a period against a ceiling. Nothing anywhere compared the wall
+    against the COST OF THE WORK INSIDE IT, and that is the gap production fell
+    through: five targets, a 20 s wall, a fair share of 4 s, and a feed build that
+    costs more than 4 s. Every counter stayed green.
+
+        ceil(N / CONCURRENCY) * MIN_VIABLE_BUILD_S <= BUDGET
+
+    Named after the invariant and asserted over the DECLARED shape set, so a
+    shape added past the pass's real capacity fails here — at the moment of the
+    addition, which is the only moment anyone is looking.
+
+    🔴 **The capacity is asserted by value, because it is not what the author of
+    this test first assumed.** The #3233 writeup claimed a sixth shape would trip
+    this guard; the arithmetic says the TENTH does
+    (`CONCURRENCY * floor(BUDGET / MIN_VIABLE)` = 3 * 3 = 9 fit). Both statements
+    cannot be acted on the same way, and only one of them had been evaluated. A
+    guard whose trip point nobody has computed is a guard whose trip point could
+    be anywhere, including past every case that will ever occur
+    (`r_guard_value_set_below_the_defect_never_fires`, in the other direction).
+    """
+    n = len(pcp.FEED_PREWARM_SHAPES)
+    headroom = live_republish_target_headroom_s(n)
+    assert headroom >= 0, (
+        f"{n} shapes at concurrency {FEED_LIVE_REPUBLISH_CONCURRENCY} need "
+        f"{-headroom:.1f}s more than the {FEED_LIVE_REPUBLISH_BUDGET_S}s wall. The "
+        "wall cannot be raised (PERIOD + BUDGET == the #2216 ceiling), so either "
+        "the concurrency goes up or the shape does not go in."
+    )
+
+    # The trip point, evaluated rather than assumed. Derived from the declared
+    # constants so changing any of them re-derives it instead of stranding a
+    # literal, but ASSERTED as a boundary so the value is visible to a reader.
+    capacity = FEED_LIVE_REPUBLISH_CONCURRENCY * int(
+        FEED_LIVE_REPUBLISH_BUDGET_S // FEED_PREWARM_MIN_VIABLE_BUILD_S
+    )
+    assert live_republish_target_headroom_s(capacity) >= 0
+    assert live_republish_target_headroom_s(capacity + 1) < 0, (
+        f"the headroom function does not bite at {capacity + 1} targets, so it "
+        "cannot detect a target count that provably cannot fit"
+    )
+    assert live_republish_target_headroom_s(0) == FEED_LIVE_REPUBLISH_BUDGET_S
+    assert n <= capacity, (
+        f"{n} declared shapes against a capacity of {capacity} — this should have "
+        "been caught by the headroom assertion above"
+    )
+
+
+def test_concurrency_never_reaches_for_the_task_pool_overflow():
+    """Three is bounded by the database pool, not chosen.
+
+    `tasks/base.py` declares `pool_size=3, max_overflow=2`. Each concurrent build
+    takes its own session (`get_task_session()`), so a concurrency above the
+    POOLED size makes this beat borrow overflow that exists for the tasks sharing
+    the process. Read out of the source rather than restated here, because a
+    number copied into a test is the #2236 arrangement in miniature — two places
+    holding one fact, neither of them comparing.
+    """
+    import re
+
+    base_src = inspect.getsource(import_module("app.tasks.base"))
+    pool_size = int(re.search(r"pool_size\s*=\s*(\d+)", base_src).group(1))
+    assert FEED_LIVE_REPUBLISH_CONCURRENCY <= pool_size, (
+        f"concurrency {FEED_LIVE_REPUBLISH_CONCURRENCY} exceeds the task pool's "
+        f"{pool_size} pooled connections — this pass would be taking overflow "
+        "from whatever else runs in the worker process"
+    )
+
+
+def _run_live_pass_with_costed_builds(
+    rc, *, build_cost_s, budget_s, min_viable_s, concurrency
+):
+    """Drive the pass with builds that actually CONSUME time and can time out.
+
+    The scale is 1/100th of production so the test is fast, and the ratio is what
+    matters: a build that costs more than a fair share of the wall. The fake
+    reproduces `asyncio.wait_for`'s contract faithfully — a build given less than
+    it costs burns its whole deadline and publishes NOTHING, which is the exact
+    production behaviour (`{"outcome": "timeout"}`, "the request path will rebuild
+    cold").
+    """
+    import asyncio
+
+    started_order = []
+
+    async def costed_warm(shape, _rc, *, deadline_s):
+        started_order.append(shape["label"])
+        if deadline_s < build_cost_s:
+            await asyncio.sleep(deadline_s)
+            return {"outcome": "timeout"}
+        await asyncio.sleep(build_cost_s)
+        return {"outcome": "ok", "items": 3, "live": True}
+
+    with patch.object(pcp, "_prewarm_feed_shape", costed_warm), patch(
+        "app.tasks.redis_state.get_redis_client", lambda: rc
+    ), patch.object(
+        import_module("app.utils.feed_cache"),
+        "FEED_LIVE_REPUBLISH_BUDGET_S",
+        budget_s,
+    ), patch.object(
+        import_module("app.utils.feed_cache"),
+        "FEED_PREWARM_MIN_VIABLE_BUILD_S",
+        min_viable_s,
+    ), patch.object(
+        import_module("app.utils.feed_cache"),
+        "FEED_LIVE_REPUBLISH_CONCURRENCY",
+        concurrency,
+    ):
+        result = asyncio.run(pcp._prewarm_live_feed_shapes())
+    return result, started_order
+
+
+def test_a_slow_build_no_longer_starves_the_whole_pass():
+    """The production defect of #3233, executed.
+
+    Every shape live, and every build costing more than `BUDGET / N`. That is not
+    a hypothetical: it is what production did 1,322 times a day, with 290
+    `Feed pre-warm TIMEOUT`s in 24 h and nothing published.
+
+    Serially, with each target given its fair `BUDGET / N`, **every** build is
+    killed and the pass publishes ZERO. Run in waves of `CONCURRENCY` under the
+    same wall, the same builds fit. The assertion is on the count published,
+    because that is the only number a reader of the Sports tab can feel.
+    """
+    n = len(pcp.FEED_PREWARM_SHAPES)
+    budget_s = 0.20
+    # More than a fair share (0.04s at n=5), comfortably less than a wave's worth
+    # of the wall. This is the whole shape of the bug in one inequality.
+    build_cost_s = 0.06
+    assert build_cost_s > budget_s / n, "the fixture does not reproduce the defect"
+
+    rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
+    published, started = _run_live_pass_with_costed_builds(
+        rc,
+        build_cost_s=build_cost_s,
+        budget_s=budget_s,
+        min_viable_s=build_cost_s,
+        concurrency=FEED_LIVE_REPUBLISH_CONCURRENCY,
+    )
+
+    assert len(started) == n, "a live target was never even started"
+    assert published >= FEED_LIVE_REPUBLISH_CONCURRENCY, (
+        f"only {published} of {n} targets published. Serial 1/N slicing publishes "
+        "0 here — that is the bug — so anything at or below the first wave means "
+        "the pass is still dividing the wall instead of running waves in it"
+    )
+
+
+def _fake_rc_two_hashes(live_labels, absent_labels):
+    """A fake Redis that can actually produce ABSENT targets.
+
+    🔴 `_fake_rc` cannot, and the first draft of the ordering test below was
+    VACUOUS because of it. Its `hgetall` returns the same dict for every key, so
+    the live-marker hash and the shape-KEY hash are one object: the only labels
+    with a remembered cache key are exactly the live ones, and
+    `_absent_prewarm_labels` excludes those. `absent_labels` came back empty, the
+    ordering assertion sat behind `if absent_positions:`, and the test passed
+    while ordering absent-before-live — which is the mutation it exists to catch.
+
+    Two hashes, kept apart, plus an `exists` that answers per key. The general
+    clause: **a fake that collapses two identities into one cannot observe a bug
+    that lives in the difference between them**, and the tell is a guard that
+    stays green under the mutation it names.
+    """
+    live_state = {label: "1" for label in live_labels}
+    # Every shape has a remembered key; only the absent ones have lost the mirror.
+    key_state = {s["label"]: f"feed:{s['label']}" for s in pcp.FEED_PREWARM_SHAPES}
+    gone = {f"feed:{label}:stale" for label in absent_labels}
+
+    rc = MagicMock()
+
+    def _hgetall(key):
+        if key == pcp.FEED_PREWARM_SHAPE_KEYS_KEY:
+            return dict(key_state)
+        return dict(live_state)
+
+    rc.hgetall.side_effect = _hgetall
+    rc.hset.side_effect = lambda key, field, value: (
+        key_state if key == pcp.FEED_PREWARM_SHAPE_KEYS_KEY else live_state
+    ).__setitem__(field, value)
+    rc.hdel.side_effect = lambda key, field: (
+        key_state if key == pcp.FEED_PREWARM_SHAPE_KEYS_KEY else live_state
+    ).pop(field, None)
+    rc.exists.side_effect = lambda key: 0 if key in gone else 1
+    rc.get.return_value = None
+    return rc
+
+
+def test_the_absent_fixture_really_produces_absent_targets():
+    """The ordering guard below is only as good as this, so it is asserted first.
+
+    A precondition that is merely assumed is how the first draft of that guard
+    came to pass while ordering absent labels ahead of live ones.
+    """
+    rc = _fake_rc_two_hashes({"sports"}, {"discover", "discover_native"})
+    assert pcp._live_prewarm_labels(rc) == {"sports"}
+    assert pcp._absent_prewarm_labels(rc, exclude={"sports"}) == {
+        "discover",
+        "discover_native",
+    }
+
+
+def test_live_labels_are_started_before_absent_labels():
+    """LAT-P112's priority rule has to survive the concurrency (#3233).
+
+    "The net never competes with the invariant": a shape whose mirror has gone is
+    a `background`-queue incident this pass covers for, while a LIVE shape is the
+    #2216 ceiling itself. Serially the ordering was the loop order. Concurrently
+    it is `gather` creating tasks in list order plus `asyncio.Semaphore` handing
+    the lock to its waiters FIFO — which is a real guarantee, but one nobody
+    should have to re-derive from the standard library to trust a warm rail.
+
+    Driven at concurrency 1 on purpose: the ordering rule is about which target
+    gets the wall FIRST, and running one at a time is the only arrangement in
+    which "first" is observable rather than a race.
+    """
+    live = {"sports", "sports_native"}
+    absent = {"discover", "discover_native"}
+    rc = _fake_rc_two_hashes(live, absent)
+
+    _, started = _run_live_pass_with_costed_builds(
+        rc,
+        build_cost_s=0.02,
+        budget_s=0.40,
+        min_viable_s=0.02,
+        concurrency=1,
+    )
+
+    assert set(started) >= live, f"a live label was not republished: {started}"
+    absent_positions = [index for index, label in enumerate(started) if label in absent]
+    assert absent_positions, (
+        "no absent target was scheduled, so this test proves nothing about "
+        "ordering — the fixture, not the code, is what failed"
+    )
+    last_live = max(started.index(label) for label in live)
+    assert last_live < min(absent_positions), (
+        f"an absent label started before a live one ({started}) — the safety "
+        "net is competing with the #2236 ceiling it is supposed to sit behind"
+    )
 
 
 def test_the_pass_budget_is_a_constant_not_a_product_of_the_target_count():

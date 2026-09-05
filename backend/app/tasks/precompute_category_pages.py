@@ -1266,6 +1266,15 @@ async def _prewarm_live_feed_shapes():
       ceiling, refuses degraded and empty payloads, and records liveness. A
       second, faster republisher that reimplemented any of that would be the
       LAT-P001 two-writers defect with a new period attached.
+    * **#3233: it builds its targets CONCURRENTLY, up to
+      `FEED_LIVE_REPUBLISH_CONCURRENCY` at a time, and skips a target it cannot
+      finish.** It used to run them serially, each given `BUDGET / N` — a slice
+      that fell under the cost of one build the moment N reached 5, at which
+      point the pass killed every target it started and published nothing while
+      reporting `failures_24h: 0`. The wall could not be widened
+      (`PERIOD + BUDGET == 60`, the #2216 ceiling, zero headroom), so the fix is
+      waves rather than slices, checked by
+      `live_republish_target_headroom_s()`.
     * **A shape that stops being live leaves on its own.** The warm it just ran
       rewrites the live set, so the set converges within one pass in both
       directions and no separate expiry logic exists to get wrong.
@@ -1280,7 +1289,15 @@ async def _prewarm_live_feed_shapes():
         smaller than the pass it sits beside, which may hold a slot for 80s of
         budget under a 120s soft limit.
 
-    NOT DONE, and named so it is a decision rather than an oversight: this does
+    NOT DONE, and named so it is a decision rather than an oversight: the build
+    itself is not made faster. #3233's own measurement shows a tail past 11 s
+    (the 120 s host pass times out on `discover` at its 11.4 s slice), and two
+    waves of an 11 s build is 22 s, which does not fit a 20 s wall either. The
+    concurrency change covers the common case completely and turns the tail case
+    from "0 of 5 published" into "3 of 5"; it does not claim to make the tail
+    fit. That needs the feed build to get cheaper and is a different ship.
+
+    ALSO NOT DONE, same reason: this does
     not skip a shape whose current publication would survive to the next pass.
     With zero headroom in the #2236 invariant (40 + 20 == 60) such a skip can
     never fire, so it would be a Redis `TTL` read per shape buying nothing. If
@@ -1290,13 +1307,16 @@ async def _prewarm_live_feed_shapes():
 
     Never raises; the caller wraps it too.
     """
+    import asyncio
     import time as _time
     from datetime import datetime, timezone
 
     from app.tasks.redis_state import get_redis_client
     from app.utils.feed_cache import (
         FEED_LIVE_REPUBLISH_BUDGET_S,
+        FEED_LIVE_REPUBLISH_CONCURRENCY,
         FEED_LIVE_REPUBLISH_PERIOD_S,
+        FEED_PREWARM_MIN_VIABLE_BUILD_S,
     )
 
     rc = get_redis_client()
@@ -1337,15 +1357,64 @@ async def _prewarm_live_feed_shapes():
         (s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in absent_labels
     ]
 
-    budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)
+    # #3233: the targets build CONCURRENTLY under one wall, not serially under
+    # 1/N slices of it.
+    #
+    # The slices were the defect. `_prewarm_target_deadline` guarantees every
+    # target at least `BUDGET / N`, which is arithmetically true and, once N
+    # reached 5, put the floor at 4 s — under the cost of one feed build. So
+    # every target was started and killed: 20.1 s burned on every one of 1,322
+    # daily passes, 290 `Feed pre-warm TIMEOUT`s in 24 h, nothing published, and
+    # `failures_24h: 0` throughout because a timeout is a returned outcome.
+    # Dividing a wall below the cost of one item does not make the pass do less,
+    # it makes it do NOTHING — see `live_republish_target_headroom_s()`.
+    #
+    # Why concurrency and not a bigger wall: `PERIOD + BUDGET == 60` is the #2216
+    # ceiling with zero headroom (`live_republish_headroom_s()`), so the budget is
+    # not available to be raised. The semaphore is the only term left.
+    #
+    # THE ORDERING RULE SURVIVES, and it survives by construction rather than by
+    # care. `gather` creates the tasks in list order and `asyncio.Semaphore`
+    # hands the lock to its waiters FIFO, so live labels acquire before absent
+    # ones exactly as the serial loop ran them — LAT-P112's "the net never
+    # competes with the invariant" is preserved.
+    #
+    # A TARGET THAT CANNOT FINISH IS NOT STARTED. A build killed at its deadline
+    # costs the same database work as one that completes and publishes nothing,
+    # so a target holding less than `FEED_PREWARM_MIN_VIABLE_BUILD_S` of wall is
+    # skipped and says so. That is the difference between spending the tail of a
+    # budget and burning it.
+    pass_started = _time.monotonic()
+    semaphore = asyncio.Semaphore(FEED_LIVE_REPUBLISH_CONCURRENCY)
     shapes: dict[str, dict] = {}
-    for index, (label, shape) in enumerate(targets):
-        deadline_s = _prewarm_target_deadline(budget_left, len(targets) - index)
-        started = _time.monotonic()
-        shapes[label] = await _prewarm_feed_shape(
-            dict(shape), rc, deadline_s=deadline_s
-        )
-        budget_left = max(0.0, budget_left - (_time.monotonic() - started))
+
+    async def _republish(label: str, shape: dict) -> None:
+        async with semaphore:
+            remaining_s = FEED_LIVE_REPUBLISH_BUDGET_S - (
+                _time.monotonic() - pass_started
+            )
+            if remaining_s < FEED_PREWARM_MIN_VIABLE_BUILD_S:
+                logger.warning(
+                    "Feed republish SKIPPED %s — %.1fs of wall left, under the %.1fs "
+                    "a build costs; starting it would spend the work and publish "
+                    "nothing (#3233)",
+                    label,
+                    remaining_s,
+                    FEED_PREWARM_MIN_VIABLE_BUILD_S,
+                )
+                shapes[label] = {
+                    "outcome": "skipped_no_time",
+                    "remaining_s": round(remaining_s, 1),
+                }
+                return
+            # The deadline is what is LEFT of the wall, not a slice of it. The
+            # pass still cannot overrun `BUDGET`, because every target's timeout
+            # is measured from the same start.
+            shapes[label] = await _prewarm_feed_shape(
+                dict(shape), rc, deadline_s=remaining_s
+            )
+
+    await asyncio.gather(*(_republish(label, shape) for label, shape in targets))
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
@@ -1363,7 +1432,18 @@ async def _prewarm_live_feed_shapes():
         "absent_labels": sorted(absent_labels),
         "shapes": shapes,
         "pass_budget_s": FEED_LIVE_REPUBLISH_BUDGET_S,
-        "budget_left_s": round(budget_left, 1),
+        # #3233: report the concurrency the wall was actually spent at. Without
+        # it a reader cannot tell a pass that served five targets in two waves
+        # from one that served five serially and killed three — the two produce
+        # the same `pass_budget_s` and, before this change, the same duration.
+        "concurrency": FEED_LIVE_REPUBLISH_CONCURRENCY,
+        "budget_left_s": round(
+            max(
+                0.0,
+                FEED_LIVE_REPUBLISH_BUDGET_S - (_time.monotonic() - pass_started),
+            ),
+            1,
+        ),
     }
     try:
         rc.setex(

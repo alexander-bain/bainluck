@@ -28,6 +28,7 @@ question mandatory, or of stopping the answer from costing anything when it is
 """
 
 import inspect
+import re
 import textwrap
 from importlib import import_module
 from unittest.mock import MagicMock, patch
@@ -258,16 +259,43 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
     Stated as a test rather than as a comment because the tempting fix for "the
     net ran out of budget" is to widen `FEED_LIVE_REPUBLISH_BUDGET_S`, and the
     ceiling arithmetic has zero headroom.
+
+    🔴 **#3233 RE-ANCHORED THIS ON THE INTENT.** It used to match the source text
+    `budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)`. That line was the serial
+    allocator, and the serial allocator was the #3233 defect — so this guard's
+    literal made the bug part of the contract, and removing the bug broke a test
+    whose stated purpose ("no second budget") the repair never violated. A
+    source-text guard has to match the property, not the statement that happened
+    to carry it (`r_shared_judgment_needs_a_callsite_guard`: match the NAME
+    SHAPE, not the line).
     """
-    from app.utils.feed_cache import live_republish_headroom_s
+    from app.utils.feed_cache import (
+        live_republish_headroom_s,
+        live_republish_target_headroom_s,
+    )
 
     assert live_republish_headroom_s() >= 0
+    # #3233's second term: the wall must also cover the WORK, not merely be
+    # divided fairly among it.
+    assert live_republish_target_headroom_s(len(pcp.FEED_PREWARM_SHAPES)) >= 0
 
     source = textwrap.dedent(inspect.getsource(pcp._prewarm_live_feed_shapes))
-    assert "budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)" in source, (
+    assert "FEED_LIVE_REPUBLISH_BUDGET_S" in source, (
         "the pass no longer starts from the declared budget — the net may have "
         "been given an allowance of its own, which is a second budget the "
         "#2236 invariant does not know about"
+    )
+    # `*_BUDGET_S` and not "BUDGET": the pass's comments discuss the invariant in
+    # prose ("PERIOD + BUDGET == 60"), and a guard that cannot tell a constant
+    # from a sentence fails on documentation.
+    other_budgets = {
+        name
+        for name in re.findall(r"\b[A-Z]+(?:_[A-Z]+)*_BUDGET_S\b", source)
+        if name != "FEED_LIVE_REPUBLISH_BUDGET_S"
+    }
+    assert not other_budgets, (
+        f"the pass references a second budget symbol {sorted(other_budgets)} — "
+        "#2236's invariant is stated over ONE budget term and cannot see another"
     )
 
 
