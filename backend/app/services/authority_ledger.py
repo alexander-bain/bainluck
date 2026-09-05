@@ -115,6 +115,14 @@ async def record_agreement_day(
             expected_version=LEDGER_SCHEMA_VERSION,
             max_age_s=LEDGER_MAX_AGE_S,
         )
+    # `read_snapshot_standalone` already classifies rather than raises; this arm
+    # is for the case where it could not even open a session. (This comment is
+    # also load bearing for `scan_mutation_residue.py` Pass B — without a line
+    # here, the closing paren above plus the bare `noqa` below reproduce
+    # `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement literal
+    # verbatim and this file reads as mutation residue. Do not delete it —
+    # `repair_polymarket_leg_label.py` and `matcher_pass_runs.py` carry the same
+    # note for the same reason.)
     except Exception as exc:  # noqa: BLE001 — classified, never swallowed
         logger.warning("authority ledger read failed for %s: %s", identity, exc)
         row["streak"] = _unrecorded("read-raised", detail=str(exc)[:200])
