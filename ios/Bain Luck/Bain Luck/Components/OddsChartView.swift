@@ -88,8 +88,30 @@ enum PeriodChipGeometry {
     static let horizontalPaddingPoints: Double = 4
     static let characterWidthPoints: Double = 6
 
-    static func chipWidth(for label: String) -> Double {
-        horizontalPaddingPoints * 2 + Double(label.count) * characterWidthPoints
+    /// One chip strip's own type size, because the event page draws two.
+    ///
+    /// The MATCH chart's chips are 10pt bold with 4pt padding; the score chart
+    /// below it draws the same periods at 8pt semibold with 3pt padding, under a
+    /// 160pt-tall plot where a full-size chip would shout. Placing the smaller
+    /// chips with the larger chip's width would drop chips that had room — the
+    /// opposite defect from the one this file exists to prevent — so the width
+    /// model takes the strip's metrics instead of assuming one of them.
+    struct ChipMetrics: Equatable {
+        let horizontalPadding: Double
+        let characterWidth: Double
+
+        /// 10pt bold, 4pt padding — the MATCH chart's strip, measured in the
+        /// note above.
+        static let match = ChipMetrics(
+            horizontalPadding: horizontalPaddingPoints, characterWidth: characterWidthPoints)
+        /// 8pt semibold, 3pt padding — the score chart's strip. 8/10 of the
+        /// MATCH chart's measured 4.7–5.3pt per glyph is 3.8–4.2pt; 5pt is the
+        /// round number above that, so this stays an upper bound too.
+        static let score = ChipMetrics(horizontalPadding: 3, characterWidth: 5)
+    }
+
+    static func chipWidth(for label: String, metrics: ChipMetrics = .match) -> Double {
+        metrics.horizontalPadding * 2 + Double(label.count) * metrics.characterWidth
     }
 
     /// Keep a chip's full width inside the plot (#3237).
@@ -103,8 +125,10 @@ enum PeriodChipGeometry {
     ///
     /// A plot too narrow to hold the chip at all has no non-overlapping answer,
     /// so it centres — visibly wrong beats arbitrarily wrong.
-    static func clampedCenterX(rawX: Double, label: String, plotWidth: Double) -> Double {
-        let width = chipWidth(for: label)
+    static func clampedCenterX(
+        rawX: Double, label: String, plotWidth: Double, metrics: ChipMetrics = .match
+    ) -> Double {
+        let width = chipWidth(for: label, metrics: metrics)
         guard plotWidth > width else { return plotWidth / 2 }
         let half = width / 2
         return min(max(rawX, half), plotWidth - half)
@@ -142,18 +166,36 @@ enum PeriodChipGeometry {
     ///
     /// Requests are placed in the order given; the caller passes them in time
     /// order, which is x order on a linear axis.
-    static func place(_ requests: [ChipRequest], plotWidth: Double) -> [ChipPlacement] {
+    static func place(
+        _ requests: [ChipRequest], plotWidth: Double, metrics: ChipMetrics = .match
+    ) -> [ChipPlacement] {
         var kept: [(placement: ChipPlacement, halfWidth: Double)] = []
         for request in requests {
-            let half = chipWidth(for: request.label) / 2
+            let half = chipWidth(for: request.label, metrics: metrics) / 2
             let centerX = clampedCenterX(
-                rawX: request.rawX, label: request.label, plotWidth: plotWidth)
+                rawX: request.rawX, label: request.label,
+                plotWidth: plotWidth, metrics: metrics)
             while let last = kept.last, centerX - half < last.placement.centerX + last.halfWidth {
                 kept.removeLast()
             }
             kept.append((ChipPlacement(key: request.key, centerX: centerX), half))
         }
         return kept.map(\.placement)
+    }
+}
+
+// MARK: - Plot Width
+
+/// The drawn plot area's width, carried from a chart's overlay (which is the
+/// only place the plot frame is knowable) up to the chart itself.
+///
+/// Both charts on the event page need it: the MATCH chart to size its time axis
+/// (#3269) and the score chart to place its period chips. The default of 0 means
+/// "not measured yet" and every reader falls back rather than dividing by it.
+struct PlotWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -286,6 +328,11 @@ struct OddsChartView: View {
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
     @State private var isFullscreen = false
+    /// The drawn plot area's width, reported by the chart's own overlay. The
+    /// x-axis needs it to know whether its labels clear each other (#3269); 0
+    /// until the first layout pass, which is the documented fallback in
+    /// `xAxisPlan`.
+    @State private var plotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var chartHeight: CGFloat {
@@ -1034,6 +1081,9 @@ struct OddsChartView: View {
                     },
                     plotWidth: plotFrame.width
                 )
+                // The x-axis needs the same width the chips do (#3269).
+                Color.clear.preference(
+                    key: PlotWidthPreferenceKey.self, value: plotFrame.width)
                 // Small floating period chips near the top of the chart
                 ForEach(placements, id: \.key) { placement in
                     let marker = visibleMarkers[placement.key]
@@ -1061,7 +1111,7 @@ struct OddsChartView: View {
             }
         }
         .chartXAxis {
-            let plan = Self.xAxisPlan(for: xAxisDomain(for: dataPoints))
+            let plan = Self.xAxisPlan(for: xAxisDomain(for: dataPoints), plotWidth: plotWidth)
             AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
@@ -1071,6 +1121,9 @@ struct OddsChartView: View {
                 )
                 .font(.system(size: 9))
             }
+        }
+        .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
+            plotWidth = width
         }
         .chartXSelection(value: $selectedDate)
     }
@@ -1633,6 +1686,11 @@ struct OddsChartView: View {
     /// How many labels of each style fit legibly at 9pt across a phone-width
     /// chart. Longer labels get a smaller budget — that is the whole mechanism
     /// that stops the smear.
+    ///
+    /// This is the FALLBACK budget, used only when the plot's width has not been
+    /// measured yet (the first frame, and any caller that has no geometry). Once
+    /// a width is known the fit is geometric — see `xAxisFits` — because a count
+    /// budget cannot know that #3237 moved the end labels.
     private static func maxTicks(for style: XAxisPlan.LabelStyle) -> Int {
         switch style {
         case .timeOfDay: return 6
@@ -1640,6 +1698,77 @@ struct OddsChartView: View {
         case .dayAndHour: return 5
         case .calendarDay: return 6
         }
+    }
+
+    /// The widest label a style can print, in points, at the axis's own 9pt font.
+    ///
+    /// MEASURED, not estimated. `OddsChartAxisFitTests` re-renders every label
+    /// each style can produce — every hour × minute, every weekday, every month —
+    /// with the real font and fails if any is wider than the number here. A
+    /// guessed budget is what put a wrong time on the axis (see `xAxisFits`), so
+    /// this one is re-measured by the suite on every run.
+    ///
+    /// The date formats follow the DEVICE's locale, not the app's copy, so the
+    /// measurement covers a locale set rather than `en_US` alone: German is the
+    /// widest of them at both coarse styles ("04 Uhr", "28. Sept." against "4 AM"
+    /// and "Sep 28"). Pinning the widest costs an English reader about one label
+    /// on a multi-week chart and is the cheap direction to be wrong in — the
+    /// alternative is a German reader getting the collision this fix exists to
+    /// remove.
+    static func xAxisLabelWidth(for style: XAxisPlan.LabelStyle) -> CGFloat {
+        switch style {
+        case .timeOfDay: return 41    // "12:30 PM"
+        case .hourOfDay: return 31    // "04 Uhr"
+        case .dayAndHour: return 50   // "Wed 12 AM"
+        case .calendarDay: return 40  // "28. Sept."
+        }
+    }
+
+    /// Ink-free space required between two neighbouring labels, in points.
+    static let xAxisLabelMinGap: CGFloat = 6
+
+    /// The tick spacing, in points, that an axis of `labelCount` labels of this
+    /// width needs before two of them touch.
+    ///
+    /// **The END pairs are the binding constraint, and #3237 is why.** Every
+    /// interior label is CENTRED on its tick, so two neighbours clear each other
+    /// at `width + gap` of spacing. The first and last labels are anchored
+    /// INWARD — the first grows right from its tick, the last grows left — so the
+    /// pair at each end needs *half a label more*: `1.5 × width + gap`. When
+    /// there are only two labels, both are end labels and they grow towards each
+    /// other, so that pair needs `2 × width + gap`.
+    ///
+    /// The count budget this replaced was calibrated for centred labels, before
+    /// the anchors moved. MEASURED on the live Ball State @ Ohio State chart
+    /// (14793398, 2026-09-05 10:16 PT): a 47-minute domain took the 10-minute
+    /// stride, 62pt of spacing, and 41pt labels — comfortable for a centred pair
+    /// (47pt needed) and 3pt short for the anchored end pair (68pt needed). The
+    /// phone drew `12:30 PM` and `12:40 PM` with their ink touching, and the "1"
+    /// of the second label disappeared into the "M" of the first: the axis read
+    /// **12:30 PM · 2:40 PM · 12:50 PM**, a time that never happened.
+    ///
+    /// This is 024's own lesson applied to itself — a rule that MOVES an element
+    /// invalidates every spacing decision taken before the move.
+    static func xAxisRequiredSpacing(labelWidth: CGFloat, labelCount: Int) -> CGFloat {
+        if labelCount <= 2 { return 2 * labelWidth + xAxisLabelMinGap }
+        return 1.5 * labelWidth + xAxisLabelMinGap
+    }
+
+    /// Does a stride's labels clear each other across a plot this wide?
+    ///
+    /// `intervals` is the nominal tick count (`duration / strideSeconds`), the
+    /// same estimate the stride ladder uses; the label count is one more than the
+    /// intervals that fit. Nothing here moves a tick or a domain — it only
+    /// decides which stride is coarse enough to label.
+    static func xAxisFits(
+        intervals: Double, plotWidth: CGFloat, style: XAxisPlan.LabelStyle
+    ) -> Bool {
+        guard plotWidth > 0 else { return false }
+        guard intervals > 0 else { return true }
+        let spacing = plotWidth / CGFloat(intervals)
+        let labelCount = Int(intervals.rounded(.down)) + 1
+        return spacing >= xAxisRequiredSpacing(
+            labelWidth: xAxisLabelWidth(for: style), labelCount: labelCount)
     }
 
     private static func labelStyle(
@@ -1653,8 +1782,14 @@ struct OddsChartView: View {
     /// Pick the finest stride whose labels still fit. Falls through to the
     /// coarsest candidate for a domain wider than a month, so a chart always has
     /// an axis — an unlabelled axis is not an improvement on a crowded one.
+    ///
+    /// `plotWidth` is the drawn plot area's width in points, measured by the
+    /// chart itself. Pass 0 (the default) when it is not known yet: the fit then
+    /// falls back to the per-style count budget, which is what every caller used
+    /// before the geometry was available.
     static func xAxisPlan(
-        for domain: ClosedRange<Date>, calendar: Calendar = .current
+        for domain: ClosedRange<Date>, plotWidth: CGFloat = 0,
+        calendar: Calendar = .current
     ) -> XAxisPlan {
         let duration = max(domain.upperBound.timeIntervalSince(domain.lowerBound), 0)
         let spansMultipleDays = !calendar.isDate(
@@ -1664,7 +1799,10 @@ struct OddsChartView: View {
             let style = labelStyle(
                 strideSeconds: candidate.seconds, spansMultipleDays: spansMultipleDays)
             let ticks = duration / candidate.seconds
-            if ticks <= Double(maxTicks(for: style)) {
+            let fits = plotWidth > 0
+                ? xAxisFits(intervals: ticks, plotWidth: plotWidth, style: style)
+                : ticks <= Double(maxTicks(for: style))
+            if fits {
                 return XAxisPlan(
                     component: candidate.component, count: candidate.count, labelStyle: style)
             }
