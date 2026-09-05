@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket, CalibrationExample } from "@/lib/api";
 import ErrorState from "@/components/ErrorState";
+import { describeLoadFailure } from "@/lib/loadFailure";
 import LoadingState from "@/components/LoadingState";
 import CalibrationChart from "@/components/CalibrationChart";
 // UX-P128: the Source Comparison row prints numbers, so it is mountable rather
@@ -501,19 +502,49 @@ export default function CalibrationPage() {
       | { status?: string; message?: string; reason?: string }
       | undefined;
     const unavailable = detail?.status === "unavailable";
+    // CAL-P1023 (#3297): everything that was NOT a typed `unavailable` body used
+    // to print one sentence — "Failed to load calibration data" — whatever had
+    // actually happened. Measured on production 2026-09-05, the commonest thing
+    // that happens is a 429: the reader's network is momentarily over the
+    // 60-requests-per-minute anonymous bucket (one IPv4 behind carrier CGNAT or
+    // an office NAT is shared by many readers), and the page then tells them the
+    // calibration data failed when the truth is that the data is fine and we
+    // were throttled. A reader told the data is broken leaves; a reader told we
+    // were throttled waits ten seconds.
+    //
+    // `lib/loadFailure.ts` already answers this exact question for the event
+    // page (#2783) and is reused verbatim rather than given a second vocabulary
+    // here (ruling 025 clause 2). It is only reached once `unavailable` has been
+    // ruled out, because a typed backend body is more specific than any status
+    // code and outranks it.
+    const failure = describeLoadFailure(
+      error as ApiError,
+      "calibration data",
+    );
     // A transport/backend failure outranks every payload-level check below: we
     // have no payload to judge. (Poison ordering, rung 1.)
     return (
       <CalibrationUnavailable
         stateName={unavailable ? (detail?.reason || "unavailable") : "load-failed"}
         contractState="no-payload"
+        /* #3297's other half, and the reason this is an attribute rather than
+           copy: a LOOK pass screenshotting this page cannot tell OUR throttling
+           from a real product regression, because both render the same failure.
+           The status makes that readable by a rail without putting a number in
+           the reader's sentence. */
+        errorStatus={(error as ApiError).status}
+        title={unavailable ? undefined : failure.title}
         message={
           unavailable
             ? detail?.message ||
               "Calibration data is temporarily unavailable. It is rebuilt hourly — please retry shortly."
-            : "Failed to load calibration data"
+            : failure.message
         }
-        onRetry={() => window.location.reload()}
+        onRetry={
+          unavailable || failure.retryable
+            ? () => window.location.reload()
+            : undefined
+        }
       />
     );
   }
@@ -2132,13 +2163,17 @@ export default function CalibrationPage() {
 // is a republish or a redeploy, and SWR's 5-minute poll picks up either without
 // the reader doing anything, which is what the copy promises.
 function CalibrationUnavailable({
-  stateName, contractState, message, onRetry, servedVersion,
+  stateName, contractState, message, onRetry, servedVersion, title, errorStatus,
 }: {
   stateName: string;
   contractState: string;
   message: string;
   onRetry?: () => void;
   servedVersion?: string;
+  /** CAL-P1023: the `LoadFailure` heading naming WHICH failure this was. */
+  title?: string;
+  /** CAL-P1023: the HTTP status, as evidence for a rail — never as copy. */
+  errorStatus?: number;
 }) {
   return (
     <div
@@ -2150,8 +2185,9 @@ function CalibrationUnavailable({
          the exact mismatch, and kept out of the reader's sentence, where a bare
          "q267" is unexplained jargon. */
       data-served-population-version={servedVersion ?? ""}
+      data-error-status={errorStatus ?? ""}
     >
-      <ErrorState message={message} onRetry={onRetry} />
+      <ErrorState title={title} message={message} onRetry={onRetry} />
     </div>
   );
 }
