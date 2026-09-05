@@ -51,6 +51,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import app.utils.principal_independent_cache as pic
 import app.utils.request_cache as rc
 from app.dependencies.auth import get_optional_user
 from app.services.database import get_db, get_db_rw
@@ -330,10 +331,17 @@ class _SeededRedis:
         return True
 
 
-async def _drive_feed(*, redis, monkeypatch, headers=None):
+async def _drive_feed(*, redis, monkeypatch, headers=None, during_build=None, events=None):
+    """Drive one real `GET /api/feed` through the ASGI app.
+
+    ``during_build`` (CERT-1864) is called from inside the patched futures
+    scorer — a real seam that runs AFTER the shared-artifact sink is bound and
+    BEFORE the publish seam. It is how a test spends measurable build time
+    between consumption and publication without sleeping.
+    """
     from app.main import app
 
-    session = _seeded_session([_event_row(1)])
+    session = _seeded_session(events if events is not None else [_event_row(1)])
 
     async def _mock_get_db():
         yield session
@@ -346,6 +354,8 @@ async def _drive_feed(*, redis, monkeypatch, headers=None):
     app.dependency_overrides[get_optional_user] = _mock_user
 
     async def _no_futures(*a, **k):
+        if during_build is not None:
+            during_build()
         return []
 
     monkeypatch.setattr(rc, "schedule_background", lambda coro: asyncio.ensure_future(coro))
@@ -1097,3 +1107,386 @@ async def test_a_non_live_page_is_still_unbounded_after_the_backdate(monkeypatch
         "a settled page was refused at 118s — the live ceiling leaked into "
         "the futures path, where last-good is unbounded on purpose"
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-1864 — a payload past the ceiling is not served ONCE
+# ---------------------------------------------------------------------------
+#
+# CERT-1856 gave the payload an honest age origin and CERT-1862 made that origin
+# keep aging while the build ran. Both were right, and both stopped one step
+# short of the reader. At 50s of artifact age plus a 20s build the arithmetic
+# now says 70s and hands back `(0, 0)` TTLs — "nobody may cache this" — and the
+# route then returned the page to the caller anyway. The one reader guaranteed
+# to see the over-ceiling score was the person who asked for it.
+#
+# #2216's own sentence is the bar: past the ceiling the page is REBUILT, not
+# served older. These tests hold the three outcomes that satisfy it — drop the
+# artifacts so the next build is a rebuild, serve a still-valid prior payload,
+# or say `unavailable` — and, just as importantly, the control that a build
+# INSIDE the ceiling still serves its live page.
+
+
+class _ShimmedTime:
+    """`principal_independent_cache`'s view of `time`, with a movable monotonic.
+
+    Patched on the MODULE's own reference (`pic.time`) and never on the `time`
+    module itself. The event loop reads `time.monotonic()` for every timer it
+    owns, so a test that moves the real one moves the deadlines of the very
+    request it is driving — including the bounded Redis calls this route makes,
+    which would divert it onto a fallback path and prove nothing about the seam
+    under test. Everything except `monotonic` is the real module.
+    """
+
+    def __init__(self, real, offset: dict):
+        self._real = real
+        self._offset = offset
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def monotonic(self) -> float:
+        return self._real.monotonic() + self._offset["s"]
+
+
+def _seed_artifact_and_build_time(
+    monkeypatch, feed_mod, *, artifact_age_s: float, build_s: float
+):
+    """One request that consumed an `artifact_age_s`-old artifact and then spent
+    `build_s` building. Returns the hook to hand `_drive_feed(during_build=…)`.
+
+    Both halves are seeded at REAL seams. The origin goes into the route's own
+    sink at the real binding site, and the build time is spent by advancing the
+    clock the route's arithmetic reads, from inside the build. Nothing patches
+    the age, the headroom or the TTL: every number in the assertions is one the
+    code under test computed (CERT-1862's criticism of the first shape of these
+    tests, applied here from the start).
+    """
+    offset = {"s": 0.0}
+    shim = _ShimmedTime(time_module, offset)
+    monkeypatch.setattr(pic, "time", shim)
+
+    real_bind = feed_mod._bind_shared_reuse_sink
+
+    def _bind_and_seed(reuse, tiers, origins):
+        origins.append(shim.monotonic() - artifact_age_s)
+        return real_bind(reuse, tiers, origins)
+
+    monkeypatch.setattr(feed_mod, "_bind_shared_reuse_sink", _bind_and_seed)
+
+    fired = {"n": 0}
+
+    def _spend_the_build():
+        fired["n"] += 1
+        offset["s"] = build_s
+
+    return _spend_the_build, fired, shim
+
+
+class _Row:
+    """A DB row whose UNSET attributes are `None`, not a `MagicMock`.
+
+    The rig above seeds a `MagicMock` event, and the real scorer throws it out
+    (`skipping event 1 — scoring error: expected string or bytes-like object`),
+    which is why the pages those tests build are not live. Every test below
+    turns on the built page BEING live, so it needs a row the real
+    `_score_events` accepts — and `None` for anything it does not name is the
+    honest default for a nullable column.
+    """
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+    def __getattr__(self, name):
+        return None
+
+
+def _live_event_row(oid: int = 1):
+    """One in-progress NBA game, in the shape `_score_events` actually reads."""
+    now = datetime.now(timezone.utc)
+    return _Row(
+        id=oid,
+        external_id=f"ext-{oid}",
+        home_team_name="Celtics",
+        away_team_name="76ers",
+        sport=_Row(key="basketball_nba", name="Basketball"),
+        status="live",
+        commence_time=now - timedelta(hours=1),
+        completed_at=None,
+        home_score=55,
+        away_score=52,
+        period="Q3 5:12",
+        win_probability_sources={"betting": {"home_probability": 0.55}},
+        opening_home_probability=0.52,
+        opening_away_probability=0.48,
+        opening_home_spread=-3.5,
+        opening_over_under=214.5,
+        opening_favorite="Celtics",
+        raw_ei=80.0,
+        llm_importance=8,
+        ei_metadata={},
+        event_tags=[],
+    )
+
+
+async def _drive_live_feed(monkeypatch, *, redis, during_build=None):
+    """`_drive_feed`, guaranteed to build a page that IS live.
+
+    Two things stand between a live row and a live page, and both are DB work
+    the rig mocks out. `enrich_event_team_data` attaches the logos, and
+    `_filter_discover_event_noise` DROPS a live game that has none — so without
+    the stub the page comes back empty and every assertion about the ceiling
+    passes vacuously. Stubbing the enrichment is the smallest thing that makes
+    the route's own liveness predicate answer honestly; the scoring, the display
+    chain, the publish seam and the ceiling arithmetic are all the real ones.
+    """
+    import app.routes.feed as feed_mod
+
+    async def _enrich(db, items):
+        for item in items:
+            if item.get("type") == "event":
+                item["data"]["home_team_data"] = {"id": 1, "logo_url": "h.png"}
+                item["data"]["away_team_data"] = {"id": 2, "logo_url": "a.png"}
+
+    monkeypatch.setattr(feed_mod, "enrich_event_team_data", _enrich)
+    return await _drive_feed(
+        redis=redis,
+        monkeypatch=monkeypatch,
+        during_build=during_build,
+        events=[_live_event_row()],
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_page_over_the_ceiling_is_not_served_even_once(monkeypatch):
+    """CERT-1864's falsifier. 50s of artifact + 20s of build = 70s, served zero
+    times.
+
+    Pre-fix this request returned 200 with the live page and a `(0, 0)` TTL
+    block: the ceiling refused to let anyone CACHE the payload and then served
+    it to the caller anyway.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, _shim = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
+    )
+
+    redis = _SeededRedis()
+    resp = await _drive_live_feed(
+        monkeypatch, redis=redis, during_build=during_build
+    )
+
+    assert fired["n"] >= 1, (
+        "the build-time seam never ran, so this request did not spend the 20 "
+        "seconds the test is about — the assertions below would be measuring "
+        "a 50s build, not a 70s one"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # The page that was built is NOT the page that came back.
+    assert body["cache"]["status"] == "unavailable", (
+        "a live page built from inputs that had already spent the whole "
+        f"{FEED_RESPONSE_STALE_TTL_LIVE_SECONDS}s ceiling was served to the "
+        "caller — the TTLs were zero and the payload went out anyway (CERT-1864)"
+    )
+    assert body["cache"]["reason"] == "input_age_ceiling"
+    assert body["items"] == []
+    assert resp.headers["X-Feed-Cache"] == "unavailable"
+
+    # …and it did not become anybody else's truth either.
+    assert rc._last_good.get(SHARED_KEY) is None, (
+        "the over-ceiling payload was recorded as process-local last-good, so "
+        "the next request would be served it as a fallback"
+    )
+    assert redis.setex_calls == [], (
+        "the over-ceiling payload was published to Redis"
+    )
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_build_inside_the_ceiling_still_serves_its_live_page(monkeypatch):
+    """THE CONTROL, and the reason the test above is a ceiling and not a mute.
+
+    Same rig, same live page, same shared artifact — 50s + 5s of build is 55s,
+    inside the ceiling, so the live body IS served, with a real (shortened) TTL.
+    A repair that refused everything would pass the falsifier and take Discover
+    down.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, _shim = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=5.0
+    )
+
+    redis = _SeededRedis()
+    resp = await _drive_live_feed(
+        monkeypatch, redis=redis, during_build=during_build
+    )
+
+    assert fired["n"] >= 1
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["cache"]["status"] == "miss"
+    assert body["cache"]["live"] is True, (
+        "the rig stopped producing a live page, so neither this control nor "
+        "the falsifier above is exercising the live ceiling any more"
+    )
+    assert body["items"], "an in-ceiling live build served an empty page"
+    # Shortened by the inputs' age, not by the principal: the anon window is
+    # 60s and the live cap 30s, so anything this small came from the headroom.
+    assert 0 < body["cache"]["ttl_seconds"] <= 10, body["cache"]
+    assert rc._last_good.get(SHARED_KEY) is not None
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_still_valid_prior_payload_is_served_instead(monkeypatch):
+    """Outcome (b): the fallback is bounded by the same ceiling it replaces.
+
+    A prior payload five seconds old is younger than the 70s build that was
+    refused, so serving it is strictly better than both alternatives — and its
+    TTLs are computed from ITS age, not from this request's artifacts.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    rc.remember_last_good(
+        SHARED_KEY, LIVE_PAGE, built_at=time_module.time() - 5.0
+    )
+
+    during_build, fired, _shim = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
+    )
+    resp = await _drive_live_feed(
+        monkeypatch, redis=_SeededRedis(), during_build=during_build
+    )
+
+    assert fired["n"] >= 1
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["cache"]["status"] == "last_good"
+    assert body["cache"]["reason"] == "input_age_ceiling"
+    assert [item["data"]["id"] for item in body["items"]] == [1, 2, 3], (
+        "the refused build's own items came back wearing a last_good label"
+    )
+    # 30s = the live fresh cap, still the binding constraint at 5s of age. The
+    # stale window is what the prior payload's own age has left of the ceiling.
+    assert body["cache"]["ttl_seconds"] == FEED_RESPONSE_TTL_LIVE_SECONDS
+    assert 50 <= body["cache"]["stale_ttl_seconds"] <= 56, body["cache"]
+
+    stored = rc._last_good.get(SHARED_KEY)
+    assert stored is not None
+    assert [item["data"]["id"] for item in stored[1]["items"]] == [1, 2, 3], (
+        "the over-ceiling build overwrote the still-valid prior payload"
+    )
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_the_over_ceiling_artifacts_are_dropped_by_the_refusal(monkeypatch):
+    """Outcome (a): the NEXT build rebuilds instead of repeating the refusal.
+
+    A shared artifact may outlive a live payload's ceiling — `market_load`'s TTL
+    is 120s against 60s — so an artifact can be a valid cache entry and an
+    invalid input at the same time. Left in place, it refuses every request that
+    consumes it until its TTL expires: one refused response is the ceiling
+    working, a minute of them is an outage.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, shim = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
+    )
+
+    ns = "market_load"
+    pic.clear_shared_builds(ns)
+    entries = pic._store.setdefault(ns, {})
+    entries[("cert1864-too-old",)] = (shim.monotonic() - 70.0, {"v": 1})
+    entries[("cert1864-still-usable",)] = (shim.monotonic() - 10.0, {"v": 2})
+
+    try:
+        resp = await _drive_live_feed(
+            monkeypatch, redis=_SeededRedis(), during_build=during_build
+        )
+        assert fired["n"] >= 1
+        assert resp.status_code == 200
+
+        remaining = pic._store.get(ns, {})
+        assert ("cert1864-too-old",) not in remaining, (
+            "the artifact that put this build over the ceiling is still in the "
+            "store, so the next request consumes it and is refused in turn"
+        )
+        assert ("cert1864-still-usable",) in remaining, (
+            "the refusal evicted an artifact that is still young enough to "
+            "build a live page from — a ceiling, not a flush"
+        )
+    finally:
+        pic.clear_shared_builds(ns)
+        rc._reset_last_good_for_tests()
+
+
+class _CountingClock:
+    """A monotonic clock a test can advance. `drop_entries_older_than` takes one
+    for the reason `get_or_build` does: a test that sleeps is a test that flakes."""
+
+    def __init__(self, t: float = 10_000.0) -> None:
+        self._t = t
+
+    def __call__(self) -> float:
+        return self._t
+
+    def advance(self, seconds: float) -> None:
+        self._t += seconds
+
+
+@pytest.mark.asyncio
+async def test_dropping_an_over_age_entry_makes_the_next_read_rebuild():
+    """The unit under outcome (a): dropped means REBUILT, not "returns stale"."""
+    ns = "cert1864_probe"
+    pic.clear_shared_builds(ns)
+    clock = _CountingClock()
+
+    async def _build_v(v):
+        return {"v": v}
+
+    first = await pic.get_or_build(
+        ns, ("k",), lambda: _build_v(1), ttl_s=120.0, clock=clock
+    )
+    assert first == {"v": 1}
+
+    clock.advance(70.0)
+    # Still a live cache entry under its own 120s TTL...
+    assert await pic.get_or_build(
+        ns, ("k",), lambda: _build_v(2), ttl_s=120.0, clock=clock
+    ) == {"v": 1}
+
+    # ...and no longer a valid input to a live page.
+    dropped = pic.drop_entries_older_than(
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS, clock=clock
+    )
+    assert dropped == 1
+    assert await pic.get_or_build(
+        ns, ("k",), lambda: _build_v(3), ttl_s=120.0, clock=clock
+    ) == {"v": 3}, "the dropped entry was still served — the eviction is a no-op"
+
+    pic.clear_shared_builds(ns)
+
+
+def test_the_ceiling_the_route_refuses_on_is_the_ceiling_last_good_is_bounded_by():
+    """The two numbers the refusal path uses have to be the same number.
+
+    The route decides "over the ceiling" with `live_total_age_headroom_s`
+    (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`) and then bounds its fallback with
+    `FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS`. If those ever drift apart the
+    fallback can be older than the payload it replaced, which is the defect
+    wearing the repair's clothes.
+    """
+    assert FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS == FEED_RESPONSE_STALE_TTL_LIVE_SECONDS

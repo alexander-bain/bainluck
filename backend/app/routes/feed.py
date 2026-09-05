@@ -148,6 +148,7 @@ from app.utils.feed_cache import (
     FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PREWARM_KEY_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
+    FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     build_feed_cache_metadata,
@@ -158,6 +159,7 @@ from app.utils.feed_cache import (
     feed_response_cache_ttl,
     feed_response_cache_ttls,
     inert_principal_share_enabled,
+    live_total_age_headroom_s,
     payload_contains_live_event,
     render_feed_page_from_base,
 )
@@ -2049,7 +2051,7 @@ async def get_feed(
             return None
         return value if isinstance(value, dict) else None
 
-    def _live_ttls(payload):
+    def _live_ttls(payload, *, oldest_artifact_age_s=None):
         """#2216: the ``(fresh, stale)`` TTLs THIS payload actually earns.
 
         ``_cache_ttl`` above is the principal's baseline and is computed before
@@ -2058,13 +2060,27 @@ async def get_feed(
         has the page. So liveness is re-derived from the payload at every point
         the TTL is used — the same shape as the detail route storing
         ``event.status`` beside its cached response.
+
+        ``oldest_artifact_age_s`` (CERT-1864) overrides the default "ask the
+        sink now". Two callers need that. The publish seam decides whether the
+        payload may be served AT ALL from one reading of the age and must spend
+        that same reading on the TTLs, or the decision and the number stamped
+        on the response come from two different instants — which is how a
+        payload judged to have 1 second of headroom gets published with a
+        zero-second TTL. And a payload SERVED FROM A PRIOR BUILD carries its own
+        age, not this request's inputs': asking the sink for it would charge a
+        stale-but-valid fallback for artifacts it was never built from.
         """
         return feed_response_cache_ttls(
             my_teams_only=my_teams_only,
             identified=bool(feed_user or feed_session_id),
             live=payload_contains_live_event(payload),
             # LAT-P230: the age the payload's INPUTS had already spent.
-            oldest_artifact_age_s=_pic.oldest_consumed_artifact_age_s(_shared_origins),
+            oldest_artifact_age_s=(
+                _pic.oldest_consumed_artifact_age_s(_shared_origins)
+                if oldest_artifact_age_s is None
+                else oldest_artifact_age_s
+            ),
         )
 
     def _payload_built_at(payload):
@@ -3461,7 +3477,138 @@ async def get_feed(
         # decided. Everything downstream — the metadata the client reads, the
         # fresh key's expiry, and the :stale mirror's — takes these two numbers.
         _built_live = payload_contains_live_event(payload)
-        _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(payload)
+        # CERT-1864: ONE reading of the consumed-input age, spent on every
+        # decision below. The sink re-derives from `monotonic()` on each call
+        # (CERT-1862), so two calls a few hundred microseconds apart can land on
+        # opposite sides of the ceiling — the serve/refuse decision and the TTL
+        # stamped on what is served have to come from the same instant.
+        _consumed_age_s = _pic.oldest_consumed_artifact_age_s(_shared_origins)
+        _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(
+            payload, oldest_artifact_age_s=_consumed_age_s
+        )
+
+        # --- CERT-1864: past the ceiling the page is REBUILT, not served -----
+        #
+        # CERT-1856 and CERT-1862 got the ARITHMETIC right: a payload built from
+        # a shared artifact carries that artifact's age, the age keeps growing
+        # while the build runs, and both TTLs shrink to zero once the inputs have
+        # spent the whole 60s live ceiling. What neither closed is what happens
+        # to the payload itself. A (0, 0) TTL means "nobody may cache this" —
+        # and the route then returned it to the caller anyway. So the one reader
+        # guaranteed to see the over-ceiling page was the person who asked for
+        # it, which is the only reader the ceiling exists to protect. #2216's own
+        # words: past the ceiling the page is REBUILT, not served older.
+        #
+        # The three permitted outcomes, in preference order, and this block does
+        # all three:
+        #   (a) rebuild without the shared artifacts — the artifacts that put
+        #       this build over are dropped from the process-local tier, so the
+        #       next build for this key rebuilds them instead of inheriting the
+        #       same too-old inputs and refusing in turn. A refusal that left
+        #       them in place would repeat itself until their TTL expired, which
+        #       turns one refused response into a dark feed.
+        #   (b) a still-valid prior payload — bounded by the same ceiling, so a
+        #       fallback can never be older than the thing it replaced.
+        #   (c) a truthful `unavailable`, which is what the coalescing waiters
+        #       already get when a build produces nothing usable.
+        #
+        # LIVE ONLY. The ceiling is a live rule (#2216) and stays one: a page of
+        # futures built from an hour-old artifact is not wrong, and refusing it
+        # would be a correctness fix that broke the product.
+        if _built_live and live_total_age_headroom_s(_consumed_age_s) <= 0:
+            # The waiters first. `result=None` is the existing contract for "the
+            # leader produced nothing usable" and sends each of them to its own
+            # bounded last-good / truthful-unavailable terminal. Handing them the
+            # payload would serve the over-ceiling page N times instead of once.
+            if _is_build_leader and _sf_future is not None:
+                _rc.finish_build(_cache_key, _sf_future, result=None)
+            # (a) Drop what can no longer feed a live page. Process-local only —
+            # a sibling worker's Redis copy is still readable at its namespace
+            # TTL, so this bounds the repeat, it does not abolish it.
+            _pic.drop_entries_older_than(FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+            # (b) A prior payload, bounded by the live ceiling. Bounded for a
+            # NON-live prior too, deliberately: this request has just proven the
+            # world contains an in-progress game, so an older page that does not
+            # show it is exactly the staleness being refused.
+            _prior, _prior_origin = (
+                _rc.recall_last_good_entry(
+                    _cache_key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+                )
+                if _cache_key
+                else (None, None)
+            )
+            _previous_at = _record_feed_timing(
+                _timings, _started_at, _previous_at, "total_age_ceiling"
+            )
+            if isinstance(_prior, dict):
+                _prior_out = dict(_prior)
+                # The prior payload's OWN age is what its TTLs must be computed
+                # from; this request's artifacts never touched it. The origin
+                # comes from the STORE, which always has one — the payload's own
+                # `cache.built_at` is absent on anything remembered before that
+                # field existed, and a missing age would read as zero and hand a
+                # 55-second-old fallback a brand-new window.
+                _prior_built_at = _prior_origin
+                _prior_age_s = (
+                    max(0.0, time.time() - _prior_origin)
+                    if isinstance(_prior_origin, (int, float))
+                    else 0.0
+                )
+                _prior_fresh_ttl, _prior_stale_ttl = _live_ttls(
+                    _prior, oldest_artifact_age_s=_prior_age_s
+                )
+                _prior_out["cache"] = build_feed_cache_metadata(
+                    "last_good",
+                    ttl_seconds=_prior_fresh_ttl,
+                    stale_ttl_seconds=_prior_stale_ttl,
+                    reason="input_age_ceiling",
+                    live=payload_contains_live_event(_prior),
+                    built_at=_prior_built_at,
+                )
+                _finalize_feed_response(
+                    response,
+                    cache_status="last_good",
+                    singleflight="none",
+                    timings=_timings,
+                    started_at=_started_at,
+                    counts=_feed_obs_counts(
+                        _prior_out.get("items"),
+                        total=_prior_out.get("total", 0),
+                        returned=len(_prior_out.get("items") or []),
+                    ),
+                    golf_provenance=_golf_provenance,
+                    shared_reuse=_shared_reuse,
+                    shared_tiers=_shared_tiers,
+                )
+                return _prior_out
+            # (c) Nothing valid to serve. An empty, truthfully labelled page —
+            # the same terminal a coalescing waiter reaches, for the same reason:
+            # a wrong answer wearing a 200 is worse than an honest empty one.
+            _finalize_feed_response(
+                response,
+                cache_status="unavailable",
+                singleflight="none",
+                timings=_timings,
+                started_at=_started_at,
+                counts=_feed_obs_counts([], total=0, returned=0),
+                golf_provenance=_golf_provenance,
+                shared_reuse=_shared_reuse,
+                shared_tiers=_shared_tiers,
+            )
+            return {
+                "items": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+                "has_more": False,
+                "cache": build_feed_cache_metadata(
+                    "unavailable",
+                    ttl_seconds=0,
+                    stale_ttl_seconds=0,
+                    reason="input_age_ceiling",
+                    live=True,
+                ),
+            }
         # CERT-409 [P1]: this is the ONE site that computed this payload, so it
         # is the only site entitled to ORIGINATE its age. Every other tier
         # copies and must carry this number rather than mint one.
@@ -3487,7 +3634,8 @@ async def get_feed(
         # shorter, never longer. `oldest_consumed_artifact_age_s` returns 0.0
         # when nothing shared was consumed, which leaves the previous behaviour
         # byte-identical for a payload built entirely from scratch.
-        _age_origin = time.time() - _pic.oldest_consumed_artifact_age_s(_shared_origins)
+        # CERT-1864: the same reading the serve/refuse decision was made on.
+        _age_origin = time.time() - _consumed_age_s
         payload["cache"] = build_feed_cache_metadata(
             _cache_status,
             ttl_seconds=_publish_fresh_ttl if _cache_key else None,
@@ -3590,9 +3738,8 @@ async def get_feed(
                         live=payload_contains_live_event(_page_base_body),
                         # LAT-P230: the page base is published for OTHER readers,
                         # so the age its inputs already spent travels with it.
-                        oldest_artifact_age_s=_pic.oldest_consumed_artifact_age_s(
-                            _shared_origins
-                        ),
+                        # CERT-1864: the same reading as the decision above.
+                        oldest_artifact_age_s=_consumed_age_s,
                     )
                     _page_base_json = _json_module.dumps(
                         _page_base_body, default=str

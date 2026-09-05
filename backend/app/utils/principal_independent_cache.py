@@ -680,6 +680,9 @@ _stats: dict[str, int] = {
     "builds": 0,
     "refused": 0,
     "coalesced": 0,
+    # CERT-1864: entries evicted for being too old to feed a LIVE page, which is
+    # a different (and stricter) bound than the namespace TTL they died inside.
+    "dropped_over_age": 0,
     # LAT-P103 cross-worker tier. Split from `hits` on purpose: `hits` answers
     # "did sharing work", these answer "did sharing survive a cold worker",
     # which is the whole claim #2143's residual turns on.
@@ -706,6 +709,47 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
         return
     _store.pop(namespace, None)
     _locks.pop(namespace, None)
+
+
+def drop_entries_older_than(max_age_s: float, *, clock=None) -> int:
+    """Evict every process-local artifact already older than `max_age_s`.
+
+    Returns how many entries were dropped, so a caller can say what it did.
+
+    CERT-1864. A shared artifact may legitimately live longer than a live feed
+    payload may (`market_load`'s TTL is 120s against a 60s live ceiling), so an
+    artifact can reach an age at which it is still a valid CACHE ENTRY and no
+    longer a valid INPUT to a live page. The route refuses to serve a payload
+    built from one — and if the entry stays, the next request consumes exactly
+    the same too-old artifact and is refused in turn, every request until the
+    TTL expires. One refused response is the ceiling working; a minute of them
+    is an outage. Dropping the entry is what makes the next build a rebuild
+    WITHOUT the shared artifact, which is the first of the three outcomes #2216
+    allows past the ceiling.
+
+    Deliberately generic — an age bound, not a feed concept. This module knows
+    nothing about liveness and must not learn: the caller owns the policy and
+    passes the number, exactly as `get_or_build` takes its TTL rather than
+    deriving one.
+
+    Process-local ONLY, and the same sentence `clear_shared_builds` carries
+    applies for the same reason: the Redis tier is bounded by its own namespace
+    TTL, so a sibling worker can still promote the same artifact. This bounds
+    the repeat within a worker; it does not abolish it across the fleet.
+    """
+    _clock = clock or time.monotonic
+    now = _clock()
+    dropped = 0
+    for namespace, entries in list(_store.items()):
+        for key, stored in list(entries.items()):
+            stored_at = stored[0]
+            if (now - stored_at) > max_age_s:
+                entries.pop(key, None)
+                dropped += 1
+        if not entries:
+            _store.pop(namespace, None)
+    _stats["dropped_over_age"] += dropped
+    return dropped
 
 
 def peek_shared_build(namespace: str) -> Any:
