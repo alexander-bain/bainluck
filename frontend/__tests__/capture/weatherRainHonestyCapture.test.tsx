@@ -7,7 +7,9 @@
  * rainfall", which #2243 names as "the single most legible weather question a
  * normal person has" — was showing every visitor two broken cards:
  *
- *   LEFT  ("NYC · 7-day rain probability")
+ *   LEFT  (then "NYC · 7-day rain probability"; since ux/1081 the heading is
+ *          derived from the tiles, so an empty card reads "NYC · daily rain
+ *          probability" — #3230)
  *         `GET /api/weather/rain` returns `daily: []`. The component's guard was
  *         `daily?.length ? daily : null`, which collapses "still loading"
  *         (undefined) and "loaded, and there is nothing" ([]) into the same
@@ -283,7 +285,7 @@ describe("UX-P170 · an all-zero field no longer emits an invalid bar width", ()
 });
 
 describe("UX-P170 · the parts of the section that were fine stay fine", () => {
-  test("a populated 7-day series still renders its seven days", () => {
+  test("a populated series still renders every day it holds", () => {
     // ux/1078 (#3219): the rows carry `iso` and the first one is dated today.
     // This test asserts a populated series still paints, and it used to read
     // "Today" off row 0 by position — which is the bug that shipped, and which
@@ -307,7 +309,11 @@ describe("UX-P170 · the parts of the section that were fine stay fine", () => {
   test("the section still identifies itself and its source", () => {
     const text = visibleText(render(SERVED_BEFORE));
     expect(text).toContain("Rain & rainfall");
-    expect(text).toContain("NYC · 7-day rain probability");
+    // Was `NYC · 7-day rain probability`, a literal. `SERVED_BEFORE.daily` is
+    // empty, and a card with nothing to count now names no horizon at all
+    // (ux/1081, #3230) — the card still identifies itself, which is what this
+    // test is for.
+    expect(text).toContain("NYC · daily rain probability");
     expect(text).toContain("Kalshi");
   });
 });
