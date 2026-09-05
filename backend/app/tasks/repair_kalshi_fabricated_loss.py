@@ -367,6 +367,32 @@ def declared_curve_movement(
     skipped: **2,887 of 2,887 target markets — 100%, 18,688 legs — are already
     excluded.** A row that is not on the curve cannot be removed from it.
 
+    **CAL-P1015 replaces that census with a containment argument, because a
+    census of a moving population goes stale and this does not.** The two
+    predicates are the same aggregate on the same basis, and each says so:
+
+    * :data:`~app.utils.kalshi_fabricated_loss.POPULATION_HAVING_SQL` opens with
+      ``COUNT(*) >= 2 AND COUNT(*) FILTER (WHERE fo.is_winner) = 0``, and
+      ``_WORK_SQL`` applies it through a LATERAL over ALL outcomes of the market
+      with no leg filter;
+    * ``no_winner_markets`` is ``n_outcomes >= 2 AND win_count = 0`` over
+      ``market_result_shape``, whose comment states the counts are *"over ALL
+      outcomes of the market (never the eligibility-filtered subset)"*;
+    * every published row passes ``AND NOT ro.is_no_winner_market``.
+
+    So a target inside ``market_info`` is necessarily excluded, and a target
+    outside it has no legs on the curve at all. And retraction cannot move that
+    membership either way: it writes ``resolution_source`` and leaves
+    ``is_winner = false``, so ``win_count`` stays 0. The shrink is unreachable
+    rather than merely unobserved.
+
+    **The growth has a published ceiling too** (CAL-P1015, #2528). The restore
+    arm's addition is bounded by the curve's own ``no_winner_filter.excluded`` —
+    11,319 outcomes against a 741,487 population on 2026-09-05, i.e. **+1.53%
+    for a drain of the ENTIRE population**, against the publish gate's ±5%
+    ``POPULATION_TOLERANCE``. So neither arm can refuse a publish, and the
+    numbers to re-read are both already in ``GET /api/calibration``.
+
     **The movement, if any, is an ADDITION.** A ``restore_winner`` flips
     ``win_count`` 0 → 1, the market LEAVES ``no_winner_markets``, and its whole
     surviving leg set is ADMITTED. So the predicted sign is **positive n**, and
@@ -382,9 +408,12 @@ def declared_curve_movement(
             "legs_retracted": losses_retracted,
             "predicted_curve_delta": 0,
             "why": (
-                "the rail's population IS the curve's own no_winner_markets "
-                "exclusion — measured 2,887/2,887 markets (100%), 18,688 legs, "
-                "already excluded (CAL-P057, 15 shards, none skipped)"
+                "the rail's population is CONTAINED IN the curve's own "
+                "no_winner_markets exclusion — the same aggregate over the same "
+                "all-outcomes basis, and retraction leaves is_winner false so "
+                "membership cannot move (CAL-P1015). A row that is not on the "
+                "curve cannot be removed from it. CAL-P057 measured the same "
+                "thing as a census: 2,887/2,887 markets, 18,688 legs"
             ),
             "if_it_moves": (
                 "HALT. A non-zero delta on this arm means the population and "
@@ -400,6 +429,19 @@ def declared_curve_movement(
                 "ADMITTING its whole surviving leg set to the curve"
             ),
             "declare": "the count of admitted legs, never the retracted ones",
+            # CAL-P1015 (#2528): the operator's actual question at approval time
+            # is "can this stop the curve publishing", and the answer is a
+            # standing NO with a number behind it. Stated in the plan they
+            # approve rather than in a report, because the publish gate has
+            # refused ~30 builds (#2129-#2280) and "probably fine" is why the
+            # apply sat held.
+            "publish_gate_ceiling": (
+                "a drain of the ENTIRE population is bounded by the curve's own "
+                "no_winner_filter.excluded — 11,319 outcomes against a 741,487 "
+                "population on 2026-09-05, i.e. +1.53% against the gate's +/-5% "
+                "POPULATION_TOLERANCE. Re-read both numbers from "
+                "GET /api/calibration; neither needs a query."
+            ),
         },
         "measure_after": (
             "recompute, then compare the published curve's n and "
