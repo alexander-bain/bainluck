@@ -926,3 +926,522 @@ class TestAHistoryIsNotAHeartbeat:
                           newest_delivery_age_s=delivery_age)
             assert g["verdict"] == "on_schedule", delivery_age
             assert g["stamp_veto_withheld"] is None, delivery_age
+
+
+class TestEmitSideCounterSaysWhichEndLostTheFires:
+    """LAT-P238-EMIT-SIDE-COUNTER (#3268, #3251), as repaired under CERT-1966.
+
+    THE MEASUREMENT THAT FORCED THE FIELD. Over 28.9 minutes on 2026-09-05
+    ``prewarm_live_feed_shapes`` delivered **0.646** of its scheduled fires with
+    ``starts == deliveries`` EXACTLY (+28/+28) and ``self_gated_fires`` +0.
+    Every counter the module had was taken at-or-after delivery, so that
+    localised the loss to *before* delivery and could go no further — and the
+    two causes that fit it need opposite fixes: beat is not emitting at 40s, or
+    the broker is expiring messages before delivery.
+
+    THE DEFECT THAT FORCED THE REPAIR. The first version compared a new emission
+    RATE against the 24h delivery counter's rate. Dividing by each counter's own
+    age fixes the unit mismatch and not the population mismatch: the emission
+    counter is born at the deploy while the delivery counter deliberately holds
+    up to a day of PRE-deploy behaviour. So the counts are now taken into shared
+    wall-clock buckets, and ``TestTheTwoHistoriesMustReadDifferently`` below is
+    the regression CERT-1966 named.
+    """
+
+    #: A 40s beat on a 600s bucket: 15 fires per bucket. Half of them published
+    #: and never delivered. The 24h counters are also short (ratio 0.50, i.e.
+    #: `behind`) because that is the branch that gets to say which end.
+    BROKER_LOSS = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_emitted=15, matched_delivered=7,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    #: The same shortfall arriving from the other end: beat published only 7 in
+    #: the bucket and all 7 were delivered.
+    BEAT_LOSS = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_emitted=7, matched_delivered=7,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    # --- RED FIRST --------------------------------------------------------
+
+    def test_the_broker_loss_shape_goes_red(self):
+        g = adherence(**self.BROKER_LOSS)
+        assert g["undelivered_fraction"] == pytest.approx(8 / 15, abs=0.005)
+        assert g["verdict"] == "behind"
+        assert "never reached a worker" in g["reason"]
+        assert "not at the scheduler" in g["reason"]
+
+    def test_the_beat_loss_shape_reads_the_opposite_end(self):
+        g = adherence(**self.BEAT_LOSS)
+        assert g["undelivered_fraction"] == 0.0
+        assert g["verdict"] == "behind"
+        assert "SCHEDULER" in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+
+    def test_the_two_shapes_differ_only_in_the_bucket_delivery_count(self):
+        broker, beat = dict(self.BROKER_LOSS), dict(self.BEAT_LOSS)
+        differing = {k for k in broker if broker[k] != beat.get(k)}
+        assert differing == {"matched_emitted"}
+        a, b = adherence(**broker), adherence(**beat)
+        assert a["ratio"] == b["ratio"]
+        assert a["deliveries"] == b["deliveries"]
+        assert a["undelivered_fraction"] != b["undelivered_fraction"]
+
+
+class TestTheTwoHistoriesMustReadDifferently:
+    """CERT-1966's named regression: a change-point must survive the average.
+
+    The block, verbatim. These two histories produce IDENTICAL aggregate inputs
+    — 90 emitted in 3600s against 1080 delivered in 86400s:
+
+    * current hour healthy: 90 emitted, 90 delivered, plus 990 deliveries in the
+      preceding 23 hours. True current undelivered fraction **0%**.
+    * current hour broken: 90 emitted, 45 delivered, plus 1,035 deliveries in
+      the preceding 23 hours. True current undelivered fraction **50%**.
+
+    The blocked version rendered BOTH as ``undelivered_fraction: 0.5`` with the
+    sentence naming the broker. On a rail whose queue had just been moved that
+    sends the repair to the wrong subsystem — which is a ship failure, not a
+    guard gap: the DISCOVER ship here is deciding whether the warm rail loses
+    fires at the scheduler or after publication.
+
+    The requirement, in the block's words: *changing only pre-counter delivery
+    history must not change the current diagnosis.*
+    """
+
+    #: Everything the two histories share, including the aggregate counters that
+    #: made them indistinguishable. `deliveries`/`deliveries_window_s` are the
+    #: 24h numbers; only their SPLIT between the current hour and the preceding
+    #: 23 differs, and nothing in the aggregate can see that split.
+    COMMON = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1080,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    #: 90 publications in the current hour is 15 per 600s bucket.
+    HEALTHY = dict(COMMON, matched_emitted=15, matched_delivered=15)
+    BROKEN = dict(COMMON, matched_emitted=15, matched_delivered=7)
+
+    def test_the_aggregate_inputs_really_are_identical(self):
+        # The control that makes the rest of this class a regression rather
+        # than two unrelated fixtures. If these ever diverge, the test has
+        # stopped reproducing the block's counterexample.
+        agg = ("starts", "starts_window_s", "deliveries", "deliveries_window_s",
+               "interval_s", "terminals")
+        assert {k: self.HEALTHY[k] for k in agg} == {k: self.BROKEN[k] for k in agg}
+
+    def test_the_healthy_history_reads_zero(self):
+        g = adherence(**self.HEALTHY)
+        assert g["undelivered_fraction"] == 0.0
+        assert "never reached a worker" not in g["reason"]
+
+    def test_the_broken_history_reads_the_loss(self):
+        g = adherence(**self.BROKEN)
+        assert g["undelivered_fraction"] == pytest.approx(8 / 15, abs=0.005)
+        assert "never reached a worker" in g["reason"]
+
+    def test_pre_counter_history_cannot_move_the_current_diagnosis(self):
+        # The block's exact requirement. Sweep the 24h delivery total across
+        # everything the preceding 23 hours could have held — including the two
+        # values from the counterexample — and the matched reading must not
+        # move at all.
+        readings = set()
+        for legacy_total in (0, 500, 990, 1035, 1080, 2160):
+            g = adherence(**{**self.BROKEN, "deliveries": legacy_total})
+            readings.add(g["undelivered_fraction"])
+        # NOT `assert readings.pop() == ...`: a mutating call inside an
+        # assert is stripped with the assert under `-O`, so the check quietly
+        # stops running (CodeQL py/side-effect-in-assert).
+        assert len(readings) == 1, readings
+        only = next(iter(readings))
+        assert only == pytest.approx(8 / 15, abs=0.005)
+
+    def test_the_legacy_window_cannot_move_it_either(self):
+        readings = {
+            adherence(**{**self.BROKEN, "deliveries_window_s": w})[
+                "undelivered_fraction"]
+            for w in (600.0, 3600.0, 43200.0, 86400.0)
+        }
+        assert len(readings) == 1
+
+    def test_the_matched_pair_is_the_only_input_that_moves_it(self):
+        base = adherence(**self.BROKEN)["undelivered_fraction"]
+        moved = adherence(**{**self.BROKEN, "matched_delivered": 15})[
+            "undelivered_fraction"]
+        assert base != moved and moved == 0.0
+
+
+class TestTheMatchedFractionRefusesWhatItCannotSee:
+    """Unknown is not zero, and a partial cohort is not a measurement."""
+
+    BASE = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    def test_an_unseen_delivery_writer_is_unknown_not_total_loss(self):
+        # `matched_delivered=None` is the state of the WHOLE fleet for one
+        # bucket after the release that ships the bucketed delivery writer.
+        # Reading it as 0 would report 100% broker loss on every beat in the
+        # schedule at the exact moment the instrument is first trusted.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=None)
+        assert g["undelivered_fraction"] is None
+        assert "never reached a worker" not in g["reason"]
+        assert "SCHEDULER" not in g["reason"]
+
+    def test_a_real_zero_is_reported_as_total_loss(self):
+        # The mirror, and the reading this instrument most needs to be able to
+        # make: the writer IS live (0, not None) and this task got nothing.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=0)
+        assert g["undelivered_fraction"] == 1.0
+        assert "never reached a worker" in g["reason"]
+
+    def test_no_bucket_at_all_is_unknown(self):
+        g = adherence(**self.BASE)
+        assert g["undelivered_fraction"] is None
+        assert g["matched_emitted"] is None and g["matched_delivered"] is None
+
+    def test_too_few_publications_to_grade_is_unknown(self):
+        # The same refusal the rate arm makes at `MIN_EXPECTED_FIRES`: at one
+        # publication in the bucket, observing zero deliveries is not evidence
+        # of anything, and a detector that manufactures 100% from one sample
+        # gets muted — which is worse than not having it.
+        for emitted in (0, 1):
+            g = adherence(**self.BASE, matched_emitted=emitted,
+                          matched_delivered=0)
+            assert g["undelivered_fraction"] is None, emitted
+        g = adherence(**self.BASE, matched_emitted=2, matched_delivered=0)
+        assert g["undelivered_fraction"] == 1.0
+
+    def test_more_deliveries_than_publications_clamps_to_zero(self):
+        # The bucket boundary: a message published at second 599 is delivered
+        # in the next bucket, so the count can lean either way at the edge.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=17)
+        assert g["undelivered_fraction"] == 0.0
+
+    def test_one_spilled_fire_is_never_editorialised_about(self):
+        # 1 of 15 is 6.7%, under the fraction floor.
+        quiet = adherence(**self.BASE, matched_emitted=15, matched_delivered=14)
+        assert quiet["undelivered_fraction"] == pytest.approx(1 / 15, abs=0.005)
+        assert "never reached a worker" not in quiet["reason"]
+        # And on a SLOW beat one spilled fire is a huge fraction of a small
+        # bucket, which no fraction threshold can cover — hence the absolute
+        # term. 1 of 2 is 50% and must still stay quiet.
+        #
+        # Both rows below are forced onto the `behind` branch (300s interval,
+        # 100 deliveries against 288 scheduled = ratio 0.35). Without that they
+        # would grade `on_schedule` with an EMPTY reason and the
+        # "not in reason" assertion would pass vacuously — a dead assertion
+        # reads exactly like a working one.
+        slow_base = {**self.BASE, "interval_s": 300.0, "deliveries": 100,
+                     "starts": 100, "terminals": 100}
+        slow = adherence(**slow_base, matched_emitted=2, matched_delivered=1)
+        assert slow["verdict"] == "behind"
+        assert slow["undelivered_fraction"] == 0.5
+        assert slow["bucket_attribution"] == "current_bucket_healthy"
+        assert "never reached a worker" not in slow["reason"]
+        assert "this window is healthy" in slow["reason"]   # it DID speak
+        # Two fires missing out of three is not spill.
+        real = adherence(**slow_base, matched_emitted=3, matched_delivered=1)
+        assert real["verdict"] == "behind"
+        assert real["bucket_attribution"] == "broker_or_worker"
+        assert "never reached a worker" in real["reason"]
+
+
+class TestTheMatchedPairIsReportedNeverGraded:
+    BASE = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    def test_the_matched_pair_never_moves_the_ratio_or_the_numerator(self):
+        plain = adherence(**self.BASE)
+        for emitted, delivered in ((0, 0), (15, 0), (15, 15), (100_000, 1)):
+            g = adherence(**self.BASE, matched_emitted=emitted,
+                          matched_delivered=delivered)
+            assert g["ratio"] == plain["ratio"], (emitted, delivered)
+            assert g["numerator"] == plain["numerator"] == "deliveries"
+            assert g["verdict"] == plain["verdict"], (emitted, delivered)
+
+    def test_the_matched_pair_is_never_folded_into_self_gated_fires(self):
+        plain = adherence(**self.BASE)
+        loud = adherence(**self.BASE, matched_emitted=100_000,
+                         matched_delivered=1)
+        assert loud["self_gated_fires"] == plain["self_gated_fires"]
+        assert loud["self_gate_fraction"] == plain["self_gate_fraction"]
+
+    def test_a_healthy_beat_is_not_made_unhealthy_by_the_new_fields(self):
+        g = adherence(
+            starts=2160, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            interval_s=40.0, terminals=2160,
+            matched_emitted=15, matched_delivered=15,
+            matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+        )
+        assert g["verdict"] == "on_schedule"
+        assert g["undelivered_fraction"] == 0.0
+
+    def test_every_field_is_on_every_row_whatever_graded_it(self):
+        # Four different returns: unmeasurable, window_too_short, the stamp
+        # arm, and behind.
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(starts=0, starts_window_s=None, interval_s=86400.0,
+                      newest_start_age_s=10.0, counter_ttl_s=86400.0),
+            adherence(**self.BASE, matched_emitted=15, matched_delivered=7),
+        ]
+        for row in rows:
+            for f in ("matched_emitted", "matched_delivered", "matched_bucket_s",
+                      "matched_bucket_start", "undelivered_fraction",
+                      "deliveries_window_s"):
+                assert f in row, f
+
+    def test_the_row_shows_the_span_the_two_counts_describe(self):
+        # A reader asked to trust that two numbers are a matched cohort has to
+        # be able to see WHICH span they matched over, or the claim is
+        # unfalsifiable from the payload.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=7)
+        assert g["matched_bucket_s"] == 600
+        assert g["matched_bucket_start"] == 1_757_100_000.0
+
+    def test_the_unmatched_quotient_is_never_published(self):
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=7)
+        # The blocked version's fields. Their absence is the repair: there is no
+        # longer an emission RATE on the row for anything to divide the 24h
+        # delivery rate by.
+        forbidden = {"emitted", "emitted_window_s", "emitted_rate",
+                     "undelivered_fires", "emitted_minus_delivered"}
+        assert forbidden.isdisjoint(g)
+
+
+class TestTheAttributionComesFromTheBucketNotTheVerdict:
+    """CERT-1969: the causal SENTENCE must be matched too, not just the counts.
+
+    The first repair fixed the quotient — matched buckets, no pre-deploy history
+    — and then still drove the sentence off the 24h `behind` verdict. Any row
+    behind over a day whose bucket fraction was non-material printed *"the
+    shortfall is at the SCHEDULER — the messages were never published"*. The
+    block's reproduction: 15 published and 15 delivered against 15 expected is a
+    perfectly healthy cohort, and that row accused the scheduler.
+
+    A 24h shortfall beside a healthy 600s bucket is an ORDINARY state — it is
+    what a rail that was just fixed looks like — so "not in this window" has to
+    be an answer the instrument can give.
+    """
+
+    #: 40s interval, 600s bucket -> 15 fires expected per bucket. The 24h
+    #: counters are `behind` (1080 of 2160) on every row here, deliberately:
+    #: that is the verdict whose sentence used to leak into the attribution.
+    BEHIND_24H = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
+    )
+
+    def test_a_healthy_bucket_under_a_behind_verdict_accuses_nobody(self):
+        g = adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=15)
+        assert g["verdict"] == "behind"          # the 24h shortfall is real
+        assert g["undelivered_fraction"] == 0.0
+        assert g["bucket_attribution"] == "current_bucket_healthy"
+        assert "SCHEDULER" not in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+        assert "this window is healthy" in g["reason"]
+        assert "predates it" in g["reason"]
+
+    def test_short_publication_with_full_delivery_is_the_scheduler(self):
+        # The bus's second worked example: 7 of 15 expected published, 7 of 7
+        # delivered.
+        g = adherence(**self.BEHIND_24H, matched_emitted=7, matched_delivered=7)
+        assert g["bucket_attribution"] == "scheduler"
+        assert "never published" in g["reason"]
+
+    def test_full_publication_with_short_delivery_is_the_broker(self):
+        # The third: 15 of 15 published, 7 delivered.
+        g = adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=7)
+        assert g["bucket_attribution"] == "broker_or_worker"
+        assert "never reached a worker" in g["reason"]
+
+    def test_short_at_both_ends_says_both(self):
+        g = adherence(**self.BEHIND_24H, matched_emitted=7, matched_delivered=3)
+        assert g["bucket_attribution"] == "both"
+        assert "BOTH ends" in g["reason"]
+
+    def test_the_three_shapes_are_distinguishable_from_each_other(self):
+        # The control. Every input outside the matched pair is identical, so
+        # nothing but the bucket can be producing three different attributions.
+        rows = {
+            adherence(**self.BEHIND_24H, matched_emitted=e, matched_delivered=d)[
+                "bucket_attribution"]
+            for e, d in ((15, 15), (7, 7), (15, 7), (7, 3))
+        }
+        assert rows == {"current_bucket_healthy", "scheduler",
+                        "broker_or_worker", "both"}
+
+    def test_the_24h_counters_cannot_move_the_attribution(self):
+        # The same requirement CERT-1966 imposed on the fraction, now on the
+        # sentence: sweep the aggregate history and the attribution must not
+        # move. This is the assertion that fails if the sentence is ever wired
+        # back to `ratio`.
+        seen = set()
+        for deliveries in (0, 500, 1080, 2160, 4000):
+            for window in (600.0, 86400.0):
+                g = adherence(**{**self.BEHIND_24H, "deliveries": deliveries,
+                                 "deliveries_window_s": window},
+                              matched_emitted=15, matched_delivered=15)
+                seen.add(g["bucket_attribution"])
+        assert seen == {"current_bucket_healthy"}
+
+    def test_an_on_schedule_row_still_carries_the_attribution(self):
+        # Reported on every row, not only where a verdict wanted a sentence. A
+        # healthy 24h ratio hiding a broken current bucket is #3276's shape
+        # exactly, and it is the one this field can see first.
+        g = adherence(
+            starts=2160, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            interval_s=40.0, terminals=2160,
+            matched_emitted=15, matched_delivered=7,
+            matched_bucket_s=600, matched_bucket_start=1.0, matched_coverage_proven=True,
+        )
+        assert g["verdict"] == "on_schedule"
+        assert g["bucket_attribution"] == "broker_or_worker"
+
+    def test_attribution_is_refused_when_the_bucket_cannot_grade(self):
+        from app.utils.schedule_adherence import MIN_EXPECTED_FIRES
+        # Unknown delivery half.
+        assert adherence(**self.BEHIND_24H, matched_emitted=15,
+                         matched_delivered=None)["bucket_attribution"] is None
+        # No bucket at all.
+        assert adherence(**self.BEHIND_24H)["bucket_attribution"] is None
+        # Too few publications to say anything.
+        assert adherence(**self.BEHIND_24H, matched_emitted=1,
+                         matched_delivered=0)["bucket_attribution"] is None
+        # A beat so slow the BUCKET cannot hold `MIN_EXPECTED_FIRES` of it. The
+        # bucket's own expectation is then under the refusal line, and grading
+        # "published 2 of 0.2 scheduled" would be arithmetic, not evidence.
+        slow = adherence(**{**self.BEHIND_24H, "interval_s": 3600.0},
+                         matched_emitted=2, matched_delivered=2)
+        assert 600 / 3600.0 < MIN_EXPECTED_FIRES
+        assert slow["bucket_attribution"] is None
+
+    def test_it_is_on_every_row_whatever_graded_it(self):
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(starts=0, starts_window_s=None, interval_s=86400.0,
+                      newest_start_age_s=10.0, counter_ttl_s=86400.0),
+            adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=7),
+        ]
+        for row in rows:
+            assert "bucket_attribution" in row
+
+
+class TestAPartlyObservedBucketSaysNothing:
+    """CERT-1972: a bucket the instrumentation only covered a SUFFIX of.
+
+    The block's reproduction, verbatim. The beat dyno restarts onto the
+    instrumented release halfway through a 600s bucket and publishes **7** fires
+    in the remaining 300s — a perfect 40s cadence, nothing wrong at all. Seven of
+    them are delivered. The bucket's expectation is 15, so
+    ``bucket_attribution`` returned ``scheduler`` and the row said eight messages
+    were never published. They were. They were published before anything was
+    counting.
+
+    A bucket's counts and a bucket's EXPECTATION are only comparable when the
+    counters covered the whole bucket, and "the writer ran at some point during
+    N" does not say that. ``coverage_proven`` does: both writers present in N and
+    in N-1, so an instrumented writer was already running before N began.
+
+    THE MIRROR CASE IS WORSE AND IS CLOSED THE SAME WAY, unasked. A DELIVERY
+    writer activating mid-bucket against a publisher live throughout
+    under-counts deliveries, which reads as broker loss that never happened — a
+    false accusation, where the block's direction is a false exoneration. Hence
+    one flag proving BOTH sides, not just the side that was named.
+    """
+
+    #: 40s interval, 600s bucket -> 15 expected. `behind` over 24h throughout, so
+    #: the row always has a verdict wanting a sentence.
+    BASE = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+    )
+
+    def test_a_partial_activation_bucket_stays_unknown(self):
+        # The block's row: perfect cadence over half a bucket.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["bucket_attribution"] is None
+        assert g["undelivered_fraction"] is None
+        assert "never published" not in g["reason"]
+        assert "SCHEDULER" not in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+
+    def test_the_same_counts_with_coverage_proven_do_accuse_the_scheduler(self):
+        # The control that makes the test above mean something: identical
+        # counts, and the ONLY difference is whether the bucket was covered.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=True)
+        assert g["bucket_attribution"] == "scheduler"
+        assert "never published" in g["reason"]
+
+    def test_a_fully_covered_healthy_bucket_is_still_healthy(self):
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=15,
+                      matched_coverage_proven=True)
+        assert g["bucket_attribution"] == "current_bucket_healthy"
+
+    def test_coverage_gates_every_derived_number_and_no_raw_one(self):
+        # The raw counts are observations and stay on the row; only the things
+        # DERIVED from comparing them against each other or against the
+        # schedule are withheld. Dropping the counts would lose real data to
+        # protect an inference that is not being made.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["matched_emitted"] == 7
+        assert g["matched_delivered"] == 7
+        assert g["matched_bucket_s"] == 600
+        assert g["matched_coverage_proven"] is False
+        assert g["undelivered_fraction"] is None
+        assert g["bucket_attribution"] is None
+
+    def test_the_flag_is_on_every_row_and_defaults_to_unproven(self):
+        # Defaulting to False is the fail-safe direction: a caller that has not
+        # been taught about coverage yet gets silence, not a confident wrong
+        # attribution. Every other three-state field here defaults to `None`;
+        # this one is a claim about evidence, and "no evidence" is `False`.
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(**self.BASE, matched_emitted=15, matched_delivered=7),
+        ]
+        for row in rows:
+            assert row["matched_coverage_proven"] is False
+            assert row["undelivered_fraction"] is None
+            assert row["bucket_attribution"] is None
+
+    def test_a_false_broker_accusation_from_a_late_delivery_writer_is_refused(self):
+        # The mirror the block did not name, and the one that produces a FALSE
+        # ACCUSATION rather than a false exoneration: the publisher was live all
+        # bucket (15 published) and the delivery writer activated halfway, so it
+        # saw 7. Without the coverage gate that is a confident 53% broker loss
+        # on a rail that delivered everything.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["undelivered_fraction"] is None
+        assert g["bucket_attribution"] is None
+        assert "never reached a worker" not in g["reason"]

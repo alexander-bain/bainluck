@@ -823,6 +823,358 @@ def get_all_task_deliveries() -> dict:
         return {}
 
 
+#: MATCHED COHORTS: emissions and deliveries counted into the SAME wall-clock
+#: bucket, so the two numbers describe one shared span by construction —
+#: LAT-P238-EMIT-SIDE-COUNTER (#3268, #3251), repairing CERT-1966.
+#:
+#: THE HOLE THIS FILLS, stated as the measurement that found it. Every counter
+#: above is written at-or-after DELIVERY: ``deliveries`` from ``task_prerun``,
+#: ``starts`` from inside the body, ``terminals`` at the end. So when
+#: ``prewarm_live_feed_shapes`` was sampled over 28.9 minutes on 2026-09-05 and
+#: delivered **0.646** of its scheduled fires with ``starts == deliveries``
+#: exactly (+28/+28) and ``self_gated_fires`` +0, the loss was provably entirely
+#: BEFORE delivery — and the instrument then had nothing left to say. Two causes
+#: fit that shape and no counter in this module could separate them:
+#:
+#: * **celery beat is not emitting at its interval** — the scheduler misses, and
+#:   the message is never published at all;
+#: * **the broker is expiring messages before delivery** — the rail carries
+#:   ``expires`` of one period, so a message that waits one full period is
+#:   discarded by the broker. An expiry is INVISIBLE to a delivery counter: the
+#:   message existed, was published, and was dropped without ever reaching
+#:   ``task_prerun``.
+#:
+#: Counting at ``before_task_publish`` — which runs in the PUBLISHER, i.e. the
+#: beat dyno for a scheduled fire — puts a number above that boundary.
+#:
+#: 🔴 WHY BUCKETS, AND NOT THE 24h WINDOW COUNTERS EVERY OTHER FAMILY HERE USES.
+#: CERT-1966 blocked the first version of this, which counted emissions into a
+#: ``_bump_window_counter`` key and compared its rate against the 24h delivery
+#: counter's rate. Dividing each count by its own age fixes the UNIT mismatch and
+#: does nothing about the population mismatch, and the population is the whole
+#: problem: the emission counter is born at the deploy that ships it, while the
+#: delivery counter deliberately preserves up to 24 hours of PRE-deploy history.
+#: The quotient is then not identifiable. The bus's counterexample, verbatim —
+#: both of these produce ``emitted=90/3600s`` against ``deliveries=1080/86400s``:
+#:
+#:   * current hour healthy: 90 emitted, 90 delivered, plus 990 deliveries in the
+#:     preceding 23 hours. True current loss **0%**.
+#:   * current hour broken: 90 emitted, 45 delivered, plus 1,035 deliveries in
+#:     the preceding 23 hours. True current loss **50%**.
+#:
+#: The first version reported 50% for both, with a confident sentence naming the
+#: broker. On a rail whose queue was just moved, that is precisely the reading
+#: that sends the repair to the wrong subsystem — an averaged history cannot see
+#: a change-point, and a change-point is the only thing this instrument was added
+#: to look at. It is #1790's founding defect for the fourth time, one field
+#: further right, committed inside the field built to escape it.
+#:
+#: So both sides count into ``floor(now / BUCKET_S)``. Two counts in the same
+#: bucket cover the same wall-clock span, from the same clock, with a TTL far too
+#: short to hold any pre-deploy history — matched by construction rather than by
+#: a tolerance. Only a COMPLETE bucket is ever read; the one still filling is
+#: half a measurement.
+#:
+#: A SEPARATE TOP-LEVEL PREFIX for each, for the reason ``TASK_DELIVERY_PREFIX``
+#: is separate: ``get_all_task_metrics`` reads any 3-part key under
+#: ``TASK_METRICS_PREFIX`` as a task, and the beat schedule speaks celery names
+#: so a bucket counter keyed that way needs no label join.
+TASK_EMISSION_BUCKET_PREFIX = "bainluck:task_emit_bucket"
+TASK_DELIVERY_BUCKET_PREFIX = "bainluck:task_deliv_bucket"
+
+#: One bucket, in seconds.
+#:
+#: Bounded on both sides by numbers this module already owns, not chosen for
+#: roundness. BELOW: the fraction is refused under ``MIN_EXPECTED_FIRES`` (2.0)
+#: publications, so a bucket must comfortably clear that for the beats this
+#: instrument exists for — at the 40s rail that is 15 fires per bucket, and the
+#: bucket still grades any beat down to a 300s cadence. ABOVE: it must be short
+#: enough to see the hole. 172 measured a rail losing 35% of its fires over 28.9
+#: minutes while the 24h ratio moved to 0.70 and read ``on_schedule``; a bucket
+#: longer than that outage would average it away exactly as the 24h window did.
+#: 600s sits an order of magnitude clear of both bounds.
+EMIT_BUCKET_S = 600
+
+#: How many buckets are retained. Three, and each one is load-bearing: the bucket
+#: still FILLING (never read), the last COMPLETE one (the only one read), and one
+#: of slack so a reader arriving just after a rollover is not handed nothing.
+#: Deliberately tiny — a long retention here would re-admit the very history the
+#: bucket design exists to exclude.
+EMIT_BUCKET_RETAINED = 3
+
+#: Proof-of-life for the bucketed DELIVERY writer, fleet-wide AND PER BUCKET.
+#:
+#: This exists because zero and unknown are the same absence in Redis and are
+#: opposite facts here. A task with 15 publications and no delivery bucket key is
+#: either 100% broker loss — the sharpest reading this instrument can produce —
+#: or a worker fleet that has not yet restarted onto the release carrying the
+#: writer. A PER-TASK marker cannot separate them: a totally-dead task has no
+#: per-task delivery key BY DEFINITION, which is the case we most need to report.
+#: A fleet-wide one can, because the workers deliver hundreds of tasks per
+#: bucket, so a delivery recorded anywhere proves the writer was running.
+#:
+#: 🔴 SCOPED TO THE BUCKET, AND THAT IS CERT-1968's REPAIR. The first version was
+#: one global key refreshed with a 1,800s TTL, so a worker whose FIRST bucketed
+#: write landed in bucket N+1 vouched for bucket N as well. Reproduced at the
+#: blocked head: 15 publications in bucket N, no bucket-N delivery counter,
+#: liveness written only in N+1 — and the reader confidently returned
+#: `delivered: 0` and 100% broker loss, when the old worker code may have
+#: delivered all 15 without the new counter existing. A liveness proof that
+#: outlives the bucket it vouches for is not a proof; it is the same
+#: unknown-read-as-zero the marker was introduced to prevent, one bucket to the
+#: left.
+#:
+#: ITS OWN TOP-LEVEL PREFIX, not a sibling under the delivery prefix. Scoping it
+#: by bucket means appending `:bN`, and `bainluck:task_deliv_bucket:__x__:bN`
+#: matches the delivery scan's own `bainluck:task_deliv_bucket:*:bN` glob — the
+#: marker would be read back as a task called `__writer_alive__`. That is the
+#: phantom-task hazard `TASK_DELIVERY_PREFIX` was separated for, and it arrives
+#: here through a different door.
+TASK_DELIVERY_WRITER_ALIVE_PREFIX = "bainluck:task_deliv_writer_alive"
+
+#: The same proof for the PUBLISH side — CERT-1972's repair.
+#:
+#: The delivery marker above answers "was the writer running during bucket N?",
+#: which is what the zero-versus-unknown question needs. It is NOT what an
+#: expectation comparison needs, and that gap is what CERT-1972 blocked: if the
+#: beat dyno restarts onto the instrumented release halfway through bucket N, it
+#: publishes 7 fires in the remaining 300s at a perfect 40s cadence — and the
+#: bucket's expectation is 15, so the row confidently reported ``scheduler`` and
+#: said eight messages were never published. They were. They were published
+#: before anything was counting.
+#:
+#: A marker present in BOTH N and N-1 is the proof that closes it: an
+#: instrumented publisher was already running before N began and was still
+#: running inside it, so its count covers the whole bucket rather than a
+#: suffix of it.
+#:
+#: THE MIRROR CASE IS WORSE AND IS CLOSED THE SAME WAY, unasked. A delivery
+#: writer that activates mid-bucket against a publisher that was live throughout
+#: under-counts deliveries, which reads as broker loss that never happened — a
+#: false accusation, where CERT-1972's direction produces a false exoneration.
+#: So coverage is required from BOTH sides before any derived number is
+#: published, not just from the side the block named.
+TASK_EMIT_WRITER_ALIVE_PREFIX = "bainluck:task_emit_writer_alive"
+
+
+def delivery_writer_alive_key(bucket: int) -> str:
+    return f"{TASK_DELIVERY_WRITER_ALIVE_PREFIX}:b{bucket}"
+
+
+def emit_writer_alive_key(bucket: int) -> str:
+    return f"{TASK_EMIT_WRITER_ALIVE_PREFIX}:b{bucket}"
+
+
+def emit_bucket_index(now_s=None) -> int:
+    """The wall-clock bucket ``now`` falls in. Shared by both writers.
+
+    A pure function of the clock, called identically on the beat dyno and on
+    every worker. That is what makes the two counts a matched cohort without any
+    coordination between the processes: they are not agreeing on a window, they
+    are both reading the same one off the clock.
+    """
+    return int((time.time() if now_s is None else now_s) // EMIT_BUCKET_S)
+
+
+def _bucket_key(prefix: str, task: str, bucket: int) -> str:
+    return f"{prefix}:{task}:b{bucket}"
+
+
+def _record_bucketed(prefix: str, task: str, alive_prefix: str = None):
+    """Increment ``task``'s counter in the current bucket. Best-effort.
+
+    The TTL rides the same ``SET … NX EX`` as the counter's creation and is never
+    refreshed afterwards — the same idiom as ``_bump_window_counter`` and for the
+    same reason, except that here the expiry is the point rather than the window:
+    a bucket that outlived its retention would start contributing history to a
+    comparison whose entire claim is that it holds none.
+    """
+    if not task:
+        return
+    try:
+        r = get_redis_client()
+        key = _bucket_key(prefix, task, emit_bucket_index())
+        ttl = EMIT_BUCKET_S * EMIT_BUCKET_RETAINED
+        pipe = r.pipeline()
+        pipe.set(key, 0, ex=ttl, nx=True)
+        pipe.incr(key)
+        if alive_prefix:
+            # The SAME bucket index the counter used, so the proof can never
+            # outlive what it vouches for (CERT-1968).
+            pipe.set(f"{alive_prefix}:b{emit_bucket_index()}", 1, ex=ttl)
+        pipe.execute()
+    except Exception:
+        # Best-effort by contract: this runs on the publish path and inside
+        # `task_prerun`, so a Redis fault must cost a count, never a fire.
+        pass
+
+
+def record_task_emission(full_task_name: str):
+    """Count one PUBLICATION of a celery task — LAT-P238-EMIT-SIDE-COUNTER.
+
+    Written from ``before_task_publish``, which celery dispatches inside
+    ``send_task_message`` in the process doing the publishing. For a beat entry
+    that process is the ``scheduler`` dyno, so this is the first counter in the
+    module that observes the scheduler rather than the worker.
+
+    WHAT AN EMISSION IS NOT, kept deliberately symmetric with
+    ``record_task_delivery_bucket`` because the whole value of this counter is
+    the comparison against that one. A **retry** is filtered at the caller
+    (``headers['retries'] > 0``), exactly as it is on the delivery side: a
+    ``self.retry()`` re-publish is not a beat fire, and letting it through here
+    while filtering it there would manufacture a phantom broker loss out of a
+    retrying task. An **eager** call never publishes at all, so it cannot reach
+    this signal and needs no filter. The residual is the same one deliveries
+    already carry and is stated rather than hidden: a manual ``.delay()`` is
+    indistinguishable from a beat publication, because beat stamps nothing on
+    the message that says so.
+
+    THE ASYMMETRY THAT WOULD RUIN THE MEASUREMENT, and the reason this uses the
+    plain ``get_redis_client()`` rather than the ``fast_fail=True`` hot-path
+    client. This write sits on beat's publish path, so the temptation is to bound
+    it harder than the delivery write. Do not: a shorter timeout drops emission
+    counts under exactly the Redis pressure that also delays delivery, biasing
+    the ratio toward "beat is not emitting" — inventing one of the two causes
+    this counter exists to tell apart. The two must fail the same way or their
+    quotient means nothing. Beat already round-trips to this same Redis to
+    publish the message, so this adds no failure mode the publish does not carry.
+
+    Best-effort and swallowing everything, like every other recorder here: it
+    runs before every publication in the system, so it must never be the reason
+    one fails.
+    """
+    _record_bucketed(TASK_EMISSION_BUCKET_PREFIX, full_task_name,
+                     alive_prefix=TASK_EMIT_WRITER_ALIVE_PREFIX)
+
+
+def record_task_delivery_bucket(full_task_name: str):
+    """The DELIVERY half of the matched pair — CERT-1966 repair.
+
+    A second, deliberately redundant delivery counter. ``record_task_delivery``
+    above is unchanged and still owns the 24h number the rate arm grades on; this
+    one exists only so the emission count has something born in the same bucket
+    to be divided by.
+
+    THE REDUNDANCY IS THE REPAIR, not an oversight. The 24h counter cannot serve
+    here at any tolerance: it deliberately survives deploys and carries up to a
+    day of pre-change behaviour, so a quotient against a counter created at the
+    change is not identifiable — see the counterexample on
+    ``TASK_EMISSION_BUCKET_PREFIX``. Two numbers over one shared 600s bucket are.
+
+    It also stamps the fleet-wide liveness marker, so a task with emissions and
+    no delivery bucket can be reported as 100% loss rather than as unknown. See
+    ``TASK_DELIVERY_WRITER_ALIVE_PREFIX``.
+    """
+    _record_bucketed(TASK_DELIVERY_BUCKET_PREFIX, full_task_name,
+                     alive_prefix=TASK_DELIVERY_WRITER_ALIVE_PREFIX)
+
+
+def get_matched_emit_delivery(now_s=None) -> dict:
+    """``{name: {...}}`` for the last COMPLETE bucket — the matched cohort.
+
+    Each entry::
+
+        {"emitted": int, "delivered": int|None,
+         "bucket_s": int, "bucket_start": float}
+
+    ``bucket_start`` is epoch seconds, so a reader can see for itself which span
+    the two counts describe rather than being asked to trust that they match.
+
+    ONLY THE LAST COMPLETE BUCKET IS READ. The bucket still filling holds a
+    partial count on both sides and, worse, an ASYMMETRICALLY partial one — a
+    message published at second 599 of a bucket is delivered in the next, so the
+    open bucket systematically understates deliveries and would report a
+    permanent phantom loss on every healthy task. One bucket of latency is the
+    price of that not happening.
+
+    ``delivered`` is ``None`` — UNKNOWN, never 0 — unless the bucketed delivery
+    writer is proven to have been running **in this very bucket**. That is the
+    state of the whole system for one bucket after the release that ships it, and
+    reading it as zero would report 100% broker loss across every beat in the
+    schedule at the exact moment the instrument is first trusted. When the writer
+    IS proven for this bucket, a missing per-task key is a real zero and is
+    reported as one — the reading this instrument most needs to make.
+
+    CERT-1968: the proof is read for bucket N and nothing else. A single global
+    marker with a multi-bucket TTL let a worker whose first write landed in N+1
+    vouch for N, which turns "we were not measuring yet" back into "we measured
+    nothing arriving".
+
+    ``coverage_proven`` is the SECOND and stricter flag — CERT-1972. Both writers
+    present in N *and* in N-1, which is what says their counts describe the whole
+    of N rather than a suffix of it. It is what the EXPECTATION comparison needs
+    and what "was it running during N" cannot supply: a beat dyno that restarts
+    onto the instrumented release halfway through N publishes 7 fires at a
+    perfect 40s cadence against a bucket expecting 15, and the row said eight
+    messages were never published. They were — before anything was counting.
+
+    Two flags rather than one, because they answer different questions and the
+    weaker one is still needed: ``delivered`` may be a real 0 as soon as the
+    delivery writer is proven for N at all, and refusing that until N-1 is also
+    proven would delay the sharpest reading this instrument makes by a bucket for
+    no gain. ``coverage_proven`` gates only the DERIVED numbers.
+
+    The residual, named rather than hidden: a dyno restart *inside* N leaves both
+    markers set and a real gap in the middle. That is ~30s of a 600s bucket on an
+    already-instrumented fleet, not an instrumentation boundary, and it is the
+    same residual the delivery side has carried since CERT-1968.
+    """
+    try:
+        r = get_redis_client()
+        bucket = emit_bucket_index(now_s) - 1
+        suffix = f":b{bucket}"
+        # CERT-1968: the EXACT completed bucket's proof, never a later one.
+        # CERT-1972: and a SECOND, stricter proof — both writers present in this
+        # bucket AND in the one before it, which is what says their counts cover
+        # the whole of N rather than a suffix of it.
+        def _alive(key):
+            try:
+                return r.get(key) is not None
+            except Exception:
+                # An unreadable proof is NO proof. Every consumer of these flags
+                # refuses rather than accuses when they are false.
+                return False
+
+        writer_alive = _alive(delivery_writer_alive_key(bucket))
+        coverage_proven = (
+            writer_alive
+            and _alive(delivery_writer_alive_key(bucket - 1))
+            and _alive(emit_writer_alive_key(bucket))
+            and _alive(emit_writer_alive_key(bucket - 1))
+        )
+
+        def _scan(prefix):
+            found = {}
+            for key in r.keys(f"{prefix}:*{suffix}"):
+                key_str = key.decode() if isinstance(key, bytes) else key
+                if not key_str.startswith(f"{prefix}:") or not key_str.endswith(suffix):
+                    continue
+                name = key_str[len(prefix) + 1:-len(suffix)]
+                if not name:
+                    continue
+                try:
+                    found[name] = int(r.get(key_str) or 0)
+                except (TypeError, ValueError):
+                    continue
+            return found
+
+        emitted = _scan(TASK_EMISSION_BUCKET_PREFIX)
+        delivered = _scan(TASK_DELIVERY_BUCKET_PREFIX)
+        out = {}
+        for name in set(emitted) | set(delivered):
+            out[name] = {
+                "emitted": emitted.get(name, 0),
+                "delivered": (delivered.get(name, 0) if writer_alive
+                              else delivered.get(name)),
+                "bucket_s": EMIT_BUCKET_S,
+                "bucket_start": float(bucket * EMIT_BUCKET_S),
+                "coverage_proven": coverage_proven,
+            }
+        return out
+    except Exception:
+        return {}
+
+
 #: Execution lifecycle, counted at celery's OWN signals and keyed by the
 #: fully-qualified task name — #1501 item 2, from codex C-CERT-SENTRY-R2.
 #:

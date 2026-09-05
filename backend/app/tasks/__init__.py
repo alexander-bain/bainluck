@@ -441,7 +441,11 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     @_task_prerun.connect
     def _record_delivery(sender=None, task=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_attempt, record_task_delivery
+            from app.tasks.redis_state import (
+                record_task_attempt,
+                record_task_delivery,
+                record_task_delivery_bucket,
+            )
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             request = getattr(sender, "request", None)
@@ -463,7 +467,105 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
                 if getattr(request, "is_eager", False):
                     return
             record_task_delivery(name)
+            # LAT-P238 / CERT-1966 repair: the same delivery, counted a SECOND
+            # time into the current wall-clock bucket. The 24h counter above is
+            # unchanged and still owns the rate arm's numerator; this one exists
+            # only so the emission count has a delivery count born in the same
+            # 600s span to be divided by. The 24h counter cannot serve that at
+            # any tolerance — it survives deploys by design and carries up to a
+            # day of pre-change history, which is exactly what makes a quotient
+            # against a counter created AT the change non-identifiable.
+            #
+            # Placed after `record_task_delivery` and behind the same two
+            # filters, so the two delivery counts can never disagree about what
+            # a delivery is.
+            record_task_delivery_bucket(name)
         except Exception:
+            # Observability must never be why a task fails to start. Swallowed
+            # deliberately and without a log: this runs before every task body
+            # in the system, so a noisy handler would be its own outage.
+            pass
+except Exception:  # pragma: no cover - defensive
+    pass
+
+
+# LAT-P238-EMIT-SIDE-COUNTER (#3268, #3251): the EMIT half, and the first
+# counter in this file that observes the SCHEDULER instead of the worker.
+#
+# Every signal above is at-or-after delivery. That is why LAT-P238 could prove
+# `prewarm_live_feed_shapes` was losing ~35% of its fires BEFORE delivery
+# (`starts == deliveries` exactly, `self_gated_fires` +0, over 28.9 minutes) and
+# then had to stop: a beat that never emitted and a broker that expired the
+# message look identical from below the boundary. `before_task_publish` fires in
+# the publishing process — the `scheduler` dyno for a beat entry — so it sits
+# above it. See `redis_state.TASK_EMISSION_PREFIX` for the full argument.
+#
+# The two helpers below are module-level and pure ON PURPOSE. The signal block
+# itself is `pragma: no cover` because it needs a live celery publish, and the
+# message-shape logic is the part that can actually be wrong: celery's protocol
+# 2 carries the task name and the retry count in `headers`, protocol 1 carries
+# them in `body`, and getting the retry filter wrong in either direction breaks
+# the comparison this counter exists for — an unfiltered retry manufactures a
+# phantom broker loss, and over-filtering hides a real one.
+def _published_task_name(sender, headers, body):
+    """The celery task name of a publication, or ``None`` if unreadable.
+
+    `before_task_publish` passes the name as `sender`, but only as a STRING —
+    unlike `task_prerun`, where `sender` is the task object. Reading `.name` off
+    it (the shape three signal handlers above this one use) silently yields
+    `None` for every publication, which is the sort of copy-paste that leaves a
+    counter reading zero and looking like a finding.
+    """
+    if isinstance(sender, str) and sender:
+        return sender
+    for source in (headers, body):
+        if isinstance(source, dict):
+            name = source.get("task")
+            if isinstance(name, str) and name:
+                return name
+    # Last resort, and only that. Kept because losing the count outright is the
+    # worse failure, but ordered LAST: on the shapes celery actually sends, a
+    # `.name` that disagreed with `headers['task']` would be the retry/eager
+    # bookkeeping disagreeing with the message, and the message is the thing
+    # that was published.
+    name = getattr(sender, "name", None)
+    return name if isinstance(name, str) and name else None
+
+
+def _published_retries(headers, body):
+    """The retry count on a publication. ``0`` when it cannot be read.
+
+    Defaulting to 0 — i.e. COUNT IT — rather than to "assume a retry" is the
+    same call `_record_delivery` makes one signal up: an unreadable message must
+    not silently zero the counter, because the count is the point and losing it
+    is worse than an upper bound. The two sides must also default the same way,
+    or an unreadable message would be emitted-but-not-delivered and read as
+    broker loss.
+    """
+    for source in (headers, body):
+        if isinstance(source, dict) and "retries" in source:
+            try:
+                return int(source.get("retries") or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+try:  # pragma: no cover - signal wiring needs a live publish, not a unit test
+    from celery.signals import before_task_publish as _before_task_publish
+
+    @_before_task_publish.connect
+    def _record_emission(sender=None, headers=None, body=None, **_kwargs):
+        try:
+            from app.tasks.redis_state import record_task_emission
+
+            if _published_retries(headers, body) > 0:
+                return
+            record_task_emission(_published_task_name(sender, headers, body))
+        except Exception:
+            # Swallowed for the same reason as the delivery handler above, and
+            # more sharply: the publisher here is celery beat, so a raise would
+            # take out the very scheduler this counter exists to grade.
             pass
 except Exception:  # pragma: no cover - defensive
     pass
