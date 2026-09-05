@@ -191,10 +191,19 @@ _REPAIRS = {
     # standing all-loser population — Kalshi markets (2+ legs) where every
     # outcome carries `api_settlement` and NONE is a winner — split by source x
     # mutually_exclusive x retention band, so ruling 054's exclusions are a
-    # published number rather than a silent denominator change. One whole-table
-    # aggregate over futures_outcomes; bounded by a statement timeout, and a
-    # timeout returns `measured: false` with a reason, NEVER a zero. Never
-    # writes: `apply` is accepted and ignored.
+    # published number rather than a silent denominator change. A timeout returns
+    # `measured: false` with a reason, NEVER a zero. Never writes: `apply` is
+    # accepted and ignored.
+    # CAL-P1012 (#3195): it WAS one whole-table aggregate over futures_outcomes
+    # and it died at its own bound — measured twice warm against production, so
+    # #2528's runbook had no completion test. It is now a WALK over a half-open
+    # `market_id` range: one bounded statement per chunk, the width halved on a
+    # chunk that trips the bound, accumulated in a durable slot ACROSS calls, and
+    # stopped by a wall clock. Read the totals from the call that reports
+    # `walk.complete: true`; until then they come back as `partial`, never as
+    # `totals`. Resume with ?after_id=<walk.next_after_id> — a cursor that is not
+    # the banked one is REFUSED, because a wrong resume double-counts a range.
+    # Omitting after_id starts a fresh walk. Accepts ?after_id=.
     "kalshi-fabricated-loss-census": (
         "app.tasks.repair_kalshi_fabricated_loss",
         "census",
