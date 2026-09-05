@@ -54,9 +54,28 @@ export type CityData = {
 export type RainDay = {
   day: string;
   date: string;
+  /** The day this probability is about, `YYYY-MM-DD`, from the market's own
+   *  ticker. Optional because a cached payload written before ux/1078 (#3219)
+   *  has no such field; a row without one is never labelled "Today". */
+  iso?: string;
   prob: number;
   icon: string;
 };
+
+/** Today's date in New York, `YYYY-MM-DD`.
+ *
+ *  The card asks "will it rain in NYC?", so its "Today" is New York's today,
+ *  not the viewer's. `en-CA` is the locale that formats as `YYYY-MM-DD`.
+ *  Deliberately not `toISOString()`, which is UTC and turns into tomorrow at
+ *  8pm ET — the exact class of off-by-one this ship exists to remove. */
+export function nycToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
 
 export type MonthlyRain = {
   city: string;

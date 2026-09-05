@@ -52,6 +52,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
+import { nycToday } from "@/components/weather/data";
 
 const FRONTEND = path.join(__dirname, "..", "..");
 const REPO = path.join(FRONTEND, "..");
@@ -283,10 +284,16 @@ describe("UX-P170 · an all-zero field no longer emits an invalid bar width", ()
 
 describe("UX-P170 · the parts of the section that were fine stay fine", () => {
   test("a populated 7-day series still renders its seven days", () => {
+    // ux/1078 (#3219): the rows carry `iso` and the first one is dated today.
+    // This test asserts a populated series still paints, and it used to read
+    // "Today" off row 0 by position — which is the bug that shipped, and which
+    // made the card call tomorrow "Today" once today's market closed. A row
+    // now earns the word by matching the date in New York, so the fixture has
+    // to say which day it is rather than rely on being first.
     const week = {
       daily: [
-        { day: "Mon", date: "Sep 1", prob: 20, icon: "☁" },
-        { day: "Tue", date: "Sep 2", prob: 65, icon: "☂" },
+        { day: "Mon", date: "Sep 1", iso: nycToday(), prob: 20, icon: "☁" },
+        { day: "Tue", date: "Sep 2", iso: "2026-09-02", prob: 65, icon: "☂" },
       ],
       monthly: SERVED_BEFORE.monthly,
     };
