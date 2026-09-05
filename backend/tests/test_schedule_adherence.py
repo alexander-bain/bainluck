@@ -23,6 +23,7 @@ from app.utils.schedule_adherence import (
     BEHIND_RATIO,
     MIN_EXPECTED_FIRES,
     OVERRUN_RATIO,
+    SELF_GATE_MATERIAL_RATIO,
     adherence,
     beat_intervals,
     expected_fires,
@@ -581,12 +582,21 @@ class TestRateArmConsultsTheStamp:
         assert g2["arm"] == "rate"
         assert g2["verdict"] != "missing"
 
+    # CERT-1932: these two carried `starts=1243, deliveries=1890` — a 34%
+    # self-gate rate and a 195s p95, which is not a generic lapping beat, it is
+    # `poll_all_odds`. So the first of the pair was asserting the exact false
+    # `missing` the CERT-1932 BLOCK named, with the false positive written in as
+    # the expected value. The property each test actually exists for — that
+    # `missing` outranks `overruns`, and that a live lapping beat is untouched —
+    # is independent of self-gating, so the gate is removed from the fixture
+    # (`starts == deliveries`) and the property is tested on its own. The
+    # self-gating row now has its own class below.
     def test_missing_beats_overruns_when_the_beat_is_both(self):
         # A dead beat whose stale duration ring still reads as lapping. Absent
         # outranks lapping: it is not overrunning, it is not running. Ordering
         # matters because `overruns` returns early.
         g = adherence(starts=1243, starts_window_s=61153.0, interval_s=30.0,
-                      deliveries=1890, deliveries_window_s=61153.0,
+                      deliveries=1243, deliveries_window_s=61153.0,
                       durations_ms=[195292] * 50,
                       newest_start_age_s=13_374.0, counter_ttl_s=TTL)
         assert g["p95_over_interval"] >= OVERRUN_RATIO
@@ -596,7 +606,7 @@ class TestRateArmConsultsTheStamp:
         # The pair to the above: same row, fresh stamp. #2014's four expiring
         # beats live here — they ARE running, so this fix must not touch them.
         g = adherence(starts=1243, starts_window_s=61153.0, interval_s=30.0,
-                      deliveries=1890, deliveries_window_s=61153.0,
+                      deliveries=1243, deliveries_window_s=61153.0,
                       durations_ms=[195292] * 50,
                       newest_start_age_s=15.0, counter_ttl_s=TTL)
         assert g["verdict"] == "overruns"
@@ -647,3 +657,112 @@ class TestRateArmConsultsTheStamp:
             "app.tasks.prewarm_live_feed_shapes",
             "app.tasks.refresh_open_commentary",
         ]
+
+
+class TestASelfGatingBeatIsNotAnAbsentOne:
+    """CERT-1932 — the #3276 stamp veto must not fire on a task that self-gates.
+
+    The first presentation of #3276 shipped the veto above and graded a HEALTHY
+    ``poll_all_odds`` as ``missing``: 20/20 deliveries, 19 self-gated fires,
+    ratio 1.0, and a 301s start age, because that task drops to a 600s adaptive
+    cadence when no sport is live and its gate sits BEFORE ``_tracked_run`` — so
+    no start is stamped on a gated fire. A stale start stamp is the expected
+    reading of a perfectly healthy self-gating beat.
+
+    Both halves are asserted together in every test here, because the whole
+    risk of this repair is that it buys the false negative back by disarming
+    the veto that #3276 exists to arm.
+    """
+
+    #: The graded row, to the field, from the CERT-1932 BLOCK.
+    GATED = dict(starts=1, starts_window_s=600.0, interval_s=30.0,
+                 deliveries=20, deliveries_window_s=600.0,
+                 durations_ms=[900] * 20, counter_ttl_s=TTL)
+
+    #: The dead rail, to the field, from production 2026-09-05 19:00Z. Unequal
+    #: windows on purpose: this is the real pair, and 1327/79469 vs 1327/80011
+    #: is a 0.68% gate — the number that must stay under the threshold.
+    DEAD_RAIL = dict(starts=1327, starts_window_s=80011.0, interval_s=40.0,
+                     deliveries=1327, deliveries_window_s=79469.0,
+                     durations_ms=[20135] * 50, counter_ttl_s=TTL)
+
+    def test_the_graded_row_that_falsely_read_missing_no_longer_does(self):
+        g = adherence(**self.GATED, newest_start_age_s=301.0)
+        assert g["verdict"] != "missing"
+        # The gate is MEASURED, not assumed: 19 of 20 fires declined.
+        assert g["self_gate_fraction"] == 0.95
+        # ...and the withheld veto is on the row. `on_schedule` with an empty
+        # reason was the original #3276 defect; a tolerated 10x stamp with no
+        # note would be that same silence wearing the fix's clothes.
+        assert "self-gate" in g["stamp_veto_withheld"]
+        assert "10.03x" in g["stamp_veto_withheld"]
+
+    def test_the_dead_rail_measured_beside_it_still_reads_missing(self):
+        # The other half of the BLOCK's required regression, on the real
+        # production windows rather than the idealised equal ones.
+        g = adherence(**self.DEAD_RAIL, newest_start_age_s=17_500.0)
+        assert g["verdict"] == "missing"
+        # 0.68%, an order of magnitude clear of the threshold either way.
+        assert g["self_gate_fraction"] < SELF_GATE_MATERIAL_RATIO
+        assert g["stamp_veto_withheld"] is None
+
+    def test_the_two_rows_separate_by_more_than_the_threshold(self):
+        # The margin is the claim. If these ever converge the discriminator has
+        # stopped discriminating, and a test asserting only the two verdicts
+        # would still pass while sitting on a knife edge.
+        gated = adherence(**self.GATED, newest_start_age_s=301.0)
+        dead = adherence(**self.DEAD_RAIL, newest_start_age_s=17_500.0)
+        assert gated["self_gate_fraction"] > SELF_GATE_MATERIAL_RATIO * 5
+        assert dead["self_gate_fraction"] < SELF_GATE_MATERIAL_RATIO / 5
+
+    def test_a_self_gating_beat_that_ALSO_stops_being_delivered_is_caught(self):
+        # The residual hole, bounded deliberately. Withholding the veto costs a
+        # self-gating task its stamp-based detection, so the RATE arm must still
+        # be able to catch it — otherwise this repair would make `poll_all_odds`
+        # undetectable rather than correctly graded.
+        g = adherence(starts=1, starts_window_s=600.0, interval_s=30.0,
+                      deliveries=2, deliveries_window_s=600.0,
+                      durations_ms=[900] * 2, counter_ttl_s=TTL,
+                      newest_start_age_s=301.0)
+        assert g["verdict"] == "behind"
+
+    def test_windows_that_drift_still_yield_a_usable_fraction(self):
+        # Why the fraction is rates and not the existing `self_gated_fires`
+        # subtraction. Production's real `poll_all_odds` pair drifts 23.9%, far
+        # past SELF_GATE_WINDOW_TOLERANCE, so `self_gated_fires` is None there —
+        # and a veto keyed on it would have fired on the live row.
+        g = adherence(starts=1318, starts_window_s=49447.0, interval_s=30.0,
+                      deliveries=2024, deliveries_window_s=64957.0,
+                      durations_ms=[107902] * 50, counter_ttl_s=TTL,
+                      newest_start_age_s=3600.0)
+        assert g["self_gated_fires"] is None      # the subtraction refuses
+        assert g["self_gate_fraction"] == 0.145   # the rate does not
+        assert g["verdict"] != "missing"
+
+    def test_no_delivery_counter_withholds_the_veto_and_says_so(self):
+        # Gotcha #53 in the small: with no deliveries there is nothing to
+        # compare a start rate against, so the module cannot tell a gate from a
+        # grave. It must not assert the sharpest verdict it owns off evidence it
+        # does not have — but it must not go silent about that either.
+        g = adherence(starts=1327, starts_window_s=80011.0, interval_s=40.0,
+                      durations_ms=[20135] * 50, counter_ttl_s=TTL,
+                      newest_start_age_s=17_500.0)
+        assert g["verdict"] != "missing"
+        assert g["self_gate_fraction"] is None
+        assert "no delivery counter" in g["stamp_veto_withheld"]
+
+    def test_a_fresh_stamp_never_records_a_withheld_veto(self):
+        # The field means "the veto was considered and declined". A punctual
+        # beat never reached that decision, and stamping it with a note would
+        # make the field unreadable as a signal.
+        g = adherence(**self.GATED, newest_start_age_s=5.0)
+        assert g["stamp_veto_withheld"] is None
+        assert g["self_gate_fraction"] == 0.95
+
+    def test_every_row_carries_both_fields_whatever_graded_it(self):
+        # Payload shape must not depend on the branch. A key that appears only
+        # sometimes makes `.get()` mean two things to a reader.
+        for row in (adherence(**self.GATED, newest_start_age_s=5.0),
+                    adherence(**self.DEAD_RAIL, newest_start_age_s=17_500.0),
+                    adherence(starts=0, starts_window_s=10.0, interval_s=30.0)):
+            assert "self_gate_fraction" in row and "stamp_veto_withheld" in row
