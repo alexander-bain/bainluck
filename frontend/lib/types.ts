@@ -273,8 +273,24 @@ export interface EventDetailResponse extends Event {
    * a finished game. It is set only for `status='completed'` with a real completion
    * timestamp — never for `closed`, whose scores are frozen mid-game and invert the
    * winner (backend/app/utils/settled_hero.py carries the measurement).
+   *
+   * "final_unresolved" when the game is OVER and nothing named a winner — a `closed`
+   * tennis match whose result lives in the tournament container, a row not yet
+   * graded. The probability is still served and is still the last captured blend;
+   * this value is a claim about what that number MEANS, not a deletion of it. It
+   * exists so a client can tell three states apart that a single "blend" collapsed
+   * into one: we know the result, we do not know it, and the question is still open.
+   *
+   * CERT-1942's follow-up `Q441-TYPE-FINAL-UNRESOLVED`. The backend emitted this
+   * value one merge before this union learned about it — the two are pinned together
+   * by `__tests__/lib/heroProbabilitySourceContract.test.ts`, which fails if the
+   * union and `app/utils/settled_hero.py`'s constants drift apart again.
    */
-  hero_probability_source?: "blend" | "opening" | "settled";
+  hero_probability_source?:
+    | "blend"
+    | "opening"
+    | "settled"
+    | "final_unresolved";
   /** Present only alongside `hero_probability_source === "settled"`. */
   hero_settled_result?: "home" | "away" | "draw";
   bookmaker_odds?: BookmakerOddsDetail[];
