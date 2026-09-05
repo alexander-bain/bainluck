@@ -59,6 +59,16 @@ SWEEP_BATCH_LIMIT = 500
 #: to find out where it is.
 SWEEP_CONCURRENCY = 6
 
+#: How far back the played-game band reaches, in days — #3284 / CAL-P1016.
+#:
+#: It is `PROVABLY_PURGED_AGE_DAYS`, READ and not retuned (the same discipline
+#: #3257 kept on the sibling drain). The band exists to rank rows the venue can
+#: still answer for, and beyond this age the venue answers for nothing, so a
+#: wider band would only promote rows that cannot be written. It is deliberately
+#: the same constant the purge floor already uses rather than a second number
+#: that could drift away from it.
+PAST_EVENT_BAND_DAYS = PROVABLY_PURGED_AGE_DAYS
+
 @dataclass
 class _Leg:
     close_time: Optional[datetime]
@@ -134,6 +144,145 @@ SELECT_SQL = """
     LIMIT :limit OFFSET :offset
 """
 
+# ---------------------------------------------------------------------------
+# The played-game band — #3284 / CAL-P1016
+# ---------------------------------------------------------------------------
+#
+# WHAT THE BEAT'S FIRST UNATTENDED RUN MEASURED (2026-09-05 04:20Z, production,
+# `task-metrics?task=kalshi_resolution_window`): 500 candidates, 125 written,
+# 121 of those `unchanged` because the venue still reports the backstop, and
+# **`newly_past = 4`**. Five hundred venue reads bought four corrected dead
+# prices. At a 500-row batch against ~7,000 eligible rows the cycle is ~14
+# nights, so a market that finalises just after its slot keeps a live-looking
+# price and a fabricated future date for up to a fortnight. That is #2660's card
+# ("a golf round that settled five days ago") as a standing mechanism.
+#
+# WHY `updated_at ASC` ALONE CANNOT FIND THEM. CAL-P992 chose that ordering on
+# the argument that the 2h open-market poll bumps `updated_at` only while the
+# venue still lists a market, so a frozen stamp detects finalisation. Measured
+# 2026-09-05: of 8,879 `status='open'` KX rows only 237 were touched in the last
+# 3 hours and 1,428 in the last 26 — the poller's COVERAGE, not the venue's
+# listing, dominates the stamp. Four rows sampled from the stale band and
+# checked against Kalshi's own API were two genuinely active (2027 midterms,
+# Hannover mayor) and two finalised days ago. The stamp does not separate them.
+#
+# THE SIGNAL THAT DOES is already in the row and gotcha #14 already prefers it
+# over `commence_time`: the ticker's own `YYMONDD` segment
+# (`app/utils/market_identity.py:ticker_game_date`). `commence_time` cannot do
+# this job — 4,954 of the 5,143 sealed rows carry `commence_time` equal to the
+# same poisoned backstop (#2771).
+#
+# MEASURED YIELD, at the venue (12 rows sampled from the band, Kalshi public
+# API, 2026-09-05): **8 finalised with a `close_time` months earlier than the
+# date we store** — they converge on read — 3 purged/no markets (#2723's
+# stranded cohort), 1 genuinely active. ~67% against the beat's measured 0.8%.
+#
+# IT IS AN ORDER, NEVER A PREDICATE, and the 12th sample is why: `KXMYSLGAME-
+# 26SEP04BRUJOH` is a season market whose ticker date is its opener, so a FILTER
+# on the band would wrongly promote-and-exclude it while a SORT merely
+# mis-orders it. :func:`banded_select_sql` therefore reuses `SELECT_SQL`'s own
+# text and rewrites only its ORDER BY — `test_the_band_changes_only_the_order`
+# proves the predicate is byte-identical rather than asserting it in prose.
+#
+# PORTABLE ON PURPOSE. The band is a bounded list of literal day tokens built in
+# Python, matched with plain `LIKE`, because the guards for this SQL execute it
+# against SQLite and Postgres has no shared regex/`strpos` spelling with it. The
+# bound is what makes the list finite: only days the venue can still answer for
+# are worth ranking, so the token list is at most `PAST_EVENT_BAND_DAYS` long.
+
+_BAND_MONTHS = (
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+)
+
+
+def past_event_band_tokens(
+    now: datetime, *, days: int = PAST_EVENT_BAND_DAYS
+) -> list[str]:
+    """`LIKE` patterns for every ticker day-stamp whose game has been played.
+
+    Strictly BEFORE today and no older than ``days``. Strictly-before matches
+    the measured cohort (604 rows on 2026-09-05) and keeps a game that is being
+    played right now out of the band, where it would only spend a venue read to
+    be told the backstop again.
+
+    Newest first, so the caller can also read the list as the order in which the
+    band's days became answerable.
+    """
+    today = now.date()
+    tokens: list[str] = []
+    for back in range(1, max(0, int(days)) + 1):
+        d = today - timedelta(days=back)
+        tokens.append(f"%-{d.year % 100:02d}{_BAND_MONTHS[d.month - 1]}{d.day:02d}%")
+    return tokens
+
+
+def band_bind_params(tokens: list[str]) -> dict:
+    """``{'band_0': '%-26SEP04%', ...}`` — one bind per token, never interpolated.
+
+    The tokens are machine-built from a clock and could not carry an injection
+    today, but a SQL string that concatenates values is a habit that outlives
+    the day its inputs were safe.
+    """
+    return {f"band_{i}": tok for i, tok in enumerate(tokens)}
+
+
+def band_rank_sql(n_tokens: int) -> str:
+    """The leading sort key: DAYS SINCE THE GAME, and ``n_tokens`` for the rest.
+
+    Graded rather than binary, and the grading is not a refinement — it is what
+    makes the band's head answerable. Measured on production 2026-09-05: under a
+    binary rank the band's first 14 rows probed at the venue as 4 convergeable,
+    3 still active and **7 purged**, because the inherited `updated_at ASC`
+    tie-break sorts the oldest — hence deadest — stamps to the front of the
+    band. A random sample from the same band was 8 convergeable of 12. The
+    difference is entirely the within-band order.
+
+    :func:`past_event_band_tokens` yields newest-first, so the token's own index
+    IS its age in days and one `CASE` expresses both facts. Non-band rows take
+    ``n_tokens`` — strictly larger than every band rank, so they follow the
+    whole band and their inherited ordering is untouched among themselves.
+
+    ``n_tokens == 0`` yields ``NULL``, not ``0``: an empty band must leave the
+    inherited ordering exactly as it was, a `CASE` with no arms is not valid
+    SQL, and a bare integer in an ORDER BY is an ORDINAL COLUMN REFERENCE in
+    both SQLite and Postgres — `ORDER BY 0` is "term out of range", which is how
+    the zero case would have failed in production rather than in a guard.
+    """
+    if n_tokens <= 0:
+        return "NULL"
+    arms = " ".join(
+        f"WHEN external_id LIKE :band_{i} THEN {i}" for i in range(n_tokens)
+    )
+    return f"CASE {arms} ELSE {n_tokens} END"
+
+
+def banded_select_sql(n_tokens: int) -> str:
+    """`SELECT_SQL` with the band rank prefixed onto its ORDER BY, nothing else.
+
+    Built by surgery on `SELECT_SQL` itself rather than by restating it, so the
+    two cannot drift: if the predicate changes, this changes with it, and if
+    this ever stops being a pure re-ordering the guard that compares the two
+    heads fails.
+    """
+    head, sep, tail = SELECT_SQL.partition("ORDER BY")
+    if not sep:  # pragma: no cover — a SELECT_SQL with no ORDER BY is a bug
+        raise ValueError("SELECT_SQL has no ORDER BY to prefix")
+    return f"{head}ORDER BY {band_rank_sql(n_tokens)},\n             {tail.lstrip()}"
+
+
+def row_is_in_band(external_id: Optional[str], tokens: list[str]) -> bool:
+    """The Python reading of the same membership, for the run's own report.
+
+    The batch's band count is computed here rather than by a second query: one
+    selection, one answer. The tokens carry `LIKE`'s ``%`` wildcards, so strip
+    them to get the literal the ticker must contain.
+    """
+    if not external_id:
+        return False
+    return any(tok.strip("%") in external_id for tok in tokens)
+
+
 #: What the batch does NOT cover. Reported every run so a bounded sweep can never
 #: read as a complete one. `never_swept` / `provisional_recheck` split the eligible
 #: population by which of the two selection reasons put the row there, because they
@@ -192,12 +341,18 @@ async def run_backfill(
     """
     now = now or datetime.now(timezone.utc)
     purge_floor = now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
+    band_tokens = past_event_band_tokens(now)
 
     async with session_maker() as session:
         rows = (
             await session.execute(
-                text(SELECT_SQL),
-                {"purge_floor": purge_floor, "limit": limit, "offset": offset},
+                text(banded_select_sql(len(band_tokens))),
+                {
+                    "purge_floor": purge_floor,
+                    "limit": limit,
+                    "offset": offset,
+                    **band_bind_params(band_tokens),
+                },
             )
         ).all()
         totals = (
@@ -219,6 +374,15 @@ async def run_backfill(
         "never_swept": never_swept,
         "provisional_recheck": provisional_recheck,
         "candidates": len(rows),
+        # #3284: how much of this batch the played-game band actually supplied.
+        # The band is an ORDER, so this is the number that says whether it is
+        # working: a batch that is mostly band is a batch of rows the venue can
+        # answer for, and when the band drains this falls and the sweep is back
+        # to walking the population — which is the correct steady state, not a
+        # regression. Reported beside `newly_past` so the yield is auditable run
+        # to run without re-deriving the cohort.
+        "band_days": len(band_tokens),
+        "candidates_in_band": sum(1 for r in rows if row_is_in_band(r[1], band_tokens)),
         "moved_earlier": 0,
         "unchanged": 0,
         "newly_past": 0,
@@ -415,7 +579,16 @@ async def run_backfill(
 #: remove. A legacy bare ``"500"`` left in Redis by the pre-repair beat parses as
 #: ``(500, 0)``, so the first run after deploy starts where the old cursor
 #: pointed and begins counting its cycle from there.
-SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset"
+#:
+#: 🔁 **VERSIONED at `:v2` by #3284.** An offset is a position in an ORDER, and
+#: the played-game band changes that order — `375` under the old ordering names
+#: a different 500 rows than `375` under the new one, so resuming on it would
+#: skip an arbitrary slice of the population on the first run after deploy and
+#: nothing would ever report that it had. Bumping the key retires the old value
+#: without deleting it (it expires on its own TTL) and starts one clean cycle at
+#: the head, which is exactly where the band is. Any future change to the ORDER
+#: BY must bump this again for the same reason.
+SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset:v2"
 
 #: 30 days. Long enough that a fortnight of failed beats does not silently reset
 #: the sweep to the jammed head; short enough that a stale cursor left behind by
