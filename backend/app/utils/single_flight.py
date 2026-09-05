@@ -165,20 +165,20 @@ def acquire(
     tasks fire every 30–120 s.
     """
     key = lease_key(task)
-    rc = rc if rc is not None else _client()
-    if rc is None:
+    client = rc if rc is not None else _client()
+    if client is None:
         return Lease(task, key, None, True, "redis_unavailable")
 
     token = f"{uuid4().hex}:{int(time.time())}"
     try:
-        if rc.set(key, token, nx=True, ex=ttl_seconds):
+        if client.set(key, token, nx=True, ex=ttl_seconds):
             return Lease(task, key, token, True, "acquired")
     except Exception as exc:  # noqa: BLE001 — see docstring: fail open
         logger.warning("single_flight: could not acquire %s (%s); running anyway", key, exc)
         return Lease(task, key, None, True, "redis_unavailable")
 
     # redis-py answers None for a refused NX. That is a refusal, not an error.
-    _record_skip(rc, task)
+    _record_skip(client, task)
     return Lease(task, key, None, False, "already_running")
 
 
@@ -191,11 +191,11 @@ def release(lease: Lease, rc=None) -> bool:
     """
     if not lease.acquired or not lease.token:
         return False
-    rc = rc if rc is not None else _client()
-    if rc is None:
+    client = rc if rc is not None else _client()
+    if client is None:
         return False
     try:
-        return bool(rc.eval(_RELEASE_IF_OWNER_LUA, 1, lease.key, lease.token))
+        return bool(client.eval(_RELEASE_IF_OWNER_LUA, 1, lease.key, lease.token))
     except Exception:  # noqa: BLE001
         logger.warning(
             "single_flight: could not release %s; leaving it to expire", lease.key
