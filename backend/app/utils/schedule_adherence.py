@@ -478,6 +478,7 @@ def adherence(
     matched_delivered=None,
     matched_bucket_s=None,
     matched_bucket_start=None,
+    matched_coverage_proven=False,
     durations_window_s=None,
     durations_saturated=None,
     newest_terminal_age_s=None,
@@ -592,6 +593,10 @@ def adherence(
         "matched_delivered": matched_delivered,
         "matched_bucket_s": matched_bucket_s,
         "matched_bucket_start": matched_bucket_start,
+        # CERT-1972: did BOTH counters cover the whole bucket, or only a suffix
+        # of it? Published, because every derived number below is conditional on
+        # it and a reader has to be able to see which state produced a `None`.
+        "matched_coverage_proven": bool(matched_coverage_proven),
         "undelivered_fraction": None,
         # CERT-1969: which end, decided on the SAME bucket as the two
         # counts above — never inherited from the 24h verdict.
@@ -644,12 +649,22 @@ def adherence(
     # whose reader most needs to know whether anything is being published, and a
     # field that only appears on the branches that happened to fall through
     # makes `.get("undelivered_fraction")` mean two different things.
-    undelivered = _undelivered_fraction(matched_emitted, matched_delivered)
+    undelivered = (
+        _undelivered_fraction(matched_emitted, matched_delivered)
+        if matched_coverage_proven else None
+    )
     out["undelivered_fraction"] = (
         round(undelivered, 3) if undelivered is not None else None
     )
-    attribution = bucket_attribution(
-        matched_emitted, matched_delivered, matched_bucket_s, interval_s
+    # CERT-1972: no derived reading at all from a bucket the instrumentation
+    # only partly covered. A 7-published/7-delivered bucket is a perfect cadence
+    # over half a window and a 53% scheduler shortfall over the whole one, and
+    # nothing in the counts says which — so it says nothing.
+    attribution = (
+        bucket_attribution(
+            matched_emitted, matched_delivered, matched_bucket_s, interval_s
+        )
+        if matched_coverage_proven else None
     )
     out["bucket_attribution"] = attribution
 

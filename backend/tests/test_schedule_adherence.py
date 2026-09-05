@@ -956,7 +956,7 @@ class TestEmitSideCounterSaysWhichEndLostTheFires:
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1079,
         matched_emitted=15, matched_delivered=7,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     #: The same shortfall arriving from the other end: beat published only 7 in
@@ -966,7 +966,7 @@ class TestEmitSideCounterSaysWhichEndLostTheFires:
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1079,
         matched_emitted=7, matched_delivered=7,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     # --- RED FIRST --------------------------------------------------------
@@ -1024,7 +1024,7 @@ class TestTheTwoHistoriesMustReadDifferently:
         starts=1080, starts_window_s=86400.0,
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1080,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     #: 90 publications in the current hour is 15 per 600s bucket.
@@ -1087,7 +1087,7 @@ class TestTheMatchedFractionRefusesWhatItCannotSee:
         starts=1080, starts_window_s=86400.0,
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1079,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     def test_an_unseen_delivery_writer_is_unknown_not_total_loss(self):
@@ -1164,7 +1164,7 @@ class TestTheMatchedPairIsReportedNeverGraded:
         starts=1080, starts_window_s=86400.0,
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1079,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     def test_the_matched_pair_never_moves_the_ratio_or_the_numerator(self):
@@ -1189,7 +1189,7 @@ class TestTheMatchedPairIsReportedNeverGraded:
             deliveries=2160, deliveries_window_s=86400.0,
             interval_s=40.0, terminals=2160,
             matched_emitted=15, matched_delivered=15,
-            matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+            matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
         )
         assert g["verdict"] == "on_schedule"
         assert g["undelivered_fraction"] == 0.0
@@ -1250,7 +1250,7 @@ class TestTheAttributionComesFromTheBucketNotTheVerdict:
         starts=1080, starts_window_s=86400.0,
         deliveries=1080, deliveries_window_s=86400.0,
         interval_s=40.0, terminals=1079,
-        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0, matched_coverage_proven=True,
     )
 
     def test_a_healthy_bucket_under_a_behind_verdict_accuses_nobody(self):
@@ -1315,7 +1315,7 @@ class TestTheAttributionComesFromTheBucketNotTheVerdict:
             deliveries=2160, deliveries_window_s=86400.0,
             interval_s=40.0, terminals=2160,
             matched_emitted=15, matched_delivered=7,
-            matched_bucket_s=600, matched_bucket_start=1.0,
+            matched_bucket_s=600, matched_bucket_start=1.0, matched_coverage_proven=True,
         )
         assert g["verdict"] == "on_schedule"
         assert g["bucket_attribution"] == "broker_or_worker"
@@ -1348,3 +1348,100 @@ class TestTheAttributionComesFromTheBucketNotTheVerdict:
         ]
         for row in rows:
             assert "bucket_attribution" in row
+
+
+class TestAPartlyObservedBucketSaysNothing:
+    """CERT-1972: a bucket the instrumentation only covered a SUFFIX of.
+
+    The block's reproduction, verbatim. The beat dyno restarts onto the
+    instrumented release halfway through a 600s bucket and publishes **7** fires
+    in the remaining 300s — a perfect 40s cadence, nothing wrong at all. Seven of
+    them are delivered. The bucket's expectation is 15, so
+    ``bucket_attribution`` returned ``scheduler`` and the row said eight messages
+    were never published. They were. They were published before anything was
+    counting.
+
+    A bucket's counts and a bucket's EXPECTATION are only comparable when the
+    counters covered the whole bucket, and "the writer ran at some point during
+    N" does not say that. ``coverage_proven`` does: both writers present in N and
+    in N-1, so an instrumented writer was already running before N began.
+
+    THE MIRROR CASE IS WORSE AND IS CLOSED THE SAME WAY, unasked. A DELIVERY
+    writer activating mid-bucket against a publisher live throughout
+    under-counts deliveries, which reads as broker loss that never happened — a
+    false accusation, where the block's direction is a false exoneration. Hence
+    one flag proving BOTH sides, not just the side that was named.
+    """
+
+    #: 40s interval, 600s bucket -> 15 expected. `behind` over 24h throughout, so
+    #: the row always has a verdict wanting a sentence.
+    BASE = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+    )
+
+    def test_a_partial_activation_bucket_stays_unknown(self):
+        # The block's row: perfect cadence over half a bucket.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["bucket_attribution"] is None
+        assert g["undelivered_fraction"] is None
+        assert "never published" not in g["reason"]
+        assert "SCHEDULER" not in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+
+    def test_the_same_counts_with_coverage_proven_do_accuse_the_scheduler(self):
+        # The control that makes the test above mean something: identical
+        # counts, and the ONLY difference is whether the bucket was covered.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=True)
+        assert g["bucket_attribution"] == "scheduler"
+        assert "never published" in g["reason"]
+
+    def test_a_fully_covered_healthy_bucket_is_still_healthy(self):
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=15,
+                      matched_coverage_proven=True)
+        assert g["bucket_attribution"] == "current_bucket_healthy"
+
+    def test_coverage_gates_every_derived_number_and_no_raw_one(self):
+        # The raw counts are observations and stay on the row; only the things
+        # DERIVED from comparing them against each other or against the
+        # schedule are withheld. Dropping the counts would lose real data to
+        # protect an inference that is not being made.
+        g = adherence(**self.BASE, matched_emitted=7, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["matched_emitted"] == 7
+        assert g["matched_delivered"] == 7
+        assert g["matched_bucket_s"] == 600
+        assert g["matched_coverage_proven"] is False
+        assert g["undelivered_fraction"] is None
+        assert g["bucket_attribution"] is None
+
+    def test_the_flag_is_on_every_row_and_defaults_to_unproven(self):
+        # Defaulting to False is the fail-safe direction: a caller that has not
+        # been taught about coverage yet gets silence, not a confident wrong
+        # attribution. Every other three-state field here defaults to `None`;
+        # this one is a claim about evidence, and "no evidence" is `False`.
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(**self.BASE, matched_emitted=15, matched_delivered=7),
+        ]
+        for row in rows:
+            assert row["matched_coverage_proven"] is False
+            assert row["undelivered_fraction"] is None
+            assert row["bucket_attribution"] is None
+
+    def test_a_false_broker_accusation_from_a_late_delivery_writer_is_refused(self):
+        # The mirror the block did not name, and the one that produces a FALSE
+        # ACCUSATION rather than a false exoneration: the publisher was live all
+        # bucket (15 published) and the delivery writer activated halfway, so it
+        # saw 7. Without the coverage gate that is a confident 53% broker loss
+        # on a rail that delivered everything.
+        g = adherence(**self.BASE, matched_emitted=15, matched_delivered=7,
+                      matched_coverage_proven=False)
+        assert g["undelivered_fraction"] is None
+        assert g["bucket_attribution"] is None
+        assert "never reached a worker" not in g["reason"]

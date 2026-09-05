@@ -316,6 +316,10 @@ def build_schedule_adherence(
             matched_delivered=e.get("delivered"),
             matched_bucket_s=e.get("bucket_s"),
             matched_bucket_start=e.get("bucket_start"),
+            # CERT-1972: whether both counters covered the WHOLE bucket. False
+            # for the bucket in which either writer first activates, and every
+            # derived number is withheld until it is true.
+            matched_coverage_proven=e.get("coverage_proven", False),
             # LAT-P040 (#835): the duration sample's own span, so the p95 is not
             # read against `window_s` (which ages the starts counter and is up
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).

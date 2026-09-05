@@ -932,9 +932,37 @@ EMIT_BUCKET_RETAINED = 3
 #: here through a different door.
 TASK_DELIVERY_WRITER_ALIVE_PREFIX = "bainluck:task_deliv_writer_alive"
 
+#: The same proof for the PUBLISH side — CERT-1972's repair.
+#:
+#: The delivery marker above answers "was the writer running during bucket N?",
+#: which is what the zero-versus-unknown question needs. It is NOT what an
+#: expectation comparison needs, and that gap is what CERT-1972 blocked: if the
+#: beat dyno restarts onto the instrumented release halfway through bucket N, it
+#: publishes 7 fires in the remaining 300s at a perfect 40s cadence — and the
+#: bucket's expectation is 15, so the row confidently reported ``scheduler`` and
+#: said eight messages were never published. They were. They were published
+#: before anything was counting.
+#:
+#: A marker present in BOTH N and N-1 is the proof that closes it: an
+#: instrumented publisher was already running before N began and was still
+#: running inside it, so its count covers the whole bucket rather than a
+#: suffix of it.
+#:
+#: THE MIRROR CASE IS WORSE AND IS CLOSED THE SAME WAY, unasked. A delivery
+#: writer that activates mid-bucket against a publisher that was live throughout
+#: under-counts deliveries, which reads as broker loss that never happened — a
+#: false accusation, where CERT-1972's direction produces a false exoneration.
+#: So coverage is required from BOTH sides before any derived number is
+#: published, not just from the side the block named.
+TASK_EMIT_WRITER_ALIVE_PREFIX = "bainluck:task_emit_writer_alive"
+
 
 def delivery_writer_alive_key(bucket: int) -> str:
     return f"{TASK_DELIVERY_WRITER_ALIVE_PREFIX}:b{bucket}"
+
+
+def emit_writer_alive_key(bucket: int) -> str:
+    return f"{TASK_EMIT_WRITER_ALIVE_PREFIX}:b{bucket}"
 
 
 def emit_bucket_index(now_s=None) -> int:
@@ -952,7 +980,7 @@ def _bucket_key(prefix: str, task: str, bucket: int) -> str:
     return f"{prefix}:{task}:b{bucket}"
 
 
-def _record_bucketed(prefix: str, task: str, also_mark_alive: bool = False):
+def _record_bucketed(prefix: str, task: str, alive_prefix: str = None):
     """Increment ``task``'s counter in the current bucket. Best-effort.
 
     The TTL rides the same ``SET … NX EX`` as the counter's creation and is never
@@ -970,10 +998,10 @@ def _record_bucketed(prefix: str, task: str, also_mark_alive: bool = False):
         pipe = r.pipeline()
         pipe.set(key, 0, ex=ttl, nx=True)
         pipe.incr(key)
-        if also_mark_alive:
+        if alive_prefix:
             # The SAME bucket index the counter used, so the proof can never
             # outlive what it vouches for (CERT-1968).
-            pipe.set(delivery_writer_alive_key(emit_bucket_index()), 1, ex=ttl)
+            pipe.set(f"{alive_prefix}:b{emit_bucket_index()}", 1, ex=ttl)
         pipe.execute()
     except Exception:
         # Best-effort by contract: this runs on the publish path and inside
@@ -1015,7 +1043,8 @@ def record_task_emission(full_task_name: str):
     runs before every publication in the system, so it must never be the reason
     one fails.
     """
-    _record_bucketed(TASK_EMISSION_BUCKET_PREFIX, full_task_name)
+    _record_bucketed(TASK_EMISSION_BUCKET_PREFIX, full_task_name,
+                     alive_prefix=TASK_EMIT_WRITER_ALIVE_PREFIX)
 
 
 def record_task_delivery_bucket(full_task_name: str):
@@ -1037,7 +1066,7 @@ def record_task_delivery_bucket(full_task_name: str):
     ``TASK_DELIVERY_WRITER_ALIVE_PREFIX``.
     """
     _record_bucketed(TASK_DELIVERY_BUCKET_PREFIX, full_task_name,
-                     also_mark_alive=True)
+                     alive_prefix=TASK_DELIVERY_WRITER_ALIVE_PREFIX)
 
 
 def get_matched_emit_delivery(now_s=None) -> dict:
@@ -1070,19 +1099,49 @@ def get_matched_emit_delivery(now_s=None) -> dict:
     marker with a multi-bucket TTL let a worker whose first write landed in N+1
     vouch for N, which turns "we were not measuring yet" back into "we measured
     nothing arriving".
+
+    ``coverage_proven`` is the SECOND and stricter flag — CERT-1972. Both writers
+    present in N *and* in N-1, which is what says their counts describe the whole
+    of N rather than a suffix of it. It is what the EXPECTATION comparison needs
+    and what "was it running during N" cannot supply: a beat dyno that restarts
+    onto the instrumented release halfway through N publishes 7 fires at a
+    perfect 40s cadence against a bucket expecting 15, and the row said eight
+    messages were never published. They were — before anything was counting.
+
+    Two flags rather than one, because they answer different questions and the
+    weaker one is still needed: ``delivered`` may be a real 0 as soon as the
+    delivery writer is proven for N at all, and refusing that until N-1 is also
+    proven would delay the sharpest reading this instrument makes by a bucket for
+    no gain. ``coverage_proven`` gates only the DERIVED numbers.
+
+    The residual, named rather than hidden: a dyno restart *inside* N leaves both
+    markers set and a real gap in the middle. That is ~30s of a 600s bucket on an
+    already-instrumented fleet, not an instrumentation boundary, and it is the
+    same residual the delivery side has carried since CERT-1968.
     """
     try:
         r = get_redis_client()
         bucket = emit_bucket_index(now_s) - 1
         suffix = f":b{bucket}"
         # CERT-1968: the EXACT completed bucket's proof, never a later one.
-        writer_alive = False
-        try:
-            writer_alive = r.get(delivery_writer_alive_key(bucket)) is not None
-        except Exception:
-            # Unreadable proof is NO proof — falls through to `delivered: None`,
-            # which is the direction that refuses rather than accuses.
-            writer_alive = False
+        # CERT-1972: and a SECOND, stricter proof — both writers present in this
+        # bucket AND in the one before it, which is what says their counts cover
+        # the whole of N rather than a suffix of it.
+        def _alive(key):
+            try:
+                return r.get(key) is not None
+            except Exception:
+                # An unreadable proof is NO proof. Every consumer of these flags
+                # refuses rather than accuses when they are false.
+                return False
+
+        writer_alive = _alive(delivery_writer_alive_key(bucket))
+        coverage_proven = (
+            writer_alive
+            and _alive(delivery_writer_alive_key(bucket - 1))
+            and _alive(emit_writer_alive_key(bucket))
+            and _alive(emit_writer_alive_key(bucket - 1))
+        )
 
         def _scan(prefix):
             found = {}
@@ -1109,6 +1168,7 @@ def get_matched_emit_delivery(now_s=None) -> dict:
                               else delivered.get(name)),
                 "bucket_s": EMIT_BUCKET_S,
                 "bucket_start": float(bucket * EMIT_BUCKET_S),
+                "coverage_proven": coverage_proven,
             }
         return out
     except Exception:

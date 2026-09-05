@@ -1032,7 +1032,7 @@ class TestMatchedPairReachesTheGrader:
     def test_the_row_carries_the_pair_and_the_span_it_covers(self):
         out = self._call({"app.tasks.foo": {
             "emitted": 15, "delivered": 7, "bucket_s": 600,
-            "bucket_start": 1_757_100_000.0}})
+            "bucket_start": 1_757_100_000.0, "coverage_proven": True}})
         row = out["all"]["app.tasks.foo"]
         assert row["matched_emitted"] == 15
         assert row["matched_delivered"] == 7
@@ -1046,9 +1046,9 @@ class TestMatchedPairReachesTheGrader:
         # partner. Same 24h counters on both calls; only the bucket differs, and
         # the diagnosis must follow the bucket.
         broken = self._call({"app.tasks.foo": {
-            "emitted": 15, "delivered": 7, "bucket_s": 600, "bucket_start": 1.0}})
+            "emitted": 15, "delivered": 7, "bucket_s": 600, "bucket_start": 1.0, "coverage_proven": True}})
         healthy = self._call({"app.tasks.foo": {
-            "emitted": 15, "delivered": 15, "bucket_s": 600, "bucket_start": 1.0}})
+            "emitted": 15, "delivered": 15, "bucket_s": 600, "bucket_start": 1.0, "coverage_proven": True}})
         assert broken["all"]["app.tasks.foo"]["deliveries"] == \
                healthy["all"]["app.tasks.foo"]["deliveries"] == 1080
         assert broken["all"]["app.tasks.foo"]["undelivered_fraction"] != \
@@ -1065,7 +1065,7 @@ class TestMatchedPairReachesTheGrader:
             {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
             matched={"app.tasks.foo": {
                 "emitted": 15, "delivered": 7, "bucket_s": 600,
-                "bucket_start": 1.0}},
+                "bucket_start": 1.0, "coverage_proven": True}},
         )
         assert out["graded"] == 1
         assert out["all"]["app.tasks.foo"]["matched_emitted"] == 15
@@ -1078,7 +1078,7 @@ class TestMatchedPairReachesTheGrader:
             self.SCHED, [], {}, {},
             matched={"app.tasks.foo": {
                 "emitted": 15, "delivered": 0, "bucket_s": 600,
-                "bucket_start": 1.0}},
+                "bucket_start": 1.0, "coverage_proven": True}},
         )
         assert out["graded"] == 0
         assert out["unmapped"] == [{
@@ -1092,7 +1092,7 @@ class TestMatchedPairReachesTheGrader:
             {}, [], {}, {},
             matched={"app.tasks.manual": {
                 "emitted": 3, "delivered": 3, "bucket_s": 600,
-                "bucket_start": 1.0}},
+                "bucket_start": 1.0, "coverage_proven": True}},
         )
         assert out["scheduled_tasks"] == 0
         assert out["all"] == {} and out["unmapped"] == []
@@ -1172,3 +1172,90 @@ class TestTheSignalsActuallyFire:
         row = redis_state.get_matched_emit_delivery(now)["app.tasks.probe_pair"]
         assert row["emitted"] == 3 and row["delivered"] == 2
         assert row["bucket_s"] == redis_state.EMIT_BUCKET_S
+
+
+class TestCoverageProofNeedsBothSidesAndTheBucketBefore:
+    """CERT-1972 storage half: what proves a bucket was fully observed.
+
+    ``writer_alive`` (CERT-1968) answers "was the delivery writer running during
+    N?", which is the zero-versus-unknown question. ``coverage_proven`` answers
+    the strictly harder one the EXPECTATION comparison needs: did both counters
+    cover the whole of N, or only a suffix of it? A publisher that activates at
+    second 300 of a 600s bucket publishes 7 fires at a perfect 40s cadence and
+    the bucket expects 15.
+    """
+
+    TASK = "app.tasks.prewarm_live_feed_shapes"
+    NOW = 2001 * redis_state.EMIT_BUCKET_S + 42
+
+    def _writer_runs_in(self, monkeypatch, bucket, deliveries=True, emissions=True):
+        with monkeypatch.context() as m:
+            m.setattr(redis_state.time, "time",
+                      lambda: bucket * redis_state.EMIT_BUCKET_S + 1)
+            if emissions:
+                redis_state.record_task_emission(self.TASK)
+            if deliveries:
+                redis_state.record_task_delivery_bucket(self.TASK)
+
+    def _row(self):
+        return redis_state.get_matched_emit_delivery(self.NOW)[self.TASK]
+
+    def test_both_writers_in_this_bucket_and_the_one_before_is_proof(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert self._row()["coverage_proven"] is True
+
+    def test_a_publisher_that_activated_inside_this_bucket_is_not_proof(self, prefix_fake, monkeypatch):
+        # THE BLOCK'S CASE. Deliveries instrumented throughout; the publisher's
+        # first bucketed write is in N itself, so its count covers a suffix of
+        # the bucket and cannot be compared against the bucket's expectation.
+        self._writer_runs_in(monkeypatch, 1999, emissions=False)
+        self._writer_runs_in(monkeypatch, 2000)
+        row = self._row()
+        assert row["coverage_proven"] is False
+        # ...and the weaker flag still holds, so `delivered` is a real number.
+        assert row["delivered"] is not None
+
+    def test_a_delivery_writer_that_activated_inside_this_bucket_is_not_proof(self, prefix_fake, monkeypatch):
+        # The mirror, which produces a FALSE ACCUSATION rather than a false
+        # exoneration and is therefore the worse of the two.
+        self._writer_runs_in(monkeypatch, 1999, deliveries=False)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert self._row()["coverage_proven"] is False
+
+    def test_a_writer_absent_from_this_bucket_is_not_proof_either(self, prefix_fake, monkeypatch):
+        # Present in N-1, gone in N: a dyno that died. Coverage of N is not
+        # established by having covered the bucket before it.
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000, emissions=False)
+        assert self._row()["coverage_proven"] is False
+
+    def test_coverage_is_false_when_nothing_is_instrumented(self, prefix_fake):
+        self._seed_bare(prefix_fake)
+        assert self._row()["coverage_proven"] is False
+
+    def _seed_bare(self, fake):
+        fake.strings[
+            f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}:{self.TASK}:b2000"] = b"7"
+
+    def test_the_two_markers_have_different_prefixes(self, prefix_fake, monkeypatch):
+        # A single shared marker would be set by whichever writer ran first and
+        # would then vouch for the other — which is the CERT-1968 defect with
+        # the two sides swapped rather than the two buckets.
+        assert (redis_state.TASK_EMIT_WRITER_ALIVE_PREFIX
+                != redis_state.TASK_DELIVERY_WRITER_ALIVE_PREFIX)
+        self._writer_runs_in(monkeypatch, 2000, deliveries=False)
+        assert redis_state.emit_writer_alive_key(2000) in prefix_fake.strings
+        assert (redis_state.delivery_writer_alive_key(2000)
+                not in prefix_fake.strings)
+
+    def test_neither_marker_is_read_back_as_a_task(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert set(redis_state.get_matched_emit_delivery(self.NOW)) == {self.TASK}
+
+    def test_the_markers_expire_with_the_buckets_they_vouch_for(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 2000)
+        ttl = redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED
+        assert prefix_fake.ttls[redis_state.emit_writer_alive_key(2000)] == ttl
+        assert prefix_fake.ttls[redis_state.delivery_writer_alive_key(2000)] == ttl
