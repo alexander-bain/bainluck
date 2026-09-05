@@ -321,6 +321,27 @@ struct SearchView: View {
                         .padding(.vertical, 4)
                 }
 
+                // Tournaments with a hub screen. These navigate straight to the
+                // hub rather than seeding a text query, because the query is the
+                // thing that does not work: "US Open" matches no event text.
+                if !featuredTournaments.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tournaments")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+
+                        FlowLayout(spacing: 8) {
+                            ForEach(featuredTournaments) { hub in
+                                quickSearchChip(icon: hub.icon, label: hub.title) {
+                                    path.append(Route.tournamentHub(slug: hub.slug, name: hub.title))
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Browse by Sport")
@@ -546,6 +567,29 @@ struct SearchView: View {
 
     private func searchResults(_ results: SearchResponse) -> some View {
         List {
+            // Tournament hubs the query names, above everything else.
+            //
+            // Searching "US Open" during the US Open returned no events at all —
+            // the matches are there (`tennis_atp_us_open`, Alcaraz vs Paul) but
+            // nothing in an event's searchable text says "US Open", so the whole
+            // tournament came back as ten loose futures rows and no way in. The
+            // hub is the answer to that query and it goes first.
+            let hubs = featuredTournaments(matching: results.query)
+            if !hubs.isEmpty {
+                Section {
+                    ForEach(hubs) { hub in
+                        NavigationLink(value: Route.tournamentHub(slug: hub.slug, name: hub.title)) {
+                            searchTournamentRow(hub)
+                        }
+                    }
+                } header: {
+                    Label("Tournament", systemImage: "trophy.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .textCase(nil)
+                }
+            }
+
             // Did you mean
             if let dym = results.didYouMean {
                 Section {
@@ -672,7 +716,10 @@ struct SearchView: View {
                 }
             }
 
-            if results.results.isEmpty && results.futures.isEmpty && (results.teams ?? []).isEmpty {
+            // A hub counts as a result. Saying "No results found for US Open"
+            // above a US Open hub row would be the page contradicting itself.
+            if results.results.isEmpty && results.futures.isEmpty
+                && (results.teams ?? []).isEmpty && hubs.isEmpty {
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
@@ -684,6 +731,31 @@ struct SearchView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+    }
+
+    // MARK: - Tournament Row
+
+    private func searchTournamentRow(_ hub: FeaturedTournament) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: hub.icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(Color.yellow.gradient, in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hub.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(hub.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Event Row
