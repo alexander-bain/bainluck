@@ -463,9 +463,15 @@ def test_a_listed_sport_actually_parses_and_an_excluded_one_actually_does_not():
     The first version of this file listed NFL because
     `sync-statpal-schedules-nfl` runs hourly. It does — and it creates nothing.
     `get_fixtures("nfl")` walks `_extract_match_items`, which knows
-    `tournament.match` and `tournament.week`; the real 374-game NFL payload nests
-    its games two levels deeper, under `stage[] → week[] → matches → match`. Zero
-    rows, every hour, green. Meanwhile the AUTHORITY read path
+    `tournament.match` and `tournament.week`; the real NFL payload nests its games
+    two levels deeper, under `stage[] → week[] → matches → match`. On the pinned
+    payload — which retains 17 of the season's matches — the authority parser reads
+    17 and the ingest parser reads 0. Zero rows, every hour, green.
+
+    The count quoted is the FIXTURE's, not the season's. A full-census number
+    beside a reduced-fixture measurement is how a figure ends up attributed to a
+    file that never held it, and this test's whole value is that its numbers are
+    the ones it actually read. Meanwhile the AUTHORITY read path
     (`_parse_nfl_season_schedule`) reads the same bytes correctly, which is why
     NFL's agreement row says 99.69% and its seven-day clock is running. Two
     parsers over one payload, one of them blind, and the blind one is the only one
