@@ -329,6 +329,17 @@ export function gridWidthPx(columnCount: number): number {
  *
  * A grid that fits is untouched and returns its own width: there is no scroll,
  * no snapping, and nothing to round.
+ *
+ * ⚠️ THIS ONLY HOLDS IF THE EXTRA PIXELS STAY OUT OF THE TRACKS. The first
+ * version of this shipped against value tracks that were `minmax(46px, 1fr)`,
+ * and a `min-width` above the natural width is FREE SPACE, which the grid
+ * algorithm hands to flexible tracks. Measured on production: the columns grew
+ * 46 -> 52, the step grew 52 -> 58, and 104 stopped being a multiple of the
+ * step — so the rounding fed the very thing it was meant to align, and a 6px
+ * sliver of the hidden column survived beside the sticky name. The phone's
+ * value tracks are therefore FIXED while the grid scrolls
+ * (`GRID_COL_TRACK_FIXED` in `PlayoffGrid.tsx`); this function is only correct
+ * beside that. A guard in `playoffGrid.test.tsx` pins the pair together.
  */
 export function gridScrollFloorPx(
   columnCount: number,

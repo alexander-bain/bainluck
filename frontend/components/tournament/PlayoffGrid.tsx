@@ -95,6 +95,44 @@ export const GRID_SIZING =
   "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
 
 /**
+ * ═══ #3087 (third pass): A FLEXIBLE VALUE TRACK EATS THE SCROLL FLOOR ═══
+ *
+ * `gridScrollFloorPx` rounds the scroll range up to a whole column step so the
+ * END of a swipe — where a browser always lets a scroller rest — lands on a snap
+ * point. That rounding only works if the extra pixels stay OUTSIDE the tracks.
+ *
+ * They did not. The value tracks were `minmax(var(--grid-col-w), 1fr)`, and the
+ * big comment on `gridTemplate` below rests on a property that was true right up
+ * until the floor shipped: *"THE PHONE IS UNTOUCHED — at 390px there is no free
+ * space, so step 2 distributes nothing."* A `min-width` of 436 on a 406px grid
+ * CREATES 30px of free space, and step 3 hands free space to the `1fr` tracks.
+ * Measured on production the night the floor shipped, phone 390px, at the end
+ * rest position:
+ *
+ *     column width  46 -> 52      (30px spread across 5 flexible tracks)
+ *     column step   52 -> 58
+ *     maxScroll     104           (not a multiple of 58 -> not a snap point)
+ *
+ * so a 6px sliver of the QF column survived beside the sticky name and the rows
+ * printed a clipped `%` next to the player. Better than the half-eaten digit it
+ * replaced, but not what the floor was for.
+ *
+ * So while the grid SCROLLS, the phone's value tracks are fixed at
+ * `--grid-col-w` and the rounding becomes real trailing gutter, which is what
+ * the floor always assumed. Two variants rather than one string with an
+ * override, so there is no specificity question: exactly one is ever applied.
+ *
+ * ⚠️ Both are LITERALS for the JIT reason `GRID_SIZING` documents above, and
+ * both spell `lg:` identically — a scrolling grid is a PHONE state (`lg:` gets
+ * `overflow-x-visible` and `lg:!min-w-0`), so above `lg` the two must agree, and
+ * they agree with what shipped before any of #3087.
+ */
+export const GRID_COL_TRACK_FLEX =
+  "[--grid-col-track:minmax(46px,1fr)] lg:[--grid-col-track:minmax(84px,1fr)]";
+export const GRID_COL_TRACK_FIXED =
+  "[--grid-col-track:46px] lg:[--grid-col-track:minmax(84px,1fr)]";
+
+/**
  * ═══ THE NAME TRACK STAYS WHEN THE GRID SCROLLS (#3087) ═══
  *
  * #3072 made the Title column REACHABLE — 74px of scroll where there had been
@@ -346,9 +384,19 @@ function Cell({
  * table, not per row, because grid tracks are shared. That is the correct
  * reading of "names get priority": a column sized to its longest entry is a
  * column where no name is cut while another row has slack.
+ *
+ * ═══ AND WHY THE VALUE TRACK IS NOW A VARIABLE (#3087, third pass) ═══
+ *
+ * The value track used to be written out here as `minmax(var(--grid-col-w),
+ * 1fr)`. It is now `var(--grid-col-track)`, which resolves to exactly that
+ * everywhere it used to — EXCEPT on a phone whose grid scrolls, where it is
+ * fixed so the scroll floor cannot be absorbed into the columns. See
+ * `GRID_COL_TRACK_FLEX` / `GRID_COL_TRACK_FIXED` above. Every clause of the
+ * ordering argument below is unchanged: a fixed track is still non-flexible, so
+ * the name still grows before the bars do.
  */
 export function gridTemplate(columnCount: number): string {
-  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, minmax(var(--grid-col-w), 1fr))`;
+  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, var(--grid-col-track))`;
 }
 
 function SumCheck({ grid }: { grid: PlayoffGridModel }) {
@@ -495,8 +543,8 @@ export default function PlayoffGrid({
           over the wrong column. */}
       <div
         className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
-          scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""
-        }`}
+          scrolls ? GRID_COL_TRACK_FIXED : GRID_COL_TRACK_FLEX
+        } ${scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""}`}
         data-testid="grid-scroller"
       >
         {/* The phone's scroll floor. `lg:min-w-0` retires it in a desktop
