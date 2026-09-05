@@ -625,28 +625,12 @@ celery_app.conf.task_routes = {
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
-    # #2236 (LAT-P101). A warmer on `realtime` looks out of place, so the reason
-    # is written here rather than left to be re-litigated. This is not a cost
-    # decision, it is a CORRECTNESS one.
-    #
-    # The task's whole contract is "republish before the 60s live ceiling
-    # expires", expressed as `PERIOD (40) + BUDGET (20) <= 60`. That arithmetic
-    # assumes the pass STARTS at its period. `background` is documented three
-    # dozen lines above as having ~one effective slot for ~45 beats, is measured
-    # at ~90 % slot occupancy, and its own budget module says "ordinary co-tenant
-    # bursts produce multi-minute waits". A pass that starts two minutes late
-    # publishes nothing in time — the key already expired and the user already
-    # paid the cold build. The fix would have been PARTIALLY INERT there, and
-    # inert in the silent way: the beat would report success on every pass it
-    # eventually ran.
-    #
-    # And it is the queue's own stated purpose: "high-frequency tasks driving
-    # user-visible live game data. Never blocked by batch jobs." This fires only
-    # while a live card is on the page, at a 40s cadence, to keep a live score
-    # from going stale in front of somebody. Cost against the 4-slot pool: ~0.15
-    # slots in the working case, <=0.5 in the pathological one (20s budget / 40s
-    # period), and ~0 when nothing is live.
-    "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
+    # #2236 (LAT-P101) put `prewarm_live_feed_shapes` HERE, on `realtime`, and
+    # D68-next (#3060, L1B-050) MOVED IT TO `heavy`. It is listed in HEAVY_TASKS
+    # below with the measurement that moved it; this breadcrumb stays because the
+    # #2236 argument is still correct and is the thing a future reader will find
+    # first. Its premise — "realtime is the lane that is never blocked by batch
+    # jobs" — is what stopped being true, not its reasoning.
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -812,6 +796,60 @@ HEAVY_TASKS = {
     # placing it there would close the queue rather than share it. It cannot
     # collide with the :15 precompute, and it is the only heavy beat at :50.
     "app.tasks.refresh_stale_futures_prices",
+    # --- D68-next = B (#3060, #3251, L1B-050). The front-page pre-builder, moved
+    # off `realtime`. This is the ONE task on this lane that a user waits on, so
+    # the reason is written out rather than left to the class rule above.
+    #
+    # WHY IT MOVED. #2236 put it on `realtime` for a correctness reason that was
+    # right at the time: its contract is PERIOD (40) + BUDGET (20) <= 60, which
+    # assumes the pass STARTS at its period, and `realtime` was then the lane
+    # "never blocked by batch jobs". That premise died. Measured 2026-09-05 off
+    # `GET /api/admin/celery/schedule-adherence`, all four `realtime` co-tenants
+    # grade `overruns` — each one's p95 exceeds its own period:
+    #
+    #     task                          period   p95      slots at p95
+    #     poll_all_odds                    30s   114.2s        3.81
+    #     sync_espn_live_events            60s   111.5s        1.86
+    #     poll_live_prediction_markets    120s   260.5s        2.17
+    #     poll_datagolf_inplay             90s   112.5s        1.25
+    #                                                          ----
+    #                                                          9.09  vs 4 slots
+    #
+    # #3251's single-flight lease caps each of those at ONE concurrent copy, so
+    # the real standing demand is ~4 of 4 — which leaves exactly zero for this
+    # beat. And zero is what it got: over the last 7.97 h it completed 50 passes,
+    # one per 574s against a 40s period = **7.0 % of its scheduled fires**. It
+    # does not fail when it loses; its `expires` bound (one period, #1609) throws
+    # the message away silently, which is why the beat surface read healthy while
+    # the front page cost 4-24s on every visit.
+    #
+    # WHY `heavy` AND NOT `background`. The #2236 argument against `background`
+    # is untouched and still disqualifies it: ~one effective slot for ~40 beats,
+    # ~90 % occupancy, multi-minute co-tenant waits. `heavy` is the opposite
+    # measurement — 2 slots, and its census depth reads 0 (it read 0 in #1609's
+    # census too, while background sat at 418).
+    #
+    # THE COST TO THE CALIBRATION LANE, priced honestly at BOTH tails. Heavy's
+    # two largest residents are precompute_calibration_main (hourly, p95 1352.8s
+    # = 0.376 slots) and match_prediction_markets (900s, p95 752.5s = 0.836).
+    # Adding this beat's <=0.5 (20s budget / 40s period; ~0 when nothing is live):
+    #     p50 stack ~1.04 of 2 slots — comfortable.
+    #     p95 stack ~1.71 of 2 slots — tight, and a real window in which both
+    #     slots are busy and a pass is discarded exactly as it is today.
+    # So this is a large improvement, NOT a cure: it moves the beat from a lane
+    # where it loses ~93 % of its fires to one where it should lose a minority.
+    # Anyone re-measuring should grade it on adherence, not on "does it run".
+    #
+    # THE REVERSIBILITY. `app/utils/heavy_routing_falsifier.py` is left armed
+    # exactly as it was — it watches the 7 calibration heavy-beats and flips to
+    # REVERT if any p50 rises to >=1.25x its pinned pre-move baseline, or crosses
+    # its consumer ceiling (user_page 60s / operator_panel 120s / no_reader 240s).
+    # Read it at `GET /api/admin/heavy-move/falsifier`. ⚠️ STATED GAP, not an
+    # oversight: that instrument's *mover* list still names only ruling 110's two
+    # tasks, so a REVERT verdict will prescribe reverting THOSE. If it fires after
+    # this change, this line is the first thing to try — deleting it and restoring
+    # the beat literal to "realtime" is the whole undo.
+    "app.tasks.prewarm_live_feed_shapes",
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -4848,13 +4886,19 @@ celery_app.conf.beat_schedule = {
         # case, and the reason a 40s beat is affordable at all), otherwise one
         # feed build per LIVE shape inside a 20s pass budget.
         #
-        # `realtime`, NOT `background` — and both routing surfaces say so, since
-        # beat options override `task_routes` and a disagreement would make the
-        # queue depend on whether the task was published by beat or by hand. The
-        # argument is at the `task_routes` entry: a 40s deadline cannot survive a
-        # queue whose own budget module documents multi-minute co-tenant waits.
+        # `heavy` since D68-next (#3060, L1B-050) — it was `realtime` under #2236
+        # until `realtime` was measured at ~4 of 4 slots permanently occupied and
+        # this beat at 7.0 % adherence. Still NOT `background`: #2236's argument
+        # against it (one effective slot, multi-minute co-tenant waits) stands.
+        #
+        # Both routing surfaces must say `heavy`, since beat options override
+        # `task_routes` and a disagreement would make the queue depend on whether
+        # the task was published by beat or by hand —
+        # `test_heavy_beat_literals_match_their_effective_queue` reads this
+        # literal out of the SOURCE, so the HEAVY_TASKS loop cannot paper over it.
+        # The full measurement and the undo are at the HEAVY_TASKS entry.
         "schedule": float(FEED_LIVE_REPUBLISH_PERIOD_S),
-        "options": {"queue": "realtime"},
+        "options": {"queue": "heavy"},
     },
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",

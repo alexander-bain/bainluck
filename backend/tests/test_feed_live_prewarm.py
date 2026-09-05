@@ -171,7 +171,7 @@ def test_the_beat_carries_an_expires_bound_of_exactly_one_period():
     ), "the bound must be exactly one period — the flat #1609 rule"
 
 
-def test_the_pass_runs_on_realtime_and_not_on_background():
+def test_the_pass_runs_on_heavy_and_not_on_background():
     """A queue choice that is part of the correctness argument, not of the cost one.
 
     `PERIOD + BUDGET <= 60` assumes the pass STARTS at its period. `background`
@@ -185,20 +185,40 @@ def test_the_pass_runs_on_realtime_and_not_on_background():
     inert in the silent way — the beat would report success on every pass it
     eventually ran. That is why this is a test and not a comment.
 
+    🔄 AMENDED by D68-next (#3060, L1B-050): `realtime` -> `heavy`. This test
+    used to read `test_the_pass_runs_on_realtime_and_not_on_background`, and the
+    half it was actually defending — NOT `background` — is unchanged and is the
+    half asserted last. What changed is a measurement, not the reasoning: on
+    2026-09-05 all four `realtime` co-tenants graded `overruns`
+    (`GET /api/admin/celery/schedule-adherence`), single-flight caps them at ~4
+    of 4 slots, and this beat completed 50 passes in 7.97 h — **7.0 % of its
+    scheduled fires** — while `heavy`'s census depth read 0. `realtime` had
+    become the exact lane #2236 was written to keep this task out of.
+
     Both surfaces are asserted because beat `options` override `task_routes`; a
     disagreement makes the queue depend on whether the task was published by the
     beat or by hand.
     """
-    from app.tasks import celery_app
+    from app.tasks import HEAVY_TASKS, celery_app
 
     conf = celery_app.conf
     entry = conf.beat_schedule["prewarm-live-feed-shapes"]
-    assert entry["options"]["queue"] == "realtime", entry["options"]
+    assert entry["options"]["queue"] == "heavy", entry["options"]
     assert conf.task_routes["app.tasks.prewarm_live_feed_shapes"] == {
-        "queue": "realtime"
+        "queue": "heavy"
     }
-    # And the fall-through hazard, named: deleting the queue option is the same
-    # as choosing `background`, because that is the default.
+    # Membership in HEAVY_TASKS is what makes the two surfaces agree by
+    # construction (the loop under the set writes `task_routes`), and it is what
+    # `test_heavy_beat_literals_match_their_effective_queue` keys off to check
+    # the beat's SOURCE literal. Assert it directly: routing correctly by
+    # accident, off a hand-written pair, is the arrangement that guard exists to
+    # forbid.
+    assert "app.tasks.prewarm_live_feed_shapes" in HEAVY_TASKS
+
+    # And the surviving half of the original guard, unchanged: `background` is
+    # still disqualified, and the fall-through hazard is still that deleting the
+    # queue option IS choosing it, because it is the default.
+    assert entry["options"]["queue"] != "background"
     assert conf.task_default_queue == "background"
 
 
