@@ -37,6 +37,7 @@ import {
   GRID_GAP_PX,
   GRID_NAME_WIDTH_PX,
   GRID_ROW_PADDING_PX,
+  gridScrollFloorPx,
   gridScrolls,
   gridWidthPx,
   readPlayoffGrid,
@@ -463,7 +464,13 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
     const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
     expect(html).toContain('data-scrolls="true"');
     expect(html).toContain("overflow-x-auto");
-    expect(html).toContain(`min-width:${gridWidthPx(5)}px`);
+    // The floor is the row's whole width ROUNDED UP so the scroll end lands on
+    // a snap point (#3087, second half) — `gridWidthPx(5)` = 406 would leave the
+    // end at 74, which is where the QF column hid half a number behind the
+    // sticky name. `gridScrollFloorPx` is what the component pins.
+    expect(html).toContain(`min-width:${gridScrollFloorPx(5)}px`);
+    expect(gridScrollFloorPx(5)).toBe(436);
+    expect(gridScrollFloorPx(5)).toBeGreaterThan(gridWidthPx(5));
     // The column that was being clipped is present and named.
     expect(html).toContain('data-kind="title"');
   });
@@ -595,6 +602,37 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
     // the reader can read QF→TITLE whole.
     expect(GRID_COLUMN_WIDTH_PX + GRID_GAP_PX).toBe(52);
     expect(GRID_SCROLL_SNAP).toContain("lg:snap-none");
+  });
+
+  it("THE END OF THE SCROLL IS A SNAP POINT, because a browser always rests there", () => {
+    // Measured on production with a real wheel gesture, snapping live but the
+    // floor still 406: +20 rested at 0, +40 at 52 (both snap points, both
+    // whole), and +70 and +120 both rested at 74 — the content END, which is
+    // not a snap point and is exactly where a swipe lands. At 74 the QF column
+    // sat half under the name box. Rounding the overflow up to a whole column
+    // step makes the end a snap point too.
+    const step = GRID_COLUMN_WIDTH_PX + GRID_GAP_PX;
+    for (const columns of [4, 5, 6, 9]) {
+      const overflow = gridScrollFloorPx(columns) - GRID_CARD_CONTENT_PX;
+      expect(gridScrolls(columns)).toBe(true);
+      expect(overflow % step).toBe(0); // the end IS a rest position
+      expect(gridScrollFloorPx(columns)).toBeGreaterThanOrEqual(gridWidthPx(columns));
+      // …and it never over-pads: at most one step of gutter.
+      expect(gridScrollFloorPx(columns) - gridWidthPx(columns)).toBeLessThan(step);
+    }
+    // Five columns: 406 overflows 332 by 74, which rounds to 104 → floor 436.
+    expect(gridScrollFloorPx(5)).toBe(436);
+    // Four columns: overflows by 22, rounds to 52 → floor 384.
+    expect(gridScrollFloorPx(4)).toBe(384);
+  });
+
+  it("a grid that fits keeps its own width — nothing to round", () => {
+    expect(gridScrolls(3)).toBe(false);
+    expect(gridScrollFloorPx(3)).toBe(gridWidthPx(3));
+    expect(gridScrollFloorPx(2)).toBe(gridWidthPx(2));
+    // And the component pins no floor at all on one.
+    const three = grid({ columns: COLUMNS.slice(0, 3) });
+    expect(renderToStaticMarkup(<PlayoffGrid grid={three} />)).not.toContain("min-width:");
   });
 
   it("does not snap a grid that does not scroll", () => {
