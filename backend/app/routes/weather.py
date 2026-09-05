@@ -102,10 +102,30 @@ def _open_weather_query():
     - Non-open markets (resolved, suspended, closed)
     - Markets whose resolution_date is in the past (zombie markets)
     - Markets not updated in the last 7 days (stale)
+    - Markets we hold no price for (see below)
     - Health/pandemic markets misclassified as weather by the LLM
     """
     now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(days=7)
+    # Every weather card prints a probability, and every one of them derives it
+    # from a scan that opens at 0.0 (`_highest_prob`). A market carrying no
+    # priced outcome therefore renders as a confident red 0% — the most wrong
+    # number available — rather than as the absence it is. Six of those were on
+    # the live page: four "Number of tornadoes in <month> 2026?", the 6.0+
+    # earthquake market, and NYC monthly rainfall. Absence is not zero, so a
+    # market with nothing priced never reaches a card; the sections' existing
+    # empty states say so honestly instead.
+    #
+    # The predicate is IS NOT NULL, not > 0: a genuine 0.0 IS a price, and a
+    # market the venue prices at zero keeps its row.
+    has_priced_outcome = (
+        select(FuturesOutcome.id)
+        .where(
+            FuturesOutcome.market_id == FuturesMarket.id,
+            FuturesOutcome.current_probability.is_not(None),
+        )
+        .exists()
+    )
     return (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -117,6 +137,7 @@ def _open_weather_query():
                 FuturesMarket.resolution_date > now,
             ),
             FuturesMarket.updated_at >= stale_cutoff,
+            has_priced_outcome,
             # Exclude health/pandemic markets misclassified as weather
             not_(FuturesMarket.name.ilike("%pandemic%")),
             not_(FuturesMarket.name.ilike("%bird flu%")),
