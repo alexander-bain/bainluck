@@ -511,3 +511,51 @@ def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven():
     )
     assert permitted
     assert "discovery" not in why
+
+
+def test_every_mapped_sport_off_the_discovery_beat_is_refused_by_name(monkeypatch):
+    """The whole tier, not one specimen — and derived, so it grows by itself.
+
+    lane1's review of the step-7 handoff (their PR #3178) closed this tier with a
+    hand-written inventory. Deriving it instead means a sport added to
+    `STATPAL_SPORT_MAPPING` without a schedule beat lands in this guard the day it
+    is mapped, rather than the day somebody remembers a list. Today that set is
+    `golf_pga`, seven soccer leagues, `tennis_atp` and `tennis_wta`.
+
+    The trap lane1 hit and warned about, which this avoids: without FULL
+    evidencing, every one of these sports is already refused at the first clause
+    (no shadow stamper), so the test passes green with the discovery clause
+    deleted — true by construction, which is not a test. Each sport here is given
+    a stamper, a governing number and ten perfect days first, so the only thing
+    left that can refuse it is the clause under test.
+    """
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    off_the_beat = set(STATPAL_SPORT_MAPPING) - set(DISCOVERY_SCHEDULED_SPORTS)
+    assert off_the_beat, (
+        "every mapped sport is on the discovery beat, so this guard is vacuous — "
+        "if that is genuinely true now, this test should be deleted, not left to "
+        "pass over an empty set"
+    )
+
+    for sport_key in sorted(off_the_beat):
+        monkeypatch.setattr(
+            abs_module,
+            "SHADOW_STAMPERS",
+            {**SHADOW_STAMPERS, sport_key: f"stamp_{sport_key}"},
+        )
+        monkeypatch.setattr(
+            abs_module,
+            "GOVERNING_IDENTITY_NUMBERS",
+            {**GOVERNING_IDENTITY_NUMBERS, sport_key: ("ours_covered_pct",)},
+        )
+
+        permitted, why = flip_permitted(sport_key, _run_of(10, GATE_MEETS))
+
+        assert not permitted, (
+            f"{sport_key} is mapped to StatPal with no scheduled discovery pass, "
+            "and ten perfect agreement days let it through the flip gate"
+        )
+        assert (
+            "discovery" in why
+        ), f"{sport_key} was refused, but not for the reason that applies to it: {why!r}"

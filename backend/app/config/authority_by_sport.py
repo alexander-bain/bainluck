@@ -163,7 +163,8 @@ def flip_permitted(
 
       * no dark id join for this sport at all, so there is nothing to flip TO;
       * no scheduled discovery pass, so agreeing about the games we already have
-        is the only thing this sport's streak could ever prove;
+        is the only thing this sport's streak could ever prove — add the beat,
+        do not wait for days;
       * no governing number ruled, so no day could ever have advanced (D63);
       * no ledger at all — not measured, which is not a streak of zero;
       * a streak that is real and not seven days long yet;
