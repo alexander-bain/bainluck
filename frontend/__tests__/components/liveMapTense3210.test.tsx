@@ -81,9 +81,20 @@ function markets(overrides: Record<string, unknown> = {}) {
       { market_name: "Bergs vs. van de Zandschulp: Game Spread", outcome_name: "Zizou Bergs -2.5", threshold: 2.5, probability: 0.48, source: "kalshi", is_winner: null, resolution_source: null },
       { market_name: "Bergs vs. van de Zandschulp: Game Spread", outcome_name: "Botic van de Zandschulp -2.5", threshold: 2.5, probability: 0.52, source: "kalshi", is_winner: null, resolution_source: null },
     ],
+    // FOUR rungs, and the count is load-bearing (#3210's second half). A
+    // two-rung card produces one PDF point, paints an identically-coloured
+    // segment across the whole rail, and therefore no longer calls itself a
+    // "distribution" at all — it says "Two lines quoted" and names them. That
+    // is the subject of `mapWithoutAShape3210.test.tsx`, not of this suite.
+    // THIS suite is about which TENSE a status selects, so its fixture has to
+    // be a card whose band really does draw a shape; otherwise every
+    // "distribution" assertion below would be testing the flat-band rule
+    // wearing the tense rule's name.
     totals: [
+      { threshold: 42.5, over_probability: 0.33, source: "kalshi", market_type: "game_total", market_name: "Bergs vs. van de Zandschulp: Total Games O/U 42.5", outcome_name: "Over", is_winner: null, resolution_source: null, movement: 0.01, period: null },
       { threshold: 40.5, over_probability: 0.51, source: "kalshi", market_type: "game_total", market_name: "Bergs vs. van de Zandschulp: Total Games O/U 40.5", outcome_name: "Over", is_winner: null, resolution_source: null, movement: 0.02, period: null },
       { threshold: 38.5, over_probability: 0.64, source: "kalshi", market_type: "game_total", market_name: "Bergs vs. van de Zandschulp: Total Games O/U 38.5", outcome_name: "Over", is_winner: null, resolution_source: null, movement: 0.03, period: null },
+      { threshold: 36.5, over_probability: 0.72, source: "kalshi", market_type: "game_total", market_name: "Bergs vs. van de Zandschulp: Total Games O/U 36.5", outcome_name: "Over", is_winner: null, resolution_source: null, movement: 0.03, period: null },
     ],
     ...overrides,
   };

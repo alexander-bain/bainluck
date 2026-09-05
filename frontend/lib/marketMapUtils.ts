@@ -105,6 +105,79 @@ export function rgbaFromIntensity(intensity: number, rgb: string): string {
   return `rgba(${rgb},${alpha.toFixed(2)})`;
 }
 
+/**
+ * DOES THIS BAND DRAW A SHAPE, OR ONE FLAT COLOUR? (#3210)
+ *
+ * Alex, from a production LOOK of `/events/15304847` at 390px:
+ *
+ *   > The band underneath is a single flat purple block — the card promises a
+ *   > distribution and draws none.
+ *
+ * ═══ WHY THE TEST IS THE RENDERED COLOUR AND NOT A RUNG COUNT ═══
+ *
+ * The obvious rule is "fewer than three rungs cannot describe a shape", and it
+ * is true — `buildDensityFromThresholds` turns N thresholds into N−1 PDF
+ * points, and with a single point every segment is assigned that same point's
+ * density, so the rail comes out mathematically constant. Two rungs are the
+ * common tennis case and that is the case in the issue.
+ *
+ * But a rung count is a PROXY, and the three events measured on production on
+ * 2026-09-05 show it is the wrong one. `/events/15304420` had **three**
+ * game-total rungs — 36.5, 38.5 and 40.5 — and every one of them was quoted at
+ * `over_probability` 0.20. Three rungs, two PDF points, both with `dp = 0`, so
+ * the whole band normalises to zero and paints one flat wash. A count-based
+ * test calls that card a distribution; the reader sees the same solid block.
+ *
+ * So the question is asked of the thing the reader actually looks at: the rail
+ * paints one `<div>` per segment coloured by `rgbaFromIntensity`, and if every
+ * one of those divs gets the SAME colour string then the band is one block, by
+ * construction, whatever produced it. No tolerance to tune and no threshold to
+ * defend — the predicate is exact about the pixels.
+ *
+ * ═══ WHAT IT DELIBERATELY DOES NOT CATCH ═══
+ *
+ * A band with two barely-distinguishable colours (say intensity 96 beside 95)
+ * would read solid to a reader and passes this test. That is on purpose: every
+ * looser rule needs a perceptual constant nobody has measured, and the cost of
+ * being strict here is only that a card keeps a band it could have replaced —
+ * never that a card loses one it earned. Widen it when a production LOOK
+ * produces the counter-example, not before.
+ *
+ * PURE: no I/O, no React.
+ */
+export function densityDrawsShape(density: number[], accentRgb: string): boolean {
+  if (density.length < 2) return false;
+  const first = rgbaFromIntensity(density[0], accentRgb);
+  return density.some((d) => rgbaFromIntensity(d, accentRgb) !== first);
+}
+
+/**
+ * Spelled out to nine, because these are counts in a sentence and not data:
+ * "Two lines quoted" is Alex's own wording in #3210 and "2 lines quoted" is
+ * not. Above nine the digits win, as they do in any house style.
+ */
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+
+/**
+ * `"Two lines quoted"` — what a map says INSTEAD of promising a distribution
+ * it cannot draw (#3210).
+ *
+ * Alex listed three options on that issue and this is the sentence from his
+ * own text: *"Two lines quoted" with the rungs named is true and useful;
+ * "Final games distribution" over a solid bar is not.* The rungs are named
+ * directly beneath it — see `MarketMap`'s inline ladder — so the count is not
+ * a substitute for the content, it is the heading over it.
+ *
+ * Note what this deliberately does NOT replace: the live and settled subtitles
+ * ("Where it's heading / landed vs what was expected") describe the MARKERS on
+ * the rail, which are drawn whether or not the band has a shape. Only the
+ * sentences that claim a *distribution* are answerable by this one.
+ */
+export function quotedLinesPhrase(rungCount: number): string {
+  const word = COUNT_WORDS[rungCount] ?? String(rungCount);
+  return `${word} ${rungCount === 1 ? "line" : "lines"} quoted`;
+}
+
 export interface ParsedSpread {
   team: string;
   threshold: number;
