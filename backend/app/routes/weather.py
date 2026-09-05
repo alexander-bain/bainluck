@@ -10,7 +10,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Sequence
+from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_, not_
@@ -901,20 +901,52 @@ async def get_rain_cached(db: AsyncSession = Depends(get_db)):
 async def get_rain(db: AsyncSession):
     """Build rain forecast response from database."""
     # --- Daily NYC rain ---
+    # Two stored shapes answer "will it rain in NYC tomorrow", and the card has
+    # to read both (ux/1076, CERT-1855):
+    #
+    #   legacy  KXRAINNYC-*   one binary market per day, "Will it rain in NYC
+    #                         on Sep 6, 2026?", outcomes Yes/No. Zero open at
+    #                         the venue today — the series is dormant, not
+    #                         removed, so the clause stays.
+    #   live    KXRAIN-*      ONE market per day, "Where will it rain on Sep 6,
+    #                         2026?", carrying 22 CITY outcomes (New York City,
+    #                         Chicago, Miami …). This is the shape the venue
+    #                         actually lists now.
+    #
+    # `KXRAIN-%` matches the daily series and nothing else: the literal hyphen
+    # excludes KXRAINWKND-* and every monthly KXRAIN*M-*, which are different
+    # questions and belong to other cards.
     daily_query = _open_weather_query().where(
-        FuturesMarket.name.ilike("Will it rain in NYC on%"),
+        or_(
+            FuturesMarket.name.ilike("Will it rain in NYC on%"),
+            FuturesMarket.external_id.like("KXRAIN-%"),
+        )
     ).order_by(FuturesMarket.resolution_date.asc())
 
     daily_result = await db.execute(daily_query)
     daily_markets: list[FuturesMarket] = list(daily_result.scalars().all())
 
     daily_rain = []
+    seen_days: set = set()
     for m in daily_markets:
         if not m.resolution_date:
             continue
-        # Get the "Yes" outcome probability
-        prob = _get_yes_probability(m)
+        prob = _nyc_rain_probability(m)
+        # None means we hold no NYC price for that day. The card must skip it.
+        # This is ux/1075's rule one level down: the multi-city event can be
+        # priced overall while NYC specifically is not, and the fallback that
+        # used to cover that gap returned the WETTEST CITY's number under an
+        # NYC label — the event leader, not New York.
+        if prob is None:
+            continue
         dt = m.resolution_date
+        day_key = dt.date()
+        # A day can be answered by both shapes if the legacy series ever wakes
+        # up. One row per day; the first writer wins and the ordering above is
+        # by resolution_date, so the pair is adjacent and the choice is stable.
+        if day_key in seen_days:
+            continue
+        seen_days.add(day_key)
         daily_rain.append({
             "day": dt.strftime("%a"),
             "date": dt.strftime("%b %d").replace(" 0", " "),
@@ -971,6 +1003,43 @@ async def get_rain(db: AsyncSession):
         "daily": daily_rain,
         "monthly": monthly_rain,
     }
+
+
+#: The venue's own key for the New York City leg of a daily KXRAIN event
+#: (`KXRAIN-26SEP06-NYC`). Preferred over the outcome's display name, which is
+#: prose and can be re-worded upstream without notice.
+_NYC_OUTCOME_SUFFIX = "-NYC"
+#: Fallback identity, and the name Kalshi ships today.
+_NYC_OUTCOME_NAMES = {"new york city", "new york", "nyc"}
+
+
+def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
+    """NYC's chance of rain from either stored shape, or None if we hold none.
+
+    Returning None rather than a number is the whole point. A daily KXRAIN
+    event carries 22 cities, so there is always SOME probability to report —
+    and reporting it under an NYC label is how "will it rain in New York?"
+    came to be answered with Chicago's forecast. If NYC is not in the event,
+    or carries no price, the honest answer is no row at all.
+    """
+    is_multi_city = (market.external_id or "").startswith("KXRAIN-")
+    if not is_multi_city:
+        # Legacy binary market: the Yes leg is NYC's answer by construction.
+        for o in market.outcomes:
+            if o.name and o.name.lower() in ("yes", "y"):
+                if o.current_probability is None:
+                    return None
+                return round(float(o.current_probability) * 100)
+        return None
+
+    for o in market.outcomes:
+        ext = (o.external_id or "").upper()
+        name = (o.name or "").strip().lower()
+        if ext.endswith(_NYC_OUTCOME_SUFFIX) or name in _NYC_OUTCOME_NAMES:
+            if o.current_probability is None:
+                return None
+            return round(float(o.current_probability) * 100)
+    return None
 
 
 def _get_yes_probability(market: FuturesMarket) -> int:
