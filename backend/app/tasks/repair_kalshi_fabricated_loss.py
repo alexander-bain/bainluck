@@ -14,6 +14,49 @@ an endpoint that returns its own census, never an incantation):
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
     ...then drain with ?after_date=<..>&after_id=<..> from ``next_cursor``
 
+CAL-P1008 — THE CAPTURE IS PART OF THE RUNBOOK, not housekeeping after it. The
+durable plan slot (:data:`PLAN_IDENTITY`) holds ONE plan and a drain over
+:data:`APPLY_MARKET_CAP` markets per call runs many, so batch N+1's dry-run
+destroys the only per-leg record of what batch N's RESTORE arm touched — that arm
+writes ``api_settlement`` back over ``api_settlement`` and leaves no marker to
+find its rows by afterwards. Every dry-run response therefore carries
+``plan_artifact``: the byte-identical banked payload, each leg with its verdict
+and the prior state the apply compares on. Save it before the next dry-run::
+
+    for each batch N:
+        apply=false  → save the WHOLE response as batchN-plan.json, read it
+        apply=true&plan_hash=<hash from that response>
+                     → save the whole response as batchN-applied.json
+    ...then re-census; finished is the addressed bands measuring 0.
+
+CAL-P1008-R (CERT-965) — AND THE UNDO IS A COMMAND, not a capture discipline.
+The block above makes the plan capturable, but capture is then an operator step,
+and an undo that exists only if a human remembered to save a file is the same
+hole one door down. So the apply banks the pre-image itself, at a per-plan
+address, BEFORE its first UPDATE — and refuses to write a single row if it
+cannot. To reverse one batch::
+
+    POST /api/admin/repairs/kalshi-fabricated-loss-restore?plan_hash=<hash>
+    POST /api/admin/repairs/kalshi-fabricated-loss-restore?apply=true&plan_hash=<hash>
+
+Dry-run by default; the `plan_hash` is in the apply response's ``undo`` block.
+The response capture above is still worth keeping — it is a second copy,
+off-box, and it is what you read to decide *whether* to undo.
+
+CAL-P1008-R2 (CERT-970) — AND THE RESTORE IS BOUND TO WHAT WAS **WRITTEN**.
+Binding it to the plan was a data-corruption bug, not a nicety. Specimen: a
+grader moves a planned leg to ``(true, api_settlement)`` — the state a
+successful apply produces — so the apply's compare-and-set skips it and never
+writes it; a plan-bound restore then finds its post-apply predicate satisfied
+and sets ``is_winner`` back to false, destroying a real grade. So the apply
+banks a SECOND record after its commit — :func:`applied_identity`, holding only
+the rowcount-1 writes — and every write carries
+``last_updated = :applied_version``, a value the apply chooses. The restore
+requires both: membership in that record, and that exact version still on the
+row. The version is what catches the case values cannot — a regrade to the SAME
+values after a successful apply. Rows committed with no applied receipt make the
+apply report ``success: false``: they are rows nothing can reverse.
+
 CAL-P058 — WHAT C-CERT-1852 CHANGED HERE, and it is the write protocol, not the
 judgment. The certification confirmed the judgment is genuinely per-leg and that
 the four venue specimens reproduce; it BLOCKED the branch on five defects in how
@@ -99,6 +142,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -116,6 +160,7 @@ from app.utils.calibration_invalidation import (
 )
 from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
+    REPAIRABLE_SOURCE,
     RETENTION_BAND_SQL,
     RETRACTION_SOURCE,
     WRITING_VERDICTS,
@@ -128,14 +173,19 @@ from app.utils.kalshi_retention import (
     PROVABLY_PURGED_AGE_DAYS,
 )
 from app.utils.repair_apply_plan import (
+    APPLIED_RECEIPT_SCHEMA,
     APPLY_PLAN_SCHEMA,
+    REASON_APPLIED_MISSING,
     REASON_CONCURRENT_DRIFT,
     REASON_OUTSIDE_APPROVED,
     REASON_PLAN_UNREADABLE,
     PlannedLeg,
     approved_leg_index,
     bind_apply,
+    applied_receipt_contains,
+    build_applied_receipt,
     build_plan,
+    decode_applied_receipt,
     decode_plan,
     evaluate_repair_contract,
     keyset_after,
@@ -189,6 +239,26 @@ _VENUE_MAX_PAGES = 3
 #: Durable identity of the reviewed plan artifact. ONE slot: a dry-run
 #: overwrites it, and the content address is what stops an operator applying the
 #: page they read two pages ago.
+#:
+#: CAL-P1008 — that one slot is also the only record of WHICH LEG GOT WHICH
+#: VERDICT, and that is the undo. The prior state is not the hard part: both
+#: writing verdicts require ``is_winner = false`` and
+#: :data:`REPAIRABLE_SOURCE`, so the pre-image is a rail-wide constant, not a
+#: per-leg fact. What is per-leg is the ARM.
+#:
+#: * Retraction is self-identifying afterwards — it stamps
+#:   :data:`RETRACTION_SOURCE`, so its rows can be found by that marker alone.
+#: * Restore leaves NO marker. It sets ``is_winner = true`` and writes
+#:   ``api_settlement`` back over ``api_settlement``, so a restored leg is
+#:   byte-identical to a Kalshi winner nobody ever touched. Only the plan says
+#:   which ones they were, and ``plan_leg_ids`` in the response is both arms
+#:   mixed together with no verdict on them.
+#:
+#: So batch N+1's dry-run overwrites the only thing that can reverse batch N's
+#: restore arm. The dry-run therefore hands the whole artifact back in
+#: ``plan_artifact`` — see :func:`_dry_run` — so the operator's captured response
+#: IS the backup and the durable slot is a convenience, not the record of last
+#: resort.
 PLAN_IDENTITY = "calibration:repair:kalshi_fabricated_loss:plan"
 
 
@@ -530,6 +600,210 @@ async def _load_plan():
             "repair plan artifact not readable: status=%s error_class=%s",
             read.status, read.error_class,
         )
+        return None, plan_reason_for_read(read.status, error_class=read.error_class)
+    return decode_plan(read.envelope.payload)
+
+
+# ---------------------------------------------------------------------------
+# The UNDO RECEIPT (CAL-P1008-R, CERT-965)
+#
+# CERT-965 blocked the first CAL-P1008 branch for the right reason. Handing the
+# plan back on the dry-run response makes the undo *capturable*, but capture is
+# then an operator step, and an undo that exists only if a human remembered to
+# `tee` is the same hole one door down. D51 = B(b) asks for a backup WRITTEN
+# FIRST and a restore that RUNS.
+#
+# So: one slot PER PLAN, addressed by the plan's own content hash, written
+# before any row is touched, and an apply that cannot bank it does not mutate.
+# Per-plan addressing is the whole point — :data:`PLAN_IDENTITY` is one slot and
+# batch N+1 overwrites it, which is exactly what left batch N unrecoverable.
+# ---------------------------------------------------------------------------
+
+UNDO_RECEIPT_SCHEMA = "kalshi_fabricated_loss_undo_receipt_v1"
+
+#: Receipts are read to REVERSE a write, so they must outlive the drain by a
+#: wide margin. A receipt that aged out would read as "nothing to undo", which
+#: is the false-green this whole rail is built to refuse.
+_RECEIPT_MAX_AGE_S = 365 * 86400
+
+
+def receipt_identity(plan_hash: str) -> str:
+    """One durable slot per plan. Content-addressed, so batches cannot collide."""
+    return f"calibration:repair:kalshi_fabricated_loss:receipt:{plan_hash}"
+
+
+def applied_identity(plan_hash: str) -> str:
+    """Where the APPLIED receipt lives — what was written, not what was planned.
+
+    CERT-970: these are two different facts and only one of them may drive a
+    restore. See :data:`APPLIED_RECEIPT_SCHEMA` for the specimen.
+    """
+    return f"calibration:repair:kalshi_fabricated_loss:applied:{plan_hash}"
+
+
+async def _stage_applied(session, plan_hash: str, written_legs) -> tuple[bool, str, int]:
+    """STAGE the applied receipt in the caller's open transaction.
+
+    CAL-P1008-R3 (CERT-1858). Banking this on its own session after the apply's
+    commit was still a hole: rows landed, the receipt did not, and the rail
+    reported the state honestly — ``reversible: false`` — which is a description
+    of an unrecoverable row, not a defence against one. Reporting a hole is not
+    closing it.
+
+    So the receipt is staged in the SAME transaction as the outcome mutations
+    and the caller commits ONCE (the CERT-851 pattern that
+    :func:`publish_snapshot_in_txn` exists for). Rows and their undo record land
+    together or not at all; a staging failure is the caller's rollback, and the
+    rows are left exactly as they were.
+
+    Read-then-merge-then-stage: a retry of a partly-applied plan must ADD its
+    legs, and an apply that wrote nothing must not blank the record of one that
+    wrote something. The read is on the SAME session, so it sees this
+    transaction's own state rather than a stale snapshot beside it.
+    """
+    from app.services.durable_snapshots import publish_snapshot_in_txn, read_snapshot
+    from app.utils.durable_state import DurableEnvelope
+
+    identity = applied_identity(plan_hash)
+    existing = None
+    try:
+        read = await read_snapshot(
+            session,
+            identity,
+            expected_version=APPLIED_RECEIPT_SCHEMA,
+            max_age_s=_RECEIPT_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Cannot read is NOT "nothing banked" (gotcha #53). Merging onto an
+        # unknown base could erase an earlier call's written set, so refuse.
+        return False, f"applied receipt read raised: {type(exc).__name__}", 0
+    if read.status != "missing":
+        if not read.ok or read.envelope is None:
+            return False, f"applied receipt unreadable: {read.status}", 0
+        existing = read.envelope.payload
+
+    payload = build_applied_receipt(plan_hash, written_legs, existing=existing)
+    if not written_legs:
+        # Nothing was written, so there is nothing to record and the merge is a
+        # no-op by construction. Staging it anyway would leave a durable write
+        # pending in a transaction this call never commits.
+        return True, "nothing written; receipt unchanged", payload["leg_count"]
+    try:
+        result = await publish_snapshot_in_txn(
+            session,
+            DurableEnvelope.build(
+                identity=identity,
+                schema_version=APPLIED_RECEIPT_SCHEMA,
+                payload=payload,
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"applied receipt stage raised: {type(exc).__name__}", 0
+
+    # CAL-P1008-R4 (CERT-1863): the STATUS is a note, not the gate. The durable
+    # layer answers `superseded` when a newer generation already sits at the
+    # identity, and in that case it writes NOTHING — for a plan artifact that
+    # still means "a good copy exists", which is why `_save_plan` accepts it,
+    # but here it means somebody else's payload is there and mine never landed.
+    # Taking it as success committed rows whose undo record did not contain
+    # them. So the gate is CONTAINMENT, read back from the store: are the legs
+    # this call wrote there, at the versions it wrote?
+    status = result.get("status")
+    try:
+        back = await read_snapshot(
+            session,
+            identity,
+            expected_version=APPLIED_RECEIPT_SCHEMA,
+            max_age_s=_RECEIPT_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"applied receipt read-back raised: {type(exc).__name__}", 0
+    if back.status == "missing":
+        # Nothing at the identity at all after a stage that answered. This is a
+        # containment failure, not a store outage: this write did not land.
+        return (
+            False,
+            f"applied receipt absent after staging ({status}): this write did "
+            "not land",
+            0,
+        )
+    if not back.ok or back.envelope is None:
+        return False, f"applied receipt not readable after staging: {back.status}", 0
+
+    contained, why = applied_receipt_contains(
+        back.envelope.payload,
+        expected_source_plan_hash=plan_hash,
+        written_legs=written_legs,
+    )
+    if not contained:
+        return False, f"applied receipt does not contain this write ({status}): {why}", 0
+    return True, f"ok ({status})", payload["leg_count"]
+
+
+async def _load_applied(plan_hash: str):
+    """``(legs, reason)`` for the applied receipt. Never "absent" on a bad read."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            applied_identity(plan_hash),
+            expected_version=APPLIED_RECEIPT_SCHEMA,
+            max_age_s=_RECEIPT_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("applied receipt read raised: %s", type(exc).__name__)
+        return None, REASON_PLAN_UNREADABLE
+    if read.status == "missing":
+        return None, REASON_APPLIED_MISSING
+    if not read.ok or read.envelope is None:
+        return None, plan_reason_for_read(read.status, error_class=read.error_class)
+    return decode_applied_receipt(
+        read.envelope.payload, expected_source_plan_hash=plan_hash
+    )
+
+
+async def _save_receipt(plan) -> tuple[bool, str]:
+    """Bank the pre-image BEFORE the first UPDATE. ``(ok, note)``.
+
+    The payload is the plan's own artifact, unchanged, so the receipt re-decodes
+    through :func:`decode_plan` and re-derives its own address — a receipt that
+    was edited or truncated in the store cannot be mistaken for a good one.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=receipt_identity(plan.plan_hash),
+                schema_version=UNDO_RECEIPT_SCHEMA,
+                payload=plan.as_payload(),
+                complete=True,
+                source="repair:kalshi-fabricated-loss",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        return False, f"receipt persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"receipt persist rejected: {result.get('status')}"
+
+
+async def _load_receipt(plan_hash: str):
+    """``(plan, reason)`` for a banked receipt. Never "absent" on a failed read."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            receipt_identity(plan_hash),
+            expected_version=UNDO_RECEIPT_SCHEMA,
+            max_age_s=_RECEIPT_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("undo receipt read raised: %s", type(exc).__name__)
+        return None, REASON_PLAN_UNREADABLE
+    if not read.ok or read.envelope is None:
         return None, plan_reason_for_read(read.status, error_class=read.error_class)
     return decode_plan(read.envelope.payload)
 
@@ -1058,6 +1332,26 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         "plan_note": plan_note,
         "plan_leg_ids": list(plan.leg_ids),
         "plan_market_ids": list(plan.market_ids),
+        # CAL-P1008: the per-leg VERDICT travels with the response, not only
+        # into the one durable slot the next batch overwrites. `plan_leg_ids`
+        # above is both arms mixed with no verdict on them, and the restore arm
+        # leaves no marker in the row it writes, so without this a drain of more
+        # than APPLY_MARKET_CAP markets — i.e. every real drain — cannot say
+        # afterwards which legs it flipped, and D51 = B(b)'s "writes a backup
+        # first, ships a one-command restore" is unmet from batch two onward.
+        # This is the exact payload that was banked, so a captured response
+        # re-decodes to this same `plan_hash`: a restorable artifact, not a
+        # description of one.
+        "plan_artifact": plan.as_payload(),
+        "plan_artifact_note": (
+            "This IS the backup — capture it per batch BEFORE the next dry-run: "
+            f"the durable slot at {PLAN_IDENTITY} holds one plan and batch N+1 "
+            "overwrites batch N. Undo the retraction arm by its "
+            f"{RETRACTION_SOURCE} marker; undo the restore arm ONLY from the "
+            "legs here whose verdict is restore_winner, because that arm writes "
+            "api_settlement back over api_settlement and leaves nothing in the "
+            "row to find it by."
+        ),
         "apply_instruction": (
             f"POST …/kalshi-fabricated-loss?apply=true&plan_hash={plan.plan_hash}"
             if plan_ok
@@ -1153,11 +1447,48 @@ async def _apply_reviewed_plan(session, plan_hash, started):
     prior_ids = obligation_market_ids(prior) if prior_open else []
     prior_legs = obligation_leg_ids(prior) if prior_open else []
 
+    # CAL-P1008-R (CERT-965): the undo receipt is banked BEFORE the first UPDATE,
+    # at an address only this plan can occupy, and a failure to bank it REFUSES
+    # the apply. Ordering is the whole guarantee: banked-then-written can leave a
+    # receipt for rows that were never touched (harmless — the restore's
+    # compare-and-set finds nothing to reverse), while written-then-banked can
+    # leave rows with no receipt at all, which is the state that cannot be
+    # recovered from. Re-applying the same plan_hash re-banks the same
+    # content-addressed payload, so a retry is idempotent here.
+    receipt_ok, receipt_note = await _save_receipt(plan)
+    if not receipt_ok:
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": ["UNDO_RECEIPT_NOT_BANKED"],
+            "receipt_note": receipt_note,
+            "receipt_identity": receipt_identity(plan.plan_hash),
+            "reason": (
+                "The pre-image could not be persisted, so this apply would not "
+                "be reversible. NOTHING was written. Retry the same plan_hash "
+                "once the durable store answers; the plan is unchanged."
+            ),
+            "prices_touched": False,
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
     index = approved_leg_index(plan)
     written: list[int] = []
+    written_legs: list[dict[str, Any]] = []
     drift: list[dict[str, Any]] = []
     winners_restored = 0
     losses_retracted = 0
+
+    # CAL-P1008-R2 (CERT-970): the apply STAMPS its own version instead of
+    # letting the database pick one. `NOW()` would leave the rail unable to say
+    # which write produced the row it is looking at, and CERT-970's specimen is
+    # exactly a row whose VALUES are the post-apply values but whose write was
+    # somebody else's. A value chosen here is known for every row this call
+    # writes, without a RETURNING clause, and any later write moves it — so a
+    # same-valued concurrent regrade is visible where no state comparison could
+    # ever have seen it.
+    applied_version = datetime.now(timezone.utc)
 
     for leg_id in plan.leg_ids:
         item = index[leg_id]
@@ -1172,7 +1503,7 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                 UPDATE futures_outcomes
                 SET is_winner = true,
                     resolution_source = 'api_settlement',
-                    last_updated = NOW()
+                    last_updated = :applied_version
                 WHERE id = :id
                   AND is_winner = :prior_winner
                   AND resolution_source IS NOT DISTINCT FROM :prior_source
@@ -1181,12 +1512,13 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                 "id": leg_id,
                 "prior_winner": item.expected_is_winner,
                 "prior_source": item.expected_source,
+                "applied_version": applied_version,
             }
         else:
             stmt = """
                 UPDATE futures_outcomes
                 SET resolution_source = :retraction,
-                    last_updated = NOW()
+                    last_updated = :applied_version
                 WHERE id = :id
                   AND is_winner = :prior_winner
                   AND resolution_source IS NOT DISTINCT FROM :prior_source
@@ -1196,11 +1528,25 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                 "retraction": RETRACTION_SOURCE,
                 "prior_winner": item.expected_is_winner,
                 "prior_source": item.expected_source,
+                "applied_version": applied_version,
             }
 
         r = await session.execute(text(stmt), params)
         if r.rowcount == 1:
             written.append(leg_id)
+            # Only a rowcount of ONE goes in the receipt. That is the whole of
+            # CERT-970's fix: a leg the compare-and-set skipped was not written
+            # by this call, so nothing may later reverse it as though it were.
+            written_legs.append(
+                {
+                    "leg_id": leg_id,
+                    "market_id": item.market_id,
+                    "verdict": item.verdict,
+                    "prior_is_winner": item.expected_is_winner,
+                    "prior_source": item.expected_source,
+                    "applied_version": applied_version.isoformat(),
+                }
+            )
             if item.verdict == "restore_winner":
                 winners_restored += 1
             else:
@@ -1231,6 +1577,42 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "measured": False,
             "refused": [REASON_OUTSIDE_APPROVED],
             "stray_leg_ids": stray,
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    # CAL-P1008-R2/R3 (CERT-970, CERT-1858): the record of what was WRITTEN is
+    # staged in THIS transaction, before the single commit below. The pre-write
+    # plan receipt is the forensic record if the process dies mid-write; THIS
+    # one is what a restore binds to, each leg carrying the version the apply
+    # stamped. It merges, so a retry adds its legs and an empty write set cannot
+    # blank an earlier call's record.
+    #
+    # The rows and their undo record therefore land together or not at all. If
+    # staging fails there is nothing to report honestly about, because nothing
+    # was committed.
+    applied_ok, applied_note, applied_leg_count = await _stage_applied(
+        session, plan.plan_hash, written_legs
+    )
+    if written and not applied_ok:
+        await session.rollback()
+        return {
+            "apply": True,
+            "measured": False,
+            "refused": ["UNDO_RECEIPT_NOT_STAGED"],
+            "plan_hash": plan.plan_hash,
+            "applied_identity": applied_identity(plan.plan_hash),
+            "applied_receipt_note": applied_note,
+            "legs_written": 0,
+            "rolled_back": True,
+            "reason": (
+                "The record of which rows this apply wrote could not be staged, "
+                "so the whole transaction was rolled back and NO row was "
+                "changed. Rows without that record cannot be reversed, and an "
+                "honest report of an unrecoverable row is not a substitute for "
+                "not creating one. Retry the same plan_hash."
+            ),
+            "prices_touched": False,
             "success": False,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
@@ -1329,6 +1711,32 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         "measured": True,
         "plan_hash": plan.plan_hash,
         "plan_leg_count": len(plan.leg_ids),
+        # CAL-P1008-R: the undo, as a command rather than a prose sketch. Banked
+        # before the first UPDATE, at an address this batch alone occupies.
+        "undo": {
+            "receipt_identity": receipt_identity(plan.plan_hash),
+            "receipt_banked_before_mutation": True,
+            "receipt_note": receipt_note,
+            # CAL-P1008-R2: the record a restore actually binds to.
+            "applied_identity": applied_identity(plan.plan_hash),
+            "applied_receipt_banked": applied_ok,
+            "applied_receipt_note": applied_note,
+            "applied_leg_count": applied_leg_count,
+            "reversible": applied_ok,
+            "dry_run": (
+                "POST …/repairs/kalshi-fabricated-loss-restore"
+                f"?plan_hash={plan.plan_hash}"
+            ),
+            "apply": (
+                "POST …/repairs/kalshi-fabricated-loss-restore"
+                f"?apply=true&plan_hash={plan.plan_hash}"
+            ),
+            "note": (
+                "Reverses BOTH arms under compare-and-set on the post-apply row "
+                "state, so a row something else has changed since is skipped and "
+                "named rather than clobbered. Dry-run by default."
+            ),
+        },
         "markets_written": len({index[i].market_id for i in written}),
         "legs_written": len(written),
         "winners_restored": winners_restored,
@@ -1372,6 +1780,10 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             invalidation_ok
             and attempted_equals_plan
             and contract["action"] != "REFUSE"
+            # CAL-P1008-R2: rows committed with no applied receipt are rows
+            # nothing can reverse. That is a debt like the invalidation's, and
+            # it is reported as failure rather than left to be noticed.
+            and (applied_ok or not written)
         ),
         "success_note": (
             "success is FALSE unless the calibration invalidation executed and "
@@ -1382,6 +1794,288 @@ async def _apply_reviewed_plan(session, plan_hash, started):
             "drifted, and never for one carrying an open debt. Rows may be "
             "repaired while success is false; that is the honest state, not a "
             "contradiction."
+        ),
+        "elapsed_s": round(time.monotonic() - started, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# THE RESTORE (CAL-P1008-R, CERT-965): the undo, as a command that runs
+# ---------------------------------------------------------------------------
+
+
+async def restore(
+    session,
+    apply: bool = False,
+    plan_hash: str | None = None,
+) -> dict[str, Any]:
+    """Reverse one applied batch, from its banked receipt. Dry-run by default.
+
+        POST /api/admin/repairs/kalshi-fabricated-loss-restore?plan_hash=<hash>
+        POST …?apply=true&plan_hash=<hash>
+
+    CERT-965's required repair, corrected by CERT-970. Four properties:
+
+    1. **It is bound to what was WRITTEN, not to what was planned.** CERT-970's
+       specimen: a concurrent grader moves a planned leg to ``(true,
+       api_settlement)`` — the same state a successful apply produces — so the
+       apply's compare-and-set skips it as drift and never writes it. A restore
+       driven off the PLAN would then find its post-apply predicate satisfied
+       and set ``is_winner`` back to false, destroying a real grade. So the
+       binding is :func:`applied_identity`, whose legs are exactly the rowcount-1
+       writes. The pre-write plan receipt stays, as the forensic record if a
+       process dies mid-write; it never drives a write.
+    2. **Every arm also compares on the version the apply STAMPED.** Values are
+       not enough — a same-valued regrade after a successful apply leaves a row
+       whose state is identical and whose grade is somebody else's. Each write
+       carries ``last_updated = :applied_version``, a value the apply chose, and
+       the restore requires it. Any later write to the row, of any value, moves
+       it and the restore declines.
+    3. **It re-derives nothing.** No venue call, no classification, no work SQL
+       — the same discipline ``apply=true`` is held to, for the same reason.
+    4. **A row that has moved is reported by id and skipped.** Never widened,
+       never retried without a fresh receipt.
+
+    The dry-run tells you what it would touch without touching it. It reads the
+    receipt and reports, and it deliberately does NOT pre-check the rows: a
+    prediction made from a read that the write does not repeat is the stale-read
+    clobber this rail already fixed once.
+    """
+    started = time.monotonic()
+
+    if not plan_hash:
+        return {
+            "restore": True,
+            "measured": False,
+            "refused": ["PLAN_HASH_REQUIRED"],
+            "reason": (
+                "A restore is bound to ONE applied batch. Pass the plan_hash the "
+                "apply returned (it is in that response's `undo` block)."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    legs, reason = await _load_applied(plan_hash)
+    if legs is None:
+        return {
+            "restore": True,
+            "measured": False,
+            "refused": [reason],
+            "presented_plan_hash": plan_hash,
+            "applied_identity": applied_identity(plan_hash),
+            "plan_receipt_identity": receipt_identity(plan_hash),
+            "reason": (
+                "No trustworthy record of what that apply WROTE. A receipt that "
+                "cannot be read is NOT a batch with nothing to undo (gotcha #53), "
+                "and the pre-write plan receipt is deliberately not a substitute "
+                "(CERT-970): it names legs the apply may have skipped, and "
+                "reversing one of those destroys somebody else's grade. Refuses "
+                "rather than reporting a clean zero. The plan receipt is still at "
+                "the address above, for a human to read."
+            ),
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    index = {leg["leg_id"]: leg for leg in legs}
+    by_arm: dict[str, int] = {}
+    for leg in legs:
+        by_arm[leg["verdict"]] = by_arm.get(leg["verdict"], 0) + 1
+
+    if not apply:
+        return {
+            "restore": True,
+            "apply": False,
+            "measured": True,
+            "plan_hash": plan_hash,
+            "applied_identity": applied_identity(plan_hash),
+            "legs_would_reverse": len(legs),
+            "by_arm": by_arm,
+            "leg_ids": sorted(index),
+            "market_ids": sorted({leg["market_id"] for leg in legs}),
+            "bound_to": (
+                "the rows this apply WROTE (rowcount 1), each pinned to the "
+                "last_updated value the apply stamped — not the plan"
+            ),
+            "restores_to": {
+                "restore_winner": "is_winner ← the prior value the apply recorded",
+                "retract_fabricated": "resolution_source ← the prior value the apply recorded",
+            },
+            "declared_curve_movement": declared_curve_movement(
+                # The mirror image of the apply's prediction: reversing a
+                # restored winner REMOVES it, reversing a retraction RETURNS a
+                # leg to the published curve.
+                winners_restored=-by_arm.get("restore_winner", 0),
+                losses_retracted=-by_arm.get("retract_fabricated", 0),
+            ),
+            "apply_instruction": (
+                f"POST …/kalshi-fabricated-loss-restore?apply=true&plan_hash={plan_hash}"
+            ),
+            "prices_touched": False,
+            "success": True,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    reversed_ids: list[int] = []
+    drift: list[dict[str, Any]] = []
+    winners_unrestored = 0
+    retractions_undone = 0
+    restored_version = datetime.now(timezone.utc)
+
+    for leg_id in sorted(index):
+        item = index[leg_id]
+        # The version is stored as text and BOUND AS A DATETIME. asyncpg types
+        # its binds, so a string against a timestamptz column is a driver error,
+        # not an implicit cast — and a version we cannot parse is a leg we cannot
+        # prove we wrote, which is a refusal rather than a widened predicate.
+        try:
+            applied_version = datetime.fromisoformat(item["applied_version"])
+        except (TypeError, ValueError):
+            drift.append(
+                {
+                    "leg_id": leg_id,
+                    "market_id": item["market_id"],
+                    "verdict": item["verdict"],
+                    "rows_affected": None,
+                    "note": (
+                        "the receipt's applied_version is unparseable, so this "
+                        "leg cannot be pinned to the write that produced it. "
+                        "Left alone."
+                    ),
+                }
+            )
+            continue
+        if item["verdict"] == "restore_winner":
+            # The apply set (true, api_settlement) and wrote api_settlement back
+            # over itself, so the post-apply VALUES carry no marker. The version
+            # the apply stamped is the marker, and it is the clause that makes
+            # this safe against CERT-970's same-valued concurrent write.
+            stmt = """
+                UPDATE futures_outcomes
+                SET is_winner = :prior_winner,
+                    last_updated = :restored_version
+                WHERE id = :id
+                  AND is_winner = true
+                  AND resolution_source IS NOT DISTINCT FROM :repairable
+                  AND last_updated = :applied_version
+            """
+            params = {
+                "id": leg_id,
+                "prior_winner": item["prior_is_winner"],
+                "repairable": REPAIRABLE_SOURCE,
+                "applied_version": applied_version,
+                "restored_version": restored_version,
+            }
+        else:
+            stmt = """
+                UPDATE futures_outcomes
+                SET resolution_source = :prior_source,
+                    last_updated = :restored_version
+                WHERE id = :id
+                  AND is_winner = :prior_winner
+                  AND resolution_source IS NOT DISTINCT FROM :retraction
+                  AND last_updated = :applied_version
+            """
+            params = {
+                "id": leg_id,
+                "prior_source": item["prior_source"],
+                "prior_winner": item["prior_is_winner"],
+                "retraction": RETRACTION_SOURCE,
+                "applied_version": applied_version,
+                "restored_version": restored_version,
+            }
+
+        r = await session.execute(text(stmt), params)
+        if r.rowcount == 1:
+            reversed_ids.append(leg_id)
+            if item["verdict"] == "restore_winner":
+                winners_unrestored += 1
+            else:
+                retractions_undone += 1
+        else:
+            drift.append(
+                {
+                    "leg_id": leg_id,
+                    "market_id": item["market_id"],
+                    "verdict": item["verdict"],
+                    "rows_affected": r.rowcount,
+                    "note": (
+                        "no longer the row this apply left — something has "
+                        "written it since, which includes a regrade to the same "
+                        "values. Left alone."
+                    ),
+                }
+            )
+
+    stray = sorted(set(reversed_ids) - set(index))
+    if stray:
+        await session.rollback()
+        return {
+            "restore": True,
+            "apply": True,
+            "measured": False,
+            "refused": [REASON_OUTSIDE_APPROVED],
+            "stray_leg_ids": stray,
+            "success": False,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    if reversed_ids:
+        await session.commit()
+
+    # Same discipline as the apply: the curve is invalidated and the
+    # invalidation is PROVED, not declared. A restore moves grades, so a banked
+    # unit computed from the repaired rows is as wrong as one computed from the
+    # unrepaired rows would have been.
+    touched_markets = sorted({index[i]["market_id"] for i in reversed_ids})
+    invalidation = await invalidate_calibration_generation(session, set(touched_markets))
+    discharged, discharge_note = invalidation_discharged(
+        status=invalidation["status"],
+        wrote_rows=bool(reversed_ids),
+        drift_count=len(drift),
+        prior_obligation_open=False,
+    )
+
+    attempted = sorted(reversed_ids + [d["leg_id"] for d in drift])
+    attempted_equals_receipt = attempted == sorted(index)
+    contract = evaluate_repair_contract(
+        candidate_ids=sorted(index),
+        processed_ids=attempted,
+        approved_ids=sorted(index),
+        mutated_ids=reversed_ids,
+        dry_run_ids=None,
+        next_cursor=None,
+    )
+
+    return {
+        "restore": True,
+        "apply": True,
+        "measured": True,
+        "plan_hash": plan_hash,
+        "applied_identity": applied_identity(plan_hash),
+        "legs_reversed": len(reversed_ids),
+        "reversed_leg_ids": reversed_ids,
+        "winners_unrestored": winners_unrestored,
+        "retractions_undone": retractions_undone,
+        "concurrent_drift": drift,
+        "concurrent_drift_count": len(drift),
+        "calibration_invalidation": invalidation,
+        "invalidation_discharged": discharged,
+        "invalidation_note": discharge_note,
+        "declared_curve_movement": declared_curve_movement(
+            winners_restored=-winners_unrestored, losses_retracted=-retractions_undone
+        ),
+        "attempted_leg_ids_equal_receipt": attempted_equals_receipt,
+        "cursor_contract": contract,
+        "prices_touched": False,
+        "success": (
+            discharged and attempted_equals_receipt and contract["action"] != "REFUSE"
+        ),
+        "success_note": (
+            "success is FALSE unless every leg the receipt names was ATTEMPTED "
+            "and the calibration invalidation proved itself. Rows may be "
+            "reversed while success is false; drift is reported, never hidden."
         ),
         "elapsed_s": round(time.monotonic() - started, 1),
     }
