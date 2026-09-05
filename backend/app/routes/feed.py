@@ -19,6 +19,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -5581,7 +5582,39 @@ def _discover_feature_tokens(
     category: str | None,
     item_type: str | None = None,
 ) -> set[str]:
-    """Derive cheap story/entity tokens used for fast swipe personalization."""
+    """Derive cheap story/entity tokens used for fast swipe personalization.
+
+    A thin shell over the memoised derivation. It always hands back a **fresh
+    mutable set**, so the cached value can never be mutated by a caller — the
+    signature and return type callers see are unchanged. Arguments are passed
+    positionally so one input always produces one cache key.
+    """
+    return set(
+        _discover_feature_tokens_cached(item_name, category, item_type)
+    )
+
+
+@lru_cache(maxsize=8192)
+def _discover_feature_tokens_cached(
+    item_name: str | None,
+    category: str | None,
+    item_type: str | None,
+) -> frozenset[str]:
+    """Derive the token set once per distinct ``(name, category, type)``.
+
+    Why the memo cannot go stale, stated before it was built and pinned by a
+    test: the value is a pure function of these three strings and nothing else
+    — not price, status, time, outcomes, source count, volume or tier. Every
+    pattern it consults is a module constant compiled at import with no writer
+    anywhere, and ``editorial_archetype`` is likewise pure on the name and the
+    category. The key is the whole input, so a renamed or recategorised item is
+    a different key and can never be served an old verdict; and changing a
+    pattern means editing this file, which means a deploy, which means a fresh
+    process and an empty cache. (LAT-P228.)
+
+    A ``frozenset`` is cached rather than a ``set`` so the shared value is
+    immutable at the type level, not merely by convention.
+    """
     name = item_name or ""
     normalized_category = (category or "other").strip().lower() or "other"
     tokens = {f"category:{normalized_category}"}
@@ -5658,7 +5691,7 @@ def _discover_feature_tokens(
         if entity and len(entity) >= 3:
             tokens.add(f"entity:{entity}")
 
-    return tokens
+    return frozenset(tokens)
 
 
 _DISCOVER_SEMANTIC_STOPWORDS = {
