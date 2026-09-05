@@ -224,49 +224,69 @@ def _ambiguity(
     none of them are reachable on one tournament-day. Resolving globally would
     refuse matches nobody could confuse.
 
-    The second element is the repair CERT-1904 required, and the finding is worth
-    stating plainly because the first version got it exactly backwards. Excluding
-    the FIXTURE alone leaves both candidate rows of ours in the population, where
-    nothing can pair them — so the `G. Garcia` specimen published
-    `ambiguous_identity=1` AND `ours_only=2`, denominator 2, coverage 0%. That is
-    the duplicate-as-disagreement outcome this module's own docstring says it
-    refuses, arrived at from the other side: I removed the half that was easy to
-    see and left the half that carries the number.
-    """
-    pool: list[str] = []
-    for r in rows:
-        for name in (r.home, r.away):
-            if isinstance(name, str):
-                pool.append(name)
+    **Ambiguity is a property of the MATCH, not of a name in the window**, and
+    that distinction is the whole of CERT-1909. Two earlier versions were wrong in
+    opposite directions and both are worth keeping on the record:
 
+      * CERT-1904 — excluding the FIXTURE and leaving its candidate rows in the
+        population. `G. Garcia` published `ambiguous_identity=1` AND
+        `ours_only=2`: a duplicate of ours printed as two matches StatPal is
+        missing, which is what this module exists to refuse.
+      * CERT-1909 — over-correcting, by asking `resolve_tennis_name` about ONE
+        player against every name in the window and holding out every row that
+        answered. With rows `Garcia–Jannik Sinner` and `Garcia Garcia–Daniil
+        Medvedev`, the Medvedev match was held out of a Sinner fixture's
+        arithmetic. **It cannot be that fixture** — the opponent settles it — so a
+        real match left the denominator and the row read 0/0/0.
+
+    A name being contested somewhere in the draw is not ambiguity; it is only
+    ambiguity when it leaves **two complete matches** we cannot choose between.
+    So the question asked here is the match question: how many of our rows agree
+    with this fixture on BOTH players, in either orientation? One is an answer.
+    Two is a refusal. Zero is an ordinary miss and not this function's business.
+
+    `resolve_tennis_name` is still called — it names WHICH player the register
+    holds twice, so the receipt says why rather than just that — but it no longer
+    decides. Naming the reason and choosing the outcome are different jobs, and
+    the first one must not be allowed to do the second.
+    """
+    candidates = [r for r in rows if _sides_agree(fixture, r)]
+    if len(candidates) < 2:
+        return None
+
+    # Which player is the contested one, for the receipt only. Resolved against
+    # the CANDIDATES' names rather than the whole window: the question is what
+    # makes these two matches indistinguishable, not what is contested elsewhere.
+    pool = [
+        name
+        for r in candidates
+        for name in (r.home, r.away)
+        if isinstance(name, str)
+    ]
+    contested_name = None
+    contested_with: tuple[str, ...] = ()
     for theirs in (fixture.home, fixture.away):
         resolution = resolve_tennis_name(theirs, pool)
         if resolution.outcome == AMBIGUOUS:
-            contested = set(resolution.candidates)
-            implicated = [
-                r
-                for r in rows
-                if (isinstance(r.home, str) and r.home in contested)
-                or (isinstance(r.away, str) and r.away in contested)
-            ]
-            receipt = {
-                "statpal_id": fixture.ref,
-                "players": [fixture.home, fixture.away],
-                "statpal_start": (
-                    fixture.start.isoformat() if fixture.start else None
-                ),
-                "label": fixture.label,
-                "unresolved_name": theirs,
-                "our_candidates": list(resolution.candidates),
-                "our_event_ids": [r.ref for r in implicated],
-                "why": (
-                    "two of our rows name different players who both answer to "
-                    "this StatPal name; neither agreement nor disagreement, and "
-                    "not this module's to resolve (D39, #2693)"
-                ),
-            }
-            return receipt, implicated
-    return None
+            contested_name = theirs
+            contested_with = resolution.candidates
+            break
+
+    receipt = {
+        "statpal_id": fixture.ref,
+        "players": [fixture.home, fixture.away],
+        "statpal_start": fixture.start.isoformat() if fixture.start else None,
+        "label": fixture.label,
+        "unresolved_name": contested_name,
+        "our_candidates": list(contested_with),
+        "our_event_ids": [r.ref for r in candidates],
+        "why": (
+            f"{len(candidates)} of our rows agree with this fixture on BOTH "
+            "players, so we cannot say which one it is. Neither agreement nor "
+            "disagreement, and not this module's to resolve (D39, #2693)"
+        ),
+    }
+    return receipt, candidates
 
 
 def pair_tennis_sides(

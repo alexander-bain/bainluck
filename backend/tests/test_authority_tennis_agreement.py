@@ -291,14 +291,39 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             "12",
         ]
 
-    def test_an_ambiguity_does_not_remove_an_unrelated_row(self):
-        """The over-removal risk the repair had to avoid.
+    def test_a_contested_name_with_a_different_opponent_is_not_ambiguous(self):
+        """CERT-1909, and the exact specimen it was found on.
 
-        Holding out every contested row BEFORE the pairing pass would have been
-        simpler. It would also drop rows that pair perfectly well with a
-        different fixture, turning a real agreement into a silent exclusion —
-        trading a published duplicate for an invisible one.
+        A name being contested somewhere in the draw is not ambiguity. It is only
+        ambiguity when it leaves two COMPLETE matches we cannot choose between.
+
+        `Garcia Garcia–Daniil Medvedev` shares a contested surname with
+        `Garcia–Jannik Sinner`, and it cannot be the `G. Garcia–J. Sinner`
+        fixture, because the opponent settles it. Judging ambiguity per NAME
+        against the whole window held it out anyway, and a real match left the
+        denominator: the row read 0 / 0 / 0 where the honest answer is 1 / 1 / 2.
         """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "G. Garcia", "J. Sinner")],
+            rows=[
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Daniil Medvedev"),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["identity"]["both"] == 1, (
+            "the Sinner fixture has exactly one candidate and must pair with it"
+        )
+        assert singles["identity"]["ours_only"] == 1, (
+            "the Medvedev match is genuinely one StatPal does not have — it is a "
+            "finding, not an exclusion"
+        )
+        assert singles["denominator"] == 2
+        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
+        assert AMBIGUOUS_CANDIDATE_ROWS not in singles["excluded"]
+
+    def test_an_ambiguity_does_not_remove_an_unrelated_row(self):
+        """The other over-removal direction: a wholly unrelated pairing survives."""
         rows = build_tennis_agreements(
             fixtures=[
                 f("1", "G. Garcia", "J. Sinner"),
@@ -311,10 +336,35 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             ],
         )
         singles = rows[SINGLES]
-        # The unrelated pairing survives the ambiguity next to it.
         assert singles["identity"]["both"] == 1
         assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
         assert singles["identity"]["ours_only"] == 0
+
+    def test_ambiguity_is_counted_over_matches_not_over_names(self):
+        """The invariant behind both regressions, stated once.
+
+        Two rows sharing a contested name refuse ONLY when both agree with the
+        fixture on both players. Same contested name, different opponents, two
+        different outcomes — that is the discriminator, and a name-level rule
+        cannot express it.
+        """
+        contested_rows = [
+            r("11", "Garcia", "Jannik Sinner"),
+            r("12", "Garcia Garcia", "Jannik Sinner"),
+        ]
+        split_rows = [
+            r("11", "Garcia", "Jannik Sinner"),
+            r("12", "Garcia Garcia", "Daniil Medvedev"),
+        ]
+        fixtures = [f("1", "G. Garcia", "J. Sinner")]
+
+        refused = build_tennis_agreements(fixtures=fixtures, rows=contested_rows)
+        allowed = build_tennis_agreements(fixtures=fixtures, rows=split_rows)
+
+        assert refused[SINGLES]["excluded"][AMBIGUOUS_REFUSAL] == 1
+        assert AMBIGUOUS_REFUSAL not in allowed[SINGLES]["excluded"]
+        assert refused[SINGLES]["identity"]["both"] == 0
+        assert allowed[SINGLES]["identity"]["both"] == 1
 
     def test_an_unambiguous_name_is_not_refused(self):
         """The mutation guard for the test above: refusing everything passes it."""
