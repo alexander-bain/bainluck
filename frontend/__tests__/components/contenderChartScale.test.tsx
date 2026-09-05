@@ -186,6 +186,40 @@ describe("#2451 — the contender chart's y-axis", () => {
     expect(at(1)).toBe(1);
   });
 
+  /**
+   * ═══ #3032: THE LADDER HAD A CLIFF IN IT ═══
+   *
+   * The 50→100 gap is the one leader range where #2451's fix stopped paying,
+   * and it bit precisely when a tournament has a clear favourite. Measured on
+   * the live men's board on 2026-09-05, before this: Alcaraz 44.5% wanted
+   * 51.2%, landed on 100, and the whole title race drew in the bottom half.
+   */
+  it("gives a mid-forties favourite an axis instead of the bottom half", () => {
+    const field = [
+      series("alcaraz", "Carlos Alcaraz", 0.445, [0.122, 0.445]),
+      series("zverev", "Alexander Zverev", 0.2, [0.107, 0.2]),
+      series("fritz", "Taylor Fritz", 0.103, [0.027, 0.103]),
+    ];
+    expect(chartCeiling(field, "ALL")).toBe(0.75);
+
+    const alcaraz = heightFraction(field[0], field);
+    // 0.445 of a 100 axis was 0.445 of the plot; on 75 it is 0.593.
+    expect(alcaraz).toBeCloseTo(0.593, 2);
+    expect(alcaraz).toBeGreaterThan(0.5);
+
+    // And the step is only allowed to exist because the axis says what it is.
+    expect(chartYLabels(0.75).map((entry) => entry.label)).toEqual(["75%", "38%", "0%"]);
+  });
+
+  /** The new step's two edges, so a later re-tune cannot quietly reopen the gap. */
+  it("holds the 75 step from 44% to 65%", () => {
+    const at = (p: number) => chartCeiling([series("x", "X", p, [p, p])], "ALL");
+    expect(at(0.43)).toBe(0.5); // the last value the 50 step holds
+    expect(at(0.44)).toBe(0.75);
+    expect(at(0.65)).toBe(0.75); // the last value the 75 step holds
+    expect(at(0.66)).toBe(1);
+  });
+
   /** A near-certain favourite still gets the full axis, not a 115% one. */
   it("never proposes a ceiling above 100%", () => {
     const field = [series("sure", "Sure Thing", 0.99, [0.97, 0.99])];

@@ -305,9 +305,19 @@ describe("contender chart", () => {
     );
   });
 
-  it("plots on a FIXED 0-100 axis, never auto-scaled to the data", () => {
-    // Two series in a narrow band must NOT fill the height. If they did, a 2pp
-    // wiggle would read as a collapse.
+  /**
+   * NEVER AUTO-SCALED TO THE DATA RANGE. A 2pp wiggle must stay a 2pp wiggle:
+   * fitting the plot to [min, max] would draw it as a collapse, on a page whose
+   * whole subject is movement.
+   *
+   * This test used to assert `[50, 48]` — a hard 0-100 axis — and was passing
+   * for the wrong reason after #2451 gave the axis a moving TOP: a 52% leader
+   * wanted 59.8% and the ladder's only step above 50 was 100, so the ceiling
+   * came back 1 and the old numbers held. #3032 added the 75 step, so the same
+   * fixture now draws against 0.75. The claim being guarded is unchanged and is
+   * asserted directly below rather than being implied by two magic numbers.
+   */
+  it("never auto-scales to the data range — a 2pp wiggle stays 2pp", () => {
     const narrow = [
       row(1, { trend: [
         { date: "2026-08-01", probability: 0.50 },
@@ -316,9 +326,21 @@ describe("contender chart", () => {
     ];
     const series = chartSeries(narrow);
     const geometry = chartGeometry(series, "ALL", 100, 100);
+
+    // The top is a LADDER STEP, never the field's own maximum.
+    expect(geometry.ceiling).toBe(0.75);
+
     const points = seriesPoints(series[0], geometry, "ALL");
     const ys = points.split(" ").map((p) => Number(p.split(",")[1]));
-    expect(ys).toEqual([50, 48]);
+    expect(ys).toEqual([33.3, 30.7]);
+
+    // 2pp of a 75-point axis is 2.67% of the plot — 2.6 once `seriesPoints`
+    // quantises to one decimal. Auto-scaling would have put these two points at
+    // 100 and 0, so the band is bounded on both sides rather than pinned to a
+    // number that is really a rounding artefact.
+    const gap = Math.abs(ys[0] - ys[1]);
+    expect(gap).toBeGreaterThan(2);
+    expect(gap).toBeLessThan(3.5);
     expect(Math.min(...ys)).toBeGreaterThan(0);
   });
 

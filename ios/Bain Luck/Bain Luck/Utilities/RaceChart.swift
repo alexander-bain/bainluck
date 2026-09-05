@@ -120,7 +120,19 @@ nonisolated enum RaceChart {
     /// The ceiling ladder (#2451). Coarse deliberately: a continuous fit-to-max
     /// would rescale the plot every time the leader moved a point, and an axis
     /// that changes daily makes movement unreadable.
-    static let ceilingSteps: [Double] = [0.1, 0.25, 0.5, 1.0]
+    ///
+    /// The `0.75` step is #3032, and the gap it fills was measured rather than
+    /// imagined: on the live men's board Alcaraz at **0.445** wants
+    /// `0.445 × 1.15 = 0.512`, so on the old 10/25/50/100 ladder the first step
+    /// that fits was **1.0** and the whole title race drew in the bottom half
+    /// with an empty top half. It bit precisely when a tournament has a clear
+    /// favourite — the moment the chart is most worth reading. With `0.75` he
+    /// occupies 59% of the plot.
+    ///
+    /// This array and `CEILING_STEPS` in `frontend/lib/contenderChart.ts` are
+    /// ONE CONTRACT. A divergence between them is the bug, not a platform
+    /// difference; change them together or not at all.
+    static let ceilingSteps: [Double] = [0.1, 0.25, 0.5, 0.75, 1.0]
 
     /// Room above the leader so the top line is not welded to the frame.
     static let ceilingHeadroom = 1.15
@@ -299,6 +311,39 @@ nonisolated enum RaceChart {
         let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         return "\(day) \(months[month - 1])"
+    }
+
+    // MARK: What the movement column measures
+
+    /// The sentence that reconciles a row's `+33` with the chart above it (#3033).
+    ///
+    /// In one frame on the men's board: the chart opens on `Draw`, its footer
+    /// says six days, Alcaraz's line climbs about 19 points across it — and the
+    /// row underneath reads `+33`. Both are correct. `trend_delta` is measured
+    /// over the row's WHOLE tracked history (verified against the wire: exactly
+    /// `trend.last − trend.first`), and the chart is showing the tournament.
+    /// They sit six points apart on one card with nothing to reconcile them.
+    ///
+    /// **It is not one date per board.** The obvious version of this fix — state
+    /// the window once for the whole board — is wrong, and measurably: on the
+    /// live men's board 23 rows start 6 Aug, 12 start 26 Aug and one starts
+    /// 7 Aug, because a contender's history begins when a market first priced
+    /// them. So the note names the shared date when the rows it is given agree,
+    /// and says the general truth when they do not, rather than printing one
+    /// row's date over the others.
+    ///
+    /// Pass the rows the reader can SEE. One contract with `deltaWindowNote` in
+    /// `frontend/lib/contenderChart.ts`; a divergence is the bug.
+    static func deltaWindowNote(rows: [TournamentHubBoardRow]) -> String? {
+        var starts = Set<String>()
+        for row in rows {
+            // A row with no delta on screen contributes no claim to reconcile.
+            guard row.trendDelta != nil, let first = row.trend?.first?.date else { continue }
+            starts.insert(first)
+        }
+        guard let only = starts.first else { return nil }
+        if starts.count > 1 { return "Movement since each contender's first number." }
+        return "Movement since \(shortDateLabel(only))."
     }
 
     // MARK: Window starts

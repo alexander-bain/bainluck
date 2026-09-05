@@ -73,6 +73,11 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         let rows: [BoardRow]
         /// "Top 6 of 36 still in the draw" — shown only when rows were trimmed.
         let trimNote: String?
+        /// "Movement since 6 Aug." — what the `+33` beside a name measures
+        /// (#3033), computed over the rows this card actually draws. `nil` when
+        /// no drawn row carries a delta, because there is then nothing to
+        /// reconcile and a sentence about an absent column is noise.
+        let deltaWindowNote: String?
         /// The RACE chart above the rows (#2911). Always present, because a
         /// board that cannot be charted still says why in `emptyNote`.
         let chart: RaceChartData
@@ -394,6 +399,10 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             trimNote: ordered.count > shown.count
                 ? "Top \(shown.count) of \(ordered.count) still in the draw"
                 : nil,
+            // Over `shown`, not `ordered`: the note reconciles the deltas a
+            // reader can see with the chart above them, and the rows below the
+            // cut are not on this screen to be reconciled.
+            deltaWindowNote: RaceChart.deltaWindowNote(rows: Array(shown)),
             chart: raceChart(ordered, starts: starts)
         )
     }
