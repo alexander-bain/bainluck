@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -273,14 +274,14 @@ class TestTheRowPublishesTheAllowance:
         """End to end through the shipped strategy, not a hand-built join — the
         two ends can agree while the wiring between them is dead."""
         from app.utils.authority_agreement import build_agreement_row
-        from app.utils.authority_tennis_agreement import pair_tennis_sides
+        from app.utils.authority_tennis_agreement import SINGLES, pair_tennis_sides
 
         row = build_agreement_row(
-            sport_key="tennis_singles",
+            sport_key=SINGLES,
             fixtures=[],
             rows=[],
             normalize=lambda v: (v or "").strip().lower(),
-            pair_sides=pair_tennis_sides,
+            pair_sides=partial(pair_tennis_sides, draw=SINGLES),
         )
         published = row["allowances"][ORDER_ALIAS_ALLOWANCE]
         assert published["count"] == 2
@@ -288,6 +289,74 @@ class TestTheRowPublishesTheAllowance:
             a.corpus_order for a in REVIEWED_ALIASES
         ]
         assert all(r["ratified_by_alex"] is False for r in published["receipts"])
+
+    def test_an_unstated_draw_publishes_no_allowance(self):
+        """Fail closed. A caller that has not said which draw it is building does
+        not get a claim published on its behalf."""
+        from app.utils.authority_tennis_agreement import pair_tennis_sides
+
+        assert pair_tennis_sides([], []).allowances == {}
+
+
+class TestTheDoublesRowClaimsNoOrderAllowance:
+    """CERT-1948. The first cut published both singles-only order allowances on
+    the separately banked `tennis_doubles` row as well.
+
+    The doubles join keys on an UNORDERED pair of surnames, so a re-ordering
+    tolerance cannot move a doubles number: measured over the pinned corpus,
+    **0 of 1,674 doubles names have a token multiset in `ORDER_ALIASES`**. The
+    doubles row was therefore asserting it had relied on a tolerance it never
+    relied on — a row saying something untrue about its own pass, which is the
+    exact failure this ship exists to stop, committed by the ship itself.
+    """
+
+    def test_no_doubles_name_in_the_field_can_reach_the_order_tolerance(self, corpus):
+        """The premise, measured rather than asserted — this is what makes the
+        doubles row's claim false rather than merely redundant."""
+        doubles = [n for n in corpus if is_doubles_name(n)]
+        assert len(doubles) == 1674
+        reachable = [
+            n for n in doubles if tuple(sorted(_tokens(n))) in ORDER_ALIASES
+        ]
+        assert reachable == []
+
+    def test_both_rows_at_once_singles_discloses_and_doubles_does_not(self):
+        """The end-to-end two-row assertion the block asked for. Built through
+        `tennis_agreement_rows`, so the draw binding at the real call site is
+        what is under test — not a partial this test constructed itself."""
+        from app.utils.authority_tennis_agreement import (
+            DOUBLES,
+            SINGLES,
+            build_tennis_agreements,
+        )
+
+        rows = build_tennis_agreements(fixtures=[], rows=[])
+
+        singles_allowances = rows[SINGLES]["allowances"]
+        assert singles_allowances[ORDER_ALIAS_ALLOWANCE]["count"] == 2
+
+        # The load-bearing half: empty, and empty for the RIGHT reason — the key
+        # is absent entirely rather than present at a lying zero.
+        assert rows[DOUBLES]["allowances"] == {}
+        assert ORDER_ALIAS_ALLOWANCE not in rows[DOUBLES]["allowances"]
+
+        # …and the two rows are still separately banked with their own censuses,
+        # so this scoping did not collapse them into one.
+        assert rows[SINGLES]["sport_key"] == SINGLES
+        assert rows[DOUBLES]["sport_key"] == DOUBLES
+
+    def test_the_doubles_partner_order_control_still_folds(self):
+        """The control the block asked for: scoping the ALLOWANCE away from
+        doubles must not disturb the tolerance doubles genuinely does have —
+        partner order, which `doubles_key` sorts and which has nothing to do with
+        `ORDER_ALIASES`. `Golubic / Waltert` and `Waltert/Golubic` are one team.
+        """
+        from app.utils.authority_tennis_names import doubles_key
+
+        assert doubles_key("Golubic / Waltert") == doubles_key("Waltert/Golubic")
+        assert doubles_key("Rojer/ Winegar") == doubles_key("Winegar / Rojer")
+        # And it is still a real relation, not everything-matches-everything.
+        assert doubles_key("Golubic / Waltert") != doubles_key("Rojer/Winegar")
 
     def test_a_name_cannot_be_both_an_allowance_and_a_refusal(self):
         with pytest.raises(ValueError, match="BOTH an allowance and a refusal"):
