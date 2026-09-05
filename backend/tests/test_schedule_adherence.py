@@ -499,3 +499,151 @@ class TestStampArmReachesAMuteRateArm:
                       newest_start_age_s=10_500.0, counter_ttl_s=TTL)
         assert g["verdict"] == "unmeasurable"
         assert g["reason"] == "no_interval_or_window"
+
+
+class TestRateArmConsultsTheStamp:
+    """#3276 — a healthy ratio must not outvote a stamp that says nothing ran.
+
+    Reproduces the production reading of 2026-09-05 that these guard against:
+    ``prewarm_live_feed_shapes``, the beat keeping Discover and Sports warm, was
+    dead for 3h43m on a 40s interval and graded ``on_schedule`` with an empty
+    reason — because 3.7h of death inside a 21h counter window left the ratio at
+    0.70, above ``BEHIND_RATIO``. The stamp proving it was passed in and unread.
+
+    The pairs below are deliberate. Every "it now alarms" case is written beside
+    the case that must still stay quiet, because the failure mode of this fix is
+    an alarm generator, not a miss.
+    """
+
+    #: The production row, to the field. 40s beat, 21h window, 1327 fires.
+    PROD = dict(starts=1327, starts_window_s=75698.0, interval_s=40.0,
+                deliveries=1327, deliveries_window_s=75698.0,
+                durations_ms=[20135] * 50, counter_ttl_s=TTL)
+
+    def test_the_production_reading_that_said_on_schedule_now_says_missing(self):
+        g = adherence(**self.PROD, newest_start_age_s=13_374.0)
+        assert g["verdict"] == "missing"
+        # The ratio is still reported and is still healthy-looking. The point is
+        # not that the count was wrong; it is that the count could not see this.
+        assert g["ratio"] >= BEHIND_RATIO
+        assert g["stamp_age_over_interval"] == 334.35
+        # The reason must name BOTH numbers, or a reader cannot tell why a row
+        # with a fine ratio is red.
+        assert "3.7h" in g["reason"] and "0.70" in g["reason"]
+
+    def test_the_same_row_with_a_fresh_stamp_stays_on_schedule(self):
+        # The other direction, and the one that decides whether this is safe to
+        # ship: an identical row whose beat is actually running must not move.
+        g = adherence(**self.PROD, newest_start_age_s=12.0)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_age_s"] == 12.0
+
+    def test_late_is_not_missing(self):
+        # `_grade_on_stamp`'s standing contract — "late, never missing" — is not
+        # allowed to mean something different on this arm. At a 40s interval the
+        # 300s FLOOR governs, not 2x the interval, so 299s of jitter is quiet.
+        assert adherence(**self.PROD,
+                         newest_start_age_s=299.0)["verdict"] == "on_schedule"
+        assert adherence(**self.PROD,
+                         newest_start_age_s=301.0)["verdict"] == "missing"
+
+    def test_no_stamp_at_all_leaves_the_verdict_alone(self):
+        # Gotcha #53. An absent observation is not an observed absence: a task
+        # nobody has ever stamped must not be reported as one that stopped.
+        g = adherence(**self.PROD)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_age_s"] is None
+
+    def test_a_future_stamp_cannot_certify_a_dead_beat_on_this_arm_either(self):
+        # The negative-age guard, which is why `_newest_stamp` is shared. A
+        # clock-skewed stamp is the freshest possible reading under `age > tol`
+        # and would silently re-open the exact hole this closes.
+        g = adherence(**self.PROD, newest_start_age_s=-7200.0)
+        assert g["stamp_age_s"] is None
+        assert g["verdict"] == "on_schedule"
+
+    def test_only_the_START_stamp_may_veto_a_healthy_rate(self):
+        # The asymmetry this arm turns on, and the case that caught the first
+        # draft of this fix. A stale TERMINAL is compatible with a beat that is
+        # firing and hanging — that is #1716's question, it already has
+        # `never_completes`, and answering it here would decide it by accident.
+        # Only a stale START proves the beat did not fire.
+        g = adherence(**self.PROD, newest_terminal_age_s=13_374.0)
+        assert g["verdict"] == "on_schedule"
+        assert g["stamp_age_s"] is None
+
+        # The row from `TestStampArm::test_rate_arm_still_wins_when_it_can_speak`,
+        # restated here so the two arms' contracts are asserted side by side:
+        # 2 starts counted in 3 days against a terminal 10 days old is a task
+        # that runs and never completes, not a missing beat.
+        g2 = adherence(starts=2, starts_window_s=3 * DAY, interval_s=DAY,
+                       newest_terminal_age_s=10 * DAY, counter_ttl_s=TTL)
+        assert g2["arm"] == "rate"
+        assert g2["verdict"] != "missing"
+
+    def test_missing_beats_overruns_when_the_beat_is_both(self):
+        # A dead beat whose stale duration ring still reads as lapping. Absent
+        # outranks lapping: it is not overrunning, it is not running. Ordering
+        # matters because `overruns` returns early.
+        g = adherence(starts=1243, starts_window_s=61153.0, interval_s=30.0,
+                      deliveries=1890, deliveries_window_s=61153.0,
+                      durations_ms=[195292] * 50,
+                      newest_start_age_s=13_374.0, counter_ttl_s=TTL)
+        assert g["p95_over_interval"] >= OVERRUN_RATIO
+        assert g["verdict"] == "missing"
+
+    def test_a_lapping_but_LIVE_beat_still_reads_overruns(self):
+        # The pair to the above: same row, fresh stamp. #2014's four expiring
+        # beats live here — they ARE running, so this fix must not touch them.
+        g = adherence(starts=1243, starts_window_s=61153.0, interval_s=30.0,
+                      deliveries=1890, deliveries_window_s=61153.0,
+                      durations_ms=[195292] * 50,
+                      newest_start_age_s=15.0, counter_ttl_s=TTL)
+        assert g["verdict"] == "overruns"
+
+    def test_a_genuinely_behind_beat_is_still_behind_not_missing(self):
+        # `behind` must not be swallowed by the new verdict when the beat is
+        # merely slow rather than absent.
+        g = adherence(starts=100, starts_window_s=60000.0, interval_s=60.0,
+                      deliveries=100, deliveries_window_s=60000.0,
+                      durations_ms=[500] * 50,
+                      newest_start_age_s=30.0, counter_ttl_s=TTL)
+        assert g["ratio"] < BEHIND_RATIO
+        assert g["verdict"] == "behind"
+
+    def test_the_dead_rail_reaches_the_top_of_the_work_list(self):
+        # A verdict nobody reads is not a fix. `missing` already sorts first in
+        # `find_lapping`; this asserts the new producer actually lands there.
+        graded = {
+            "app.tasks.poll_all_odds": adherence(
+                starts=1243, starts_window_s=61153.0, interval_s=30.0,
+                durations_ms=[195292] * 50, newest_start_age_s=15.0,
+                counter_ttl_s=TTL),
+            "app.tasks.prewarm_live_feed_shapes": adherence(
+                **self.PROD, newest_start_age_s=13_374.0),
+        }
+        assert find_lapping(graded)[0]["task"] == (
+            "app.tasks.prewarm_live_feed_shapes")
+
+    def test_two_dead_beats_rank_by_deadness_not_by_ratio(self):
+        # #3276: measured on production — three beats read `missing` at once,
+        # so which one tops the work-list is a real question and `ratio` is the
+        # wrong answer to it. The warm rail silent for 348 of its own intervals
+        # must outrank a beat silent for 5, even though the rail's ratio (0.70)
+        # is the HEALTHIER-looking of the two.
+        graded = {
+            "app.tasks.refresh_open_commentary": adherence(
+                starts=90, starts_window_s=60000.0, interval_s=180.0,
+                deliveries=90, deliveries_window_s=60000.0,
+                newest_start_age_s=827.0, counter_ttl_s=TTL),
+            "app.tasks.prewarm_live_feed_shapes": adherence(
+                **self.PROD, newest_start_age_s=13_914.0),
+        }
+        assert all(g["verdict"] == "missing" for g in graded.values())
+        # The rail has the higher ratio and must still sort first.
+        assert (graded["app.tasks.prewarm_live_feed_shapes"]["ratio"]
+                > graded["app.tasks.refresh_open_commentary"]["ratio"])
+        assert [r["task"] for r in find_lapping(graded)] == [
+            "app.tasks.prewarm_live_feed_shapes",
+            "app.tasks.refresh_open_commentary",
+        ]

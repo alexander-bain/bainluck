@@ -181,6 +181,36 @@ def rate_arm_is_structurally_blind(interval_s, counter_ttl_s):
     return interval_s > counter_ttl_s / MIN_EXPECTED_FIRES
 
 
+def _newest_stamp(newest_terminal_age_s, newest_start_age_s):
+    """``(age_s, kind)`` of the freshest usable stamp, or ``None``.
+
+    Shared by BOTH arms on purpose. The negative-age guard below is the whole
+    reason this is a function: a clock-skewed stamp yields a negative age, which
+    sails through every ``age <= limit`` comparison as the freshest reading
+    possible and certifies a dead beat as healthy. That guard was written once
+    for the stamp arm and has a mutation test on it; giving the rate arm its own
+    copy of the same three lines is how the two would drift apart.
+    """
+    ages = [
+        (a, k)
+        for a, k in (
+            (newest_terminal_age_s, "terminal"),
+            (newest_start_age_s, "start"),
+        )
+        if a is not None and a >= 0
+    ]
+    return min(ages) if ages else None
+
+
+def _stamp_tolerance_s(interval_s):
+    """How old the newest stamp may be before a beat is ``missing``.
+
+    One definition, used by both arms. See ``STAMP_LATE_TOLERANCE`` and
+    ``STAMP_MIN_TOLERANCE_S`` for why the two terms and why these values.
+    """
+    return max(interval_s * STAMP_LATE_TOLERANCE, STAMP_MIN_TOLERANCE_S)
+
+
 def _grade_on_stamp(
     out, interval_s, newest_terminal_age_s, newest_start_age_s, counter_ttl_s
 ):
@@ -212,9 +242,7 @@ def _grade_on_stamp(
     a task that has simply never been seen would be reported as one that stopped.
     """
     out["arm"] = "stamp"
-    ages = [(a, k) for a, k in
-            ((newest_terminal_age_s, "terminal"), (newest_start_age_s, "start"))
-            if a is not None and a >= 0]
+    stamp = _newest_stamp(newest_terminal_age_s, newest_start_age_s)
     ceiling = counter_ttl_s / MIN_EXPECTED_FIRES if counter_ttl_s else None
     if not out["rate_arm_blind"]:
         # Reached via the no-window route, not the too-slow one. Say which, or a
@@ -226,16 +254,16 @@ def _grade_on_stamp(
                       f"{ceiling:.0f}s ceiling from counter TTL)")
     else:
         blind_note = "rate arm blind"
-    if not ages:
+    if stamp is None:
         out["reason"] = f"{blind_note}; no start or terminal stamp recorded"
         return out
 
-    age, kind = min(ages)
+    age, kind = stamp
     out["stamp_age_s"] = round(age, 1)
     out["stamp_kind"] = kind
     out["stamp_age_over_interval"] = round(age / interval_s, 2)
 
-    tolerance_s = max(interval_s * STAMP_LATE_TOLERANCE, STAMP_MIN_TOLERANCE_S)
+    tolerance_s = _stamp_tolerance_s(interval_s)
     if age <= tolerance_s:
         out["verdict"] = "on_schedule"
         out["reason"] = (
@@ -413,6 +441,93 @@ def adherence(
     ratio = (fires or 0) / exp
     out["ratio"] = round(ratio, 2)
 
+    # --- #3276: the rate arm being ABLE to speak does not make it the right
+    # instrument, and until now "able" was the only test applied. -------------
+    #
+    # The two arms were written as ALTERNATIVES — the stamp is reached (L~397)
+    # only when the rate arm is mute — so a task with a healthy-looking ratio
+    # never had its stamp read at all, even though the caller passes it in and
+    # it is live in this scope.
+    #
+    # THE SCOPE MISMATCH, which is this module's founding defect (#1790) one
+    # field further left. A ratio is an average over `window_s`, and an average
+    # cannot see a hole much shorter than its own window. Measured on production
+    # 2026-09-05: `prewarm_live_feed_shapes` — the beat that keeps Discover and
+    # Sports warm — had been dead for 3h43m on a 40s interval, and graded
+    # `on_schedule` with an EMPTY REASON, because 3.7h of death inside a 21h
+    # counter window only moved the ratio to 0.70, above BEHIND_RATIO. Its
+    # `last_started_at` was 334x its interval old the whole time. Every visitor
+    # ate a cold build for four hours and this surface said nothing.
+    #
+    # Worse, it might never have spoken: as the window saturates at the counter
+    # TTL the ratio bottoms out at 1327/(86400/40) = 0.61 — still above 0.6. The
+    # beat only becomes visible ~24h later, when the counters expire and L~397
+    # finally hands it to the stamp arm. A detector whose first report of a dead
+    # rail is a day late is not a detector.
+    #
+    # Lowering BEHIND_RATIO is NOT the fix and is explicitly rejected: it would
+    # only shorten the blindness (never remove it — the bound above is 0.61) and
+    # would re-redden the four `expires`-carrying beats of #2014.
+    #
+    # So: read the moment, not just the count. This module already argues the
+    # point in `_grade_on_stamp`'s own comment — "A count of unknown age is
+    # unusable; a moment is not" — and then only acts on it when the count is
+    # missing. The tolerance, the negative-age guard and the `missing` verdict
+    # are all REUSED from that arm rather than restated, so the two cannot
+    # disagree about what "dead" means.
+    #
+    # CHECKED BEFORE `overruns` DELIBERATELY. `p95_over_interval` is computed
+    # from a duration ring that describes the past; a beat that has recorded
+    # nothing for many intervals is not lapping, it is absent, and returning
+    # `overruns` first would mask the sharper fact. `arm` stays "rate" because
+    # the rate arm is still what graded the fire count — the stamp is a veto on
+    # its `on_schedule`, not a replacement for it.
+    #
+    # ONLY THE START STAMP MAY VETO HERE, and the distinction is load-bearing
+    # rather than cautious. `_grade_on_stamp` takes the newest of {terminal,
+    # start} because it runs when there is no counter at all, so any stamp is
+    # the best evidence in the room. On THIS arm the counter has already given
+    # positive evidence that fires happened, and the two stamps then answer
+    # different questions:
+    #
+    #   * a stale START says the beat did not FIRE — which is exactly what
+    #     adherence grades, and is decisive;
+    #   * a stale TERMINAL says nothing FINISHED, which is compatible with a
+    #     beat that is firing and hanging. That is #1716's open question, it
+    #     already has its own flag (`never_completes`), and answering it here
+    #     would decide it by accident — the thing this module refuses to do.
+    #
+    # Concretely: 2 starts counted in 3 days against a terminal stamp 10 days
+    # old is a task that runs and never completes, NOT a missing beat, and
+    # grading it `missing` off the terminal would be a false alarm. There is a
+    # guard test on exactly that row.
+    #
+    # Gotcha #53 holds: no start stamp at all leaves the verdict alone. An
+    # absent observation is not an observed absence, and a task nobody has ever
+    # stamped must not be reported as one that stopped.
+    start_stamp = _newest_stamp(None, newest_start_age_s)
+    if start_stamp is not None and interval_s:
+        age, kind = start_stamp
+        # Reported unconditionally, fresh or stale. A reader comparing a count
+        # against a moment needs both on the row; publishing the moment only
+        # when it is damning is how a surface becomes an alarm instead of an
+        # instrument.
+        out["stamp_age_s"] = round(age, 1)
+        out["stamp_kind"] = kind
+        out["stamp_age_over_interval"] = round(age / interval_s, 2)
+
+        tolerance_s = _stamp_tolerance_s(interval_s)
+        if age > tolerance_s:
+            out["verdict"] = "missing"
+            out["reason"] = (
+                f"nothing started for {age / 3600.0:.1f}h — newest {kind} stamp "
+                f"is {out['stamp_age_over_interval']:.2f}x its {interval_s:.0f}s "
+                f"interval, over a {tolerance_s:.0f}s tolerance. The fire count "
+                f"still reads {ratio:.2f} because it averages over "
+                f"{window_s / 3600.0:.1f}h and cannot see an outage this short"
+            )
+            return out
+
     # Runtime-over-interval is checked FIRST and reported even when the fire
     # rate looks fine, because it is the *cause* shape: a task using ~all of its
     # period is already lapping, and the fire count only collapses later, once
@@ -550,11 +665,28 @@ def find_lapping(graded):
     # unchanged so the existing relative order is preserved exactly.
     order = {"missing": -1, "overruns": 0, "behind": 1, "unmeasurable": 3}
 
+    # #3276: WITHIN ``missing``, rank by how many of its own intervals the beat
+    # has been silent — not by ``ratio``, which is meaningless for a beat that
+    # is not running. Two dead beats sort by the number that says which one is
+    # more dead; sorting them by a fire-count average would put a rail silent
+    # for 348 intervals below one silent for 5, purely on the shape of their
+    # counter windows. Before this arm existed every ``missing`` row came from a
+    # beat too slow to have a usable ratio, so the question never arose; now the
+    # rate arm produces them too and they all carry a ratio.
+    #
+    # Non-``missing`` rows contribute a constant here, so the existing relative
+    # order — including the ratio tie-break below — is preserved exactly.
     def _key(item):
         _name, g = item
+        deadness = (
+            -(g.get("stamp_age_over_interval") or 0.0)
+            if g["verdict"] == "missing"
+            else 0.0
+        )
         return (
             0 if g.get("never_completes") else 1,
             order.get(g["verdict"], 2),
+            deadness,
             g["ratio"] if g["ratio"] is not None else 99,
         )
 
