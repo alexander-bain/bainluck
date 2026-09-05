@@ -1651,10 +1651,23 @@ struct OddsChartView: View {
             case timeOfDay
             /// "6 PM" — within one day, hourly or coarser ticks.
             case hourOfDay
-            /// "Wed 6 PM" — the domain spans more than one calendar day.
+            /// "Wed 6 PM" — the domain spans more than one calendar day, hourly
+            /// or coarser ticks.
             case dayAndHour
+            /// "Wed 6:45 PM" — spans days AND ticks finer than an hour.
+            ///
+            /// #3269. Without this style a sub-hour stride across midnight took
+            /// `dayAndHour` and dropped the minutes, so two different ticks
+            /// printed the same label: MEASURED on 15302915 (the Yankees @
+            /// Padres walk-off, 9:40 PM - 12:15 AM) the axis read
+            /// **Fri 9 PM · Fri 10 PM · Fri 11 PM · Fri 11 PM** at 45-minute
+            /// ticks. A duplicate label is the same lie as a wrong one.
+            case dayAndTime
             /// "Sep 3" — the domain spans days, ticks a day or coarser.
             case calendarDay
+            /// "Sep 2026" — ticks a season or coarser, where a bare "Sep 3"
+            /// would repeat itself a year apart.
+            case monthAndYear
         }
 
         let component: Calendar.Component
@@ -1666,7 +1679,9 @@ struct OddsChartView: View {
             case .timeOfDay: return .dateTime.hour().minute()
             case .hourOfDay: return .dateTime.hour()
             case .dayAndHour: return .dateTime.weekday(.abbreviated).hour()
+            case .dayAndTime: return .dateTime.weekday(.abbreviated).hour().minute()
             case .calendarDay: return .dateTime.month(.abbreviated).day()
+            case .monthAndYear: return .dateTime.month(.abbreviated).year()
             }
         }
     }
@@ -1705,7 +1720,9 @@ struct OddsChartView: View {
         case .timeOfDay: return 6
         case .hourOfDay: return 6
         case .dayAndHour: return 5
+        case .dayAndTime: return 4
         case .calendarDay: return 6
+        case .monthAndYear: return 5
         }
     }
 
@@ -1726,10 +1743,12 @@ struct OddsChartView: View {
     /// remove.
     static func xAxisLabelWidth(for style: XAxisPlan.LabelStyle) -> CGFloat {
         switch style {
-        case .timeOfDay: return 41    // "12:30 PM"
-        case .hourOfDay: return 31    // "04 Uhr"
-        case .dayAndHour: return 50   // "Wed 12 AM"
-        case .calendarDay: return 40  // "28. Sept."
+        case .timeOfDay: return 41     // "12:30 PM"
+        case .hourOfDay: return 31     // "04 Uhr"
+        case .dayAndHour: return 50    // "Wed 12 AM"
+        case .dayAndTime: return 63    // "Mo, 10:58 Uhr"
+        case .calendarDay: return 40   // "28. Sept."
+        case .monthAndYear: return 49  // "Sept. 2026"
         }
     }
 
@@ -1780,11 +1799,20 @@ struct OddsChartView: View {
             labelWidth: xAxisLabelWidth(for: style), labelCount: labelCount)
     }
 
+    /// Which label a stride needs.
+    ///
+    /// The rule underneath all four cases is that **no two ticks may print the
+    /// same label**: a label must carry every field that changes between
+    /// neighbouring ticks. So minutes appear exactly when the stride is
+    /// sub-hourly (in or out of one day), the weekday appears exactly when the
+    /// domain crosses one, and the year appears once the ticks are far enough
+    /// apart that a month-and-day would come round again (#3269).
     private static func labelStyle(
         strideSeconds: TimeInterval, spansMultipleDays: Bool
     ) -> XAxisPlan.LabelStyle {
+        if strideSeconds >= 180 * 86400 { return .monthAndYear }
         if strideSeconds >= 86400 { return .calendarDay }
-        if spansMultipleDays { return .dayAndHour }
+        if spansMultipleDays { return strideSeconds < 3600 ? .dayAndTime : .dayAndHour }
         return strideSeconds < 3600 ? .timeOfDay : .hourOfDay
     }
 

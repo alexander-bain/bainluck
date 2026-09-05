@@ -215,6 +215,72 @@ final class OddsChartAxisFitTests: XCTestCase {
         }
     }
 
+    // MARK: - Two ticks may never print the same label
+
+    /// #3269's second defect, found by photographing the fix: the 45-minute rung
+    /// above put a sub-hour stride on a domain that crosses midnight, `dayAndHour`
+    /// dropped the minutes, and the walk-off chart (15302915, 9:40 PM - 12:15 AM)
+    /// drew **Fri 9 PM · Fri 10 PM · Fri 11 PM · Fri 11 PM**.
+    ///
+    /// Two ticks 45 minutes apart printing one label is the same lie as a wrong
+    /// time — worse, arguably, because it looks deliberate. The rule is that a
+    /// label carries every field that changes between neighbouring ticks.
+    func testTheWalkOffChartDoesNotPrintTheSameHourTwice() {
+        // 15302915's own domain: 01:40Z-04:15Z, which is 9:40 PM - 12:15 AM in
+        // the app's own timezone and therefore crosses a calendar day.
+        var eastern = Calendar(identifier: .gregorian)
+        eastern.timeZone = TimeZone(identifier: "America/New_York")!
+        let range = date("2026-09-05T01:40:00Z")...date("2026-09-05T04:15:00Z")
+        let plan = OddsChartView.xAxisPlan(
+            for: range, plotWidth: phonePlotWidth, calendar: eastern)
+
+        XCTAssertEqual(
+            Set(labels(plan, over: range, calendar: eastern)).count,
+            labels(plan, over: range, calendar: eastern).count,
+            "the axis printed \(labels(plan, over: range, calendar: eastern))")
+    }
+
+    /// The property, over the whole continuum. A style that omits a field the
+    /// stride changes is a bug at every span that reaches it, not just at the one
+    /// somebody photographed.
+    func testNoSpanEverPrintsTwoIdenticalLabels() {
+        var eastern = Calendar(identifier: .gregorian)
+        eastern.timeZone = TimeZone(identifier: "America/New_York")!
+        // Start at 9:40 PM local so the sub-hour multi-day case is reached, not
+        // just skirted (gotcha #44: offset first, then step).
+        let start = date("2026-09-05T01:40:00Z")
+        var span: TimeInterval = 600
+        while span <= 3 * 365 * 86400 {
+            let range = start...start.addingTimeInterval(span)
+            let plan = OddsChartView.xAxisPlan(
+                for: range, plotWidth: phonePlotWidth, calendar: eastern)
+            let drawn = labels(plan, over: range, calendar: eastern)
+            XCTAssertEqual(
+                Set(drawn).count, drawn.count,
+                "span \(Int(span))s (\(plan.labelStyle)) printed \(drawn)")
+            span *= 1.25
+        }
+    }
+
+    /// The labels the chart will actually draw, in tick order: the domain stepped
+    /// by the plan's own stride and formatted by the plan's own format.
+    private func labels(
+        _ plan: OddsChartView.XAxisPlan, over range: ClosedRange<Date>, calendar: Calendar
+    ) -> [String] {
+        var format = plan.format
+        format.locale = Locale(identifier: "en_US")
+        format.timeZone = calendar.timeZone
+        format.calendar = calendar
+
+        var out: [String] = []
+        var tick = range.lowerBound
+        while tick <= range.upperBound && out.count < 40 {
+            out.append(format.format(tick))
+            tick = tick.addingTimeInterval(strideSeconds(plan))
+        }
+        return out
+    }
+
     // MARK: - The pinned label widths are re-measured, not trusted
 
     #if canImport(UIKit)
@@ -231,7 +297,7 @@ final class OddsChartAxisFitTests: XCTestCase {
         let locales = ["en_US", "en_GB", "de_DE", "fr_FR"].map(Locale.init(identifier:))
 
         for style in [OddsChartView.XAxisPlan.LabelStyle.timeOfDay, .hourOfDay,
-                      .dayAndHour, .calendarDay] {
+                      .dayAndHour, .dayAndTime, .calendarDay, .monthAndYear] {
             var widest: (label: String, width: CGFloat) = ("", 0)
             for locale in locales {
                 var format = OddsChartView.XAxisPlan(
