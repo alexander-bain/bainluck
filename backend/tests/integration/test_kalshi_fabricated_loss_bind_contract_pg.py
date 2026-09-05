@@ -493,16 +493,25 @@ async def _reference_work(session, **params):
 
 
 async def _mixed_population(session):
-    """Four members and four near-misses, ages deliberately out of id order.
+    """Four members and five near-misses, ages deliberately out of id order.
 
-    The ages ASCEND against the insertion order for the members, so a plan that
-    lost the sort returns them in the wrong sequence and every ordering
-    assertion below fails rather than passing by luck.
+    THE INSERTION ORDER IS THE POINT and it is not the reading order. Seeded
+    oldest-first, the ids come out ascending in the same sequence as the dates,
+    so "sorted by id" and "sorted by resolution_date" are the same answer and an
+    ordering test over the fixture proves nothing — it passes just as happily
+    against a plan that lost the sort entirely. (That is not a hypothetical: the
+    first version of this fixture did exactly that, and the anti-vacuity
+    assertion in the ordering test below is what caught it, in CI, on the run
+    that was meant to prove the rewrite.)
+
+    So the four members go in as recent, future, oldest, middle, and are RETURNED
+    in resolution_date order. Id order and date order are now different answers
+    and only one of them is the contract.
     """
-    oldest = await _seed_market(session, ext="KXWORK-OLD", days_ago=60)
-    middle = await _seed_market(session, ext="KXWORK-MID", days_ago=40)
     recent = await _seed_market(session, ext="KXWORK-NEW", days_ago=10)
     future = await _seed_market(session, ext="KXWORK-FUT", days_ago=-9)
+    oldest = await _seed_market(session, ext="KXWORK-OLD", days_ago=60)
+    middle = await _seed_market(session, ext="KXWORK-MID", days_ago=40)
 
     # Near-misses, one per exclusion the population predicate makes.
     await _seed_market(session, ext="KXWORK-ONELEG", days_ago=30, legs=("YES",))
@@ -572,7 +581,7 @@ async def test_the_rewrite_agrees_with_the_grouped_form_under_a_shard_and_a_curs
     the operator relies on: every call after the first carries a cursor, and the
     old refusal's advice was to carry a shard.
     """
-    members = await _mixed_population(pg_session)
+    await _mixed_population(pg_session)
     await _seed_market(pg_session, ext="KXWORK-HOCKEY", days_ago=20, sport="hockey")
 
     for params in (
@@ -586,17 +595,25 @@ async def test_the_rewrite_agrees_with_the_grouped_form_under_a_shard_and_a_curs
             r.market_id for r in await _reference_work(pg_session, **params)
         ], f"the two forms disagree under {params}"
 
+    everything = [r.market_id for r in await _work(pg_session, lim=50)]
     page_one = await _work(pg_session, lim=1)
     resumed = {
-        "lim": 10,
+        "lim": 50,
         "after_date": page_one[0].resolution_date,
         "after_id": page_one[0].market_id,
     }
     assert [r.market_id for r in await _work(pg_session, **resumed)] == [
         r.market_id for r in await _reference_work(pg_session, **resumed)
     ]
-    assert [r.market_id for r in await _work(pg_session, **resumed)] == members[1:], (
-        "the resume must start immediately after the row page one returned"
+    # Derived from the unsharded listing, never hand-written. The first draft of
+    # this line said `members[1:]` and forgot that the hockey market seeded two
+    # lines up also joins the population — so it asserted a four-row resume was
+    # three rows and failed in CI on a defect that was entirely the test's.
+    assert [
+        r.market_id for r in await _work(pg_session, **resumed)
+    ] == everything[1:], (
+        "the resume must return everything except the row page one returned, in "
+        "the same order"
     )
 
 
