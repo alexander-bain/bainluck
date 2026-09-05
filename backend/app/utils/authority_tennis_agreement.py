@@ -112,6 +112,7 @@ from app.utils.authority_agreement import (
 )
 from app.utils.authority_tennis_names import (
     AMBIGUOUS,
+    REVIEWED_ALIASES,
     is_doubles_name,
     looks_like_a_player,
     resolve_tennis_name,
@@ -169,6 +170,17 @@ UNSOLVED_COMPONENT_ROWS = "unsolved_component_candidate_rows"
 #: Collapsing the two — always writing empty lists into `refusals` — would make
 #: the seeding vacuous, so the mechanism every future strategy relies on would
 #: never run in the one place that uses it.
+#: `Join.allowances` key for the re-ordering classes this strategy folds on
+#: REVIEW rather than on measurement (`authority_tennis_names.REVIEWED_ALIASES`).
+#:
+#: Deliberately not a refusal name. Every other name this module publishes is a
+#: reason a row left the denominator; this one is a reason two names were allowed
+#: to MEET, and its effect on the governing number therefore points the other way
+#: — upward, generously, and with nothing in `excluded` to show for it. Zero is
+#: NOT the expected reading here: two entries are expected, and both are expected
+#: to say `ratified_by_alex: false` until he reads them (#3287).
+ORDER_ALIAS_ALLOWANCE = "order_aliases_reviewed"
+
 TENNIS_REFUSAL_NAMES = (
     AMBIGUOUS_REFUSAL,
     AMBIGUOUS_CANDIDATE_ROWS,
@@ -717,6 +729,7 @@ def pair_tennis_sides(
         unusable_rows=[r for r in rows if not _readable(r)],
         refusals=refusals,
         refusal_names=TENNIS_REFUSAL_NAMES,
+        allowances={ORDER_ALIAS_ALLOWANCE: [a.receipt() for a in REVIEWED_ALIASES]},
         denominator_is=TENNIS_DENOMINATOR_IS,
     )
 
