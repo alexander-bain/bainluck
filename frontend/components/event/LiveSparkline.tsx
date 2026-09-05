@@ -36,6 +36,83 @@ interface LiveSparklineProps {
 const MIN_POINTS = 3;
 
 /**
+ * The narrowest y-axis this glyph will ever draw, in probability (0-1).
+ *
+ * native/027 (#3313) — the original rule was "pin y to the FULL 0-100%", to stop
+ * an auto-scaled axis turning a one-point wobble into a mountain. That concern is
+ * real and this constant keeps it. What the rule got wrong is the other side: a
+ * 24px box holding the whole 0-100 range resolves one percentage point to
+ * 0.24px, so it cannot show the movement it exists to report.
+ *
+ * Measured against production, 26 live events, 2026-09-05 14:05 PT — of the 16
+ * carrying at least MIN_POINTS in the window, **15 drew less vertical travel
+ * than twice the 1.5px stroke**. Only three were actually flat (range under one
+ * point); eight had moved five points or more, and a Cubs-Marlins game had swung
+ * 19 — the most dramatic thing on its page — which the full-range axis rendered
+ * as 4.6px of wiggle. The glyph was not reporting calm markets, it was hiding
+ * live ones.
+ *
+ * So the axis is the data's own range widened to at least this span, never
+ * narrower. Both failure modes are then bounded by one number:
+ *   * a 1-point wobble spans 1/20th of the box — still visually flat, which is
+ *     the honest reading, so the mountain the original rule feared cannot appear;
+ *   * a 19-point swing fills the box, because the span floor is the FLOOR and
+ *     a wider range widens the axis with it.
+ *
+ * ONE CONTRACT with the phone: `LiveSparklineChart.minimumSpan` in
+ * `ios/Bain Luck/Bain Luck/Components/LiveSparklineChart.swift` carries the same
+ * number, and each side pins the literal in its own test — the same arrangement
+ * `CEILING_STEPS` / `RaceChart.ceilingSteps` uses (native/023, #3032). Change one
+ * and the other side's test fails, which is the point.
+ */
+export const MIN_SPAN = 0.2;
+
+/**
+ * Vertical breathing room, in px, kept clear at the top and bottom of the box.
+ *
+ * native/024's lesson applied one size down: *a rule that MOVES an element
+ * invalidates every spacing decision taken before the move.* Pinning y to the
+ * full 0-100 range meant real data almost never reached the frame, so a stroke
+ * centred on the extreme value was never noticeably sliced. With a span floor the
+ * opposite is true BY CONSTRUCTION — whenever the data range exceeds the floor the
+ * domain IS that range, so the highest and lowest readings sit exactly on the
+ * edges and half the 1.5px stroke lands outside the box on every such glyph.
+ *
+ * Caught by reading the raster, not by a test: the first render of the
+ * Cubs-Marlins swing measured 72px of ink in a 72px box, which is the line
+ * touching both frames.
+ */
+const STROKE_INSET = 1;
+
+/**
+ * The y-axis [min, max] this series should be drawn against.
+ *
+ * Pure and exported so the rule is tested as arithmetic rather than inferred from
+ * SVG coordinates. Slides rather than squashes at the edges: a series sitting at
+ * 96% gets [0.8, 1.0], not a clipped or compressed box, so the span the reader is
+ * judging travel against is the same everywhere on the axis.
+ */
+export function sparklineDomain(
+  values: number[],
+  minimumSpan: number = MIN_SPAN,
+): [number, number] {
+  if (values.length === 0) return [0, 1];
+  const clamped = values.map((v) => Math.min(1, Math.max(0, v)));
+  const lo = Math.min(...clamped);
+  const hi = Math.max(...clamped);
+  const floor = Math.min(1, Math.max(0, minimumSpan));
+  if (hi - lo >= floor) return [lo, hi];
+  const mid = (lo + hi) / 2;
+  let min = mid - floor / 2;
+  let max = mid + floor / 2;
+  // Slide the window back inside [0,1] keeping its width, so a near-certain or
+  // near-hopeless market is judged against the same span as an even one.
+  if (min < 0) [min, max] = [0, floor];
+  if (max > 1) [min, max] = [1 - floor, 1];
+  return [min, max];
+}
+
+/**
  * The last `windowMinutes` of points, oldest first.
  *
  * Exported and pure so the windowing is testable directly: this harness renders
@@ -62,20 +139,28 @@ export function windowPoints(
 /**
  * Map points to an SVG polyline.
  *
- * The y-axis is the FULL 0-100% range, never auto-scaled to the data. An
- * auto-scaled sparkline turns a one-point wobble into a dramatic mountain,
- * which is exactly the false story a "has this been moving" glance must not be
- * told.
+ * The y-axis is NOT auto-scaled to the data — it is the data's range widened to
+ * at least `MIN_SPAN`, which is what stops a one-point wobble reading as a
+ * dramatic mountain while still letting a real swing be seen. See `MIN_SPAN`.
  */
 export function polylinePoints(
   windowed: SparkPoint[],
   width: number,
   height: number,
+  minimumSpan: number = MIN_SPAN,
 ): string {
   if (windowed.length < MIN_POINTS) return '';
   const first = Date.parse(windowed[0].timestamp);
   const last = Date.parse(windowed[windowed.length - 1].timestamp);
   const span = last - first;
+  const [yMin, yMax] = sparklineDomain(
+    windowed.map((p) => p.value),
+    minimumSpan,
+  );
+  const yRange = yMax - yMin;
+  // Keep the stroke inside the box at the extremes; see STROKE_INSET.
+  const inset = Math.min(STROKE_INSET, height / 4);
+  const usable = height - inset * 2;
   return windowed
     .map((p, i) => {
       // A zero span means every point shares a timestamp; spread them evenly
@@ -85,7 +170,10 @@ export function polylinePoints(
           ? ((Date.parse(p.timestamp) - first) / span) * width
           : (i / (windowed.length - 1)) * width;
       const clamped = Math.min(1, Math.max(0, p.value));
-      const y = height - clamped * height;
+      // yRange can only be 0 if MIN_SPAN was passed as 0; centre rather than
+      // divide by zero.
+      const unit = yRange > 0 ? (clamped - yMin) / yRange : 0.5;
+      const y = height - inset - unit * usable;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
