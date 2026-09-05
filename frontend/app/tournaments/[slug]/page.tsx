@@ -134,7 +134,7 @@ import { useParams } from "next/navigation";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ContenderChart from "@/components/tournament/ContenderChart";
-import DrawToggle from "@/components/tournament/DrawToggle";
+import DrawToggle, { DRAWS, OPENING_DRAW_FALLBACK } from "@/components/tournament/DrawToggle";
 import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
 import TournamentBoard from "@/components/tournament/TournamentBoard";
 import TournamentBracket from "@/components/tournament/TournamentBracket";
@@ -146,7 +146,7 @@ import {
   toggleSelection,
 } from "@/lib/contenderChart";
 import { tournamentWindowStarts } from "@/lib/tournamentWindows";
-import { buildMatchList, type TitleChances } from "@/lib/matchList";
+import { buildMatchList, defaultDraw, type TitleChances } from "@/lib/matchList";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
 import { slateEmptyState, slateNotice } from "@/lib/slate";
 import TournamentMatches from "@/components/tournament/TournamentMatches";
@@ -188,7 +188,25 @@ export default function TournamentPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("tournament");
-  const [draw, setDraw] = useState<string>("mens-singles");
+  /**
+   * The draw on screen, or `null` for "the payload has not opened one yet".
+   *
+   * Was `useState("mens-singles")` — a constant that had never read the slate.
+   * On 2026-09-05 both of the tournament's in-progress matches were women's,
+   * so a phone landing on the hub during them showed five men's rows, none of
+   * them live, and said nothing about the two matches actually being played.
+   * `defaultDraw` is the rule and carries the measurement.
+   *
+   * RESOLVED ONCE, in the first request's `.then` below, and never after.
+   * Deriving it during render would re-answer the question on every payload
+   * and swap the whole page — chart, slate, grid, contenders — out from under
+   * a reader the moment a match started in the other draw. A tap writes the
+   * same state, so an explicit choice and a resolved default are indistinguish-
+   * able afterwards, which is the point: this picks the OPENING draw, it does
+   * not follow play around.
+   */
+  const [drawChoice, setDrawChoice] = useState<string | null>(null);
+  const draw = drawChoice ?? OPENING_DRAW_FALLBACK;
   /**
    * The chart's chosen contenders, or `null` for "whatever the default is".
    *
@@ -236,6 +254,25 @@ export default function TournamentPage() {
       .then((payload) => {
         if (cancelled) return;
         setData(payload);
+        /**
+         * Open on the draw being played (live/077 item 2).
+         *
+         * Here rather than in an effect on `data` so it lands in the SAME
+         * commit as the first payload: an effect would render the fallback
+         * draw once and then replace it, which on a phone is a visible flash
+         * of the wrong draw — the exact thing this is fixing, shown briefly
+         * instead of permanently. The slate is in the `first` section, so
+         * this request always carries what the rule reads.
+         *
+         * `current ?? …` and not a bare set: a reader who tapped the toggle
+         * while the request was in flight has already answered this question.
+         */
+        setDrawChoice(
+          (current) =>
+            current ??
+            defaultDraw(payload.slate?.matches ?? [], DRAWS) ??
+            OPENING_DRAW_FALLBACK
+        );
         setLoading(false);
 
         return fetchTournament(slug, HUB_SECTIONS_REST)
@@ -423,7 +460,7 @@ export default function TournamentPage() {
           <DrawToggle
             draw={draw}
             onSelect={(id) => {
-              setDraw(id);
+              setDrawChoice(id);
               setSelection(null);
             }}
           />

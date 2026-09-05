@@ -36,6 +36,22 @@ export const DRAWS: DrawOption[] = [
 ];
 
 /**
+ * The draw to open on when NOTHING is being played (live/077 item 2).
+ *
+ * The hub used to open on this unconditionally, which is the defect: on
+ * 2026-09-05 both in-progress matches were women's and a phone landing mid-
+ * session was shown five men's rows and no sign the live ones existed. The
+ * opening draw is `defaultDraw`'s answer now, and this is only what it falls
+ * back to between sessions — a tournament with no match on court has no draw
+ * to prefer, and SOME tab has to be pressed.
+ *
+ * It lives here, beside `DRAWS`, for the reason the whole strip does: a route
+ * file may not carry named exports (Next's generated page types fail the
+ * typecheck gate on them), so the page cannot declare its own default.
+ */
+export const OPENING_DRAW_FALLBACK = DRAWS[0].id;
+
+/**
  * Symmetric padding, and the same 12px the tab row uses under its labels, so
  * the two strips read as one rhythm instead of one strip crowding the other.
  * Exported so a guard can assert the top padding EXISTS rather than asserting
