@@ -29,6 +29,7 @@ Terminal window, kills a process, or writes into the live handoff tree.
 
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -934,4 +935,320 @@ def test_every_lane_worktree_can_write_the_handoff_tree():
         "land in a private handoff-outbox/ that only a human copying by hand can deliver. "
         "lane-runner.sh seeds this at launch, so a lane listed here has not been "
         "restarted since the grant landed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# A .running marker older than a session can be is an orphan (integrator/205)
+# ---------------------------------------------------------------------------
+# THE WEDGE. The runner takes `Q` -> `Q.running` and expects to move `$RUN`
+# itself when the session ends. But a session may rename its OWN marker — a
+# self-restock session marks the RESTOCK file `…superseded-by-047` and writes
+# `047-….md.running` in its place. If that session then hits the 2h cap (rc 124)
+# or simply ends, `mv "$RUN" …` finds nothing, the orphan stays, `inbox_running`
+# reads 1, guard 1 refuses every restock, and no queued `.md` exists to take.
+# The lane is idle forever and the window says nothing.
+#
+# Measured 2026-09-05: integrator idle ~4:00-4:10am on a marker orphaned the
+# previous Thursday, native idle 8:59-10:10am, lane1b idle 7:33-10:10am.
+#
+# The startup crash-recovery pass cannot catch this — it runs once, at runner
+# start, so a marker orphaned under a long-lived runner is never looked at
+# again. These tests drive the real write path, because a reaper proven only
+# under --dry-run is a reaper proven not to run.
+
+
+def _reap(handoff, lane="demo", **env):
+    """One REAL pass: reap, then restock. Starts no session."""
+    e = {"LANE_HANDOFF": str(handoff)}
+    e.update(env)
+    return run(RUNNER, "--restock-once", str(REPO), lane, env=e)
+
+
+# The runner ages markers by ctime, which is the right clock (`mv` updates it,
+# so it dates the TAKE; mtime would date the directive's authoring and call a
+# freshly-taken week-old directive stale). ctime cannot be backdated portably —
+# `os.utime` moves atime/mtime and bumps ctime to now — so these tests shrink
+# the threshold to 1s and then genuinely wait past it. That keeps the age
+# comparison real rather than trivially true: a cap of 0 would fire even if the
+# age test were deleted. The bound itself is proved by
+# `test_reaper_leaves_a_live_sessions_marker_alone`, which runs the same fixture
+# under the real 7200s cap and asserts nothing is touched.
+STALE_NOW = {"LANE_SESSION_TIMEOUT": "1", "LANE_STALE_RUNNING_GRACE": "0"}
+STALE_WAIT = 1.2   # > the 1s cap above, so the marker is genuinely past it
+
+
+def test_reaper_unwedges_a_lane_orphaned_by_its_own_session(tmp_path):
+    """The ship: the orphan is retired and the lane restocks itself again.
+
+    Both halves are asserted. Retiring the marker without the restock firing
+    would leave the lane just as idle as before.
+    """
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    (inbox / "047-orphan.md.running").write_text("orphaned by a capped session\n")
+    time.sleep(STALE_WAIT)
+
+    rc, out = _reap(handoff, **STALE_NOW)
+    assert rc == 0, out
+    assert "retired orphaned marker 047-orphan.md.running" in out, out
+
+    # The reported age must be a real elapsed time, not an epoch subtracted from
+    # something that was never a clock. `stat -f %c` is not an error on GNU
+    # coreutils — there `-f` selects FILESYSTEM status and `%c` is the total
+    # inode count, so it exits 0 and yields a large number that is not a time.
+    # Probing BSD-first read every marker as decades stale on Linux and retired
+    # live sessions' markers; the symptom surfaced in the negative arm, but this
+    # is the assertion that names the cause. Deliberately platform-independent:
+    # it fails on whichever OS gets the probe order wrong.
+    age = int(re.search(r"\((\d+)s old,", out).group(1))
+    assert age < 3600, (
+        f"the reaper aged this marker at {age}s ({age / 86400:.0f} days) — it is "
+        "seconds old, so file_ctime is not reading a timestamp on this platform"
+    )
+
+    assert not (inbox / "047-orphan.md.running").exists(), "the orphan still wedges the lane"
+    names = sorted(p.name for p in inbox.iterdir())
+    assert any(n.startswith("047-orphan.md.stale-") for n in names), names
+    assert any(n.startswith("RESTOCK-") and n.endswith(".md") for n in names), (
+        f"the lane was unwedged but never restocked: {names}"
+    )
+
+
+def test_reaper_never_requeues_the_orphan_as_work(tmp_path):
+    """A retired marker must be invisible to the queue glob.
+
+    Crash recovery re-queues because a dead runner left work genuinely
+    unstarted. Here the session RAN — usually merged, pushed and reported — and
+    only the bookkeeping was lost. Renaming back to `.md` would re-run finished
+    work, so the marker is parked under a name `ls *.md` cannot see.
+    """
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    (inbox / "047-orphan.md.running").write_text("already merged and pushed\n")
+    time.sleep(STALE_WAIT)
+
+    rc, out = _reap(handoff, **STALE_NOW)
+    assert rc == 0, out
+
+    assert not (inbox / "047-orphan.md").exists(), "the orphan was re-queued as live work"
+    requeued = [p.name for p in inbox.iterdir() if p.name.endswith(".md") and p.name.startswith("047")]
+    assert requeued == [], requeued
+    assert "NOT re-queued" in out, out
+
+
+def test_reaper_leaves_a_live_sessions_marker_alone(tmp_path):
+    """The guard that keeps this from being a footgun.
+
+    Under the real cap a marker young enough to belong to a running session is
+    not eligible, and guard 1 correctly still blocks the restock. Without this
+    arm the reaper would happily retire the marker of a session that is mid-way
+    through a merge.
+    """
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    live = inbox / "047-live.md.running"
+    live.write_text("a session is working on this right now\n")
+
+    rc, out = _reap(handoff)  # default LANE_SESSION_TIMEOUT of 7200s
+    assert rc == 1, out
+    assert live.exists(), "the reaper retired a live session's marker"
+    assert "retired orphaned marker" not in out, out
+    assert "a directive is .running — no restock" in out, out
+    assert [p.name for p in inbox.iterdir()] == ["047-live.md.running"]
+
+
+def test_reaper_dry_run_reports_but_writes_nothing(tmp_path):
+    """The rehearsal the directive asked for: it prints, it does not act."""
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    orphan = inbox / "047-orphan.md.running"
+    orphan.write_text("orphaned\n")
+    time.sleep(STALE_WAIT)
+
+    rc, out = run(RUNNER, "--dry-run", str(REPO), "demo",
+                  env={"LANE_HANDOFF": str(handoff), **STALE_NOW})
+    assert rc == 0, out
+    assert "WOULD RETIRE 047-orphan.md.running" in out, out
+    assert orphan.exists(), "dry-run retired a marker"
+    assert [p.name for p in inbox.iterdir()] == ["047-orphan.md.running"]
+
+
+def test_restock_once_does_not_requeue_a_running_directive(tmp_path):
+    """`--restock-once` starts no session, so it must not re-queue one either.
+
+    Found while proving the reaper (integrator/205): the startup crash-recovery
+    pass was skipped under --dry-run but NOT under --restock-once, so a nudge
+    aimed at an idle lane renamed a BUSY lane's in-flight marker back to `.md`
+    for the real runner to take a second time. It also made the reaper dead code
+    on that path — crash recovery had already renamed everything away before it
+    ran.
+    """
+    handoff = _handoff(tmp_path)
+    inbox = handoff / "runner-inbox" / "demo"
+    live = inbox / "047-in-flight.md.running"
+    live.write_text("busy\n")
+
+    rc, out = _reap(handoff)
+    assert rc == 1, out
+    assert live.exists(), "--restock-once re-queued a live session's directive"
+    assert not (inbox / "047-in-flight.md").exists(), (
+        "--restock-once handed an in-flight directive back to the queue glob"
+    )
+    assert "re-queued interrupted" not in out, out
+
+
+# --- the two paths that actually run in production ---------------------------
+# A mutation battery on the reaper killed every mutant EXCEPT "delete the reap
+# call from the idle loop" — because the tests above drive `--restock-once`, and
+# the idle loop is where the reaper runs for real. These two drive the loop
+# itself. `LANE_IDLE_SLEEP` exists so they can.
+
+
+def _run_loop(tmp_path, handoff, fake_claude, seconds=3.0, after_start=None, **env):
+    """Run the real serve loop for a moment, then kill it, and return its output.
+
+    SIGKILL to the whole process group, and `start_new_session=True` so that
+    group is never pytest's: the runner traps INT/TERM/HUP and answers with
+    `kill 0`, which under a shared group would take the test session down with
+    it. KILL cannot be trapped, so the trap never runs at all.
+
+    WORKDIR is tmp_path, not REPO: the runner seeds a cross-root settings.json
+    into whatever workdir it is handed, and a test has no business writing that
+    into the checkout.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake = bin_dir / "claude"
+    fake.write_text(fake_claude)
+    fake.chmod(0o755)
+
+    e = dict(os.environ)
+    e.update({
+        "LANE_HANDOFF": str(handoff),
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "LANE_IDLE_SLEEP": "1",
+    })
+    e.update(env)
+    p = subprocess.Popen(
+        ["bash", str(RUNNER), str(tmp_path), "demo"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=str(REPO), env=e, start_new_session=True,
+    )
+    try:
+        if after_start is not None:
+            # The point of the idle-loop test: this state must appear AFTER the
+            # runner has started, or startup crash-recovery reaches it first and
+            # the loop's own reaper is never the thing under test.
+            time.sleep(1.0)
+            after_start()
+        time.sleep(seconds)
+    finally:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return p.communicate(timeout=30)[0]
+
+
+def test_idle_loop_reaps_a_marker_orphaned_after_the_runner_started(tmp_path):
+    """The production path, and the one startup crash-recovery cannot reach.
+
+    Crash recovery runs ONCE, at runner start. This orphan appears afterwards —
+    which is the real shape: a session orphans its own marker hours into a
+    long-lived runner. Before integrator/205 nothing looked at it again and the
+    lane idled until a human noticed.
+    """
+    handoff = _handoff(tmp_path, program=None)   # no program file: no restock noise
+    inbox = handoff / "runner-inbox" / "demo"
+
+    out = _run_loop(
+        tmp_path, handoff, "#!/bin/bash\nexit 0\n", seconds=4.0,
+        LANE_SESSION_TIMEOUT="1", LANE_STALE_RUNNING_GRACE="0",
+        after_start=lambda: (inbox / "047-orphan.md.running").write_text("orphaned\n"),
+    )
+    assert "retired orphaned marker" in out, out
+    assert not list(inbox.glob("*.md.running")), (
+        f"the lane is still wedged: {[p.name for p in inbox.iterdir()]}"
+    )
+    assert list(inbox.glob("047-orphan.md.stale-*")), [p.name for p in inbox.iterdir()]
+
+
+def test_a_session_that_renames_its_own_marker_does_not_wedge_the_lane(tmp_path):
+    """The measured bug, end to end, with a session that does what ours do.
+
+    A self-restock session marks its RESTOCK file `…superseded-by-047` and
+    writes `047-….md.running` in its place. The runner's `mv "$RUN" …` then has
+    nothing to move: before this fix it printed an mv error, called the
+    directive consumed, and left the new marker behind forever — `inbox_running`
+    stayed 1, guard 1 refused every restock, and the lane went idle with nothing
+    in the window to say why (integrator 4:00-4:10am, native 8:59-10:10am,
+    lane1b 7:33-10:10am, all on 2026-09-05).
+    """
+    handoff = _handoff(tmp_path, program=None)
+    inbox = handoff / "runner-inbox" / "demo"
+    (inbox / "001-work.md").write_text("do the thing\n")
+
+    fake = (
+        "#!/bin/bash\n"
+        f'INBOX="{inbox}"\n'
+        'for R in "$INBOX"/*.md.running; do\n'
+        '  [ -e "$R" ] || continue\n'
+        '  mv "$R" "${R%.running}.superseded-by-047"\n'
+        'done\n'
+        ': > "$INBOX/047-self-written.md.running"\n'
+        "exit 0\n"
+    )
+    out = _run_loop(tmp_path, handoff, fake, seconds=3.0)
+
+    assert "was renamed by the session itself" in out, out
+    assert not list(inbox.glob("*.md.running")), (
+        f"the lane is wedged exactly as it was before the fix: "
+        f"{[p.name for p in inbox.iterdir()]}"
+    )
+    assert list(inbox.glob("047-self-written.md.stale-*")), [p.name for p in inbox.iterdir()]
+    # And the directive the session really did run is not handed back as work.
+    assert not (inbox / "001-work.md").exists()
+
+
+def test_the_post_session_sweep_only_touches_this_sessions_own_leftovers(tmp_path):
+    """The bound that keeps the sweep from being a blunt instrument.
+
+    The sweep fires when a session renamed its own marker, and it must retire
+    only what THAT session left behind. A `.running` marker that already existed
+    when the session started is somebody else's — a duplicate runner's live
+    take, most plausibly — and retiring it would hand that lane's in-flight
+    directive to a second session, the very hazard the startup crash-recovery
+    pass has always carried.
+
+    So the marker here is created a clear interval BEFORE the work is queued,
+    which puts its ctime below the session's start stamp.
+    """
+    handoff = _handoff(tmp_path, program=None)
+    inbox = handoff / "runner-inbox" / "demo"
+    other = inbox / "099-someone-elses.md.running"
+
+    def stage():
+        other.write_text("a sibling runner is mid-session on this\n")
+        time.sleep(2.0)   # ctime gap, so `other` predates SESSION_START
+        (inbox / "001-work.md").write_text("do the thing\n")
+
+    fake = (
+        "#!/bin/bash\n"
+        f'INBOX="{inbox}"\n'
+        'mv "$INBOX/001-work.md.running" "$INBOX/001-work.md.superseded-by-047"\n'
+        ': > "$INBOX/047-self-written.md.running"\n'
+        "exit 0\n"
+    )
+    # Default 7200s cap throughout, so the idle reaper is not what spares
+    # `other` — only the sweep's SINCE bound can.
+    out = _run_loop(tmp_path, handoff, fake, seconds=4.0, after_start=stage)
+
+    assert "was renamed by the session itself" in out, out
+    assert list(inbox.glob("047-self-written.md.stale-*")), (
+        f"the sweep did not run at all: {[p.name for p in inbox.iterdir()]}"
+    )
+    assert other.exists(), (
+        "the sweep retired a marker that predates the session — that is a "
+        f"sibling runner's live directive: {[p.name for p in inbox.iterdir()]}"
     )
