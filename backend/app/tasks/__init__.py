@@ -441,7 +441,11 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     @_task_prerun.connect
     def _record_delivery(sender=None, task=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_attempt, record_task_delivery
+            from app.tasks.redis_state import (
+                record_task_attempt,
+                record_task_delivery,
+                record_task_delivery_bucket,
+            )
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             request = getattr(sender, "request", None)
@@ -463,6 +467,19 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
                 if getattr(request, "is_eager", False):
                     return
             record_task_delivery(name)
+            # LAT-P238 / CERT-1966 repair: the same delivery, counted a SECOND
+            # time into the current wall-clock bucket. The 24h counter above is
+            # unchanged and still owns the rate arm's numerator; this one exists
+            # only so the emission count has a delivery count born in the same
+            # 600s span to be divided by. The 24h counter cannot serve that at
+            # any tolerance — it survives deploys by design and carries up to a
+            # day of pre-change history, which is exactly what makes a quotient
+            # against a counter created AT the change non-identifiable.
+            #
+            # Placed after `record_task_delivery` and behind the same two
+            # filters, so the two delivery counts can never disagree about what
+            # a delivery is.
+            record_task_delivery_bucket(name)
         except Exception:
             pass
 except Exception:  # pragma: no cover - defensive
