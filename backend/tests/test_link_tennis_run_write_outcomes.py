@@ -97,6 +97,26 @@ class FakeResult:
         return self._rows
 
 
+def _selected_column_count(sql: str) -> int:
+    """How many columns a flat `SELECT ... FROM` projects.
+
+    Depth-aware on parentheses so a `COALESCE(a, b)` counts once. Deliberately
+    small: it is asked only about this module's own hand-written queries, and a
+    real parser here would be a second thing to keep true.
+    """
+    body = sql.upper().split("SELECT", 1)[1].split("FROM", 1)[0]
+    depth = 0
+    columns = 1
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            columns += 1
+    return columns
+
+
 class RecordingSession:
     """Answers the task's three statements; counts commits and rollbacks.
 
@@ -116,6 +136,19 @@ class RecordingSession:
         # test that cares says so and every other test measures an empty
         # population and asserts nothing about it.
         self._measured = list(measured or [])
+        # #3226. The task decodes these tuples POSITIONALLY, so a fake row that
+        # is one column short of the real SELECT is an `IndexError` at best and
+        # a column read into the wrong field at worst. Adding `e.status` to
+        # `MEASUREMENT_ROWS` found this the hard way; checked here so the next
+        # column does not.
+        want = _selected_column_count(task.MEASUREMENT_ROWS)
+        for row in self._measured:
+            assert len(row) == want, (
+                f"a measured row has {len(row)} columns and MEASUREMENT_ROWS "
+                f"selects {want}. Positional decode — fix the fixture, and do "
+                "not pad the task with a length check that would read a missing "
+                "status as 'not retired'."
+            )
         self.measurement_windows: list[dict] = []
         # A SEQUENCE of answers, because the task asks twice: once up front for
         # the batch, and again after a lost race, when the whole point is that
@@ -729,8 +762,8 @@ class TestASuccessfulEmptyReadStillMeasuresOurSide:
     async def test_an_empty_venue_read_still_counts_our_matches(self, drive_empty):
         summary, session = await drive_empty(
             measured=[
-                (11, "tennis_atp_us_open", "Carlos Alcaraz", "Jannik Sinner", START, None),
-                (12, "tennis_atp", "Novak Djokovic", "Daniil Medvedev", START, None),
+                (11, "tennis_atp_us_open", "Carlos Alcaraz", "Jannik Sinner", START, None, "scheduled"),
+                (12, "tennis_atp", "Novak Djokovic", "Daniil Medvedev", START, None, "scheduled"),
             ]
         )
         assert summary["fixtures_read"] == 0
@@ -749,7 +782,7 @@ class TestASuccessfulEmptyReadStillMeasuresOurSide:
     async def test_a_failed_read_does_not_spend_the_query(self, drive_empty):
         summary, session = await drive_empty(
             measured=[
-                (11, "tennis_atp", "Carlos Alcaraz", "Jannik Sinner", START, None)
+                (11, "tennis_atp", "Carlos Alcaraz", "Jannik Sinner", START, None, "scheduled")
             ],
             fail=True,
         )

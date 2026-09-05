@@ -197,7 +197,7 @@ SELECT e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time,
 #: agreement number.
 MEASUREMENT_ROWS = """
 SELECT e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time,
-       e.statpal_fixture_id
+       e.statpal_fixture_id, e.status
   FROM events e
   JOIN sports s ON s.id = e.sport_id
  WHERE s.key LIKE 'tennis%'
@@ -487,8 +487,13 @@ async def _measurement_rows(session, now: datetime) -> list[Side]:
             home=r[2],
             away=r[3],
             start=r[4],
+            # Tennis's `label` is the SPORT KEY, never a status — which is
+            # precisely why #3226's exclusion reads `event_status` and not
+            # `label`. Added to `MEASUREMENT_ROWS` for this; nothing else uses
+            # it, and without it every retired tennis row would stay counted.
             label=r[1],
             held_id=r[5],
+            event_status=r[6],
         )
         for r in rows
     ]
