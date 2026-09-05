@@ -665,15 +665,36 @@ async def _run_link_tennis_statpal_fixtures(
         # failures means we could not ask. Both carry the streak unchanged and
         # they are different facts, and returning early without banking either
         # would leave the ledger unable to tell them apart (gotcha #53).
+        #
+        # OUR side is still measured on a successful empty read, and that is the
+        # CERT-1904 repair. Banking `rows=[]` published denominator 0 — "nobody
+        # lists anything" — on a day when our own tennis inventory was nonempty
+        # and StatPal's was not. That is the strongest `statpal_only` finding the
+        # row can make, and the first version erased it into a zero that looks
+        # like a quiet day. A READ FAILURE is different and skips the query: the
+        # row is READ-FAILED and carries no counts whatever we measure, so asking
+        # would spend a query to publish nothing.
+        measured_rows: list[Side] = []
+        if not run.read_failures:
+            async with get_task_session() as session:
+                measured_rows = await _measurement_rows(session, now)
+
         empty = build_tennis_agreements(
             fixtures=[],
-            rows=[],
+            rows=measured_rows,
             read_failures=run.read_failures,
             sources_read=run.sources_read,
+            measurement_window=(
+                None if run.read_failures else tennis_measurement_bounds((now, now), now=now)
+            ),
         )
         for row in empty.values():
             await record_agreement_day(row, at=now, apply=apply)
-        return {**run.summary(), "agreements": empty}
+        return {
+            **run.summary(),
+            "rows_measured": len(measured_rows),
+            "agreements": empty,
+        }
 
     starts = [f.start_time for f in fixtures if f.start_time]
     window_start = (min(starts) if starts else now) - MATCH_WINDOW

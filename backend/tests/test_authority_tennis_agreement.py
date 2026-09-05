@@ -22,6 +22,7 @@ import pytest
 
 from app.utils.authority_agreement import (
     GATE_PENDING,
+    Join,
     GOVERNING_IDENTITY_NUMBERS,
     MEASUREMENT_POPULATIONS,
     SHADOW_STAMPERS,
@@ -31,7 +32,9 @@ from app.utils.authority_agreement import (
     pair_by_normalized_key,
 )
 from app.utils.authority_tennis_agreement import (
+    AMBIGUOUS_CANDIDATE_ROWS,
     AMBIGUOUS_REFUSAL,
+    TENNIS_DENOMINATOR_IS,
     DOUBLES,
     SINGLES,
     STATPAL_TENNIS_REACH,
@@ -247,6 +250,72 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         assert len(receipts[0]["our_candidates"]) == 2
         assert receipts[0]["unresolved_name"] == "G. Garcia"
 
+    def test_the_candidate_rows_leave_the_denominator_too(self):
+        """CERT-1904 finding 1, pinned as the exact specimen it was found on.
+
+        Excluding the FIXTURE alone was half a repair and the wrong half. Both of
+        our rows stayed in the population, nothing could pair them, and the row
+        published `ambiguous_identity=1` beside `ours_only=2`, denominator 2,
+        coverage 0% — a duplicate of ours printed as two matches StatPal is
+        missing. That is the outcome this module's own docstring says it refuses,
+        reached from the side I was not looking at.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "G. Garcia", "J. Sinner")],
+            rows=[
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Jannik Sinner"),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["identity"]["ours_only"] == 0
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
+        assert singles["denominator"] == 0
+        # `None`, not 0.0 — there is nothing to divide by, and a coverage of 0%
+        # here would be the same lie in a percentage (gotcha #53).
+        assert singles["identity"]["ours_covered_pct"] is None
+
+    def test_the_held_out_rows_are_receipted_by_event_id(self):
+        """A count with no ids is not actionable for the #2693 work it feeds."""
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "G. Garcia", "J. Sinner")],
+            rows=[
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Jannik Sinner"),
+            ],
+        )
+        held = rows[SINGLES]["receipts"][AMBIGUOUS_CANDIDATE_ROWS]
+        assert {h["event_id"] for h in held} == {"11", "12"}
+        assert rows[SINGLES]["receipts"][AMBIGUOUS_REFUSAL][0]["our_event_ids"] == [
+            "11",
+            "12",
+        ]
+
+    def test_an_ambiguity_does_not_remove_an_unrelated_row(self):
+        """The over-removal risk the repair had to avoid.
+
+        Holding out every contested row BEFORE the pairing pass would have been
+        simpler. It would also drop rows that pair perfectly well with a
+        different fixture, turning a real agreement into a silent exclusion —
+        trading a published duplicate for an invisible one.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[
+                f("1", "G. Garcia", "J. Sinner"),
+                f("2", "C. Alcaraz", "N. Djokovic"),
+            ],
+            rows=[
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Jannik Sinner"),
+                r("13", "Carlos Alcaraz", "Novak Djokovic"),
+            ],
+        )
+        singles = rows[SINGLES]
+        # The unrelated pairing survives the ambiguity next to it.
+        assert singles["identity"]["both"] == 1
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
+        assert singles["identity"]["ours_only"] == 0
+
     def test_an_unambiguous_name_is_not_refused(self):
         """The mutation guard for the test above: refusing everything passes it."""
         rows = build_tennis_agreements(
@@ -325,6 +394,48 @@ class TestTheDefaultJoinDidNotMove:
             "statpal_unusable_names": 0,
             "our_unusable_names": 0,
         }
+
+
+class TestARowDescribesTheJoinItActuallyUsed:
+    """CERT-1904 finding 3. A denominator described by the wrong join is a
+    measurement with the wrong source attached to it (CERT-1895's lesson)."""
+
+    def test_the_tennis_row_does_not_claim_an_ordered_pair_key(self):
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
+        )
+        described = rows[SINGLES]["denominator_is"]
+        assert described == TENNIS_DENOMINATOR_IS
+        # Every clause of the default is false here: there is no key, kickoff is
+        # not an in-key tiebreak, and orientation is not part of the identity.
+        assert "keyed on the normalised (away, home) pair" not in described
+        assert "resolve_tennis_name" in described
+        assert "either orientation" in described
+
+    def test_the_default_join_still_describes_itself(self):
+        row = build_agreement_row(
+            sport_key="americanfootball_nfl",
+            fixtures=[f("1", "Bears", "Packers")],
+            rows=[r("11", "Bears", "Packers")],
+            normalize=lambda v: (v or "").strip().lower(),
+        )
+        assert "keyed on the normalised (away, home) pair" in row["denominator_is"]
+
+    def test_every_join_strategy_describes_its_own_denominator(self):
+        """A strategy whose relation differs must not keep the default sentence.
+
+        Named as a sweep rather than as two assertions so a THIRD strategy cannot
+        be added with the key join's description still attached — which is
+        exactly how tennis shipped for one grading round.
+        """
+        default = Join(
+            fixtures=[], rows=[], paired=[], statpal_only=[], ours_only=[],
+            unusable_fixtures=[], unusable_rows=[],
+        ).denominator_is
+        tennis = pair_tennis_sides([], [])
+        assert tennis.denominator_is != default
+        assert pair_by_normalized_key([], [], str).denominator_is == default
 
 
 class TestNeitherDrawStartsAClockItCannotScore:
@@ -428,6 +539,27 @@ class TestAZeroYieldIsARowAndNotASkip:
         assert set(rows) == {SINGLES, DOUBLES}
         for key in rows:
             assert rows[key]["identity"]["governing"]["gate"] == GATE_PENDING
+
+    def test_an_empty_venue_against_a_nonempty_inventory_is_the_finding(self):
+        """CERT-1904 finding 2, at the builder.
+
+        StatPal serving no tennis while WE list matches is the strongest
+        `statpal_only` signal the row can make. Banking `rows=[]` on that day
+        publishes denominator 0 — "nobody lists anything" — which reads as a
+        quiet Monday. The task-level half is
+        `test_a_successful_empty_read_still_measures_our_inventory`.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner"),
+                r("12", "Novak Djokovic", "Daniil Medvedev"),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["denominator"] == 2
+        assert singles["identity"]["ours_only"] == 2
+        assert singles["identity"]["ours_covered_pct"] == 0.0
 
     def test_a_failed_read_is_not_a_disagreement(self):
         rows = build_tennis_agreements(

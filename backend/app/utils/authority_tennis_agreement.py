@@ -142,6 +142,32 @@ DOUBLES = "tennis_doubles"
 #: something else — see the module docstring.
 AMBIGUOUS_REFUSAL = "ambiguous_identity"
 
+#: `Join.refusals` key for OUR rows an ambiguous fixture could not be told apart
+#: between, left unpaired at the end of the pass. Separate from the key above
+#: because one ambiguous fixture and the two rows it implicates are different
+#: quantities and `excluded` is read as a census (CERT-1904).
+AMBIGUOUS_CANDIDATE_ROWS = "ambiguous_identity_candidate_rows"
+
+#: What this strategy's denominator actually is, published on the row.
+#:
+#: The shared default describes an ordered normalised-pair key with kickoff as an
+#: in-key tiebreak. **Every clause of that is false for tennis** — the join is a
+#: resolver over a non-transitive relation, orientation is not a difference, and
+#: there are no keys to be inside of. A row that describes the wrong join is a
+#: measurement with the wrong source attached to it (CERT-1895's lesson, and
+#: CERT-1904 caught this file failing it).
+TENNIS_DENOMINATOR_IS = (
+    "distinct matches under the union of both sides, joined by "
+    "`authority_tennis_names.resolve_tennis_name` on BOTH players in either "
+    "orientation — not by a normalised pair key, because the identity relation "
+    "reads a missing given name as UNKNOWN and so is not transitive. Start time "
+    "chooses WHICH of two admissible pairings is made and never whether one is "
+    "made. Singles and doubles are separate denominators; a fixture whose player "
+    "our register holds under two identities, and any of our rows it could not "
+    "be told apart between, leave the denominator under `excluded` rather than "
+    "counting as a disagreement."
+)
+
 
 def is_doubles_side(side: Side) -> bool:
     """Is this fixture or row a doubles draw?
@@ -188,13 +214,24 @@ def _sides_agree(fixture: Side, row: Side) -> bool:
     return straight or crossed
 
 
-def _ambiguity(fixture: Side, rows: Sequence[Side]) -> Optional[dict[str, Any]]:
-    """A receipt if either of this fixture's players is two of our players.
+def _ambiguity(
+    fixture: Side, rows: Sequence[Side]
+) -> Optional[tuple[dict[str, Any], list[Side]]]:
+    """A receipt and the OUR-SIDE rows it implicates, if this fixture is ambiguous.
 
     Asked with `resolve_tennis_name` against the names actually in the window,
     not against the global register: the field has 572 contested keys and almost
     none of them are reachable on one tournament-day. Resolving globally would
     refuse matches nobody could confuse.
+
+    The second element is the repair CERT-1904 required, and the finding is worth
+    stating plainly because the first version got it exactly backwards. Excluding
+    the FIXTURE alone leaves both candidate rows of ours in the population, where
+    nothing can pair them — so the `G. Garcia` specimen published
+    `ambiguous_identity=1` AND `ours_only=2`, denominator 2, coverage 0%. That is
+    the duplicate-as-disagreement outcome this module's own docstring says it
+    refuses, arrived at from the other side: I removed the half that was easy to
+    see and left the half that carries the number.
     """
     pool: list[str] = []
     for r in rows:
@@ -205,7 +242,14 @@ def _ambiguity(fixture: Side, rows: Sequence[Side]) -> Optional[dict[str, Any]]:
     for theirs in (fixture.home, fixture.away):
         resolution = resolve_tennis_name(theirs, pool)
         if resolution.outcome == AMBIGUOUS:
-            return {
+            contested = set(resolution.candidates)
+            implicated = [
+                r
+                for r in rows
+                if (isinstance(r.home, str) and r.home in contested)
+                or (isinstance(r.away, str) and r.away in contested)
+            ]
+            receipt = {
                 "statpal_id": fixture.ref,
                 "players": [fixture.home, fixture.away],
                 "statpal_start": (
@@ -214,12 +258,14 @@ def _ambiguity(fixture: Side, rows: Sequence[Side]) -> Optional[dict[str, Any]]:
                 "label": fixture.label,
                 "unresolved_name": theirs,
                 "our_candidates": list(resolution.candidates),
+                "our_event_ids": [r.ref for r in implicated],
                 "why": (
                     "two of our rows name different players who both answer to "
                     "this StatPal name; neither agreement nor disagreement, and "
                     "not this module's to resolve (D39, #2693)"
                 ),
             }
+            return receipt, implicated
     return None
 
 
@@ -250,25 +296,66 @@ def pair_tennis_sides(
     # and the leftover would be published as `ours_only` — a duplicate printed as
     # a disagreement about a match.
     refused: list[dict[str, Any]] = []
+    contested_rows: list[Side] = []
     joinable_f: list[Side] = []
     for f in usable_f:
-        receipt = _ambiguity(f, usable_r)
-        if receipt is None:
+        found = _ambiguity(f, usable_r)
+        if found is None:
             joinable_f.append(f)
         else:
+            receipt, implicated = found
             refused.append(receipt)
+            contested_rows.extend(implicated)
 
     paired, spare_f, spare_r = pair_greedily(joinable_f, usable_r, _sides_agree)
 
+    # The contested rows leave the denominator only if the pairing did NOT
+    # already place them, and that order is the whole of the repair's care.
+    #
+    # Removing them from `usable_r` up front would have been simpler and wrong:
+    # a row our register holds under a contested name can still be the
+    # unambiguous answer to a DIFFERENT fixture on the same day, and dropping it
+    # before the pass would turn a real agreement into a silent exclusion. So the
+    # greedy pass runs over the whole pool, keeps every pairing it can prove, and
+    # only the leftovers implicated in a refusal are held out of `ours_only`.
+    contested_refs = {r.ref for r in contested_rows}
+    held_out = [r for r in spare_r if r.ref in contested_refs]
+    ours_only = [r for r in spare_r if r.ref not in contested_refs]
+
+    refusals: dict[str, list[dict[str, Any]]] = {}
+    if refused:
+        refusals[AMBIGUOUS_REFUSAL] = refused
+    if held_out:
+        # Counted under their OWN name rather than added to the fixture receipt's
+        # count. One ambiguous fixture and two rows held out of the denominator
+        # are different quantities, and `excluded` is read as a census.
+        refusals[AMBIGUOUS_CANDIDATE_ROWS] = [
+            {
+                "event_id": r.ref,
+                "players": [r.home, r.away],
+                "our_start": r.start.isoformat() if r.start else None,
+                "label": r.label,
+                "column_holds": r.held_id,
+                "why": (
+                    "one of the rows an ambiguous StatPal name could not be told "
+                    "apart between, and unpaired at the end of the pass. Left in "
+                    "`ours_only` it would publish a duplicate of ours as a match "
+                    "StatPal is missing"
+                ),
+            }
+            for r in held_out
+        ]
+
     return Join(
         fixtures=joinable_f,
-        rows=usable_r,
+        rows=[r for r in usable_r if r.ref not in {h.ref for h in held_out}],
         paired=paired,
         statpal_only=spare_f,
-        ours_only=spare_r,
+        ours_only=ours_only,
         unusable_fixtures=[f for f in fixtures if not _readable(f)],
         unusable_rows=[r for r in rows if not _readable(r)],
-        refusals={AMBIGUOUS_REFUSAL: refused} if refused else {},
+        refusals=refusals,
+        denominator_is=TENNIS_DENOMINATOR_IS,
     )
 
 

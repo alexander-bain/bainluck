@@ -679,6 +679,21 @@ class Join:
     #: which is the opposite of what happened, and is spec rule 5's failure:
     #: an exclusion that quietly moves the governing number.
     refusals: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: What this strategy's denominator IS, in one sentence, published on the row
+    #: as `denominator_is`.
+    #:
+    #: Carried by the strategy rather than written once in `build_agreement_row`,
+    #: because the sentence is a description of the JOIN and the join is the one
+    #: part of a row that differs by sport. The default below describes the key
+    #: join; a strategy that leaves it is asserting the key join's semantics, and
+    #: `test_every_join_strategy_describes_its_own_denominator` fails if a
+    #: strategy whose relation differs keeps it (CERT-1904 — tennis shipped for
+    #: one grading round describing an ordered pair key it does not use).
+    denominator_is: str = (
+        "distinct fixtures under the union of both sides, keyed on the "
+        "normalised (away, home) pair; kickoff is a tiebreak within a key and "
+        "never a filter"
+    )
 
 
 #: The signature every join strategy has. `normalize` is the default strategy's
@@ -1115,11 +1130,10 @@ def build_agreement_row(
     row.update(
         {
             "denominator": denominator,
-            "denominator_is": (
-                "distinct fixtures under the union of both sides, keyed on the "
-                "normalised (away, home) pair; kickoff is a tiebreak within a "
-                "key and never a filter"
-            ),
+            # The JOIN says what its own denominator is. A sentence written here
+            # describes whichever strategy the author had in mind, and is wrong
+            # for every other one (CERT-1904).
+            "denominator_is": join.denominator_is,
             "excluded": {
                 "statpal_placeholders": len(placeholder_fixtures),
                 "statpal_unusable_names": len(unusable_fixtures),
