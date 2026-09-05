@@ -196,6 +196,22 @@ SPORT_TOTAL_PERIODS: dict[str, int] = {
 }
 
 
+#: Soccer's regulation length. Progress for a minute-clock sport is minute/90,
+#: so a 90+3' match reads as 1.0 rather than overflowing past it.
+SOCCER_REGULATION_MINUTES = 90
+
+
+def _is_minute_clock_sport(sport_key: Optional[str]) -> bool:
+    """True when this sport's live period string is a running clock MINUTE.
+
+    Soccer is the case that matters: ESPN reports "31'", not "1st Half". Keyed
+    off the `soccer_` prefix rather than a list of leagues, so a competition we
+    add next month is covered the day it arrives instead of silently falling
+    through to the period reader that produced #3208.
+    """
+    return (sport_key or "").startswith("soccer_")
+
+
 def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> tuple[float, bool]:
     """Parse game progress from ESPN period string.
 
@@ -228,17 +244,47 @@ def parse_game_progress(period_str: Optional[str], sport_key: Optional[str]) -> 
     if "halftime" in period_lower:
         return 0.5, False
 
+    # Soccer's live "period" from ESPN is a CLOCK MINUTE, not a period index:
+    # "31'", "45+2'", "90+3'". Read as a period number it was catastrophic — the
+    # bare-number branch below matched it, and every minute past the 2nd cleared
+    # `period_num > total` (soccer has 2 halves), so an ordinary first-half match
+    # scored as overtime: (1.0, True). That is #3208 — a 61' EPL card badged
+    # "Overtime" in a competition whose league fixtures have no overtime at all.
+    # Handle the minute clock explicitly, before any period reading can claim it.
+    minute_match = re.match(r"^(\d{1,3})\s*(?:\+\s*\d{1,2})?\s*'?\s*$", period_lower)
+    if minute_match and _is_minute_clock_sport(sport_key):
+        minute = int(minute_match.group(1))
+        # Stoppage time is not extra time. A 90+3' match is in regulation, and
+        # this function has no way to tell a cup tie's extra time from a long
+        # stoppage — the explicit "ET"/"extra time" check above is the only
+        # trustworthy signal, and it has already run. So: never overtime here.
+        return min(minute / SOCCER_REGULATION_MINUTES, 1.0), False
+
     # Quarter/period-based: extract number from "Q4", "3rd", "Period 2", etc.
     # Use specific patterns to avoid matching clock digits like "6:55"
-    num_match = re.search(r"(?:^|q|quarter\s*|period\s*|half\s*)(\d+)", period_lower)
-    if not num_match:
-        # Fallback: match ordinal patterns like "1st", "2nd", "3rd", "4th"
-        num_match = re.search(r"(\d+)(?:st|nd|rd|th)\b", period_lower)
+    keyword_match = re.search(r"(?:q|quarter\s*|period\s*|half\s*)(\d+)", period_lower)
+    # A number with no period word in front of it. "3" probably means period 3 —
+    # but it is the one form that carries no evidence of being a period at all,
+    # so it is not allowed to conclude overtime (see `explicit` below).
+    bare_match = None if keyword_match else re.match(r"^(\d+)", period_lower)
+    # Ordinals — "3rd", "Top 12th". These DO say period: 12th in a 9-inning sport
+    # is extra innings and reading it as beyond-regulation is correct.
+    ordinal_match = re.search(r"(\d+)(?:st|nd|rd|th)\b", period_lower)
+
+    num_match = keyword_match or ordinal_match or bare_match
     if num_match:
+        # Only an explicitly-marked period may be read as beyond regulation.
+        explicit = num_match is not bare_match
         period_num = int(num_match.group(1))
         total = SPORT_TOTAL_PERIODS.get(sport_key or "", 4)
         if period_num > total:
-            return 1.0, True  # Beyond regulation = overtime
+            if explicit:
+                return 1.0, True  # Beyond regulation = overtime
+            # An unlabelled number larger than the sport has periods is far more
+            # likely a clock than a 31st period. Say "mid-game, don't know" —
+            # the old code said "overtime", which is a strong claim built on the
+            # weakest evidence on the card.
+            return 0.5, False
         # Mid-period approximation: (period - 0.5) / total
         progress = min((period_num - 0.5) / total, 1.0)
         return progress, False
