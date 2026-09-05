@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 from typing import Any, Optional
 
@@ -102,6 +103,44 @@ def live_republish_headroom_s() -> int:
         - FEED_LIVE_REPUBLISH_PERIOD_S
         - FEED_LIVE_REPUBLISH_BUDGET_S
     )
+
+
+# --- LAT-P230 (#3144): the OTHER term the ceiling never counted ---------------
+def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
+    """Seconds a live payload may still be CACHED for, given its inputs' age.
+
+    The ceiling above bounds how old a served live payload may be. It was written
+    when a payload's age started at zero — the build read the database, and the
+    only clock that then ran was the response cache's. Once a build can be
+    assembled from a SHARED ARTIFACT that was already N seconds old
+    (`principal_independent_cache`), the two ages ADD:
+
+        artifact_age + response_age <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+
+    Nothing anywhere compared them, which is #2236's shape exactly — two
+    individually-correct numbers whose PRODUCT nobody computed. So the sum is a
+    function beside the ceiling it protects rather than an assumption at a call
+    site, on the same reasoning that put `live_republish_headroom_s()` here.
+
+    This became load-bearing when LAT-P230 raised `market_load`'s TTL to 120s. It
+    is deliberately NOT scoped to that artifact: `market_load` cannot itself make
+    a payload live (see the guard in `test_shared_artifact_total_age_lat_p230.py`),
+    so the term this function adds is today usually zero. It exists for the NEXT
+    namespace given a long TTL — the one whose exemption nobody will re-derive.
+
+    Returns 0 once the inputs alone have spent the ceiling. The payload is then
+    not cached at all, so the next reader REBUILDS rather than being served
+    something older — which is what #2216 requires ("past the ceiling the page is
+    REBUILT, not served older").
+
+    The age is rounded UP, not truncated. TTLs are whole seconds and artifact ages
+    are not, so the fractional part has to go somewhere; `int()` would round the
+    INPUT'S age down and hand the difference to the response, which is the
+    generous direction on a correctness bound. A 59.9s-old artifact has spent 60
+    seconds of the ceiling, not 59.
+    """
+    spent = math.ceil(max(0.0, oldest_artifact_age_s))
+    return max(0, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - spent)
 
 # LAT-P089 operator kill switch for the inert-principal share.
 FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
@@ -422,6 +461,7 @@ def feed_response_cache_ttls(
     my_teams_only: bool = False,
     identified: bool = False,
     live: bool = False,
+    oldest_artifact_age_s: float = 0.0,
 ) -> tuple[int, int]:
     """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
 
@@ -430,6 +470,12 @@ def feed_response_cache_ttls(
     ``min``, never a replacement: the 5s identified TTL must stay 5s, because a
     live-aware ceiling that LENGTHENED anybody's cache would be a latency fix
     wearing a correctness fix's clothes.
+
+    ``oldest_artifact_age_s`` (LAT-P230) is how old the oldest SHARED ARTIFACT
+    this payload was built from already was — the term the ceiling never counted.
+    It applies on the same discipline: a ``min``, only when ``live``, and it can
+    only ever SHORTEN. Defaulting to ``0.0`` keeps every existing caller's answer
+    byte-identical, so an un-updated call site is conservative rather than wrong.
     """
     fresh = feed_response_cache_ttl(
         my_teams_only=my_teams_only, identified=identified
@@ -438,6 +484,10 @@ def feed_response_cache_ttls(
     if live:
         fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
         stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+        # The inputs have already spent part of the ceiling.
+        headroom = live_total_age_headroom_s(oldest_artifact_age_s)
+        fresh = min(fresh, headroom)
+        stale = min(stale, headroom)
     return fresh, stale
 
 

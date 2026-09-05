@@ -79,6 +79,24 @@ MEASURED_ENVELOPE_BYTES = 2_928_973
 #: `MEASURED_ENVELOPE_BYTES`. Re-calibrate it when the shape constants move.
 NULL_RATE = 0.25
 
+#: Node count of the fixture, measured 2026-09-05 (LAT-P230 ITEM 2a). Nodes are
+#: what `assert_plain_data` counts, and they are a function of the SHAPE alone —
+#: 700 markets x 29 columns, 6,904 outcomes x 12 columns, plus the list spine and
+#: the `market_metadata` dicts — so unlike the byte constants this one does not
+#: move with text widths. Deterministic given the shape constants above, which is
+#: what makes a 1.5x alarm on it a real signal rather than a flaky one.
+#:
+#: Re-measured 2026-09-05 after rebasing onto master: 114,421 -> 115,133. The
+#: cause is the `price_polled_at` derived snapshot field that landed on master
+#: independently, i.e. the shape genuinely grew by one column's worth of nodes;
+#: this is the guard reporting real drift, not a flake. The 1.5x budget
+#: assertion below is UNCHANGED and still passes with room (115,133 against a
+#: 200,000 cap is 58%, and the alarm sits at 133,333) — re-measuring the
+#: baseline must never become a way of quietly absorbing growth, so the two are
+#: deliberately separate assertions: this one says "the shape moved", the other
+#: says "the shape is still safe". Flagged by CERT-1856 as a follow-up.
+MEASURED_NODES = 115_133
+
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
 #: have; the point is to be red while there is still room to fix it. 1.5 puts
@@ -299,6 +317,119 @@ def test_a_production_scale_market_load_fits_the_storage_budget(payload):
         f"{pic.MAX_STORED_BYTES:,} B and Redis is a shared 100 MB LRU that "
         f"Celery's state lives in too."
     )
+
+
+# --- LAT-P230 ITEM 2a: the THIRD cap, which fails worse than the two above ----
+#
+# `assert_plain_data` enforces `_MAX_NODES` as well as the byte bounds, and it had
+# no production-scale guard at all — the exact omission this file was written to
+# close, left open for the one cap whose breach is silent.
+#
+# It fails WORSE than the byte caps. A byte breach only stops the Redis publish;
+# the artifact still lands in the local tier and a warm worker still reuses it. A
+# NODE breach makes `assert_plain_data` raise inside `get_or_build`, which returns
+# the value BEFORE the `entries[key] = ...` store — so the artifact is not cached
+# at all, local tier included, silently, on every single build.
+
+
+def _count_validator_nodes(value) -> int:
+    """Count nodes exactly as `assert_plain_data`'s walker does.
+
+    A mirror, so it can drift — which is why
+    `test_the_node_counter_matches_the_real_validator` pins it against the real
+    walker at the accept/reject boundary rather than trusting it.
+    """
+    n = 0
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        n += 1
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+    return n
+
+
+def test_the_node_counter_matches_the_real_validator(payload, monkeypatch):
+    """The control for the two assertions below: our count IS the walker's count.
+
+    Proven at the boundary, not by sampling. `_walk` raises once `nodes` exceeds
+    the cap, so the real validator must accept the payload at exactly our count
+    and refuse it at one less. Off by a single node and one of these fails.
+    """
+    counted = _count_validator_nodes(payload)
+
+    monkeypatch.setattr(pic, "_MAX_NODES", counted)
+    pic.assert_plain_data(payload)  # accepted at exactly the count
+
+    monkeypatch.setattr(pic, "_MAX_NODES", counted - 1)
+    with pytest.raises(pic.NotPlainData):
+        pic.assert_plain_data(payload)
+
+
+def test_the_fixture_is_the_measured_node_shape(payload):
+    """A control, on the same discipline as the envelope-bytes control."""
+    counted = _count_validator_nodes(payload)
+    assert counted == MEASURED_NODES, (
+        f"the fixture is {counted:,} nodes against a recorded {MEASURED_NODES:,}. "
+        f"The shape constants moved — re-measure MEASURED_NODES, and check the "
+        f"node budget below still has room."
+    )
+
+
+def test_a_production_scale_market_load_fits_the_node_budget(payload):
+    """The cap that had no production-scale guard until LAT-P230.
+
+    Today: 114,421 nodes against 200,000 — 57% of the cap, 1.75x of headroom.
+    """
+    nodes = _count_validator_nodes(payload)
+
+    assert nodes <= pic._MAX_NODES / HEADROOM_FACTOR, (
+        f"market_load validates to {nodes:,} nodes; the cap is "
+        f"{pic._MAX_NODES:,} and this guard wants {HEADROOM_FACTOR}x headroom. "
+        f"Breaching it does not merely stop the Redis publish — the artifact "
+        f"stops being cached AT ALL, local tier included, silently, on every "
+        f"build. Narrow the row form; do not raise the cap."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatch):
+    """The claim above, proven through the real `get_or_build` rather than argued.
+
+    This is what makes the node cap worth its own guard: the byte caps degrade to
+    "local tier only", which is slower but still a cache. This one degrades to no
+    cache anywhere, and says so only at `logger.warning`.
+    """
+    pic.clear_shared_builds("lat_p230_nodecap")
+    monkeypatch.setenv("FEED_SHARED_BUILD_CROSS_WORKER", "0")
+
+    builds = {"n": 0}
+
+    async def _build():
+        builds["n"] += 1
+        return payload
+
+    monkeypatch.setattr(pic, "_MAX_NODES", _count_validator_nodes(payload) - 1)
+
+    for _ in range(3):
+        await pic.get_or_build("lat_p230_nodecap", ("k",), _build, ttl_s=600.0)
+
+    assert builds["n"] == 3, (
+        "a node-cap breach should defeat the local tier too — every call must "
+        f"rebuild, but only {builds['n']} of 3 did"
+    )
+    assert pic.peek_shared_build("lat_p230_nodecap") is None
+
+    # And the control: under the real cap the same artifact caches normally, so
+    # the assertion above is about the cap and not about a broken fixture.
+    pic.clear_shared_builds("lat_p230_nodecap")
+    monkeypatch.setattr(pic, "_MAX_NODES", 200_000)
+    builds["n"] = 0
+    for _ in range(3):
+        await pic.get_or_build("lat_p230_nodecap", ("k",), _build, ttl_s=600.0)
+    assert builds["n"] == 1
 
 
 @pytest.mark.asyncio

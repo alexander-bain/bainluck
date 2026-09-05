@@ -194,14 +194,25 @@ def remember_last_good(
 ) -> None:
     """Record the last successfully served payload for ``key`` (in-process).
 
-    ``built_at`` (CERT-409 [P1]) is when the payload's CONTENT was computed. It
-    defaults to now, which is correct only for a payload this process just
-    built. A payload that arrived from Redis — a fresh hit, a stale-mirror hit,
-    or an inert-principal share — is already some unknown age, and stamping it
-    with the read time hands it a brand-new full-length age window. With a 60s
-    ceiling that turned a 59-second-old score into one served at 118 seconds,
-    under a branch that declares 60 as the maximum. Callers that copy a payload
-    between cache tiers MUST pass the original.
+    ``built_at`` (CERT-409 [P1]) is the payload's AGE ORIGIN. It defaults to
+    now, which is correct only for a payload this process just built from
+    nothing. A payload that arrived from Redis — a fresh hit, a stale-mirror
+    hit, or an inert-principal share — is already some unknown age, and stamping
+    it with the read time hands it a brand-new full-length age window. With a
+    60s ceiling that turned a 59-second-old score into one served at 118
+    seconds, under a branch that declares 60 as the maximum. Callers that copy a
+    payload between cache tiers MUST pass the original.
+
+    CERT-1856 widened "origin" from "when this process computed it" to "when the
+    OLDEST INPUT it was computed from was itself computed", and the two are not
+    the same: a payload freshly built HERE out of a 59-second-old shared
+    artifact is already 59 seconds old the moment it exists. Passing the
+    response-build time for one of those restarted the very clock this argument
+    exists to preserve — the same 118-seconds-against-a-60-second-ceiling
+    failure as above, reached by building rather than by copying. So a caller
+    that consumed shared artifacts MUST backdate by the oldest one's age
+    (``app/routes/feed.py``, ``_age_origin``). Passing ``time.time()`` there is
+    not a simplification; it is the defect.
     """
     if not key or payload is None:
         return
@@ -212,22 +223,43 @@ def remember_last_good(
     _last_good[key] = (time.time() if built_at is None else float(built_at), payload)
 
 
-def recall_last_good(key: Optional[str], *, max_age_s: Optional[float] = None) -> Any:
-    """Return the last-good payload for ``key`` (optionally age-bounded).
+def recall_last_good_entry(
+    key: Optional[str], *, max_age_s: Optional[float] = None
+) -> tuple[Any, Optional[float]]:
+    """``(payload, origin)`` for ``key`` — the recall, plus the age origin.
 
     The age is measured from the payload's BUILD time (see
     ``remember_last_good``), so ``max_age_s`` bounds the age of the content, not
     the age of the most recent copy of it.
+
+    CERT-1864 needed the origin, not just the payload. A caller that SERVES a
+    recalled payload has to pick TTLs for it, and those must be computed from
+    how old this payload already is — a 55-second-old fallback may not be handed
+    a fresh 60-second window, which is CERT-1856's defect reached from the other
+    side. The payload's own ``cache.built_at`` cannot answer it: a payload
+    remembered before that field existed, or one stored by a caller that passed
+    ``built_at`` without stamping the body, has none. The store always knows.
+
+    ``origin`` is ``None`` exactly when ``payload`` is ``None``.
     """
     if not key:
-        return None
+        return None, None
     hit = _last_good.get(key)
     if not hit:
-        return None
+        return None, None
     ts, payload = hit
     if max_age_s is not None and (time.time() - ts) > max_age_s:
-        return None
-    return payload
+        return None, None
+    return payload, ts
+
+
+def recall_last_good(key: Optional[str], *, max_age_s: Optional[float] = None) -> Any:
+    """Return the last-good payload for ``key`` (optionally age-bounded).
+
+    The bounded-recall half of ``recall_last_good_entry``, unchanged: every
+    caller that does not need the origin keeps the shape it already reads.
+    """
+    return recall_last_good_entry(key, max_age_s=max_age_s)[0]
 
 
 def _reset_last_good_for_tests() -> None:
