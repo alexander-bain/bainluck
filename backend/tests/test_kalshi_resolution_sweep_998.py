@@ -646,12 +646,17 @@ def test_the_sealed_card_converges_onto_the_venue_close_time(apply_writes):
         assert updates[0]["resolution_date"] == datetime(
             2026, 8, 28, 23, 29, tzinfo=timezone.utc
         )
-        # Never `status`, never `is_winner`, never a price — CAL-P061's
-        # constraint. A wrong date and a wrong grade are different defects with
-        # different blast radii and moving both at once is how #1852 happened.
+        # Never `is_winner`, never a price — CAL-P061's constraint. A wrong date
+        # and a wrong grade are different defects with different blast radii and
+        # moving both at once is how #1852 happened. `venue_settled` joined the
+        # parameter set under #2722 and is a STATUS bind, not a grade: it is the
+        # venue's own word about whether the market is over, and this fixture's
+        # payload does not say it is.
         assert set(updates[0]) == {
-            "id", "resolution_date", "expiration_time", "updated_at",
+            "id", "resolution_date", "expiration_time", "venue_settled",
+            "updated_at",
         }
+        assert updates[0]["venue_settled"] is False
     else:
         assert updates == [], "a dry run must prepare writes and issue none"
 

@@ -88,6 +88,11 @@ CREATE_TABLE = """
         commence_time TEXT,
         resolution_date TEXT,
         expiration_time TEXT,
+        -- #2722: the sweep's UPDATE can now stamp the settlement clock, so the
+        -- seeded schema has to carry the column the real table has had since
+        -- `FuturesMarket.settled_at` shipped. A fixture narrower than the table
+        -- would make the statement unexecutable here and green everywhere else.
+        settled_at TEXT,
         updated_at TEXT
     )
 """
@@ -299,6 +304,10 @@ class TestTheFloorIsInThePredicate:
                     "id": 9001,
                     "resolution_date": (NOW - timedelta(days=3)).isoformat(),
                     "expiration_time": (NOW + timedelta(days=31)).isoformat(),
+                    # #2722: the venue still lists this one, so the settlement
+                    # arm is OFF and this test is about the date columns only —
+                    # exactly as it was before that arm existed.
+                    "venue_settled": False,
                     "updated_at": NOW.isoformat(),
                 },
             )
@@ -651,17 +660,52 @@ class TestTheComposedApplyPath:
             "predicate can finally select it"
         )
 
-    def test_the_update_touches_only_the_two_date_columns(self):
-        """A wrong date and a wrong grade are different defects (#1852's lesson)."""
+    def test_the_update_never_writes_a_grade(self):
+        """A wrong date and a wrong grade are different defects (#1852's lesson).
+
+        NARROWED, DELIBERATELY, BY #2722. This guard used to forbid `status` too.
+        It no longer can: #2722's whole finding is that 20% of the settled cohort
+        is unreachable by ANY date field, so the venue's own status is the only
+        way in and this statement now writes it. What #1852's line actually
+        protects is the GRADE — `is_winner`, prices, probabilities — and #2722
+        restates it in those words: "Whatever fixes this issue writes `status`;
+        it must still not write grades." That boundary is what this asserts, and
+        `test_the_status_write_is_conditional_on_the_venue` next door holds the
+        half that the widening gave up.
+        """
         _report, recorder, _venue, _ = _drive(apply=True)
 
         sql = next(s for s, _ in recorder if s.strip().upper().startswith("UPDATE"))
         lowered = sql.lower()
-        for forbidden in ("status", "is_winner", "current_price", "probability"):
+        for forbidden in ("is_winner", "current_price", "probability", "result"):
             assert forbidden not in lowered, (
                 f"the catch-up must never write `{forbidden}`: moving a date and "
                 "a grade in one pass is how #1852 happened"
             )
+
+    def test_the_status_write_is_conditional_on_the_venue(self):
+        """The status column may move, but only on the venue's word.
+
+        Without this, dropping `status` from the forbidden list above would let
+        an unconditional `SET status = 'resolved'` through — every swept row
+        marked over whether or not Kalshi says so, which is a far worse defect
+        than the one #2722 reports.
+        """
+        _report, recorder, _venue, _ = _drive(apply=True)
+
+        sql = next(s for s, _ in recorder if s.strip().upper().startswith("UPDATE"))
+        lowered = " ".join(sql.lower().split())
+        assert "status = case when :venue_settled then 'resolved' else status end" in lowered, (
+            "status must be written through the venue-settlement bind and must "
+            "leave the column alone otherwise"
+        )
+        params = next(
+            p for s, p in recorder if s.strip().upper().startswith("UPDATE")
+        )
+        assert params["venue_settled"] is False, (
+            "this fixture's venue payload carries no `status` at all, so the "
+            "settlement arm must be OFF: an absent status is not a settlement"
+        )
 
     def test_dry_run_is_the_default_and_writes_nothing(self):
         report, recorder, venue, sessions = _drive(apply=False)
