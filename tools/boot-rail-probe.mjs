@@ -55,11 +55,18 @@ await page.addInitScript(`(() => {
 })()`);
 
 const reqs = [];
+const API_HOST = 'api.bainluck.com';
 page.on('request', (r) => {
-  const u = r.url();
-  if (!/api\.bainluck\.com\/api\/(feed|tournaments)/.test(u)) return;
+  // Match on the PARSED host and path, not a substring of the whole URL. An unanchored
+  // /api\.bainluck\.com\/api\/(feed|tournaments)/ against the raw URL also matches a
+  // foreign origin that merely CONTAINS the string — `evil.test/?x=api.bainluck.com/api/feed`
+  // — so the probe would count someone else's request as ours (CodeQL js/regex/missing-regexp-anchor).
+  let parsed;
+  try { parsed = new URL(r.url()); } catch { return; }
+  if (parsed.hostname !== API_HOST) return;
+  if (!/^\/api\/(feed|tournaments)(\/|$)/.test(parsed.pathname)) return;
   const h = r.headers();
-  reqs.push({ url: u.replace(/^https?:\/\/[^/]+/, ''), sessionId: h['x-session-id'] ?? null, auth: !!h['authorization'] });
+  reqs.push({ url: parsed.pathname + parsed.search, sessionId: h['x-session-id'] ?? null, auth: !!h['authorization'] });
 });
 
 await page.goto(url, { waitUntil: 'load', timeout: 120000 });
