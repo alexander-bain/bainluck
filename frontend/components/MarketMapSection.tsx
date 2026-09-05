@@ -13,6 +13,8 @@ import {
   sportVocab,
   withUnit,
   unitPhrase,
+  playedCountAbsence,
+  mapColumnHeading,
   posOnRail,
   collapseDuplicateRungs,
 } from "@/lib/marketMapUtils";
@@ -191,10 +193,16 @@ export default function MarketMapSection({
    * This says which two units it refuses to mix and what is missing, in the
    * sport's own words — `unit` and `scoreboardUnit` both come from the vocab,
    * so a second set-scored sport declared tomorrow gets the sentence for free.
+   *
+   * #3136: the CLAIM half comes from `playedCountAbsence`, which is what stops
+   * a finished match being told the count is still on its way. See that
+   * helper — the tense is shared with the Score Differential note above this
+   * card precisely so the two cannot disagree on one page.
    */
   const unitMismatchNote =
     !vocab.scoreboardCountsTheUnit && vocab.scoreboardUnit && (isLive || isDone)
-      ? `The scoreboard reports ${vocab.scoreboardUnit}, this market quotes ${vocab.unit} — we do not hold the ${vocab.unit} played yet.`
+      ? `The scoreboard reports ${vocab.scoreboardUnit}, this market quotes ` +
+        `${vocab.unit} — ${playedCountAbsence(vocab.unit, isDone)}.`
       : null;
 
   const halfScores = useMemo(
@@ -868,8 +876,14 @@ export default function MarketMapSection({
     return maps;
   }, [gameMarkets.period_markets, status, vocab, isDone, isLive, halfScores, liveHalfScores]);
 
-  const hasMargin = marginData || halfMarginMaps.length > 0;
-  const hasTotal = totalData || halfTotalMaps.length > 0;
+  // #3136: the headings below are counted, not assumed — see `mapColumnHeading`.
+  // A tennis match has no halves, so its totals column has always held exactly
+  // one card under a heading that said there were several.
+  const marginCardCount = (marginData ? 1 : 0) + halfMarginMaps.length;
+  const totalCardCount = (totalData ? 1 : 0) + halfTotalMaps.length;
+
+  const hasMargin = marginCardCount > 0;
+  const hasTotal = totalCardCount > 0;
 
   if (!hasMargin && !hasTotal) return null;
 
@@ -888,7 +902,7 @@ export default function MarketMapSection({
                 #2441 adds the empty-unit arm: an UNDECLARED sport has no unit
                 to build a heading from, and interpolating one produces " maps".
                 So it falls back to the plain noun rather than to a guess. */}
-            {vocab.unit ? `${vocab.marginTitle.replace(/ map$/, "")} maps` : "Margin maps"}
+            {mapColumnHeading(vocab.unit ? vocab.marginTitle : "Margin map", marginCardCount)}
           </div>
           {marginData && (
             <MarketMap variant="margin" {...marginData} status={status} />
@@ -903,7 +917,7 @@ export default function MarketMapSection({
       {hasTotal && (
         <div className="rounded-2xl border border-surface-border bg-surface-card/50 p-2 space-y-2">
           <div className="px-2 pt-1 text-[10px] font-black uppercase tracking-widest text-text-muted">
-            {vocab.unit ? `${vocab.totalTitle.replace(/ map$/, "")} maps` : "Scoring maps"}
+            {mapColumnHeading(vocab.unit ? vocab.totalTitle : "Scoring map", totalCardCount)}
           </div>
           {totalData && (
             <MarketMap variant="total" {...totalData} status={status} />

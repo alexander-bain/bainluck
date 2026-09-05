@@ -28,19 +28,45 @@
  *     resolved  …: Set 2 Winner        Wawrinka             is_winner=True   api_settlement
  *     resolved  Wawrinka vs Burruchaga Burruchaga           is_winner=True   api_settlement
  *
- * The grading is AUTHORITATIVE and it is merely UNSERIALIZED — the game-markets
- * endpoint emits `{market_name, outcome_name, probability, source}` for `other`
- * rows and drops the rest. So printing "grading unavailable" over these rows
- * would state something false to the reader: the result is known, this view
- * just does not carry it. A refusal that is itself a false claim is worse than
- * the bug it replaces.
+ * So printing "grading unavailable" over these rows would state something false
+ * to the reader: the result is known, this view just does not act on it. A
+ * refusal that is itself a false claim is worse than the bug it replaces.
+ *
+ * ── TWO CLAIMS THAT WERE TRUE WHEN WRITTEN AND ARE NOT NOW (live/072) ────────
+ *
+ * This note used to say the endpoint "emits `{market_name, outcome_name,
+ * probability, source}` for `other` rows and drops the rest", and to point at
+ * **#1494** for the serialization work. Both are stale, and a stale claim in a
+ * file this deliberate is worse than no claim:
+ *
+ *   - The endpoint has NOT dropped the rest for some time. `_settled_grade_fields`
+ *     is spread onto every `other` row, so `is_winner` and `resolution_source`
+ *     are on the wire today — verified against `/api/events/15301243/game-markets`
+ *     on 2026-09-05, where four of 27 `other` rows carry `is_winner`.
+ *   - #1494 is the SEARCH-LATENCY issue. The live issue for this surface is
+ *     **#3135**.
+ *
+ * ── AND WHY THE FIELD BEING PRESENT STILL DID NOT MAKE THIS RENDERABLE ───────
+ *
+ * live/071 threaded `is_winner` through to the renderer and measured it against
+ * five real settled events before pushing: **0 rendered rows graded** on all
+ * five. live/072 then measured the join the obvious way round — pair a rendered
+ * row with the resolved twin of the same question — and gated it out too. The
+ * reason is upstream of both and is recorded on #3135: the rows a reader sees
+ * under a Polymarket container are the CONTAINER's children, which carry the
+ * question as their label and a price for a side nobody named, because
+ * `poll_polymarket_markets` overwrites the venue's own outcome labels
+ * (`["Wu", "Alcaraz"]`) with a hardcoded `"Yes"` / `"No"`. A verdict word on
+ * such a row would read `Set 2 Winner — HIT`, which names no winner.
+ *
+ * So the bar for the next attempt is not "get the grade to the renderer" — it
+ * is already reachable. It is "be able to say WHO".
  *
  * So this surface states NO VERDICT. `SETTLED_VOCABULARY` governs "the verdict
  * slot"; nothing is put in that slot here, and neither of the phrases below
  * belongs in it. They label a NUMBER, which is the one thing this payload can
- * honestly support. Serializing the grade so the row can say "Burruchaga —
- * won" is the real fix and lives in `routes/events.py`, which this lane does
- * not own (#1494); it is filed rather than guessed at.
+ * honestly support. Letting the row say "Burruchaga — won" is the real fix, it
+ * is backend, and it is filed rather than guessed at (#3135).
  *
  * ── THE TRAP THE NEXT CONSUMER WILL HIT ──────────────────────────────────────
  *
