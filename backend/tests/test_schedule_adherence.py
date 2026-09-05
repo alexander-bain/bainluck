@@ -1348,3 +1348,102 @@ class TestTheAttributionComesFromTheBucketNotTheVerdict:
         ]
         for row in rows:
             assert "bucket_attribution" in row
+
+
+class TestLeaseDeclinesAreTheirOwnNumber:
+    """LAT-P238 ITEM 3, on lane1b's spec: the lease gate's share, published.
+
+    ``self_gated_fires`` is ``max(0, deliveries - starts)`` — everything that
+    drops between ``task_prerun`` and ``_tracked_run``. On ``poll_all_odds``
+    that is TWO gates in series: ``single_flight``'s lease, then
+    ``should_poll_now()``'s cadence check. So the difference is a SUPERSET of
+    the lease declines, not a synonym for them, and one number cannot answer
+    which gate is doing the declining.
+
+    Published side by side, the cadence gate's share is readable by
+    subtraction. Folded together, neither number means anything — the same
+    argument that makes ``deliveries`` and ``starts`` two fields instead of one.
+    """
+
+    #: 30s beat, 24h window, 2880 scheduled. 2880 delivered, 1400 started:
+    #: 1480 fires dropped between delivery and the body, of which 900 were the
+    #: lease and (by subtraction) 580 were the cadence gate.
+    TWO_GATES = dict(
+        starts=1400, starts_window_s=86400.0,
+        deliveries=2880, deliveries_window_s=86400.0,
+        interval_s=30.0, terminals=1400,
+        lease_declines=900, lease_declines_window_s=86400.0,
+    )
+
+    def test_the_two_gates_are_separable(self):
+        g = adherence(**self.TWO_GATES)
+        assert g["self_gated_fires"] == 1480
+        assert g["lease_declines"] == 900
+        # The whole point: the reader can now name the other gate's share.
+        assert g["self_gated_fires"] - g["lease_declines"] == 580
+
+    def test_declines_are_never_folded_into_self_gated_fires(self):
+        without = adherence(**{k: v for k, v in self.TWO_GATES.items()
+                               if not k.startswith("lease_declines")})
+        for declines in (0, 900, 99_999):
+            g = adherence(**{**self.TWO_GATES, "lease_declines": declines})
+            assert g["self_gated_fires"] == without["self_gated_fires"], declines
+            assert g["self_gate_fraction"] == without["self_gate_fraction"], declines
+
+    def test_declines_are_never_a_numerator_and_never_a_verdict(self):
+        # A tick that found the lease held WAS delivered and DID run. The beat
+        # was perfect; grading on this would report a healthy scheduler as a
+        # failing one.
+        without = adherence(**{k: v for k, v in self.TWO_GATES.items()
+                               if not k.startswith("lease_declines")})
+        for declines in (0, 900, 99_999):
+            g = adherence(**{**self.TWO_GATES, "lease_declines": declines})
+            assert g["ratio"] == without["ratio"], declines
+            assert g["verdict"] == without["verdict"], declines
+            assert g["numerator"] == without["numerator"], declines
+            assert g["reason"] == without["reason"], declines
+
+    def test_the_count_carries_its_own_window(self):
+        # A count without its age is not a rate: 346 declines is 346 in eight
+        # minutes or 346 in twenty-four hours, and the payload has to say which.
+        # This counter's window was previously unreadable because the only
+        # surface exposing it (`/api/admin/redis-read`) returns the value alone.
+        g = adherence(**self.TWO_GATES)
+        assert g["lease_declines_window_s"] == 86400.0
+        # And it is its OWN window, not borrowed from a neighbour that happens
+        # to be on the row. A tumbling counter that rolled ten minutes ago has a
+        # 600s window beside a 24h delivery counter, and reading the wrong one
+        # inflates the rate by 144x.
+        g2 = adherence(**{**self.TWO_GATES, "lease_declines_window_s": 600.0})
+        assert g2["lease_declines_window_s"] == 600.0
+        assert g2["window_s"] == 86400.0
+        assert g2["deliveries_window_s"] == 86400.0
+
+    def test_an_unmeasurable_window_still_publishes_the_count(self):
+        # Unlike `undelivered_fraction`, nothing here is DERIVED, so an unknown
+        # window suppresses no arithmetic — it is simply reported as unknown
+        # beside a count that is still a fact. Dropping the count would lose a
+        # real observation to protect a division that is not being done.
+        g = adherence(**{**self.TWO_GATES, "lease_declines_window_s": None})
+        assert g["lease_declines"] == 900
+        assert g["lease_declines_window_s"] is None
+
+    def test_both_fields_are_on_every_row_whatever_graded_it(self):
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(starts=0, starts_window_s=None, interval_s=86400.0,
+                      newest_start_age_s=10.0, counter_ttl_s=86400.0),
+            adherence(**self.TWO_GATES),
+        ]
+        for row in rows:
+            assert "lease_declines" in row
+            assert "lease_declines_window_s" in row
+
+    def test_no_lease_counter_is_unknown_not_zero(self):
+        # Most tasks never take a lease at all. `None` says "this task has no
+        # lease counter"; a 0 would claim it takes one and never declines,
+        # which is a different and unsupported statement.
+        g = adherence(starts=10, starts_window_s=3600.0, interval_s=30.0)
+        assert g["lease_declines"] is None
+        assert g["lease_declines_window_s"] is None
