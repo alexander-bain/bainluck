@@ -175,6 +175,167 @@ class TestSummarizeHistory:
         assert summarize_history(history)["cursor_appears_stuck"] is False
 
 
+class TestBackfillTruncationIsRead:
+    """The cutoff is truthful per beat (#3148); these say a READER can get it.
+
+    The 24-beat ring of 2026-09-05 was `exhausted` + `healthy` on every beat
+    while the market backfill was cut off on every beat. Both the one-word
+    verdict and the across-beats summary have to say so, or the raw field is
+    another number the code knows and nobody reads (#2214, #2927, #3149).
+    """
+
+    def _clean_walk(self, **kw):
+        """A beat that is `healthy` on every axis except the one under test."""
+        return _report(
+            stop_reason="exhausted",
+            events_new=10,
+            events_existing=100,
+            events_processed=110,
+            unreached_existing=0,
+            wrapped=True,
+            pages_skipped=0,
+            **kw,
+        )
+
+    def test_a_clean_walk_with_a_cut_backfill_is_not_healthy(self):
+        r = self._clean_walk(market_backfill_truncated_after=467)
+        assert r.verdict() == "backfill_starved"
+
+    def test_a_backfill_that_never_started_is_not_healthy_either(self):
+        """The other half of the same disease: candidates owed, none reached."""
+        r = self._clean_walk(market_backfill_skipped_past_deadline=True)
+        assert r.verdict() == "backfill_starved"
+
+    def test_a_backfill_that_finished_its_list_stays_healthy(self):
+        """`None` under a present field means it worked — not that it was cut."""
+        r = self._clean_walk(market_backfill_truncated_after=None)
+        assert r.verdict() == "healthy"
+
+    def test_a_cut_backfill_never_outranks_a_starved_scan(self):
+        """The main scan's own starvation is the worse reading and stays first."""
+        r = _report(
+            stop_reason="main_scan_deadline",
+            events_new=10,
+            events_existing=100,
+            events_processed=110,
+            unreached_existing=90,
+            wrapped=False,
+            market_backfill_truncated_after=467,
+        )
+        assert r.verdict() == "starved"
+
+    def test_summary_counts_the_beats_that_were_cut(self):
+        history = [
+            {"market_backfill_truncated_after": 467, "market_backfill_candidates": 10901},
+            {"market_backfill_truncated_after": 452, "market_backfill_candidates": 10420},
+            {"market_backfill_truncated_after": None, "market_backfill_candidates": 12},
+        ]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 2
+        assert s["runs_backfill_complete"] == 1
+        assert s["runs_backfill_unknown"] == 0
+        assert s["backfill_truncated_after_max"] == 467
+        assert s["backfill_truncated_every_measured_beat"] is False
+
+    def test_summary_says_when_every_measured_beat_was_cut(self):
+        history = [
+            {"market_backfill_truncated_after": 400 + i, "market_backfill_candidates": 10901}
+            for i in range(24)
+        ]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 24
+        assert s["backfill_truncated_every_measured_beat"] is True
+
+    def test_a_beat_predating_the_field_is_unknown_not_complete(self):
+        """Silence is absence of measurement, never proof of headroom."""
+        history = [{"stop_reason": "exhausted", "wrapped": True}] * 5
+        s = summarize_history(history)
+        assert s["runs_backfill_unknown"] == 5
+        assert s["runs_backfill_complete"] == 0
+        assert s["backfill_truncated_every_measured_beat"] is False
+        assert s["backfill_candidates_latest"] is None
+        assert s["backfill_unreached_latest"] is None
+
+    def test_summary_states_what_the_newest_beat_left_on_the_floor(self):
+        """The #3149 number, off the newest beat that can say."""
+        history = [
+            {"market_backfill_truncated_after": 467, "market_backfill_candidates": 10901},
+            {"market_backfill_truncated_after": 100, "market_backfill_candidates": 200},
+        ]
+        s = summarize_history(history)
+        assert s["backfill_candidates_latest"] == 10901
+        assert s["backfill_unreached_latest"] == 10434
+
+    def test_a_finished_backfill_leaves_nothing_on_the_floor(self):
+        history = [{"market_backfill_truncated_after": None, "market_backfill_candidates": 12}]
+        s = summarize_history(history)
+        assert s["backfill_unreached_latest"] == 0
+
+    def test_a_skipped_backfill_is_a_cut_at_zero_not_a_completed_list(self):
+        """CERT-1857's repair, half one.
+
+        `skipped_past_deadline` is the one deadline case the mid-flight cutoff
+        cannot express: the step never started, so the loop's `break` never
+        ran and the cutoff stays null. Reading that null as "finished its
+        list" turned the worst beat there is — 10,901 candidates, not one
+        attempted — into the healthiest reading in the summary.
+        """
+        history = [{
+            "market_backfill_skipped_past_deadline": True,
+            "market_backfill_truncated_after": None,
+            "market_backfill_candidates": 10901,
+        }]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_complete"] == 0
+        assert s["backfill_truncated_every_measured_beat"] is True
+        assert s["backfill_unreached_latest"] == 10901, (
+            "every candidate was left on the floor; a beat that attempted "
+            "nothing must not report nothing missing"
+        )
+
+    def test_a_cutoff_of_zero_is_a_cut_not_a_finished_list(self):
+        """CERT-1857's repair, half two: `after or candidates` erases a real 0.
+
+        A cutoff of zero is the loop breaking on its very first candidate.
+        Folded through an `or` it is falsy, so it read as "worked the whole
+        list" and reported nothing unreached — the loudest fact rendered as
+        the quietest one, which is the same defect the nullable field was
+        introduced to avoid in the other direction.
+        """
+        history = [{
+            "market_backfill_truncated_after": 0,
+            "market_backfill_candidates": 10901,
+        }]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_complete"] == 0
+        assert s["backfill_truncated_after_max"] == 0
+        assert s["backfill_unreached_latest"] == 10901
+
+    def test_a_skipped_beat_predating_the_cutoff_field_still_says_so(self):
+        """`skipped_past_deadline` is older than the cutoff, and it is knowable.
+
+        Such a beat is not `unknown`: it states outright that the step did not
+        run, which is strictly more than silence.
+        """
+        history = [{"market_backfill_skipped_past_deadline": True}]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_unknown"] == 0
+
+    def test_the_newest_beat_that_can_say_is_the_one_read(self):
+        """A ring whose newest entries predate the field still reports."""
+        history = [
+            {"stop_reason": "exhausted"},
+            {"market_backfill_truncated_after": 467, "market_backfill_candidates": 10901},
+        ]
+        s = summarize_history(history)
+        assert s["runs_backfill_unknown"] == 1
+        assert s["backfill_candidates_latest"] == 10901
+        assert s["backfill_unreached_latest"] == 10434
+
+
 class TestScanTelemetryIsWired:
     """Structural: the telemetry must survive future edits to the scan."""
 
