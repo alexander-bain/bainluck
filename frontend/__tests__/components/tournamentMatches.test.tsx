@@ -909,3 +909,167 @@ describe("#2550 — an in-progress match prints LIVE, not a start time", () => {
     expect(html).not.toContain('data-testid="match-live"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #3243 item 3 — THE LIVE RAIL IS A CLAIM ABOUT THE MATCH, NOT ABOUT THE NUMBER
+//
+// #3243 item 1 was the hub calling a live match's fresh number eight hours old.
+// This is the same conflation from the other side, and it is the one a phone
+// sees first. `EventCardShell live` drew its green left rail from
+// `entry.isLive`, which is `probability_is_live` — the SERVER's verdict that
+// the probability is a fresh reading, not a statement that anyone is on court.
+//
+// Those two facts disagree in the ordinary case, because a match that starts in
+// nine minutes is quoted continuously. Measured on production at 18:42Z on
+// 2026-09-05, `/api/tournaments/us-open` carried 22 slate rows:
+//
+//     upcoming    + fresh price   14      <- live rail, nobody playing
+//     in_progress + fresh price    3      <- live rail, correctly
+//     upcoming    + stale/unpriced 5
+//
+// So seventeen cards wore the rail and three matches were being played. Alex
+// opens this page on his phone during the women's final; the whole value of the
+// rail is that it points at the one card that is happening now.
+//
+// The fix derives the rail from the BADGE, which #2550 already got right:
+// `liveMatchLabel` is non-null exactly when the row is `in_progress` and not
+// decided. A card can therefore no longer print a start time inside a live
+// rail, because one predicate now drives both.
+//
+// `data-live` KEEPS ITS MEANING. It is the page-wide "this row presents a live
+// number" contract that the board, the props and the playoff grid all use and
+// the honesty certs are written against; the play-state claim gets its own
+// `data-in-play` rather than overloading it. The tests below assert both — a
+// fix that repaired the rail by redefining `data-live` would silently move
+// every other surface's honesty assertion.
+// ---------------------------------------------------------------------------
+
+describe("#3243 item 3 — a match that has not started wears no live rail", () => {
+  /** The rail EventCardShell draws for `live`. */
+  const RAIL = "border-l-accent-live";
+
+  const upcomingFresh = match({
+    matchup_key: "mens-singles:karen-khachanov-vs-benjamin-bonzi:2026-09-05",
+    live_state: "upcoming",
+    status_detail: "Sat, September 5th at 2:50 PM EDT",
+    probability_is_live: true,
+    price_state: "live",
+    age_hours: 0.01,
+  });
+
+  const inProgress = match({
+    matchup_key: "mens-singles:taylor-fritz-vs-francisco-cerundolo:2026-09-05",
+    live_state: "in_progress",
+    status_detail: "4th Set",
+    probability_is_live: true,
+    price_state: "live",
+    age_hours: 0.01,
+  });
+
+  it("draws no rail on an upcoming row whose price is seconds old", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([upcomingFresh])} />
+    );
+    expect(html).toContain('data-in-play="false"');
+    expect(html).not.toContain(RAIL);
+    // The row still prints the clock it is entitled to — this is the bug, and
+    // the clock inside the rail was the visible contradiction.
+    expect(html).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+  });
+
+  it("keeps saying the NUMBER is live on that same row", () => {
+    // The freshness contract is untouched: the price really is seconds old, so
+    // `data-live` stays true and the figures stay at full strength. A fix that
+    // muted them would trade one wrong claim for another.
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([upcomingFresh])} />
+    );
+    expect(html).toContain('data-live="true"');
+    expect(html).not.toContain('data-testid="match-age"');
+  });
+
+  it("draws the rail on a match that is actually being played", () => {
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate([inProgress])} />
+    );
+    expect(html).toContain('data-in-play="true"');
+    expect(html).toContain(RAIL);
+    expect(html).toContain('data-testid="match-live"');
+  });
+
+  it("separates the two verdicts over the measured slate, 3 playing of 17 fresh", () => {
+    // The population failure, rebuilt from the production mix above. A
+    // single-row assertion passes on a fix that only handles one card; this
+    // one fails on any rule that keeps deriving the rail from freshness.
+    //
+    // Asserted on the ENTRIES rather than the markup because the list
+    // collapses to `COLLAPSED_LIST_COUNT` rows and `renderToStaticMarkup`
+    // cannot press "Show all 22" — the rendered half is the test below, which
+    // is what a phone actually sees. `liveMatchLabel` is the predicate the
+    // card now shares with the badge, so asking it here asks the fix itself.
+    const { liveMatchLabel } = require("@/lib/matchList");
+    const entries = matchListFromSlate([
+      ...Array.from({ length: 14 }, (_, i) =>
+        match({ ...upcomingFresh, matchup_key: `mens-singles:upcoming-${i}:2026-09-05` })
+      ),
+      ...Array.from({ length: 3 }, (_, i) =>
+        match({ ...inProgress, matchup_key: `mens-singles:playing-${i}:2026-09-05` })
+      ),
+      ...Array.from({ length: 5 }, (_, i) =>
+        match({
+          ...upcomingFresh,
+          matchup_key: `mens-singles:cold-${i}:2026-09-05`,
+          probability_is_live: false,
+          price_state: "stale",
+          age_hours: 30,
+        })
+      ),
+    ]);
+    expect(entries).toHaveLength(22);
+    // What the page used to draw a rail from: seventeen fresh numbers.
+    expect(entries.filter((e) => e.isLive)).toHaveLength(17);
+    // What it draws one from now: three matches with somebody on court.
+    expect(entries.filter((e) => liveMatchLabel(e) !== null)).toHaveLength(3);
+  });
+
+  it("draws two rails, not five, on the five rows a phone is shown", () => {
+    // Production's own visible five at 18:42Z: two men's singles in progress
+    // followed by three that had not started. Every one of the five wore the
+    // rail. The list collapses at five, so this IS the whole phone view.
+    const html = renderToStaticMarkup(
+      <TournamentMatches
+        entries={matchListFromSlate([
+          match({ ...inProgress, matchup_key: "mens-singles:playing-0:2026-09-05" }),
+          match({ ...inProgress, matchup_key: "mens-singles:playing-1:2026-09-05" }),
+          match({ ...upcomingFresh, matchup_key: "mens-singles:upcoming-0:2026-09-05" }),
+          match({ ...upcomingFresh, matchup_key: "mens-singles:upcoming-1:2026-09-05" }),
+          match({ ...upcomingFresh, matchup_key: "mens-singles:upcoming-2:2026-09-05" }),
+        ])}
+      />
+    );
+    expect(count(html, 'data-testid="match-row"')).toBe(5);
+    expect(count(html, RAIL)).toBe(2);
+    expect(count(html, 'data-in-play="true"')).toBe(2);
+    expect(count(html, 'data-in-play="false"')).toBe(3);
+    // And all five numbers are still seconds old, so all five still say so.
+    expect(count(html, 'data-live="true"')).toBe(5);
+  });
+
+  it("draws no rail on a decided row", () => {
+    // Carried from the old `entry.isLive && !entry.decided`: the `!decided`
+    // clause must survive the rewrite, and it does because `liveMatchLabel`
+    // refuses a decided row on its own. `decided` is derived from the winner
+    // key rather than being a payload field, so the fixture states the fact
+    // the same way the server does.
+    const html = renderToStaticMarkup(
+      <TournamentMatches
+        entries={matchListFromSlate([
+          match({ ...inProgress, winner_entity_key: "carlos-alcaraz" }),
+        ])}
+      />
+    );
+    expect(html).toContain('data-decided="true"');
+    expect(html).toContain('data-in-play="false"');
+    expect(html).not.toContain(RAIL);
+  });
+});
