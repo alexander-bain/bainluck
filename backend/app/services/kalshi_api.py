@@ -381,14 +381,53 @@ _SPORTS_SERIES_TICKERS = [
 # `-26SEP05` and is the whole series in one page. The 5-page cap is not in the
 # way.
 #
-# Deliberately NOT here: KXRAINNYCM and the monthly city-rain series. Monthly
-# events turn over slowly enough that the main scan does reach them (4 open
-# KXRAINNYCM rows in our DB prove it), and the supplementary reserve is
-# contended — a series that is already arriving on time buys nothing and costs
-# a slot the daily series needs.
+# MONTHLY city rain (ux/1082, #3250). The paragraph that used to sit here said
+# these series were deliberately excluded because "the main scan does reach
+# them — 4 open KXRAINNYCM rows in our DB prove it". Both halves of that were
+# wrong, and in the way this file has been wrong four times before: the four
+# rows are the SELF-SEALING SHAPE, not the proof against it.
+#
+#   - They are four rows of ONE city. Measured at the venue 2026-09-05 by
+#     series discovery (notice 26a — `/series?category=Climate and Weather`,
+#     369 series), Kalshi lists ELEVEN monthly city-rain series. The main scan
+#     reached one of them. "We have rain" is not "we have the cities", exactly
+#     as `_ALWAYS_FETCH_SERIES` says two comments below.
+#   - Reaching the EVENT is not reaching its MARKETS. All four NYC rows carry
+#     ZERO outcomes, so `_open_weather_query()`'s priced-outcome predicate
+#     correctly withholds every one and the card renders "No live rainfall
+#     markets right now" — true of our tables, false of the world in ten
+#     cities. That empty card is what #3250 is.
+#
+# What the venue actually had when this list was widened (one
+# `/events?series_ticker=…&status=open&with_nested_markets=true` per series):
+#
+#     KXRAINNYCM 10 markets   KXRAINMIAM 16   KXRAINCHIM  7   KXRAINDALM  7
+#     KXRAINHOUM  7           KXRAINSFOM  7   KXRAINSEAM  7   KXRAINLAXM  7
+#     KXRAINAUSM  7           KXRAINDENM  7   KXRAINSTPM  0 (dormant)
+#
+# 82 nested markets, every one of them priced, across TEN live cities against a
+# card whose subtitle promises "city by city". Cost of the whole set measured
+# before adding it: ONE page per series, 1.9s wall clock for all eleven — the
+# `_PRIORITY_RESCUE_PREFIXES` note below budgets the daily pair at 1-2s of the
+# 60s reserve, so this is the same order and the contention argument the old
+# paragraph made does not survive its own measurement.
+#
+# KXRAINSTPM is here at zero open events on purpose: the set is "the monthly
+# city-rain series the venue lists", which is a rule, and dropping the dormant
+# one would make it a snapshot of one afternoon that rots the month St
+# Petersburg opens. It costs one page.
+#
+# None carries a _HEAVY_TOKEN, so all eleven fetch WITH nested markets and
+# their outcomes arrive attached — which is the actual repair for the shells.
+_WEATHER_MONTHLY_SERIES_TICKERS = [
+    "KXRAINNYCM", "KXRAINCHIM", "KXRAINMIAM", "KXRAINDALM",
+    "KXRAINHOUM", "KXRAINSFOM", "KXRAINSEAM", "KXRAINLAXM",
+    "KXRAINAUSM", "KXRAINSTPM", "KXRAINDENM",
+]
+
 _WEATHER_SERIES_TICKERS = [
     "KXRAIN", "KXRAINWKND",
-]
+] + _WEATHER_MONTHLY_SERIES_TICKERS
 
 # What the supplementary rescue actually walks. Sport was the whole of this
 # policy until weather joined it; the two lists stay separate because they
@@ -396,6 +435,53 @@ _WEATHER_SERIES_TICKERS = [
 # the fetch, the discovery hand-off and the empty-event backfill cannot drift
 # apart on which series the net covers.
 _RESCUE_SERIES_TICKERS = _SPORTS_SERIES_TICKERS + _WEATHER_SERIES_TICKERS
+
+#: Outcomes of merging one fetched event into the accumulator.
+MERGE_ADDED = "added"        # the event was not held at all
+MERGE_UPGRADED = "upgraded"  # held as a market-less shell, replaced with markets
+MERGE_KEPT = "kept"          # already held with markets; the parse is redundant
+
+
+def merge_fetched_event(all_events: dict, parsed_event) -> str:
+    """Merge one parsed event into the fetch accumulator; say what happened.
+
+    ux/1082 (#3250). Both rescue merges — the guaranteed series floor and the
+    discovered half — used to read exactly `if ticker not in all_events`, which
+    silently made the rescue UNABLE TO REPAIR THE ROW IT EXISTS FOR.
+
+    The whole point of the supplementary fetch is that the main scan's coverage
+    of a series is partial. But "partial" has two shapes, and that condition
+    only handled one of them. When the main scan misses an event entirely the
+    rescue adds it and works. When the main scan returns the event WITHOUT its
+    nested markets — a market-less shell — the rescue re-fetches it properly,
+    gets the markets, finds the ticker already present, and THROWS THE GOOD
+    PARSE AWAY in favour of the empty one. The upsert loop's first statement is
+    `if not event.markets: continue`, so the shell then ingests as nothing.
+
+    That is what `KXRAINNYCM-26SEP` is: an event we hold, whose ten priced
+    threshold markets we do not, on a card that therefore says there is nothing
+    to show. Widening `_WEATHER_SERIES_TICKERS` alone would have fixed the nine
+    cities we had never seen and left the one city we had — the visible half of
+    #3250 — untouched, which is how this would have shipped looking fixed.
+
+    So: a shell never wins over a parse that carries markets. The reverse is
+    also guarded — a nested parse is never replaced by a later market-less one,
+    which is the same bug pointed the other way.
+
+    The return value is not decoration. `supplemented` is one half of an
+    identity the fetch report checks every beat (main_scan + supplementary ==
+    events_fetched, Queue 355 / #1845), and an UPGRADE adds no event — counting
+    it would break that identity on exactly the beats where the repair worked.
+    Callers increment on MERGE_ADDED only.
+    """
+    incumbent = all_events.get(parsed_event.event_ticker)
+    if incumbent is None:
+        all_events[parsed_event.event_ticker] = parsed_event
+        return MERGE_ADDED
+    if not incumbent.markets and parsed_event.markets:
+        all_events[parsed_event.event_ticker] = parsed_event
+        return MERGE_UPGRADED
+    return MERGE_KEPT
 
 
 def stripped_market_series() -> set:
@@ -441,12 +527,23 @@ def stripped_market_series() -> set:
 # "KXRAINWKND" and of every KXRAIN*M monthly series, so without this set a
 # single stale weekend or monthly event would satisfy the short-circuit and
 # skip the daily slate on its own.
+#
+# ux/1082: the MONTHLY series are here for a different reason from the daily
+# ones, and it is worth naming because the short-circuit above is keyed on the
+# series string (`st not in _ALWAYS_FETCH_SERIES`) and NOT on the prefix — so
+# "KXRAIN" being in this set does nothing for "KXRAINNYCM". A monthly series
+# mints one event a month and keeps its settled ones in the listing forever
+# (36 KXRAINNYCM events at the venue, 26AUG finalized, 26SEP active), so
+# `any(startswith)` is satisfied on every single beat by a dead row. Without
+# membership here the monthly rescue would be skipped 100% of the time, which
+# is the strongest form of the self-sealing bug on this list, not the weakest:
+# a daily series at least fails intermittently.
 _ALWAYS_FETCH_SERIES = {
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
     "KXRAIN", "KXRAINWKND",
-}
+} | set(_WEATHER_MONTHLY_SERIES_TICKERS)
 # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
 # WINNER/SERIES) explode into monster nested-markets payloads — the exact
 # blobs whose sync parse froze the loop (KXMLBGAME, KXNBA1HSPREAD). Fetch
@@ -1977,6 +2074,12 @@ class KalshiAPIService(BaseAPIClient):
         )
 
         supplemented = 0
+        # ux/1082 (#3250): shells the rescue REPAIRED. Kept apart from
+        # `supplemented` because it is not an event count (see
+        # merge_fetched_event), and reported because a silent repair is
+        # indistinguishable from a repair that never ran — the shape that let
+        # `KXRAINNYCM-26SEP` sit market-less through every beat.
+        _supp_upgraded = 0
         _ordered_series = sorted(
             _RESCUE_SERIES_TICKERS,
             key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
@@ -2044,9 +2147,16 @@ class KalshiAPIService(BaseAPIClient):
                         _progress(f"fetch:supp:{st}:p{_sp}:parse_timeout")
                         parsed_page = []
                     for parsed_event in parsed_page:
-                        if parsed_event and parsed_event.event_ticker not in all_events:
-                            all_events[parsed_event.event_ticker] = parsed_event
+                        if not parsed_event:
+                            continue
+                        # ux/1082: an UPGRADE (shell → markets) is the repair
+                        # this fetch exists for and adds no event, so it does
+                        # not touch `supplemented`. See merge_fetched_event.
+                        _verdict = merge_fetched_event(all_events, parsed_event)
+                        if _verdict == MERGE_ADDED:
                             supplemented += 1
+                        elif _verdict == MERGE_UPGRADED:
+                            _supp_upgraded += 1
                     if not series_cursor:
                         break
             except Exception as e:
@@ -2127,8 +2237,13 @@ class KalshiAPIService(BaseAPIClient):
                         # alarm asks. Whether we already had the event is our
                         # bookkeeping, not the draw's existence.
                         _dsr["returned"] += 1
-                        if parsed_event.event_ticker not in all_events:
-                            all_events[parsed_event.event_ticker] = parsed_event
+                        # ux/1082: same rule as the guaranteed floor above —
+                        # a market-less incumbent is upgraded, not preferred.
+                        _dverdict = merge_fetched_event(all_events, parsed_event)
+                        if _dverdict == MERGE_UPGRADED:
+                            _dsr["upgraded"] = _dsr.get("upgraded", 0) + 1
+                            _supp_upgraded += 1
+                        if _dverdict == MERGE_ADDED:
                             _dsr["unique_added"] += 1
                             _disc_added += 1
                             # Queue 355 / #1845: `supplementary_events` is one
@@ -2159,6 +2274,13 @@ class KalshiAPIService(BaseAPIClient):
 
         if supplemented:
             logger.info("Supplementary series fetch added %d events", supplemented)
+        if _supp_upgraded:
+            logger.info(
+                "Rescue upgraded %d market-less event shells to their nested "
+                "markets (ux/1082) — these are repairs, not additions, and are "
+                "NOT counted in the %d supplementary events above",
+                _supp_upgraded, supplemented,
+            )
 
         # Backfill: for events with 0 nested markets (Kalshi sometimes omits
         # them from the listing for large multivariate events), fetch markets
@@ -2396,7 +2518,10 @@ class KalshiAPIService(BaseAPIClient):
         # len(all_events) exactly, and len(all_events) is the list the caller
         # partitions into new/existing. The report's reconciliation invariant
         # checks that identity every beat rather than trusting this comment.
+        # ux/1082: an upgrade REPLACES a key rather than adding one, so it moves
+        # neither term of that identity and is reported on its own line.
         _tel["supplementary_events"] = supplemented
+        _tel["shells_upgraded"] = _supp_upgraded
         _tel["events_fetched"] = len(all_events)
 
         return list(all_events.values())

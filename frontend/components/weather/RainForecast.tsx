@@ -80,6 +80,17 @@ function RainDaySkeleton() {
   );
 }
 
+// City · bar · probability · 24h change. One definition, because the skeleton
+// and the real rows have to line up and they used to carry separate copies.
+//
+// The city column was 90px, which was never once tested against a city: until
+// ux/1082 widened the ingest (#3250) NYC was the only row this card could ever
+// show, and "NYC" fits in anything. The moment the other nine arrived, "San
+// Francisco" rendered as "San Francis…". 104px is measured, not computed —
+// `tools/look-local.mjs` at 390px with all ten cities, which is also the width
+// where the bar has least room to give.
+const MONTHLY_GRID = "104px 1fr 42px 36px";
+
 function MonthlySkeleton() {
   return (
     <div className="flex flex-col gap-2.5">
@@ -87,7 +98,7 @@ function MonthlySkeleton() {
         <div
           key={i}
           className="grid items-center gap-2"
-          style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
+          style={{ gridTemplateColumns: MONTHLY_GRID }}
         >
           <div className="h-4 bg-gray-200 rounded animate-pulse" />
           <div className="h-[7px] bg-gray-200 rounded-full animate-pulse" />
@@ -277,7 +288,7 @@ export default function RainForecast() {
                     <div
                       key={m.city}
                       className="grid items-center gap-2"
-                      style={{ gridTemplateColumns: "90px 1fr 42px 36px" }}
+                      style={{ gridTemplateColumns: MONTHLY_GRID }}
                     >
                       <div className="min-w-0">
                         <span className="block text-sm text-text-primary font-medium truncate">
