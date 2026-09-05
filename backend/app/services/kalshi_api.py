@@ -150,6 +150,103 @@ def order_market_backfill_candidates(
     return sorted(events, key=_key)
 
 
+def drop_provably_purged_candidates(
+    events,
+    stripped_series: set,
+    now: Optional[datetime] = None,
+) -> tuple[list, list]:
+    """Split backfill candidates into ones the venue can still answer for, and dead ones.
+
+    #3190. **Kalshi EVENT data is permanent; MARKET data is purged** (gotcha
+    #35). So the supplementary listing keeps handing back years of finished
+    games with zero nested markets, forever, and the backfill keeps asking for
+    them and keeps getting nothing. Measured on the 2026-09-05 10:45Z beat:
+    ``market_backfill_candidates 11,538`` against ``market_backfill_unmatched
+    7,722`` — two thirds of the list was a request budget spent on rows that
+    have no answer and never will again.
+
+    Cutting them is the one relief that takes nothing from a live consumer: it
+    is not a re-carve of ``_BACKFILL_RESERVE_S`` and it does not narrow a tag.
+
+    THE BOUND. :data:`~app.utils.kalshi_retention.PROVABLY_PURGED_AGE_DAYS` (86)
+    is the only constant in that module permitted to STOP work — the others
+    prioritise it. Never a day count written here; the module owns the number
+    and the evidence for it.
+
+    AND THE BOUND HOLDS ONLY INSIDE THE STRIPPED SET — measured, not assumed.
+    All 34 series of ``_stripped_series`` were read at the venue on 2026-09-05
+    (23,363 events listed, 4,052 still carrying markets, oldest 68.5 days):
+    **zero** at or past 86 days still carried a market. Outside that set the
+    premise is false, and CERT-1889 produced the counter-specimen —
+    ``KXATPMATCH`` has three events at **244.5-245.5 days** whose markets are
+    still retrievable, one quoting `last_price_dollars 0.3100`. Reproduced
+    independently: 3 of 933. Age is a property of a series' retention, not of
+    Kalshi, so a cut derived on one population may not be applied to another.
+
+    THE AGE IS AN UPPER BOUND, AND THAT IS THE RISKY DIRECTION. What the ticker
+    embeds is the GAME date, not ``settled_at``; a market settles at or after
+    its game, so ``now - game_date >= now - settled_at``. Over-stating an age is
+    exactly how a floor cuts a row that was still fillable, so it is checked
+    against the venue rather than argued. Measured 2026-09-05 against Kalshi's
+    own API over six game series (KXMLBGAME, KXMLBSPREAD, KXMLBTOTAL,
+    KXNBAGAME, KXNHLGAME, KXNFLGAME):
+
+        events listed              12,161
+        events still with markets   2,773   oldest **68.5 days**
+        events with no markets      9,388   youngest **69.5 days**
+        with markets at >= 86d          0
+
+    A sharp cliff at ~69 days, and the 86-day bound sits 17 days clear of it on
+    the safe side. For the cut to be wrong, a game market would have to settle
+    more than 17 days after its own game.
+
+    THE CUT IS BOUNDED TO THE POPULATION THAT WAS MEASURED, and that bound is
+    load-bearing rather than tidy. Only candidates of a **stripped game series**
+    — the `_HEAVY_TOKENS` set the fetch itself emptied — are eligible. The reason
+    is a real specimen, caught before this shipped:
+
+        KXHONEYDEUCE-01JAN27  ->  extract_game_date_from_ticker  ->  2001-01-02
+
+    Kalshi writes a GAME ticker as ``<SERIES>-YYMMMDD[HHMM]<TEAMS>`` and a
+    FUTURES ticker as ``<SERIES>-DDMMMYY`` with nothing after it. The two are
+    the same seven characters and the parser reads both as the first, so a live
+    2027-expiry future reads as twenty-five years old and would have been cut —
+    an outage, in the exact series #2927's discovery had just started ingesting
+    (``KXATPADVANCE-15MAR27`` -> 2015-03-02 is the same shape). Stripped game
+    series always carry the team suffix, so within them the reading is safe, and
+    they are also where the whole 7,722 lives. The ambiguity itself belongs to
+    the matcher (D39/D35): filed, not fixed here.
+
+    FAIL-OPEN ON IGNORANCE. An unparseable or undated ticker is KEPT, matching
+    :func:`~app.utils.kalshi_retention.is_provably_purged`, which answers False
+    for an unknown settlement rather than writing the row off.
+
+    BOTH BOUNDS, NOT ONE (gotcha #41). This is only the floor. The ordering in
+    :func:`order_market_backfill_candidates` is untouched and still runs
+    oldest-last *within* it, so what survives the cut is worked
+    stripped-series-first and soonest-unplayed-first — a floorless sweep would
+    process the dead first and a bare newest-first cut would starve the old
+    tail. Neither half is safe alone.
+
+    Returns ``(live, dead)``. Pure and total: it never raises on a candidate.
+    """
+    from app.utils.kalshi_retention import is_provably_purged
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    live: list = []
+    dead: list = []
+    for event in events:
+        if event_series_ticker(event.event_ticker) not in stripped_series:
+            live.append(event)
+            continue
+        try:
+            game_date = extract_game_date_from_ticker(event.event_ticker)
+        except Exception:
+            game_date = None
+        (dead if is_provably_purged(game_date, now) else live).append(event)
+    return live, dead
+
+
 # ---------------------------------------------------------------------------
 # The guaranteed supplementary rescue net.
 #
@@ -2068,6 +2165,13 @@ class KalshiAPIService(BaseAPIClient):
                 or event_series_ticker(e.event_ticker) in _stripped_series
             )
         ]
+        # #3190: cut the rows the venue can no longer answer for BEFORE the
+        # ordering runs. Two thirds of the list (7,722 of 11,538 on 2026-09-05)
+        # are events whose markets Kalshi purged months ago; asking again is a
+        # request and a page of budget spent on a guaranteed empty answer.
+        empty_events, _dead_candidates = drop_provably_purged_candidates(
+            empty_events, _stripped_series
+        )
         empty_events = order_market_backfill_candidates(
             empty_events, _stripped_series
         )
@@ -2101,6 +2205,11 @@ class KalshiAPIService(BaseAPIClient):
             1 for e in all_events.values() if not e.markets
         )
         _tel["market_backfill_candidates"] = len(empty_events)
+        # #3190: the cut, reported beside what survived it. Without this field a
+        # reader watching `market_backfill_candidates` fall from 11,538 to a few
+        # thousand cannot tell relief from an inventory outage — the two look
+        # identical from the surviving number alone, and one of them is a P1.
+        _tel["market_backfill_dead_candidates"] = len(_dead_candidates)
         # #2214: the sub-count that says whether the reserve is being spent on
         # the population it was reserved FOR. `candidates` alone cannot: a beat
         # that fills 45 accidental non-game events reads identically to one that
@@ -2136,8 +2245,10 @@ class KalshiAPIService(BaseAPIClient):
             )
         if empty_events and not _past_deadline():
             logger.info(
-                "Backfilling markets for %d sports events with 0 nested markets",
-                len(empty_events),
+                "Backfilling markets for %d sports events with 0 nested "
+                "markets (%d more skipped: past Kalshi's market-retention "
+                "bound, so the venue has nothing left to give)",
+                len(empty_events), len(_dead_candidates),
             )
             # #3149: ask the venue once per SERIES, not once per event.
             #

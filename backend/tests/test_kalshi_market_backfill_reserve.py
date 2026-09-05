@@ -45,6 +45,30 @@ RED_FIRST_TICKER = "KXMLBGAME-26AUG26BOSMIA"
 NOW = datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc)
 
 
+def _live_ticker(suffix: str = "BOSMIA", series: str = "KXMLBGAME") -> str:
+    """A ticker for yesterday's game, built from the real clock.
+
+    #3190 gave the backfill a retention floor, and the floor reads the date the
+    ticker embeds against ``datetime.now``. So a hard-coded date in a
+    SERVICE-level fixture is a time bomb: `KXMLBGAME-26AUG26…` is a live
+    candidate today and a provably-purged one from 2026-11-20, at which point
+    nine tests that have nothing to do with retention start failing for a reason
+    none of them mentions.
+
+    Offset FIRST, then format (gotcha #44) — no branch on the clock. Yesterday
+    rather than today so the ordering treats it as a real played game.
+
+    The PURE-function ordering tests keep :data:`RED_FIRST_TICKER` and its frozen
+    :data:`NOW`: they pass their own clock in, so nothing about them rots.
+    """
+    d = datetime.now(timezone.utc) - timedelta(days=1)
+    return f"{series}-{d:%y%b%d}".upper() + suffix
+
+
+#: The stripped-series candidate the service-level tests below backfill.
+LIVE_TICKER = _live_ticker()
+
+
 # ---------------------------------------------------------------------------
 # G1a — the ordering. A bounded reserve is only as good as what it spends on.
 # ---------------------------------------------------------------------------
@@ -268,7 +292,7 @@ async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
         if series_ticker == "KXMLBGAME":
             # Fetched WITHOUT nested markets by `_HEAVY_TOKENS`, so it arrives
             # empty — exactly the production shape.
-            return ([{"event_ticker": RED_FIRST_TICKER,
+            return ([{"event_ticker": LIVE_TICKER,
                       "title": "Red Sox at Marlins",
                       "category": "Sports",
                       "markets": []}], None)
@@ -280,7 +304,7 @@ async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
         status=None, event_ticker=None, series_ticker=None, limit=200, **kw
     ):
         markets_calls.append(series_ticker)
-        return (_venue_markets([RED_FIRST_TICKER]), None)
+        return (_venue_markets([LIVE_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -299,7 +323,7 @@ async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
     assert tel["market_backfill_stripped_candidates"] == 1
 
     by_ticker = {e.event_ticker: e for e in events}
-    assert by_ticker[RED_FIRST_TICKER].markets, (
+    assert by_ticker[LIVE_TICKER].markets, (
         "the game event still carries zero markets, so the upsert loop will "
         "drop it on `if not event.markets: continue` and no Kalshi row is "
         "created for tonight's game"
@@ -332,7 +356,7 @@ async def test_a_stripped_game_series_is_a_candidate_without_a_sport_category(
     ):
         clock.t += 4.0
         if series_ticker == "KXMLBGAME":
-            return ([{"event_ticker": RED_FIRST_TICKER,
+            return ([{"event_ticker": LIVE_TICKER,
                       "title": "Red Sox at Marlins",
                       "category": None,          # <- the whole point
                       "markets": []}], None)
@@ -344,7 +368,7 @@ async def test_a_stripped_game_series_is_a_candidate_without_a_sport_category(
         status=None, event_ticker=None, series_ticker=None, limit=200, **kw
     ):
         markets_calls.append(series_ticker)
-        return (_venue_markets([RED_FIRST_TICKER]), None)
+        return (_venue_markets([LIVE_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -427,7 +451,7 @@ async def test_a_backfill_the_deadline_cuts_off_says_where_it_stopped(
     # the CANDIDATE count, because that is the number of events left with no
     # markets, and that is what a reader is trying to learn.
     series = [f"KXMLBGAME{s}" for s in range(8)]
-    tickers = [f"{s}-26AUG26BOSMI{i:02d}" for s in series for i in range(5)]
+    tickers = [_live_ticker(f"BOSMI{i:02d}", series=s) for s in series for i in range(5)]
 
     async def fake_get_events(
         status=None, series_ticker=None, with_nested_markets=True,
@@ -500,7 +524,7 @@ async def test_a_backfill_that_finishes_the_list_reports_no_cut(monkeypatch):
         limit=200, cursor=None, deadline=None, progress_cb=None, **kw,
     ):
         if series_ticker == "KXMLBGAME":
-            return ([{"event_ticker": RED_FIRST_TICKER,
+            return ([{"event_ticker": LIVE_TICKER,
                       "title": "Red Sox at Marlins",
                       "category": "Sports", "markets": []}], None)
         return ([], None)
@@ -508,7 +532,7 @@ async def test_a_backfill_that_finishes_the_list_reports_no_cut(monkeypatch):
     async def fake_get_markets(
         status=None, event_ticker=None, series_ticker=None, limit=200, **kw
     ):
-        return (_venue_markets([RED_FIRST_TICKER]), None)
+        return (_venue_markets([LIVE_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -645,7 +669,7 @@ def test_g1_kalshi_game_ticker_is_still_recognised_as_game_level():
     from app.utils.prediction_market_matching import is_game_level_market
 
     assert is_game_level_market(
-        "Red Sox at Marlins", external_id=RED_FIRST_TICKER
+        "Red Sox at Marlins", external_id=LIVE_TICKER
     ) is True
 
 
@@ -740,7 +764,7 @@ async def test_the_backfill_asks_once_per_series_not_once_per_event(monkeypatch)
     RED-FIRST against the per-event loop, which made thirty calls and paid
     thirty 0.3s sleeps for the same markets.
     """
-    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(30)]
+    tickers = [_live_ticker(f"BOSMI{i:02d}") for i in range(30)]
     svc, clock = _one_series_service(monkeypatch, tickers)
 
     calls: list[str] = []
@@ -783,7 +807,7 @@ async def test_a_candidate_the_series_did_not_answer_for_is_counted(monkeypatch)
     An aggregate `filled` cannot tell a batch that served 9 of 10 events from
     one that was only ever asked about 9. So the miss is counted by name.
     """
-    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(10)]
+    tickers = [_live_ticker(f"BOSMI{i:02d}") for i in range(10)]
     svc, clock = _one_series_service(monkeypatch, tickers)
 
     async def fake_get_markets(
@@ -817,7 +841,7 @@ async def test_pagination_stops_once_every_candidate_is_served(monkeypatch):
     all of it to serve tonight's slate would hand back the per-event problem in
     a new currency.
     """
-    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(4)]
+    tickers = [_live_ticker(f"BOSMI{i:02d}") for i in range(4)]
     svc, clock = _one_series_service(monkeypatch, tickers)
 
     pages: list[str] = []
@@ -844,7 +868,7 @@ async def test_a_series_the_venue_paginates_is_walked_until_our_events_appear(
     monkeypatch,
 ):
     """The other direction: stopping early must not mean stopping too early."""
-    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(3)]
+    tickers = [_live_ticker(f"BOSMI{i:02d}") for i in range(3)]
     svc, clock = _one_series_service(monkeypatch, tickers)
 
     async def fake_get_markets(
@@ -873,8 +897,8 @@ async def test_grouping_keeps_the_stripped_series_at_the_front(monkeypatch):
     so a cut still lands on the accidental tail rather than on the game series
     the backfill exists to serve.
     """
-    accidental = [f"KXFAKEFUTURES-26AUG26X{i:02d}" for i in range(3)]
-    promised = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(3)]
+    accidental = [_live_ticker(f"X{i:02d}", series="KXFAKEFUTURES") for i in range(3)]
+    promised = [_live_ticker(f"BOSMI{i:02d}") for i in range(3)]
     # Deliberately fetched accidental-first, so only the ordering can save it.
     svc, clock = _one_series_service(monkeypatch, accidental + promised)
 
@@ -943,3 +967,374 @@ def test_the_batched_counters_reach_the_scan_report():
         "market_backfill_unmatched",
     ):
         assert key in passed, f"{key} is computed and never carried to the report"
+
+
+# ---------------------------------------------------------------------------
+# #3190 — THE RETENTION FLOOR.
+#
+# The invariant these guard: **a candidate past Kalshi's market-retention bound
+# is not requested.** Named after that, not after the queue that shipped it.
+#
+# Kalshi EVENT data is permanent; MARKET data is purged (gotcha #35). So the
+# supplementary listing hands back years of finished games with zero nested
+# markets, forever. Measured on the 2026-09-05 10:45Z beat: 11,538 candidates,
+# 7,722 unmatched — two thirds of every beat's request budget spent on rows the
+# venue has nothing left to answer with.
+#
+# Checked against the venue, not against a fixture (2026-09-05, Kalshi's own
+# API, six game series — KXMLBGAME, KXMLBSPREAD, KXMLBTOTAL, KXNBAGAME,
+# KXNHLGAME, KXNFLGAME):
+#
+#     events listed              12,161
+#     events still with markets   2,773   oldest 68.5 days
+#     events with no markets      9,388   youngest 69.5 days
+#     with markets at >= 86d          0
+#
+# A sharp cliff at ~69 days, and `PROVABLY_PURGED_AGE_DAYS` (86) sits 17 days
+# clear of it on the safe side. Nothing here writes a day count: the module owns
+# the number and these tests derive their fixtures from it, so re-measuring the
+# venue moves the constant and the tests together.
+# ---------------------------------------------------------------------------
+
+
+def _aged_ticker(
+    days_ago: float, suffix: str = "BOSMIA", series: str = "KXMLBGAME"
+) -> str:
+    """A game ticker whose embedded date is `days_ago` days old.
+
+    Offset FIRST, then format (gotcha #44). The offsets callers pass are derived
+    from `PROVABLY_PURGED_AGE_DAYS`, never typed.
+    """
+    d = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return f"{series}-{d:%y%b%d}".upper() + suffix
+
+
+def test_a_candidate_past_the_retention_bound_is_not_requested():
+    """THE INVARIANT. The venue cannot answer for it, so we do not ask.
+
+    RED-FIRST: before the floor existed every one of these went into the
+    request list, came back `unmatched`, and would have again on every beat
+    until the heat death of the series.
+    """
+    from app.services.kalshi_api import drop_provably_purged_candidates
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    dead = [
+        _ev(_aged_ticker(PROVABLY_PURGED_AGE_DAYS, "AAABBB")),
+        _ev(_aged_ticker(PROVABLY_PURGED_AGE_DAYS + 200, "CCCDDD")),
+        _ev(_aged_ticker(PROVABLY_PURGED_AGE_DAYS + 1, "EEEFFF")),
+    ]
+
+    live, cut = drop_provably_purged_candidates(dead, {"KXMLBGAME"})
+
+    assert live == [], (
+        "a candidate whose markets Kalshi has provably purged was still going "
+        "to be asked for; it can only ever come back unmatched"
+    )
+    assert len(cut) == 3
+
+
+def test_a_candidate_inside_the_retention_bound_is_still_requested():
+    """The other direction, which is the one that would be a regression.
+
+    A floor that also cuts fillable rows is not relief, it is an outage wearing
+    a smaller number. This includes the UNCERTAIN band: retention was measured
+    at >=74 and <86 days, and the skip-work bound is deliberately the UPPER one
+    so a row in the band is still tried. Fail-open is the whole design.
+    """
+    from app.services.kalshi_api import drop_provably_purged_candidates
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    tonight = _ev(_aged_ticker(-1, "AAABBB"))
+    yesterday = _ev(_aged_ticker(1, "CCCDDD"))
+    # Inside the 74-86d band the venue's answer is genuinely unknown.
+    uncertain = _ev(_aged_ticker(PROVABLY_PURGED_AGE_DAYS - 1, "EEEFFF"))
+
+    live, cut = drop_provably_purged_candidates(
+        [tonight, yesterday, uncertain], {"KXMLBGAME"}
+    )
+
+    assert cut == [], f"the floor cut a row that may still be fillable: {cut}"
+    assert [e.event_ticker for e in live] == [
+        tonight.event_ticker, yesterday.event_ticker, uncertain.event_ticker,
+    ]
+
+
+def test_an_undated_candidate_is_never_written_off():
+    """Ignorance is not evidence of purging.
+
+    `is_provably_purged(None)` is False by design — an unknown settlement time
+    is still attempted rather than abandoned. A floor that inverted that would
+    silently drop every series whose ticker shape we cannot parse, which is
+    exactly the classes (college, esports, tennis) that have no other net.
+    """
+    from app.services.kalshi_api import drop_provably_purged_candidates
+
+    undated = _ev("KXMLBGAME-NONSENSE")
+    empty = _ev("")
+
+    live, cut = drop_provably_purged_candidates(
+        [undated, empty], {"KXMLBGAME"}
+    )
+
+    assert cut == []
+    assert len(live) == 2
+
+
+def test_the_floor_leaves_the_ordering_of_what_survives_alone():
+    """Both bounds, not one (gotcha #41).
+
+    The floor is the FLOOR. It must not become the ordering: a cut that also
+    reshuffled would hand back the starvation the ordering exists to prevent —
+    stripped series before accidental ones, soonest-unplayed before the tail.
+    """
+    from app.services.kalshi_api import (
+        drop_provably_purged_candidates,
+        order_market_backfill_candidates,
+    )
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    stripped = {"KXMLBGAME"}
+    tonight = _ev(_aged_ticker(-1, "AAABBB"))
+    accidental = _ev(_aged_ticker(-1, "X01", series="KXFEDDECISION"))
+    recent_past = _ev(_aged_ticker(3, "CCCDDD"))
+    ancient = _ev(_aged_ticker(PROVABLY_PURGED_AGE_DAYS + 30, "EEEFFF"))
+
+    live, cut = drop_provably_purged_candidates(
+        [ancient, accidental, recent_past, tonight], stripped
+    )
+    ordered = order_market_backfill_candidates(live, stripped)
+
+    assert [e.event_ticker for e in cut] == [ancient.event_ticker]
+    assert [e.event_ticker for e in ordered] == [
+        tonight.event_ticker,      # the promise, soonest unplayed
+        recent_past.event_ticker,  # then the most recent past, not the oldest
+        accidental.event_ticker,   # the accident goes behind the promise
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_dead_tail_costs_no_request_and_the_live_slate_still_fills(
+    monkeypatch,
+):
+    """THE SHIP, end to end: fewer asks, the same fills.
+
+    RED-FIRST against the pre-floor code, which grouped the purged series into
+    `_groups` and spent a request and a page walk on it before serving nobody.
+
+    `filled` not falling is the half that makes this relief rather than a
+    regression — it is asserted here and not inferred from the request count.
+    """
+    live_tickers = [_aged_ticker(1, f"BOSMI{i:02d}") for i in range(4)]
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    dead_tickers = [
+        _aged_ticker(PROVABLY_PURGED_AGE_DAYS + 10, f"OLD{i:02d}",
+                     series="KXNBAGAME")
+        for i in range(6)
+    ]
+    svc, clock = _one_series_service(monkeypatch, live_tickers + dead_tickers)
+
+    calls: list[str] = []
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        calls.append(series_ticker)
+        # The venue answers for the live series only. For the purged one it
+        # returns the empty list it really returns — an event that still exists
+        # with no markets left (gotcha #53: an empty 200 is a response shape).
+        if series_ticker == "KXMLBGAME":
+            return (_venue_markets(live_tickers), None)
+        return ([], None)
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    events = await svc._fetch_all_events_unfiltered(
+        deadline=clock.t + 240.0, telemetry=tel
+    )
+
+    assert calls == ["KXMLBGAME"], (
+        "the purged series was still asked for; that request and its page walk "
+        f"can only ever come back empty. asked={calls}"
+    )
+    assert tel["market_backfill_candidates"] == 4
+    assert tel["market_backfill_dead_candidates"] == 6
+    assert tel["market_backfill_filled"] == 4, (
+        "the live slate must still fill — a floor that costs a fill is an "
+        "outage wearing a smaller candidate count"
+    )
+    assert tel["market_backfill_unmatched"] == 0, (
+        "the 7,722 permanently-unanswerable rows are gone from the ask, so "
+        "they are gone from the miss count too"
+    )
+    # The dead events are still handed back to the caller untouched; the floor
+    # decides what to REQUEST, never what exists.
+    assert len(events) == 10
+    assert not any(e.markets for e in events
+                   if e.event_ticker in set(dead_tickers))
+
+
+def test_the_dead_cut_reaches_the_scan_report():
+    """A cut nobody can read is a candidate count that fell for no stated reason.
+
+    Two thirds of the list disappears the beat this deploys. From
+    `market_backfill_candidates` alone that is indistinguishable from the
+    supplementary fetch going dark, and one of those two is a P1.
+    """
+    import ast
+    from pathlib import Path
+
+    from app.utils.kalshi_scan_report import KalshiScanReport
+
+    data = KalshiScanReport(
+        market_backfill_candidates=3816,
+        market_backfill_dead_candidates=7722,
+    ).to_dict()
+    assert data["market_backfill_dead_candidates"] == 7722
+
+    src = Path(__file__).resolve().parents[1] / "app" / "tasks" / "kalshi.py"
+    tree = ast.parse(src.read_text())
+    passed = {
+        kw.arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "KalshiScanReport"
+        for kw in node.keywords
+    }
+    assert "market_backfill_dead_candidates" in passed, (
+        "the cut is computed in the fetch and never carried to the report — "
+        "the same omission this module already records four times"
+    )
+
+
+def test_a_futures_expiry_ticker_is_never_read_as_a_25_year_old_game():
+    """The specimen that bounded the cut, kept as a specimen.
+
+    Kalshi writes a GAME ticker as `<SERIES>-YYMMMDD[HHMM]<TEAMS>` and a FUTURES
+    ticker as `<SERIES>-DDMMMYY` with nothing after it. Same seven characters,
+    and `extract_game_date_from_ticker` reads both as the first:
+
+        KXHONEYDEUCE-01JAN27  ->  2001-01-02
+        KXATPADVANCE-15MAR27  ->  2015-03-02
+
+    Both are LIVE 2027-expiry futures in series #2927's discovery had only just
+    started ingesting, and both are `is_provably_purged` under the naive read. A
+    floor that trusted the parser everywhere would have cut them — shipping an
+    outage inside a change whose whole claim is that it takes nothing away.
+
+    So the cut is bounded to STRIPPED GAME series, which always carry the team
+    suffix and are where the 7,722 lives anyway. The parser ambiguity itself is
+    the matcher's (D39/D35): filed against #2693, not fixed here.
+    """
+    from app.services.kalshi_api import drop_provably_purged_candidates
+    from app.utils.kalshi_retention import is_provably_purged
+    from app.utils.prediction_market_matching import (
+        extract_game_date_from_ticker,
+    )
+
+    honey = "KXHONEYDEUCE-01JAN27"
+    advance = "KXATPADVANCE-15MAR27"
+
+    # The trap is real, not hypothetical — assert it, so this test still means
+    # something on the day somebody fixes the parser.
+    assert is_provably_purged(extract_game_date_from_ticker(honey)), (
+        "the specimen no longer misparses; re-derive the bound below rather "
+        "than deleting this test"
+    )
+
+    live, cut = drop_provably_purged_candidates(
+        [_ev(honey), _ev(advance)], {"KXMLBGAME", "KXNBAGAME"}
+    )
+
+    assert cut == [], (
+        "a live 2027-expiry future was cut as a purged 2001 market; the floor "
+        "must only read a date it knows the shape of"
+    )
+    assert len(live) == 2
+
+
+def test_the_floor_only_cuts_the_population_it_was_measured_on():
+    """Same bound, stated as the invariant rather than through one specimen.
+
+    The venue table behind this floor covers stripped game series. A candidate
+    of any other series keeps its request no matter how old its ticker reads —
+    that is the difference between a measured cut and a guess applied widely.
+    """
+    from app.services.kalshi_api import drop_provably_purged_candidates
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    ancient = PROVABLY_PURGED_AGE_DAYS + 400
+    measured = _ev(_aged_ticker(ancient, "BOSMIA", series="KXMLBGAME"))
+    unmeasured = _ev(_aged_ticker(ancient, "FONSZA", series="KXITFMATCH"))
+
+    live, cut = drop_provably_purged_candidates(
+        [measured, unmeasured], {"KXMLBGAME"}
+    )
+
+    assert [e.event_ticker for e in cut] == [measured.event_ticker]
+    assert [e.event_ticker for e in live] == [unmeasured.event_ticker]
+
+
+def test_the_production_filter_cuts_the_old_game_and_keeps_the_live_future():
+    """CERT-1889's named repair, against the REAL production filter.
+
+    The BLOCK asked for exactly this pairing: "an old measured game with a live
+    future-shaped non-stripped ticker", run through the set the service actually
+    computes rather than a set the test invents. A hand-made `{"KXMLBGAME"}`
+    cannot fail the way production fails — it cannot tell whether
+    `_stripped_series` itself admits the wrong series.
+
+    The two counter-specimens behind it, both re-measured at the venue
+    2026-09-05:
+
+    * `KXHONEYDEUCE-01JAN27` — a LIVE 2027-expiry future with active markets,
+      which the game parser reads as `2001-01-02`, i.e. provably purged.
+    * `KXATPMATCH` — 3 of 933 events at **244.5-245.5 days** still carry
+      retrievable markets, one quoting `last_price_dollars 0.3100`. Inside the
+      stripped set nothing survives past 86 days; outside it, things do. The
+      premise is a property of the population, not of Kalshi.
+    """
+    from app.services.kalshi_api import (
+        _HEAVY_TOKENS,
+        _SPORTS_SERIES_TICKERS,
+        drop_provably_purged_candidates,
+    )
+    from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+    # The production filter, derived exactly as `_fetch_all_events_unfiltered`
+    # derives it — so a change to either constant reaches this test.
+    stripped = {
+        st.upper()
+        for st in _SPORTS_SERIES_TICKERS
+        if any(tok in st.upper() for tok in _HEAVY_TOKENS)
+    }
+    assert "KXMLBGAME" in stripped and "KXATPMATCH" not in stripped, (
+        "the production filter no longer describes the measured population; "
+        "re-measure the venue before trusting the cut"
+    )
+
+    old_measured_game = _ev(
+        _aged_ticker(PROVABLY_PURGED_AGE_DAYS + 120, "BOSMIA",
+                     series="KXMLBGAME")
+    )
+    live_future = _ev("KXHONEYDEUCE-01JAN27")
+    # The 245-day ATP survivor, in the shape the venue actually returns it.
+    old_unmeasured_but_alive = _ev(
+        _aged_ticker(245, "ALCSIN", series="KXATPMATCH")
+    )
+
+    live, cut = drop_provably_purged_candidates(
+        [old_measured_game, live_future, old_unmeasured_but_alive], stripped
+    )
+
+    assert [e.event_ticker for e in cut] == [old_measured_game.event_ticker], (
+        "the cut must land on the measured population and nowhere else; "
+        f"cut={[e.event_ticker for e in cut]}"
+    )
+    assert [e.event_ticker for e in live] == [
+        live_future.event_ticker,
+        old_unmeasured_but_alive.event_ticker,
+    ]
