@@ -524,9 +524,15 @@ class TestRouteJoin:
             {"b": {"task": "app.tasks.invisible", "schedule": 60.0}}, [], {},
         )
         assert out["graded"] == 0
+        # LAT-P238 added the emit pair to this entry, defaulted on every row so
+        # its absence stays readable. Still asserted by EQUALITY, deliberately:
+        # a subset assertion here would let a future field be dropped onto an
+        # unmapped entry unnoticed, and this row is the surface's only report of
+        # a beat it cannot grade.
         assert out["unmapped"] == [{
             "task": "app.tasks.invisible", "interval_s": 60.0,
             "reason": "no_metric_label_recorded",
+            "emitted": None, "emitted_window_s": None,
         }]
 
     def test_a_label_with_no_metrics_is_distinguished_from_no_label(self):
@@ -697,3 +703,309 @@ class TestStampArmWiring:
         )
         assert terminal is None
         assert start == pytest.approx(300.0)
+
+
+class _PrefixRedis(_Redis):
+    """``_Redis`` with a ``keys()`` that honours its pattern.
+
+    The parent's ``keys()`` synthesises a metrics-shaped answer and ignores what
+    it was asked for, which is fine for the reader it was written for and
+    useless for a second prefix — a reader scanning
+    ``bainluck:task_emissions:*`` would be handed the metrics keys and either
+    invent tasks or find none, and either way the test would not be measuring
+    the scan. Gotcha, in a test double: a fake that cannot express the question
+    cannot answer it.
+    """
+
+    def keys(self, pattern):
+        prefix = pattern[:-1] if pattern.endswith("*") else pattern
+        return [k.encode() for k in self.strings if k.startswith(prefix)]
+
+
+@pytest.fixture
+def prefix_fake(monkeypatch):
+    r = _PrefixRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: r)
+    return r
+
+
+class TestEmissionCounterStorage:
+    """LAT-P238-EMIT-SIDE-COUNTER: the counter taken ABOVE the delivery boundary.
+
+    Every other counter in ``redis_state`` is written at-or-after delivery, so
+    "beat never published it" and "the broker expired it before delivery" were
+    the same observation — which is precisely where LAT-P238's diagnosis of the
+    ``prewarm_live_feed_shapes`` rail ran out of instrument. These check the
+    storage half: that the count exists, that it carries its own window, and
+    that it cannot be mistaken for anything else on the health surface.
+    """
+
+    KEY = f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.prewarm_live_feed_shapes"
+
+    def test_a_publication_is_counted_with_its_window(self, prefix_fake):
+        redis_state.record_task_emission("app.tasks.prewarm_live_feed_shapes")
+        assert prefix_fake.strings[self.KEY] == b"1"
+        assert prefix_fake.ttls[self.KEY] == redis_state.WINDOW_COUNTER_TTL
+
+    def test_later_publications_do_not_slide_the_window(self, prefix_fake):
+        # The LAT-P024 contract, inherited rather than re-implemented: the TTL
+        # IS the window, stamped once at the first increment. A counter whose
+        # expiry rolls forward on every write becomes a lifetime total, and a
+        # lifetime total divided by a nominal 24h is the founding defect of
+        # this whole surface.
+        redis_state.record_task_emission("app.tasks.foo")
+        key = f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.foo"
+        prefix_fake.ttls[key] = 86000  # 400s of the window has elapsed
+        redis_state.record_task_emission("app.tasks.foo")
+        assert prefix_fake.strings[key] == b"2"
+        assert prefix_fake.ttls[key] == 86000
+
+    def test_an_empty_name_writes_nothing(self, prefix_fake):
+        redis_state.record_task_emission("")
+        redis_state.record_task_emission(None)
+        assert prefix_fake.strings == {}
+
+    def test_the_reader_returns_the_count_and_its_own_window(self, prefix_fake):
+        redis_state.record_task_emission("app.tasks.foo")
+        key = f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.foo"
+        prefix_fake.ttls[key] = redis_state.WINDOW_COUNTER_TTL - 600
+        out = redis_state.get_all_task_emissions()
+        assert out["app.tasks.foo"]["fires"] == 1
+        assert out["app.tasks.foo"]["window_s"] == pytest.approx(600.0)
+
+    def test_a_counter_with_no_expiry_is_unmeasurable_not_fresh(self, prefix_fake):
+        # Same refusal the delivery and starts counters make. A window of
+        # `None` makes `adherence` decline to compute a fraction at all, which
+        # is the correct reading of "this count has no age".
+        prefix_fake.strings[f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.foo"] = b"7"
+        out = redis_state.get_all_task_emissions()
+        assert out["app.tasks.foo"] == {"fires": 7, "window_s": None}
+
+    def test_a_non_numeric_value_is_skipped_not_zeroed(self, prefix_fake):
+        prefix_fake.strings[f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.bad"] = b"x"
+        redis_state.record_task_emission("app.tasks.good")
+        out = redis_state.get_all_task_emissions()
+        assert "app.tasks.bad" not in out
+        assert out["app.tasks.good"]["fires"] == 1
+
+    def test_a_dead_redis_reads_empty_rather_than_raising(self, monkeypatch):
+        def _boom():
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", _boom)
+        assert redis_state.get_all_task_emissions() == {}
+        redis_state.record_task_emission("app.tasks.foo")  # must not raise
+
+    def test_emission_keys_are_not_read_back_as_phantom_tasks(self, prefix_fake):
+        # `get_all_task_metrics` treats any 3-part key under the metrics prefix
+        # as a task. `bainluck:task_emissions:app.tasks.foo` is 3 parts deep,
+        # so parking it under that prefix would have put a task named
+        # "app.tasks.foo" on the health surface with no metrics behind it. A
+        # separate top-level prefix cannot be mistaken for one — asserted here
+        # rather than trusted, because the delivery counter needed the same
+        # argument and this is the second key to make it.
+        redis_state.record_task_emission("app.tasks.foo")
+        assert not redis_state.TASK_EMISSION_PREFIX.startswith(
+            f"{TASK_METRICS_PREFIX}:"
+        )
+        names = [m.get("task") for m in redis_state.get_all_task_metrics()]
+        assert names == []
+
+
+class TestPublishSignalPayloadShape:
+    """The message-shape half: what ``before_task_publish`` actually hands over.
+
+    Split out and made pure because the signal block itself needs a live celery
+    publish to exercise and is therefore `pragma: no cover`, while THIS is the
+    part that can silently be wrong. ``task_prerun`` passes the task OBJECT as
+    ``sender``; ``before_task_publish`` passes the task NAME as a string. Three
+    handlers in the same file read ``sender.name``, so copying that shape here
+    would have produced a counter that reads zero for every task — which does
+    not look like a bug, it looks like a finding.
+    """
+
+    def test_a_string_sender_is_the_name(self):
+        from app.tasks import _published_task_name
+        assert _published_task_name("app.tasks.foo", None, None) == "app.tasks.foo"
+
+    def test_protocol_2_headers_carry_the_name(self):
+        from app.tasks import _published_task_name
+        assert _published_task_name(
+            None, {"task": "app.tasks.foo"}, None) == "app.tasks.foo"
+
+    def test_protocol_1_body_carries_the_name(self):
+        from app.tasks import _published_task_name
+        assert _published_task_name(
+            None, None, {"task": "app.tasks.foo"}) == "app.tasks.foo"
+
+    def test_an_object_sender_still_yields_its_name(self):
+        from app.tasks import _published_task_name
+
+        class _Task:
+            name = "app.tasks.foo"
+        assert _published_task_name(_Task(), None, None) == "app.tasks.foo"
+
+    def test_an_unreadable_publication_is_none_not_a_blank_key(self):
+        from app.tasks import _published_task_name
+        assert _published_task_name(None, None, None) is None
+        assert _published_task_name(object(), {}, {}) is None
+        # A blank name must not become a counter key: `record_task_emission`
+        # refuses it, and this is the caller-side half of that refusal.
+        assert _published_task_name("", {}, {}) is None
+
+    def test_a_retry_is_filtered_exactly_as_it_is_on_the_delivery_side(self):
+        from app.tasks import _published_retries
+        assert _published_retries({"retries": 2}, None) == 2
+        assert _published_retries(None, {"retries": 1}) == 1
+
+    def test_a_first_attempt_reads_zero(self):
+        from app.tasks import _published_retries
+        assert _published_retries({"retries": 0}, None) == 0
+
+    def test_an_unreadable_retry_count_defaults_to_counting_it(self):
+        # The same call `_record_delivery` makes one signal up: losing the count
+        # is worse than an upper bound. And the two sides must default the SAME
+        # way — an unreadable message counted as emitted but not as delivered
+        # would present as broker loss that never happened.
+        from app.tasks import _published_retries
+        assert _published_retries(None, None) == 0
+        assert _published_retries({"retries": "many"}, None) == 0
+        assert _published_retries({}, {}) == 0
+
+
+class TestEmissionsReachTheGrader:
+    """The join: emissions are keyed by celery name and need no label map."""
+
+    SCHED = {"b": {"task": "app.tasks.foo", "schedule": 40.0}}
+
+    def test_the_row_carries_both_counters_and_both_windows(self):
+        out = build_schedule_adherence(
+            self.SCHED,
+            [_metrics("foo", starts=1080, window_s=86400.0)],
+            {"app.tasks.foo": "foo"},
+            {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
+            emissions={"app.tasks.foo": {"fires": 90, "window_s": 3600.0}},
+        )
+        row = out["all"]["app.tasks.foo"]
+        assert row["emitted"] == 90 and row["emitted_window_s"] == 3600.0
+        assert row["deliveries"] == 1080 and row["deliveries_window_s"] == 86400.0
+        assert row["undelivered_fraction"] == pytest.approx(0.5, abs=0.005)
+        assert "never reached a worker" in row["reason"]
+
+    def test_no_emissions_argument_leaves_the_fraction_unknown(self):
+        # The whole first day after the deploy, and every caller that has not
+        # been updated. Unknown, never 0 — a 0 here would report "beat is
+        # publishing fine" about a counter that does not exist yet.
+        out = build_schedule_adherence(
+            self.SCHED,
+            [_metrics("foo", starts=1080, window_s=86400.0)],
+            {"app.tasks.foo": "foo"},
+            {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
+        )
+        row = out["all"]["app.tasks.foo"]
+        assert row["undelivered_fraction"] is None
+        assert row["emitted"] is None and row["emitted_window_s"] is None
+
+    def test_emissions_do_not_need_the_label_join(self):
+        # The point of keying by celery name: 30 beat tasks never call
+        # `_tracked_run` and so have no label. A delivery-graded row must pick
+        # its emissions up anyway.
+        out = build_schedule_adherence(
+            self.SCHED, [], {},
+            {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
+            emissions={"app.tasks.foo": {"fires": 90, "window_s": 3600.0}},
+        )
+        assert out["graded"] == 1
+        assert out["all"]["app.tasks.foo"]["emitted"] == 90
+
+    def test_emissions_alone_stay_unmapped_but_carry_their_count(self):
+        # "Beat is publishing into a void": nothing ran, nothing was delivered,
+        # and the emit counter is the only witness that the scheduler is alive
+        # at all. Not graded — an emission is not evidence anything ran — but
+        # not dropped either, which is what every counter below the delivery
+        # boundary would have done with it.
+        out = build_schedule_adherence(
+            self.SCHED, [], {}, {},
+            emissions={"app.tasks.foo": {"fires": 90, "window_s": 3600.0}},
+        )
+        assert out["graded"] == 0
+        assert out["unmapped"] == [{
+            "task": "app.tasks.foo", "interval_s": 40.0,
+            "reason": "no_metric_label_recorded",
+            "emitted": 90, "emitted_window_s": 3600.0,
+        }]
+
+    def test_emissions_for_an_unscheduled_task_are_ignored(self):
+        # Metrics exist for ad-hoc and admin-triggered publications too.
+        # Grading one against a cadence it does not have would invent a task.
+        out = build_schedule_adherence(
+            {}, [], {}, {},
+            emissions={"app.tasks.manual": {"fires": 3, "window_s": 60.0}},
+        )
+        assert out["scheduled_tasks"] == 0
+        assert out["all"] == {} and out["unmapped"] == []
+
+
+class TestTheSignalActuallyFires:
+    """End to end, against a real celery publish: is the counter WRITTEN?
+
+    Every test above this one proves the pieces are correct in isolation, and
+    none of them would fail if ``before_task_publish`` never reached
+    ``_record_emission`` at all — a dead instrument reads exactly like a healthy
+    beat, because both produce a counter that does not move. That failure mode
+    is not hypothetical for this lane: LAT-P238 spent a session on a rail whose
+    numbers were fine and whose ship was dead.
+
+    ``memory://`` is kombu's in-process transport, so ``apply_async`` performs a
+    genuine publish — the same ``send_task_message`` path production uses, with
+    the same signal dispatch — without a broker. The handler under test is the
+    module-level one connected at ``import app.tasks``; nothing here re-declares
+    it, so if the real wiring is removed or its name lookup is wrong, this goes
+    red.
+    """
+
+    @pytest.fixture
+    def probe_app(self):
+        from celery import Celery
+
+        app = Celery("lat_p238_probe", broker="memory://", backend=None)
+
+        @app.task(name="app.tasks.lat_p238_probe")
+        def _probe():  # pragma: no cover - never executed, only published
+            return 1
+
+        return app, _probe
+
+    def test_a_real_publish_increments_the_counter(self, prefix_fake, probe_app):
+        import app.tasks  # noqa: F401  - importing is what connects the handler
+
+        _app, probe = probe_app
+        key = f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.lat_p238_probe"
+        assert key not in prefix_fake.strings
+        probe.apply_async()
+        assert prefix_fake.strings[key] == b"1"
+        assert prefix_fake.ttls[key] == redis_state.WINDOW_COUNTER_TTL
+
+    def test_a_real_retry_publish_is_not_counted(self, prefix_fake, probe_app):
+        import app.tasks  # noqa: F401
+
+        _app, probe = probe_app
+        key = f"{redis_state.TASK_EMISSION_PREFIX}:app.tasks.lat_p238_probe"
+        probe.apply_async()
+        probe.apply_async(retries=3)
+        # Still 1. A `self.retry()` re-publish is not a beat fire, and counting
+        # it would manufacture a phantom broker loss out of a retrying task —
+        # the delivery side filters it, so this side must too or the quotient
+        # of the two is measuring the retry rate.
+        assert prefix_fake.strings[key] == b"1"
+
+    def test_the_publish_survives_a_dead_redis(self, monkeypatch, probe_app):
+        # The instrument must never be the reason a publication fails — least
+        # of all here, where the publisher is celery beat and a raise would
+        # take out the scheduler this counter exists to grade.
+        def _boom(*_a, **_k):
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", _boom)
+        import app.tasks  # noqa: F401
+
+        _app, probe = probe_app
+        probe.apply_async()  # must not raise

@@ -823,6 +823,133 @@ def get_all_task_deliveries() -> dict:
         return {}
 
 
+#: Emissions are counted where the message is PUBLISHED, under their own
+#: top-level prefix, keyed by the fully-qualified celery name — LAT-P238-EMIT-
+#: SIDE-COUNTER (#3268, #3251).
+#:
+#: THE HOLE THIS FILLS, stated as the measurement that found it. Every counter
+#: above is written at-or-after DELIVERY: ``deliveries`` from ``task_prerun``,
+#: ``starts`` from inside the body, ``terminals`` at the end. So when
+#: ``prewarm_live_feed_shapes`` was sampled over 28.9 minutes on 2026-09-05 and
+#: delivered **0.646** of its scheduled fires with ``starts == deliveries``
+#: exactly (+28/+28) and ``self_gated_fires`` +0, the loss was provably entirely
+#: BEFORE delivery — and the instrument then had nothing left to say. Two causes
+#: fit that shape and no counter in this module could separate them:
+#:
+#: * **celery beat is not emitting at its interval** — the scheduler misses, and
+#:   the message is never published at all;
+#: * **the broker is expiring messages before delivery** — the rail carries
+#:   ``expires`` of one period, so a message that waits one full period is
+#:   discarded by the broker. An expiry is INVISIBLE to a delivery counter: the
+#:   message existed, was published, and was dropped without ever reaching
+#:   ``task_prerun``.
+#:
+#: Both read identically from below. Counting at ``before_task_publish`` — which
+#: runs in the PUBLISHER, i.e. in the beat dyno for a scheduled fire — puts a
+#: number above the boundary for the first time, and the two causes stop being
+#: the same observation: emissions at cadence with deliveries short is the
+#: broker; emissions short is beat.
+#:
+#: A SEPARATE PREFIX, for the same two reasons ``TASK_DELIVERY_PREFIX`` is
+#: separate: ``get_all_task_metrics`` reads any 3-part key under
+#: ``TASK_METRICS_PREFIX`` as a task, and the beat schedule speaks celery names
+#: so a counter keyed that way needs no label join.
+TASK_EMISSION_PREFIX = "bainluck:task_emissions"
+
+
+def record_task_emission(full_task_name: str):
+    """Count one PUBLICATION of a celery task — LAT-P238-EMIT-SIDE-COUNTER.
+
+    Written from ``before_task_publish``, which celery dispatches inside
+    ``send_task_message`` in the process doing the publishing. For a beat entry
+    that process is the ``scheduler`` dyno, so this is the first counter in the
+    module that observes the scheduler rather than the worker.
+
+    WHAT AN EMISSION IS NOT, kept deliberately symmetric with
+    ``record_task_delivery`` because the whole value of this counter is the
+    comparison against that one. A **retry** is filtered at the caller
+    (``headers['retries'] > 0``), exactly as it is on the delivery side: a
+    ``self.retry()`` re-publish is not a beat fire, and letting it through here
+    while filtering it there would manufacture a phantom broker loss out of a
+    retrying task. An **eager** call never publishes at all, so it cannot reach
+    this signal and needs no filter. The residual is the same one deliveries
+    already carry and is stated rather than hidden: a manual ``.delay()`` is
+    indistinguishable from a beat publication, because beat stamps nothing on
+    the message that says so. Emissions are therefore *first-attempt broker
+    publications*, an upper bound on beat fires — the same bound, from the same
+    slack, as the number they will be compared against.
+
+    THE ASYMMETRY THAT WOULD HAVE RUINED THE MEASUREMENT, and the reason this
+    uses the plain ``get_redis_client()`` rather than the ``fast_fail=True``
+    hot-path client. This write sits on beat's publish path, so the temptation
+    is to bound it harder than the delivery write. Do not: a shorter timeout
+    drops emission counts under exactly the Redis pressure that also delays
+    delivery, biasing the ratio toward "beat is not emitting" — inventing the
+    first of the two causes this counter exists to tell apart. The two counters
+    must fail the same way or their quotient means nothing. The cost of matching
+    is bounded by the fact that beat already round-trips to this same Redis to
+    publish the message, so this adds no failure mode the publish does not
+    already carry.
+
+    Best-effort and swallowing everything, like every other recorder here: it
+    runs before every publication in the system, so it must never be the reason
+    one fails.
+    """
+    if not full_task_name:
+        return
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        _bump_window_counter(pipe, f"{TASK_EMISSION_PREFIX}:{full_task_name}")
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def get_all_task_emissions() -> dict:
+    """``{name: {"fires": int, "window_s": float|None}}`` — LAT-P238.
+
+    ``window_s`` comes from the counter's OWN TTL via ``_window_age_s``, and it
+    is not optional decoration on this counter — it is what makes it usable at
+    all. This counter is born at the deploy that ships it while the delivery
+    counter it will be compared against may already be 24 hours old, so the two
+    windows are guaranteed to disagree for the first day. A reader who
+    subtracts the counts gets a number with no meaning; a reader who divides
+    each count by the window printed beside it gets two rates that are
+    comparable even when the spans are not. ``adherence`` does the second and
+    refuses the first — see ``_undelivered_fraction``.
+
+    ``None`` passes through rather than flattening to 0, for the reason the rest
+    of this module keeps repeating: an absent observation is a shape, not a fact
+    (gotcha #53). No stamp sibling is written here, unlike deliveries: the veto
+    that needed a MOMENT is on the delivery side, and this counter is read by
+    differencing it across a sampling window, which needs a count and a span
+    and nothing else.
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{TASK_EMISSION_PREFIX}:"
+        out = {}
+        for key in r.keys(f"{prefix}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            if not key_str.startswith(prefix):
+                continue
+            name = key_str[len(prefix):]
+            if not name:
+                continue
+            try:
+                fires = int(r.get(key_str) or 0)
+            except (TypeError, ValueError):
+                continue
+            out[name] = {
+                "fires": fires,
+                "window_s": _window_age_s(r, key_str),
+            }
+        return out
+    except Exception:
+        return {}
+
+
 #: Execution lifecycle, counted at celery's OWN signals and keyed by the
 #: fully-qualified task name — #1501 item 2, from codex C-CERT-SENTRY-R2.
 #:

@@ -926,3 +926,248 @@ class TestAHistoryIsNotAHeartbeat:
                           newest_delivery_age_s=delivery_age)
             assert g["verdict"] == "on_schedule", delivery_age
             assert g["stamp_veto_withheld"] is None, delivery_age
+
+
+class TestEmitSideCounterSaysWhichEndLostTheFires:
+    """LAT-P238-EMIT-SIDE-COUNTER (#3268, #3251): above the delivery boundary.
+
+    THE MEASUREMENT THAT FORCED THIS, and the reason a "the counters agree"
+    fixture would not have been a test. Over 28.9 minutes on 2026-09-05
+    ``prewarm_live_feed_shapes`` delivered **0.646** of its scheduled fires with
+    ``starts == deliveries`` EXACTLY (+28/+28), ``terminals`` +27 (one in
+    flight) and ``self_gated_fires`` +0. Every counter the module had was taken
+    at-or-after delivery, so that reading localised the loss to *before*
+    delivery and could go no further — and the two causes that fit it need
+    opposite fixes:
+
+    * beat is not emitting at 40s, or
+    * the broker is expiring messages before delivery (the rail carries an
+      ``expires`` of one period, and an expiry never reaches ``task_prerun``).
+
+    So the bar for these tests is not "the field exists". It is that the field
+    reads DIFFERENTLY on those two shapes. A counter that only ever equals
+    ``deliveries`` in its fixtures has not been shown to measure anything.
+    """
+
+    #: A 40s beat losing HALF its fires before delivery, with an emit counter
+    #: (younger — it is born at the deploy that ships it) publishing at the full
+    #: cadence. 86400/40 = 2160 scheduled; 1080 delivered is ratio 0.50, i.e.
+    #: `behind`, which is the branch that gets to say a sentence about the end.
+    #: Delivery rate 1080/86400 = 0.0125/s against 90/3600 = 0.025/s published.
+    BROKER_LOSS = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0,
+        terminals=1079,
+        emitted=90, emitted_window_s=3600.0,   # 90 in 1h == one per 40.0s
+    )
+
+    #: The same shortfall arriving from the other end: beat itself publishes at
+    #: half cadence and everything it publishes is delivered. 45/3600 =
+    #: 0.0125/s — identical to the delivery rate above.
+    BEAT_LOSS = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0,
+        terminals=1079,
+        emitted=45, emitted_window_s=3600.0,
+    )
+
+    # --- RED FIRST --------------------------------------------------------
+
+    def test_the_broker_loss_shape_goes_red(self):
+        g = adherence(**self.BROKER_LOSS)
+        assert g["undelivered_fraction"] == pytest.approx(0.5, abs=0.005)
+        assert g["verdict"] == "behind"
+        assert "never reached a worker" in g["reason"]
+        assert "not at the scheduler" in g["reason"]
+
+    def test_the_rail_as_actually_measured_reads_on_a_row_no_verdict_owns(self):
+        # The production shape verbatim: 0.646 of schedule delivered over a
+        # mature 24h window, which is ABOVE `BEHIND_RATIO` and therefore grades
+        # `on_schedule`. That is the #3276 blindness this module already
+        # documents — a 24h average cannot see a 29-minute hole — and it is
+        # exactly why the emit fraction must be computed on every row rather
+        # than only on the branch that happens to be alarmed. The sampler that
+        # differences these counters over 25 minutes is the reader here, and it
+        # needs the number on a row the verdict has nothing to say about.
+        g = adherence(
+            starts=1395, starts_window_s=86400.0,
+            deliveries=1395, deliveries_window_s=86400.0,
+            terminals=1394, interval_s=40.0,
+            emitted=90, emitted_window_s=3600.0,
+        )
+        assert g["verdict"] == "on_schedule"
+        # 1395/86400 = 0.016146/s delivered against 0.025/s published.
+        assert g["undelivered_fraction"] == pytest.approx(0.354, abs=0.005)
+
+    def test_the_beat_loss_shape_reads_the_opposite_end(self):
+        g = adherence(**self.BEAT_LOSS)
+        # Same shortfall, same deliveries, same verdict — and the emit counter
+        # is the only thing in the payload that can tell the two apart.
+        assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.02)
+        assert g["verdict"] == "behind"
+        assert "SCHEDULER" in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+
+    def test_the_two_shapes_differ_only_in_the_emit_counter(self):
+        # The control that makes the two tests above mean something: every
+        # other input is identical, so nothing but `emitted` can be producing
+        # the different reading.
+        broker = dict(self.BROKER_LOSS)
+        beat = dict(self.BEAT_LOSS)
+        assert {k: v for k, v in broker.items() if k != "emitted"} == \
+               {k: v for k, v in beat.items() if k != "emitted"}
+        a, b = adherence(**broker), adherence(**beat)
+        assert a["ratio"] == b["ratio"]
+        assert a["deliveries"] == b["deliveries"]
+        assert a["undelivered_fraction"] != b["undelivered_fraction"]
+
+    # --- IT IS A RATE QUOTIENT, NOT A COUNTER DIFFERENCE ------------------
+
+    def test_wildly_drifted_windows_still_grade(self):
+        # THE POINT OF DIVIDING BY OWN WINDOWS. This counter is born at the
+        # deploy that ships it, against a delivery counter that may already be
+        # 24h old, so the two windows disagree BY CONSTRUCTION for the first
+        # day. `self_gated_fires` refuses at 10% drift and would therefore be
+        # `None` on every row of that first day; the fraction must not be.
+        g = adherence(
+            starts=0, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            emitted=15, emitted_window_s=600.0,   # 600s vs 86400s: 99.3% drift
+            interval_s=40.0,
+        )
+        # 2160/86400 = 0.025/s and 15/600 = 0.025/s — the SAME rate.
+        assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.001)
+
+    def test_a_subtraction_would_have_said_the_opposite(self):
+        # The mutation-shaped control. On the row above, `emitted - deliveries`
+        # is 15 - 2160 = -2145; floored at zero that reads "no loss" by luck,
+        # and with the operands the other way round (`deliveries - emitted`)
+        # it reads 2145 undelivered fires out of 15 published. Both are
+        # nonsense, and both are what publishing the DIFFERENCE would produce.
+        # The rates are equal, so the only correct answer is 0.
+        g = adherence(
+            starts=0, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            emitted=15, emitted_window_s=600.0,
+            interval_s=40.0,
+        )
+        assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.001)
+        assert g["undelivered_fraction"] <= 1.0
+        # And the module publishes both counters WITH both windows, so a reader
+        # can redo the division rather than trust it.
+        assert g["emitted"] == 15 and g["emitted_window_s"] == 600.0
+        assert g["deliveries"] == 2160 and g["deliveries_window_s"] == 86400.0
+
+    def test_the_difference_itself_is_never_published(self):
+        g = adherence(**self.BROKER_LOSS)
+        forbidden = {"undelivered_fires", "emitted_minus_delivered",
+                     "lost_fires", "expired_fires"}
+        assert forbidden.isdisjoint(g)
+
+    # --- UNKNOWN IS NOT ZERO ----------------------------------------------
+
+    def test_no_emit_counter_is_unknown_not_healthy(self):
+        # Gotcha #53 at its sharpest here: reading a missing emit counter as
+        # zero loss would report "beat is publishing fine" about a task the
+        # emit counter has never seen.
+        g = adherence(**{k: v for k, v in self.BROKER_LOSS.items()
+                         if k not in ("emitted", "emitted_window_s")})
+        assert g["undelivered_fraction"] is None
+        assert g["verdict"] == "behind"
+        assert "never reached a worker" not in g["reason"]
+        assert "SCHEDULER" not in g["reason"]
+
+    @pytest.mark.parametrize("window", [None, 0, 0.0])
+    def test_an_emit_count_with_no_window_is_unknown(self, window):
+        g = adherence(**{**self.BROKER_LOSS, "emitted_window_s": window})
+        assert g["undelivered_fraction"] is None
+
+    def test_a_zero_emit_rate_is_unknown_not_total_loss(self):
+        # 0 published in a measured window is a real observation about BEAT,
+        # but it cannot express a fraction OF publications — and 1 - (d/0) is
+        # not a number. Reported as unknown rather than as 100% loss, which
+        # would accuse the broker of discarding messages that never existed.
+        g = adherence(**{**self.BROKER_LOSS, "emitted": 0})
+        assert g["undelivered_fraction"] is None
+
+    def test_no_delivery_counter_is_unknown(self):
+        g = adherence(starts=10, starts_window_s=3600.0, interval_s=40.0,
+                      emitted=90, emitted_window_s=3600.0)
+        assert g["undelivered_fraction"] is None
+
+    def test_more_deliveries_than_publications_clamps_to_zero(self):
+        # The counter boundary, not negative loss: deliveries counted in a
+        # window whose publications fell in the previous one.
+        g = adherence(**{**self.BROKER_LOSS, "emitted": 40,
+                         "emitted_window_s": 3600.0})
+        assert g["undelivered_fraction"] == 0.0
+
+    # --- NEVER A NUMERATOR, NEVER FOLDED INTO ANOTHER FIELD ---------------
+
+    def test_emissions_never_move_the_ratio_or_the_numerator(self):
+        base = {k: v for k, v in self.BROKER_LOSS.items()
+                if k not in ("emitted", "emitted_window_s")}
+        plain = adherence(**base)
+        for emitted in (0, 1, 90, 100_000):
+            g = adherence(**base, emitted=emitted, emitted_window_s=3600.0)
+            assert g["ratio"] == plain["ratio"], emitted
+            assert g["numerator"] == plain["numerator"] == "deliveries", emitted
+            assert g["verdict"] == plain["verdict"], emitted
+
+    def test_emissions_are_never_folded_into_self_gated_fires(self):
+        base = {k: v for k, v in self.BROKER_LOSS.items()
+                if k not in ("emitted", "emitted_window_s")}
+        plain = adherence(**base)
+        loud = adherence(**base, emitted=100_000, emitted_window_s=3600.0)
+        assert loud["self_gated_fires"] == plain["self_gated_fires"]
+        assert loud["self_gate_fraction"] == plain["self_gate_fraction"]
+
+    def test_a_healthy_beat_is_not_made_unhealthy_by_the_new_field(self):
+        # 2160 deliveries in 86400s at a 40s interval is exactly on schedule.
+        g = adherence(
+            starts=2160, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            emitted=90, emitted_window_s=3600.0,
+            interval_s=40.0, terminals=2160,
+        )
+        assert g["verdict"] == "on_schedule"
+        assert g["undelivered_fraction"] == pytest.approx(0.0, abs=0.001)
+
+    # --- PAYLOAD SHAPE ----------------------------------------------------
+
+    def test_the_emit_fields_are_on_every_row_whatever_graded_it(self):
+        # Same contract every other three-state field in this module keeps: a
+        # key that appears only on the branch that computed it makes `.get()`
+        # mean two different things. The rows below reach four different
+        # returns — unmeasurable, window_too_short, the stamp arm, and behind.
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(starts=0, starts_window_s=None, interval_s=86400.0,
+                      newest_start_age_s=10.0, counter_ttl_s=86400.0),
+            adherence(**self.BROKER_LOSS),
+        ]
+        for row in rows:
+            assert "emitted" in row
+            assert "emitted_window_s" in row
+            assert "undelivered_fraction" in row
+            assert "deliveries_window_s" in row
+
+    def test_the_materiality_floor_is_the_same_number_as_the_self_gate_one(self):
+        # Derived, not restated. Both ask "is this gap between two
+        # independently-born window counters real or is it the boundary?", and
+        # the 0.4% production measurement that sized it is a property of the
+        # counter mechanism, not of the pair it was measured on.
+        from app.utils.schedule_adherence import UNDELIVERED_MATERIAL_RATIO
+        assert UNDELIVERED_MATERIAL_RATIO == SELF_GATE_MATERIAL_RATIO
+
+    def test_the_sentence_is_silent_below_the_floor_but_the_number_is_not(self):
+        # ~4% undelivered: reported as a number, not editorialised about.
+        # 47/3600 = 0.013056/s published against 0.0125/s delivered.
+        g = adherence(**{**self.BROKER_LOSS, "emitted": 47,
+                         "emitted_window_s": 3600.0})
+        assert 0 < g["undelivered_fraction"] < SELF_GATE_MATERIAL_RATIO
+        assert "never reached a worker" not in g["reason"]
+        assert "SCHEDULER" in g["reason"]
