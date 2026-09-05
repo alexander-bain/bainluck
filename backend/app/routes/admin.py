@@ -1175,6 +1175,270 @@ async def get_category_precompute_last(
     }
 
 
+def _warm_rail_status(key: str, *, ttl_s: int, absent_note: str) -> dict:
+    """The classified read behind both warm-rail status endpoints (#2430).
+
+    Same branch ladder as `/category-precompute/last`, extracted rather than
+    copied a third time. The branches ARE the value here: an absent report and a
+    Redis outage are opposite diagnoses with opposite remedies, and returning
+    `{}` for both is the shape gotcha #53 is about.
+    """
+    read = health_reads.read_json_key(key)
+    if read.unavailable:
+        raise HTTPException(status_code=503, detail=f"Redis unavailable: {read.error}")
+    if read.missing:
+        return {"status": "unknown", "report": None, "key": key, "ttl_s": ttl_s, "note": absent_note}
+    if read.status in (health_reads.MALFORMED, health_reads.WRONG_SHAPE):
+        return {
+            "status": "unparseable" if read.status == health_reads.MALFORMED else "wrong_shape",
+            "key": key,
+            "error_class": read.error_class,
+            "error": read.error,
+            "report": None,
+        }
+
+    report = read.value
+    age_s = health_reads.age_seconds(report.get("ran_at") or report.get("generated_at"))
+    return {
+        "status": "ok",
+        "key": key,
+        "age_seconds": age_s,
+        "stale": (age_s is not None and age_s > ttl_s),
+        "report": report,
+    }
+
+
+@router.get("/feed-prewarm/last")
+async def get_feed_prewarm_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Last 120s Discover warm-rail pass (#2430, read-only).
+
+    The rail writes this key with a 6-hour TTL *specifically so it can be read*,
+    and until now nothing read it. `/category-precompute/last` hard-codes a
+    different key and its report has no feed section at all, so "the host beat
+    left the anonymous first paint cold" was not a question production could be
+    asked.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    from app.tasks.precompute_category_pages import (
+        FEED_PREWARM_STATUS_KEY,
+        FEED_PREWARM_STATUS_TTL,
+    )
+
+    # Off-loop for the reason `/typeahead-warmer/last` is: `get_redis_client()` is
+    # bounded at 5s (gotcha #39), and 5s of a blocked single uvicorn event loop
+    # under a refreshing dashboard tab is how #1994 happened.
+    return await run_in_threadpool(
+        _warm_rail_status,
+        FEED_PREWARM_STATUS_KEY,
+        ttl_s=FEED_PREWARM_STATUS_TTL,
+        absent_note=(
+            "No report present. The pass is hosted inside the 120s "
+            "`precompute-discover-candidate-base` beat on the `background` queue "
+            "and writes this key even on failure, so an absent report means the "
+            "host beat did not run (or was hard-killed) — not that the warm "
+            "succeeded quietly."
+        ),
+    )
+
+
+def _live_prewarm_state() -> dict:
+    """The 40s republish rail's status, its SELECTION, and its two kill switches.
+
+    Three reads beyond the status key, and each closes a specific ambiguity that
+    the status key alone cannot — every one of them met while trying to grade
+    #3233's fix on production:
+
+    * **The kill switches.** `_prewarm_live_feed_shapes` returns `"disabled"`
+      BEFORE it writes any report, so a switched-off rail and a beat that never
+      ran produce the same absent key. The switch values are therefore read here;
+      without them "the fix did not work" and "the rail is off" are one reading.
+    * **The live set.** The pass only targets shapes marked live, and that hash is
+      written exclusively by a SUCCESSFUL warm (`_record_shape_liveness`). So a
+      shape that stops publishing eventually leaves the set and stops being
+      selected — the pass then reports `no_live_shapes`, which reads as healthy.
+      An empty set beside a live scoreboard is the tell, and it is only visible
+      from here.
+    * **That set's HEARTBEAT, AND ITS TTL — both, and neither alone.** The set
+      carries a reserved `FEED_PREWARM_LIVE_HEARTBEAT_FIELD` written by every
+      successful warm. `present` cannot read the key's existence alone: Redis has
+      no empty hash, so clearing the last live label deletes the key and a
+      healthy quiet night returns `TTL -2` exactly like a rail that has not
+      warmed in 300s (CERT-1914's BLOCK — the first version of this endpoint
+      reported the two as the same fact). Nor can it read the heartbeat alone: a
+      heartbeat on a key that lost its TTL never expires, so it vouches for a
+      rail that died a week ago (CERT-1920's BLOCK — the second version did
+      exactly that). `present` therefore means ARMED — heartbeat present AND a
+      positive TTL — and `deadman` names which of `expired` / `no_expiry` /
+      `unreadable_ttl` it fell to, because those three have different remedies.
+
+    Read-only. Four bounded commands, no broadcast, nothing written.
+    """
+    from app.tasks.precompute_category_pages import (
+        FEED_LIVE_PREWARM_ENABLED_KEY,
+        FEED_LIVE_PREWARM_STATUS_KEY,
+        FEED_PREWARM_ENABLED_KEY,
+        FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
+        FEED_PREWARM_LIVE_SHAPES_KEY,
+        FEED_PREWARM_LIVE_SHAPES_TTL_S,
+    )
+
+    out = _warm_rail_status(
+        FEED_LIVE_PREWARM_STATUS_KEY,
+        # The pass runs every 40s, so its report is stale in seconds, not hours.
+        # Reusing the 6h TTL of the other rail would call a dead beat fresh for a
+        # quarter of a day.
+        ttl_s=3 * 40,
+        absent_note=(
+            "No report present. The pass writes this key on EVERY tick including "
+            "the idle one, so an absent report means the beat did not run in the "
+            "last 6h — or a kill switch is off, which returns before the write. "
+            "Read `switches` below before concluding the beat is dead."
+        ),
+    )
+
+    conn, failure = health_reads.client(key=FEED_PREWARM_LIVE_SHAPES_KEY)
+    if failure is not None:
+        out["selection"] = failure.as_status()
+        out["switches"] = failure.as_status()
+        return out
+
+    switches = {}
+    for name, key in (
+        ("warm_rail", FEED_PREWARM_ENABLED_KEY),
+        ("live_republish", FEED_LIVE_PREWARM_ENABLED_KEY),
+    ):
+        read = health_reads.read_text(conn, key)
+        # An UNSET switch is ON — the pass only stops on a literal "0". Said here
+        # so a reader does not see `missing` and infer the rail is disabled.
+        switches[name] = {
+            "key": key,
+            "value": read.value if read.ok else None,
+            "state": (
+                "unreadable"
+                if read.degraded
+                else ("off" if (read.value or "").strip() == "0" else "on")
+            ),
+            "default_when_unset": "on",
+        }
+    out["switches"] = switches
+
+    members = health_reads.command(
+        FEED_PREWARM_LIVE_SHAPES_KEY, lambda: conn.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY)
+    )
+    ttl = health_reads.command(
+        FEED_PREWARM_LIVE_SHAPES_KEY, lambda: conn.ttl(FEED_PREWARM_LIVE_SHAPES_KEY)
+    )
+    if members.degraded:
+        out["selection"] = members.as_status()
+        return out
+
+    def _s(raw):
+        return raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+
+    fields = {_s(k): _s(v) for k, v in (members.value or {}).items()}
+    # The heartbeat is not a shape. Popped before the labels are read so it can
+    # never be reported as live (CERT-1914 repair).
+    heartbeat = fields.pop(FEED_PREWARM_LIVE_HEARTBEAT_FIELD, None)
+    labels = sorted(k for k, v in fields.items() if v == "1")
+    ttl_left = ttl.value if ttl.ok and isinstance(ttl.value, int) else None
+
+    # `present` IS THE HEARTBEAT, NOT THE KEY'S TTL ALONE. Redis has no empty
+    # hash, so when the last live label is cleared the key itself disappears and
+    # `ttl` returns -2 — meaning a bare `ttl_left != -2` reports a healthy quiet
+    # night as an expired dead-man's switch, which is the exact confusion this
+    # endpoint was built to remove (CERT-1914). The heartbeat is written by every
+    # successful warm, so its presence says a warmer ran.
+    last_warm_at = None
+    last_warm_age_s = None
+    if heartbeat is not None:
+        try:
+            last_warm_at = int(heartbeat)
+            last_warm_age_s = max(
+                0, int(datetime.now(timezone.utc).timestamp()) - last_warm_at
+            )
+        except (TypeError, ValueError):
+            # A malformed heartbeat is still evidence a warmer wrote here, but it
+            # cannot be aged. Reported with an unreadable age rather than
+            # silently dropped to "absent" — the two have opposite remedies.
+            last_warm_at = None
+
+    # ...BUT A HEARTBEAT IS ONLY EVIDENCE WHILE SOMETHING CAN EXPIRE IT
+    # (CERT-1920). The heartbeat proves a warm happened; only the TTL bounds WHEN.
+    # A hash carrying a heartbeat and TTL -1 never expires, so that heartbeat
+    # survives the rail's death and this endpoint would keep answering `present:
+    # true` forever — the most expensive possible wrong answer, because it is the
+    # confident one. So the switch must be provably ARMED to read as present, and
+    # every state in which it cannot be proved armed fails CLOSED.
+    #
+    # The four states are reported separately rather than folded into the one
+    # boolean, because their remedies are opposites: `expired` means go restart
+    # the host rail; `no_expiry` means the rail may be fine and the WRITER broke
+    # its transaction, and deleting the key is what re-arms it; `unreadable_ttl`
+    # means fix Redis before believing anything here. Collapsing diagnoses that
+    # share a symptom is the defect this whole endpoint exists to undo.
+    if heartbeat is None:
+        deadman = "expired"
+    elif ttl_left is None:
+        deadman = "unreadable_ttl"
+    elif ttl_left == -1:
+        deadman = "no_expiry"
+    elif ttl_left < 1:
+        deadman = "expired"
+    else:
+        deadman = "armed"
+
+    out["selection"] = {
+        "key": FEED_PREWARM_LIVE_SHAPES_KEY,
+        "live_labels": labels,
+        "count": len(labels),
+        "ttl_seconds": ttl_left,
+        "ttl_configured_s": FEED_PREWARM_LIVE_SHAPES_TTL_S,
+        "present": deadman == "armed",
+        "deadman": deadman,
+        "last_warm_at": last_warm_at,
+        "last_warm_age_s": last_warm_age_s,
+        "note": (
+            "`present` means the dead-man's switch is ARMED: a warm wrote the "
+            "heartbeat field AND the key still carries a positive TTL. It reads "
+            "the heartbeat rather than the key's existence because clearing the "
+            "last live label deletes the hash, so a quiet night would otherwise "
+            "be indistinguishable from a dead rail; it also requires the TTL "
+            "because a heartbeat on a never-expiring key outlives the rail it "
+            "vouches for. `present: true` with `count: 0` is a genuinely quiet "
+            "night. `deadman` says which way it failed: `expired` = no warm in "
+            f"{FEED_PREWARM_LIVE_SHAPES_TTL_S}s, the host rail is down; "
+            "`no_expiry` = the key lost its TTL, so age is untrustworthy — "
+            "delete the key to re-arm; `unreadable_ttl` = Redis did not answer."
+        ),
+    }
+    return out
+
+
+@router.get("/feed-live-prewarm/last")
+async def get_feed_live_prewarm_last(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """Last 40s live-republish pass, plus what it selected and whether it is on.
+
+    #2430, riding #3233. `live_labels` and `absent_labels` stay SEPARATE in the
+    report — LAT-P112's comment is emphatic that merging them destroys the
+    distinction between "this shape is live" and "this shape's mirror was GONE
+    and I covered for the host beat", which have different remedies.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from starlette.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(_live_prewarm_state)
+
+
 # ---------------------------------------------------------------------------
 # Featured market capture ground-truth status
 # ---------------------------------------------------------------------------
