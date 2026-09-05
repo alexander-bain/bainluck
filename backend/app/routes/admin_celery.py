@@ -216,7 +216,8 @@ def _delivery_age_s(delivery, now_epoch):
 
 
 def build_schedule_adherence(
-    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None
+    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None,
+    emissions=None,
 ):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
@@ -233,6 +234,14 @@ def build_schedule_adherence(
     ``unmapped`` entries (#1716). A task with deliveries is now graded on them
     even when the label join finds nothing, so being invisible to the join no
     longer means being invisible to the surface.
+
+    ``emissions`` (LAT-P238) is keyed the same way and joins the same way, and
+    it deliberately does NOT open the gate below. An emission is not evidence
+    that anything ran, so a task with emissions and nothing else stays
+    ``unmapped`` — but the count rides along on that entry rather than being
+    dropped, because "beat is publishing into a void" is the sharpest reading
+    that row can carry and it is invisible to every counter taken below the
+    delivery boundary.
     """
     import time as _time
 
@@ -243,6 +252,7 @@ def build_schedule_adherence(
     intervals = beat_intervals(beat_schedule)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
+    emissions = emissions or {}
 
     graded = {}
     unmapped = []
@@ -250,6 +260,7 @@ def build_schedule_adherence(
         label = label_map.get(full_name)
         m = by_label.get(label) if label else None
         d = deliveries.get(full_name) or {}
+        e = emissions.get(full_name) or {}
         terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
@@ -261,6 +272,15 @@ def build_schedule_adherence(
                 "interval_s": round(interval_s, 1),
                 "reason": "no_metric_label_recorded" if not label
                           else "label_recorded_but_no_metrics",
+                # LAT-P238: on EVERY unmapped entry, not only the ones that have
+                # one. An entry whose `emitted` is a positive number is a beat
+                # that is publishing and getting nothing back — a much sharper
+                # fact than "unmapped" — and an entry where it is `None` says
+                # the emit counter has not seen it either, which is a different
+                # and equally reportable state. A key that appears only when it
+                # is interesting makes its absence unreadable.
+                "emitted": e.get("fires"),
+                "emitted_window_s": e.get("window_s"),
             })
             continue
         # No metrics row at all means completions are UNKNOWN, not zero. Passing
@@ -279,6 +299,14 @@ def build_schedule_adherence(
             durations_ms=(m or {}).get("recent_durations_ms") or [],
             deliveries=d.get("fires"),
             deliveries_window_s=d.get("window_s"),
+            # LAT-P238: the emit-side pair, passed with its OWN window and
+            # never differenced against the delivery window here. This counter
+            # is born at the deploy that ships it while the delivery counter it
+            # is read against may already be 24h old, so the two spans disagree
+            # by construction for the first day; `adherence` divides each count
+            # by the window beside it rather than subtracting across them.
+            emitted=e.get("fires"),
+            emitted_window_s=e.get("window_s"),
             # LAT-P040 (#835): the duration sample's own span, so the p95 is not
             # read against `window_s` (which ages the starts counter and is up
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).
@@ -367,6 +395,7 @@ async def celery_schedule_adherence(
     from app.tasks import celery_app
     from app.tasks.redis_state import (
         get_all_task_deliveries,
+        get_all_task_emissions,
         get_all_task_metrics,
         get_task_label_map,
     )
@@ -376,6 +405,7 @@ async def celery_schedule_adherence(
         get_all_task_metrics(),
         get_task_label_map(),
         get_all_task_deliveries(),
+        emissions=get_all_task_emissions(),
     )
 
 

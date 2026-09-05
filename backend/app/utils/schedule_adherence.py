@@ -64,6 +64,22 @@ SELF_GATE_WINDOW_TOLERANCE = 0.1
 #: health surface that editorialises about noise is one people stop reading.
 SELF_GATE_MATERIAL_RATIO = 0.1
 
+#: The same noise floor as ``SELF_GATE_MATERIAL_RATIO``, under the name the
+#: emit-side comparison reads by — LAT-P238-EMIT-SIDE-COUNTER.
+#:
+#: Deliberately DERIVED rather than restated as a second literal. Both tests ask
+#: the same question of the same kind of evidence — "is this gap between two
+#: independently-born window counters real, or is it the boundary?" — and the
+#: 0.4% measurement that sized the original (``sync_statpal_livescores``, 2,186
+#: deliveries against 2,177 starts, two counters ~30s apart) is a property of
+#: that counter mechanism, not of the pair it happened to be measured on. Two
+#: literals would let the two drift apart on a fact that cannot differ.
+#:
+#: It is a materiality floor and nothing more: the fraction itself is published
+#: on every row regardless. This only decides whether a ``behind`` verdict says
+#: a SENTENCE about which side of the broker the fires were lost on.
+UNDELIVERED_MATERIAL_RATIO = SELF_GATE_MATERIAL_RATIO
+
 #: A task whose p95 runtime exceeds this fraction of its own interval is lapping
 #: (at 1.0 it has literally no gap between runs). Flagged below 1.0 because a
 #: task using 80% of its period has no headroom for a slow day and is one
@@ -251,6 +267,60 @@ def _self_gate_fraction(deliveries, deliveries_window_s, starts, starts_window_s
     return max(0.0, min(1.0, 1.0 - (start_rate / delivery_rate)))
 
 
+def _undelivered_fraction(emitted, emitted_window_s, deliveries, deliveries_window_s):
+    """Fraction of PUBLISHED fires that never reached a worker, or ``None``.
+
+    LAT-P238-EMIT-SIDE-COUNTER. This is the number the module could not compute
+    at all until ``before_task_publish`` was wired: every other counter here is
+    written at-or-after delivery, so a fire that was never published and a fire
+    the broker expired before delivery were the same observation. Measured on
+    ``prewarm_live_feed_shapes`` 2026-09-05: 0.646 of its scheduled fires
+    delivered, with ``starts == deliveries`` exactly (+28/+28 over 28.9 minutes)
+    and ``self_gated_fires`` +0 — the loss was provably entirely before
+    delivery, and provably nowhere else, and that was the end of what could be
+    said. Emissions put a count above the boundary, so:
+
+    * a fraction near 0 says the messages that were published were delivered —
+      the shortfall is BEAT, which did not publish them;
+    * a fraction near the shortfall says beat published on cadence and the
+      BROKER dropped them, which on this rail means the one-period ``expires``.
+
+    RATES, NOT A DIFFERENCE, AND THAT IS NOT A STYLE CHOICE. ``emitted -
+    delivered`` is cross-window arithmetic between two counters with independent
+    birthdays, and this module was founded on refusing it: ``self_gated_fires``
+    is ``None`` whenever its two windows drift more than
+    ``SELF_GATE_WINDOW_TOLERANCE``, and on production 2026-09-05 that meant
+    ``poll_all_odds`` — 23.9% drift — reported nothing at all. The emit counter
+    would hit that case *by construction*, not occasionally: it is born at the
+    deploy that ships it, against a delivery counter that may already be 24
+    hours old, so the difference would be `None` for the first day and a
+    plausible-looking lie for the seconds either side of it. Dividing each count
+    by its OWN window first is the same window-safe move
+    ``_self_gate_fraction`` makes, and it needs no tolerance because it never
+    subtracts across the two spans.
+
+    ``None`` means UNKNOWN — no emission counter, no window, or nothing
+    published in the window — and the caller must not read it as zero. Reading
+    it as zero would report "beat is emitting fine" on a task with no emit
+    counter at all, which is the sharpest possible version of gotcha #53 here:
+    the absence of an emission observation is not an observation of emissions.
+
+    Clamped into ``[0, 1]``. A delivery rate above the emit rate is the counter
+    boundary (deliveries counted in a window whose publications fell in the
+    previous one), not negative loss, and reporting -0.04 as a fact is the
+    over-reach the clamp on ``self_gated_fires`` exists to prevent.
+    """
+    if emitted is None or not emitted_window_s or emitted_window_s <= 0:
+        return None
+    if deliveries is None or not deliveries_window_s or deliveries_window_s <= 0:
+        return None
+    emit_rate = emitted / emitted_window_s
+    if emit_rate <= 0:
+        return None
+    delivery_rate = (deliveries or 0) / deliveries_window_s
+    return max(0.0, min(1.0, 1.0 - (delivery_rate / emit_rate)))
+
+
 def _grade_on_stamp(
     out, interval_s, newest_terminal_age_s, newest_start_age_s, counter_ttl_s
 ):
@@ -331,6 +401,8 @@ def adherence(
     durations_ms=None,
     deliveries=None,
     deliveries_window_s=None,
+    emitted=None,
+    emitted_window_s=None,
     durations_window_s=None,
     durations_saturated=None,
     newest_terminal_age_s=None,
@@ -373,6 +445,16 @@ def adherence(
     large ``self_gated_fires`` on ``poll_all_odds`` is a finding again, not a
     footnote.
 
+    ``emitted`` is NOT a third numerator and must never become one. LAT-P238:
+    every other count here is taken at-or-after delivery, so the module could
+    localise a 35% shortfall to "before delivery" and then say nothing about
+    which side of the broker it happened on. The emit counter is taken at
+    ``before_task_publish``, in the scheduler's own process, purely so that
+    ``_undelivered_fraction`` can answer that — reported, never graded on.
+    Grading on it would swap one blind spot for another: an emission is a
+    message that was published, and a task the broker throws away has a perfect
+    emission rate and does no work at all.
+
     ``terminals`` is still reported rather than graded — whether adherence
     should own completion is an open product question (#1716) and inventing a
     verdict here would answer it by accident. What is NOT open, and is fixed, is
@@ -407,6 +489,19 @@ def adherence(
         "expected_fires": round(exp, 2) if exp is not None else None,
         "starts": starts,
         "deliveries": deliveries,
+        # LAT-P238: published EXPLICITLY rather than left to be read off
+        # `window_s`, which is the deliveries window on some rows and the starts
+        # window on others depending on which numerator won. A reader dividing
+        # the emit count by its window has to divide the delivery count by the
+        # RIGHT one, and "whichever this row happened to grade on" is not it.
+        "deliveries_window_s": deliveries_window_s,
+        # LAT-P238-EMIT-SIDE-COUNTER: the first count in this payload taken
+        # ABOVE the delivery boundary. Never a numerator and never folded into
+        # `self_gated_fires` — see `_undelivered_fraction`, and the `numerator`
+        # field below, which still names only the two counters that can grade.
+        "emitted": emitted,
+        "emitted_window_s": emitted_window_s,
+        "undelivered_fraction": None,
         "numerator": "deliveries" if use_deliveries else "starts",
         "self_gated_fires": None,
         # Both default to None on EVERY row so the payload shape does not depend
@@ -448,6 +543,19 @@ def adherence(
         drift = abs(deliveries_window_s - starts_window_s) / widest
         if drift <= SELF_GATE_WINDOW_TOLERANCE:
             out["self_gated_fires"] = max(0, (deliveries or 0) - (starts or 0))
+
+    # LAT-P238: computed on EVERY row, before any branch returns, and outside
+    # the `use_deliveries` gate above. A row that never reaches the rate arm —
+    # `unmeasurable`, `window_too_short`, either stamp branch — is exactly a row
+    # whose reader most needs to know whether anything is being published, and a
+    # field that only appears on the branches that happened to fall through
+    # makes `.get("undelivered_fraction")` mean two different things.
+    undelivered = _undelivered_fraction(
+        emitted, emitted_window_s, deliveries, deliveries_window_s
+    )
+    out["undelivered_fraction"] = (
+        round(undelivered, 3) if undelivered is not None else None
+    )
 
     # A task that fires and never finishes is the sharpest failure there is, and
     # the surface used to call it healthy (#1716). Gated on having enough fires
@@ -758,6 +866,32 @@ def adherence(
             f"{fires or 0} {noun} against {exp:.1f} scheduled "
             f"in {window_s:.0f}s"
         )
+        # LAT-P238: WHICH END. A `behind` row used to say only how far behind,
+        # and the two ways a beat gets there need opposite fixes — a scheduler
+        # that is not publishing versus a broker discarding what it published.
+        # The emit counter can now separate them, so the row says so instead of
+        # leaving the reader to open a sampler for 25 minutes, which is what
+        # LAT-P238 actually had to do.
+        #
+        # Appended, never substituted: the count-against-schedule sentence is
+        # the verdict's evidence and stays first. Silent below the materiality
+        # floor, because a health surface that editorialises about counter noise
+        # is one people stop reading — the fraction itself is on the row either
+        # way, so nothing is hidden, only unsaid.
+        if undelivered is not None and undelivered >= UNDELIVERED_MATERIAL_RATIO:
+            out["reason"] += (
+                f". {undelivered * 100:.0f}% of published fires never reached a "
+                f"worker ({emitted} published in {emitted_window_s:.0f}s against "
+                f"{deliveries} delivered in {deliveries_window_s:.0f}s), so the "
+                "loss is between the broker and the worker, not at the scheduler"
+            )
+        elif undelivered is not None:
+            out["reason"] += (
+                f". Only {undelivered * 100:.0f}% of published fires went "
+                f"undelivered ({emitted} published in {emitted_window_s:.0f}s), "
+                "so the shortfall is at the SCHEDULER — the messages were never "
+                "published"
+            )
         return out
 
     out["verdict"] = "on_schedule"
