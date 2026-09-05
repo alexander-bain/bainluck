@@ -161,14 +161,11 @@ struct SearchView: View {
             viewModel.cancelInFlightWork()
         }
         .task {
+            consumePendingSearchQuery()
             await viewModel.loadTrending()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
-            if navCoordinator.selectedTab == .search,
-               let query = navCoordinator.consumeSearchQuery() {
-                viewModel.query = query
-                Task { await viewModel.search() }
-            }
+            consumePendingSearchQuery()
         }
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
@@ -178,6 +175,24 @@ struct SearchView: View {
             updateLandscapeColumns()
         }
         #endif
+    }
+
+    /// Drains a deep-link query (`bainluck://search?q=…`) onto the field.
+    ///
+    /// Called on mount AND on change, because neither alone is enough. A TabView
+    /// builds SearchView lazily, and `NavigationCoordinator.handleURL` selects
+    /// the tab and sets the query in the same tick — so on a cold open the
+    /// value has already changed by the time this view exists and `.onChange`
+    /// never fires, and the reader who followed a search link lands on an empty
+    /// Search screen. `.onAppear` alone would miss the warm case, where the view
+    /// is already mounted and only the value moves. The query stays pending in
+    /// the coordinator until one of the two drains it, so exactly one does
+    /// (#3157).
+    private func consumePendingSearchQuery() {
+        guard navCoordinator.selectedTab == .search,
+              let query = navCoordinator.consumeSearchQuery() else { return }
+        viewModel.query = query
+        Task { await viewModel.search() }
     }
 
     // MARK: - Search Field
