@@ -184,6 +184,62 @@ export interface EventOutcomeInput {
 }
 
 /**
+ * `"6-3, 1-4"` — the games under a hero that is printing SETS, WHILE IT IS
+ * STILL BEING PLAYED. `""` whenever the hero must not print one (#3330).
+ *
+ * The live counterpart of `resolveEventOutcome`'s `resultLine`, and it lives
+ * beside it because the two answer one question in two tenses and the page
+ * must never be able to ask them differently.
+ *
+ * ── WHY THE HERO NEEDS IT ────────────────────────────────────────────────────
+ *
+ * Alex, `/events/15304419` at 5-5 in the first set: the hero printed `0` and
+ * `0`. Zero sets each is TRUE, and it is the least informative true statement
+ * available — indistinguishable from a match that has not started, on a page
+ * whose Games map four sections down was already drawing 11 played games.
+ * `/events/15304420` is the sharper exhibit: `1 – 0` in sets while that player
+ * was losing the second set 1-4, so the two big numbers were not merely thin,
+ * they pointed the wrong way about where the match was going.
+ *
+ * ── ORDER IS HOME-FIRST, AND IT IS GUARANTEED UPSTREAM, NOT ASSUMED HERE ─────
+ *
+ * `sets` is stated in OUR home/away order: `authority_games_line` orients
+ * ESPN's competitors onto our two names through `orient_sides` and REFUSES
+ * (`SCORE_ORIENTATION_UNRESOLVED`) rather than guess, so a stored line cannot
+ * be back-to-front. The event hero renders home left and away right
+ * unconditionally, so the line is printed unreversed and reads straight across
+ * the two columns.
+ *
+ * This is deliberately NOT `lib/linescore.ts`'s `orientLinescore`. That helper
+ * exists because the tournament SLATE re-orders its sides (`matchListFromSlate`
+ * sorts favourite-first, `matchListFromBracket` joins order-insensitively), so
+ * a slate row has to re-point the line by entity key. This payload carries no
+ * entity keys — `routes/events.py` serves the bare line — so that helper would
+ * refuse every row and the hero would print nothing at all. Two surfaces, two
+ * different guarantees; using the slate's helper here would be a refusal
+ * dressed as safety.
+ *
+ * ── WHY IT REFUSES A FINISHED MATCH ──────────────────────────────────────────
+ *
+ * Not because a finished match has no line, but because it already has one:
+ * `resolveEventOutcome` prints it WINNER-first under the winner's name. A live
+ * match has no winner, so home-first is the only order its columns can be read
+ * in — and returning a line here too would print the same games twice, in two
+ * different orders, on one hero.
+ */
+export function liveHeroGamesLine(input: {
+  isFinished: boolean;
+  /** The hero shows scores only once the match is under way. */
+  isLive: boolean;
+  hasStarted: boolean;
+  linescore?: { sets: [number, number][] } | null;
+}): string {
+  if (input.isFinished) return "";
+  if (!input.isLive && !input.hasStarted) return "";
+  return formatLinescore(input.linescore?.sets);
+}
+
+/**
  * The settled outcome, or `null` when nothing authoritative names a winner.
  *
  * `null` is a real answer and the caller must keep its honest "Final" for it —
