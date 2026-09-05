@@ -19,6 +19,16 @@ export default function WeatherPage() {
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
     <div className="-mx-3 md:-mx-6 -mt-4">
       <WeatherHero />
+      {/* The hero's headline — "What are the odds it rains tomorrow?" — is the
+          first promise the page makes, so the section that answers it comes
+          next (#3231). It used to sit last, 6,558px down an 8,605px page at
+          390px, behind four sections about other questions; the featured card
+          beside the headline answers a different one again (a weekend,
+          multi-city market, leading on whichever city is wettest). Rain is the
+          only daily, personally-relevant question here and the headline
+          already picked it. RainForecast brings its own <section> and
+          SectionHeader, so its position is the whole of its layout. */}
+      <RainForecast />
       <TemperatureMap />
       <NaturalEvents />
       <section className="pt-14 px-4 md:px-6">
@@ -41,8 +51,6 @@ export default function WeatherPage() {
           <WildCards />
         </div>
       </section>
-
-      <RainForecast />
 
       {/* Footer */}
       <footer className="mt-[72px] border-t border-surface-border bg-white">
