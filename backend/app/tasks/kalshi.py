@@ -35,6 +35,11 @@ from app.utils.kalshi_resolution_window import (  # noqa: E402  # CAL-P989 #2660
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
+# #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
+# at module scope — the alarm below needs it outside the task body.
+from app.utils.kalshi_series_selection import (  # noqa: E402
+    discovery_dead_series,
+)
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -382,6 +387,54 @@ def _partition_new_events_first(events, existing_tickers):
     new_events = [e for e in events if e.event_ticker not in existing_tickers]
     existing_events = [e for e in events if e.event_ticker in existing_tickers]
     return new_events, existing_events
+
+
+def _alarm_on_series_discovery(series_discovery, stats: dict) -> list:
+    """#2927 / gotcha #53: an empty discovery yield is a response shape, not an
+    absence. Copy the receipt's headline into ``stats`` and page when a selected
+    series came back with nothing.
+
+    Asked PER SERIES (CERT-953) — a dead ``KXATPDOUBLES`` must not hide behind a
+    live ``KXWTADOUBLES``, and a healthy series whose events the main scan
+    already held must not alarm. Both are aggregate failures; ``returned`` is
+    per series and is the venue's own answer for that ticker.
+
+    Lives at module level, and not inline in ``_poll_kalshi_markets``, so the
+    branch can be EXECUTED by a test. Inline it was reachable only by driving
+    the whole task, and it sits inside the scan-report ``try/except`` — so any
+    raise in here degraded a per-draw coverage outage into a one-line
+    "scan report failed" warning. Returns the dead series it named.
+    """
+    _disc = series_discovery if isinstance(series_discovery, dict) else {}
+    stats["discovery_source"] = _disc.get("source")
+    stats["discovery_events_added"] = _disc.get("events_added")
+    _dead = discovery_dead_series(_disc)
+    stats["discovery_dead_series"] = _dead
+    if _dead:
+        # No type guard here on purpose: a mutation proved one unreachable.
+        # `discovery_dead_series` only names tickers it read out of a Mapping,
+        # so a non-empty `_dead` already means `series_results` is one — and
+        # narrowing it to `dict` would silently drop the detail for any Mapping
+        # that is not literally a dict, which is worse than the raise it was
+        # meant to prevent.
+        _results = _disc.get("series_results") or {}
+        logger.error(
+            "poll_kalshi series discovery: %d SELECTED SERIES RETURNED "
+            "NOTHING — %s (source=%s). Each was chosen off a census "
+            "that said it holds open events; the venue then handed back "
+            "none. Treat as a per-draw coverage outage, not a quiet "
+            "night. Detail: %s",
+            len(_dead), ", ".join(_dead), _disc.get("source"),
+            {t: _results.get(t) for t in _dead[:10]},
+        )
+    elif _disc.get("source") in ("failed", "unsummarizable"):
+        logger.error(
+            "poll_kalshi series discovery: stage did not resolve "
+            "(source=%s, error=%s). The rescue list is the hand list "
+            "alone this beat.",
+            _disc.get("source"), _disc.get("error"),
+        )
+    return _dead
 
 
 async def _poll_kalshi_markets():
@@ -1239,8 +1292,9 @@ async def _poll_kalshi_markets():
                 KalshiScanReport,
                 save_scan_report,
             )
+            # `discovery_dead_series` is imported at module scope — the alarm
+            # that calls it lives there too (`_alarm_on_series_discovery`).
             from app.utils.kalshi_series_selection import (
-                discovery_dead_series,
                 summarize_discovery_receipt,
             )
 
@@ -1327,35 +1381,10 @@ async def _poll_kalshi_markets():
                     _recon["main_plus_supplementary_delta"],
                     _recon["events_fetched"],
                 )
-            # #2927 / gotcha #53: an empty discovery yield is a response shape,
-            # not an absence. Asked PER SERIES (CERT-953) — a dead
-            # `KXATPDOUBLES` must not hide behind a live `KXWTADOUBLES`, and a
-            # healthy series whose events the main scan already held must not
-            # alarm. Both are aggregate failures; `returned` is per series and
-            # is the venue's own answer for that ticker.
-            _disc = _report.series_discovery or {}
-            stats["discovery_source"] = _disc.get("source")
-            stats["discovery_events_added"] = _disc.get("events_added")
-            _dead = discovery_dead_series(_disc)
-            stats["discovery_dead_series"] = _dead
-            if _dead:
-                _results = _disc.get("series_results") or {}
-                logger.error(
-                    "poll_kalshi series discovery: %d SELECTED SERIES RETURNED "
-                    "NOTHING — %s (source=%s). Each was chosen off a census "
-                    "that said it holds open events; the venue then handed back "
-                    "none. Treat as a per-draw coverage outage, not a quiet "
-                    "night. Detail: %s",
-                    len(_dead), ", ".join(_dead), _disc.get("source"),
-                    {t: _results.get(t) for t in _dead[:10]},
-                )
-            elif _disc.get("source") in ("failed", "unsummarizable"):
-                logger.error(
-                    "poll_kalshi series discovery: stage did not resolve "
-                    "(source=%s, error=%s). The rescue list is the hand list "
-                    "alone this beat.",
-                    _disc.get("source"), _disc.get("error"),
-                )
+            # #2927: the per-draw alarm. Module-level so a test can execute the
+            # branch — see `_alarm_on_series_discovery`. Asked of the PERSISTED
+            # receipt, which is what a reader gets.
+            _alarm_on_series_discovery(_report.series_discovery, stats)
         except Exception as exc:
             logger.warning("poll_kalshi: scan report failed: %s", exc)
 
