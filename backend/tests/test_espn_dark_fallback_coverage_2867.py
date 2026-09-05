@@ -60,11 +60,17 @@ fails here rather than silently narrowing what survives an outage.
 """
 
 import ast
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
+from app.config import authority_by_sport
+from app.config.authority_by_sport import flip_permitted
 from app.tasks import celery_app
+from app.utils import statpal_discovery_coverage
+from app.utils.authority_agreement import GATE_MEETS
+from app.utils.authority_streak import REQUIRED_STREAK_DAYS
 from app.utils.sport_keys import ESPN_SPORT_MAPPING, STATPAL_SPORT_MAPPING
 
 # The beat entry that breaks the circular dependency. Without it, `status='live'`
@@ -258,30 +264,189 @@ def test_most_espn_sports_have_no_statpal_counterpart_at_all():
     } <= none_at_all
 
 
-def test_a_flip_cannot_be_authorized_for_a_sport_that_cannot_discover():
-    """Agreement is not coverage — the invariant the switch does not carry.
+# ── The gate: agreement is not coverage ─────────────────────────────────────
+#
+# The first cut of this file asserted the coupling over the sets it had just
+# defined — `discovery` was BUILT as `mapped & scheduled`, so re-checking that
+# each member was mapped and scheduled was true by construction and would have
+# stayed true with `flip_permitted` untouched (CERT-1871). The tests below drive
+# the production gate instead.
 
-    `flip_permitted(sport, ledger_days)` gates on a seven-day agreement streak
-    measured over the games both sources see. That streak says nothing about
-    whether StatPal could find a game ESPN missed. This test states the missing
-    coupling as an invariant over what we ship today: every sport we would call
-    discovery-resilient must have BOTH a StatPal mapping and a scheduled
-    discovery path — never the mapping alone.
+
+def _run_of(n: int, state: str = GATE_MEETS) -> list[dict]:
+    """`n` CONSECUTIVE durable-ledger days ending 2026-09-30, all in one state.
+
+    Consecutive matters: `compute_streak` stops at a day with no stored row, so
+    a list of `n` entries with gaps is not a streak of `n`. Same shape as
+    `test_authority_flip_switch._run_of`, restated rather than imported so a
+    change to that file's helper cannot quietly weaken this one's premise.
     """
-    discovery, _, _ = _tiers()
+    end = date(2026, 9, 30)
+    return [
+        {"day": (end - timedelta(days=n - 1 - i)).isoformat(), "state": state}
+        for i in range(n)
+    ]
+
+
+def _fully_evidenced(monkeypatch, sport_key: str) -> None:
+    """Give `sport_key` everything the gate asked for BEFORE discovery coverage.
+
+    A shadow stamper and a governing number, patched onto the names
+    `authority_by_sport` bound at import. Without this the gate refuses
+    `soccer_epl` at the first clause and the discovery clause is never reached —
+    a test that passed for the wrong reason, which is the failure mode that
+    produced CERT-1871 in the first place.
+    """
+    monkeypatch.setattr(
+        authority_by_sport,
+        "SHADOW_STAMPERS",
+        {**authority_by_sport.SHADOW_STAMPERS, sport_key: "stamp_epl_statpal_fixtures"},
+    )
+    monkeypatch.setattr(
+        authority_by_sport,
+        "GOVERNING_IDENTITY_NUMBERS",
+        {**authority_by_sport.GOVERNING_IDENTITY_NUMBERS, sport_key: ("ours_covered_pct",)},
+    )
+
+
+def test_a_fully_evidenced_livescore_only_sport_is_still_refused(monkeypatch):
+    """The regression CERT-1871 asked for, and the reason it is not pedantic.
+
+    `soccer_epl` here has a shadow stamper, a ruled governing number, and seven
+    consecutive days at or above the bar — everything D50's measured half asks
+    for. It is also livescore-only: no `sync-statpal-schedules` beat, so StatPal
+    can never create a fixture nobody else reported.
+
+    Permitting it would make StatPal the source of record for a sport StatPal
+    cannot enumerate, breaking the first clause of the ship the switch serves
+    (*every game exists on the site*) with the change meant to serve it.
+    """
+    _fully_evidenced(monkeypatch, "soccer_epl")
+
+    # Premise, asserted rather than assumed: the OTHER four clauses are all
+    # satisfied, so a refusal below can only be the discovery clause.
+    assert "soccer_epl" in authority_by_sport.SHADOW_STAMPERS
+    assert authority_by_sport.GOVERNING_IDENTITY_NUMBERS.get("soccer_epl")
+    assert "soccer_epl" not in statpal_discovery_coverage.DISCOVERY_SYNCED_SPORTS
+
+    permitted, why = flip_permitted("soccer_epl", _run_of(REQUIRED_STREAK_DAYS))
+
+    assert not permitted, (
+        "flip_permitted authorised a livescore-only sport on agreement evidence "
+        "alone. Its streak is scored on the games BOTH sources list, which is "
+        f"where they agree by construction; StatPal has no way to discover an "
+        "EPL fixture ESPN missed (#2867 step 7, CERT-1871)."
+    )
+    assert "discovery" in why, (
+        f"refused, but for the wrong reason: {why!r}. The reader has to be able "
+        "to tell 'no discovery path' from 'no stamper' and 'no ruling' — three "
+        "different next actions."
+    )
+    assert "not a wait" in why, (
+        "a missing discovery beat is a build step. Wording it as a wait sends "
+        "the reader to count more days, which is the failure this lane spent "
+        "9/4 unwinding on MLB."
+    )
+
+
+def test_a_discovery_resilient_sport_with_the_same_evidence_is_permitted():
+    """The positive control: the new clause denies the gap, not the gate.
+
+    NBA, on real unpatched config — a shadow stamper, `ours_covered_pct` ruled
+    under D63, and a `sync-statpal-schedules-nba` beat. Identical ledger
+    evidence to the test above. Without this, a clause that returned `False`
+    unconditionally would pass the denial test and dark the whole switch.
+    """
+    assert "basketball_nba" in statpal_discovery_coverage.DISCOVERY_SYNCED_SPORTS
+
+    permitted, why = flip_permitted("basketball_nba", _run_of(REQUIRED_STREAK_DAYS))
+
+    assert permitted, (
+        f"the discovery clause refused a discovery-resilient sport: {why!r}. "
+        "NBA has a StatPal schedule sync on the beat; if this fails, the flip "
+        "gate is now unreachable for every sport."
+    )
+    assert "YOUR-TURN" in why, (
+        "a permitted flip must still name D50's second half — no function can "
+        "check that Alex has seen the entry."
+    )
+
+
+def test_the_gate_reads_the_coverage_set_rather_than_a_hardcoded_sport_list(
+    monkeypatch,
+):
+    """Drop NBA's discovery path and NBA stops being flippable.
+
+    Distinguishes a gate that consults `DISCOVERY_SYNCED_SPORTS` from one that
+    happens to name the same four sports inline. The mutation this kills is a
+    real edit: retiring a StatPal schedule beat without noticing that a sport's
+    flip eligibility rode on it.
+    """
+    monkeypatch.setattr(
+        statpal_discovery_coverage,
+        "DISCOVERY_SYNCED_SPORTS",
+        statpal_discovery_coverage.DISCOVERY_SYNCED_SPORTS - {"basketball_nba"},
+    )
+
+    permitted, why = flip_permitted("basketball_nba", _run_of(REQUIRED_STREAK_DAYS))
+
+    assert not permitted, (
+        "NBA is still permitted with its discovery path removed, so the gate is "
+        "not actually reading the coverage set (#2867 step 7, CERT-1871)."
+    )
+    assert "discovery" in why
+
+
+def test_the_coverage_set_matches_the_beat_and_cannot_rot():
+    """`DISCOVERY_SYNCED_SPORTS` is a literal; the beat schedule is the truth.
+
+    The constant is a literal on purpose — deriving it inside
+    `statpal_discovery_coverage` would import `app.tasks` from a module the
+    config layer imports, pulling Celery into a config import for a four-element
+    answer. The cost of the literal is paid here: add or drop a
+    `sync-statpal-schedules` beat entry and this fails rather than silently
+    widening or narrowing what a flip may cover.
+    """
     scheduled = _scheduled_discovery_sports()
-    for sport in discovery:
-        assert sport in STATPAL_SPORT_MAPPING, sport
-        assert sport in scheduled, (
-            f"{sport} is treated as discovery-resilient but has no StatPal "
-            "schedule sync on the beat. Agreement-ledger evidence cannot "
-            "substitute for a discovery path (#2867 step 7)."
-        )
-    # And the converse: a scheduled discovery beat for a sport ESPN does not
-    # serve is not wrong, but a scheduled beat for a sport with no StatPal
-    # mapping is incoherent.
+
+    assert statpal_discovery_coverage.DISCOVERY_SYNCED_SPORTS == frozenset(scheduled), (
+        "DISCOVERY_SYNCED_SPORTS and the sync-statpal-schedules beat entries "
+        "disagree. The beat is the truth; update the constant, and check "
+        "whether a sport just gained or lost the ability to be flipped."
+    )
+    # The converse, over two independent sources: a scheduled StatPal schedule
+    # sync for a sport with no STATPAL_SPORT_MAPPING entry cannot resolve a
+    # sport at all, so the beat would run and create nothing.
     for sport in scheduled:
         assert sport in STATPAL_SPORT_MAPPING, (
             f"Beat schedules a StatPal schedule sync for '{sport}', which has "
             "no STATPAL_SPORT_MAPPING entry — the run cannot resolve a sport."
+        )
+
+
+def test_no_livescore_only_sport_can_be_flipped_today(monkeypatch):
+    """The inventory and the gate, joined — over every tier-2 sport at once.
+
+    The tests above prove the mechanism on one sport. This one closes the set:
+    every sport the inventory calls livescore-only is refused by the production
+    gate even when handed a perfect ledger. A future sport added to
+    `STATPAL_SPORT_MAPPING` without a schedule beat lands here automatically.
+
+    Each sport is fully evidenced first. Without that they are all refused at
+    the shadow-stamper clause — true today, and true with the discovery clause
+    deleted, which would make this test pass while measuring nothing.
+    """
+    _, livescore_only, _ = _tiers()
+    assert livescore_only, "the tier is empty; this test is no longer measuring"
+
+    for sport in sorted(livescore_only):
+        _fully_evidenced(monkeypatch, sport)
+        permitted, why = flip_permitted(sport, _run_of(REQUIRED_STREAK_DAYS))
+        assert not permitted, (
+            f"{sport} is livescore-only but the flip gate permits it on "
+            f"agreement evidence alone: {why!r}"
+        )
+        assert "discovery" in why, (
+            f"{sport} is refused, but not for the missing discovery path: "
+            f"{why!r}"
         )
