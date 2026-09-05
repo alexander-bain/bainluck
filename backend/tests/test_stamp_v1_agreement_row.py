@@ -528,12 +528,12 @@ async def test_the_pass_folds_its_own_day_into_the_durable_ledger(drive, monkeyp
             status="missing", missing=True, ok=False, envelope=None, error=None
         )
 
-    async def _publish(envelope):
+    async def _publish(envelope, *, expected_generation=None):
         published.append(envelope)
         return {"status": "ok"}
 
     monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
-    monkeypatch.setattr(ds, "publish_snapshot_standalone", _publish)
+    monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
 
     fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
     rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]

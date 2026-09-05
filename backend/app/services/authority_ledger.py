@@ -84,6 +84,14 @@ LEDGER_MAX_AGE_S = 400 * 24 * 3600
 #: reader never mistakes "we failed to write it" for "the streak is 0".
 STREAK_UNRECORDED = "UNRECORDED"
 
+#: `publish_cas_snapshot`'s word for "the row moved under us". The ledger's
+#: write is a COMPARE-AND-SWAP against the generation it actually read, so a
+#: miss means our fold was built on a copy that is no longer there — re-read and
+#: fold again. CERT-955: the ordinary `<=` guard cannot express this, because two
+#: writers that both read `g` both propose `g+1` and `stored <= proposed` accepts
+#: the second on EQUALITY, letting it overwrite a fold it never read.
+CAS_MISS = "cas-miss"
+
 #: `publish_snapshot`'s word for "a newer generation is already there".
 #:
 #: For a snapshot whose every writer produces the SAME artifact — a calibration
@@ -168,7 +176,6 @@ async def record_agreement_day(
             sport_key=sport_key,
             at=at,
             stored_generation=read["generation"],
-            is_retry=attempt > 1,
         )
         status = published.get("status")
 
@@ -180,7 +187,7 @@ async def record_agreement_day(
             row["streak"] = streak
             return row
 
-        if status == SUPERSEDED:
+        if status in (CAS_MISS, SUPERSEDED):
             # We LOST the generation race. Our fold was computed on a ledger
             # that is no longer the truth, so it may not be published as one —
             # this is the whole of CERT-952: a losing writer that returns its
@@ -269,31 +276,32 @@ async def _publish_ledger(
     sport_key: str,
     at: datetime,
     stored_generation: Optional[int],
-    is_retry: bool,
 ) -> dict[str, Any]:
-    """Publish one fold, at a generation that can actually win a RETRY.
+    """Publish one fold with a COMPARE-AND-SWAP against the row we read.
 
-    Generation is epoch-ms of the pass's own stamp, and **on the first attempt
-    it stays that way** — that is what lets the substrate's
-    `generation <= EXCLUDED.generation` guard do its job and tell us we lost.
-    Bumping on the first attempt would make every writer win, which is not a
-    fix for a lost race, it is the removal of the race detector.
+    `expected_generation` is the generation this attempt actually read, so
+    exactly one of two writers that both read `g` can commit and the other is
+    told `cas-miss` and folds again. **It is never the proposed generation** —
+    passing that would restore CERT-955's defect in a form that still reads like
+    a CAS.
 
-    On a RETRY the bump is required and safe. Required, because the writer that
-    beat us holds a later generation and re-sending ours would be refused
-    forever — the loop would spin and the day would be lost. Safe, because a
-    retry has already re-read and re-folded onto the winner's payload, so what
-    we are about to write CONTAINS the winner's days rather than replacing them.
+    The proposed generation is epoch-ms of the pass's own stamp, raised to
+    `stored + 1` whenever that is not already ahead. That is only about ORDERING
+    — keeping the stored generation monotonic so a later reader can tell which
+    write is newer — and no longer about winning the race, which is the CAS's
+    job now. Under the old `stored <= proposed` guard the two concerns were the
+    same knob, and that is precisely why it could not express this write: making
+    the number big enough to land was indistinguishable from being allowed to.
 
-    It also decouples two things one timestamp was doing at once: WHICH WRITE IS
-    NEWEST (the generation, monotonic per attempt) and WHICH DAY THE PASS
-    BELONGS TO (`at`, inside the payload, untouched).
+    It also keeps apart two things one timestamp was doing at once: WHICH WRITE
+    IS NEWEST (the generation) and WHICH DAY THE PASS BELONGS TO (`at`, inside
+    the payload, untouched).
     """
-    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.services.durable_snapshots import publish_cas_snapshot_standalone
 
     stamped = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
     generation = generation_for(stamped)
-    if is_retry and stored_generation is not None and generation <= stored_generation:
+    if stored_generation is not None and generation <= stored_generation:
         generation = int(stored_generation) + 1
 
     envelope = DurableEnvelope.build(
@@ -305,7 +313,14 @@ async def _publish_ledger(
         source=f"authority-shadow-stamper:{sport_key}",
     )
     try:
-        return await publish_snapshot_standalone(envelope)
+        return await publish_cas_snapshot_standalone(
+            envelope, expected_generation=stored_generation
+        )
+    # The publisher classifies rather than raises; this arm is for a session it
+    # could not open. (Load bearing for `scan_mutation_residue.py` Pass B for the
+    # same reason as the twin comment in `_read_ledger` above — a closing paren
+    # followed by a bare `noqa: BLE001` reproduces
+    # `typeahead_outcome_arm_mutations:M2-NO-LIMIT` verbatim. Do not delete it.)
     except Exception as exc:  # noqa: BLE001
         logger.warning("authority ledger publish raised for %s: %s", identity, exc)
         return {"status": "publish-raised", "error": str(exc)[:200]}

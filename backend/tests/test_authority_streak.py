@@ -275,14 +275,15 @@ def durable(monkeypatch):
         state["last_read_kwargs"] = kwargs
         return state["read"]
 
-    async def _publish(envelope):
+    async def _publish(envelope, *, expected_generation=None):
         state["wrote"].append(envelope)
+        state["last_expected_generation"] = expected_generation
         return state["publish"]
 
     import app.services.durable_snapshots as ds
 
     monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
-    monkeypatch.setattr(ds, "publish_snapshot_standalone", _publish)
+    monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
     return state
 
 
@@ -389,17 +390,37 @@ class FakeSubstrate:
         # models "one old rival", not "a rival that keeps winning", and only
         # the second one exercises the give-up path.
         self.always_supersede = False
+        # "This writer's read happened before the row you are about to see."
+        # One-shot, so a single pass can be made to fold onto a stale copy.
+        self.stale_read_once = None
 
     async def read(self, identity, **kwargs):
         self.reads += 1
+        if self.stale_read_once is not None:
+            payload, generation = self.stale_read_once
+            self.stale_read_once = None
+            if payload is None:
+                return FakeRead("missing")
+            return FakeRead("ok", payload=payload, generation=generation)
         if self.payload is None:
             return FakeRead("missing")
         return FakeRead("ok", payload=self.payload, generation=self.generation)
 
-    async def publish(self, envelope):
-        self.publishes.append(envelope)
-        if self.always_supersede or envelope.generation < self.generation:
-            return {"status": "superseded", "identity": envelope.identity}
+    async def publish(self, envelope, *, expected_generation=None):
+        """`_CAS_UPSERT_SQL` / `_CAS_CREATE_SQL` in Python.
+
+        Equality against the generation the caller READ, and a create arm that
+        does nothing if a row already exists. Anything looser than this is the
+        `<=` guard CERT-955 rejected.
+        """
+        self.publishes.append((envelope, expected_generation))
+        if self.always_supersede:
+            return {"status": "cas-miss", "identity": envelope.identity}
+        if expected_generation is None:
+            if self.payload is not None:
+                return {"status": "cas-miss", "identity": envelope.identity}
+        elif int(expected_generation) != int(self.generation):
+            return {"status": "cas-miss", "identity": envelope.identity}
         self.payload = envelope.payload
         self.generation = envelope.generation
         return {"status": "ok", "identity": envelope.identity}
@@ -408,7 +429,7 @@ class FakeSubstrate:
         import app.services.durable_snapshots as ds
 
         monkeypatch.setattr(ds, "read_snapshot_standalone", self.read)
-        monkeypatch.setattr(ds, "publish_snapshot_standalone", self.publish)
+        monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", self.publish)
         return self
 
 
@@ -469,23 +490,21 @@ async def test_a_lost_race_on_a_day_the_winner_lacks_records_nothing(substrate):
 async def test_two_passes_across_midnight_keep_both_days(substrate):
     """CERT-952's catching test #2: cross-midnight overlap retains both days.
 
-    The 23:59 pass reads an empty ledger. Before it writes, the 00:01 pass runs
-    to completion and banks the NEW day. The late writer must not lose its own
-    day to the newer generation, and must not overwrite the new day either:
-    re-read, re-fold onto the winner, and land BOTH.
+    The 23:59 pass reads an empty store. Before it writes, the 00:01 pass runs to
+    completion and banks the new day. The late writer must not lose its own day
+    to the row that appeared, and must not flatten the new day either: its create
+    misses, it re-reads, it folds onto the winner, and BOTH days land.
     """
     late = NOON.replace(hour=23, minute=59)
     early_next = late + timedelta(minutes=2)  # the following UTC day
 
-    # The 23:59 pass gets as far as reading an empty store...
-    first_read = await substrate.read("authority-agreement-ledger:x")
-    assert first_read.missing
-
-    # ...while the 00:01 pass completes.
+    # The 00:01 pass completes first.
     await authority_ledger.record_agreement_day(row(), at=early_next)
     assert [d["day"] for d in substrate.payload["days"]] == [utc_day(early_next)]
 
-    # Now the 23:59 pass writes. Its generation is older by two minutes.
+    # The 23:59 pass reads an EMPTY store — its read happened before the above —
+    # and only then tries to write.
+    substrate.stale_read_once = (None, 0)
     out = await authority_ledger.record_agreement_day(row(), at=late)
 
     days = [d["day"] for d in substrate.payload["days"]]
@@ -497,6 +516,74 @@ async def test_two_passes_across_midnight_keep_both_days(substrate):
     assert out["streak"]["attempts"] == 2, "it took exactly one refold"
     # And the surviving ledger is a real two-day streak, not one day twice.
     assert substrate.payload["streak"]["days"] == 2
+
+
+@pytest.mark.asyncio
+async def test_two_writers_that_read_the_same_generation_cannot_both_land(substrate):
+    """CERT-955's catching test: both read `g`, both propose `g+1`.
+
+    This is the case the shared `stored <= EXCLUDED.generation` guard cannot
+    express. Two folds built on the same read both propose the same next
+    generation; under `<=` the second passes on EQUALITY, returns `ok`, and
+    overwrites a fold it never read — losing a calendar day while telling both
+    callers they succeeded. Under compare-and-swap against the generation
+    actually READ, exactly one lands and the other has to fold again.
+    """
+    # A day is already banked, at a generation AHEAD of either writer's stamp —
+    # the state a previous refold leaves behind. Both writers must therefore
+    # raise their proposal to `stored + 1`, and land on the same number.
+    substrate.payload = ledger_of([GATE_MEETS], end=NOON - timedelta(days=2))
+    substrate.generation = 10**15
+    shared_generation = substrate.generation
+    shared_payload = substrate.payload
+    assert len(shared_payload["days"]) == 1
+
+    # Writer A reads `g` and lands its day.
+    await authority_ledger.record_agreement_day(row(), at=NOON - timedelta(days=1))
+    assert substrate.generation != shared_generation
+    proposed_by_a = substrate.generation
+
+    # Writer B read the SAME `g` before A wrote, and only now publishes.
+    substrate.stale_read_once = (shared_payload, shared_generation)
+    out = await authority_ledger.record_agreement_day(row(), at=NOON)
+
+    first_attempt, first_expected = substrate.publishes[-2]
+    assert first_expected == shared_generation, "the CAS is against the READ generation"
+    assert first_attempt.generation == proposed_by_a, "both writers proposed g+1"
+
+    assert out["streak"]["recorded"] is True
+    assert out["streak"]["attempts"] == 2, "B's first write was rejected, not accepted"
+    assert [d["day"] for d in substrate.payload["days"]] == [
+        utc_day(NOON - timedelta(days=2)),
+        utc_day(NOON - timedelta(days=1)),
+        utc_day(NOON),
+    ], "a calendar day was lost to two writers proposing the same generation"
+    assert substrate.payload["streak"]["days"] == 3
+
+
+def test_the_ledger_write_is_a_compare_and_swap_in_the_sql_itself():
+    """The predicate is the guard, so it is pinned as source text.
+
+    There is no PostgreSQL in this sandbox, so the concurrency above is proved
+    against a Python model of these two statements. That model is only worth
+    something if the statements it models say what it thinks they say — and the
+    difference between the CAS and the bug is four characters of SQL.
+    """
+    import app.services.durable_snapshots as ds
+
+    cas = str(ds._CAS_UPSERT_SQL)
+    assert "durable_state_snapshots.generation = :expected_generation" in cas
+    assert "<=" not in cas, "the ledger's write must not fall back to the `<=` guard"
+    assert "EXCLUDED.generation" not in cas.split("DO UPDATE SET")[1].split("WHERE")[1]
+
+    create = str(ds._CAS_CREATE_SQL)
+    assert "ON CONFLICT (identity) DO NOTHING" in create
+
+    # And the guard the ledger must NOT be using is still there, unchanged, for
+    # the callers it is right for.
+    assert "durable_state_snapshots.generation <= EXCLUDED.generation" in str(
+        ds._UPSERT_SQL
+    )
 
 
 @pytest.mark.asyncio
