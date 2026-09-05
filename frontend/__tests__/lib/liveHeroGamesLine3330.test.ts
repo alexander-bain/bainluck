@@ -171,5 +171,27 @@ describe("#3330 — the games, while it is still being played", () => {
     it("says nothing for a line with no sets", () => {
       expect(liveHeroGamesLine({ ...LIVE, linescore: { sets: [] } })).toBe("");
     });
+
+    /**
+     * FOUND BY THE POST-SHIP LOOK, NOT BY THIS SUITE. Osaka v Mertens
+     * (15303007) went live carrying `sets: [[0, 0]]` — started, first game
+     * still being played — and the chip rendered `0-0` beneath a hero already
+     * printing `0` and `0`. That is #3330's own complaint reproduced one line
+     * further down the page, so the line is refused until a game exists.
+     */
+    it("says nothing at 0-0 in the first set — the zeroes complaint, again", () => {
+      expect(liveHeroGamesLine({ ...LIVE, linescore: { sets: [[0, 0]] } })).toBe("");
+    });
+
+    /**
+     * The control that keeps the rule narrow. A new set starting level is NOT
+     * an absence — a set has begun, and `6-3, 0-0` says so. A refusal keyed on
+     * "the last set is 0-0", or on the first set only, would delete that.
+     */
+    it("...but a new set starting level still prints — the control", () => {
+      expect(
+        liveHeroGamesLine({ ...LIVE, linescore: { sets: [[6, 3], [0, 0]] } })
+      ).toBe("6-3, 0-0");
+    });
   });
 });

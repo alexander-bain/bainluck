@@ -236,7 +236,32 @@ export function liveHeroGamesLine(input: {
 }): string {
   if (input.isFinished) return "";
   if (!input.isLive && !input.hasStarted) return "";
-  return formatLinescore(input.linescore?.sets);
+
+  /**
+   * A LINE WITH NO GAMES IN IT IS AN ABSENCE WEARING A SHAPE.
+   *
+   * Found by the post-ship LOOK, not by the tests: Osaka v Mertens went live at
+   * `sets: [[0, 0]]` — the match had started and the first game was still being
+   * played — and the chip rendered `0-0` under a hero already printing `0` and
+   * `0`. That is the exact complaint #3330 was filed about, reproduced one line
+   * lower down the page. A first set at 0-0 is the one moment the games have
+   * nothing to add to the sets.
+   *
+   * ALL games, not the first set: `[[6,3],[0,0]]` is a completed set beside a
+   * new one starting level, and the `0-0` there is real information — a set has
+   * begun. So the test is whether the match has produced a game at all.
+   *
+   * `playedUnits` states the same rule about the same payload for the same
+   * reason ("`0 – 0` beside a finished match is the empty-card class all over
+   * again"), which is why this is a refusal here rather than a change to
+   * `formatLinescore` — that helper is shared with the settled hero, and the
+   * rule is about what a LIVE hero is worth printing, not about how a line is
+   * spelled.
+   */
+  const sets = input.linescore?.sets ?? [];
+  if (!sets.some(([home, away]) => home > 0 || away > 0)) return "";
+
+  return formatLinescore(sets);
 }
 
 /**
