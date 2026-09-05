@@ -53,9 +53,12 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 __all__ = [
+    "FINAL_UNRESOLVED_SOURCE",
+    "FINISHED_STATUSES",
     "RESOLVABLE_STATUSES",
     "SETTLED_HERO_SOURCE",
     "SettledHero",
+    "is_finished_status",
     "resolve_settled_hero",
 ]
 
@@ -69,6 +72,30 @@ RESOLVABLE_STATUSES: frozenset[str] = frozenset({"completed"})
 #: the literal string "blend", so reusing it would let a resolved result be labelled
 #: "Live · Bain Luck blend" on a finished game.
 SETTLED_HERO_SOURCE = "settled"
+
+#: Every status that means the game is over, which is DELIBERATELY WIDER than
+#: ``RESOLVABLE_STATUSES`` above.
+#:
+#: The asymmetry is the whole design. ``closed`` is not trustworthy enough to crown a
+#: winner FROM THE SCORE — that is what the docstring's ESPN sample measures — but it
+#: is more than trustworthy enough to know we must stop advertising a live forecast.
+#: Trusting a status to WITHHOLD a claim is safe in a way trusting it to MAKE one is
+#: not, so the two sets are separate and neither may be quietly widened into the other.
+FINISHED_STATUSES: frozenset[str] = frozenset({"completed", "closed"})
+
+#: The source written when the game is over and nothing resolved a winner.
+#:
+#: CERT-1938: leaving these rows labelled "blend" is what let ``/events/15293846``
+#: publish "Bain Luck gives Matteo Berrettini a 84% win probability" six days after he
+#: had won the match 7-6, 7-6, 6-0. The number itself is unchanged and still served —
+#: this is a claim about what it MEANS, and "the last price before capture stopped" is
+#: not a live blend. A reader that gates on "blend" now correctly declines it.
+FINAL_UNRESOLVED_SOURCE = "final_unresolved"
+
+
+def is_finished_status(status: Any) -> bool:
+    """Is this game over? Tolerant of the same casing/whitespace as the gate above."""
+    return isinstance(status, str) and status.strip().lower() in FINISHED_STATUSES
 
 
 @dataclass(frozen=True)

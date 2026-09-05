@@ -1,7 +1,17 @@
 import type { Metadata } from "next";
 import type { EventDetailResponse } from "@/lib/types";
 import { buildShareUrl } from "@/lib/share";
-import { buildEventShareCopy, withSiteSuffix } from "@/lib/eventShareMeta";
+import {
+  buildEventShareCopy,
+  isFinishedForShare,
+  withSiteSuffix,
+} from "@/lib/eventShareMeta";
+import {
+  isTournamentSportKey,
+  resolveEventOutcome,
+  type SettledOutcome,
+} from "@/lib/eventOutcome";
+import type { EventTournamentResponse } from "@/lib/types";
 import EventBootScript from "@/components/event/EventBootScript";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.bainluck.com").replace(/\/$/, "");
@@ -16,6 +26,37 @@ async function fetchEvent(id: string): Promise<EventDetailResponse | null> {
     });
     if (!response.ok) return null;
     return response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The tournament container's decided result, for the metadata's rung 2.
+ *
+ * Asked ONLY for a finished event in a tournament sport — the same `eligible`
+ * test `TournamentExtensions` uses, so this never fires on a Lakers game and
+ * never costs a scheduled page anything. The route is the one the page itself
+ * already calls and is cached for 180s upstream, so on a warm path this is a
+ * cache read rather than a second build of the hub.
+ *
+ * Every failure returns `null`, which the ladder treats as "this rung did not
+ * answer" — a metadata request must never take the page down over a section.
+ */
+async function fetchTournamentResult(
+  event: EventDetailResponse,
+): Promise<EventTournamentResponse["result"] | null> {
+  if (!isFinishedForShare(event)) return null;
+  if (!isTournamentSportKey(event.sport)) return null;
+
+  try {
+    const response = await fetch(
+      `${API_URL}/api/tournaments/by-event/${event.id}`,
+      { next: { revalidate: 300 } },
+    );
+    if (!response.ok) return null;
+    const payload: EventTournamentResponse = await response.json();
+    return payload?.result ?? null;
   } catch {
     return null;
   }
@@ -39,7 +80,30 @@ export async function generateMetadata({
   // captured before the final whistle. The copy decision lives in a pure module so
   // it is testable without a browser; this layout only wires it.
   const matchup = `${event.away_team} vs ${event.home_team}`;
-  const { title, description } = buildEventShareCopy(event);
+
+  // CERT-1938: ask the SAME authority ladder the visible hero asks, so the tab and
+  // the page cannot disagree about who won. `lib/eventOutcome` owns the order.
+  //
+  // The score rung is fed STRICTLY: scores go in only when the backend has already
+  // stamped `hero_probability_source === "settled"`, which it does only for
+  // `completed` with a real completion timestamp. Handing it `event.home_score`
+  // unconditionally would re-admit `closed`'s frozen mid-game scores — measured to
+  // invert the winner in 2 of 8 sampled rows — through the ladder's front door.
+  // The tournament rung has no such problem: it is an independent authority that
+  // names a winner outright, so it is trusted for `closed` too.
+  const tournamentResult = await fetchTournamentResult(event);
+  const scoresAreTrusted = event.hero_probability_source === "settled";
+  const outcome: SettledOutcome | null = resolveEventOutcome({
+    isFinished: isFinishedForShare(event),
+    homeTeam: event.home_team,
+    awayTeam: event.away_team,
+    homeScore: scoresAreTrusted ? event.home_score ?? null : null,
+    awayScore: scoresAreTrusted ? event.away_score ?? null : null,
+    tournamentResult,
+    linescore: event.linescore,
+  });
+
+  const { title, description } = buildEventShareCopy(event, outcome);
   // The root layout's metadata template is `%s | Bain Luck`, so `title` must NOT
   // carry a suffix — appending one here is what printed `| Bain Luck | Bain Luck`
   // on every event page. og:/twitter: bypass the template and so add it explicitly.

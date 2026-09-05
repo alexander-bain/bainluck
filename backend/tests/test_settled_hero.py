@@ -10,8 +10,11 @@ loudly rather than quietly covering nothing.
 import pytest
 
 from app.utils.settled_hero import (
+    FINAL_UNRESOLVED_SOURCE,
+    FINISHED_STATUSES,
     RESOLVABLE_STATUSES,
     SETTLED_HERO_SOURCE,
+    is_finished_status,
     resolve_settled_hero,
 )
 
@@ -174,3 +177,56 @@ def test_draw_is_distinguishable_from_indeterminate():
 def test_numeric_string_scores_resolve(hs, as_):
     resolved = _resolve(home=hs, away=as_)
     assert resolved is not None and resolved.result == "home"
+
+
+class TestFinishedStatusIsWiderThanResolvable:
+    """CERT-1938 — the game can be OVER without us being able to name a winner.
+
+    The two sets are deliberately different sizes, and the asymmetry is load-bearing:
+    `closed` may not crown a winner from its frozen score, but it absolutely may stop
+    us calling the game a live forecast. A change that collapses them in either
+    direction re-opens one of the two bugs.
+    """
+
+    def test_finished_covers_completed_and_closed(self):
+        assert is_finished_status("completed") is True
+        assert is_finished_status("closed") is True
+
+    def test_finished_excludes_games_still_in_play(self):
+        for status in ("scheduled", "live", "postponed", "cancelled", ""):
+            assert is_finished_status(status) is False, status
+
+    def test_finished_tolerates_casing_and_whitespace(self):
+        assert is_finished_status("  Completed ") is True
+        assert is_finished_status("CLOSED") is True
+
+    def test_finished_rejects_non_strings(self):
+        for value in (None, 1, True, object()):
+            assert is_finished_status(value) is False
+
+    def test_the_two_sets_are_not_the_same_set(self):
+        # The guard that fails if someone "tidies" one into the other.
+        assert RESOLVABLE_STATUSES < FINISHED_STATUSES
+        assert "closed" in FINISHED_STATUSES
+        assert "closed" not in RESOLVABLE_STATUSES
+
+    def test_closed_is_finished_but_still_never_resolves_a_hero(self):
+        # 15293846's exact shape: closed, decisive scores on the row, a real
+        # completion timestamp. Finished — and still not a winner we may crown.
+        assert is_finished_status("closed") is True
+        assert (
+            resolve_settled_hero(
+                status="closed",
+                home_score=3,
+                away_score=0,
+                completed_at="2026-08-30T20:25:53.487618+00:00",
+            )
+            is None
+        )
+
+    def test_the_two_source_words_are_distinct(self):
+        # Both exist so a reader can tell "we know the result" from "it is over and
+        # we do not". Collapsing them is how a 0.5 on a finished game becomes
+        # indistinguishable from a draw (#1495 criterion 4).
+        assert SETTLED_HERO_SOURCE != FINAL_UNRESOLVED_SOURCE
+        assert FINAL_UNRESOLVED_SOURCE != "blend"

@@ -39,7 +39,11 @@ from app.utils.event_completion import (
     is_retired_event_status,
 )
 from app.utils.graded_card import rendered_duel_percents
-from app.utils.settled_hero import resolve_settled_hero
+from app.utils.settled_hero import (
+    FINAL_UNRESOLVED_SOURCE,
+    is_finished_status,
+    resolve_settled_hero,
+)
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -8078,7 +8082,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     elif agg_prob is not None:
         response["hero_probability"] = agg_prob
         response["hero_probability_away"] = round(1.0 - agg_prob, 6)
-        response["hero_probability_source"] = "blend"
+        # CERT-1938: the game can be OVER without us being able to name a winner —
+        # a tennis match whose result lives in the tournament container, a row we
+        # have not graded yet. Serving those as "blend" is what let 15293846
+        # publish an 84% forecast six days after the match was decided. The number
+        # is unchanged; only the claim about it is. See `settled_hero` for why the
+        # finished set is wider than the resolvable one.
+        response["hero_probability_source"] = (
+            FINAL_UNRESOLVED_SOURCE
+            if is_finished_status(event.status)
+            else "blend"
+        )
     elif event.opening_home_probability is not None:
         response["hero_probability"] = float(event.opening_home_probability)
         response["hero_probability_away"] = (
@@ -13627,7 +13641,15 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     elif _blend is not None:
         response["hero_probability"] = _blend
         response["hero_probability_away"] = round(1.0 - _blend, 6)
-        response["hero_probability_source"] = "blend"
+        # CERT-1938 — SECOND ARM, same reasoning as `get_event` above. The two
+        # copies of this block are why the first cut needed both; a label that is
+        # honest on the detail page and stale on every list surface is the same
+        # bug wearing a different route.
+        response["hero_probability_source"] = (
+            FINAL_UNRESOLVED_SOURCE
+            if is_finished_status(event.status)
+            else "blend"
+        )
     elif event.opening_home_probability is not None:
         response["hero_probability"] = float(event.opening_home_probability)
         response["hero_probability_away"] = (

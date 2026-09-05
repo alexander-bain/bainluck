@@ -134,15 +134,23 @@ class TestSettledHeroKills:
     @pytest.mark.parametrize(
         "event_id,home,away,hs,as_,blend_home,winner", SETTLED_SPECIMENS
     )
-    async def test_closed_keeps_the_blend(
+    async def test_closed_never_resolves_but_stops_claiming_a_live_blend(
         self, event_id, home, away, hs, as_, blend_home, winner
     ):
         """`closed` scores are frozen mid-game and invert the winner (two of four
-        sampled rows). The route must NOT resolve them."""
+        sampled rows). The route must NOT resolve them.
+
+        CERT-1938 sharpened the other half. The NUMBER is untouched — still the
+        blend, to the same tolerance this test has always asserted — but the game
+        is over, so the row stops calling that number a live blend. Both halves
+        matter and they fail for different reasons: crowning a winner here is the
+        inverted-winner bug, and labelling it "blend" is what let 15293846 publish
+        an 84% forecast six days after the match was decided.
+        """
         body = await _get(
             _settled_event(event_id, home, away, hs, as_, blend_home, status="closed")
         )
-        assert body["hero_probability_source"] == "blend"
+        assert body["hero_probability_source"] == "final_unresolved"
         assert body["hero_probability"] == pytest.approx(blend_home, abs=1e-4)
         assert "hero_settled_result" not in body
 
@@ -152,16 +160,24 @@ class TestSettledHeroKills:
         assert body["hero_probability_source"] == "blend"
         assert body["hero_probability"] == pytest.approx(0.65, abs=1e-4)
 
-    async def test_completed_without_completed_at_keeps_the_blend(self):
+    async def test_completed_without_completed_at_does_not_resolve(self):
+        # Nothing ever declared this game over, so no winner — but `completed`
+        # still means finished, so it is not a live blend either (CERT-1938).
         event = _settled_event(1, "Celtics", "76ers", 88, 82, 0.65)
         event.completed_at = None
         body = await _get(event)
-        assert body["hero_probability_source"] == "blend"
+        assert body["hero_probability_source"] == "final_unresolved"
+        assert "hero_settled_result" not in body
+        assert body["hero_probability"] == pytest.approx(0.65, abs=1e-4)
 
-    async def test_completed_without_scores_keeps_the_blend(self):
+    async def test_completed_without_scores_does_not_resolve(self):
+        # The tennis shape: over, and the row itself holds no result. This is the
+        # population whose winner lives in the tournament container.
         event = _settled_event(1, "Celtics", "76ers", None, None, 0.65)
         body = await _get(event)
-        assert body["hero_probability_source"] == "blend"
+        assert body["hero_probability_source"] == "final_unresolved"
+        assert "hero_settled_result" not in body
+        assert body["hero_probability"] == pytest.approx(0.65, abs=1e-4)
 
     async def test_draw_is_explicit_not_a_stale_blend(self):
         event = _settled_event(1, "Watford", "Peterborough United", 2, 2, 0.6492)
@@ -178,4 +194,61 @@ class TestSettledHeroKills:
         assert body["hero_probability_source"] == "settled"
         assert body["current_odds"]["home_probability"] == pytest.approx(
             0.8199, abs=1e-4
+        )
+
+
+class TestFinishedUnresolvedIsItsOwnState:
+    """CERT-1938 — "it is over and we do not know" is not "it is 84% likely".
+
+    The route serves three distinct answers for a hero and a client must be able to
+    tell them apart: a resolved result, a live forecast, and a closed question we
+    cannot answer. Before this, the third wore the second's clothes.
+    """
+
+    async def test_live_is_still_a_blend(self):
+        # The kill. Withholding the "blend" claim is only right once the question
+        # is closed; a live game must keep it or every live hero loses its label.
+        body = await _get(
+            _settled_event(1, "Celtics", "76ers", 88, 82, 0.65, status="live")
+        )
+        assert body["hero_probability_source"] == "blend"
+
+    async def test_scheduled_is_still_a_blend(self):
+        body = await _get(
+            _settled_event(1, "Celtics", "76ers", None, None, 0.65, status="scheduled")
+        )
+        assert body["hero_probability_source"] == "blend"
+
+    async def test_the_three_states_are_three_different_words(self):
+        resolved = await _get(_settled_event(*SETTLED_SPECIMENS[0][:6]))
+        unresolved = await _get(
+            _settled_event(1, "Celtics", "76ers", None, None, 0.65, status="closed")
+        )
+        forecast = await _get(
+            _settled_event(1, "Celtics", "76ers", None, None, 0.65, status="live")
+        )
+        words = {
+            resolved["hero_probability_source"],
+            unresolved["hero_probability_source"],
+            forecast["hero_probability_source"],
+        }
+        assert words == {"settled", "final_unresolved", "blend"}
+
+    async def test_the_number_survives_the_relabel(self):
+        """The relabel is a claim about the number, not a deletion of it.
+
+        `current_odds` and the hero value both stay — "what the market thought" is
+        real history the chart still needs (gotcha #21: this module is display-only
+        and never writes a probability back).
+        """
+        body = await _get(
+            _settled_event(
+                15293846, "Matteo Berrettini", "Stan Wawrinka", 3, 0, 0.8411,
+                status="closed",
+            )
+        )
+        assert body["hero_probability_source"] == "final_unresolved"
+        assert body["hero_probability"] == pytest.approx(0.8411, abs=1e-4)
+        assert body["current_odds"]["home_probability"] == pytest.approx(
+            0.8411, abs=1e-4
         )

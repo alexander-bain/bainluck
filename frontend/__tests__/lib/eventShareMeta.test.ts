@@ -8,6 +8,7 @@
 
 import {
   buildEventShareCopy,
+  isFinishedForShare,
   isSettledForShare,
   withSiteSuffix,
   type EventShareMetaInput,
@@ -194,5 +195,178 @@ describe("the doubled site suffix (#1495 secondary)", () => {
     expect(withSiteSuffix("Celtics vs 76ers | Bain Luck")).toBe(
       "Celtics vs 76ers | Bain Luck",
     );
+  });
+});
+
+/**
+ * CERT-1938's block — the SECOND authority.
+ *
+ * The first cut of this module gated on the score alone, so a decided tennis match
+ * still published a forecast. Specimen read off production 2026-09-05:
+ *
+ *   /events/15293846  <title>… Matteo Berrettini 84%, Stan Wawrinka 16% …</title>
+ *
+ * Berrettini had won it 7-6, 7-6, 6-0 on 2026-08-30. The row is `closed`, so the
+ * score rung correctly declines it — and `/api/tournaments/by-event/15293846`
+ * named the winner all along.
+ */
+describe("the tournament rung (CERT-1938) — a decided match with no trusted score", () => {
+  // The event exactly as production serves it: `closed`, scores present but NOT
+  // trusted (the backend withholds the "settled" source), blend still on the row.
+  const BERRETTINI_EVENT: EventShareMetaInput = {
+    home_team: "Matteo Berrettini",
+    away_team: "Stan Wawrinka",
+    home_score: 3,
+    away_score: 0,
+    status: "closed",
+    hero_probability_source: "blend",
+    current_odds: { home_probability: 0.8411, away_probability: 0.1589 },
+  };
+
+  // What `resolveEventOutcome` returns for it once the container answers.
+  const TOURNAMENT_OUTCOME = {
+    winnerName: "Berrettini",
+    winnerSide: "home" as const,
+    resultLine: "7-6, 7-6, 6-0",
+    resultExplanation: "7-6, 7-6, 6-0, winner's games first.",
+    resultKind: "score" as const,
+    authority: "tournament" as const,
+  };
+
+  it("leads with the winner and the set line, not the 84%", () => {
+    const copy = buildEventShareCopy(BERRETTINI_EVENT, TOURNAMENT_OUTCOME);
+    expect(copy.settled).toBe(true);
+    expect(copy.title).toBe(
+      "Stan Wawrinka vs Matteo Berrettini: Matteo Berrettini won 7-6, 7-6, 6-0",
+    );
+    expect(copy.description).toBe(
+      "Final: Matteo Berrettini beat Stan Wawrinka 7-6, 7-6, 6-0.",
+    );
+    // The exact string production served, and the shape of it.
+    expect(copy.title).not.toMatch(/84%|16%/);
+    expect(copy.description).not.toMatch(/win probability/);
+  });
+
+  it("names the winner with the EVENT's full name, not the hero's short one", () => {
+    // The hero prints "Berrettini" in a badge; a page title and a shared link get
+    // the whole name. `winnerName` is the fallback, not the first choice.
+    const copy = buildEventShareCopy(BERRETTINI_EVENT, TOURNAMENT_OUTCOME);
+    expect(copy.title).toContain("Matteo Berrettini won");
+    expect(copy.title).not.toContain("Berrettini won 7-6, 7-6, 6-0 |");
+  });
+
+  it("does NOT read the untrusted `closed` scores back in under the tournament rung", () => {
+    // The row carries 3 and 0. The score rung refused them (frozen mid-game
+    // scores invert the winner in 2 of 8 sampled rows); wording the tournament's
+    // answer with them would smuggle them back in.
+    const copy = buildEventShareCopy(BERRETTINI_EVENT, TOURNAMENT_OUTCOME);
+    expect(copy.title).not.toContain("3-0");
+    expect(copy.description).not.toContain("3-0");
+  });
+
+  it("still names a winner the ladder could not place on a side", () => {
+    // An unmatched winner gets named, but nobody gets called the loser.
+    const copy = buildEventShareCopy(BERRETTINI_EVENT, {
+      ...TOURNAMENT_OUTCOME,
+      winnerSide: null,
+      winnerName: "Berrettini",
+    });
+    expect(copy.settled).toBe(true);
+    expect(copy.title).toContain("Berrettini won 7-6, 7-6, 6-0");
+    expect(copy.description).toBe("Final: Berrettini won 7-6, 7-6, 6-0.");
+    expect(copy.description).not.toContain("beat");
+  });
+
+  it("a winner with no score line says so rather than inventing one", () => {
+    const copy = buildEventShareCopy(BERRETTINI_EVENT, {
+      ...TOURNAMENT_OUTCOME,
+      resultLine: null,
+    });
+    expect(copy.title).toBe(
+      "Stan Wawrinka vs Matteo Berrettini: Matteo Berrettini won",
+    );
+    expect(copy.description).toBe("Final: Matteo Berrettini beat Stan Wawrinka.");
+  });
+
+  it("the score rung's wording is unchanged by the new rung existing", () => {
+    // Regression on the OTHER specimen: passing a score-authority outcome must
+    // produce byte-for-byte what the no-outcome call already produces, or adding
+    // the tournament rung silently restyled every settled team game.
+    const { event } = PRODUCTION_SPECIMENS[0];
+    const viaLadder = buildEventShareCopy(event, {
+      winnerName: "Tribe",
+      winnerSide: "away",
+      resultLine: null,
+      resultExplanation: null,
+      resultKind: null,
+      authority: "score",
+    });
+    expect(viaLadder).toEqual(buildEventShareCopy(event));
+  });
+});
+
+describe("finished with NO authority — explicit no-result, never a stale forecast", () => {
+  const FINISHED_UNKNOWN: EventShareMetaInput = {
+    home_team: "Matteo Berrettini",
+    away_team: "Stan Wawrinka",
+    home_score: 3,
+    away_score: 0,
+    status: "closed",
+    hero_probability_source: "blend",
+    current_odds: { home_probability: 0.8411, away_probability: 0.1589 },
+  };
+
+  it("says Final and states we do not hold the result", () => {
+    const copy = buildEventShareCopy(FINISHED_UNKNOWN, null);
+    expect(copy.settled).toBe(false);
+    expect(copy.title).toBe("Stan Wawrinka vs Matteo Berrettini: Final");
+    expect(copy.description).toBe(
+      "Final. Bain Luck does not have a confirmed result for Stan Wawrinka vs Matteo Berrettini yet.",
+    );
+  });
+
+  it("publishes NO probability on a finished game — the whole point", () => {
+    const copy = buildEventShareCopy(FINISHED_UNKNOWN, null);
+    expect(copy.title).not.toMatch(/\d+%/);
+    expect(copy.description).not.toMatch(/\d+%/);
+    expect(copy.description).not.toMatch(/win probability/);
+  });
+
+  it("a `completed` game with no scores and no container gets it too", () => {
+    const copy = buildEventShareCopy({
+      home_team: "Celtics",
+      away_team: "76ers",
+      status: "completed",
+      home_score: null,
+      away_score: null,
+      hero_probability_source: "blend",
+      current_odds: { home_probability: 0.65, away_probability: 0.35 },
+    });
+    expect(copy.settled).toBe(false);
+    expect(copy.description).not.toMatch(/win probability/);
+    expect(copy.description).toContain("does not have a confirmed result");
+  });
+
+  it("does NOT touch a scheduled or live game", () => {
+    // The kill for this rung: withholding a forecast is only right once the
+    // question is closed.
+    for (const status of ["scheduled", "live"]) {
+      const copy = buildEventShareCopy({
+        home_team: "Celtics",
+        away_team: "76ers",
+        status,
+        commence_time: "2026-09-02T23:00:00Z",
+        current_odds: { home_probability: 0.65, away_probability: 0.35 },
+      });
+      expect(copy.description).toContain("win probability");
+    }
+  });
+
+  it("isFinishedForShare is wider than the score gate, and knows it", () => {
+    expect(isFinishedForShare({ status: "completed" })).toBe(true);
+    expect(isFinishedForShare({ status: "closed" })).toBe(true);
+    expect(isFinishedForShare({ status: "live" })).toBe(false);
+    expect(isFinishedForShare({ status: "scheduled" })).toBe(false);
+    expect(isFinishedForShare({})).toBe(false);
   });
 });
