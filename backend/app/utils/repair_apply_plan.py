@@ -1737,6 +1737,7 @@ def cursor_skips_unprocessed(
     selected_ids: Sequence[int],
     processed_ids: Sequence[int],
     next_after_id: int | None,
+    order_rank: Mapping[int, Any] | None = None,
 ) -> bool:
     """Would resuming here step over a selected row this page never examined?
 
@@ -1744,13 +1745,35 @@ def cursor_skips_unprocessed(
     terms. It is the ONE property a resumable bounded walk has to have, and the
     offset form could not have it: an offset counts rows that were there when
     the page was taken, and this rail's whole purpose is to remove them.
+
+    ``order_rank`` — CAL-P1014. **The comparison is on the SORT, and the id is
+    only the sort where the walk is ordered by id.** Without it this compares
+    raw ids, which is right for a rail keyed ``ORDER BY id`` and quietly wrong
+    for one keyed on anything else: ``repair_kalshi_fabricated_loss`` sorts
+    ``(resolution_date, id)``, where a later row can carry a smaller id, so an
+    honest cursor pointing at the last examined row can compare HIGH against a
+    tail it in fact precedes — and the walk refuses itself for a skip that
+    never happened. That was latent for as long as every page examined all its
+    rows (an empty ``remaining`` short-circuits before the comparison); the
+    rate-limit stop is the first thing that routinely leaves a tail, so it is
+    the first thing that could reach it. Pass a mapping from row id to its
+    position in the walk's own sort and the check is exact.
+
+    A ``next_after_id`` the mapping does not name is treated as a SKIP rather
+    than waved through: this is the guard against abandoning rows silently, and
+    a guard that cannot evaluate its own subject must not answer "fine".
     """
     if next_after_id is None:
         return False
     remaining = [int(i) for i in selected_ids if int(i) not in set(map(int, processed_ids))]
     if not remaining:
         return False
-    return int(next_after_id) >= max(remaining)
+    if order_rank is None:
+        return int(next_after_id) >= max(remaining)
+    if int(next_after_id) not in order_rank:
+        return True
+    here = order_rank[int(next_after_id)]
+    return any(here >= order_rank[i] for i in remaining if i in order_rank)
 
 
 def evaluate_repair_contract(
@@ -1761,6 +1784,7 @@ def evaluate_repair_contract(
     mutated_ids: Sequence[int],
     dry_run_ids: Sequence[int] | None,
     next_cursor: int | None,
+    order_rank: Mapping[int, Any] | None = None,
 ) -> dict[str, Any]:
     """This rail, scored by the canonical corpus's own oracle shape.
 
@@ -1781,6 +1805,7 @@ def evaluate_repair_contract(
         selected_ids=candidate_ids,
         processed_ids=processed_ids,
         next_after_id=next_cursor,
+        order_rank=order_rank,
     ):
         reasons.append(REASON_CURSOR_SKIP)
     action = "REFUSE" if reasons else ("APPLY" if mutated else "NOOP")

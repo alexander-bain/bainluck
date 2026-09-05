@@ -1082,12 +1082,50 @@ async def _legs(session, market_id: int) -> list[Any]:
     ).all()
 
 
+#: The note :func:`_fetch_venue` returns when the venue refused for RATE, and the
+#: predicate the loop reads it with. A string prefix rather than a third tuple
+#: slot because every caller of this note already treats it as opaque text; what
+#: must not be opaque is the DECISION, and that is :func:`venue_rate_limited`.
+_RATE_LIMIT_NOTE = "rate_limited:429"
+
+
+def venue_rate_limited(note: str | None) -> bool:
+    """Did the venue refuse this lookup for RATE rather than for CONTENT?
+
+    CAL-P1014 (#3262). A 429 is not a fact about the market — it is the rail
+    running out of venue budget mid-page, and it is the ONE lookup failure the
+    next call would answer differently. Everything else ``_fetch_venue`` cannot
+    resolve (404, transport, malformed) stays ``unknown`` under gotcha #36 and
+    is a genuine per-market verdict.
+    """
+    return bool(note) and note.startswith(_RATE_LIMIT_NOTE)
+
+
 async def _fetch_venue(service, event_ticker: str) -> tuple[list[dict] | None, str]:
     """Ask the venue for every market under this event ticker.
 
     Returns ``(markets, note)``. ``None`` markets means the lookup did not
     answer — 404 or transport error, indistinguishable at this boundary
     (gotcha #36), so it must never be read as "the event has no markets".
+
+    CAL-P1014 SPLITS ONE CASE BACK OUT OF THAT, and only one: **429**. The
+    conflation gotcha #36 protects against is between *absence* and *failure*,
+    and it stands. But a rate refusal is not a fact about the event at all, and
+    measured against production on 2026-09-05 it was not rare — it was 37% of a
+    full-size page:
+
+        POST …/kalshi-fabricated-loss?apply=false&limit=10  ->  0 unknown
+        POST …/kalshi-fabricated-loss?apply=false&limit=20  ->  6 unknown
+        POST …/kalshi-fabricated-loss?apply=false&limit=40  -> 15 unknown
+        ... every one of the 12 sampled: `lookup_failed:429`
+
+    and it scales with the page, not with the age: exactly the same count at
+    every point in the sort from 86 days down to 10. ``get_markets`` is the one
+    method on the client with no 429 handling at all — its sibling
+    ``get_market`` retries three times with backoff — so the drain walks
+    straight into the venue's limit and the exception surfaces here.
+    Distinguishing it is what lets the caller stop the page instead of burning
+    a verdict on a market it never actually asked about.
     """
     collected: list[dict] = []
     cursor = None
@@ -1102,6 +1140,8 @@ async def _fetch_venue(service, event_ticker: str) -> tuple[list[dict] | None, s
         return collected, "ok"
     except Exception as e:  # noqa: BLE001
         status = getattr(getattr(e, "response", None), "status_code", None)
+        if status == 429:
+            return None, _RATE_LIMIT_NOTE
         return None, f"lookup_failed:{status or type(e).__name__}"
 
 # ---------------------------------------------------------------------------
@@ -2024,6 +2064,7 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
     leg_verdicts: dict[str, int] = {}
     examined = 0
     timed_out = False
+    rate_limited = False
     excluded: dict[str, int] = {}
     samples: list[dict[str, Any]] = []
     mismatch_samples: list[dict[str, Any]] = []
@@ -2048,6 +2089,26 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             examined += 1
 
             venue_markets, note = await _fetch_venue(service, row.event_ticker)
+            if venue_rate_limited(note):
+                # CAL-P1014 (#3262): NOT a verdict. The venue refused for rate,
+                # so this market has not been asked yet and must not be counted
+                # as examined — `keyset_after` resumes at the last EXAMINED row,
+                # and counting it here would advance the cursor past a market
+                # nobody ever looked at. Measured before the fix: 15 of every 40
+                # rows, silently skipped, never revisited by a linear drain.
+                #
+                # Stopping the whole page rather than skipping the one row is
+                # deliberate and it is what makes the rail self-pacing: the
+                # refusal means the burst budget is spent, so every remaining
+                # lookup on this page would refuse too (measured: the 429s are
+                # always the page's TAIL, never scattered through it). The
+                # operator resumes with the cursor and the next call starts on a
+                # refilled budget. This is the same shape as the wall-clock stop
+                # one branch up, and it reuses that stop's cursor machinery
+                # exactly, so the contract check below already covers it.
+                examined -= 1
+                rate_limited = True
+                break
             verdict, detail = classify_market(
                 venue_markets, row.age_days, mutually_exclusive=row.mutex
             )
@@ -2102,7 +2163,27 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         except Exception:  # noqa: BLE001
             pass
 
-    cursor = keyset_after(rows, examined)
+    advanced = keyset_after(rows, examined)
+    cursor = advanced
+    if cursor is None and rate_limited and after_date is not None and after_id is not None:
+        # CAL-P1014: the venue refused the page's FIRST lookup, so nothing was
+        # examined and `keyset_after` correctly has no new position to give.
+        # Handing back `null` here would be read as "start over" by the rail's
+        # own instruction (omitting after_id starts a fresh walk), throwing the
+        # operator back to the head of the sort — 597 measured-dead markets away
+        # from where they were. Echo the position they came in on: a resume that
+        # makes no progress must still be a resume.
+        #
+        # The CONTRACT below is still scored on `advanced`, not on this, and the
+        # difference is not pedantry. `cursor_skips_unprocessed` compares
+        # `next_after_id` against the ids this page did not process, but this
+        # rail's sort key is `(resolution_date, id)` and id order is NOT date
+        # order — so an echoed inbound id can compare high against a page whose
+        # rows it in fact all precedes, and the walk would refuse itself with
+        # CURSOR_SKIP for standing still. We are not advancing; the honest
+        # answer to "does the position I advance to skip anything" is that there
+        # is no such position.
+        cursor = {"after_date": after_date, "after_id": int(after_id)}
     plan = build_plan(
         planned_legs,
         context={
@@ -2122,7 +2203,12 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         approved_ids=plan.market_ids,
         mutated_ids=[],
         dry_run_ids=None,
-        next_cursor=(cursor or {}).get("after_id"),
+        next_cursor=(advanced or {}).get("after_id"),
+        # CAL-P1014: score the skip check on THIS walk's sort, not on the id.
+        # `rows` arrives in `ORDER BY resolution_date, id`, so its index IS the
+        # position the keyset names — and unlike the id it agrees with the
+        # cursor by construction. See `cursor_skips_unprocessed`.
+        order_rank={int(r.market_id): i for i, r in enumerate(rows)},
     )
 
     return {
@@ -2181,8 +2267,25 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             losses_retracted=plan.verdict_counts().get("retract_fabricated", 0),
         ),
         "next_cursor": cursor,
-        "exhausted": (not timed_out) and len(rows) < window,
+        # CAL-P1014: a page the venue cut short has NOT exhausted anything, and
+        # this is the field a drain's completion test reads. Without the third
+        # clause a rate-limited short page on the last window of the walk would
+        # report `exhausted: true` — the drain would call itself finished with
+        # rows it never asked about, which is gotcha #53's shape exactly ("it
+        # returned" is not "it worked").
+        "exhausted": (not timed_out) and (not rate_limited) and len(rows) < window,
         "stopped_on_time_budget": timed_out,
+        "stopped_on_venue_rate_limit": rate_limited,
+        "rate_limit_note": (
+            "The venue refused for RATE mid-page, so the page stopped and the "
+            "cursor did NOT advance past the market it refused: nothing here is "
+            "a verdict about that market and it will be asked again on resume. "
+            "Resume with next_cursor. If this repeats on every call, lower "
+            "?limit= — measured 2026-09-05, limit=10 drew no refusals, limit=20 "
+            "drew 6 and limit=40 drew 15."
+        )
+        if rate_limited
+        else None,
         "cursor_contract": contract,
         "elapsed_s": round(time.monotonic() - started, 1),
         "apply_market_cap": APPLY_MARKET_CAP,
