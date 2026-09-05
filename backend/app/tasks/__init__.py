@@ -963,33 +963,48 @@ def discover_events(self):
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.poll_all_odds")
 def poll_all_odds(self):
-    """Poll odds for all configured sports with adaptive polling."""
+    """Poll odds for all configured sports with adaptive polling.
+
+    #3251: the in-flight lease is the OUTERMOST gate, above `should_poll_now()`,
+    because the two shed different things. `should_poll_now()` is an adaptive
+    CADENCE gate — it stamps its clock when a pass FINISHES, so while a pass is
+    running it says "yes" to every delivery, and that is precisely how a 30 s
+    beat against a 118 s p95 stacked 85 copies onto `realtime`. The lease sheds
+    CONCURRENCY: one copy runs, the rest return in microseconds.
+    """
     from app.tasks.odds_polling import _poll_all_odds
     from app.tasks.redis_state import should_poll_now
+    from app.utils.single_flight import single_flight
 
-    should_poll, reason = should_poll_now()
-    if not should_poll:
-        return {"skipped": True, "reason": reason}
+    with single_flight("app.tasks.poll_all_odds") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
 
-    try:
-        result = _tracked_run("poll_odds", _poll_all_odds())
-        # Piggyback DataGolf live poll — Redis-gated to 5 min
+        should_poll, reason = should_poll_now()
+        if not should_poll:
+            return {"skipped": True, "reason": reason}
+
         try:
-            from app.tasks.redis_state import get_redis_client
-            r = get_redis_client()
-            dg_live_key = "bainluck:datagolf_live_gate"
-            if r.set(dg_live_key, "1", nx=True, ex=300):  # 5 min TTL
-                from app.tasks.datagolf import _poll_datagolf_live
-                dg_result = _tracked_run("datagolf_live", _poll_datagolf_live())
-                result["datagolf_live"] = dg_result
-            else:
-                result["datagolf_live"] = "skipped (gate)"
-        except Exception as dg_exc:
-            logger.warning("DataGolf live poll failed: %s", dg_exc)
-            result["datagolf_live_error"] = str(dg_exc)[:200]
-        return {**result, "poll_reason": reason}
-    except Exception as exc:
-        raise self.retry(exc=exc, countdown=60)
+            result = _tracked_run("poll_odds", _poll_all_odds())
+            # Piggyback DataGolf live poll — Redis-gated to 5 min
+            try:
+                from app.tasks.redis_state import get_redis_client
+                r = get_redis_client()
+                dg_live_key = "bainluck:datagolf_live_gate"
+                if r.set(dg_live_key, "1", nx=True, ex=300):  # 5 min TTL
+                    from app.tasks.datagolf import _poll_datagolf_live
+                    dg_result = _tracked_run("datagolf_live", _poll_datagolf_live())
+                    result["datagolf_live"] = dg_result
+                else:
+                    result["datagolf_live"] = "skipped (gate)"
+            except Exception as dg_exc:
+                logger.warning("DataGolf live poll failed: %s", dg_exc)
+                result["datagolf_live_error"] = str(dg_exc)[:200]
+            return {**result, "poll_reason": reason}
+        except Exception as exc:
+            # `self.retry` raises, so the `with` unwinds and the lease is
+            # released here — the retry re-publishes and takes a fresh one.
+            raise self.retry(exc=exc, countdown=60)
 
 
 @celery_app.task(bind=True, name="app.tasks.poll_sport_odds")
@@ -1632,9 +1647,18 @@ def enrich_events_metadata(self, limit: int = 50):
 
 @celery_app.task(bind=True, name="app.tasks.sync_espn_live_events")
 def sync_espn_live_events(self):
-    """Sync live event data from ESPN for all sports with active games."""
+    """Sync live event data from ESPN for all sports with active games.
+
+    #3251: 60 s beat against a measured p95 of 81 s — it laps, so it takes an
+    in-flight lease and a delivery that finds one held declines.
+    """
     from app.tasks.espn_sync import _sync_espn_live_events
-    return _tracked_run("espn_sync", _sync_espn_live_events())
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.sync_espn_live_events") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("espn_sync", _sync_espn_live_events())
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_team_logos")
@@ -1752,9 +1776,22 @@ def match_prediction_markets(self, limit: int = 500):
 
 @celery_app.task(bind=True, name="app.tasks.poll_live_prediction_markets")
 def poll_live_prediction_markets(self):
-    """Fast-poll prices for prediction markets linked to live events (every 2 min)."""
+    """Fast-poll prices for prediction markets linked to live events (every 2 min).
+
+    #3251: 120 s beat against a measured p95 of 208 s — it laps, so it takes an
+    in-flight lease. This one is also dispatched by hand from
+    `/api/admin/matching/...`; a manual `.delay()` that lands while a poll is
+    running now declines rather than doubling the pass, which is the intent.
+    """
     from app.tasks.prediction_market_matching import _poll_live_prediction_market_prices
-    return _tracked_run("prediction_market_live", _poll_live_prediction_market_prices())
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.poll_live_prediction_markets") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run(
+            "prediction_market_live", _poll_live_prediction_market_prices()
+        )
 
 
 @celery_app.task(bind=True, name="app.tasks.backfill_polymarket_win_prob")
@@ -3311,9 +3348,19 @@ def poll_datagolf_inplay(self):
 
     Decoupled from poll_all_odds so live golf keeps a sub-minute-feeling cadence
     even when no ball sports are live. The window guard inside makes this a single
-    Redis check off-tournament (near-zero cost)."""
+    Redis check off-tournament (near-zero cost).
+
+    #3251: 90 s beat against a measured p95 of 120.7 s — it laps in-tournament,
+    so it takes an in-flight lease. Off-tournament the window guard still short-
+    circuits it as before; the lease costs one extra Redis round trip.
+    """
     from app.tasks.datagolf import _poll_datagolf_inplay
-    return _tracked_run("datagolf_inplay", _poll_datagolf_inplay())
+    from app.utils.single_flight import single_flight
+
+    with single_flight("app.tasks.poll_datagolf_inplay") as lease:
+        if not lease.acquired:
+            return lease.skipped_result()
+        return _tracked_run("datagolf_inplay", _poll_datagolf_inplay())
 
 
 # --- Golf Leaderboard Snapshot ---
