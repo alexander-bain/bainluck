@@ -1803,8 +1803,20 @@ class TestWinnerWritesBumpLastUpdated:
         for i, ln in enumerate(lines, start=1):
             s = ln.strip()
             # Raw SQL: "SET is_winner = ..." (skip NULL-reset cleanups).
-            if s.startswith("SET is_winner") and "NULL" not in s:
+            #
+            # CERT-1936: the NULL test reads the WINDOW, not the single line. A
+            # multi-column reset writes `SET is_winner = false,` on one line and
+            # `resolution_source = NULL` on the next, so the line-local test
+            # missed the exemption its own docstring grants and flagged
+            # `_clear_premature_open_winners` the moment that sweep correctly
+            # stopped stamping the price clock. Nothing is lost by widening it:
+            # this guard protects the winners-touched-24h metric, which counts
+            # `is_winner = true`, and a reset takes the row out of that
+            # population rather than making it invisible inside it.
+            if s.startswith("SET is_winner"):
                 window = "\n".join(lines[i - 1 : i + 4])
+                if "NULL" in window:
+                    continue
                 if "last_updated" not in window:
                     misses.append((i, s[:80]))
             # Core update().values(...) and multi-column SET continuations.

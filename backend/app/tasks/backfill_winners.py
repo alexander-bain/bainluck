@@ -3202,6 +3202,19 @@ async def _clear_premature_open_winners():
     date_passed or box_score winner is self-justifying) — only NULL/guess-family is
     swept. Nulls both is_winner and resolution_source. Verified vs kalshi futures
     109327 (Yes 0.94, is_winner=true, status=open).
+
+    IT DOES NOT TOUCH ``last_updated`` (CERT-1936, #3243). That column is the
+    touch stamp three surfaces now read as a PRICE OBSERVATION — the tournament
+    hub grades a rendered probability from the newer of it and
+    ``futures_odds_snapshots.captured_at``, the playoff grid gates liveness on
+    it, and ``admin_judgments`` reads it for freshness. This sweep is the one
+    settlement-family writer that targets rows which are explicitly still OPEN
+    and therefore still rendered live, and it reads no venue price at all. It
+    used to stamp ``last_updated = NOW()``, so every six hours it could tell the
+    hub that an hours-old probability had been seen seconds ago — #3243 arriving
+    from the other direction, on the rows least able to afford it. Winner
+    metadata is corrected; the price clock is left where the last real price
+    reading put it.
     """
     stats = {"cleared": 0, "errors": []}
     try:
@@ -3209,8 +3222,7 @@ async def _clear_premature_open_winners():
             r = await session.execute(text("""
                     UPDATE futures_outcomes fo
                     SET is_winner = false,
-                        resolution_source = NULL,
-                        last_updated = NOW()
+                        resolution_source = NULL
                     FROM futures_markets fm
                     WHERE fo.market_id = fm.id
                       AND fm.status NOT IN ('resolved', 'closed')
