@@ -15,6 +15,10 @@ import pytest
 
 from app.routes.admin_celery import build_schedule_adherence
 from app.tasks import redis_state
+# The whole module, bound once. Importing it is also what connects the
+# `before_task_publish` / `task_prerun` handlers the end-to-end tests drive.
+from app import tasks as tasks_mod
+from app.tasks import _published_retries, _published_task_name
 from app.utils.schedule_adherence import adherence
 from app.tasks.redis_state import TASK_LABEL_MAP_KEY, TASK_METRICS_PREFIX
 
@@ -828,7 +832,7 @@ class TestMatchedBucketReader:
                 f"{redis_state.TASK_DELIVERY_BUCKET_PREFIX}:{self.TASK}:b{bucket}"
             ] = str(delivered).encode()
         if alive:
-            fake.strings[redis_state.TASK_DELIVERY_BUCKET_ALIVE_KEY] = b"1"
+            fake.strings[redis_state.delivery_writer_alive_key(bucket)] = b"1"
 
     def test_the_last_complete_bucket_is_the_one_returned(self, prefix_fake):
         self._seed(prefix_fake, 2000, emitted=15, delivered=7)
@@ -870,12 +874,11 @@ class TestMatchedBucketReader:
             "delivered"] is None
 
     def test_the_liveness_marker_is_written_by_the_real_delivery_writer(self, prefix_fake):
-        assert redis_state.TASK_DELIVERY_BUCKET_ALIVE_KEY not in prefix_fake.strings
+        key = redis_state.delivery_writer_alive_key(redis_state.emit_bucket_index())
+        assert key not in prefix_fake.strings
         redis_state.record_task_delivery_bucket("app.tasks.anything_at_all")
-        assert redis_state.TASK_DELIVERY_BUCKET_ALIVE_KEY in prefix_fake.strings
-        # And it expires with the buckets it vouches for, or it would go on
-        # vouching for a writer that stopped hours ago.
-        assert prefix_fake.ttls[redis_state.TASK_DELIVERY_BUCKET_ALIVE_KEY] == (
+        assert key in prefix_fake.strings
+        assert prefix_fake.ttls[key] == (
             redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED)
 
     def test_the_emit_writer_does_not_vouch_for_the_delivery_writer(self, prefix_fake):
@@ -884,7 +887,70 @@ class TestMatchedBucketReader:
         # would certify a worker fleet that is still on the old one — and every
         # task would read 100% loss.
         redis_state.record_task_emission("app.tasks.anything_at_all")
-        assert redis_state.TASK_DELIVERY_BUCKET_ALIVE_KEY not in prefix_fake.strings
+        assert not [k for k in prefix_fake.strings
+                    if k.startswith(redis_state.TASK_DELIVERY_WRITER_ALIVE_PREFIX)]
+
+    # --- CERT-1968: the proof may not outlive the bucket it vouches for ------
+
+    def _writer_runs_in_bucket(self, monkeypatch, bucket, task="app.tasks.other"):
+        """Drive the REAL delivery writer with the clock inside ``bucket``.
+
+        Hand-seeding the marker would not reproduce anything: a mutant that
+        writes and reads the proof under a DIFFERENT key still returns "no
+        proof" against a hand-seeded correct-shaped key, so the test would pass
+        against the very defect it is named for. Faking the clock and letting
+        the writer choose its own key is what makes the writer's scoping — not
+        the test's idea of it — the thing under test.
+        """
+        # `monkeypatch.context()`, NOT `monkeypatch.undo()`: the two share one
+        # fixture instance with `prefix_fake`, so an undo here would also revert
+        # the fake Redis and the reader below would talk to a real client.
+        with monkeypatch.context() as m:
+            m.setattr(redis_state.time, "time",
+                      lambda: bucket * redis_state.EMIT_BUCKET_S + 1)
+            redis_state.record_task_delivery_bucket(task)
+
+    def test_liveness_in_a_LATER_bucket_leaves_this_one_unknown(
+            self, prefix_fake, monkeypatch):
+        # CERT-1968's exact reproduction. 15 publications in bucket N, no
+        # bucket-N delivery counter, and the delivery writer's first bucketed
+        # write landing in N+1. The blocked version's marker was one global key
+        # with a 1,800s TTL, so it was present when N was read: N returned
+        # `delivered: 0` and 100% broker loss, when the truth is that the old
+        # worker code may have delivered all 15 without the counter existing.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 2001)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] is None
+
+    def test_liveness_in_THIS_bucket_makes_a_missing_key_a_real_zero(
+            self, prefix_fake, monkeypatch):
+        # The mirror, and the reading the instrument exists for: the writer WAS
+        # running in this bucket and this task still got nothing.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 2000)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] == 0
+
+    def test_liveness_in_an_EARLIER_bucket_leaves_this_one_unknown_too(
+            self, prefix_fake, monkeypatch):
+        # The other direction: a writer that STOPPED. A proof scoped to N-1 says
+        # nothing about N, and treating it as one would accuse the broker of
+        # discarding messages a dead worker was never there to take.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 1999)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] is None
+
+    def test_the_liveness_marker_is_not_read_back_as_a_task(self, prefix_fake):
+        # Scoping the marker by bucket means appending `:bN` — and
+        # `bainluck:task_deliv_bucket:__x__:bN` would match the delivery scan's
+        # own `bainluck:task_deliv_bucket:*:bN` glob, putting a task called
+        # `__writer_alive__` on the health surface. Hence its own top-level
+        # prefix; asserted rather than trusted.
+        redis_state.record_task_delivery_bucket(self.TASK)
+        now = (redis_state.emit_bucket_index() + 1) * redis_state.EMIT_BUCKET_S + 1
+        assert set(redis_state.get_matched_emit_delivery(now)) == {self.TASK}
 
     def test_a_delivery_only_task_is_still_reported(self, prefix_fake):
         self._seed(prefix_fake, 2000, delivered=7)
@@ -913,39 +979,32 @@ class TestPublishSignalPayloadShape:
     """
 
     def test_a_string_sender_is_the_name(self):
-        from app.tasks import _published_task_name
         assert _published_task_name("app.tasks.foo", None, None) == "app.tasks.foo"
 
     def test_protocol_2_headers_carry_the_name(self):
-        from app.tasks import _published_task_name
         assert _published_task_name(
             None, {"task": "app.tasks.foo"}, None) == "app.tasks.foo"
 
     def test_protocol_1_body_carries_the_name(self):
-        from app.tasks import _published_task_name
         assert _published_task_name(
             None, None, {"task": "app.tasks.foo"}) == "app.tasks.foo"
 
     def test_an_object_sender_still_yields_its_name(self):
-        from app.tasks import _published_task_name
 
         class _Task:
             name = "app.tasks.foo"
         assert _published_task_name(_Task(), None, None) == "app.tasks.foo"
 
     def test_an_unreadable_publication_is_none_not_a_blank_key(self):
-        from app.tasks import _published_task_name
         assert _published_task_name(None, None, None) is None
         assert _published_task_name(object(), {}, {}) is None
         assert _published_task_name("", {}, {}) is None
 
     def test_a_retry_is_filtered_exactly_as_it_is_on_the_delivery_side(self):
-        from app.tasks import _published_retries
         assert _published_retries({"retries": 2}, None) == 2
         assert _published_retries(None, {"retries": 1}) == 1
 
     def test_a_first_attempt_reads_zero(self):
-        from app.tasks import _published_retries
         assert _published_retries({"retries": 0}, None) == 0
 
     def test_an_unreadable_retry_count_defaults_to_counting_it(self):
@@ -953,7 +1012,6 @@ class TestPublishSignalPayloadShape:
         # is worse than an upper bound. And the two sides must default the SAME
         # way — an unreadable message counted as published but not as delivered
         # would present as broker loss that never happened.
-        from app.tasks import _published_retries
         assert _published_retries(None, None) == 0
         assert _published_retries({"retries": "many"}, None) == 0
         assert _published_retries({}, {}) == 0
@@ -1068,8 +1126,9 @@ class TestTheSignalsActuallyFire:
         return app, _probe
 
     def test_a_real_publish_increments_the_current_bucket(self, prefix_fake, probe_app):
-        import app.tasks  # noqa: F401  - importing is what connects the handler
-
+        # Importing the module is what connects the handler; `tasks_mod` is
+        # imported once at the top of this file so the same module object is
+        # used everywhere (CodeQL py/import-and-import-from).
         _app, probe = probe_app
         bucket = redis_state.emit_bucket_index()
         key = (f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}"
@@ -1079,8 +1138,6 @@ class TestTheSignalsActuallyFire:
         assert prefix_fake.strings[key] == b"1"
 
     def test_a_real_retry_publish_is_not_counted(self, prefix_fake, probe_app):
-        import app.tasks  # noqa: F401
-
         _app, probe = probe_app
         bucket = redis_state.emit_bucket_index()
         key = (f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}"
@@ -1096,8 +1153,6 @@ class TestTheSignalsActuallyFire:
         def _boom(*_a, **_k):
             raise RuntimeError("redis down")
         monkeypatch.setattr(redis_state, "get_redis_client", _boom)
-        import app.tasks  # noqa: F401
-
         _app, probe = probe_app
         probe.apply_async()  # must not raise
 
@@ -1107,8 +1162,6 @@ class TestTheSignalsActuallyFire:
         # two writers ever disagree about the bucket index — different clock,
         # different rounding, a process-local epoch — this is what catches it,
         # and nothing else would: each side would still look perfect alone.
-        import app.tasks as tasks_mod
-
         for _ in range(3):
             tasks_mod._record_emission(sender="app.tasks.probe_pair", headers={})
         for _ in range(2):
