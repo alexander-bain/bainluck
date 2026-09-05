@@ -710,12 +710,30 @@ def _schedule_league_refresh(rc, keys: ConceptCacheKeys, sport_key: str) -> None
             release_refresh_lock(rc, keys, token)
 
 
+# #3245: the payload keys that carry games, in ONE place.
+#
+# Two decisions ask "does this league have anything on it": the mirror-write
+# guard (`is_empty_league`) and the envelope's `availability`. #3211 added a
+# third rail and only `availability` learned about it, so a league whose only
+# content was unreported matches was judged EMPTY by the guard, never written
+# to the primary slot, and served off the 24h mirror forever.
+#
+# Restating the rail list a third time would set the fourth rail up to repeat
+# this exactly. Both decisions now derive from this tuple, and `availability`
+# is computed by calling `is_empty_league` on the very payload it ships in —
+# the two cannot disagree, whatever gets added next.
+GAMES_RAIL_KEYS: tuple[str, ...] = (
+    "upcoming_games",
+    "recent_results",
+    "unreported_games",
+)
+
+
 def is_empty_league(payload: dict) -> bool:
-    """A league with no sections and neither games rail has nothing on it."""
+    """A league with no sections and no games on ANY rail has nothing on it."""
     return not (
         payload.get("sections")
-        or payload.get("upcoming_games")
-        or payload.get("recent_results")
+        or any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
     )
 
 
@@ -1250,25 +1268,29 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         "unreported_games_has_more": more_unreported,
         "record_n": len(recent_results),
         "tier": tiering["tier"],
-        # Ruling 025's vocabulary, never live/stale_ok/unavailable (register E10).
-        # A freshly built response with nothing AT ALL in it is EMPTY — a real
-        # state, and a different one from the degraded reads stamped on the cache
-        # and timeout paths, which is the whole point of declaring it. "Nothing"
-        # has to include the games rails, or a league mid-season with a full
-        # schedule and no futures would declare itself empty.
-        #
-        # #3211: `unreported_games` counts too. A league whose entire visible
-        # fortnight is matches nobody reported has content — that is exactly
-        # what the tennis pages were during the US Open — and calling that page
-        # EMPTY would be the same claim of absence this issue exists to remove,
-        # made one level up in the envelope.
-        "availability": (
-            AVAILABILITY_FRESH
-            if (sections or upcoming_games or recent_results or unreported_games)
-            else AVAILABILITY_EMPTY
-        ),
         "pool_counts": pool_counts,
         "section_counts": section_counts,
     }
+
+    # Ruling 025's vocabulary, never live/stale_ok/unavailable (register E10).
+    # A freshly built response with nothing AT ALL in it is EMPTY — a real
+    # state, and a different one from the degraded reads stamped on the cache
+    # and timeout paths, which is the whole point of declaring it. "Nothing"
+    # has to include the games rails, or a league mid-season with a full
+    # schedule and no futures would declare itself empty.
+    #
+    # #3211: `unreported_games` counts too. A league whose entire visible
+    # fortnight is matches nobody reported has content — that is exactly
+    # what the tennis pages were during the US Open — and calling that page
+    # EMPTY would be the same claim of absence this issue exists to remove,
+    # made one level up in the envelope.
+    #
+    # #3245: this asks the mirror-write guard's OWN predicate rather than
+    # restating its rail list. When the two were written out separately they
+    # drifted the moment #3211 landed; sharing the function is what stops it
+    # happening again.
+    response["availability"] = (
+        AVAILABILITY_EMPTY if is_empty_league(response) else AVAILABILITY_FRESH
+    )
 
     return response
