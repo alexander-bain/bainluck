@@ -29,7 +29,11 @@ from app.utils.sport_keys import (  # noqa: E402
 from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
-from app.utils.kalshi_market_status import all_terminal  # noqa: E402
+from app.utils.kalshi_market_status import (  # noqa: E402
+    all_terminal,
+    graded_columns,
+    gradeable_winner,
+)
 from app.utils.kalshi_resolution_window import (  # noqa: E402  # CAL-P989 #2660
     derive_resolution_window,
 )
@@ -1099,10 +1103,31 @@ async def _poll_kalshi_markets():
                         opening_at = now if has_real_trading else None
 
                         # Forward capture: set is_winner when Kalshi has
-                        # settlement data, so we don't rely on backfill
-                        is_winner_value = None
-                        if market.result is not None:
-                            is_winner_value = market.result == "yes"
+                        # settlement data, so we don't rely on backfill.
+                        #
+                        # CAL-P1004 (#1852 forward half). This read used to be
+                        # `if market.result is not None: is_winner = result == "yes"`,
+                        # and `result` is `""` on every ACTIVE market — so an empty
+                        # string is not None, `"" == "yes"` is False, and this line
+                        # stamped a LOSS the venue never declared onto the top
+                        # authority rung (`api_settlement`, which
+                        # `resolution_authority.is_downgrade` then protects from any
+                        # later correction). CAL-P053 shipped `gradeable_winner` for
+                        # exactly this and `backfill_winners` adopted it in August;
+                        # this call site never did, so the forward leak stayed open
+                        # while the backward repair drained behind it.
+                        #
+                        # MEASURED against the venue 2026-09-04 (public Kalshi
+                        # `/markets?tickers=…`, 120 legs our DB graded
+                        # `is_winner=false / api_settlement` on tier<=2 OPEN markets):
+                        # 111 `status=active result=""` — still trading, never graded;
+                        # 8 `status=finalized result="yes"` — the venue says they WON;
+                        # 0 real losses. Not one of the 120 was a true loss.
+                        #
+                        # Three-state on purpose: an unanswered venue yields an
+                        # EMPTY mapping, so a poll can never erase a grade a real
+                        # settlement already established.
+                        graded_cols = graded_columns(market.status, market.result)
 
                         # Upsert outcome
                         update_set: dict = {
@@ -1125,9 +1150,7 @@ async def _poll_kalshi_markets():
                                 prob,
                             ),
                         }
-                        if is_winner_value is not None:
-                            update_set["is_winner"] = is_winner_value
-                            update_set["resolution_source"] = "api_settlement"
+                        update_set.update(graded_cols)
                         # Backfill opening_probability if it was NULL (market had
                         # no trading on first capture) and now has real trading
                         if has_real_trading:
@@ -1158,6 +1181,21 @@ async def _poll_kalshi_markets():
                                 opening_american_odds=opening_american,
                                 opening_captured_at=opening_at,
                                 rank=rank,
+                                # CAL-P1004R (CERT-948, extended to this site).
+                                # `graded_cols` reached only `update_set`, so the
+                                # conflict arm was fixed and the INSERT arm was
+                                # not — and this is the file's bulk CREATOR of
+                                # outcome rows. Naming no `is_winner` means the
+                                # column's `server_default false`, so every leg
+                                # the poll saw for the FIRST time was born a
+                                # declared loss, including one already
+                                # `finalized`/`yes` at the venue. Explicit pair:
+                                # the grade when Kalshi answered, SQL NULL when
+                                # it has not.
+                                is_winner=graded_cols.get("is_winner"),
+                                resolution_source=graded_cols.get(
+                                    "resolution_source"
+                                ),
                             )
                             .on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
@@ -2579,8 +2617,15 @@ async def _backfill_candlestick_snapshots(limit: int = 5000, deadline: float | N
                             vol = float(mkt.get("volume_fp") or 0)
 
                             # Phase A: resolve is_winner
-                            if ticker and result_val is not None:
-                                is_w = result_val == "yes"
+                            #
+                            # CAL-P1004: `result_val is not None` let `""` (still
+                            # trading) and `"scalar"` (settles on a number) both
+                            # through as `is_w = False`, onto `api_settlement`.
+                            # Same defect as the two forward-capture writes, third
+                            # copy in this file. The SQL is unchanged; only the
+                            # decision that reaches it is.
+                            is_w = gradeable_winner(mkt.get("status"), result_val)
+                            if ticker and is_w is not None:
                                 wr = await session.execute(
                                     text("""
                                         UPDATE futures_outcomes
@@ -3151,18 +3196,31 @@ async def _backfill_from_settled_events(limit: int = 5000, only_series: list[str
                             stats["markets_resolved"] += resolve_result.rowcount
 
                         # --- Phase 1.5: Batch resolve is_winner from settlement ---
+                        #
+                        # CAL-P1004 — THE BULK FABRICATOR. This partition read
+                        # `if result_val is None: continue` and then sent
+                        # EVERYTHING that was not the literal "yes" to
+                        # `no_tickers`, so `""` (still trading at the venue) and
+                        # `"scalar"` (settles on a number, not a side) were batch
+                        # UPDATEd to `is_winner = false, resolution_source =
+                        # 'api_settlement'` — the top authority rung, thousands of
+                        # tickers per run, which `is_downgrade` then protects from
+                        # any later correction. The venue probe of 2026-09-04 found
+                        # 111 of 120 sampled losing legs still `status=active
+                        # result=""` and 8 more `finalized result="yes"`; zero were
+                        # real losses. `gradeable_winner` is three-state, and its
+                        # None means this ticker joins NEITHER list.
                         yes_tickers = []
                         no_tickers = []
                         for event_data in events:
                             for mkt in event_data.get("markets") or []:
                                 ticker = mkt.get("ticker", "")
-                                result_val = mkt.get("result")
-                                if not ticker or result_val is None:
+                                won = gradeable_winner(
+                                    mkt.get("status"), mkt.get("result")
+                                )
+                                if not ticker or won is None:
                                     continue
-                                if result_val == "yes":
-                                    yes_tickers.append(ticker)
-                                else:
-                                    no_tickers.append(ticker)
+                                (yes_tickers if won else no_tickers).append(ticker)
 
                         page_resolved = 0
                         if yes_tickers:
@@ -3837,28 +3895,58 @@ async def _create_settled_market(
                 outcome_name = m.ticker
         prob = m.last_price if (m.last_price and 0 < m.last_price < 1) else None
         american = probability_to_american(prob) if prob else None
-        is_winner = m.result == "yes"
-        out_stmt = (
-            pg_insert(FuturesOutcome)
-            .values(
-                market_id=market_id,
-                external_id=m.ticker,
-                name=(outcome_name or m.ticker)[:300],
-                current_probability=prob,
-                current_american_odds=american,
-                is_winner=is_winner,
-                resolution_source="api_settlement" if m.result else None,
-                volume=int(m.volume) if m.volume is not None else None,
-            )
-            .on_conflict_do_update(
+        # CAL-P1004 (#1852 forward half) — the same fabricated loss as the poll's
+        # forward capture, one rung worse: `is_winner = m.result == "yes"` was
+        # UNCONDITIONAL, so `result=""` (active) and `result="scalar"`
+        # (ungradeable) both landed as a declared LOSS. `""` landed it with a NULL
+        # `resolution_source` and `"scalar"` landed it with `api_settlement`, which
+        # is why the population splits the way production measures it
+        # (47,795 `api_settlement` + 15,834 NULL-source losing legs on OPEN markets,
+        # 2026-09-04). `gradeable_winner` is three-state: None means the venue has
+        # not answered, and neither column is written at all.
+        graded_cols = graded_columns(m.status, m.result)
+        # CAL-P1004R (CERT-948). The INSERT arm must name the pair EXPLICITLY,
+        # because `**graded_cols` contributes nothing when the venue is silent
+        # and `futures_outcomes.is_winner` carries both `default=False` and
+        # `server_default=text("false")` (models.py). An omitted column is not
+        # an absent grade — it is the column default, so the row being born was
+        # still recorded as a declared LOSS while `on_conflict_do_nothing`
+        # correctly protected every row that already existed. Ungraded now
+        # stores SQL NULL on both columns: "the venue has not answered" is a
+        # value we write, not a value we decline to write.
+        base_stmt = pg_insert(FuturesOutcome).values(
+            market_id=market_id,
+            external_id=m.ticker,
+            name=(outcome_name or m.ticker)[:300],
+            current_probability=prob,
+            current_american_odds=american,
+            volume=int(m.volume) if m.volume is not None else None,
+            is_winner=graded_cols.get("is_winner"),
+            resolution_source=graded_cols.get("resolution_source"),
+        )
+        # The conflict path is a RESOLUTION write or it is nothing. Splatting an
+        # empty `graded_cols` into `set_` would have left `last_updated =
+        # func.now()` standing alone — a bare touch-stamp on a row where nothing
+        # changed, which is #2024's exact surface, and
+        # `tests/test_futures_stamp_semantics.py` caught it in CI: its census of
+        # poll touch-stamps went 5 -> 6 because this block stopped naming
+        # `resolution_source`. The census was right, so the semantics are fixed
+        # rather than the count bumped. An ungraded re-run now touches the row
+        # not at all, so it cannot refresh the staleness gate `routes/playoffs.py`
+        # drops outcomes on either.
+        if graded_cols:
+            out_stmt = base_stmt.on_conflict_do_update(
                 index_elements=["market_id", "external_id"],
                 set_={
-                    "is_winner": is_winner,
-                    "resolution_source": "api_settlement" if m.result else None,
+                    "is_winner": graded_cols["is_winner"],
+                    "resolution_source": graded_cols["resolution_source"],
                     "last_updated": func.now(),
                 },
             )
-        )
+        else:
+            out_stmt = base_stmt.on_conflict_do_nothing(
+                index_elements=["market_id", "external_id"]
+            )
         await session.execute(out_stmt)
         stats["outcomes_created"] += 1
 

@@ -223,6 +223,85 @@ def test_write_side_is_exactly_the_known_poll_stampers() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The classifier's own negative controls — CAL-P1004 / CERT-944 FOLLOW-UP
+# ---------------------------------------------------------------------------
+#
+# CAL-P1004 moved `_create_settled_market`'s conflict path to
+# `set_={"last_updated": func.now(), **graded_cols}`, and this census went 5 -> 6
+# because `resolution_source` was no longer spelled inside the block. The grader
+# read that as the classifier misfiring on a resolution-only stamp and asked for a
+# genuine-price-stamp negative control instead of a bumped count.
+#
+# THE COUNT WAS NOT BUMPED, AND THE CLASSIFIER WAS NOT LOOSENED — because on that
+# diff it was not misfiring. With an empty `graded_cols` (the venue silent, which
+# is the entire point of CAL-P1004) that `set_` reduced to a BARE
+# `last_updated = func.now()` on a row where nothing else changed. That is a real
+# poll touch-stamp and #2024's exact surface, so the census was reporting a true
+# semantic change, not a textual artefact. The production fix restores the
+# resolution-only property in fact: the conflict path is now
+# `on_conflict_do_update` when the venue answered and `on_conflict_do_nothing`
+# when it did not.
+#
+# What the FOLLOW-UP is owed regardless is proof that the classifier can still
+# tell the two apart, in BOTH directions, on synthetic blocks rather than on
+# whatever the tree happens to contain today. That is these four.
+
+
+def test_classifier_counts_a_genuine_price_stamp() -> None:
+    """POSITIVE control: a price write that stamps IS #2024's surface."""
+    src = (
+        "stmt.on_conflict_do_update(\n"
+        "    set_={\n"
+        '        "current_probability": prob,\n'
+        '        "last_updated": func.now(),\n'
+        "    },\n"
+        ")\n"
+    )
+    assert len(_poll_stamp_sites(src)) == 1
+
+
+def test_classifier_ignores_a_resolution_only_stamp() -> None:
+    """NEGATIVE control: a grade write that stamps is honest, not a touch-stamp."""
+    src = (
+        "stmt.on_conflict_do_update(\n"
+        "    set_={\n"
+        '        "is_winner": won,\n'
+        '        "resolution_source": "api_settlement",\n'
+        '        "last_updated": func.now(),\n'
+        "    },\n"
+        ")\n"
+    )
+    assert _poll_stamp_sites(src) == []
+
+
+def test_classifier_counts_a_bare_stamp_with_no_company_at_all() -> None:
+    """The case CAL-P1004 briefly created. A lone stamp is a touch-stamp.
+
+    This is the control that decides the disagreement above, so it is spelled out
+    rather than folded into the positive case: a block naming NEITHER a price nor
+    `resolution_source` must still be counted. A classifier that excused it would
+    have sat green through exactly the regression CI caught.
+    """
+    src = 'stmt.on_conflict_do_update(\n    set_={"last_updated": func.now()},\n)\n'
+    assert len(_poll_stamp_sites(src)) == 1
+
+
+def test_classifier_counts_a_grade_write_that_also_moves_a_price() -> None:
+    """A block doing both is a price write; `resolution_source` does not excuse it."""
+    src = (
+        "stmt.on_conflict_do_update(\n"
+        "    set_={\n"
+        '        "is_winner": won,\n'
+        '        "resolution_source": "api_settlement",\n'
+        '        "current_probability": prob,\n'
+        '        "last_updated": func.now(),\n'
+        "    },\n"
+        ")\n"
+    )
+    assert len(_poll_stamp_sites(src)) == 1
+
+
+# ---------------------------------------------------------------------------
 # READ side — the reason option 1 is refused
 # ---------------------------------------------------------------------------
 

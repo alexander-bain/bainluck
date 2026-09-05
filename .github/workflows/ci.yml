@@ -699,6 +699,42 @@ jobs:
             exit 1
           fi
 
+      - name: "#1852 gap-create grade round trip (real Postgres)"
+        # CAL-P1004R, the repair CERT-948 named. `graded_columns()` returns an
+        # EMPTY mapping when the venue has not answered — right on an UPDATE,
+        # wrong on an INSERT, because `futures_outcomes.is_winner` carries both
+        # `default=False` and `server_default=text("false")`. `**{}` contributes
+        # no column, the default fires, and a leg Kalshi is still TRADING is
+        # born as a declared loss. `ON CONFLICT DO NOTHING` protects rows that
+        # already exist and does nothing for that one.
+        #
+        # Why the service container and nothing cheaper: an omitted column and
+        # an explicit `None` are indistinguishable in the compiled statement,
+        # and the divergence is produced by the defaulting machinery at execute
+        # time. A mock session records what the caller passed and therefore
+        # agrees with the caller by construction. Only the server that owns the
+        # column default can be asked what was STORED.
+        #
+        # This column has already caused one total silent failure by this exact
+        # mechanism — #2199's price writer, 0 of 10,804 rows matched, 19,906
+        # tests green — whose gate is the "Futures price writer contract" step
+        # above. This is that lesson on the write side.
+        #
+        # Two-armed: `test_the_unrepaired_insert_stores_a_false_the_venue_never
+        # _declared` executes the ORIGINAL `**graded_cols` splat and requires it
+        # to store `False`, so a green run means the repair was proved necessary
+        # rather than that nothing objected. Runs last in this job because its
+        # fixture drops and recreates the schema. Same skip-detection as every
+        # gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_gap_create_grade_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/gapgrade1852.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/gapgrade1852.txt; then
+            echo "::error::#1852 gap-create grade round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
