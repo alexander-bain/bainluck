@@ -726,6 +726,17 @@ jobs:
         # rather than that nothing objected. Runs last in this job because its
         # fixture drops and recreates the schema. Same skip-detection as every
         # gate here.
+        #
+        # CAL-P1004R-BULK-INSERT-ROUND-TRIP (the follow-up CERT-950 named) added
+        # a second half to the same file, so the step now guards BOTH of Kalshi's
+        # outcome-INSERT sites: `_create_settled_market` (gap-create) and the
+        # bulk `_poll_kalshi_markets` upsert, which is the higher-volume creator
+        # and had only statement-shape coverage. The poll arms drive the REAL
+        # task — its network, session and Redis boundaries are the only seams —
+        # and carry their own unrepaired-shape control, this one keeping
+        # `on_conflict_do_update` so it shows that CAL-P1004's fixed UPDATE arm
+        # does nothing for a row that does not exist yet. The step keeps its
+        # gap-create name because the ledger and #1852 cite it by that name.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_gap_create_grade_real_postgres.py \
