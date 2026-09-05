@@ -49,7 +49,9 @@ __all__ = [
     "invalidation_discharged",
     "main_checkpoint_is_invalidation",
     "new_obligation",
+    "obligation_contains",
     "obligation_is_open",
+    "obligation_leg_ids",
     "obligation_market_ids",
     "obligation_plan_hash",
     "obligation_retry_instruction",
@@ -213,6 +215,55 @@ def obligation_plan_hash(obligation: Any) -> Optional[str]:
         return None
     value = obligation.get("plan_hash")
     return value if isinstance(value, str) else None
+
+
+def obligation_contains(
+    raw: Any,
+    *,
+    plan_hash: str,
+    owner: str,
+    market_ids: Iterable[int],
+    leg_ids: Iterable[int],
+) -> tuple[bool, str]:
+    """Is THIS call's debt the OPEN record now in the slot? ``(ok, why)``.
+
+    CAL-P1009-R (CERT-1872). A debt is staged as the price of committing rows,
+    so the question it has to answer is the same one the applied receipt asks
+    one slot over: after the write, is *my* record there?
+
+    The staging call's STATUS cannot answer it. The durable layer answers
+    ``superseded`` when a newer generation already sits at the identity, and in
+    that case it writes NOTHING — for a plan artifact that still means "a good
+    copy exists", which is why ``_save_plan`` accepts it, but for a debt it
+    means somebody else's record is in the one slot and mine never landed
+    (CERT-1863, the same specimen). So the gate is containment, read back from
+    the store, and the status is only ever a note.
+
+    Four things are checked and each is load-bearing. The record must be OPEN —
+    a discharged record is not a debt anyone will retry. It must carry this
+    plan_hash and this OWNER, because the ledger is one slot shared by two
+    writers that move the same rows in opposite directions and the retry
+    instruction a reader acts on comes from those fields. And it must cover
+    every id this call owes: containment, not equality, because the union may
+    legitimately carry an earlier call's ids forward as well.
+    """
+    if not isinstance(raw, dict):
+        return False, "OBLIGATION_PAYLOAD_IS_NOT_A_RECORD"
+    if raw.get("schema") != INVALIDATION_OBLIGATION_SCHEMA:
+        return False, f"OBLIGATION_SCHEMA_IS_{raw.get('schema')!r}"
+    if not obligation_is_open(raw):
+        return False, "OBLIGATION_IN_THE_SLOT_IS_ALREADY_DISCHARGED"
+    if obligation_plan_hash(raw) != plan_hash:
+        return False, f"OBLIGATION_PLAN_HASH_IS_{obligation_plan_hash(raw)!r}"
+    if raw.get("owner") != owner:
+        return False, f"OBLIGATION_OWNER_IS_{raw.get('owner')!r}"
+    missing = sorted({int(m) for m in market_ids} - set(obligation_market_ids(raw)))
+    if missing:
+        return False, f"OBLIGATION_MISSING_MARKET_IDS:{missing[:10]}"
+    missing = sorted({int(x) for x in leg_ids} - set(obligation_leg_ids(raw)))
+    if missing:
+        return False, f"OBLIGATION_MISSING_LEG_IDS:{missing[:10]}"
+    return True, "ok"
 
 
 def obligation_retry_instruction(obligation: Any) -> str:

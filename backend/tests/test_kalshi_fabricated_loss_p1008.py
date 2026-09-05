@@ -40,6 +40,9 @@ from app.tasks.calibration_main_build import CHECKPOINT_IDENTITY
 from app.utils.calibration_invalidation import (
     REAPPLY_DISCHARGES,
     RESTORE_DISCHARGES,
+    discharge_obligation,
+    new_obligation,
+    obligation_contains,
     obligation_market_ids,
     obligation_retry_instruction,
 )
@@ -1457,20 +1460,275 @@ class TestTheRestoreJoinsTheObligationLedger:
         assert second["calibration_invalidation"]["status"] == "invalidated"
         assert second["invalidation_obligation"]["discharged"] is True
 
+
+# =============================================================================
+# CAL-P1009-R / CERT-1872 — the debt COMMITS WITH THE ROWS, or neither does
+#
+# The first presentation banked the restore's OPEN debt after the commit that
+# reversed the rows. Between those two steps there is an interval, and CERT-1872
+# reproduced what is in the store if the process is lost inside it: the reversed
+# outcome is permanent, the published calibration curve is stale, and NOTHING
+# durable names what would pay it. The retry then reverses zero rows, owes no
+# market ids, and reads a slot still holding the previous, discharged record —
+# the retry handle the whole ledger exists to provide is simply absent.
+#
+# So the debt is staged in the SAME transaction as the reversals, gated on
+# containment read back from the store, and the caller commits once. That is
+# CERT-1858's answer for the undo receipt, one slot over, for the same reason:
+# reporting an unrecoverable state honestly is not a substitute for not creating
+# it. It applies to BOTH writers of the one slot — the apply had the identical
+# window, and closing only the undo's half would leave the class open.
+# =============================================================================
+
+
+class _ProcessLost(RuntimeError):
+    """The dyno is gone. Nothing after the commit runs — not the obligation
+    publish, not the invalidation, not the response."""
+
+
+class _CrashOnCommitSession(_UndoSession):
+    """Commits, and then the process is lost. The window CERT-1872 named.
+
+    The commit is REAL — rows and anything staged in the transaction land — and
+    execution stops the instant afterwards. Nothing that the old code did after
+    the commit can be reached, which is precisely what makes it able to tell the
+    two orderings apart.
+    """
+
+    async def commit(self):
+        await super().commit()
+        raise _ProcessLost("process lost immediately after commit")
+
+
+class TestTheDebtCommitsWithTheRowsOrNeitherDoes:
     @pytest.mark.asyncio
-    async def test_an_unbankable_debt_cannot_report_success(self, monkeypatch):
-        """If the ledger write fails, the restore has no retry handle either."""
+    async def test_a_process_loss_the_instant_after_the_commit_leaves_the_debt(
+        self, monkeypatch
+    ):
+        """THE CATCHING TEST. Reversed row and OPEN debt, or neither.
+
+        The only route to the slot in the first half is the reversal's own
+        transaction: standalone publishes are made no-ops, so a debt found in
+        the store afterwards can only have arrived with the rows. Pre-fix the
+        slot still holds the apply's DISCHARGED record and market 100's reversal
+        is owed by nothing.
+        """
         store = _txn_store(monkeypatch)
         plan = _plan((1, 100, "restore_winner"))
         session = _UndoSession([_row(1)])
         await _apply(monkeypatch, plan, session)
+        assert store.payload(rail.OBLIGATION_IDENTITY)["state"] == "discharged"
 
-        store.forced_status[rail.OBLIGATION_IDENTITY] = "error"
+        # Nothing may reach the slot except through the transaction that
+        # reverses the row: a standalone publish now answers `ok` and writes
+        # nothing (C-CERT-1852-R2 specimen one, used here as a fence).
+        store.no_op.add(rail.OBLIGATION_IDENTITY)
+
+        crashed = _CrashOnCommitSession(list(session.rows.values()))
+        with pytest.raises(_ProcessLost):
+            await rail.restore(crashed, apply=True, plan_hash=plan.plan_hash)
+
+        # The reversal is permanent...
+        assert crashed.rows[1]["is_winner"] is False, "the row did not reverse"
+        # ...and the debt it created is IN the store, open, and says a RESTORE
+        # pays it.
+        banked = store.payload(rail.OBLIGATION_IDENTITY)
+        assert banked["state"] == "open", "the reversal committed with no debt"
+        assert obligation_market_ids(banked) == [100]
+        assert banked["owner"] == rail.OBLIGATION_OWNER_RESTORE
+        assert obligation_retry_instruction(banked) == RESTORE_DISCHARGES
+
+        # RECOVERY. Nothing is left to reverse, so the market ids can come from
+        # one place only — the record that survived the loss.
+        store.no_op.discard(rail.OBLIGATION_IDENTITY)
+        retry = await rail.restore(
+            _UndoSession(list(crashed.rows.values())),
+            apply=True,
+            plan_hash=plan.plan_hash,
+        )
+
+        assert retry["legs_reversed"] == 0
+        assert retry["invalidation_obligation"]["market_ids"] == [100]
+        assert retry["calibration_invalidation"]["status"] == "invalidated"
+        assert retry["invalidation_obligation"]["discharged"] is True
+        assert store.payload(rail.OBLIGATION_IDENTITY)["state"] == "discharged"
+        assert retry["success"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["error", "superseded"])
+    async def test_a_debt_that_cannot_be_staged_reverses_nothing(
+        self, monkeypatch, status
+    ):
+        """The other half of "or neither".
+
+        ``superseded`` is the one that matters most: the durable layer answers
+        it when a newer generation already sits at the identity, and it writes
+        NOTHING (CERT-1863). A rail that read the status as success would commit
+        reversals against somebody else's record.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+        await _apply(monkeypatch, plan, session)
+        before = copy.deepcopy(session.rows)
+        discharged_by_the_apply = copy.deepcopy(store.payload(rail.OBLIGATION_IDENTITY))
+
+        store.forced_status[rail.OBLIGATION_IDENTITY] = status
         out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
 
-        assert out["legs_reversed"] == 1
-        assert out["invalidation_obligation"]["persisted_before_invalidating"] is False
+        assert out["refused"] == ["INVALIDATION_DEBT_NOT_STAGED"]
+        assert out["legs_reversed"] == 0 and out["rolled_back"] is True
         assert out["success"] is False
+        assert session.rows == before, "rows reversed with no durable debt"
+        assert store.payload(rail.OBLIGATION_IDENTITY) == discharged_by_the_apply
+
+    @pytest.mark.asyncio
+    async def test_a_staging_failure_is_not_paid_by_the_applys_own_open_record(
+        self, monkeypatch
+    ):
+        """Containment is about MY record, not about *a* record.
+
+        The slot may already hold an OPEN debt for this very plan_hash — the
+        apply's, if its invalidation never discharged — naming the very same
+        market. Reading that as this restore's staged debt would commit the
+        reversals under a record whose instruction is to RE-APPLY the plan,
+        which pays the curve by redoing the repair the reversals just undid.
+        """
+        store = _txn_store(monkeypatch)
+        store.unreadable[CHECKPOINT_IDENTITY] = "unavailable"  # the apply cannot pay
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        applied = await _apply(monkeypatch, plan, session)
+        assert applied["invalidation_obligation"]["discharged"] is False
+
+        owed_by_the_apply = copy.deepcopy(store.payload(rail.OBLIGATION_IDENTITY))
+        assert owed_by_the_apply["owner"] == rail.OBLIGATION_OWNER_APPLY
+        assert obligation_market_ids(owed_by_the_apply) == [100]
+        before = copy.deepcopy(session.rows)
+
+        store.unreadable.pop(CHECKPOINT_IDENTITY)  # the store recovers
+        store.forced_status[rail.OBLIGATION_IDENTITY] = "error"  # ...but the slot won't take mine
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["refused"] == ["INVALIDATION_DEBT_NOT_STAGED"]
+        assert "OBLIGATION_OWNER_IS" in out["obligation_note"]
+        assert session.rows == before, "reversed under somebody else's instruction"
+        assert store.payload(rail.OBLIGATION_IDENTITY) == owed_by_the_apply
+
+    @pytest.mark.asyncio
+    async def test_the_apply_stages_its_debt_with_its_rows_too(self, monkeypatch):
+        """The same window, on the other writer of the one slot.
+
+        The ledger exists because the APPLY commits before it invalidates, so
+        closing the restore's half and leaving this one open would fix the
+        instance and not the class.
+        """
+        store = _txn_store(monkeypatch)
+        store.no_op.add(rail.OBLIGATION_IDENTITY)  # only the transaction may write it
+        plan = _plan((1, 100, "restore_winner"))
+
+        async def _load():
+            return plan, "ok"
+
+        monkeypatch.setattr(rail, "_load_plan", _load)
+        crashed = _CrashOnCommitSession([_row(1)])
+        with pytest.raises(_ProcessLost):
+            await rail.repair(crashed, apply=True, plan_hash=plan.plan_hash)
+
+        assert crashed.rows[1]["is_winner"] is True, "the row did not apply"
+        banked = store.payload(rail.OBLIGATION_IDENTITY)
+        assert banked["state"] == "open", "the apply committed with no debt"
+        assert obligation_market_ids(banked) == [100]
+        assert banked["owner"] == rail.OBLIGATION_OWNER_APPLY
+        assert obligation_retry_instruction(banked) == REAPPLY_DISCHARGES
+
+    @pytest.mark.asyncio
+    async def test_an_unstageable_debt_writes_no_rows_in_the_apply_either(
+        self, monkeypatch
+    ):
+        store = _txn_store(monkeypatch)
+        store.forced_status[rail.OBLIGATION_IDENTITY] = "error"
+        plan = _plan((1, 100, "restore_winner"))
+
+        async def _load():
+            return plan, "ok"
+
+        monkeypatch.setattr(rail, "_load_plan", _load)
+        session = _UndoSession([_row(1)])
+        out = await rail.repair(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["refused"] == ["INVALIDATION_DEBT_NOT_STAGED"]
+        assert out["legs_written"] == 0 and out["success"] is False
+        assert session.rows[1]["is_winner"] is False, "a row written with no debt"
+        assert store.payload(rail.OBLIGATION_IDENTITY) is None
+
+
+class TestTheDebtContainmentIsPure:
+    """One clause of the staging gate per test, driven by a table.
+
+    The rail-level tests above exercise the gate through a store, which can only
+    reach the combinations a store can produce; each clause is separately
+    load-bearing and each therefore gets a case that only it refuses.
+    """
+
+    def _record(self, **over):
+        base = new_obligation(
+            plan_hash="h",
+            market_ids=[100],
+            leg_ids=[1],
+            owner=rail.OBLIGATION_OWNER_RESTORE,
+            retry_instruction=RESTORE_DISCHARGES,
+        )
+        base.update(over)
+        return base
+
+    def _contains(self, raw, **over):
+        args = {
+            "plan_hash": "h",
+            "owner": rail.OBLIGATION_OWNER_RESTORE,
+            "market_ids": [100],
+            "leg_ids": [1],
+        }
+        args.update(over)
+        return obligation_contains(raw, **args)
+
+    def test_my_own_record_read_back_is_contained(self):
+        assert self._contains(self._record()) == (True, "ok")
+
+    def test_a_union_carrying_an_earlier_calls_ids_is_still_contained(self):
+        """Containment, not equality: the union may legitimately be wider."""
+        wider = self._record(market_ids=[100, 200], leg_ids=[1, 4])
+        assert self._contains(wider)[0] is True
+
+    def test_a_discharged_record_is_not_a_debt(self):
+        ok, why = self._contains(discharge_obligation(self._record()))
+        assert (ok, why) == (False, "OBLIGATION_IN_THE_SLOT_IS_ALREADY_DISCHARGED")
+
+    def test_the_applys_record_for_the_same_plan_is_not_mine(self):
+        """Same plan_hash, same market, OPEN — and the wrong instruction."""
+        theirs = self._record(owner=rail.OBLIGATION_OWNER_APPLY)
+        ok, why = self._contains(theirs)
+        assert ok is False and why.startswith("OBLIGATION_OWNER_IS")
+
+    def test_another_plans_record_is_not_mine(self):
+        ok, why = self._contains(self._record(plan_hash="other"))
+        assert ok is False and why.startswith("OBLIGATION_PLAN_HASH_IS")
+
+    def test_a_record_missing_one_owed_market_is_refused(self):
+        ok, why = self._contains(self._record(), market_ids=[100, 200])
+        assert (ok, why) == (False, "OBLIGATION_MISSING_MARKET_IDS:[200]")
+
+    def test_a_record_missing_one_owed_leg_is_refused(self):
+        ok, why = self._contains(self._record(), leg_ids=[1, 4])
+        assert (ok, why) == (False, "OBLIGATION_MISSING_LEG_IDS:[4]")
+
+    def test_a_foreign_schema_is_refused_rather_than_guessed_at(self):
+        ok, why = self._contains(self._record(schema="something-else/v9"))
+        assert ok is False and why.startswith("OBLIGATION_SCHEMA_IS")
+
+    def test_a_non_record_is_refused(self):
+        assert self._contains(None)[0] is False
+        assert self._contains("open")[0] is False
 
 
 class TestTheRetryInstructionIsCarriedNotAssumed:
