@@ -2034,6 +2034,9 @@ class KalshiAPIService(BaseAPIClient):
             empty_events and _past_deadline()
         )
         _tel["market_backfill_filled"] = 0
+        # None means "worked the whole list". Anything else is the count it had
+        # ATTEMPTED when the deadline cut it off — the number that was missing.
+        _tel["market_backfill_truncated_after"] = None
         if empty_events and _past_deadline():
             logger.warning(
                 "Kalshi fetch: the empty-event market backfill was SKIPPED "
@@ -2054,9 +2057,20 @@ class KalshiAPIService(BaseAPIClient):
             for _bi, event in enumerate(empty_events):
                 _progress(f"fetch:markets_backfill:{_bi}")
                 if _past_deadline():
+                    # #2214 follow-up: record the cut, do not just log it. This
+                    # break is how the backfill ends on every beat in the ring,
+                    # and it wrote nothing to telemetry — so the report's only
+                    # deadline field (`skipped_past_deadline`, which covers the
+                    # step never starting) said False and the beat read as if
+                    # the reserved floor were holding with room to spare.
+                    _tel["market_backfill_truncated_after"] = _bi
                     logger.warning(
                         "Kalshi fetch deadline hit during empty-event backfill "
-                        "(%d/%d done)", backfilled, len(empty_events),
+                        "— attempted %d of %d candidates, filled %d. The "
+                        "remaining %d events keep zero markets and are dropped "
+                        "by `if not event.markets: continue` this beat.",
+                        _bi, len(empty_events), backfilled,
+                        len(empty_events) - _bi,
                     )
                     break
                 try:

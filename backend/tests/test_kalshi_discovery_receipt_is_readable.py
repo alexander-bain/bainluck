@@ -379,6 +379,238 @@ class TestTheChainReachesTheArtifact:
         }
         assert "discovery_dead_series" in called
 
+    def test_the_poll_task_is_the_thing_that_calls_the_alarm(self):
+        """Narrower than the test above, and the one that matters.
+
+        Once the alarm moved to module level so it could be executed, "the file
+        calls `discovery_dead_series` somewhere" stopped proving the beat asks
+        it — the helper could sit there uncalled and that assertion stays green.
+        So this walks INTO `_poll_kalshi_markets` and asks for the call by name.
+        """
+        src = (Path(__file__).resolve().parents[1]
+               / "app" / "tasks" / "kalshi.py").read_text()
+        tree = ast.parse(src)
+
+        task = next(
+            (n for n in ast.walk(tree)
+             if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+             and n.name == "_poll_kalshi_markets"),
+            None,
+        )
+        assert task is not None, "_poll_kalshi_markets was renamed"
+
+        called = {
+            node.func.id for node in ast.walk(task)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_alarm_on_series_discovery" in called, (
+            "the beat no longer asks the per-draw alarm — a dead "
+            "KXATPDOUBLES would go unremarked again (#2927 / CERT-953)"
+        )
+
+
+class TestTheAlarmBranchIsExecuted:
+    """`L1B-039-TASK-LOGGER-EXECUTION-GUARD`, carried three directives.
+
+    Everything above proves the PREDICATE (`discovery_dead_series` returns the
+    right tickers) and the CALL SITE (`ast` says the beat asks it). Neither runs
+    the logging branch. That gap had teeth: the branch sits inside the scan
+    report's `except Exception` — so a raise in the alarm itself (a
+    `series_results` that is not a dict, a `_dead` that is not a list) is
+    swallowed into a one-line `poll_kalshi: scan report failed` warning, and a
+    per-draw coverage outage reads as an instrument hiccup. These execute it.
+    """
+
+    @staticmethod
+    def _errors(caplog):
+        return [r for r in caplog.records if r.levelname == "ERROR"]
+
+    def test_a_dead_series_actually_emits_an_error_naming_it(self, caplog):
+        stats: dict = {}
+        receipt = _results(
+            KXATPDOUBLES={"expected": 32, "returned": 0, "unique_added": 0},
+            KXWTADOUBLES={"expected": 22, "returned": 22, "unique_added": 22},
+        )
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert dead == ["KXATPDOUBLES"]
+        errors = self._errors(caplog)
+        assert len(errors) == 1, "the outage must page exactly once"
+        message = errors[0].getMessage()
+        assert "KXATPDOUBLES" in message
+        assert "KXWTADOUBLES" not in message, (
+            "the healthy sibling must not be named as an outage"
+        )
+
+    def test_the_stats_the_beat_returns_carry_the_verdict(self, caplog):
+        """`stats` is what the task returns and what the funnel reads; the
+        alarm is also the only thing that writes these three keys."""
+        stats: dict = {}
+        receipt = _results(
+            KXATPDOUBLES={"expected": 32, "returned": 0, "unique_added": 0},
+        )
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert stats["discovery_source"] == "live"
+        assert stats["discovery_events_added"] == 207
+        assert stats["discovery_dead_series"] == ["KXATPDOUBLES"]
+
+    def test_a_healthy_beat_emits_no_error_at_all(self, caplog):
+        stats: dict = {}
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(
+                _live_shaped_receipt(), stats
+            )
+
+        assert dead == []
+        assert self._errors(caplog) == [], (
+            "a healthy beat that pages is an alarm nobody will keep reading"
+        )
+
+    @pytest.mark.parametrize("source", ["failed", "unsummarizable"])
+    def test_an_unresolved_stage_pages_on_its_own_account(self, caplog, source):
+        """No series is dead because no series was reached — silence here is
+        the #2927 defect wearing a different hat."""
+        stats: dict = {}
+        receipt = {"source": source, "error": "boom"}
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert dead == []
+        errors = self._errors(caplog)
+        assert len(errors) == 1
+        assert "did not resolve" in errors[0].getMessage()
+        assert source in errors[0].getMessage()
+
+    def test_the_error_renders_without_raising_on_a_format_argument(
+        self, caplog
+    ):
+        """`logger.error(fmt, *args)` defers formatting, so a bad argument does
+        not raise at the call — it raises inside `getMessage()` when a handler
+        renders it, i.e. in production and not here. Render it on purpose."""
+        stats: dict = {}
+        receipt = _results(
+            KXATPDOUBLES={"expected": 32, "returned": 0, "unique_added": 0},
+        )
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        rendered = [r.getMessage() for r in self._errors(caplog)]
+        assert rendered and all(isinstance(m, str) for m in rendered)
+
+    @pytest.mark.parametrize("receipt", [
+        None, [], "", 0, {"series_results": "not-a-dict"},
+        {"series_results": None},
+    ])
+    def test_a_malformed_receipt_never_takes_the_alarm_down(
+        self, caplog, receipt
+    ):
+        """The swallow: this branch runs inside the scan report's blanket
+        `except Exception`, so anything raised here is downgraded to
+        `scan report failed` and the outage is lost. Nothing in this list is
+        supposed to reach production — the point is that if one does, the
+        alarm degrades to silence rather than to a lie about the instrument."""
+        stats: dict = {}
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert isinstance(dead, list)
+        for record in self._errors(caplog):
+            record.getMessage()  # must render, not raise
+
+    def test_a_mapping_that_is_not_a_dict_still_prints_its_detail(self, caplog):
+        """`discovery_dead_series` reads `series_results` as a `Mapping`, not a
+        `dict`. A first cut of this alarm narrowed it to `dict` "defensively";
+        a mutation showed the branch was unreachable for the case it claimed to
+        guard, and reachable only for this one — where it would have thrown the
+        detail away on a real outage. So: whatever the predicate could read, the
+        log line can print."""
+        from types import MappingProxyType
+
+        stats: dict = {}
+        receipt = _live_shaped_receipt(series_results=MappingProxyType({
+            "KXATPDOUBLES": {"expected": 32, "returned": 0, "unique_added": 0},
+        }))
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert dead == ["KXATPDOUBLES"]
+        message = self._errors(caplog)[0].getMessage()
+        assert "'expected': 32" in message, (
+            "the outage is named but its numbers were dropped"
+        )
+
+    def test_the_detail_map_is_capped_in_the_emitted_line(self, caplog):
+        """48 of these go in the ring; an outage across 40 series must not
+        write a 40-entry dict into every log line."""
+        stats: dict = {}
+        receipt = _results(**{
+            f"KXDEAD{i}": {"expected": 3, "returned": 0, "unique_added": 0}
+            for i in range(40)
+        })
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(receipt, stats)
+
+        assert len(dead) == 40, "every dead series is still counted"
+        message = self._errors(caplog)[0].getMessage()
+        assert message.startswith("poll_kalshi series discovery: 40 ")
+        assert message.count("'expected'") == 10, (
+            "the DETAIL map is the capped part, at ten entries"
+        )
+
+    def test_the_alarm_runs_on_a_receipt_the_real_fetch_produced(self, caplog):
+        """Hand-built receipts are how the aggregate bug survived. Drive the
+        real fetch, persist through the real projection and JSON, then execute
+        the real branch on that."""
+        disc = _sd()
+        svc = disc._FetchService(
+            census={"KXATPDOUBLES": 32, "KXWTADOUBLES": 22},
+            per_series={
+                "KXATPDOUBLES": [],
+                "KXWTADOUBLES": [
+                    f"KXWTADOUBLES-26SEP05X{i}" for i in range(22)
+                ],
+            },
+        )
+        real_sleep = asyncio.sleep
+        tel: dict = {}
+
+        async def _instant(delay, *a, **kw):
+            return await real_sleep(0, *a, **kw)
+
+        original = asyncio.sleep
+        asyncio.sleep = _instant
+        try:
+            asyncio.run(svc._fetch_all_events_unfiltered(
+                deadline=None, telemetry=tel, save_discovery=lambda _p: None,
+            ))
+        finally:
+            asyncio.sleep = original
+
+        persisted = json.loads(json.dumps(KalshiScanReport(
+            series_discovery=summarize_discovery_receipt(
+                tel.get("series_discovery")
+            )
+        ).to_dict()))["series_discovery"]
+
+        stats: dict = {}
+        with caplog.at_level("INFO", logger="app.tasks.kalshi"):
+            dead = _kalshi()._alarm_on_series_discovery(persisted, stats)
+
+        assert persisted["events_added"] > 0, (
+            "precondition: the aggregate must look healthy"
+        )
+        assert "KXATPDOUBLES" in dead
+        assert "KXATPDOUBLES" in self._errors(caplog)[0].getMessage()
+
+
+def _kalshi():
+    """The task module, imported lazily — it pulls the Celery app in."""
+    import app.tasks.kalshi as mod
+    return mod
+
 
 class TestTheRealFetchPathAlarmsCorrectly:
     """CERT-953's required catching test: the ACTUAL fetch, not a fixture.
