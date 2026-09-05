@@ -257,9 +257,36 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     // MARK: - Public API
 
+    /// Launch-argument key that skips the first-run permission prompt (#3141).
+    ///
+    /// A headless screenshot rig cannot dismiss a system alert — there are no
+    /// Apple events in the sandbox — so `UNUserNotificationCenter`'s dialog sits
+    /// over the app for the rest of the session and every unattended shot of
+    /// Discover photographs the dialog instead of the feed. Neither
+    /// `simctl privacy … deny notifications` nor erasing the device helps: the
+    /// request is re-issued unconditionally on every launch, so there is nothing
+    /// for a reinstall to clear.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -suppress_notification_prompt YES`.
+    static let suppressPromptKey = "suppress_notification_prompt"
+
+    /// Whether the first-run permission prompt should be asked at all.
+    ///
+    /// Pure and injectable so the rig's contract is a test, not a convention.
+    /// It can only ever SKIP the ask, which is what keeps it a test affordance
+    /// rather than a product setting: not asking grants nothing, so the
+    /// suppressed state is identical to a reader who ignored the prompt.
+    static func shouldRequestPermission(defaults: UserDefaults = .standard) -> Bool {
+        !defaults.bool(forKey: suppressPromptKey)
+    }
+
     /// Request notification permission after a short delay so the prompt
     /// doesn't fire immediately on first launch — better UX.
     func requestPermissionAfterDelay(seconds: TimeInterval = 5) {
+        guard Self.shouldRequestPermission() else {
+            logger.info("Notification permission prompt suppressed by launch argument")
+            return
+        }
         Task {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             await requestPermission()

@@ -6,6 +6,12 @@
 # interaction profile the defect needs and shoots the app's own counter.
 #
 # Usage: tools/native-g1-shoot.sh <label>
+#
+# ONE-TIME, on a simulator that was prompted before #3141 landed: the alert
+# already on screen is owned by SpringBoard, and neither `install` nor
+# `terminate` clears it — so the first shot after this fix still photographs a
+# dialog the app is no longer raising. Erase once and it never returns:
+#   xcrun simctl shutdown $SIM; xcrun simctl erase $SIM; xcrun simctl boot $SIM
 set -u
 SIM=76D961F0-8575-479F-ABCE-652D8A79DBF9    # iPhone 17 — PIN IT, `booted` picks the iPad
 BUNDLE=com.bainluck.Bain-Luck
@@ -40,9 +46,18 @@ with open(path,"wb") as f: plistlib.dump(d, f)
 print("  seeded %d cooled categories" % len(cooled))
 PY
 
+# -suppress_notification_prompt and -bainluck_telemetry_consent are honoured ON
+# MASTER (#3141): without the first, the permission alert lands 5s in and covers
+# the middle of every shot below, and no amount of `simctl privacy deny` or
+# erasing suppresses it. `-temp_screenshot_tab` / `-temp_screenshot_counts` were
+# passed here for weeks and read by NOTHING — they exist only in the hand-patched
+# scaffold (tools/native-look-scaffold-TempScreenshot.swift.txt), so the rig
+# looked like it was selecting a tab and was in fact inert. Discover is the
+# default tab, which is the only reason these shots were ever of the right
+# screen. Patch the scaffold in if you need a tab this rig cannot reach.
 xcrun simctl launch "$SIM" "$BUNDLE" \
-  -temp_screenshot_quiet YES -bainluck_telemetry_consent none \
-  -temp_screenshot_tab discover -temp_screenshot_counts YES >/dev/null 2>&1
+  -suppress_notification_prompt YES -bainluck_telemetry_consent none \
+  -discover_onboarded YES >/dev/null 2>&1
 sleep 18
 xcrun simctl io "$SIM" screenshot "$OUT/G1-$LABEL-discover.png" >/dev/null 2>&1 \
   && echo "  shot G1-$LABEL-discover.png"
