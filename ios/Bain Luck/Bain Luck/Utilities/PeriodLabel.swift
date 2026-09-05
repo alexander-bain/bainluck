@@ -138,3 +138,92 @@ enum PeriodLabel {
         }
     }
 }
+
+// MARK: - Halves inferred from a gap (#3317)
+
+/// The `1H` / `HT` / `2H` markers a pause in the reading stream implies.
+///
+/// **A GAP SAYS "PLAY STOPPED". IT NEVER SAYS "THIS IS SOCCER."** That confusion
+/// is the whole of #3317: `OddsChartView` inserted soccer's halves whenever it
+/// held no period data and saw one gap over eight minutes, so a **Major League
+/// Baseball** chart drew `1H` and `2H` — photographed on the live Giants–Mets
+/// game 15296786, 2026-09-05, `artifacts-native-028/n028-BEFORE-mets.png`.
+///
+/// The guard that was already here only half worked, and its own comment says
+/// why it was added: baseball inning markers are numeric, so soccer's `2H` used
+/// to *overwrite* correct innings. Requiring `firstSeen.isEmpty` protected a
+/// baseball game that HAS innings and did nothing for one that has none — and
+/// empty markers plus a long pause is the ordinary shape of a televised
+/// baseball game (between innings, pitching changes, replay reviews).
+///
+/// **MEASURED, 2026-09-05, on the eight live MLB event rows of the afternoon:**
+/// two fire this inference right now (15296785 Cubs–Marlins, 872s and 638s
+/// gaps, `has_period = 0`), four carry real period data and are untouched, and
+/// two more were early enough not to have met the row floor yet. It is not a
+/// corner case.
+///
+/// **THE INTENDED CASE CURRENTLY HAS NO DATA, AND THAT IS STATED RATHER THAN
+/// ASSUMED.** Measured the same day: zero soccer events had any `espn_snapshots`
+/// row in seven days, and `espn_history`'s supplement path only reads the `mlb`
+/// and `stat_model` win-prob sources, neither of which serves soccer (of seven
+/// live soccer matches sampled, one had win-prob rows at all — Kalshi, with no
+/// game state). So this branch is dormant for the sport it was written for and
+/// fired only on sports it was wrong about. It is GATED rather than deleted so
+/// the capability survives the day soccer's stream returns; the soccer arm below
+/// is therefore pinned by a fixture, never by production evidence.
+///
+/// The WEB has never had any of this: `frontend/lib/periodMarkers.ts` derives
+/// boundaries from real period data on four sources and invents nothing. This
+/// narrows a native-only invention rather than diverging from web.
+enum HalvesFromGap {
+
+    /// A pause longer than this is the candidate interval.
+    static let minimumGapSeconds: TimeInterval = 480
+
+    /// Below this many readings a single gap is a sync hiccup, not a half-time.
+    static let minimumReadings = 5
+
+    /// Whether a sport divides regulation into two halves with an interval —
+    /// the only shape `1H`/`HT`/`2H` can be true of.
+    ///
+    /// **FAILS CLOSED.** An unrecognised or absent sport key returns `false`.
+    /// Drawing no chips is an honest absence; drawing another sport's
+    /// vocabulary is a number in the wrong unit, which `SportVocab`'s own thesis
+    /// calls worse than an absent one *because it looks sourced*.
+    ///
+    /// Soccer only, deliberately. Every one of the 176 sport keys in the
+    /// database that is soccer is `soccer_`-prefixed (measured 2026-09-05: 60 of
+    /// them, and no non-soccer key contains `mls`/`epl`/`uefa`/`fifa`), so the
+    /// substring is exact rather than approximate. Other halves sports — rugby,
+    /// handball, NCAA basketball — are absent on purpose: none of them has ever
+    /// reached this code, and adding a sport on a guess is the mistake this
+    /// function exists to undo. Adding one when it is measured is one line.
+    static func sportPlaysInHalves(_ sportKey: String?) -> Bool {
+        guard let key = sportKey?.lowercased(), !key.isEmpty else { return false }
+        return key.contains("soccer")
+    }
+
+    /// The halves implied by the first qualifying pause, oldest first — or `[]`,
+    /// which is the usual and correct answer.
+    ///
+    /// Pure and total so the rule can be pinned in both directions rather than
+    /// inspected through a rendered chart; `dates` need not be sorted.
+    static func markers(
+        sportKey: String?,
+        espnDates: [Date]
+    ) -> [(label: String, date: Date)] {
+        guard sportPlaysInHalves(sportKey) else { return [] }
+        let dates = espnDates.sorted()
+        guard dates.count >= minimumReadings, let first = dates.first else { return [] }
+        for index in 1..<dates.count {
+            let gap = dates[index].timeIntervalSince(dates[index - 1])
+            guard gap > minimumGapSeconds else { continue }
+            return [
+                ("1H", first),
+                ("HT", dates[index - 1].addingTimeInterval(gap / 2)),
+                ("2H", dates[index]),
+            ]
+        }
+        return []
+    }
+}

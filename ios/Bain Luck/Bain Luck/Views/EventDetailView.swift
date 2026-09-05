@@ -196,6 +196,7 @@ struct EventDetailView: View {
                                      awayTeamLogo: event.awayTeamData?.logoSmall,
                                      homeTeamAbbrev: event.homeTeamData?.abbreviation,
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                                     sportKey: event.sport,
                                      refreshCountdown: refreshCountdown,
                                      refreshInterval: refreshInterval,
                                      refreshStreaming: vm.streamDelivering,

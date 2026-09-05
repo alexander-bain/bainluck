@@ -314,6 +314,15 @@ struct OddsChartView: View {
     var awayTeamLogo: String?
     var homeTeamAbbrev: String?
     var awayTeamAbbrev: String?
+    /// The event's sport key (`baseball_mlb`, `soccer_epl`, …).
+    ///
+    /// #3317. This view drew period chips for years without knowing what sport
+    /// it was drawing, which is exactly how it came to stamp soccer's halves on
+    /// a baseball game. Only `HalvesFromGap` reads it, and it FAILS CLOSED on
+    /// nil — a chart that cannot name its sport infers nothing.
+    /// `ScoreDifferentialChartView`, the other chart on this page, has taken the
+    /// same `event.sport` since it was written.
+    var sportKey: String?
     /// Countdown seconds until next data refresh (0 = just refreshed)
     var refreshCountdown: Int = 0
     /// Total refresh interval in seconds
@@ -373,6 +382,7 @@ struct OddsChartView: View {
          homeTeamName: String? = nil, awayTeamName: String? = nil,
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
+         sportKey: String? = nil,
          refreshCountdown: Int = 0, refreshInterval: Int = 30,
          refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
@@ -388,6 +398,7 @@ struct OddsChartView: View {
         self.awayTeamLogo = awayTeamLogo
         self.homeTeamAbbrev = homeTeamAbbrev
         self.awayTeamAbbrev = awayTeamAbbrev
+        self.sportKey = sportKey
         self.refreshCountdown = refreshCountdown
         self.refreshInterval = refreshInterval
         self.refreshStreaming = refreshStreaming
@@ -887,30 +898,18 @@ struct OddsChartView: View {
             }
         }
 
-        // Soccer halftime detection: if we have NO period markers at all
-        // but ESPN history shows a time gap >8 minutes (halftime break),
-        // insert a "HT" marker at the gap.
-        // NOTE: Only trigger when firstSeen is truly empty. The previous
-        // condition also triggered when all labels were numeric (allSatisfy(\.isNumber)),
-        // but baseball inning markers ARE numeric ("1","2"..."9") — that caused
-        // soccer "2H" to overwrite correct inning markers on baseball win prob charts.
-        if firstSeen.isEmpty,
-           let espnHistory = history.espnHistory, espnHistory.count >= 5 {
-            let espnDates = espnHistory.compactMap { $0.timestamp.asDate }.sorted()
-            for i in 1..<espnDates.count {
-                let gap = espnDates[i].timeIntervalSince(espnDates[i - 1])
-                if gap > 480 { // >8 minute gap = likely halftime
-                    let htDate = espnDates[i - 1].addingTimeInterval(gap / 2)
-                    if !seenLabels.contains("HT") {
-                        firstSeen.removeAll()
-                        seenLabels.removeAll()
-                        firstSeen.append(("1H", espnDates.first!))
-                        firstSeen.append(("HT", htDate))
-                        firstSeen.append(("2H", espnDates[i]))
-                        seenLabels = ["1H", "HT", "2H"]
-                    }
-                    break
-                }
+        // Halftime inferred from a pause — gated on the sport actually playing
+        // halves (#3317). The rule, why the previous `firstSeen.isEmpty` guard
+        // was only half of one, and the production measurement that condemned
+        // it, are all in `HalvesFromGap`; this is only the call.
+        if firstSeen.isEmpty, !seenLabels.contains("HT") {
+            let inferred = HalvesFromGap.markers(
+                sportKey: sportKey,
+                espnDates: (history.espnHistory ?? []).compactMap { $0.timestamp.asDate }
+            )
+            if !inferred.isEmpty {
+                firstSeen = inferred
+                seenLabels = Set(inferred.map(\.label))
             }
         }
 
