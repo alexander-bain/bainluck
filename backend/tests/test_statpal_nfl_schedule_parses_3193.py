@@ -48,22 +48,30 @@ def _payload() -> dict:
     return json.loads(NFL_SCHEDULE.read_text())
 
 
-class _StubbedFetch(StatPalAPIService):
-    """The production service with exactly one thing replaced: the network.
+def _service_serving(payload) -> tuple[StatPalAPIService, list]:
+    """The real service with exactly one thing replaced: the network.
 
-    Subclassing rather than patching `_parse_fixtures` or handing the payload
-    straight to the parser, because the defect lived in what the task's own
-    call CHAIN did with the response, and a test that starts at the parser
-    cannot see an endpoint chosen wrongly or an early return above it.
+    A REAL `StatPalAPIService()`, not a subclass and not `__new__`, so the
+    endpoint table, `_base_url` and every branch above the parse are the shipped
+    ones. Only `_get` is swapped — the defect lived in what the task's own call
+    CHAIN did with the response, and a test that starts at the parser cannot see
+    an endpoint chosen wrongly or an early return above it.
+
+    (`__init__` needs no key: it warns and carries on, which is what the repo's
+    other StatPal tests rely on too.)
+
+    Returns the service and the list its `_get` records calls into, so a test
+    can assert a fetch actually happened rather than trusting an empty result.
     """
+    service = StatPalAPIService()
+    calls: list = []
 
-    def __init__(self, payload):
-        self._payload = payload
-        self.calls = []
+    async def fake_get(sport, endpoint, params=None):
+        calls.append((sport, endpoint, params))
+        return payload
 
-    async def _get(self, sport, endpoint, params=None):
-        self.calls.append((sport, endpoint, params))
-        return self._payload
+    service._get = fake_get
+    return service, calls
 
 
 @pytest.mark.asyncio
@@ -77,7 +85,7 @@ async def test_the_task_s_own_call_reads_every_nfl_game_in_the_real_payload():
     handles the list arm alone reads Week 1's thirteen games and silently drops
     Pre Season's one.
     """
-    service = _StubbedFetch(_payload())
+    service, calls = _service_serving(_payload())
     fixtures = await service.get_fixtures("nfl")
 
     assert len(fixtures) == NFL_GAMES_IN_CAPTURE, (
@@ -85,7 +93,7 @@ async def test_the_task_s_own_call_reads_every_nfl_game_in_the_real_payload():
         "games. This is the call the hourly beat makes; whatever it cannot see, "
         "an ESPN outage hides (#2867 step 7)."
     )
-    assert service.calls, "get_fixtures returned without fetching anything"
+    assert calls, "get_fixtures returned without fetching anything"
 
 
 @pytest.mark.asyncio
@@ -102,7 +110,7 @@ async def test_every_fixture_the_beat_reads_carries_a_start_time():
     the `date`+`time` pair precisely because that pair is venue-local on some
     endpoints and UTC on others.
     """
-    service = _StubbedFetch(_payload())
+    service, _ = _service_serving(_payload())
     fixtures = await service.get_fixtures("nfl")
 
     missing = [f"{f.home_team} v {f.away_team}" for f in fixtures if not f.start_time]
@@ -118,7 +126,7 @@ async def test_both_stages_reach_the_beat_not_just_the_one_served_as_a_list():
     Both shapes in one response is the whole difficulty, and a count alone can
     be satisfied by reading one stage twice.
     """
-    service = _StubbedFetch(_payload())
+    service, _ = _service_serving(_payload())
     fixtures = await service.get_fixtures("nfl")
 
     ids = {f.fixture_id for f in fixtures}
@@ -142,7 +150,7 @@ async def test_no_fixture_is_the_response_envelope_wearing_a_game_s_clothes():
     and "returned matches" are not the same thing, and a guard asserting
     emptiness here would have read false while sounding right.
     """
-    service = _StubbedFetch(_payload())
+    service, _ = _service_serving(_payload())
     fixtures = await service.get_fixtures("nfl")
 
     for f in fixtures:
@@ -161,7 +169,7 @@ async def test_an_empty_response_still_yields_nothing_rather_than_an_envelope():
     out of an outage.
     """
     for empty in ({}, {"scores": {}}, {"scores": {"tournament": {}}}, None):
-        service = _StubbedFetch(empty)
+        service, _ = _service_serving(empty)
         assert await service.get_fixtures("nfl") == [], (
             f"{empty!r} produced fixtures"
         )
