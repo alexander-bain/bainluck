@@ -89,13 +89,37 @@ class _WorkSession:
         self.bound: list[dict] = []
 
     async def execute(self, stmt, params=None):
+        """Dispatch on the BINDS, and refuse a statement it does not know.
+
+        Both of those are CAL-P1013 repairs, and the same edit caused both. This
+        double used to recognise the work selection by the literal prefix
+        ``SELECT fm.id AS market_id`` and to answer every unrecognised statement
+        with zero rows. When #2528's rewrite renamed the alias to ``s.id``, the
+        double stopped recognising its own subject and cheerfully reported an
+        empty page — so the three tests below failed on ``returned == 0`` and on
+        an empty ``bound`` list, which reads as "the cursor is broken" when what
+        actually happened is that the fake went blind.
+
+        A fake that answers a statement it does not understand can only ever fail
+        in that misleading direction, so it now RAISES. And the dispatch keys on
+        the parameters the rail binds rather than on its SELECT list: ``lim`` is
+        what makes a statement the work selection, whatever its columns are
+        called next time.
+        """
         sql = str(stmt)
+        params = dict(params or {})
         if "statement_timeout" in sql:
             return _Rows([])
-        if "SELECT fm.id AS market_id" in sql:
-            self.bound.append(dict(params or {}))
-            return _Rows(self._select(params or {}))
-        return _Rows([])
+        if "lim" in params:
+            self.bound.append(params)
+            return _Rows(self._select(params))
+        if "mid" in params:
+            return _Rows([])  # `_legs`, deliberately empty for this file
+        raise AssertionError(
+            "the session double was handed a statement it does not model, so "
+            "any answer it gives is fiction. Teach it the statement or stop "
+            f"issuing it. Binds: {sorted(params)}. SQL: {sql[:200]}"
+        )
 
     @staticmethod
     def _select(params):

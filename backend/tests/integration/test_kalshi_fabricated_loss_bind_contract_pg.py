@@ -44,7 +44,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.tasks import repair_kalshi_fabricated_loss as rail
-from app.utils.kalshi_fabricated_loss import REPAIRABLE_SOURCE
+from app.utils.kalshi_fabricated_loss import (
+    POPULATION_HAVING_SQL,
+    REPAIRABLE_SOURCE,
+)
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -369,6 +372,296 @@ async def test_the_census_entry_point_completes_against_real_postgres(
     # And the completion test the whole change exists for is expressible: the
     # addressed bands are readable off a walk that reached the end.
     assert banked["record"]["complete"] is True
+
+
+#: The work selection AS IT WAS before CAL-P1013 rewrote it (#2528) — the grouped
+#: whole-table aggregate that cost 10.8s in August and 18.2s-and-cancelled on
+#: 2026-09-05, once ``futures_outcomes`` reached 3,957,119 rows.
+#:
+#: It is kept here as an EXECUTABLE REFERENCE, not as documentation. The rewrite's
+#: entire claim is that it selects the same markets in the same order by a cheaper
+#: route, and the only way to hold a claim like that is to run both and diff the
+#: rows. A prose assertion that two SQL statements agree is the thing that goes
+#: stale (#2779: a hand-copied table that rotted five times).
+#:
+#: The parts that are SHARED with the shipped statement are INTERPOLATED FROM THE
+#: SHIPPED CONSTANTS, never re-typed: the population predicate is
+#: ``POPULATION_HAVING_SQL`` itself and the floor is ``PROVABLY_PURGED_AGE_DAYS``
+#: itself. So a future change to what the population MEANS moves both sides at
+#: once and this gate keeps testing the shape rather than freezing a definition
+#: nobody meant to freeze. Only the SHAPE — group-then-join vs drive-then-probe —
+#: is frozen, which is exactly the thing under test.
+_WORK_SQL_BEFORE_THE_LATERAL = f"""
+    SELECT fm.id AS market_id,
+           fm.external_id AS event_ticker,
+           fm.mutually_exclusive AS mutex,
+           fm.llm_sport_category AS sport,
+           fm.status AS our_status,
+           fm.resolution_date AS resolution_date,
+           EXTRACT(EPOCH FROM (NOW() - fm.resolution_date)) / 86400.0 AS age_days
+    FROM (
+      SELECT fo.market_id,
+             COUNT(*) AS n_out
+      FROM futures_outcomes fo
+      GROUP BY fo.market_id
+      HAVING {POPULATION_HAVING_SQL}
+    ) mx
+    JOIN futures_markets fm ON fm.id = mx.market_id
+    WHERE fm.source = 'kalshi'
+      AND fm.resolution_date IS NOT NULL
+      AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
+      AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
+      AND (
+            CAST(:after_date AS timestamptz) IS NULL
+         OR (fm.resolution_date, fm.id)
+              > (CAST(:after_date AS timestamptz), CAST(:after_id AS bigint))
+          )
+    ORDER BY fm.resolution_date ASC, fm.id ASC
+    LIMIT :lim
+"""
+
+
+async def _seed_market(
+    session,
+    *,
+    ext,
+    days_ago,
+    legs=("YES", "NO"),
+    winner_leg=None,
+    source=REPAIRABLE_SOURCE,
+    market_source="kalshi",
+    sport="baseball",
+):
+    """One market at a chosen age, with control over the three exclusion knobs.
+
+    ``legs`` sizes the market (a ONE-leg market is the ``COUNT(*) >= 2`` edge),
+    ``winner_leg`` gives it a winner (the ``FILTER (WHERE is_winner) = 0`` edge)
+    and ``source`` sets the grading provenance (the ``api_settlement`` edge).
+    """
+    from sqlalchemy import text
+
+    resolved = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    market_id = (
+        await session.execute(
+            text("""
+                INSERT INTO futures_markets
+                    (name, source, category, mutually_exclusive, status,
+                     resolution_date, external_id, llm_sport_category)
+                VALUES
+                    (:name, :msrc, 'championship', TRUE, 'resolved',
+                     :resolved, :ext, :sport)
+                RETURNING id
+                """),
+            {
+                "name": f"work-selection {ext}",
+                "msrc": market_source,
+                "resolved": resolved,
+                "ext": ext,
+                "sport": sport,
+            },
+        )
+    ).scalar()
+
+    for leg in legs:
+        await session.execute(
+            text("""
+                INSERT INTO futures_outcomes
+                    (market_id, name, external_id, is_winner, resolution_source)
+                VALUES (:mid, :name, :ext, :win, :source)
+                """),
+            {
+                "mid": market_id,
+                "name": leg.title(),
+                "ext": f"{ext}-{leg}",
+                "win": leg == winner_leg,
+                "source": source,
+            },
+        )
+
+    await session.commit()
+    return market_id
+
+
+async def _reference_work(session, **params):
+    from sqlalchemy import text
+
+    args = {"lim": 10, "sport": None, "after_date": None, "after_id": None}
+    args.update(params)
+    return (
+        await session.execute(text(_WORK_SQL_BEFORE_THE_LATERAL), args)
+    ).all()
+
+
+async def _mixed_population(session):
+    """Four members and five near-misses, ages deliberately out of id order.
+
+    THE INSERTION ORDER IS THE POINT and it is not the reading order. Seeded
+    oldest-first, the ids come out ascending in the same sequence as the dates,
+    so "sorted by id" and "sorted by resolution_date" are the same answer and an
+    ordering test over the fixture proves nothing — it passes just as happily
+    against a plan that lost the sort entirely. (That is not a hypothetical: the
+    first version of this fixture did exactly that, and the anti-vacuity
+    assertion in the ordering test below is what caught it, in CI, on the run
+    that was meant to prove the rewrite.)
+
+    So the four members go in as recent, future, oldest, middle, and are RETURNED
+    in resolution_date order. Id order and date order are now different answers
+    and only one of them is the contract.
+    """
+    recent = await _seed_market(session, ext="KXWORK-NEW", days_ago=10)
+    future = await _seed_market(session, ext="KXWORK-FUT", days_ago=-9)
+    oldest = await _seed_market(session, ext="KXWORK-OLD", days_ago=60)
+    middle = await _seed_market(session, ext="KXWORK-MID", days_ago=40)
+
+    # Near-misses, one per exclusion the population predicate makes.
+    await _seed_market(session, ext="KXWORK-ONELEG", days_ago=30, legs=("YES",))
+    await _seed_market(
+        session, ext="KXWORK-WON", days_ago=30, winner_leg="YES"
+    )
+    await _seed_market(
+        session, ext="KXWORK-MANUAL", days_ago=30, source="manual_review"
+    )
+    await _seed_market(
+        session,
+        ext="KXWORK-POLY",
+        days_ago=30,
+        market_source="polymarket",
+        sport="hockey",
+    )
+    # Below the floor: older than the measured purge bound.
+    await _seed_market(
+        session, ext="KXWORK-PURGED", days_ago=PROVABLY_PURGED_AGE_DAYS + 5
+    )
+
+    return [oldest, middle, recent, future]
+
+
+async def test_the_lateral_rewrite_selects_exactly_what_the_grouped_form_did(
+    pg_session,
+):
+    """CAL-P1013 (#2528): the rewrite is answer-identical, run against both.
+
+    The old form is not merely slow — on 2026-09-05 it was CANCELLED at its own
+    18s bound on every production call, sharded and unsharded, so the drain
+    could not so much as build a plan. Making it finish is worthless if it
+    finishes on a different set of markets: this rail writes to `is_winner`, and
+    a work list that quietly widened would write outside the population the
+    census measures and the after-check re-reads.
+
+    So both statements run, over a population that exercises every exclusion,
+    and the assertion is on the ROWS — including their order, which the keyset
+    cursor is a position in.
+    """
+    expected = await _mixed_population(pg_session)
+
+    shipped = await _work(pg_session)
+    reference = await _reference_work(pg_session)
+
+    assert [r.market_id for r in shipped] == [r.market_id for r in reference], (
+        "the LATERAL probe and the grouped aggregate disagree about WHICH "
+        "markets are in the drain's population, or about their ORDER"
+    )
+    assert [r.market_id for r in shipped] == expected, (
+        "both forms agree with each other but not with the population this test "
+        "seeded — the predicate itself moved"
+    )
+    assert [tuple(r) for r in shipped] == [tuple(r) for r in reference], (
+        "the two forms return different COLUMNS or different values in them; "
+        "the plan builder reads mutex, sport, our_status and age_days off these "
+        "rows"
+    )
+
+
+async def test_the_rewrite_agrees_with_the_grouped_form_under_a_shard_and_a_cursor(
+    pg_session,
+):
+    """The same identity under the two parameters an attended drain actually uses.
+
+    An identity that holds only for the unparameterised call is not the identity
+    the operator relies on: every call after the first carries a cursor, and the
+    old refusal's advice was to carry a shard.
+    """
+    await _mixed_population(pg_session)
+    await _seed_market(pg_session, ext="KXWORK-HOCKEY", days_ago=20, sport="hockey")
+
+    for params in (
+        {"sport": "baseball"},
+        {"sport": "hockey"},
+        {"sport": "chess"},
+        {"lim": 2},
+        {"lim": 1},
+    ):
+        assert [r.market_id for r in await _work(pg_session, **params)] == [
+            r.market_id for r in await _reference_work(pg_session, **params)
+        ], f"the two forms disagree under {params}"
+
+    everything = [r.market_id for r in await _work(pg_session, lim=50)]
+    page_one = await _work(pg_session, lim=1)
+    resumed = {
+        "lim": 50,
+        "after_date": page_one[0].resolution_date,
+        "after_id": page_one[0].market_id,
+    }
+    assert [r.market_id for r in await _work(pg_session, **resumed)] == [
+        r.market_id for r in await _reference_work(pg_session, **resumed)
+    ]
+    # Derived from the unsharded listing, never hand-written. The first draft of
+    # this line said `members[1:]` and forgot that the hockey market seeded two
+    # lines up also joins the population — so it asserted a four-row resume was
+    # three rows and failed in CI on a defect that was entirely the test's.
+    assert [
+        r.market_id for r in await _work(pg_session, **resumed)
+    ] == everything[1:], (
+        "the resume must return everything except the row page one returned, in "
+        "the same order"
+    )
+
+
+async def test_the_work_selection_is_ordered_oldest_first_not_by_id(pg_session):
+    """The sort is a CONTRACT here, not a nicety, and the rewrite moved it.
+
+    Oldest-first-within-a-floor is what reaches the at-risk band before the
+    retention cliff destroys it, and the keyset cursor names a POSITION in this
+    order — a page returned out of order hands back a cursor that skips
+    everything it stepped over, silently, because every row returned is still a
+    genuine population member.
+
+    The seeded ages ascend against the insertion order, so id order and date
+    order are different answers and only one of them is right.
+    """
+    members = await _mixed_population(pg_session)
+
+    rows = await _work(pg_session)
+
+    assert [r.market_id for r in rows] == members, "not in resolution_date order"
+    assert [r.market_id for r in rows] != sorted(
+        r.market_id for r in rows
+    ), "the fixture must make id order and date order DIFFER, or this proves nothing"
+    dates = [r.resolution_date for r in rows]
+    assert dates == sorted(dates), "oldest first"
+
+
+async def test_the_near_misses_stay_out_of_the_lateral_form(pg_session):
+    """The three exclusions, each proven by a market that differs in one field.
+
+    The LATERAL restates the population predicate against a single market rather
+    than a GROUP BY, and the case that changes shape is the one-leg market: it
+    used to fail to form a group, and now it forms an aggregate row that HAVING
+    must reject. If ``COUNT(*) >= 2`` were dropped, 4,372 correctly-settled
+    one-leg binaries would enter the drain's work list and be sent to the venue.
+    """
+    await _mixed_population(pg_session)
+
+    selected = {r.event_ticker for r in await _work(pg_session, lim=50)}
+
+    for excluded, why in (
+        ("KXWORK-ONELEG", "a one-leg binary that settled NO is an ordinary loser"),
+        ("KXWORK-WON", "a market with a winner is not all-loser"),
+        ("KXWORK-MANUAL", "only api_settlement losses are fabricated ones"),
+        ("KXWORK-POLY", "this rail is Kalshi's"),
+        ("KXWORK-PURGED", "past the purge bound the venue cannot answer"),
+    ):
+        assert excluded not in selected, why
 
 
 async def test_the_per_market_leg_read_executes(pg_session):
