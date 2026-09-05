@@ -149,6 +149,7 @@ with it would be the same class of error one layer down.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -202,6 +203,7 @@ from app.utils.repair_apply_plan import (
     keyset_after,
     mutations_outside_approved,
     plan_reason_for_read,
+    url_safe_isoformat,
 )
 
 logger = logging.getLogger(__name__)
@@ -510,7 +512,22 @@ _WORK_SQL = f"""
     WHERE fm.source = 'kalshi'
       AND fm.resolution_date IS NOT NULL
       AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
-      AND (:sport IS NULL OR fm.llm_sport_category = :sport)
+      -- CAST is NOT decoration. asyncpg prepares this statement with no
+      -- parameter types, so Postgres must infer them from the text alone, and
+      -- the FIRST occurrence of a parameter fixes its type. Untyped, the
+      -- IS NULL test fixes it as `unknown`, the later equality can no longer
+      -- resolve it, and the prepare dies with AmbiguousParameterError before a
+      -- row is read, whatever value is bound. That is why the keyset below
+      -- casts both halves, and why every sibling rail casts this one on BOTH
+      -- sides (repair_polymarket_leg_label, lines 457-458 and 758). This line
+      -- was the one that did not, so the drain's endpoint had never completed
+      -- a work selection.
+      --
+      -- No colon-prefixed word may appear in this comment: SQLAlchemy's text()
+      -- parses one as a BIND, and a line reference written as a colon plus
+      -- digits compiled to a parameter nobody supplies. Caught by the real
+      -- Postgres gate on the first run of the fix for this very line.
+      AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
       AND (
             CAST(:after_date AS timestamptz) IS NULL
          OR (fm.resolution_date, fm.id)
@@ -1245,6 +1262,69 @@ async def repair(
     return await _dry_run(session, limit, after_id, after_date, sport, started)
 
 
+#: A UTC offset whose ``+`` a query string has already eaten. Anchored to the
+#: END of the value and to the exact ``HH:MM`` an offset is, so this repairs the
+#: one transport artefact and refuses everything else that contains a space.
+_PLUS_EATEN_BY_THE_QUERY_STRING = re.compile(r"^(.*\d) (\d{2}:\d{2})$")
+
+#: The example the refusal text shows an operator. DERIVED from the emit path
+#: rather than typed, because this string is the rail's own instruction — the
+#: one CERT-1892 followed literally to find that the advertised form could not
+#: survive being pasted. An example that is not what ``next_cursor`` hands back
+#: is the same defect wearing prose.
+_CURSOR_EXAMPLE = url_safe_isoformat(
+    datetime(2026, 6, 16, 12, 27, 30, tzinfo=timezone.utc)
+)
+
+
+def parse_cursor_date(after_date: str | None) -> datetime | None:
+    """The ISO string this rail HANDS BACK, turned into what asyncpg will take.
+
+    Two transport layers sit between the cursor and the query, and each one
+    dropped it.
+
+    **CAL-P1010 — the driver.** ``keyset_after`` emits ``after_date`` as an ISO
+    string, the operator pastes it back into ``?after_date=``, the route
+    declares it ``str`` — and asyncpg refuses a ``str`` for a ``timestamptz``
+    parameter rather than casting it, which psycopg2 would have done silently.
+    Page two of every drain died on ``DataError: invalid input for query
+    argument``. Same specimen as the cliff drain one rail over (#1884).
+
+    **CAL-P1010-R (CERT-1892) — the query string.** Fixing that was not enough,
+    because the value never arrived intact. ``isoformat()`` writes the UTC
+    offset as ``+00:00``, and a literal ``+`` in a query string is
+    ``application/x-www-form-urlencoded`` for a SPACE, so what reached this
+    function was ``2026-06-16T12:27:30.636456 00:00`` and the parse refused it
+    by name. The rail's own instruction is *paste ``next_cursor`` into
+    ``?after_date=``*, so following the instruction exactly was the failing
+    path.
+
+    Both ends are fixed, deliberately:
+
+    * :func:`~app.utils.repair_apply_plan.url_safe_isoformat` now emits ``Z``
+      instead of ``+00:00``, so a NEW cursor carries no character a query string
+      will rewrite;
+    * this parse also repairs the eaten ``+``, because a cursor an operator
+      already holds — in a captured response, a terminal scrollback, a ticket —
+      must not become unusable, and because the guarantee has to hold for a
+      value that took the old path.
+
+    A naive value is read as UTC rather than refused: an operator typing
+    ``?after_date=2026-06-16`` by hand means the instant the column stores, and
+    asyncpg wants the tzinfo explicit.
+
+    Raises ``ValueError`` for anything it cannot read. Never returns ``None``
+    for a value that was supplied — a cursor silently dropped to ``None`` reads
+    page one forever and calls it a resume, which is the ``?offset=`` bug
+    rebuilt one level down.
+    """
+    if after_date is None:
+        return None
+    candidate = _PLUS_EATEN_BY_THE_QUERY_STRING.sub(r"\1+\2", after_date.strip())
+    parsed = datetime.fromisoformat(candidate)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 async def _dry_run(session, limit, after_id, after_date, sport, started):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
@@ -1262,6 +1342,22 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         }
 
     try:
+        cursor_date = parse_cursor_date(after_date)
+    except (TypeError, ValueError):
+        return {
+            "measured": False,
+            "refused": "CURSOR_DATE_UNPARSEABLE",
+            "presented_after_date": after_date,
+            "reason": (
+                "after_date must be the ISO timestamp this rail returned in "
+                f"`next_cursor` (for example {_CURSOR_EXAMPLE}). It is "
+                "REFUSED rather than ignored: a dropped cursor half re-reads "
+                "page one and reports it as a resume."
+            ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    try:
         await session.execute(
             text(f"SET LOCAL statement_timeout = {_SELECT_TIMEOUT_MS}")
         )
@@ -1271,7 +1367,7 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
                 {
                     "lim": window,
                     "sport": sport,
-                    "after_date": after_date,
+                    "after_date": cursor_date,
                     "after_id": after_id,
                 },
             )
