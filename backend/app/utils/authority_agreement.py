@@ -39,7 +39,10 @@ WHAT A ROW SAYS
     sport. ``identity.governing`` says which of them scores THIS sport's streak
     and whether it clears the bar (D63; `GOVERNING_IDENTITY_NUMBERS`) — because
     the answer differs by sport, and a reader picking one is a reader who can
-    pick the wrong one.
+    pick the wrong one. Each number's complement is split by horizon —
+    ``statpal_only_by_horizon`` and ``ours_only_by_horizon`` — so an absence
+    outside the span the other side publishes is never read as a disagreement
+    about a game.
   * ``schedule`` — within the window / off by hours / a different day. Reported,
     never merged into identity (spec rule 2: a blend buried five real findings
     inside twenty-four non-findings).
@@ -218,6 +221,7 @@ def _identity_block(
     ours_only: int,
     denominator: int,
     horizon: dict[str, int],
+    ours_horizon: dict[str, int],
 ) -> dict[str, Any]:
     """The identity bucket, with its two numbers and the ruling on which decides.
 
@@ -250,6 +254,11 @@ def _identity_block(
         # Under D63 this is the number that GOVERNS for NBA and NHL. It is still
         # published for every sport, governing or not: the pair is the finding.
         "ours_covered_pct": _pct(both, both + ours_only),
+        # Where our own misses fall against StatPal's published span — the
+        # mirror of `statpal_only_by_horizon`, and the split that says whether
+        # `ours_covered_pct`'s complement is a disagreement or their horizon.
+        # Reported, never subtracted — see `_ours_only_by_horizon`.
+        "ours_only_by_horizon": ours_horizon,
     }
     identity["governing"] = governing_identity(sport_key, identity)
     return identity
@@ -447,6 +456,45 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
     return round(100.0 * numerator / denominator, 2)
 
 
+def _split_against_span(
+    misses: Sequence[Side],
+    span_source: Sequence[Side],
+    *,
+    before: str,
+    inside: str,
+    beyond: str,
+) -> dict[str, int]:
+    """Place each miss against the timed span of the OTHER side's list.
+
+    The shared core of the two horizon splits. Both ask the same question in
+    opposite directions — "does this absence fall inside the window the other
+    side actually publishes?" — and a second hand-written copy of that arithmetic
+    is a second place for the two directions to drift apart.
+
+    An empty span is NOT an empty split: with no timed fixture on the other side
+    there is no window to be inside or outside of, and reporting zeros would
+    claim every miss falls within it. Those rows go to ``unplaceable``, as does
+    any miss with no kickoff of its own.
+    """
+    starts = [s.start for s in span_source if s.start is not None]
+    split = {before: 0, inside: 0, beyond: 0, "unplaceable": 0}
+    if not starts:
+        split["unplaceable"] = len(misses)
+        return split
+
+    first, last = min(starts), max(starts)
+    for m in misses:
+        if m.start is None:
+            split["unplaceable"] += 1
+        elif m.start < first:
+            split[before] += 1
+        elif m.start > last:
+            split[beyond] += 1
+        else:
+            split[inside] += 1
+    return split
+
+
 def _statpal_only_by_horizon(
     statpal_only: Sequence[Side], rows: Sequence[Side]
 ) -> dict[str, int]:
@@ -472,35 +520,54 @@ def _statpal_only_by_horizon(
     never subtracted from it, because an exclusion that quietly moves the number
     is the failure mode spec rule 5 exists to prevent.
     """
-    starts = [r.start for r in rows if r.start is not None]
-    if not starts:
-        # No timed row on our side, so there is no span to be inside or outside
-        # of. Reporting zeros here would claim the whole StatPal list falls in
-        # our window, which is the opposite of what an empty table means.
-        return {
-            "before_our_first": 0,
-            "inside_our_span": 0,
-            "beyond_our_last": 0,
-            "unplaceable": len(statpal_only),
-        }
+    return _split_against_span(
+        statpal_only,
+        rows,
+        before="before_our_first",
+        inside="inside_our_span",
+        beyond="beyond_our_last",
+    )
 
-    first, last = min(starts), max(starts)
-    split = {
-        "before_our_first": 0,
-        "inside_our_span": 0,
-        "beyond_our_last": 0,
-        "unplaceable": 0,
-    }
-    for f in statpal_only:
-        if f.start is None:
-            split["unplaceable"] += 1
-        elif f.start < first:
-            split["before_our_first"] += 1
-        elif f.start > last:
-            split["beyond_our_last"] += 1
-        else:
-            split["inside_our_span"] += 1
-    return split
+
+def _ours_only_by_horizon(
+    ours_only: Sequence[Side], fixtures: Sequence[Side]
+) -> dict[str, int]:
+    """Split "we have it, StatPal doesn't" by where it falls against THEIR span.
+
+    The mirror of `_statpal_only_by_horizon`, and it exists because the number it
+    discriminates is the one that governs. `ours_covered_pct` — "of the games WE
+    list, does StatPal have them?" — is the D63 governing number for NBA and NHL
+    and one of NFL's two, and its complement is `ours_only`. Until now nothing on
+    the row said whether one of those absences sits inside the span StatPal
+    actually publishes or past the edge of it, and those are different facts:
+
+      * ``inside_statpal_span`` — StatPal publishes that date and has no such
+        game. **This is the one that is a finding**, and the only part of
+        `ours_only` that is evidence StatPal would have left a hole in the site.
+      * ``before_statpal_first`` / ``beyond_statpal_last`` — outside the span
+        StatPal serves at all. Not a disagreement about a game; a statement about
+        THEIR horizon, exactly as the mirrored buckets are about ours.
+
+    MLB is why this is built now. Its `season-schedule` is a rolling ~17-day
+    window rather than a season, so a game of ours two months out is guaranteed
+    to be `ours_only` and guarantees nothing about agreement — while the same
+    absence inside the window would be the strongest disagreement we can measure.
+    D63's discriminator table was built entirely from the StatPal-side split, so
+    MLB's governing number cannot be ruled on until the same split exists on this
+    side (`ARTIFACT-AUTHORITY-20260905-*`, #2867).
+
+    Reported, never subtracted: `ours_covered_pct` keeps its full denominator.
+    An exclusion that quietly moves the governing number is spec rule 5's failure
+    mode, and it would be worse here than on the StatPal side precisely because
+    this side governs.
+    """
+    return _split_against_span(
+        ours_only,
+        fixtures,
+        before="before_statpal_first",
+        inside="inside_statpal_span",
+        beyond="beyond_statpal_last",
+    )
 
 
 def build_agreement_row(
@@ -574,6 +641,7 @@ def build_agreement_row(
     both = len(paired)
     denominator = both + len(statpal_only) + len(ours_only)
     horizon = _statpal_only_by_horizon(statpal_only, real_rows)
+    ours_horizon = _ours_only_by_horizon(ours_only, real_fixtures)
 
     schedule: dict[str, int] = {
         "within": 0,
@@ -626,6 +694,7 @@ def build_agreement_row(
                 ours_only=len(ours_only),
                 denominator=denominator,
                 horizon=horizon,
+                ours_horizon=ours_horizon,
             ),
             "schedule": {
                 **schedule,
