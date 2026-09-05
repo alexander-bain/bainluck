@@ -161,6 +161,21 @@ AMBIGUOUS_CANDIDATE_ROWS = "ambiguous_identity_candidate_rows"
 UNSOLVED_COMPONENT_FIXTURES = "unsolved_component"
 UNSOLVED_COMPONENT_ROWS = "unsolved_component_candidate_rows"
 
+#: Every refusal name this strategy can emit, declared to `Join` so the row seeds
+#: all four at `0` whatever today's data did (#3275).
+#:
+#: The `if` guards in `pair_tennis_sides` stay: `Join.refusals` remains a record
+#: of what THIS pass refused, and this tuple is what the census is keyed by.
+#: Collapsing the two — always writing empty lists into `refusals` — would make
+#: the seeding vacuous, so the mechanism every future strategy relies on would
+#: never run in the one place that uses it.
+TENNIS_REFUSAL_NAMES = (
+    AMBIGUOUS_REFUSAL,
+    AMBIGUOUS_CANDIDATE_ROWS,
+    UNSOLVED_COMPONENT_FIXTURES,
+    UNSOLVED_COMPONENT_ROWS,
+)
+
 #: What this strategy's denominator actually is, published on the row.
 #:
 #: The shared default describes an ordered normalised-pair key with kickoff as an
@@ -701,6 +716,7 @@ def pair_tennis_sides(
         unusable_fixtures=[f for f in fixtures if not _readable(f)],
         unusable_rows=[r for r in rows if not _readable(r)],
         refusals=refusals,
+        refusal_names=TENNIS_REFUSAL_NAMES,
         denominator_is=TENNIS_DENOMINATOR_IS,
     )
 

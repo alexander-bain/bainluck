@@ -646,6 +646,17 @@ def _pair_within_key(
     return paired, spare_f, spare_r
 
 
+#: The exclusions EVERY row publishes, whatever the join. Named here rather than
+#: only inline in `build_agreement_row` so that `Join.__post_init__` can refuse a
+#: strategy that declares a refusal under one of these names — the seed would
+#: silently zero a default the row has already counted.
+DEFAULT_EXCLUDED_KEYS = (
+    "statpal_placeholders",
+    "statpal_unusable_names",
+    "our_unusable_names",
+)
+
+
 @dataclass(frozen=True)
 class Join:
     """Which fixtures are which rows, and everything the join could not place.
@@ -679,6 +690,27 @@ class Join:
     #: which is the opposite of what happened, and is spec rule 5's failure:
     #: an exclusion that quietly moves the governing number.
     refusals: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: Every refusal name this strategy can EVER emit, whether or not today's data
+    #: made it emit one. `build_agreement_row` seeds all of them at `0` before
+    #: merging the counts above, so `excluded` is keyed by the strategy's
+    #: vocabulary rather than by one pass's findings.
+    #:
+    #: Without this, `refusals` alone made one census carry two conventions: a
+    #: default key at zero says *measured, none*, and a strategy key that is
+    #: simply absent says nothing at all (#3275). That difference has teeth for
+    #: `MAX_ASSIGNMENTS_PER_COMPONENT`, whose whole purpose is to be raised when
+    #: it bites and whose expected reading is therefore zero — an operator could
+    #: not tell *the bound did not bite* from *the bound can no longer be
+    #: reported*, which is the same "not measured" vs "measured and disagreed"
+    #: distinction `agreement: null` gets right one level up in the same
+    #: response.
+    #:
+    #: A strategy keeps its `if refused:` guards: `refusals` stays a record of
+    #: what this pass actually refused, and the vocabulary is declared here. The
+    #: two are checked against each other below, because a name emitted but not
+    #: declared would publish under its own key while the declared one sat at a
+    #: permanent, lying `0`.
+    refusal_names: tuple[str, ...] = ()
     #: What this strategy's denominator IS, in one sentence, published on the row
     #: as `denominator_is`.
     #:
@@ -694,6 +726,30 @@ class Join:
         "normalised (away, home) pair; kickoff is a tiebreak within a key and "
         "never a filter"
     )
+
+    def __post_init__(self) -> None:
+        """Both ways a declared vocabulary can lie, refused at construction.
+
+        Neither is a data finding, so neither may be published: a row that says
+        `unsolved_component: 0` while the same pass refused a component under a
+        neighbouring name is worse than the absent key #3275 replaced, because
+        absent reads as unknown and a wrong `0` reads as measured.
+        """
+        undeclared = sorted(set(self.refusals) - set(self.refusal_names))
+        if undeclared:
+            raise ValueError(
+                f"join emitted refusal name(s) {undeclared} it did not declare "
+                f"in refusal_names={list(self.refusal_names)}. Declare them, or "
+                "the census seeds the declared name at 0 while the real count "
+                "publishes under a name nothing is watching."
+            )
+        collides = sorted(set(self.refusal_names) & set(DEFAULT_EXCLUDED_KEYS))
+        if collides:
+            raise ValueError(
+                f"refusal name(s) {collides} collide with the default `excluded` "
+                f"keys {list(DEFAULT_EXCLUDED_KEYS)}. Seeding one at 0 would "
+                "overwrite a count the row already owes."
+            )
 
 
 #: The signature every join strategy has. `normalize` is the default strategy's
@@ -1088,6 +1144,11 @@ def build_agreement_row(
                 "statpal_placeholders": len(placeholder_fixtures),
                 "statpal_unusable_names": len(unusable_fixtures),
                 "our_unusable_names": len(unusable_rows),
+                # Every refusal the strategy can ever make, seeded at zero, so a
+                # name that did not fire today still READS as measured-and-none
+                # like the three defaults above do. Keyed by the strategy's
+                # declared vocabulary, never by one pass's findings (#3275).
+                **{name: 0 for name in join.refusal_names},
                 # A strategy's own refusals, each under its own name. Merged into
                 # `excluded` rather than published beside it so that spec rule 5's
                 # promise — every row left out is named and counted in one place —
@@ -1141,6 +1202,11 @@ def build_agreement_row(
                 "statpal_placeholders": [
                     _fixture_receipt(f) for f in placeholder_fixtures[:RECEIPT_CAP]
                 ],
+                # Seeded from the same vocabulary as `excluded`, for the same
+                # reason and so the two blocks cannot disagree about which names
+                # exist: every other receipt key above publishes an empty list
+                # when it has nothing, and a refusal's should too (#3275).
+                **{name: [] for name in join.refusal_names},
                 **{
                     name: items[:RECEIPT_CAP]
                     for name, items in join.refusals.items()
